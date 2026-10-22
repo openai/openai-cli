@@ -34,9 +34,14 @@ Selections remain when you change the search. Press Enter to check the selected 
 Use Shift+Tab to go back. Press Escape or Ctrl+C to cancel.
 The final confirmation defaults to No.
 The form stays inline and keeps the fields and confirmation action together.
-A steady text cursor marks the input position. Brief controls appear for the active field.
+A blinking text cursor marks the input position. Brief controls appear for the active field.
 It preserves terminal scrollback and supports both light and dark terminal colors.
 Set `NO_COLOR=1` for plain output; selection markers remain visible.
+
+Choose Existing webhooks to browse the project's current endpoints without leaving the form.
+Use Up and Down to choose an endpoint, then Enter to view its ID, URL, and subscribed events.
+Escape returns to the list, then to your unchanged draft. Refresh reloads the endpoint list.
+This list shows current endpoints, not deleted endpoints or delivery history.
 
 Creation returns a signing secret. Save it securely before closing the terminal.
 Configure your receiver to verify webhook signatures with that secret before processing events.

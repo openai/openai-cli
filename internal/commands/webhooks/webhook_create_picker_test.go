@@ -175,7 +175,7 @@ func TestWebhookCreatePickerResizeKeepsAllChoicesAccessible(t *testing.T) {
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		for range len(events) {
 			content := ansi.Strip(m.View().Content)
-			require.Contains(t, content, "> [ ] "+m.filteredEvents()[m.current], "the focused event must stay visible after scrolling")
+			require.Contains(t, content, "› [ ] "+m.filteredEvents()[m.current], "the focused event must stay visible after scrolling")
 			lines := strings.Split(content, "\n")
 			require.LessOrEqual(t, len(lines), size[1]-1)
 			for _, line := range lines {
@@ -209,12 +209,12 @@ func TestWebhookCreatePickerReviewCanScrollCompleteURLAndSelections(t *testing.T
 			}
 		}
 		scrollHint := -1
-		for i := 1; i < len(lines); i++ {
+		for i := 2; i < len(lines); i++ {
 			if strings.HasPrefix(lines[i], "↑↓ settings ") {
 				scrollHint = i
 				break
 			}
-			index := m.reviewOffset + i - 1
+			index := m.reviewOffset + i - 2
 			if previous, exists := rows[index]; exists {
 				require.Equal(t, previous, lines[i], "review rows must remain stable while scrolling")
 			}
@@ -355,14 +355,14 @@ func TestWebhookCreatePickerThemeAndPlainSelection(t *testing.T) {
 	for stage := range 3 {
 		m.stage, m.color = stage, false
 		plain := m.View().Content
-		require.Contains(t, plain, "> ")
+		require.Contains(t, plain, "› ")
 		require.NotContains(t, plain, "\x1b")
 		for _, dark := range []bool{true, false} {
 			m.color, m.dark = true, dark
 			colored := m.View().Content
-			marker := "\x1b[1;38;2;49;89;188m>"
+			marker := "\x1b[1;38;2;49;89;188m›"
 			if dark {
-				marker = "\x1b[1;38;2;138;168;255m>"
+				marker = "\x1b[1;38;2;138;168;255m›"
 			}
 			require.Contains(t, colored, marker, "focus marker must use the theme's blue accent")
 			color := "138;168;255"
@@ -370,7 +370,7 @@ func TestWebhookCreatePickerThemeAndPlainSelection(t *testing.T) {
 				color = "49;89;188"
 			}
 			for _, label := range []string{"Name", "URL", "Events"} {
-				require.Regexp(t, "\\x1b\\[[^m]*38;2;"+color+"[^m]*m[> ]*"+label, colored, "field labels keep their accent when focus changes")
+				require.Regexp(t, "\\x1b\\[[^m]*38;2;"+color+"[^m]*m[› ]*"+label, colored, "field labels keep their accent when focus changes")
 			}
 			require.Equal(t, plain, ansi.Strip(colored), "theme must not change content or alignment")
 		}
@@ -394,7 +394,7 @@ func TestWebhookCreatePickerArrowNavigationIncludesReview(t *testing.T) {
 	webhookCreateKey(m, tea.KeyDown)
 	webhookCreateKey(m, tea.KeyDown)
 	require.True(t, m.reviewFocused)
-	require.Contains(t, ansi.Strip(m.View().Content), "> [ Continue to confirmation ]")
+	require.Contains(t, ansi.Strip(m.View().Content), "› [ Continue to confirmation ]")
 	foot := ansi.Strip(m.View().Content)
 	for _, inactive := range []string{"←→ category", "Space select", "Ctrl+A all"} {
 		require.NotContains(t, foot, inactive, "the action must not advertise event controls")
@@ -430,12 +430,12 @@ func TestWebhookCreatePickerFocusesCategoryAndSearchAsSeparateFields(t *testing.
 	m := newWebhookCreatePicker([]string{"batch.completed", "response.completed"})
 	webhookCreateKey(m, tea.KeyDown)
 	webhookCreateKey(m, tea.KeyDown)
-	require.Contains(t, ansi.Strip(m.View().Content), "> Events")
+	require.Contains(t, ansi.Strip(m.View().Content), "› Events")
 	require.Nil(t, m.View().Cursor)
 	webhookCreateKey(m, tea.KeyRight)
 	require.Equal(t, []string{"batch.completed"}, m.filteredEvents())
 	webhookCreateKey(m, tea.KeyDown)
-	require.Contains(t, ansi.Strip(m.View().Content), "> Search")
+	require.Contains(t, ansi.Strip(m.View().Content), "› Search")
 	require.Contains(t, ansi.Strip(m.View().Content), "Type an event or group name")
 	require.NotNil(t, m.View().Cursor, "an empty search must show where typing starts")
 	webhookCreatePaste(m, "batch")
@@ -452,13 +452,13 @@ func TestWebhookCreatePickerFocusesCategoryAndSearchAsSeparateFields(t *testing.
 	m.Update(tea.KeyPressMsg{Code: 'k', Mod: tea.ModCtrl})
 	require.Empty(t, m.search.value)
 	webhookCreateKey(m, tea.KeyDown)
-	require.Contains(t, ansi.Strip(m.View().Content), "> [ ] batch.completed")
+	require.Contains(t, ansi.Strip(m.View().Content), "› [ ] batch.completed")
 	m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	require.Equal(t, []string{"batch.completed"}, m.settings().events)
 	m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
-	require.Contains(t, ansi.Strip(m.View().Content), "> Search")
+	require.Contains(t, ansi.Strip(m.View().Content), "› Search")
 	webhookCreateKey(m, tea.KeyUp)
-	require.Contains(t, ansi.Strip(m.View().Content), "> Events")
+	require.Contains(t, ansi.Strip(m.View().Content), "› Events")
 	webhookCreateKey(m, tea.KeyUp)
 	require.Equal(t, 1, m.stage)
 	require.False(t, m.confirmed)
@@ -466,7 +466,7 @@ func TestWebhookCreatePickerFocusesCategoryAndSearchAsSeparateFields(t *testing.
 
 func TestWebhookCreatePickerTabStopsDoNotSubmitTheDraft(t *testing.T) {
 	m := newWebhookCreatePicker([]string{"response.completed"})
-	for _, marker := range []string{"> Name", "> URL", "> Events", "> Search", "> [ ] response.completed", "> [ Continue to confirmation ]"} {
+	for _, marker := range []string{"› Name", "› URL", "› Events", "› Search", "› [ ] response.completed", "› [ Continue to confirmation ]"} {
 		require.Contains(t, ansi.Strip(m.View().Content), marker)
 		require.False(t, m.confirmed)
 		webhookCreateKey(m, tea.KeyTab)
@@ -498,7 +498,7 @@ func TestWebhookCreatePickerKeepsEditingFieldsTogether(t *testing.T) {
 	for stage := range 3 {
 		m.stage = stage
 		view := ansi.Strip(m.View().Content)
-		require.True(t, strings.HasPrefix(view, "╭─ Create webhook endpoint "), "keep the heading beside the form")
+		require.Contains(t, strings.Split(view, "\n")[1], "Create webhook endpoint", "keep the heading inside the form")
 		for _, value := range []string{"Name", "Webhook", "URL", "https://example.com/webhook", "Events", "response.completed", "response.failed"} {
 			require.Contains(t, view, value, "changing focus must not replace the other fields")
 		}
@@ -588,6 +588,35 @@ func TestWebhookCreatePickerCompactBudgetKeepsControls(t *testing.T) {
 				require.Contains(t, view, "Create endpoint now?")
 				require.Contains(t, view, "[No]   Yes, create")
 				require.Contains(t, view, "↑↓ settings")
+			}
+		}
+	}
+}
+
+func TestWebhookCreateControlsRemainVisibleAtFrameThreshold(t *testing.T) {
+	for width := 36; width <= 80; width++ {
+		for height := 15; height <= 19; height++ {
+			m := newWebhookCreatePicker([]string{"response.completed"})
+			m.width, m.height, m.stage, m.eventFocus = width, height, 2, webhookCreateChoices
+			m.browser = &webhookEndpointBrowser{}
+			for _, note := range []string{"", "Choose at least one event."} {
+				m.note = note
+				view := ansi.Strip(m.View().Content)
+				controls := []string{"Space select", "Esc cancel"}
+				if note == "" {
+					controls = append(controls, "Ctrl+A all", "Enter next")
+				}
+				for _, control := range controls {
+					require.Contains(t, view, control, "size=%dx%d note=%q", width, height, note)
+				}
+			}
+			m.browser = &webhookEndpointBrowser{
+				active: true, items: []webhookEndpoint{{name: "Retained", id: "whe_partial"}},
+				note: "Could not load all webhooks. Check your connection, project, and webhook read access, then Refresh.",
+			}
+			view := ansi.Strip(m.View().Content)
+			for _, content := range []string{"Retained", "Could not load all webhooks.", "[ Refresh ]", "Tab actions", "Esc back"} {
+				require.Contains(t, view, content, "size=%dx%d", width, height)
 			}
 		}
 	}
@@ -775,7 +804,7 @@ func TestWebhookCreatePickerBlinkingTextCursorAndCompactSpacing(t *testing.T) {
 			require.NotRegexp(t, `\x1b\[[^m]*48;`, view.Content, "focus must not paint a highlight bar")
 			if stage == 2 {
 				require.Nil(t, view.Cursor, "category browsing does not show a text cursor")
-				require.Contains(t, ansi.Strip(view.Content), "> Events")
+				require.Contains(t, ansi.Strip(view.Content), "› Events")
 				m.eventFocus = webhookCreateSearch
 			}
 			input := m.input()
@@ -856,5 +885,5 @@ func TestWebhookCreatePickerDoesNotEndWithEmptyGroupHeading(t *testing.T) {
 	}
 	view = ansi.Strip(m.View().Content)
 	require.Contains(t, view, "Batches")
-	require.Contains(t, view, "> [ ] batch.completed")
+	require.Contains(t, view, "› [ ] batch.completed")
 }

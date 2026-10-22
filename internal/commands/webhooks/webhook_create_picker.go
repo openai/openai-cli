@@ -627,8 +627,9 @@ func (m *webhookCreatePicker) View() tea.View {
 	}
 	inner := width - 4 // Border and one padding cell on each side.
 	clip := func(s string) string { return ansi.Truncate(s, inner, "…") }
-	active := func(s string) string { return selected.Render(clip(s)) }
-	compact := height < 14
+	active := func(s string) string { return strong.Render(clip(s)) }
+	// Narrow footers wrap; omit framing in short windows to retain every control.
+	compact := height < 14 || height < 16 && width < 68
 	if compact && m.stage < 3 {
 		inner = width // Short terminals omit decoration, not fields or controls.
 	}
@@ -643,10 +644,12 @@ func (m *webhookCreatePicker) View() tea.View {
 		body = append(body, "")
 	}
 	var cursor *tea.Cursor
+	var controls []string
 	cursorAt := func(column, row int) {
 		x, y := valueColumn+column, 1+row
 		if !compact {
 			x += 2
+			y++
 		}
 		cursor = tea.NewCursor(x, y)
 		cursor.Shape = tea.CursorBar
@@ -659,7 +662,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			if focused {
 				value, column := input.viewport(inner-valueColumn, placeholder)
 				cursorAt(column, row)
-				return strong.Render("> "+label) + separator + value
+				return strong.Render("› "+label) + separator + value
 			}
 			value := webhookCreateLine(string(input.value))
 			if value == "" {
@@ -667,19 +670,19 @@ func (m *webhookCreatePicker) View() tea.View {
 			} else {
 				value = ansi.Truncate(value, inner-valueColumn, "…")
 			}
-			return "  " + strong.Render(label) + separator + value
+			return "  " + selected.Render(label) + separator + value
 		}
 		body = append(body, field("Name", &m.name, "Webhook", m.stage == 0, 0),
 			field("URL", &m.url, "https://example.com/webhook", m.stage == 1, 1))
 		if !compact {
 			divide("┼")
 		}
-		eventLabel := "  Events"
+		eventLabel := selected.Render("  Events")
 		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateCategory {
-			eventLabel = "> Events"
+			eventLabel = strong.Render("› Events")
 		}
 		category := "‹ " + ansi.Truncate(m.categories()[m.category], inner-valueColumn-4, "…") + " ›"
-		body = append(body, strong.Render(eventLabel)+separator+category)
+		body = append(body, eventLabel+separator+category)
 		body = append(body, field("Search", &m.search, "Type an event or group name",
 			m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateSearch, len(body)))
 		if !compact {
@@ -715,9 +718,9 @@ func (m *webhookCreatePicker) View() tea.View {
 				}
 			}
 		}
-		footer := webhookCreateControls(inner, m.color, quiet, bindings...)
+		controls = webhookCreateControls(inner, selected, quiet, bindings...)
 		// Reserve complete controls before sizing the event viewport.
-		overhead, tail := 1, 1+len(footer)
+		overhead, tail := 1, 1+len(controls)
 		if !compact {
 			overhead += 2
 			tail++
@@ -742,7 +745,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			if index == m.current {
 				currentRow = len(rows)
 				if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateChoices {
-					marker = ">"
+					marker = "›"
 				}
 			}
 			if m.selected[event] {
@@ -761,7 +764,9 @@ func (m *webhookCreatePicker) View() tea.View {
 			} else {
 				name = ""
 			}
-			if emphasized {
+			if marker == "›" {
+				leaf = strong.Render(leaf)
+			} else if emphasized {
 				leaf = selected.Render(leaf)
 			}
 			row := checkbox + name + leaf
@@ -790,9 +795,9 @@ func (m *webhookCreatePicker) View() tea.View {
 			action = "  [ Continue ]"
 		}
 		if m.reviewFocused && !m.existingFocused {
-			action = active(">" + action[1:])
+			action = active("›" + action[1:])
 		} else {
-			action = strong.Render(action)
+			action = selected.Render(action)
 		}
 		if m.browser != nil {
 			label := "  [ Existing webhooks ]"
@@ -800,12 +805,13 @@ func (m *webhookCreatePicker) View() tea.View {
 				label = "  [ Webhooks ]"
 			}
 			if m.reviewFocused && m.existingFocused {
-				label = ">" + label[1:]
+				label = active("›" + label[1:])
+			} else {
+				label = selected.Render(label)
 			}
-			action += "  " + strong.Render(label)
+			action += "  " + label
 		}
 		body = append(body, action)
-		body = append(body, footer...)
 		if m.note != "" {
 			body = append(body, clip(m.note))
 		}
@@ -816,7 +822,8 @@ func (m *webhookCreatePicker) View() tea.View {
 			details = append(details, "  "+webhookCreateLine(event))
 		}
 		wrapped := strings.Split(ansi.Hardwrap(strings.Join(details, "\n"), inner, false), "\n")
-		available := max(1, height-5-len(webhookCreateControls(inner, m.color, quiet, "←→ choose", "Enter confirm", "Esc cancel")))
+		controls = webhookCreateControls(inner, selected, quiet, "←→ choose", "Enter confirm", "Esc cancel")
+		available := max(1, height-5-len(controls))
 		if m.note != "" {
 			available = max(1, available-1)
 		}
@@ -828,40 +835,41 @@ func (m *webhookCreatePicker) View() tea.View {
 		if len(wrapped) > available {
 			body = append(body, quiet.Render(clip(fmt.Sprintf("↑↓ settings %d-%d/%d", m.reviewOffset+1, min(len(wrapped), m.reviewOffset+available), len(wrapped)))))
 		}
-		choice := "[No]   Yes, create"
+		choice := strong.Render("[No]") + quiet.Render("   Yes, create")
 		if m.confirmYes {
-			choice = " No   [Yes, create]"
+			choice = quiet.Render(" No   ") + strong.Render("[Yes, create]")
 		}
-		body = append(body, strong.Render("Create endpoint now?"), active(choice))
-		body = append(body, webhookCreateControls(inner, m.color, quiet, "←→ choose", "Enter confirm", "Esc cancel")...)
+		body = append(body, lipgloss.NewStyle().Bold(m.color).Render("Create endpoint now?"), choice)
 	}
 	if m.stage == 3 && m.note != "" {
 		body = append(body, clip(m.note))
 	}
-	lines := []string{strong.Render("Create webhook endpoint")}
+	heading := lipgloss.NewStyle().Bold(m.color)
+	lines := []string{heading.Render("Create webhook endpoint")}
 	if compact && m.stage < 3 {
 		lines = append(lines, body...)
 	} else {
-		lines = webhookCreatePanel(body, width, panelSplit, dividers, panel, rule, "Create webhook endpoint", strong)
+		lines = webhookCreatePanel(body, width, panelSplit, dividers, panel, rule, "Create webhook endpoint", heading)
 	}
+	lines = append(lines, controls...)
 	view := m.frame(lines, width, height)
 	view.Cursor = cursor
 	return view
 }
 
 // Keep key/action pairs together instead of clipping controls in narrow terminals.
-func webhookCreateControls(width int, color bool, quiet lipgloss.Style, bindings ...string) []string {
+func webhookCreateControls(width int, keys, quiet lipgloss.Style, bindings ...string) []string {
 	var rows []string
 	line := "  "
 	for _, binding := range bindings {
 		key, label, _ := strings.Cut(binding, " ")
-		part := lipgloss.NewStyle().Bold(color).Render(key)
+		part := keys.Render(key)
 		if label != "" {
 			part += quiet.Render(" " + label)
 		}
 		gap := ""
 		if line != "  " {
-			gap = "  "
+			gap = quiet.Render(" · ")
 		}
 		if ansi.StringWidth(line+gap+part) > width && line != "  " {
 			rows = append(rows, line)
@@ -874,7 +882,8 @@ func webhookCreateControls(width int, color bool, quiet lipgloss.Style, bindings
 
 // Connect section rules to the outer frame without changing content row geometry.
 func webhookCreatePanel(rows []string, width, split int, dividers map[int]string, panel, rule lipgloss.Style, title string, heading lipgloss.Style) []string {
-	lines := strings.Split(panel.Width(width).Render(strings.Join(rows, "\n")), "\n")
+	content := heading.Render(title) + "\n" + strings.Join(rows, "\n")
+	lines := strings.Split(panel.Width(width).Render(content), "\n")
 	line := func(left, junction, right string) string {
 		middle := strings.Repeat("─", width-2)
 		if split > 0 && split < width-1 {
@@ -882,10 +891,8 @@ func webhookCreatePanel(rows []string, width, split int, dividers map[int]string
 		}
 		return rule.Render(left + middle + right)
 	}
-	caption := ansi.Truncate(" "+title+" ", width-3, "…")
-	lines[0] = rule.Render("╭─") + heading.Render(caption) + rule.Render(strings.Repeat("─", width-ansi.StringWidth(caption)-3)+"╮")
 	for row, junction := range dividers {
-		lines[row+1] = line("├", junction, "┤")
+		lines[row+2] = line("├", junction, "┤")
 	}
 	return lines
 }

@@ -203,17 +203,19 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 	if m.dark {
 		accent, muted, border = "#8AA8FF", "#A4ACC2", "#51566B"
 	}
-	strong, quiet := lipgloss.NewStyle(), lipgloss.NewStyle()
+	strong, quiet, label := lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle()
 	rule := lipgloss.NewStyle()
 	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	if m.color {
 		strong = strong.Bold(true).Foreground(lipgloss.Color(accent))
+		label = label.Foreground(lipgloss.Color(accent))
 		quiet = quiet.Foreground(lipgloss.Color(muted))
 		panel = panel.BorderForeground(lipgloss.Color(border))
 		rule = rule.Foreground(lipgloss.Color(border))
 	}
 	inner, overhead := width-4, 5
-	compact := height < 14
+	// Narrow footers wrap; omit framing in short windows to retain every control.
+	compact := height < 14 || height < 16 && width < 68
 	if compact {
 		inner, overhead = width, 3
 	}
@@ -229,7 +231,7 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 	} else if !b.loading && len(b.items) > 0 {
 		bindings = []string{"↑↓ move", "Enter details", "Tab actions", "Esc back"}
 	}
-	controls := webhookCreateControls(inner, m.color, quiet, bindings...)
+	controls := webhookCreateControls(inner, label, quiet, bindings...)
 	overhead += len(controls)
 	table := !compact && !b.loading && !b.details && len(b.items) > 0
 	if table {
@@ -255,14 +257,14 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 		if !compact {
 			valueColumn, panelSplit, separator = 11, 11, rule.Render(" │ ")
 		}
-		field := func(label string, values []string) {
+		field := func(name string, values []string) {
 			if len(values) == 0 {
 				values = []string{""}
 			}
 			for _, value := range values {
 				for _, line := range strings.Split(ansi.Hardwrap(webhookCreateLine(value), inner-valueColumn, false), "\n") {
-					rows = append(rows, "  "+strong.Render(fmt.Sprintf("%-6s", label))+separator+line)
-					label = ""
+					rows = append(rows, "  "+label.Render(fmt.Sprintf("%-6s", name))+separator+line)
+					name = ""
 				}
 			}
 		}
@@ -292,7 +294,7 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 			name += strings.Repeat(" ", max(0, nameWidth-ansi.StringWidth(name)))
 			row := "  " + name
 			if index == b.current && !b.actions {
-				row = strong.Render("> " + name)
+				row = strong.Render("› " + name)
 			}
 			if table {
 				row += rule.Render(" │ ") + quiet.Render(webhookCreateLine(item.id))
@@ -322,9 +324,13 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 	rows = append(rows, note...)
 	back, refresh := "  [ Back ]", "  [ Refresh ]"
 	if b.actions && !b.refresh {
-		back = "> [ Back ]"
+		back = strong.Render("› [ Back ]")
+		refresh = label.Render(refresh)
 	} else if b.actions {
-		refresh = "> [ Refresh ]"
+		back = label.Render(back)
+		refresh = strong.Render("› [ Refresh ]")
+	} else {
+		back, refresh = label.Render(back), label.Render(refresh)
 	}
 	if !compact {
 		dividers[len(rows)] = "─"
@@ -332,16 +338,17 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 			dividers[len(rows)] = "┴"
 		}
 	}
-	rows = append(rows, "", strong.Render(back)+"  "+strong.Render(refresh))
-	rows = append(rows, controls...)
+	rows = append(rows, "", back+"  "+refresh)
 	for index := range rows {
 		rows[index] = ansi.Truncate(rows[index], inner, "…")
 	}
-	lines := []string{strong.Render("Existing webhooks")}
+	heading := lipgloss.NewStyle().Bold(m.color)
+	lines := []string{heading.Render("Existing webhooks")}
 	if compact {
 		lines = append(lines, rows...)
 	} else {
-		lines = webhookCreatePanel(rows, width, panelSplit, dividers, panel, rule, "Existing webhooks", strong)
+		lines = webhookCreatePanel(rows, width, panelSplit, dividers, panel, rule, "Existing webhooks", heading)
 	}
+	lines = append(lines, controls...)
 	return m.frame(lines, width, height)
 }

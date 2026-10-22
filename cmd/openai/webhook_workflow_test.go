@@ -739,7 +739,7 @@ func webhookCreateFailureFixture(t *testing.T, catalog string, drop bool) (*http
 }
 
 func runWebhookCreateWorkflowPTY(t *testing.T, server *httptest.Server, confirm bool) mainDispatchResult {
-	return runWebhookCreateWorkflowPTYMode(t, server, confirm, false)
+	return runWebhookCreateWorkflowPTYMode(t, server, webhookCreateWorkflowPTYOptions{Confirm: confirm})
 }
 
 func TestMainWebhookWorkflowPTYBrowseEndpointsKeepsCreationDraft(t *testing.T) {
@@ -762,7 +762,7 @@ func TestMainWebhookWorkflowPTYBrowseEndpointsKeepsCreationDraft(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	got := runWebhookCreateWorkflowPTYMode(t, server, false, true)
+	got := runWebhookCreateWorkflowPTYMode(t, server, webhookCreateWorkflowPTYOptions{Browse: true})
 	if got.code != 130 || catalogs.Load() != 1 || lists.Load() != 1 || creates.Load() != 0 {
 		t.Fatalf("endpoint browsing changed creation: %+v, catalogs=%d lists=%d creates=%d", got, catalogs.Load(), lists.Load(), creates.Load())
 	}
@@ -773,7 +773,114 @@ func TestMainWebhookWorkflowPTYBrowseEndpointsKeepsCreationDraft(t *testing.T) {
 	}
 }
 
-func runWebhookCreateWorkflowPTYMode(t *testing.T, server *httptest.Server, confirm, browse bool) mainDispatchResult {
+func TestMainWebhookWorkflowPTYBrowseEndpointsCancelsPendingRequest(t *testing.T) {
+	var catalogs, lists, canceled, creates atomic.Int32
+	signals := t.TempDir()
+	fixtureDone := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /webhook_event_types":
+			catalogs.Add(1)
+			_, _ = io.WriteString(w, `{"object":"list","data":["response.completed"]}`)
+		case "GET /webhook_endpoints":
+			if lists.Add(1) != 1 {
+				t.Error("canceled endpoint read was retried")
+				http.Error(w, "must not retry", http.StatusBadRequest)
+				return
+			}
+			if err := os.WriteFile(filepath.Join(signals, "started"), nil, 0o600); err != nil {
+				t.Error(err)
+				return
+			}
+			select {
+			case <-r.Context().Done():
+				canceled.Add(1)
+				if err := os.WriteFile(filepath.Join(signals, "canceled"), nil, 0o600); err != nil {
+					t.Error(err)
+				}
+			case <-fixtureDone:
+			}
+		case "POST /webhook_endpoints":
+			creates.Add(1)
+			http.Error(w, "must not create", http.StatusInternalServerError)
+		default:
+			t.Errorf("unexpected endpoint browser request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(func() {
+		close(fixtureDone)
+		server.Close()
+	})
+	got := runWebhookCreateWorkflowPTYMode(t, server, webhookCreateWorkflowPTYOptions{Browse: true, CancellationSignals: signals})
+	if got.code != 130 || catalogs.Load() != 1 || lists.Load() != 1 || canceled.Load() != 1 || creates.Load() != 0 {
+		t.Fatalf("browser cancellation changed request lifecycle: %+v, catalogs=%d lists=%d canceled=%d creates=%d", got, catalogs.Load(), lists.Load(), canceled.Load(), creates.Load())
+	}
+	_, returned, ok := strings.Cut(got.stdout, "Loading webhooks...")
+	if !ok || !strings.Contains(returned, "Draft receiver") || !strings.Contains(returned, "https://example.invalid/draft") {
+		t.Fatalf("browser cancellation did not return to the retained draft: %q", got.stdout)
+	}
+	if strings.Contains(got.stdout, "API error") || strings.Contains(got.stdout, "Could not load") || strings.Contains(got.stdout, "No webhook endpoints") {
+		t.Fatalf("canceled browser read rendered a result after returning: %q", got.stdout)
+	}
+}
+
+func TestMainWebhookWorkflowPTYBrowseEndpointsKeepsPartialResults(t *testing.T) {
+	var catalogs, lists, creates atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Should-Retry", "false")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /webhook_event_types":
+			catalogs.Add(1)
+			_, _ = io.WriteString(w, `{"object":"list","data":["response.completed"]}`)
+		case "GET /webhook_endpoints":
+			if lists.Add(1) == 1 {
+				if after := r.URL.Query().Get("after"); after != "" {
+					t.Errorf("first page supplied unexpected cursor: %q", after)
+				}
+				_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"whe_visible","name":"Synthetic first","url":"https://example.invalid/receiver","event_types":["response.failed"]}],"has_more":true}`)
+				return
+			}
+			if after := r.URL.Query().Get("after"); after != "whe_visible" {
+				t.Errorf("next page lost its cursor: %q", after)
+			}
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"error":{"message":"synthetic-private-browser-error"}}`)
+		case "POST /webhook_endpoints":
+			creates.Add(1)
+			http.Error(w, "must not create", http.StatusInternalServerError)
+		default:
+			t.Errorf("unexpected endpoint browser request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	got := runWebhookCreateWorkflowPTYMode(t, server, webhookCreateWorkflowPTYOptions{Browse: true})
+	if got.code != 130 || catalogs.Load() != 1 || lists.Load() != 2 || creates.Load() != 0 {
+		t.Fatalf("partial endpoint browsing changed creation: %+v, catalogs=%d lists=%d creates=%d", got, catalogs.Load(), lists.Load(), creates.Load())
+	}
+	for _, text := range []string{"API error (HTTP 403)", "Synthetic first", "whe_visible", "https://example.invalid/receiver", "response.failed"} {
+		if !strings.Contains(got.stdout, text) {
+			t.Fatalf("partial endpoint browser omitted %q: %q", text, got.stdout)
+		}
+	}
+	_, returned, _ := strings.Cut(got.stdout, "API error (HTTP 403)")
+	if !strings.Contains(returned, "Draft receiver") || !strings.Contains(returned, "https://example.invalid/draft") {
+		t.Fatalf("partial endpoint browsing lost the creation draft: %q", got.stdout)
+	}
+	if strings.Contains(got.stdout, "No webhook endpoints") || strings.Contains(got.stdout+got.stderr, "synthetic-private-browser-error") {
+		t.Fatalf("partial endpoint browser reported empty success or disclosed the error body: %+v", got)
+	}
+}
+
+type webhookCreateWorkflowPTYOptions struct {
+	Confirm, Browse     bool
+	CancellationSignals string
+}
+
+func runWebhookCreateWorkflowPTYMode(t *testing.T, server *httptest.Server, options webhookCreateWorkflowPTYOptions) mainDispatchResult {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("guided creation PTY checks require a Unix host")
@@ -788,8 +895,8 @@ func runWebhookCreateWorkflowPTYMode(t *testing.T, server *httptest.Server, conf
 	}
 	input, err := json.Marshal(struct {
 		Binary, Endpoint, Work string
-		Confirm, Browse        bool
-	}{binary, server.URL, t.TempDir(), confirm, browse})
+		webhookCreateWorkflowPTYOptions
+	}{binary, server.URL, t.TempDir(), options})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -829,12 +936,19 @@ selector = selectors.DefaultSelector()
 output = [bytearray(), bytearray()]
 process = None
 completed = False
-steps = [(b"> Name", b"Synthetic receiver\x1b[Bhttps://example.com/webhook\x1b[B\x1b[B\x1b[B \r"),
+steps = [(b"\xe2\x80\xba Name", b"Synthetic receiver\x1b[Bhttps://example.com/webhook\x1b[B\x1b[B\x1b[B \r"),
          (b"Create endpoint now?", b"y\r\r\r")] if config["Confirm"] else []
 if config["Browse"]:
-    steps = [(b"> Name", b"Draft receiver\x1b[Bhttps://example.invalid/draft\x1b[B\x1b[B\x1b[B\t\x1b[C\r"),
+    steps = [(b"\xe2\x80\xba Name", b"Draft receiver\x1b[Bhttps://example.invalid/draft\x1b[B\x1b[B\x1b[B\t\x1b[C\r"),
              (b"Synthetic first", b"\r"), (b"https://example.invalid/receiver", b"\x1b"),
-             (b"> Synthetic first", b"\x1b"), (b"> [ Existing webhooks ]", b"\x1b")]
+             (b"\xe2\x80\xba Synthetic first", b"\x1b"), (b"\xe2\x80\xba [ Existing webhooks ]", b"\x1b")]
+signals = {}
+if config["CancellationSignals"]:
+    steps = [steps[0], (b"Loading webhooks...", b"\x1b"),
+             (b"\xe2\x80\xba [ Existing webhooks ]", b"\x1b")]
+    # Cancel only after the server receives GET. Keep the process alive until
+    # the server observes cancellation, so process exit cannot satisfy the test.
+    signals = {1: "started", 2: "canceled"}
 step = 0
 step_start = 0
 try:
@@ -863,11 +977,14 @@ try:
             output[key.data].extend(data)
             if key.data == 0 and b"\x1b[6n" in data:
                 os.write(master, b"\x1b[1;1R")
-            if key.data == 0 and step < len(steps) and steps[step][0] in output[0][step_start:]:
+        if step < len(steps) and steps[step][0] in output[0][step_start:]:
+            if step not in signals or os.path.exists(os.path.join(config["CancellationSignals"], signals[step])):
                 os.write(master, steps[step][1])
                 step_start = len(output[0])
                 step += 1
     code = process.wait(timeout=2)
+    if step != len(steps):
+        raise AssertionError("guided create exited before all steps; stage=" + str(step))
     completed = True
 finally:
     if process is not None and not completed:
