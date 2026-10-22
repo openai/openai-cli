@@ -132,10 +132,12 @@ func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writ
 		if canceled := ctx.Err(); canceled != nil {
 			return canceled
 		}
-		if result.workspace != nil {
+		if result.workspace != nil && !result.PrintOnly {
 			result.workspace.send(imagePickerWorkspaceRows{[]string{"Could not save the draft."}})
 			return nil
 		}
+		// Print-only exits close the workspace before saving the draft.
+		// Send their warning to diagnostics, which remain available after exit.
 		// Storage is optional. Do not expose stored prompts or raw filesystem
 		// errors, and do not prevent an otherwise valid image request.
 		if _, err := fmt.Fprintln(diagnostics, "Could not save the draft."); err != nil {

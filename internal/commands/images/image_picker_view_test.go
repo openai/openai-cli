@@ -100,6 +100,40 @@ func TestImagePickerFolderCursorPreservesText(t *testing.T) {
 	}
 }
 
+func TestImagePickerInlineCursorMatchesRenderedText(t *testing.T) {
+	for _, layout := range []struct {
+		name          string
+		width, height int
+		folder        bool
+	}{
+		{"compact prompt", 40, 16, false},
+		{"framed prompt", 80, 24, false},
+		{"compact folder", 40, 16, true},
+		{"framed folder", 80, 24, true},
+	} {
+		t.Run(layout.name, func(t *testing.T) {
+			m := pickerForTest(t)
+			m.width, m.height = layout.width, layout.height
+			const draft = "cursor-check"
+			m.settings.prompt, m.draft = draft, []rune(draft)
+			if layout.folder {
+				m.page, m.focus = "path", "path"
+				m.folder.draft = []rune(draft)
+			}
+			for cursor := 0; cursor <= len(draft); cursor++ {
+				m.cursor, m.folder.cursor = cursor, cursor
+				view := m.View()
+				require.NotNil(t, view.Cursor)
+				row := ansi.Strip(strings.Split(view.Content, "\n")[view.Cursor.Y])
+				start := strings.Index(row, draft)
+				require.NotEqual(t, -1, start)
+				require.Equal(t, ansi.StringWidth(row[:start])+cursor, view.Cursor.X)
+				require.Equal(t, tea.CursorBar, view.Cursor.Shape)
+			}
+		})
+	}
+}
+
 func TestImagePickerPromptFramePreservesEdgesAndCursor(t *testing.T) {
 	m := pickerForTest(t)
 	m.width, m.color = 50, false

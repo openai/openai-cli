@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -130,6 +131,38 @@ func TestImagePickerOptionalHistoryFailureDoesNotBlockSelection(t *testing.T) {
 	require.Equal(t, invalid, after)
 	err = finishImagePickerSelection(context.Background(), &output, failedImagePickerWriter{}, path, &result)
 	require.ErrorIs(t, err, io.ErrClosedPipe)
+}
+
+func TestImagePickerPrintOnlyDraftWarningAfterWorkspaceClose(t *testing.T) {
+	for _, warningFails := range []bool{false, true} {
+		t.Run(map[bool]string{false: "visible warning", true: "warning write failure"}[warningFails], func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "image-picker.json")
+			invalid := []byte(`{"version":99,"prompt":"private old draft"}`)
+			require.NoError(t, os.WriteFile(path, invalid, 0600))
+			model := pickerForTest(t)
+			var queued []tea.Msg
+			workspace := &imagePickerWorkspace{send: func(msg tea.Msg) { queued = append(queued, msg) }}
+			result := imagePickerResult{Args: model.settings.args(), settings: model.settings, shell: "bash", PrintOnly: true, workspace: workspace}
+			var output, diagnostics bytes.Buffer
+			var warning io.Writer = &diagnostics
+			if warningFails {
+				warning = failedImagePickerWriter{}
+			}
+			err := finishImagePickerSelection(t.Context(), &output, warning, path, &result)
+			if warningFails {
+				require.ErrorIs(t, err, io.ErrClosedPipe)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, "Could not save the draft.\n", diagnostics.String())
+			}
+			require.Equal(t, cliterminal.FormatCommand(result.Args, "bash")+"\n", output.String())
+			require.False(t, result.draftSaved)
+			require.Empty(t, queued, "the closed workspace cannot display the warning")
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, invalid, after)
+		})
+	}
 }
 
 func TestImagePickerCanceledSelectionHasNoPersistenceOrOutput(t *testing.T) {
