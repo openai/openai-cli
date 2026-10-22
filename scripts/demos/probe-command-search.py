@@ -29,6 +29,7 @@ checks = []
 reaped = False
 run = None
 failure = None
+completed = False
 
 
 def pump(duration=0.05):
@@ -222,14 +223,18 @@ try:
         pump()
     assert reaped
     checks.append('normal exit cleans the temporary home')
-except BaseException as error:
+    completed = True
+except Exception as error:
     failure = str(error)
 finally:
+    if not completed and failure is None:
+        failure = 'Probe interrupted before completion.'
     if not reaped:
         # Only terminate the owned session. No graphical terminal participates.
         try:
             os.killpg(pid, signal.SIGHUP)
         except ProcessLookupError:
+            # The owned process group can exit before signal delivery.
             pass
         end = time.monotonic()+3
         while time.monotonic() < end:
@@ -242,6 +247,7 @@ finally:
             try:
                 os.killpg(pid, signal.SIGKILL)
             except ProcessLookupError:
+                # The group may exit between the wait and forced cleanup.
                 pass
             os.waitpid(pid, 0)
             reaped = True

@@ -77,6 +77,7 @@ print -r -- 'PRIOR_TRANSCRIPT_SENTINEL'
                 if group > 0:
                     self.owned_groups.add(group)
             except OSError:
+                # Ownership was not observable; retain only previously observed groups.
                 pass
             if not select.select([self.fd], [], [], max(0, deadline-time.monotonic()))[0]:
                 continue
@@ -136,12 +137,14 @@ print -r -- 'PRIOR_TRANSCRIPT_SENTINEL'
             if foreground > 0 and os.getsid(foreground) == self.pid:
                 groups.add(foreground)
         except OSError:
+            # Ownership was not observable; historical groups are unsafe signal targets.
             pass
         if self.status is None:
             for group in groups:
                 try:
                     os.killpg(group, signal.SIGHUP)
                 except ProcessLookupError:
+                    # The owned group may exit before signal delivery.
                     pass
             deadline = time.monotonic()+2
             while time.monotonic() < deadline:
@@ -154,6 +157,7 @@ print -r -- 'PRIOR_TRANSCRIPT_SENTINEL'
                 try:
                     os.killpg(self.pid, signal.SIGKILL)
                 except ProcessLookupError:
+                    # The child may exit between the wait and forced cleanup.
                     pass
                 _, status = os.waitpid(self.pid, 0)
                 self.status = os.waitstatus_to_exitcode(status)

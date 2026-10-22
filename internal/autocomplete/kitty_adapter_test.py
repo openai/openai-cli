@@ -9,6 +9,7 @@ import string
 import sys
 import types
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 handler = types.ModuleType("kittens.tui.handler")
@@ -145,6 +146,44 @@ class AdapterTest(unittest.TestCase):
     def test_file_owner_is_checked(self):
         info = types.SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=os.getuid() + 1)
         self.assertFalse(adapter._private(info, stat.S_ISREG, 0o600, os.getuid()))
+
+    def check_closed_descriptors(self, *, window=17, close_failure=None):
+        opened, closed = [], []
+        real_open, real_close = os.open, os.close
+
+        def track_open(*args, **kwargs):
+            descriptor = real_open(*args, **kwargs)
+            opened.append(descriptor)
+            return descriptor
+
+        def track_close(descriptor):
+            closed.append(descriptor)
+            real_close(descriptor)
+            if len(closed) == close_failure:
+                raise OSError("synthetic close failure")
+
+        try:
+            with mock.patch.object(adapter.os, "open", side_effect=track_open), \
+                    mock.patch.object(adapter.os, "close", side_effect=track_close):
+                result = self.request(window=window)
+            self.assertEqual(closed, list(reversed(opened)))
+            for descriptor in opened:
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+            return result, len(opened)
+        finally:
+            # A failing implementation still leaves this test's descriptors owned.
+            for descriptor in set(opened) - set(closed):
+                real_close(descriptor)
+
+    def test_success_and_early_rejection_close_every_opened_descriptor(self):
+        self.assertEqual(self.check_closed_descriptors(), (True, 3))
+        self.assertEqual(self.check_closed_descriptors(window=18), (False, 2))
+
+    def test_close_failure_does_not_skip_other_descriptors(self):
+        for position in range(1, 4):
+            with self.subTest(close_position=position):
+                self.assertEqual(self.check_closed_descriptors(close_failure=position), (False, 3))
 
 
 unittest.main()

@@ -54,10 +54,10 @@ func TestRepositoryLayout(t *testing.T) {
 				isApp := strings.HasPrefix(rel, "internal/app/")
 				isFeature := strings.HasPrefix(rel, "internal/commands/")
 				isGenerated := strings.HasPrefix(rel, "generated/")
-				if strings.HasPrefix(imp, "pkg/") || strings.HasPrefix(imp, "cmd/") ||
-					(!isGenerated && strings.HasPrefix(imp, "generated/commands")) ||
-					(!isApp && strings.HasPrefix(imp, "internal/commands") && !isFeature) ||
-					(!isApp && !isGenerated && strings.HasPrefix(imp, "internal/app")) {
+				if withinRepositoryPackage(imp, "pkg") || withinRepositoryPackage(imp, "cmd") ||
+					(!isGenerated && withinRepositoryPackage(imp, "generated/commands")) ||
+					(!isApp && withinRepositoryPackage(imp, "internal/commands") && !isFeature) ||
+					(!isApp && !isGenerated && withinRepositoryPackage(imp, "internal/app")) {
 					t.Errorf("%s imports %s across the repository layout boundary", rel, imp)
 				}
 			}
@@ -65,6 +65,33 @@ func TestRepositoryLayout(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func withinRepositoryPackage(path, parent string) bool {
+	return path == parent || strings.HasPrefix(path, parent+"/")
+}
+
+func TestRepositoryLayoutPackageBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		path, parent string
+		within       bool
+	}{
+		{"internal/commands", "internal/commands", true},
+		{"internal/commands/explore", "internal/commands", true},
+		{"internal/commands/explore/nested", "internal/commands", true},
+		{"internal/commandsuggest", "internal/commands", false},
+		{"internal/commandsuggest/nested", "internal/commands", false},
+		{"internal/app", "internal/app", true},
+		{"internal/app/setup", "internal/app", true},
+		{"internal/application", "internal/app", false},
+		{"generated/commands", "generated/commands", true},
+		{"generated/commands/runtime", "generated/commands", true},
+		{"generated/commands_metadata", "generated/commands", false},
+	} {
+		if got := withinRepositoryPackage(test.path, test.parent); got != test.within {
+			t.Errorf("package %q inside %q = %t; want %t", test.path, test.parent, got, test.within)
 		}
 	}
 }

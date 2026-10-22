@@ -82,7 +82,12 @@ func commandHelpAtWidth(command *cli.Command, invocation, path string, width int
 		out.WriteString(wrapDescription(description, "   ", width))
 	}
 	if path == "" {
-		fmt.Fprintf(&out, "\nSTART HERE\n   %s\n   %s\n",
+		out.WriteString("\nSTART HERE\n")
+		if explore := command.Command("explore"); explore != nil && !explore.Hidden {
+			fmt.Fprintf(&out, "   %s\n", commandsuggest.Record(command, invocation+" explore"))
+			out.WriteString(wrapPlainDescription("Search commands and examples. No API key needed.", "      ", width))
+		}
+		fmt.Fprintf(&out, "   %s\n   %s\n",
 			commandsuggest.Record(command, invocation+" help setup"),
 			commandsuggest.Record(command, invocation+" models list"))
 	}

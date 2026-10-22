@@ -13,7 +13,7 @@ source "$demo_source/capture_and_render.sh"
 demo_prepare_capture "$demo_root" "$1" "$2" "$3" "$4" "$5" /usr/bin/true
 demo_expect="$(command -v expect)"
 demo_window_size=108x36
-demo_render_options=(--font-family Menlo --font-size 18 --line-height 1.2 \
+demo_render_options=(--renderer resvg --font-family Menlo --font-size 18 --line-height 1.2 \
   --theme dracula --fps-cap 20 --last-frame-duration 3)
 demo_before_digest="$(shasum -a 256 "$demo_before" | cut -d ' ' -f 1)"
 demo_after_digest="$(shasum -a 256 "$demo_after" | cut -d ' ' -f 1)"
@@ -69,6 +69,7 @@ SCENE
   echo 'data: local help/search only; no API/admin key; loopback-only base URL'
   echo 'scope: asciinema/agg terminal replay; not graphical-terminal or mouse-adapter validation'
   echo 'terminal background query: driver reports the replay renderer Dracula background (#282a36)'
+  echo 'renderer: resvg preserves rounded border joins; scene advertises truecolor for the blue theme'
   echo 'picker screenshot: visible search frame; selection and cleanup continue after relay stops'
   echo "terminal dimensions: $demo_window_size"
   demo_capture_metadata
@@ -107,6 +108,7 @@ for demo_scene in before after-recent after-explore after-picker; do
       --profile "$demo_home/.zshrc" > "$demo_output/$demo_scene-setup.json"
   fi
   demo_capture_scene "$demo_scene" 0 "$demo_directory" http://127.0.0.1:1 "$demo_label" \
+    "COLORTERM=truecolor" \
     "HOME=$demo_home" "ZDOTDIR=$demo_home" "XDG_CONFIG_HOME=$demo_home/.config" \
     "TMPDIR=$demo_home" "DEMO_MODE=$demo_scene" "DEMO_EXPECT=$demo_expect" \
     "DEMO_DRIVER=$demo_source/command-insertion.exp" \

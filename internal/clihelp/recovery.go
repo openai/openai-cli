@@ -44,12 +44,17 @@ func RecoveryAt(command *cli.Command, name string, remaining []string, helpReque
 	if command.Suggest {
 		candidates := VisibleCommands(command)
 		for _, child := range command.Commands {
+			// Help is not a help topic, but its spelling must still outrank
+			// unrelated commands when the user mistypes it.
+			if child.Name == "help" && !child.Hidden {
+				candidates = append(candidates, child)
+			}
 			compatibility, _ := child.Metadata["command-compatibility-alias"].(bool)
 			if child.Hidden && compatibility && (strings.Contains(name, ":") || WithinOneEdit(strings.ToLower(name), strings.ToLower(child.Name))) {
 				candidates = append(candidates, child)
 			}
 		}
-		if target := suggestCommandTarget(candidates, name); target != nil {
+		if target := suggestCommandTarget(candidates, name); target != nil && recoveryCommandVisible(target) {
 			path := append(append([]string(nil), command.Path()[1:]...), target.Name)
 			for _, token := range remaining {
 				if strings.HasPrefix(token, "-") {
