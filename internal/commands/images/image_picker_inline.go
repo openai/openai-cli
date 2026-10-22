@@ -193,7 +193,7 @@ func (p *imagePickerInline) draw() {
 	p.model.clampCommandOffset()
 	if p.workspace != nil {
 		if err := p.workspace.draw(p.model, p.profile, p.busy, true); err != nil {
-			p.err = imageSavingFailure("Could not display the image picker. Saved images remain available.", err)
+			p.err = err
 			p.output.cancel()
 			return
 		}

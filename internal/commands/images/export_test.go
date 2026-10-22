@@ -38,6 +38,7 @@ var TestPrivateImagePickerState = privateImagePickerState
 type TestOutputJSON = outputJSON
 
 var TestImagePickerStatePath = imagePickerStatePath
+var TestImagePickerDisplayFailure = imagePickerDisplayFailure
 
 func NewOutputPlanForTest(directory, name, inline string) *imageOutputPlan {
 	return &imageOutputPlan{directory: directory, name: name, inline: inline}

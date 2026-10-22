@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
@@ -769,9 +770,9 @@ func TestImagePickerParentContextDuringInput(t *testing.T) {
 			require.NotErrorIs(t, err, context.Canceled)
 			require.False(t, result.Canceled)
 			require.Empty(t, result.Args)
-			var displayErr *SavingError
+			var displayErr *localcommands.LocalError
 			require.ErrorAs(t, err, &displayErr)
-			require.Contains(t, displayErr.ReadableMessage(nil), "Could not display the image picker.")
+			require.Contains(t, displayErr.Error(), "Could not display the image picker.")
 			return
 		}
 		go func() {

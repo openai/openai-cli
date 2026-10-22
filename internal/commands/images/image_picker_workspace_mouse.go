@@ -77,7 +77,7 @@ func (w *imagePickerWorkspace) stopMouse() error {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 250*time.Millisecond)
 	defer cancel()
-	return terminalimage.WriteFrame(ctx, w.out, frame, "")
+	return imagePickerDisplayFailure(terminalimage.WriteFrame(ctx, w.out, frame, ""))
 }
 
 // The native-shell contract excludes remote, multiplexed, and unknown callers.

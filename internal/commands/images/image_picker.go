@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/term"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/forminput"
 	"github.com/openai/openai-cli/internal/readable"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
@@ -186,7 +187,7 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 		runErr = nil
 	}
 	if writeErr != nil {
-		writeErr = imageSavingFailure("Could not display the image picker. Saved images remain available.", writeErr)
+		writeErr = imagePickerDisplayFailure(writeErr)
 	}
 	if inline.workspace != nil {
 		initialSettings = inline.savedSettings
@@ -198,6 +199,14 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	result.workspace = inline.workspace
 	err = errors.Join(runErr, writeErr, inline.err, parent.Err())
 	return result, err
+}
+
+func imagePickerDisplayFailure(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	// Display deadlines describe local output, not an uncertain API request.
+	return &localcommands.LocalError{Message: "Could not display the image picker. Saved images remain available.", Cause: cause}
 }
 
 // Capture the live draft even when cancellation intentionally discards Args.

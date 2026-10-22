@@ -198,8 +198,11 @@ func (w *imagePickerWorkspace) progress() string {
 	return fmt.Sprintf("%s · %ds elapsed", label, int(time.Since(w.since)/time.Second))
 }
 
-func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile, busy, headerChanged bool) error {
-	defer func() { w.nativeTransient = nil }()
+func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile, busy, headerChanged bool) (err error) {
+	defer func() {
+		w.nativeTransient = nil
+		err = imagePickerDisplayFailure(err)
+	}()
 	width, height := m.width, m.height
 	if width <= 0 || height <= 0 {
 		return nil
@@ -351,7 +354,7 @@ func (w *imagePickerWorkspace) close() error {
 	if w.kitty {
 		protocol = "kitty"
 	}
-	return errors.Join(mouseErr, previewErr, terminalimage.WriteFrame(cleanup, w.out, output.String(), protocol))
+	return errors.Join(mouseErr, previewErr, imagePickerDisplayFailure(terminalimage.WriteFrame(cleanup, w.out, output.String(), protocol)))
 }
 
 func imagePickerWorkspaceClock(started time.Time) tea.Cmd {
