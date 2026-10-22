@@ -6,6 +6,10 @@ The calling workflow cross-compiles the test binary before importing Ubuntu.
 """
 
 import argparse
+import copy
+from dataclasses import dataclass, field
+from functools import partial
+import importlib.util
 from collections import Counter
 from datetime import datetime, timezone
 import hashlib
@@ -122,6 +126,64 @@ PROCESS_TESTS = {root for root in PROCESS_CASES} | {
 }
 PROCESS_SELECTOR = "^(" + "|".join(PROCESS_CASES) + ")$"
 COMMAND_CASES_PATH = Path(__file__).with_name("wsl-command-cases.json")
+LOCAL_CASES_PATH = Path(__file__).with_name("wsl-local-state-cases.json")
+INDEPENDENT_PROCESS_ROOTS = {
+    "TestMainLocalUtilitiesIgnoreRemoteConfiguration",
+    "TestMainLocalUtilitiesRootFlagPlacement",
+    "TestMainLocalUtilitiesLegacyTokenizers",
+    "TestMainLocalUtilitiesNamesDoNotBypassRemoteValidation",
+    "TestMainLocalUtilitiesPreserveRemoteTokenCounter",
+    "TestMainLocalUtilitiesErrorsRemainLocal",
+    "TestMainTokenizerEditorNeverCapturesRedirectedInput",
+    "TestMainTokenizerEditorPlainFallbackEnvironments",
+    "TestMainTokenizerEditorRejectsUnsupportedModes",
+    "TestMainTokenizerEditorLeavesScriptResultsUnchanged",
+    "TestMainAdminSetupOfflineRoutes",
+    "TestMainAdminSetupIsReadOnly",
+    "TestMainAdminSetupPreservesOrdinarySetup",
+    "TestMainAdminSetupRejectsExtraArguments",
+    "TestMainImageModelsRequestDeadlineCancelsHTTP",
+    "TestMainImageModelsInterruptPreservesCompletedResults",
+    "TestMainWelcomeRedirectedOutputMatchesHelp",
+    "TestMainWelcomeExplicitArgumentsStayPlain",
+    "TestMainWelcomeBareInvocationStaysOffline",
+    "TestMainCommandSubgroupsBareInvocation",
+    "TestMainDispatchOutputManpagesDeepSubgroups",
+    "TestMainPickerShellSetupRefusesUnsafeConfigurationAncestry",
+    "TestMainPickerShellSetupReadOnlyModesDoNotWrite",
+}
+SUPPORTED_AUTOCOMPLETE_ROOTS = {
+    "TestPickerRenameNoReplace", "TestPickerInstallRoundTrip", "TestPickerRemoveRestoresAbsentProfile",
+}
+NATIVE_CUSTOM_ROOT = "TestImagePickerFirstRunNativeSetupContract"
+NATIVE_PROCESS_ROOT = "TestMainPickerShellSetupNativeContract"
+PROFILE_PHASES = {
+    # Direct installer checks retain native errors before public commands redact them.
+    "local-state": {"imageprefs": 70, "clihelp": 70, "custom": 70,
+                    "process": 170, "autocomplete": 70, "final": 20},
+    "shell-contracts": {"invocation": 170, "completion": 75, "startup-login": 130,
+                        "startup-nonlogin": 130, "models": 40, "final": 20},
+}
+NATIVE_CASES = {"TestMainNativeShell": [
+    "bash", "bash/installed_help_uses_command_name",
+    "bash/copy_local_help_with_implicit_lookup_enabled",
+    "bash/copy_typo_suggestion_with_another_openai_on_PATH",
+]}
+NATIVE_SELECTOR = ("^TestMainNativeShell$/^bash$/^(installed_help_uses_command_name|"
+                   "copy_local_help_with_implicit_lookup_enabled|"
+                   "copy_typo_suggestion_with_another_openai_on_PATH)$")
+COMPLETION_CASES = {
+    "single quoted assigned file", "double quoted assigned file", "double quoted apostrophe",
+    "escaped assigned file", "separate quoted file", "unquoted assigned control",
+    "UTF-8 midline file with later flag",
+    "escaped colon command", "quoted colon command", "unquoted colon command",
+    "literal colon flag value", "separate colon command words",
+}
+SHELL_ASSETS = ("check-bash-completion.py", "image_picker_harness.py",
+                "check-wsl-shell-startup.py", "check-wsl-models.py")
+PAYLOAD_ROOT = "/home/cli-compat/payload/"
+WELCOME_DYNAMIC_ROOT = "TestMainWelcomeBareInvocationStaysOffline/"
+WELCOME_DYNAMIC_NAME = WELCOME_DYNAMIC_ROOT + "<loopback>"
 
 STOP = 0
 
@@ -188,17 +250,31 @@ def require_native_windows_process():
     return identity
 
 
-def require_test_pass(stdout, stderr, code, tests=TESTS, label="pager"):
+def require_test_pass(stdout, stderr, code, tests=TESTS, label="pager", dynamic_loopback=False):
     text = stdout.decode("utf-8", errors="strict")
     stderr.decode("utf-8", errors="strict")
     if code != 0 or stderr:
         raise RuntimeError(f"The WSL {label} test failed or wrote stderr")
     starts = Counter(re.findall(r"^=== RUN\s+(\S+)\s*$", text, re.MULTILINE))
     passes = Counter(re.findall(r"^\s*--- PASS: (\S+) \([^\n]*\)\s*$", text, re.MULTILINE))
+    observed = set(starts)
+    if dynamic_loopback:
+        # Match the one source-generated port. Never normalize mismatched run/pass names.
+        if starts != passes or WELCOME_DYNAMIC_NAME in starts:
+            raise RuntimeError("Mismatched dynamic test run/pass names")
+        matches = [name for name in starts if name.startswith(WELCOME_DYNAMIC_ROOT + "http:")]
+        pattern = re.escape(WELCOME_DYNAMIC_ROOT) + r"http://(?:127\.0\.0\.1|\[::1\]):([1-9][0-9]{0,4})"
+        matched = re.fullmatch(pattern, matches[0]) if len(matches) == 1 else None
+        if matched is None or not 1 <= int(matched.group(1)) <= 65535:
+            raise RuntimeError("Invalid dynamic loopback test name")
+        actual = matches[0]
+        for counts in (starts, passes):
+            counts[WELCOME_DYNAMIC_NAME] = counts.pop(actual)
     if (starts != Counter(tests) or passes != Counter(tests) or
             re.search(r"--- (?:FAIL|SKIP):|panic:|fatal error:|no tests to run", text) or
             len(re.findall(r"^PASS\s*$", text, re.MULTILINE)) != 1):
         raise RuntimeError(f"Missing, skipped, duplicated, or failed {label} test execution")
+    return observed
 
 
 def require_linux_binary(path):
@@ -478,40 +554,432 @@ def load_command_cases():
     return suites, hashlib.sha256(data).hexdigest()
 
 
-def run_custom_suite(commands, user, target, cases=None, *, label=None):
-    # Admit the complete custom stage before launching either fixed selection.
-    if commands.deadline - time.monotonic() < 70:
-        raise RuntimeError("Insufficient work time for the WSL custom suite")
-    label = label or ("pager" if cases is None else "custom-contracts")
-    tests = TESTS if cases is None else test_names(cases)
-    selector = "^" + ROOT + "$" if cases is None else "^(" + "|".join(cases) + ")$"
-    test = ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "60s", target,
-            "-test.run=" + selector, "-test.timeout=45s", "-test.v"]
-    stdout, stderr, code = commands.run(label, user + test, 70)
-    require_test_pass(stdout, stderr, code, tests, label)
-    return tests
+def load_local_cases():
+    def unique_object(pairs):
+        result = dict(pairs)
+        if len(result) != len(pairs):
+            raise RuntimeError("Duplicated local-state inventory key")
+        return result
+
+    if LOCAL_CASES_PATH.is_symlink() or not LOCAL_CASES_PATH.is_file():
+        raise RuntimeError("Expected a regular local-state inventory")
+    raw = LOCAL_CASES_PATH.read_bytes()
+    suites = json.loads(raw, object_pairs_hook=unique_object)
+    counts = {"imageprefs": (9, 30), "custom": (12, 29), "autocomplete": (5, 59),
+              "process": (29, 147), "clihelp": (5, 6)}
+    if not isinstance(suites, dict) or set(suites) != set(counts):
+        raise RuntimeError("Invalid local-state packages")
+    excluded = set(PROCESS_CASES) | {ROOT, "TestMainDispatchProcess", "TestImagePreferenceWaitingWriterProcess"}
+    previous, _ = load_command_cases()
+    for cases in previous.values():
+        excluded.update(cases)
+    selected = set()
+    for package, (roots, names) in counts.items():
+        cases = suites[package]
+        if not isinstance(cases, dict) or len(cases) != roots:
+            raise RuntimeError("Invalid local-state root count")
+        for root, children in cases.items():
+            if (not re.fullmatch(r"Test[A-Za-z0-9_]+", root) or root in excluded or root in selected
+                    or not isinstance(children, list)
+                    or any(not isinstance(child, str) or not child or re.search(r"\s", child) for child in children)
+                    or len(children) != len(set(children))):
+                raise RuntimeError("Invalid or duplicated local-state case")
+            for child in children:
+                if "<loopback>" in child and root + "/" + child != WELCOME_DYNAMIC_NAME:
+                    raise RuntimeError("Unexpected dynamic loopback inventory slot")
+        selected.update(cases)
+        if len(test_names(cases)) != names:
+            raise RuntimeError("Invalid local-state named inventory")
+    if WELCOME_DYNAMIC_NAME not in test_names(suites["process"]):
+        raise RuntimeError("Missing dynamic loopback inventory slot")
+    return suites, hashlib.sha256(raw).hexdigest()
 
 
-def run_process_suite(commands, user, target, cases=None):
-    # Reserve the full bounded stage before launching any selected process tests.
-    if commands.deadline - time.monotonic() < 170:
-        raise RuntimeError("Insufficient work time for the WSL process suite")
-    label = "process" if cases is None else "process-contracts"
-    tests = PROCESS_TESTS if cases is None else test_names(cases)
-    selector = PROCESS_SELECTOR if cases is None else "^(" + "|".join(cases) + ")$"
-    test = ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "160s", target,
-            "-test.run=" + selector, "-test.timeout=150s", "-test.v"]
-    stdout, stderr, code = commands.run(label, user + test, 170)
-    require_test_pass(stdout, stderr, code, tests, label)
-    return tests
+def admit_profile(commands, phases):
+    if commands.deadline - time.monotonic() < sum(phases.values()):
+        raise RuntimeError("Insufficient work time for the complete remaining WSL profile")
 
 
-def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=False, app_binary=None, images_binary=None):
-    suites = None
-    if command_contracts and not cleanup_only:
-        if binary is None or process_binary is None or app_binary is None or images_binary is None:
-            raise RuntimeError("Command contracts require all four test binaries")
+def require_capability_receipt(stdout, contract):
+    lines = [line.removeprefix("PICKER_CAPABILITY ") for line in stdout.decode("utf-8").splitlines()
+             if line.startswith("PICKER_CAPABILITY ")]
+    if len(lines) != 1:
+        raise RuntimeError("Missing or duplicated native capability receipt")
+    def unique_object(pairs):
+        value = dict(pairs)
+        if len(value) != len(pairs):
+            raise RuntimeError("Duplicated native capability receipt key")
+        return value
+    value = json.loads(lines[0], object_pairs_hook=unique_object)
+    errnos = {""} if contract == "supported" else {"ENOSYS", "EOPNOTSUPP", "EINVAL"}
+    if (contract not in {"supported", "refused"} or not isinstance(value, dict)
+            or set(value) != {"contract", "errno", "checks"} or value["contract"] != contract
+            or not isinstance(value["errno"], str) or value["errno"] not in errnos or type(value["checks"]) is not int or value["checks"] != 10):
+        raise RuntimeError("Invalid native capability receipt")
+    return value
+
+
+def shell_prerequisites(commands, user):
+    # This uses only the guest standard library. It installs nothing.
+    code = r'''
+import fcntl, hashlib, json, locale, os, pathlib, pty, select, signal, struct, subprocess, sys, termios
+assert sys.version_info >= (3, 8), "Python 3.8 or newer is required"
+assert os.getuid() == 2000 and os.uname().machine == "x86_64"
+assert all(hasattr(os, name) for name in ("waitid", "WNOWAIT", "P_PID", "WEXITED", "WNOHANG")), "owned child status is unavailable"
+bash = pathlib.Path("/usr/bin/bash").resolve(strict=True)
+python = pathlib.Path(sys.executable).resolve(strict=True)
+def identity(path):
+    h = hashlib.sha256()
+    with path.open("rb") as source:
+        header = source.read(20)
+        assert header[:6] == b"\x7fELF\x02\x01" and header[18:20] == b"\x3e\x00"
+        h.update(header)
+        for chunk in iter(lambda: source.read(1048576), b""):
+            h.update(chunk)
+    return {"path": str(path), "sha256": h.hexdigest()}
+assert locale.getpreferredencoding(False).lower().replace("-", "") == "utf8"
+assert pathlib.Path("/dev/ptmx").exists() and pathlib.Path("/dev/pts").is_dir()
+master, slave = pty.openpty()
+child = None
+try:
+    child = subprocess.Popen([str(bash), "--noprofile", "--norc", "-c", "test -t 0 && test -t 1"],
+        stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
+        preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
+    assert child.wait(timeout=5) == 0
+finally:
+    if child is not None and child.poll() is None:
+        os.killpg(child.pid, signal.SIGKILL)
+    os.close(master)
+    os.close(slave)
+    if child is not None:
+        child.wait(timeout=5)
+print(json.dumps({"bash": identity(bash), "python": identity(python), "python_version": sys.version,
+                  "utf8": True, "controlling_pty": True, "uid": os.getuid()}))
+'''
+    stdout, stderr, _ = commands.run("shell-prerequisites", user + ["/usr/bin/python3", "-I", "-B", "-c", code], 25)
+    if stderr:
+        raise RuntimeError("Shell prerequisite check wrote stderr")
+    return json.loads(stdout)
+
+
+def profile_file_hashes(commands, user, paths, label, seconds=10):
+    # Payload ownership applies only to the private copies, not system interpreters.
+    script = ('set -eu; for file do test -f "$file" && test ! -L "$file" && test -x "$file"; '
+              'case "$file" in /home/cli-compat/payload/*) '
+              'test "$(stat -c %u:%g:%a -- "$file")" = 2000:2000:700 ;; esac; done; '
+              'exec /usr/bin/sha256sum -- "$@"')
+    stdout, stderr, _ = commands.run(label, user + ["/bin/bash", "--noprofile", "--norc", "-c",
+                                                   script, "profile-files", *paths], seconds)
+    rows = [line.split("  ", 1) for line in stdout.decode("ascii").splitlines()]
+    if stderr or len(rows) != len(paths) or any(len(row) != 2 for row in rows):
+        raise RuntimeError("Invalid profile artifact metadata or hash output")
+    return {path: value for value, path in rows}
+
+
+@dataclass(frozen=True)
+class Payload:
+    filename: str
+    path: Path
+    result_path: tuple
+    copy_prefix: str
+    executable: bool = True
+
+
+@dataclass(frozen=True)
+class ProfilePhase:
+    label: str
+    seconds: int
+    result_path: tuple
+    arguments: object
+    validate: object
+    budget: str = None
+    closes_budget: bool = True
+    shared_budget: bool = False
+    cases: object = None
+    verify_payload: str = None
+
+
+@dataclass(frozen=True)
+class ProfilePlan:
+    selection: str
+    scope: str
+    payloads: tuple = ()
+    phases: tuple = ()
+    budgets: dict = field(default_factory=dict)
+    initial_result: dict = field(default_factory=dict)
+    completion_result: dict = field(default_factory=dict)
+    inventory: tuple = ()
+    prepare: object = None
+    check_copied_artifacts: bool = False
+    final_guest_paths: object = None
+    cleanup_only: bool = False
+
+
+class ProfileOptionsError(RuntimeError):
+    """Reject an invalid CLI payload combination before lifecycle admission."""
+
+
+def set_result(result, path, value):
+    for key in path[:-1]:
+        result = result.setdefault(key, {})
+    result[path[-1]] = value
+
+
+def test_arguments(hashes, result, *, filename, selector, seconds, setup_contract, native):
+    go_seconds, guest_seconds = (150, 160) if seconds == 170 else (45, 60)
+    env = [] if setup_contract is None else ["OPENAI_CLI_PICKER_SETUP_CONTRACT=" + setup_contract]
+    if native:
+        env += ["OPENAI_CLI_REQUIRE_NATIVE_SHELLS=bash",
+                "OPENAI_CLI_NATIVE_SHELL_BINARY=" + PAYLOAD_ROOT + "openai",
+                "OPENAI_CLI_NATIVE_SHELL_SHA256=" + hashes["openai"]]
+    return env + ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", f"{guest_seconds}s",
+                  PAYLOAD_ROOT + filename, "-test.run=" + selector, f"-test.timeout={go_seconds}s", "-test.v"]
+
+
+def validate_test_phase(stdout, stderr, code, *, cases, label, entry, setup_contract):
+    names = sorted(require_test_pass(stdout, stderr, code, test_names(cases), label,
+                                    WELCOME_DYNAMIC_NAME in test_names(cases)))
+    if not entry:
+        return names
+    value = {"tests": names, "final_PASS": 1}
+    if "TestPickerNativeSetupContract" in cases:
+        value["native_capability"] = require_capability_receipt(stdout, setup_contract or "supported")
+    return value
+
+
+def test_phase(label, filename, cases, seconds, result_path, *, selector=None, setup_contract=None,
+               native=False, budget=None, closes_budget=True, shared_budget=False, verify_payload=None):
+    cases = {root: tuple(children) for root, children in cases.items()}
+    return ProfilePhase(
+        label, seconds, result_path,
+        partial(test_arguments, filename=filename, selector=selector or "^(" + "|".join(cases) + ")$",
+                seconds=seconds, setup_contract=setup_contract, native=native),
+        partial(validate_test_phase, cases=cases, label=label, entry=len(result_path) > 1,
+                setup_contract=setup_contract),
+        budget, closes_budget, shared_budget, cases, verify_payload)
+
+
+def shell_arguments(hashes, result, *, script, args, guest_seconds):
+    return ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", f"{guest_seconds}s",
+            "/usr/bin/python3", "-I", "-B", PAYLOAD_ROOT + script,
+            PAYLOAD_ROOT + "openai", result["shell_prerequisites"]["bash"]["path"], *args]
+
+
+def load_shell_receipts():
+    spec = importlib.util.spec_from_file_location(
+        "wsl_shell_receipts", Path(__file__).with_name("wsl_shell_receipts.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def require_driver_pass(stdout, stderr, code, names, receipt_case=None):
+    # The fixture entrypoint tests use the same lazy validation boundary.
+    return load_shell_receipts().require_driver_pass(stdout, stderr, code, names, receipt_case)
+
+
+def shell_phase(label, script, args, seconds, guest_seconds, names, receipt=None, *, validator):
+    return ProfilePhase(
+        label, seconds, ("profile_results", label),
+        partial(shell_arguments, script=script, args=tuple(args), guest_seconds=guest_seconds),
+        partial(validator, names=frozenset(names), receipt_case=receipt),
+        budget=label)
+
+
+def prepare_shell(commands, user, result):
+    result["shell_prerequisites"] = shell_prerequisites(commands, user)
+
+
+def shell_final_paths(result):
+    return {result["shell_prerequisites"][key]["path"]: result["shell_prerequisites"][key]["sha256"]
+            for key in ("bash", "python")}
+
+
+def fixed_payloads(payloads):
+    return tuple(Payload(name, path, ("artifact_sha256", name), name + "-") for name, path in payloads.items())
+
+
+def local_state_plan(payloads, setup_contract):
+    suites, inventory_hash = load_local_cases()
+    independent = {root: children for root, children in suites["process"].items()
+                   if root in INDEPENDENT_PROCESS_ROOTS}
+    if set(independent) != INDEPENDENT_PROCESS_ROOTS:
+        raise RuntimeError("Missing independent local process roots")
+    custom_independent = {root: children for root, children in suites["custom"].items()
+                          if root != NATIVE_CUSTOM_ROOT}
+    autocomplete = {root: children for root, children in suites["autocomplete"].items()
+                    if setup_contract == "supported" or root not in SUPPORTED_AUTOCOMPLETE_ROOTS}
+    dependent = {root: children for root, children in suites["process"].items()
+                 if root not in INDEPENDENT_PROCESS_ROOTS
+                 and (setup_contract == "supported" or root == NATIVE_PROCESS_ROOT)}
+    groups = (
+        ("imageprefs", "imageprefs", suites["imageprefs"], True),
+        ("clihelp", "clihelp", suites["clihelp"], True),
+        ("custom-independent", "custom", custom_independent, False),
+        ("process-independent", "process", independent, False),
+        ("autocomplete", "autocomplete", autocomplete, True),
+        ("custom", "custom", {NATIVE_CUSTOM_ROOT: suites["custom"][NATIVE_CUSTOM_ROOT]}, True),
+        ("process", "process", dependent, True),
+    )
+    budgets = dict(PROFILE_PHASES["local-state"])
+    phases = tuple(test_phase("local-" + key, group + ".test", cases, budgets[group],
+                              ("profile_results", key), setup_contract=setup_contract,
+                              budget=group, closes_budget=complete, shared_budget=True)
+                   for key, group, cases, complete in groups)
+    omitted = [] if setup_contract == "supported" else sorted(
+        test_names({root: suites["autocomplete"][root] for root in SUPPORTED_AUTOCOMPLETE_ROOTS})
+        | test_names({root: children for root, children in suites["process"].items()
+                      if root not in INDEPENDENT_PROCESS_ROOTS and root != NATIVE_PROCESS_ROOT}))
+    return ProfilePlan(
+        "local-state", "Ubuntu WSL 1 AMD64 local-state", fixed_payloads(payloads), phases, budgets,
+        {"local_cases_sha256": inventory_hash, "setup_contract": setup_contract, "profile_results": {}},
+        {"positive_installation_tests_executed": setup_contract == "supported",
+         "positive_installation_tests_not_selected": omitted},
+        ((LOCAL_CASES_PATH, inventory_hash, "The local-state inventory changed"),),
+        check_copied_artifacts=True)
+
+
+def shell_contract_plan(payloads, setup_contract):
+    validator = load_shell_receipts().require_driver_pass
+    assets = []
+    for name in SHELL_ASSETS:
+        path = Path(__file__).with_name(name)
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError("Expected a regular shell fixture source")
+        assets.append(Payload(name, path, ("artifact_sha256", name), name + "-", False))
+    phases = [
+        test_phase("invocation", "process.test", NATIVE_CASES, 170, ("profile_results", "invocation"),
+                   selector=NATIVE_SELECTOR, native=True, budget="invocation"),
+        shell_phase("completion", "check-bash-completion.py", (), 75, 65, COMPLETION_CASES, validator=validator),
+    ]
+    for mode in ("login", "nonlogin"):
+        args, receipt = [mode], "bash-" + mode
+        if setup_contract == "refused":
+            args += ["--setup-contract", "refused", "--autocomplete-test-binary", PAYLOAD_ROOT + "autocomplete.test"]
+            receipt += "-refused"
+            if mode == "nonlogin":
+                args.append("--first-use-admission")
+        phases.append(shell_phase("startup-" + mode, "check-wsl-shell-startup.py", args, 130, 120,
+                                  {receipt}, receipt, validator=validator))
+    phases.append(shell_phase("models", "check-wsl-models.py", (), 40, 30,
+                              {"models-filter-sort-limit"}, "models-filter-sort-limit", validator=validator))
+    return ProfilePlan(
+        "shell-contracts", "Ubuntu WSL 1 AMD64 shell-contracts", fixed_payloads(payloads) + tuple(assets),
+        tuple(phases), dict(PROFILE_PHASES["shell-contracts"]),
+        {"setup_contract": setup_contract, "profile_results": {}},
+        prepare=prepare_shell, check_copied_artifacts=True, final_guest_paths=shell_final_paths)
+
+
+def legacy_plan(binary, process_binary, command_contracts, app_binary, images_binary):
+    selection, scope = "pager-and-process", "Ubuntu WSL 1 AMD64 pager process"
+    inventory, metadata = (), {}
+    cases = {ROOT: ["LookPath", "ForkExec"]}
+    payloads = [Payload("custom.test", binary, ("binary_sha256",), "")]
+    if command_contracts:
         suites, inventory_hash = load_command_cases()
+        cases = suites["custom"]
+        selection = "command-contracts"
+        scope = "Ubuntu WSL 1 AMD64 request, command, output, error, and saved-setting contracts"
+        metadata["command_cases_sha256"] = inventory_hash
+        inventory = ((COMMAND_CASES_PATH, inventory_hash, "The command-contract inventory changed"),)
+    phases = [test_phase("custom-contracts" if command_contracts else "pager", "custom.test", cases,
+                         70, ("tests",), selector=None if command_contracts else "^" + ROOT + "$")]
+    if process_binary is not None:
+        payloads.append(Payload("process.test", process_binary, ("process_binary_sha256",), "process-"))
+        phases.append(test_phase("process-contracts" if command_contracts else "process", "process.test",
+                                 suites["process"] if command_contracts else PROCESS_CASES, 170,
+                                 ("process_tests",), verify_payload="process.test"))
+        if not command_contracts:
+            scope += "; public stdin, download, and output processes"
+    if command_contracts:
+        payloads += [Payload("app.test", app_binary, ("app_binary_sha256",), "app-"),
+                     Payload("images.test", images_binary, ("images_binary_sha256",), "images-")]
+        phases += [test_phase("images-contracts", "images.test", suites["images"], 70, ("images_tests",),
+                              verify_payload="images.test"),
+                   test_phase("app-contracts", "app.test", suites["app"], 70, ("app_tests",),
+                              verify_payload="app.test")]
+    return ProfilePlan(selection, scope, tuple(payloads), tuple(phases),
+                       initial_result=metadata, inventory=inventory)
+
+
+def resolve_profile(binary=None, cleanup_only=False, process_binary=None, command_contracts=False,
+                    app_binary=None, images_binary=None, profile=None, extra_payloads=None, setup_contract="supported"):
+    """Resolve CLI selection, payloads, phases, and validators before distro ownership."""
+    if setup_contract not in {"supported", "refused"} or (profile is None and setup_contract != "supported"):
+        raise ProfileOptionsError("Setup contracts require a fixed WSL profile")
+    if profile is not None and profile not in PROFILE_PHASES:
+        raise ProfileOptionsError("Unknown fixed WSL profile")
+    if profile is not None and command_contracts:
+        raise ProfileOptionsError("WSL profiles cannot be combined")
+    selection = profile or ("command-contracts" if command_contracts else "pager-and-process")
+    if cleanup_only:
+        scope = "Ubuntu WSL 1 AMD64 " + profile if profile else "Ubuntu WSL 1 AMD64 pager process"
+        return ProfilePlan(selection, scope, cleanup_only=True)
+    extras = dict(extra_payloads or {})
+    if profile is None:
+        if extras:
+            raise ProfileOptionsError("Additional binaries require a fixed successor profile")
+        if command_contracts and any(path is None for path in (binary, process_binary, app_binary, images_binary)):
+            raise ProfileOptionsError("Command contracts require all four test binaries")
+        if binary is None:
+            raise ProfileOptionsError("--binary is required for the pilot")
+        return legacy_plan(binary, process_binary, command_contracts, app_binary, images_binary)
+    if app_binary is not None or images_binary is not None:
+        raise ProfileOptionsError("Application and image binaries require the command-contract profile")
+    if binary is not None:
+        extras["custom.test"] = binary
+    if process_binary is not None:
+        extras["process.test"] = process_binary
+    required, factory = {
+        "local-state": ({"custom.test", "process.test", "imageprefs.test", "clihelp.test", "autocomplete.test"}, local_state_plan),
+        "shell-contracts": ({"process.test", "openai"} | ({"autocomplete.test"} if setup_contract == "refused" else set()),
+                            shell_contract_plan),
+    }[profile]
+    if set(extras) != required:
+        raise ProfileOptionsError("The fixed WSL profile requires its exact payload set")
+    return factory(extras, setup_contract)
+
+
+def run_profile(commands, user, plan, hashes, result):
+    """Execute a resolved plan without selecting a profile during the lifecycle."""
+    for key, value in plan.initial_result.items():
+        result.setdefault(key, copy.deepcopy(value))
+    remaining = dict(plan.budgets)
+    if remaining:
+        admit_profile(commands, remaining)
+        result["profile_admission_seconds"] = sum(remaining.values())
+    payloads = {payload.filename: payload for payload in plan.payloads}
+    for phase in plan.phases:
+        if remaining:
+            admit_profile(commands, remaining)
+        elif commands.deadline - time.monotonic() < phase.seconds:
+            raise RuntimeError("Insufficient work time for the WSL " + phase.label + " suite")
+        deadline, started = commands.deadline, time.monotonic()
+        if phase.shared_budget:
+            commands.deadline = min(deadline, started + remaining[phase.budget])
+        try:
+            stdout, stderr, code = commands.run(phase.label, user + phase.arguments(hashes, result), phase.seconds)
+            accepted = phase.validate(stdout, stderr, code)
+        finally:
+            if phase.shared_budget:
+                remaining[phase.budget] -= time.monotonic() - started
+                commands.deadline = deadline
+        if phase.shared_budget and remaining[phase.budget] <= 0:
+            raise RuntimeError("Local checks exhausted their shared time budget")
+        set_result(result, phase.result_path, accepted)
+        if phase.verify_payload and digest(payloads[phase.verify_payload].path) != hashes[phase.verify_payload]:
+            raise RuntimeError("The host " + phase.verify_payload.removesuffix(".test") + " test binary changed")
+        if phase.budget and phase.closes_budget:
+            del remaining[phase.budget]
+    result.update(plan.completion_result)
+    if remaining:
+        admit_profile(commands, remaining)
+    return remaining
+
+
+def pilot(plan):
+    cleanup_only = plan.cleanup_only
+    artifact_hashes, payload_paths = {}, {}
     # Validate process bitness before selecting System32, which WOW64 can redirect.
     host_process = require_native_windows_process()
     name, directory = owned_paths()
@@ -532,29 +1000,19 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
     cleanup_deadline = remaining_deadline("WSL_PAGER_CLEANUP_DEADLINE")
     work_deadline = cleanup_deadline if cleanup_only else remaining_deadline("WSL_PAGER_WORK_DEADLINE")
     commands = Commands(directory, min(work_deadline, start + (150 if cleanup_only else 780)), "final-" if cleanup_only else "")
-    result = {"state": "failed", "scope": "Ubuntu WSL 1 AMD64 pager process", "commands": commands.records}
-    result["selection"] = "command-contracts" if command_contracts else "pager-and-process"
-    if suites is not None:
-        result["scope"] = "Ubuntu WSL 1 AMD64 request, command, output, error, and saved-setting contracts"
-        result["command_cases_sha256"] = inventory_hash
+    result = {"state": "failed", "scope": plan.scope, "selection": plan.selection, "commands": commands.records}
+    result.update(copy.deepcopy(plan.initial_result))
     result["requires_successful_process_exit"] = True
     result["host_process"] = host_process
     result["runner_image"] = {key: os.environ.get(key) for key in ("ImageOS", "ImageVersion", "RUNNER_ARCH")}
     failure = None
     try:
         if not cleanup_only:
-            result["binary_sha256"] = require_linux_binary(binary)
-            binary = binary.resolve(strict=True)
-            if process_binary is not None:
-                result["process_binary_sha256"] = require_linux_binary(process_binary)
-                process_binary = process_binary.resolve(strict=True)
-                if suites is None:
-                    result["scope"] += "; public stdin, download, and output processes"
-            if suites is not None:
-                result["app_binary_sha256"] = require_linux_binary(app_binary)
-                app_binary = app_binary.resolve(strict=True)
-                result["images_binary_sha256"] = require_linux_binary(images_binary)
-                images_binary = images_binary.resolve(strict=True)
+            for payload in plan.payloads:
+                value = require_linux_binary(payload.path) if payload.executable else digest(payload.path)
+                artifact_hashes[payload.filename] = value
+                payload_paths[payload.filename] = payload.path.resolve(strict=True)
+                set_result(result, payload.result_path, value)
             result["wsl_sha256"] = digest(Path(wsl))
             result["source"] = commands.run("source", ["git", "rev-parse", "HEAD", "HEAD^{tree}"], 10)[0].decode("ascii").splitlines()
             result["wsl_version"] = decode_metadata(commands.run("wsl-version", [wsl, "--version"], 20)[0])
@@ -581,19 +1039,12 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
                      "/usr/sbin/useradd --create-home --uid 2000 --user-group --shell /bin/bash cli-compat; "
                      "install -d -m 700 -o cli-compat -g cli-compat /home/cli-compat/payload")
             commands.run("user", root + ["/bin/bash", "--noprofile", "--norc", "-c", setup], 30)
-            target = "/home/cli-compat/payload/custom.test"
             user = [wsl, "--distribution", name, "--user", "cli-compat", "--exec", "/usr/bin/env", "-i",
                     "HOME=/home/cli-compat", "TMPDIR=/home/cli-compat", "PATH=/usr/bin:/bin", "LC_ALL=C.UTF-8",
                     "TERM=dumb", "NO_COLOR=1", "GOMAXPROCS=2"]
-            copy_payload(commands, root, user, binary, target, result["binary_sha256"])
-            process_target = "/home/cli-compat/payload/process.test"
-            if process_binary is not None:
-                copy_payload(commands, root, user, process_binary, process_target, result["process_binary_sha256"], "process-")
-            app_target = "/home/cli-compat/payload/app.test"
-            if suites is not None:
-                copy_payload(commands, root, user, app_binary, app_target, result["app_binary_sha256"], "app-")
-                images_target = "/home/cli-compat/payload/images.test"
-                copy_payload(commands, root, user, images_binary, images_target, result["images_binary_sha256"], "images-")
+            for payload in plan.payloads:
+                copy_payload(commands, root, user, payload_paths[payload.filename], PAYLOAD_ROOT + payload.filename,
+                             artifact_hashes[payload.filename], payload.copy_prefix)
             identity = "set -eu; test $(id -u) = 2000; test $(uname -m) = x86_64; test $(dpkg --print-architecture) = amd64; cat /etc/os-release; uname -a; id; /bin/bash --version; stat -f -c %T /home/cli-compat"
             observed = commands.run("ubuntu-identity", user + ["/bin/bash", "--noprofile", "--norc", "-c", identity], 20)[0].decode("utf-8")
             if not re.search(r"^ID=ubuntu$", observed, re.MULTILINE):
@@ -603,26 +1054,30 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
             stdout, stderr, _ = commands.run("exit-control", user + ["/bin/bash", "--noprofile", "--norc", "-c", control], 10, expected=7)
             if stdout != b"wsl-control-out\n" or stderr != b"wsl-control-err\n":
                 raise RuntimeError("WSL stream or exit control changed")
-            result["tests"] = sorted(run_custom_suite(commands, user, target,
-                                                     suites["custom"] if suites is not None else None))
-            if process_binary is not None:
-                result["process_tests"] = sorted(run_process_suite(commands, user, process_target,
-                                                                  suites["process"] if suites is not None else None))
-                if digest(process_binary) != result["process_binary_sha256"]:
-                    raise RuntimeError("The host process test binary changed")
-            if suites is not None:
-                result["images_tests"] = sorted(run_custom_suite(commands, user, images_target,
-                                                                suites["images"], label="images-contracts"))
-                if digest(images_binary) != result["images_binary_sha256"]:
-                    raise RuntimeError("The host images test binary changed")
-                result["app_tests"] = sorted(run_custom_suite(commands, user, app_target,
-                                                             suites["app"], label="app-contracts"))
-                if digest(app_binary) != result["app_binary_sha256"]:
-                    raise RuntimeError("The host app test binary changed")
-            if digest(binary) != result["binary_sha256"]:
-                raise RuntimeError("The host test binary changed")
-            if suites is not None and digest(COMMAND_CASES_PATH) != inventory_hash:
-                raise RuntimeError("The command-contract inventory changed")
+            if plan.check_copied_artifacts:
+                commands.run("profile-tools", user + ["/bin/bash", "--noprofile", "--norc", "-c",
+                    "test -x /usr/bin/timeout && test -x /usr/bin/mkfifo && test -x /usr/bin/sha256sum"], 10)
+                copied = {PAYLOAD_ROOT + name: value for name, value in artifact_hashes.items()}
+                if profile_file_hashes(commands, user, list(copied), "profile-prepared-hashes") != copied:
+                    raise RuntimeError("A prepared profile artifact changed")
+            if plan.prepare is not None:
+                plan.prepare(commands, user, result)
+            remaining = run_profile(commands, user, plan, artifact_hashes, result)
+            if remaining:
+                # Keep final source and artifact verification inside its reserved phase.
+                commands.deadline = min(commands.deadline, time.monotonic() + remaining["final"])
+            if plan.check_copied_artifacts:
+                expected = {PAYLOAD_ROOT + name: value for name, value in artifact_hashes.items()}
+                if plan.final_guest_paths is not None:
+                    expected.update(plan.final_guest_paths(result))
+                if profile_file_hashes(commands, user, list(expected), "profile-final-hashes") != expected:
+                    raise RuntimeError("A copied profile artifact changed")
+            for filename, path in payload_paths.items():
+                if digest(path) != artifact_hashes[filename]:
+                    raise RuntimeError("A host profile artifact changed")
+            for path, expected_hash, error in plan.inventory:
+                if digest(path) != expected_hash:
+                    raise RuntimeError(error)
             final_source = commands.run("source-final", ["git", "rev-parse", "HEAD", "HEAD^{tree}"], 10)[0].decode("ascii").splitlines()
             if final_source != result["source"]:
                 raise RuntimeError("The source commit changed during execution")
@@ -656,18 +1111,32 @@ def main():
     parser.add_argument("--process-binary", type=Path, help="Also run the fixed noninteractive process suite")
     parser.add_argument("--images-binary", type=Path, help="Run the image preference and state contracts")
     parser.add_argument("--app-binary", type=Path, help="Run the application lifecycle contracts")
-    parser.add_argument("--command-contracts", action="store_true",
-                        help="Run the fixed command-contract supplement using all four test binaries")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--command-contracts", action="store_true",
+                           help="Run the fixed command-contract supplement using all four test binaries")
+    selection.add_argument("--profile", choices=sorted(PROFILE_PHASES), help="Run one fixed successor profile")
+    parser.add_argument("--imageprefs-binary", type=Path)
+    parser.add_argument("--clihelp-binary", type=Path)
+    parser.add_argument("--autocomplete-binary", type=Path)
+    parser.add_argument("--cli-binary", type=Path)
+    parser.add_argument("--setup-contract", choices=("supported", "refused"), default="supported")
     parser.add_argument("--cleanup", action="store_true")
     args = parser.parse_args()
-    if not args.cleanup and args.binary is None:
-        parser.error("--binary is required for the pilot")
-    if args.command_contracts and not args.cleanup and (args.process_binary is None or args.app_binary is None or args.images_binary is None):
-        parser.error("--command-contracts requires --process-binary, --app-binary, and --images-binary")
+    extras = {name: path for name, path in (("imageprefs.test", args.imageprefs_binary),
+              ("clihelp.test", args.clihelp_binary), ("autocomplete.test", args.autocomplete_binary),
+              ("openai", args.cli_binary)) if path is not None}
     for number in (signal.SIGINT, signal.SIGTERM):
         signal.signal(number, interrupted)
     try:
-        code = pilot(args.binary, args.cleanup, args.process_binary, args.command_contracts, args.app_binary, args.images_binary)
+        plan = resolve_profile(args.binary, args.cleanup, args.process_binary, args.command_contracts,
+                               args.app_binary, args.images_binary, args.profile, extras, args.setup_contract)
+    except ProfileOptionsError as error:
+        parser.error(str(error))
+    except Exception as error:
+        print(f"WSL pager pilot failed: {error}", file=sys.stderr)
+        return 128 + STOP if STOP else 1
+    try:
+        code = pilot(plan)
     except Exception as error:
         print(f"WSL pager pilot failed: {error}", file=sys.stderr)
         code = 128 + STOP if STOP else 1

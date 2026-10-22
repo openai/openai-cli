@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,7 +19,7 @@ const apiAuthenticationIPAllowlistURL = "https://developers.openai.com/api/docs/
 
 // Human guidance names configuration sources, never their values. The existing
 // presenter retains status, request IDs, structured data and error identity.
-func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *openai.Error) string {
+func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *openai.Error, output ...io.Writer) string {
 	if apierr == nil || apierr.StatusCode != http.StatusUnauthorized {
 		return ""
 	}
@@ -66,7 +67,7 @@ func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *
 	if !custom && !customAuthorization && !admin {
 		lines = append(lines, "API keys: "+apiAuthenticationKeyURL)
 	}
-	lines = append(lines, "Key setup: "+clihelp.DisplayInvocation(root)+" help setup")
+	lines = append(lines, "Key setup: "+clihelp.SuggestedCommand(root, output, clihelp.DisplayInvocation(root)+" help setup"))
 	return strings.Join(lines, "\n")
 }
 

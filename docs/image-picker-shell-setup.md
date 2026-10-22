@@ -113,6 +113,23 @@ manual inspection; setup preserves files whose ownership it cannot establish.
 Supported native exclusive rename is required;
 filesystems without it refuse the change instead of overwriting a profile.
 
+Some kernels and filesystems, including the tested WSL1 filesystem, lack this
+atomic operation. Explicit setup then fails with a readable error and a nonzero
+exit status. `--format-error json` keeps the error structured. Ordinary commands
+and completion output remain available. Failed optional first-use setup stays quiet.
+Type `openai images generate` and press Enter to use the picker without persistent
+setup. The [current-session shortcut](image-picker-shortcuts.md) also avoids
+profile changes. Persistent setup needs a supported kernel and filesystem.
+WSL2 may provide that environment, but its selected filesystem still needs the
+required operation.
+
+A refused change can follow earlier successful updates to other startup files
+or preferences. Keep recovery directories and inspect their `original` files
+before manual recovery. A refused removal can leave existing Bash shortcuts
+active in new terminals. The opt-out prevents later automatic setup attempts;
+it does not prove removal succeeded. Unchanged installations and cleanup that
+does not require profile replacement can still succeed.
+
 Repeating either command is safe. Modified blocks or scripts stay available for
 inspection. Default Bash removal checks all three login profiles as well as
 `.bashrc`, so a newer, higher-priority login profile cannot hide earlier setup.

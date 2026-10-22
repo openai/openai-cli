@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.40.2](https://github.com/openai/openai-cli/compare/v1.40.1...v1.40.2) (2026-10-22)
+
+
+### Chores
+
+* **api:** clarify service-account API key deletion ([#582](https://github.com/openai/openai-cli/issues/582)) ([7d32d04](https://github.com/openai/openai-cli/commit/7d32d0447842a4e664c1835a01ae94d7530e5e04))
+
+## [1.40.1](https://github.com/openai/openai-cli/compare/v1.40.0...v1.40.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **completion:** show recovery guidance when WSL shortcut setup or removal cannot safely update shell files ([#497](https://github.com/openai/openai-cli/issues/497)) ([c73035a](https://github.com/openai/openai-cli/commit/c73035a0da29bfdb718801a3646715a38094219d))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.85.0 ([#576](https://github.com/openai/openai-cli/issues/576)) ([442d8ae](https://github.com/openai/openai-cli/commit/442d8aede60889508b80549487d7fcdbc8a88bf2))
+
+## [1.40.0](https://github.com/openai/openai-cli/compare/v1.39.1...v1.40.0) (2026-10-21)
+
+
+### Features
+
+* **api:** add custom voice consent management ([#572](https://github.com/openai/openai-cli/issues/572)) ([7080124](https://github.com/openai/openai-cli/commit/708012431f8e4f64d20489e290690d6ed8ecdc30))
+
+
+### Chores
+
+* **api:** clarify cache-write token totals ([#570](https://github.com/openai/openai-cli/issues/570)) ([bd86692](https://github.com/openai/openai-cli/commit/bd866925a3fcf0dc6877067678f37df445ffd60a))
+
 ## [1.39.1](https://github.com/openai/openai-cli/compare/v1.39.0...v1.39.1) (2026-10-21)
 
 

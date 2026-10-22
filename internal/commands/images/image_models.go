@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/imagemodels"
 	"github.com/openai/openai-cli/internal/readable"
 	requestconfig "github.com/openai/openai-cli/internal/request"
@@ -22,7 +23,7 @@ import (
 )
 
 const imageModelsHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}Find an image model
-  {{$bin}} images models
+  {{suggest . (printf "%s images models" $bin)}}
 
 Shows exact model names and checks metadata visibility with your key.
 Checks known image models individually, without loading the full API model list.
@@ -32,13 +33,13 @@ No images are generated. Checks stop after 15 seconds, with no retries.
   --offline   Show known names immediately, without an API key or access check
 
 Use an exact name from the list:
-  {{$bin}} images generate --prompt "A tiny orange robot" --model gpt-image-2.5-flare
+  {{suggest . (printf "%s images generate --prompt \"A tiny orange robot\" --model gpt-image-2.5-flare" $bin)}}
 
 The known list comes from this CLI's SDK; it may not include newly released models.
 Visibility checks do not guarantee image-generation permissions or quota.
-JSON for scripts: {{$bin}} --format json images models
+JSON for scripts: {{suggest . (printf "%s --format json images models" $bin)}}
 Readable output also works in scripts. Failed checks keep partial results and exit nonzero.
-API key setup: {{$bin}} help setup
+API key setup: {{suggest . (printf "%s help setup" $bin)}}
 `
 
 // RegisterModels installs image model discovery, a CLI workflow over the existing model retrieval
@@ -77,10 +78,16 @@ type ModelsError struct {
 }
 
 func (e *ModelsError) Error() string {
+	return e.ReadableMessage(nil)
+}
+
+// ReadableMessage registers recovery commands only for readable output.
+func (e *ModelsError) ReadableMessage(command *cli.Command, output ...io.Writer) string {
+	record := func(text string) string { return clihelp.SuggestedCommand(command, output, text) }
 	if e.extraArguments {
-		return fmt.Sprintf("use %s images models to see image model names; no additional arguments are needed", e.invocation)
+		return fmt.Sprintf("use %s to see image model names; no additional arguments are needed", record(e.invocation+" images models"))
 	}
-	return imageModelsFailureMessage(e.results, e.invocation)
+	return imageModelsFailureMessage(e.results, e.invocation, record)
 }
 
 func handleImagesModels(ctx context.Context, command *cli.Command, opts ModelOptions) error {
@@ -128,7 +135,7 @@ func handleImagesModels(ctx context.Context, command *cli.Command, opts ModelOpt
 		if opts.DiagnosticsAllowed(ctx) {
 			hints = os.Stderr
 		}
-		if err := writeImageModels(root.Writer, report, command.Bool("all"), invocation, hints); err != nil {
+		if err := writeImageModels(root.Writer, report, command.Bool("all"), invocation, hints, command); err != nil {
 			return err
 		}
 	} else {
@@ -156,7 +163,12 @@ func writeImageModelsData(ctx context.Context, command *cli.Command, report imag
 	return opts.ShowData(context.WithoutCancel(ctx), command, obj, stderr)
 }
 
-func writeImageModels(out io.Writer, report imageModelsReport, all bool, invocation string, hints io.Writer) error {
+func writeImageModels(out io.Writer, report imageModelsReport, all bool, invocation string, hints io.Writer, commands ...*cli.Command) error {
+	var command *cli.Command
+	if len(commands) > 0 {
+		command = commands[0]
+	}
+	presenter := clihelp.NewSuggestedText(hints, command)
 	var text strings.Builder
 	var guidance strings.Builder
 	if report.Source == "offline" {
@@ -189,10 +201,10 @@ func writeImageModels(out io.Writer, report imageModelsReport, all bool, invocat
 	}
 	if hidden > 0 {
 		fmt.Fprintf(&text, "\n%d retired or not visible.\n", hidden)
-		fmt.Fprintf(&guidance, "Include them and dated versions: %s images models --all\n", invocation)
+		fmt.Fprintf(&guidance, "Include them and dated versions: %s\n", clihelp.SuggestedCommand(command, []io.Writer{presenter}, invocation+" images models --all"))
 	}
 	if choice != "" {
-		fmt.Fprintf(&guidance, "Choose a model:\n  %s images generate --prompt \"A tiny orange robot\" --model %s\n", invocation, choice)
+		fmt.Fprintf(&guidance, "Choose a model:\n  %s\n", clihelp.SuggestedCommand(command, []io.Writer{presenter}, fmt.Sprintf("%s images generate --prompt \"A tiny orange robot\" --model %s", invocation, choice)))
 	}
 
 	text.WriteString("\nKnown image IDs from this CLI; newly released models may not be listed.\n")
@@ -203,7 +215,7 @@ func writeImageModels(out io.Writer, report imageModelsReport, all bool, invocat
 		return err
 	}
 	if hints != nil && guidance.Len() > 0 {
-		return readable.WriteText(hints, guidance.String())
+		return presenter.WriteText(guidance.String())
 	}
 	return nil
 }
@@ -237,7 +249,11 @@ func imageModelStatusText(model imagemodels.Result) string {
 	}
 }
 
-func imageModelsFailureMessage(results []imagemodels.Result, invocation string) string {
+func imageModelsFailureMessage(results []imagemodels.Result, invocation string, recorders ...func(string) string) string {
+	record := func(text string) string { return text }
+	if len(recorders) > 0 {
+		record = recorders[0]
+	}
 	failures := make(map[imagemodels.Failure]bool)
 	for _, result := range results {
 		if result.Status == imagemodels.StatusUnknown {
@@ -247,7 +263,7 @@ func imageModelsFailureMessage(results []imagemodels.Result, invocation string) 
 	message := "Some model checks could not be completed. Unchecked models have not been verified."
 	switch {
 	case failures[imagemodels.FailureAuthentication]:
-		message = "The API did not accept authentication for a model check. Check your key or endpoint credentials.\nAPI key setup: " + invocation + " help setup"
+		message = "The API did not accept authentication for a model check. Check your key or endpoint credentials.\nAPI key setup: " + record(invocation+" help setup")
 	case failures[imagemodels.FailureRateLimit]:
 		message = "The API rate-limited model checks. Wait briefly before trying again."
 	case failures[imagemodels.FailureTimeout] || failures[imagemodels.FailureServer]:
@@ -259,7 +275,7 @@ func imageModelsFailureMessage(results []imagemodels.Result, invocation string) 
 	case failures[imagemodels.FailureInvalidResponse]:
 		message = "The API returned an unexpected model response. Those models have not been verified."
 	}
-	return message + "\nBrowse known names without an API check: " + invocation + " images models --offline"
+	return message + "\nBrowse known names without an API check: " + record(invocation+" images models --offline")
 }
 
 // Use the help system's already quoted executable name for runnable examples.

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline controls for the WSL pager pilot. Never imports or starts a distro."""
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib.util
@@ -19,6 +20,7 @@ from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("wsl_pager", Path(__file__).with_name("check-wsl-pager.py"))
 pilot = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = pilot
 spec.loader.exec_module(pilot)
 
 
@@ -33,6 +35,19 @@ def passing_output():
 def process_passing_output():
     names = sorted(pilot.PROCESS_TESTS)
     return ("".join(f"=== RUN   {name}\n--- PASS: {name} (0.01s)\n" for name in names) + "PASS\n").encode()
+
+
+def resolved_legacy_plan(command_contracts=False, include_process=False):
+    return pilot.resolve_profile(
+        Path("custom.test"),
+        process_binary=Path("process.test") if command_contracts or include_process else None,
+        command_contracts=command_contracts,
+        app_binary=Path("app.test") if command_contracts else None,
+        images_binary=Path("images.test") if command_contracts else None)
+
+
+def only_phase(plan, label):
+    return replace(plan, phases=(next(phase for phase in plan.phases if phase.label == label),))
 
 
 class MetadataTests(unittest.TestCase):
@@ -221,42 +236,35 @@ class AcceptanceTests(unittest.TestCase):
                     pilot.copy_payload(FakeCommands(b"wrong  target\n"), ["root"], ["user"], Path("test"), target, expected, prefix)
 
     def test_process_stage_requires_full_admission_and_fixed_command(self):
-        class FakeCommands:
-            deadline = 200.0
-
-            def __init__(self):
-                self.calls = []
-
-            def run(self, label, argv, seconds):
-                self.calls.append((label, argv, seconds))
-                return process_passing_output(), b"", 0
-
-        commands = FakeCommands()
+        plan = only_phase(resolved_legacy_plan(include_process=True), "process")
+        commands = Mock(deadline=200.0)
+        commands.run.return_value = process_passing_output(), b"", 0
+        hashes = {"process.test": "a" * 64}
         with patch.object(pilot.time, "monotonic", return_value=30.001):
             with self.assertRaisesRegex(RuntimeError, "Insufficient work time"):
-                pilot.run_process_suite(commands, ["user"], "/process.test")
-        self.assertEqual(commands.calls, [])
-        with patch.object(pilot.time, "monotonic", return_value=30.0):
-            pilot.run_process_suite(commands, ["user"], "/process.test")
-        self.assertEqual(commands.calls, [("process", ["user", "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "160s", "/process.test", "-test.run=" + pilot.PROCESS_SELECTOR, "-test.timeout=150s", "-test.v"], 170)])
+                pilot.run_profile(commands, ["user"], plan, hashes, {})
+        commands.run.assert_not_called()
+        with patch.object(pilot.time, "monotonic", return_value=30.0), \
+                patch.object(pilot, "digest", return_value="a" * 64):
+            pilot.run_profile(commands, ["user"], plan, hashes, {})
+        commands.run.assert_called_once_with("process", [
+            "user", "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "160s",
+            "/home/cli-compat/payload/process.test", "-test.run=" + pilot.PROCESS_SELECTOR,
+            "-test.timeout=150s", "-test.v"], 170)
 
     def test_process_stage_does_not_accept_a_false_command_result(self):
-        class FakeCommands:
-            deadline = 200.0
-
-            def __init__(self, result):
-                self.result = result
-
-            def run(self, *_args):
-                return self.result
-
+        plan = only_phase(resolved_legacy_plan(include_process=True), "process")
         with patch.object(pilot.time, "monotonic", return_value=0):
-            for result in ((process_passing_output(), b"", 1),
-                           (process_passing_output(), b"unexpected", 0),
-                           (b"PASS\n", b"", 0)):
-                with self.subTest(code=result[2], stderr=result[1]):
+            for response in ((process_passing_output(), b"", 1),
+                             (process_passing_output(), b"unexpected", 0),
+                             (b"PASS\n", b"", 0)):
+                commands, result = Mock(deadline=200.0), {}
+                commands.run.return_value = response
+                with self.subTest(code=response[2], stderr=response[1]):
                     with self.assertRaises(RuntimeError):
-                        pilot.run_process_suite(FakeCommands(result), ["user"], "/process.test")
+                        pilot.run_profile(commands, ["user"], plan, {}, result)
+                commands.run.assert_called_once()
+                self.assertNotIn("process_tests", result)
 
     def test_binary_architecture(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -452,9 +460,9 @@ class CommandContractTests(unittest.TestCase):
                     self.load_fixture(json.dumps(suites).encode())
 
     def test_supplement_suites_require_exact_output(self):
-        for package, runner in (("custom", pilot.run_custom_suite), ("process", pilot.run_process_suite),
-                                ("images", lambda *args: pilot.run_custom_suite(*args, label="images-contracts")),
-                                ("app", lambda *args: pilot.run_custom_suite(*args, label="app-contracts"))):
+        plan = resolved_legacy_plan(command_contracts=True)
+        for package in ("custom", "process", "images", "app"):
+            selected = only_phase(plan, package + "-contracts")
             cases = self.suites[package]
             good = self.output(cases)
             name = next(name for name in sorted(self.names(cases)) if "/" in name)
@@ -475,47 +483,58 @@ class CommandContractTests(unittest.TestCase):
                 "invalid encoding": b"\xff" + good,
                 "panic": good + b"panic: synthetic\n",
             }
-            results = [(label, (raw, b"", 0)) for label, raw in bad.items()]
-            results.extend([("nonzero exit", (good, b"", 7)), ("stderr", (good, b"unexpected\n", 0))])
-            for label, result in results:
+            responses = [(label, (raw, b"", 0)) for label, raw in bad.items()]
+            responses.extend([("nonzero exit", (good, b"", 7)), ("stderr", (good, b"unexpected\n", 0))])
+            for label, response in responses:
                 with self.subTest(package=package, case=label):
-                    commands = Mock(deadline=1000.0)
-                    commands.run.return_value = result
+                    commands, result = Mock(deadline=1000.0), {}
+                    commands.run.return_value = response
                     with patch.object(pilot.time, "monotonic", return_value=0.0):
                         with self.assertRaises((RuntimeError, UnicodeError)):
-                            runner(commands, ["user"], "/payload.test", cases)
+                            pilot.run_profile(commands, ["user"], selected, {}, result)
                     commands.run.assert_called_once()
+                    self.assertNotIn(selected.phases[0].result_path[0], result)
 
     def test_custom_admission_and_both_fixed_commands(self):
-        for cases in (None, self.suites["custom"]):
-            with self.subTest(supplement=cases is not None):
-                commands = Mock(deadline=200.0)
-                commands.run.return_value = (passing_output() if cases is None else self.output(cases), b"", 0)
+        for supplement in (False, True):
+            label = "custom-contracts" if supplement else "pager"
+            plan = only_phase(resolved_legacy_plan(command_contracts=supplement), label)
+            cases = self.suites["custom"] if supplement else None
+            commands = Mock(deadline=200.0)
+            commands.run.return_value = (self.output(cases) if supplement else passing_output()), b"", 0
+            with self.subTest(supplement=supplement):
                 with patch.object(pilot.time, "monotonic", return_value=130.001):
                     with self.assertRaisesRegex(RuntimeError, "Insufficient work time"):
-                        pilot.run_custom_suite(commands, ["user"], "/custom.test", cases)
+                        pilot.run_profile(commands, ["user"], plan, {}, {})
                 commands.run.assert_not_called()
+                result = {}
                 with patch.object(pilot.time, "monotonic", return_value=130.0):
-                    names = pilot.run_custom_suite(commands, ["user"], "/custom.test", cases)
-                selector = "^" + pilot.ROOT + "$" if cases is None else "^(" + "|".join(cases) + ")$"
-                commands.run.assert_called_once_with("pager" if cases is None else "custom-contracts",
-                    ["user", "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "60s", "/custom.test",
-                     "-test.run=" + selector, "-test.timeout=45s", "-test.v"], 70)
-                self.assertEqual(names, pilot.TESTS if cases is None else self.names(cases))
+                    pilot.run_profile(commands, ["user"], plan, {}, result)
+                selector = "^(" + "|".join(cases) + ")$" if supplement else "^" + pilot.ROOT + "$"
+                commands.run.assert_called_once_with(label, [
+                    "user", "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "60s",
+                    "/home/cli-compat/payload/custom.test", "-test.run=" + selector, "-test.timeout=45s", "-test.v"], 70)
+                self.assertEqual(set(result["tests"]), self.names(cases) if supplement else pilot.TESTS)
 
     def test_process_supplement_preserves_full_admission_and_command(self):
         cases = self.suites["process"]
+        plan = only_phase(resolved_legacy_plan(command_contracts=True), "process-contracts")
         commands = Mock(deadline=200.0)
-        commands.run.return_value = (self.output(cases), b"", 0)
+        commands.run.return_value = self.output(cases), b"", 0
+        hashes = {"process.test": "a" * 64}
         with patch.object(pilot.time, "monotonic", return_value=30.001):
             with self.assertRaisesRegex(RuntimeError, "Insufficient work time"):
-                pilot.run_process_suite(commands, ["user"], "/process.test", cases)
+                pilot.run_profile(commands, ["user"], plan, hashes, {})
         commands.run.assert_not_called()
-        with patch.object(pilot.time, "monotonic", return_value=30.0):
-            self.assertEqual(pilot.run_process_suite(commands, ["user"], "/process.test", cases), self.names(cases))
-        commands.run.assert_called_once_with("process-contracts",
-            ["user", "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "160s", "/process.test",
-             "-test.run=^(" + "|".join(cases) + ")$", "-test.timeout=150s", "-test.v"], 170)
+        result = {}
+        with patch.object(pilot.time, "monotonic", return_value=30.0), \
+                patch.object(pilot, "digest", return_value="a" * 64):
+            pilot.run_profile(commands, ["user"], plan, hashes, result)
+        self.assertEqual(set(result["process_tests"]), self.names(cases))
+        commands.run.assert_called_once_with("process-contracts", [
+            "user", "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "160s",
+            "/home/cli-compat/payload/process.test", "-test.run=^(" + "|".join(cases) + ")$",
+            "-test.timeout=150s", "-test.v"], 170)
 
     def test_cli_rejects_missing_payloads_and_unknown_flags(self):
         for argv in (["--command-contracts"], ["--command-contracts", "--binary", "custom.test"],
@@ -525,6 +544,7 @@ class CommandContractTests(unittest.TestCase):
                       "--app-binary", "app.test"], ["--unknown"]):
             with self.subTest(argv=argv):
                 with patch.object(pilot.sys, "argv", ["check-wsl-pager.py", *argv]), \
+                        patch.object(pilot.signal, "signal"), \
                         patch.object(pilot.sys, "stderr", io.StringIO()), patch.object(pilot, "pilot") as run:
                     with self.assertRaises(SystemExit) as caught:
                         pilot.main()
@@ -532,42 +552,51 @@ class CommandContractTests(unittest.TestCase):
                 run.assert_not_called()
 
     def test_cli_preserves_profile_and_cleanup_flags(self):
-        for argv, expected in (
+        for argv, selection, cleanup, payloads in (
             (["--command-contracts", "--binary", "custom.test", "--process-binary", "process.test",
               "--app-binary", "app.test", "--images-binary", "images.test"],
-             (Path("custom.test"), False, Path("process.test"), True, Path("app.test"), Path("images.test"))),
-            (["--cleanup", "--command-contracts"], (None, True, None, True, None, None)),
-            (["--binary", "custom.test"], (Path("custom.test"), False, None, False, None, None)),
+             "command-contracts", False, {"custom.test", "process.test", "app.test", "images.test"}),
+            (["--cleanup", "--command-contracts"], "command-contracts", True, set()),
+            (["--binary", "custom.test"], "pager-and-process", False, {"custom.test"}),
         ):
-            calls = []
+            with self.subTest(argv=argv), \
+                    patch.object(pilot.sys, "argv", ["check-wsl-pager.py", *argv]), \
+                    patch.object(pilot.signal, "signal"), \
+                    patch.object(pilot, "resolve_profile", wraps=pilot.resolve_profile) as resolve, \
+                    patch.object(pilot, "pilot", return_value=0) as run:
+                self.assertEqual(pilot.main(), 0)
+            resolve.assert_called_once()
+            run.assert_called_once()
+            self.assertEqual(run.call_args.kwargs, {})
+            self.assertEqual(len(run.call_args.args), 1)
+            plan = run.call_args.args[0]
+            self.assertEqual(plan.selection, selection)
+            self.assertIs(plan.cleanup_only, cleanup)
+            self.assertEqual({payload.filename for payload in plan.payloads}, payloads)
 
-            def run(binary, cleanup_only=False, process_binary=None, command_contracts=False, app_binary=None, images_binary=None):
-                calls.append((binary, cleanup_only, process_binary, command_contracts, app_binary, images_binary))
-                return 0
-
-            with self.subTest(argv=argv):
-                with patch.object(pilot.sys, "argv", ["check-wsl-pager.py", *argv]), \
-                        patch.object(pilot.signal, "signal"), patch.object(pilot, "pilot", side_effect=run):
-                    self.assertEqual(pilot.main(), 0)
-                self.assertEqual(calls, [expected])
-
-    def test_direct_pilot_requires_all_payloads_before_preparation(self):
+    def test_resolver_requires_all_payloads_before_preparation(self):
         for binary, process_binary in ((None, None), (Path("custom.test"), None), (None, Path("process.test")),
                                        (Path("custom.test"), Path("process.test"))):
             with self.subTest(binary=binary, process=process_binary):
                 with patch.object(pilot, "load_command_cases") as load, \
                         patch.object(pilot, "require_native_windows_process") as native:
                     with self.assertRaisesRegex(RuntimeError, "all four test binaries"):
-                        pilot.pilot(binary, process_binary=process_binary, command_contracts=True)
+                        pilot.resolve_profile(binary, process_binary=process_binary, command_contracts=True)
                 load.assert_not_called()
                 native.assert_not_called()
 
     def test_pilot_routes_only_the_fixed_supplement(self):
+        outputs = {package + "-contracts": self.output(cases) for package, cases in self.suites.items()}
         class FakeCommands:
-            records = []
             deadline = 1000.0
 
-            def run(self, label, *_args, **_kwargs):
+            def __init__(self):
+                self.records, self.calls = [], []
+
+            def run(self, label, *args, **_kwargs):
+                self.calls.append((label, *args))
+                if label in outputs:
+                    return outputs[label], b"", 0
                 replies = {
                     "source": (b"source\ntree\n", b"", 0),
                     "source-final": (b"source\ntree\n", b"", 0),
@@ -588,10 +617,8 @@ class CommandContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory)
             custom, process, app, images = (parent / name for name in ("custom.test", "process.test", "app.test", "images.test"))
-            custom.write_bytes(b"synthetic")
-            process.write_bytes(b"synthetic")
-            app.write_bytes(b"synthetic")
-            images.write_bytes(b"synthetic")
+            for path in (custom, process, app, images):
+                path.write_bytes(b"synthetic")
             owned = parent / "owned"
             commands = FakeCommands()
             custom_names = self.names(self.suites["custom"])
@@ -609,20 +636,20 @@ class CommandContractTests(unittest.TestCase):
                     patch.object(pilot.shutil, "disk_usage", return_value=Mock(free=6 * 1024**3)), \
                     patch.object(pilot, "download_image", return_value=0), \
                     patch.object(pilot, "copy_payload") as copy, patch.object(pilot, "clean_distro"), \
-                    patch.object(pilot, "run_custom_suite", side_effect=[custom_names, images_names, app_names]) as run_custom, \
-                    patch.object(pilot, "run_process_suite", return_value=process_names) as run_process, \
                     patch.dict(os.environ, {"SYSTEMROOT": str(parent / "windows")}):
-                self.assertEqual(pilot.pilot(custom, process_binary=process, command_contracts=True, app_binary=app, images_binary=images), 0)
+                plan = pilot.resolve_profile(custom, process_binary=process, command_contracts=True,
+                                             app_binary=app, images_binary=images)
+                self.assertEqual(pilot.pilot(plan), 0)
             load.assert_called_once_with()
-            self.assertEqual(run_custom.call_count, 3)
-            run_process.assert_called_once()
-            self.assertEqual(run_custom.call_args_list[0].args[2:], ("/home/cli-compat/payload/custom.test", self.suites["custom"]))
-            self.assertEqual(run_process.call_args.args[2:], ("/home/cli-compat/payload/process.test", self.suites["process"]))
-            self.assertEqual(run_custom.call_args_list[2].args[2:], ("/home/cli-compat/payload/app.test", self.suites["app"]))
-            self.assertEqual(run_custom.call_args_list[2].kwargs, {"label": "app-contracts"})
+            phases = [call for call in commands.calls if call[0] in outputs]
+            self.assertEqual([call[0] for call in phases],
+                             ["custom-contracts", "process-contracts", "images-contracts", "app-contracts"])
+            self.assertEqual([call[2] for call in phases], [70, 170, 70, 70])
+            for call, payload in zip(phases, ("custom", "process", "images", "app")):
+                self.assertIn("/home/cli-compat/payload/" + payload + ".test", call[1])
+            self.assertEqual(copy.call_args_list[0].args[3:], (custom.resolve(), "/home/cli-compat/payload/custom.test", "b" * 64, ""))
+            self.assertEqual(copy.call_args_list[1].args[3:], (process.resolve(), "/home/cli-compat/payload/process.test", "b" * 64, "process-"))
             self.assertEqual(copy.call_args_list[2].args[3:], (app.resolve(), "/home/cli-compat/payload/app.test", "b" * 64, "app-"))
-            self.assertEqual(run_custom.call_args_list[1].args[2:], ("/home/cli-compat/payload/images.test", self.suites["images"]))
-            self.assertEqual(run_custom.call_args_list[1].kwargs, {"label": "images-contracts"})
             self.assertEqual(copy.call_args_list[3].args[3:], (images.resolve(), "/home/cli-compat/payload/images.test", "b" * 64, "images-"))
             result = json.loads((owned / "result.json").read_text())
             self.assertEqual(result["images_tests"], sorted(images_names))
@@ -646,9 +673,10 @@ class CommandContractTests(unittest.TestCase):
                     patch.object(pilot.time, "monotonic", return_value=0.0), \
                     patch.object(pilot, "Commands", return_value=commands), \
                     patch.object(pilot, "load_command_cases", side_effect=FileNotFoundError("missing inventory")) as load, \
+                    patch.object(pilot, "load_shell_receipts", side_effect=AssertionError("receipt helper loaded")), \
                     patch.object(pilot, "clean_distro") as clean, \
                     patch.dict(os.environ, {"SYSTEMROOT": str(path / "windows")}):
-                self.assertEqual(pilot.pilot(None, cleanup_only=True, command_contracts=True), 0)
+                self.assertEqual(pilot.pilot(pilot.resolve_profile(cleanup_only=True, command_contracts=True)), 0)
             load.assert_not_called()
             commands.run.assert_not_called()
             commands.finish.assert_called_once()
@@ -994,7 +1022,7 @@ class LifecycleTests(unittest.TestCase):
                 patch.object(pilot, "write_json", side_effect=late_write), \
                 patch.dict(os.environ, {"SYSTEMROOT": "/synthetic-windows"}), \
                 patch.object(pilot.subprocess, "Popen", side_effect=AssertionError("No process may start")):
-            self.assertEqual(pilot.pilot(None, cleanup_only=True), 1)
+            self.assertEqual(pilot.pilot(pilot.resolve_profile(cleanup_only=True)), 1)
 
 
 if __name__ == "__main__":
