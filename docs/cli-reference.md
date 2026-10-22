@@ -178,4 +178,3 @@ Checks respect `HTTPS_PROXY` and `NO_PROXY`, including their lowercase forms.
 Update discovery waits at most 200 milliseconds. Failed checks remain silent.
 Package-manager availability can lag a new GitHub release.
 Set `OPENAI_CLI_NO_UPDATE_CHECK=1` to disable checks and notices.
-

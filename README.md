@@ -1,7 +1,7 @@
 <div align="center">
   <h1>OpenAI CLI</h1>
 
-  <p>The official command-line tool for the OpenAI API.</p>
+  <p>The official command-line tool for the OpenAI REST API.</p>
 
   <p>
     <a href="#installation"><strong>Install</strong></a>
@@ -16,7 +16,7 @@
   <img src="./assets/openai-cli.png" alt="OpenAI CLI terminal showing commands for images, files, batches, and JSON output" width="80%">
 </p>
 
-Call the OpenAI API from your terminal or shell scripts. Generate images, upload
+Call the OpenAI REST API from your terminal or shell scripts. Generate images, upload
 files, submit batches, and inspect API results without writing an application.
 
 > [!NOTE]
