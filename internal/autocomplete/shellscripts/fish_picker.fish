@@ -10,6 +10,11 @@ if set -q __openai_picker_modes
     return
 end
 
+function ____APPNAME___picker_command_available
+    test "$(type --type __APPNAME__ 2>/dev/null)" = file; and return 0
+    functions -q ____APPNAME___suggestions_owns_command; and ____APPNAME___suggestions_owns_command
+end
+
 function openai_picker_disable
     if not set -q __openai_picker_modes
         return
@@ -93,10 +98,17 @@ for mode in default insert
         # command substitution would also trim newlines in the editor buffer.
         set -l buffer (commandline --current-buffer | string collect --no-trim-newlines)
         set -l app (string escape --style=regex -- '__APPNAME__')
-        if test "$$active_name" = 1; and isatty stdin; and isatty stdout; and isatty stderr; and test "$TERM" != dumb; and test (commandline --cursor) -eq (math (string length -- "$buffer") - 1); and string match --quiet --regex -- "\\A[ \\t]*"$app"[ \\t]+images[ \\t]+generate[ \\t]*\\n\\z" "$buffer"; and test "$(type --type __APPNAME__ 2>/dev/null)" = file__FISH_PICKER_COMMAND_GUARD__
+        if test "$$active_name" = 1; and isatty stdin; and isatty stdout; and isatty stderr; and test "$TERM" != dumb; and test (commandline --cursor) -eq (math (string length -- "$buffer") - 1); and string match --quiet --regex -- "\\A[ \\t]*"$app"[ \\t]+images[ \\t]+generate[ \\t]*\\n\\z" "$buffer"; and ____APPNAME___picker_command_available__FISH_PICKER_COMMAND_GUARD__
             # The current command resolves to an external executable.
             printf '\n'
-            env OPENAI_PICKER_SHELL=fish __APPNAME__ images generate
+            if functions -q ____APPNAME___suggestions_owns_command; and ____APPNAME___suggestions_owns_command
+                begin
+                    set -lx OPENAI_PICKER_SHELL fish
+                    ____APPNAME___suggestions_run images generate
+                end
+            else
+                env OPENAI_PICKER_SHELL=fish __APPNAME__ images generate
+            end
             commandline --function repaint
             return
         end

@@ -111,7 +111,7 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 		}
 		targets, err := imagePickerShellTarget(ctx, shell, command.Bool("automatic"), command.String("profile"))
 		if err != nil {
-			return imageSavingFailure("Could not choose a supported shell startup file. Use openai @completion SHELL --install-picker with an explicit shell and --profile PATH when needed.", err)
+			return imageSavingFailure("Could not choose a supported shell startup file. Use openai @completion SHELL --install-picker with an explicit shell and --profile PATH when needed.", err, "openai @completion SHELL --install-picker")
 		}
 		if len(targets) == 0 {
 			return nil

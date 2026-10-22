@@ -9,6 +9,7 @@ import (
 	"os"
 
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
+	"github.com/openai/openai-cli/internal/commandsuggest"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/urfave/cli/v3"
@@ -37,6 +38,8 @@ func Run(ctx context.Context, argv []string, app *cli.Command) int {
 		return 0
 	}
 	ConfigureCommand(app)
+	finishSuggestions := commandsuggest.Configure(app)
+	defer finishSuggestions()
 	app.Flags = append(app.Flags, requestconfig.NewRequestHeaderFlag())
 
 	completing := len(argv) > 1 && argv[1] == "__complete"

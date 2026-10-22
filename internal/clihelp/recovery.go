@@ -1,6 +1,7 @@
 package clihelp
 
 import (
+	"io"
 	"slices"
 	"strings"
 
@@ -10,7 +11,7 @@ import (
 
 // RecoveryMessage uses parsed positions, never the diagnostic text or
 // original argv. The parser has already removed recognized flags and values.
-func RecoveryMessage(command *cli.Command) string {
+func RecoveryMessage(command *cli.Command, output ...io.Writer) string {
 	if command != nil {
 		command = command.Root()
 	}
@@ -24,15 +25,15 @@ func RecoveryMessage(command *cli.Command) string {
 		if cli.HelpFlag != nil {
 			helpRequested = slices.ContainsFunc(cli.HelpFlag.Names(), command.Bool)
 		}
-		return RecoveryAt(command, name, command.Args().Tail(), helpRequested)
+		return RecoveryAt(command, name, command.Args().Tail(), helpRequested, output...)
 	}
-	return RecoveryAt(command, "", nil, false)
+	return RecoveryAt(command, "", nil, false, output...)
 }
 
 // RecoveryAt emits help for declared command names. A corrected group
 // can retain an exact descendant path, but never an operand or an option value.
 // Running the original operation requires keeping its private request context.
-func RecoveryAt(command *cli.Command, name string, remaining []string, helpRequested bool) string {
+func RecoveryAt(command *cli.Command, name string, remaining []string, helpRequested bool, output ...io.Writer) string {
 	message := "Unknown command."
 	if helpRequested {
 		message = "Unknown help topic."
@@ -65,7 +66,7 @@ func RecoveryAt(command *cli.Command, name string, remaining []string, helpReque
 			if len(path) > 0 {
 				invocation += " " + strings.Join(path, " ")
 			}
-			message += " Did you mean: " + invocation + "?"
+			message += " Did you mean: " + SuggestedCommandPath(target, output, invocation) + "?"
 			if !helpRequested {
 				message += "\nTo run it, correct only the command spelling. Keep your original options and arguments."
 			}
@@ -76,7 +77,7 @@ func RecoveryAt(command *cli.Command, name string, remaining []string, helpReque
 	if path := command.Path(); len(path) > 1 {
 		invocation += " " + strings.Join(path[1:], " ")
 	}
-	return message + " Run " + invocation + " to see commands."
+	return message + " Run " + SuggestedCommandPath(command, output, invocation) + " to see commands."
 }
 
 func recoveryCommandVisible(command *cli.Command) bool {

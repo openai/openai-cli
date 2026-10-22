@@ -103,6 +103,8 @@ func TestImagePickerFirstRunEligibility(t *testing.T) {
 		{"completion generation", []string{"openai", "@completion", "zsh"}, nil, [3]bool{true, true, true}, false},
 		{"completion global flag", []string{"openai", "--format", "text", "@completion", "zsh"}, nil, [3]bool{true, true, true}, false},
 		{"manual generation", []string{"openai", "@manpages"}, nil, [3]bool{true, true, true}, false},
+		{"local command search", []string{"openai", "explore"}, nil, [3]bool{true, true, true}, false},
+		{"local command search global flag", []string{"openai", "--format", "text", "explore"}, nil, [3]bool{true, true, true}, false},
 		{"Tab key invocation", []string{"openai", "images", "generate"}, map[string]string{"OPENAI_PICKER_SHELL": "pwsh"}, [3]bool{true, true, true}, false},
 		{"active integration can need an upgrade", []string{"openai", "--help"}, map[string]string{"OPENAI_PICKER_INTEGRATION": "zsh"}, [3]bool{true, true, true}, true},
 		{"inherited other shell integration", []string{"openai", "--help"}, map[string]string{"OPENAI_PICKER_INTEGRATION": "fish"}, [3]bool{true, true, true}, true},

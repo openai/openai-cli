@@ -110,6 +110,46 @@ essential.
   control protected release credentials, trusted workflow code from `main`, or
   repository settings unless a workflow crosses that boundary.
 
+### Suggested command insertion
+
+Command insertion accepts only snippets explicitly registered by CLI presenters.
+It does not discover commands in API responses, model text, or arbitrary terminal output.
+Readable presenters escape external text before adding trusted command links.
+Structured and redirected output retain their existing formats.
+Navigation suggestions come from displayed command definitions, using conservative shell-safe command names.
+Typed help examples render and register together; new command-tree entries need no separate shell catalog.
+
+Persistent keyboard setup requires an explicit install action.
+It reuses the profile transaction engine with separate command-insertion markers and cleanup ownership.
+Shared profile locks preserve concurrent image-picker and insertion changes.
+Managed loaders retain the logical executable path selected during installation, including package-manager symlinks.
+Startup requires that PATH still resolves to that installation's current file.
+The loader evaluates only successful, complete integration output carrying the supported completion marker.
+It never evaluates suggested commands or falls back to another executable.
+Insertion-only generation preserves ordinary completion functions and settings.
+Binary updates supply new suggestions immediately; a new shell refreshes integration code without reinstalling setup.
+Setup errors preserve their causes while presenting fixed messages without private paths.
+
+The optional Kitty adapter sends identifiers through a private local FIFO.
+Links contain no command text, arguments, or executable paths.
+The adapter validates the opened directory, readiness record, FIFO, and source Kitty window.
+The zsh editor independently validates the session owner, generation, editor epoch, context, directory, and command index.
+It rejects busy shells and expired links.
+Only the active editor changes its input buffer; the adapter never writes terminal input or submits a command.
+Ordinary Enter input still follows the shell's execution rules.
+
+The supported click path is an explicitly configured, local Kitty session with zsh.
+SSH and terminal multiplexers retain keyboard insertion only.
+Click-script generation does not modify shell profiles or terminal configuration.
+Persistent keyboard setup does not install the experimental mouse adapter.
+Private session files contain identifiers, while the shell holds the command text in memory.
+Normal disable and shell exit remove owned session files.
+An abrupt process kill can leave a private directory, but its readiness record cannot activate a missing editor.
+See [command insertion](../command-insertion.md),
+[command registration](../../internal/commandsuggest/suggestions.go),
+[Kitty adapter](../../internal/autocomplete/shellscripts/kitty_command_insertion.py), and
+[zsh editor integration](../../internal/autocomplete/shellscripts/zsh_command_insertion_click.zsh).
+
 ### Repository-code authority
 
 Reviewed, checked-in source, generated code, examples, tests, executable

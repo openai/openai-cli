@@ -6,9 +6,15 @@ if [[ -z ${ZSH_VERSION-} || ! -o interactive ]]; then
     return 0
 fi
 # A hashed command can retain its classification after its file disappears.
-if [[ $(builtin whence -w '__APPNAME__') != '__APPNAME__: command' &&
-      $(builtin whence -w '__APPNAME__') != '__APPNAME__: hashed' ]] ||
-   [[ ! -f $(builtin whence '__APPNAME__') || ! -x $(builtin whence '__APPNAME__') ]]; then
+# Accept only the separately enabled insertion wrapper's unchanged definition.
+# Looking up its external executable never executes the wrapper or request data.
+if ! { { [[ $(builtin whence -w '__APPNAME__') == '__APPNAME__: command' ||
+            $(builtin whence -w '__APPNAME__') == '__APPNAME__: hashed' ]] &&
+         [[ -f $(builtin whence '__APPNAME__') && -x $(builtin whence '__APPNAME__') ]]; } ||
+       [[ $(builtin whence -w '__APPNAME__') == '__APPNAME__: function' &&
+          ${____APPNAME___suggestions_enabled-} == 1 && -n ${____APPNAME___suggestions_wrapper_body-} &&
+          ${functions[__APPNAME__]-} == "$____APPNAME___suggestions_wrapper_body" &&
+          -f $(builtin whence -p '__APPNAME__') && -x $(builtin whence -p '__APPNAME__') ]]; }; then
     builtin printf '%s\n' 'Executable suggestions require __APPNAME__ on PATH. No suggestion hook was installed.' >&2
     if (( __openai_suggestions_zsh_source_trace )); then builtin unset __openai_suggestions_zsh_source_trace; builtin set -x; else builtin unset __openai_suggestions_zsh_source_trace; fi
     return 2
@@ -64,9 +70,13 @@ function command_not_found_handler {
     local __openai_suggestions_target
     if [[ ${__openai_suggestions_zsh_state-} == active ]] &&
        "__openai_suggestions_zsh_match" "${1-}" &&
-       [[ $(builtin whence -w '__APPNAME__') == '__APPNAME__: command' ||
-          $(builtin whence -w '__APPNAME__') == '__APPNAME__: hashed' ]] &&
-       __openai_suggestions_target=$(builtin whence '__APPNAME__') &&
+       { { [[ $(builtin whence -w '__APPNAME__') == '__APPNAME__: command' ||
+              $(builtin whence -w '__APPNAME__') == '__APPNAME__: hashed' ]] &&
+           __openai_suggestions_target=$(builtin whence '__APPNAME__'); } ||
+         { [[ $(builtin whence -w '__APPNAME__') == '__APPNAME__: function' &&
+              ${____APPNAME___suggestions_enabled-} == 1 && -n ${____APPNAME___suggestions_wrapper_body-} &&
+              ${functions[__APPNAME__]-} == "$____APPNAME___suggestions_wrapper_body" ]] &&
+           __openai_suggestions_target=$(builtin whence -p '__APPNAME__'); }; } &&
        [[ -f $__openai_suggestions_target && -x $__openai_suggestions_target ]]; then
         builtin printf '%s\n' 'Command not found. Did you mean: __APPNAME__?' \
             'Keep the remaining arguments unchanged.' >&2

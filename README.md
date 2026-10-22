@@ -103,6 +103,10 @@ Tab completion follows the same group order and supports help topics and file in
 After upgrading, [reload shell completion](docs/shell-completion.md) to enable the new file-path behavior.
 Older loaded completion scripts keep their previous behavior until refreshed.
 
+Enable [command insertion](docs/command-insertion.md) to fill your command line
+from examples, setup guidance, and recovery commands. Ctrl+X, then Tab searches suggestions
+without running them. Double Tab is an optional binding for Bash, zsh, and fish.
+
 Successful JSON responses print readable text by default, including in pipes.
 Use `--format json` or `--format jsonl` in scripts that parse API data.
 See [reading command results](docs/readable-output.md) for extraction, binary

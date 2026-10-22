@@ -24,12 +24,12 @@ Press q or Escape to close it. The live view does not remain in scrollback.
 `
 
 const imagePreviewHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}View a saved image
-  {{$bin}} images preview "photo.png"
+  {{suggest . (printf "%s images preview \"photo.png\"" $bin)}}
 
 Replace photo.png with your saved image's path.
 No API call or key needed. Keeps your original.
 
-Command help: {{$bin}} images preview --help
+Command help: {{suggest . (printf "%s images preview --help" $bin)}}
 `
 
 // RegisterPreview installs local previews and inline preference commands.
@@ -47,7 +47,7 @@ func RegisterPreview(root *cli.Command, opts PreviewOptions) {
 		inline = &cli.Command{Name: "inline", Usage: "Turn automatic image previews on or off."}
 		images.Commands = append(images.Commands, inline)
 	}
-	for _, command := range imageInlinePreferenceCommands(opts.Receipt) {
+	for _, command := range imageInlinePreferenceCommands(opts.Receipt, opts.SuggestedReceipt) {
 		if inline.Command(command.Name) == nil {
 			inline.Commands = append(inline.Commands, command)
 		}
@@ -56,7 +56,7 @@ func RegisterPreview(root *cli.Command, opts PreviewOptions) {
 
 func handleImagesPreview(ctx context.Context, command *cli.Command, opts PreviewOptions) (resultErr error) {
 	if command.Args().Len() != 1 {
-		return imageSavingFailure("Provide one saved image: openai images preview \"path/to/image.png\". Quote filenames containing spaces.", nil)
+		return imageSavingFailure("Provide one saved image: openai images preview \"path/to/image.png\". Quote filenames containing spaces.", nil, `openai images preview "path/to/image.png"`)
 	}
 	if err := validateLocalImageOutput(command); err != nil {
 		return err
