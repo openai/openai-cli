@@ -266,6 +266,115 @@ func TestCompanionStopBeforeSubscriptionAllowsImmediateRetry(t *testing.T) {
 	}
 }
 
+func TestCompanionStartHeaderAllowsCancelWithoutReadingBody(t *testing.T) {
+	sessions := make(chan *fakeSession, 3)
+	c, _ := testCompanion(t, func(context.Context, Config) (Session, error) {
+		session := newFakeSession()
+		sessions <- session
+		return session, nil
+	})
+	previousID := ""
+	for attempt := 0; attempt < 3; attempt++ {
+		response := call(t, c, http.MethodPost, "/start", strings.NewReader(`{"language":"en"}`))
+		id := response.Header.Get("X-OpenAI-Audio-Session")
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK || id == "" {
+			t.Fatalf("start status %d, session header present: %t", response.StatusCode, id != "")
+		}
+		session := <-sessions
+		if previousID != "" {
+			if id == previousID {
+				t.Fatal("start reused a previous session identity")
+			}
+			response = call(t, c, http.MethodPost, "/stop?id="+previousID, nil)
+			response.Body.Close()
+			select {
+			case <-session.closed:
+				t.Fatal("old header identity stopped the replacement")
+			default:
+			}
+		}
+		response = call(t, c, http.MethodPost, "/stop?id="+id, nil)
+		response.Body.Close()
+		if response.StatusCode != http.StatusNoContent {
+			t.Fatalf("stop status %d", response.StatusCode)
+		}
+		select {
+		case <-session.closed:
+		default:
+			t.Fatal("stop acknowledged before releasing the session")
+		}
+		previousID = id
+	}
+}
+
+func TestCompanionStartHeaderMatchesBodyAndErrorsOmitIdentity(t *testing.T) {
+	c, _ := testCompanion(t, func(context.Context, Config) (Session, error) { return newFakeSession(), nil })
+	response := call(t, c, http.MethodPost, "/start", strings.NewReader(`{"language":"en"}`))
+	defer response.Body.Close()
+	var body struct{ ID string }
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ID == "" || response.Header.Get("X-OpenAI-Audio-Session") != body.ID {
+		t.Fatal("start header and body identities differ")
+	}
+	for _, config := range []string{`{"language":"en"}`, `{}`} {
+		failed := call(t, c, http.MethodPost, "/start", strings.NewReader(config))
+		failed.Body.Close()
+		if failed.StatusCode < 400 || failed.Header.Get("X-OpenAI-Audio-Session") != "" {
+			t.Fatal("failed start exposed another session's identity")
+		}
+	}
+}
+
+func TestCompanionStartHandshakeDisconnectReleasesOpeningBeforeRetry(t *testing.T) {
+	entered := make(chan struct{})
+	first := newFakeSession()
+	var calls atomic.Int32
+	c, _ := testCompanion(t, func(ctx context.Context, _ Config) (Session, error) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-ctx.Done()
+			return first, nil
+		}
+		return newFakeSession(), nil
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.origin+"/start", strings.NewReader(`{"language":"en"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Origin", c.origin)
+	request.Header.Set("X-OpenAI-Audio", c.token)
+	done := make(chan error, 1)
+	go func() {
+		response, err := http.DefaultClient.Do(request)
+		if response != nil {
+			response.Body.Close()
+		}
+		done <- err
+	}()
+	<-entered
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("start request cancellation: %v", err)
+	}
+	released := make(chan struct{})
+	go func() { c.workers.Wait(); close(released) }()
+	select {
+	case <-released:
+	case <-time.After(3 * time.Second):
+		t.Fatal("disconnected handshake retained an opening session")
+	}
+	select {
+	case <-first.closed:
+	default:
+		t.Fatal("disconnected handshake did not abort its late session")
+	}
+	startCapture(t, c)
+}
+
 func TestCompanionRetainsEarlyAPIErrorsUntilBrowserSubscribes(t *testing.T) {
 	session := newFakeSession()
 	session.events <- Event{Type: "error", Message: "Your project cannot start live translation."}

@@ -23,12 +23,12 @@
   }
   function setState(value) {
     state = value;
-    const busy = value === 'starting' || value === 'running' || value === 'finishing';
+    const busy = value === 'starting' || value === 'canceling' || value === 'running' || value === 'finishing';
     for (const id of controls) $(id).disabled = busy;
     $('start').textContent = value === 'starting' ? 'Cancel' : value === 'running' ? 'Stop session' : value === 'finishing' ? 'Stop now' : 'Start session';
-    $('start').disabled = !token;
+    $('start').disabled = !token || value === 'canceling' || value === 'disconnected';
     $('mute').hidden = value !== 'running';
-    $('clear').disabled = busy;
+    $('clear').disabled = busy || value === 'disconnected';
   }
   async function devices() {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -46,7 +46,7 @@
   function updateSource() {
     const tab = $('source').value === 'tab';
     $('tab-hint').hidden = !tab;
-    $('microphone').disabled = tab || state === 'starting' || state === 'running' || state === 'finishing';
+    $('microphone').disabled = tab || state === 'starting' || state === 'canceling' || state === 'running' || state === 'finishing';
   }
   async function stopOutput() {
     const context = outputContext;
@@ -128,7 +128,16 @@
       if (current !== run) { releaseCapture(run); return; }
       status('Connecting');
       const response = await request('/start',{method:'POST',signal:run.controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({language:$('language').value,noise_reduction:$('noise').checked})});
-      run.id = (await response.json()).id;
+      // Acquire the identity before awaiting the response body so Cancel can release it.
+      run.id = response.headers.get('X-OpenAI-Audio-Session');
+      if (!run.id) {
+        run.cleanupUnconfirmed = true;
+        throw new Error('The local translation page could not finish connecting. Reopen live translation from the CLI.');
+      }
+      if (current !== run) { releaseCapture(run); request(endpoint('/stop',run.id),{method:'POST'}).catch(() => {}); return; }
+      let accepted;
+      try { accepted = await response.json(); } catch (_) { throw new Error('The local translation page could not finish connecting. Start a new session.'); }
+      if (accepted?.id !== run.id) throw new Error('The local translation page could not finish connecting. Start a new session.');
       if (current !== run) { releaseCapture(run); request(endpoint('/stop',run.id),{method:'POST'}).catch(() => {}); return; }
       resetRecording(false); run.replaced = true;
       outputContext = playback; outputGain = gain;
@@ -270,7 +279,11 @@
     const run = current;
     if (!run) return;
     if (state === 'starting') {
-      current = null; generation++; run.controller.abort(); releaseCapture(run); restoreRecording(run); await stopOutput();
+      setState('canceling'); status('Canceling connection');
+      current = null; generation++; run.controller.abort(); releaseCapture(run); restoreRecording(run);
+      try { await cancelStarting(run); }
+      catch (error) { showError(error.message); setState('disconnected'); updateSource(); status('Stopped'); return; }
+      await stopOutput();
       setState('ready'); updateSource(); status('Ready'); return;
     }
     if (state !== 'running') return;
@@ -286,15 +299,33 @@
     } catch (error) { if (!run.closed) await fail(run,error); }
     finally { run.flushed = null; }
   }
+  async function cancelStarting(run) {
+    if (!run.id) return;
+    const controller = new AbortController();
+    try {
+      await waitForCapture({controller},request(endpoint('/stop',run.id),{method:'POST',signal:controller.signal}),2000,'');
+    } catch (_) {
+      throw new Error('Could not confirm that the connection stopped. Reopen live translation from the CLI.');
+    } finally { controller.abort(); }
+  }
   async function fail(run,error) {
     if (current !== run || run.failed) return;
+    const starting = state === 'starting';
     run.failed = true; releaseCapture(run);
-    if (run.id) request(endpoint('/stop',run.id),{method:'POST'}).catch(() => {});
     run.controller.abort();
+    let cleanupFailed = !!run.cleanupUnconfirmed;
+    if (starting) {
+      setState('canceling');
+      try { await cancelStarting(run); }
+      catch (cleanupError) { error = cleanupError; cleanupFailed = true; }
+      if (current !== run) return;
+      // Local audio cleanup may still be pending; Cancel can dismiss it once the session is released.
+      if (!cleanupFailed) setState('starting');
+    } else if (run.id) request(endpoint('/stop',run.id),{method:'POST'}).catch(() => {});
     if (!run.hasOutput) await stopOutput();
     if (current !== run) return;
     if (!restoreRecording(run)) { try { prepareRecording(); } catch (_) {} }
-    showError(error.message || 'Translation stopped. Start a new session.'); status('Stopped'); setState('ready'); updateSource();
+    showError(error.message || 'Translation stopped. Start a new session.'); status('Stopped'); setState(cleanupFailed ? 'disconnected' : 'ready'); updateSource();
   }
   function save(blob,extension) {
     const name = outputText.join('').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'-').replace(/^-|-$/g,'').split('-').slice(0,8).join('-') || 'translation';
@@ -342,7 +373,7 @@
     canvas.setAttribute('aria-valuenow',position.toFixed(2)); canvas.setAttribute('aria-valuemax',duration.toFixed(2));
     requestAnimationFrame(draw);
   }
-  $('start').onclick = () => state === 'finishing' ? fail(current,new Error('Translation stopped before completion. Received audio remains available.')) : state === 'starting' || state === 'running' ? stop() : start();
+  $('start').onclick = () => state === 'canceling' || state === 'disconnected' ? undefined : state === 'finishing' ? fail(current,new Error('Translation stopped before completion. Received audio remains available.')) : state === 'starting' || state === 'running' ? stop() : start();
   $('source').onchange = updateSource;
   $('listen').onchange = () => { if (outputGain) outputGain.gain.value = $('listen').checked ? 1 : 0; $('player').muted = !$('listen').checked; };
   $('output').onchange = async () => {
@@ -377,8 +408,15 @@
   $('playback').onclick = togglePlayback;
   $('download').onclick = () => { try { save(wavBlob(),'wav'); } catch (error) { showError(error.message); } };
   $('transcript').onclick = () => save(new Blob(['Original\n',originalText.join(''),'\n\nTranslation\n',outputText.join('')],{type:'text/plain;charset=utf-8'}),'txt');
-  $('clear').onclick = async () => { if (state === 'running' || state === 'starting' || state === 'finishing') return; current = null; await stopOutput(); resetRecording(); showError(''); status('Ready'); };
-  window.addEventListener('pagehide',() => { if (current) { current.controller.abort(); releaseCapture(current); } stopOutput().catch(() => {}); });
+  $('clear').onclick = async () => {
+    if (state === 'running' || state === 'starting' || state === 'canceling' || state === 'finishing' || state === 'disconnected') return;
+    const clearing = ++generation; current = null;
+    try { await stopOutput(); }
+    catch (_) { if (generation === clearing) showError('Could not finish clearing audio. Try Clear again.'); return; }
+    if (generation !== clearing) return;
+    resetRecording(); showError(''); status('Ready');
+  };
+  window.addEventListener('pagehide',() => { const run = current; current = null; if (run) { run.controller.abort(); releaseCapture(run); if (state === 'starting' && run.id) request(endpoint('/stop',run.id),{method:'POST',keepalive:true}).catch(() => {}); } stopOutput().catch(() => {}); });
   if (!token) showError('Open live translation from the CLI to connect this page.');
   setState('ready'); devices().catch(() => {}); draw();
 })();

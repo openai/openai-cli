@@ -267,6 +267,8 @@ func (c *companion) start(w http.ResponseWriter, r *http.Request) {
 	c.mu.Unlock()
 	go c.receive(active)
 	w.Header().Set("Content-Type", "application/json")
+	// The browser must know which capture to cancel before reading the body.
+	w.Header().Set("X-OpenAI-Audio-Session", active.id)
 	if err := json.NewEncoder(w).Encode(map[string]string{"id": active.id}); err != nil {
 		active.cancel()
 		session.Abort()

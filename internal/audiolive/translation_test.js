@@ -11,7 +11,7 @@ function page(options = {}) {
   const tracks = [{kind:'audio',enabled:true,stopped:false,stop(){this.stopped=true;},addEventListener(){}}];
   if (options.noTabAudio) tracks[0].kind = 'video';
   const stream = {getTracks:()=>tracks,getAudioTracks:()=>tracks.filter(track=>track.kind==='audio')};
-  let eventController, frame;
+  let eventController, frame, sessionNumber = 0;
   class Element {
     constructor(id) { this.id=id;this.value='';this.checked=true;this.hidden=false;this.disabled=false;this.options=[];this.children=[];this.currentTime=0;this.paused=true;this.clientWidth=500; }
     get textContent(){return this.children.map(child=>child.textContent).join('');}
@@ -54,10 +54,14 @@ function page(options = {}) {
     navigator:{mediaDevices:{enumerateDevices:async()=>[],getUserMedia:async()=>{calls.push({kind:'microphone'});if(options.permission)throw new DOMException('denied','NotAllowedError');return options.capture?options.capture:stream;},getDisplayMedia:async()=>{calls.push({kind:'tab'});return stream;}}},
     fetch:async(url,config)=>{
       calls.push({url,config});
-      if(url==='/start')return options.failStart ? new Response('Your API key was not accepted.',{status:401}) : new Response(JSON.stringify({id:'synthetic-session'}));
+      if(url==='/start') {
+        const id='synthetic-session-'+(++sessionNumber);
+        if(options.start)return options.start(id,config);
+        return options.failStart ? new Response('Your API key was not accepted.',{status:401}) : new Response(JSON.stringify({id}),{headers:{'X-OpenAI-Audio-Session':id}});
+      }
       if(url.startsWith('/events')){const eventStream=new ReadableStream({start(controller){eventController=controller;}});const controller=eventController;config.signal.addEventListener('abort',()=>{try{controller.error(new DOMException('aborted','AbortError'));}catch(_){}},{once:true});return new Response(eventStream);}
       if(url.startsWith('/input') && options.input)return options.input(url,config);
-      if(url.startsWith('/stop')){emit({type:'session.closed'});}
+      if(url.startsWith('/stop')){if(options.stop)return options.stop(url,config);if(eventController)emit({type:'session.closed'});}
       return new Response(null,{status:204});
     },
     URL:{createObjectURL(blob){if(options.recordingFail)throw new Error('Could not prepare the recording.');const id='blob:synthetic-'+blobs.size;blobs.set(id,blob);return id;},revokeObjectURL(){}},
@@ -71,6 +75,173 @@ function page(options = {}) {
   return {elements,calls,contexts,nodes,tracks,downloads,emit,timers,frame:()=>frame(),close:()=>context.pagehide?.()};
 }
 const settle = () => new Promise(resolve=>setImmediate(resolve));
+
+function startResponse(id, json) {
+  const response=new Response(JSON.stringify({id}),{headers:{'X-OpenAI-Audio-Session':id}});
+  if(json)response.json=json;
+  return response;
+}
+
+test('start cancellation waits for scoped cleanup while its JSON body is pending',{timeout:2000},async()=>{
+  let releaseJSON,releaseStop,bodyRead=false,active,firstID;
+  const options={start(id){active=id;firstID=id;return startResponse(id,()=>{bodyRead=true;return new Promise(resolve=>{releaseJSON=resolve;});});},
+    stop(url){assert.equal(url,'/stop?id='+firstID);return new Promise(resolve=>{releaseStop=()=>{active=null;resolve(new Response(null,{status:204}));};});}};
+  const p=page(options),opening=p.elements.get('start').onclick();await settle();
+  assert.equal(bodyRead,true);assert.equal(p.elements.get('status').textContent,'Connecting');
+  const canceling=p.elements.get('start').onclick();await settle();
+  assert.equal(p.elements.get('start').disabled,true);assert.equal(p.tracks[0].stopped,true);
+  assert.equal(p.calls.find(call=>call.url==='/start').config.signal.aborted,true);
+  assert.equal(typeof releaseStop,'function','Cancel must send a scoped stop before the JSON body resolves');
+  await p.elements.get('start').onclick();assert.equal(p.calls.filter(call=>call.url==='/start').length,1);
+  releaseStop();await canceling;assert.equal(active,null);assert.equal(p.elements.get('status').textContent,'Ready');
+  options.start=id=>{assert.equal(active,null);active=id;return startResponse(id);};
+  options.stop=url=>{if(url==='/stop?id='+active)active=null;return new Response(null,{status:204});};
+  await p.elements.get('start').onclick();const replacement=active;
+  assert.notEqual(replacement,firstID);assert.equal(p.elements.get('status').textContent,'Translating');
+  releaseJSON({id:firstID});await opening;await settle();
+  assert.equal(active,replacement);assert.equal(p.elements.get('status').textContent,'Translating');
+  assert.equal(p.elements.get('error').textContent,'');p.close();
+});
+
+for(const kind of ['malformed','rejected','missing-id','different-id','null']) {
+  test(`start cancellation releases a ${kind} JSON response before retry`,{timeout:2000},async()=>{
+    let releaseStop,active,firstID;
+    const options={start(id){active=id;firstID=id;return startResponse(id,async()=>{
+      if(kind==='malformed')return JSON.parse('{');
+      if(kind==='rejected')throw new Error('Synthetic body read failed');
+      return kind==='null'?null:kind==='missing-id'?{}:{id:'wrong-session'};
+    });},stop(url){assert.equal(url,'/stop?id='+firstID);return new Promise(resolve=>{releaseStop=()=>{active=null;resolve(new Response(null,{status:204}));};});}};
+    const p=page(options),opening=p.elements.get('start').onclick();await settle();
+    assert.equal(typeof releaseStop,'function','failed JSON must still release the known session');
+    assert.equal(p.elements.get('start').disabled,true);assert.equal(p.tracks[0].stopped,true);
+    releaseStop();await opening;assert.equal(active,null);
+    assert.match(p.elements.get('error').textContent,/could not finish connecting.*Start a new session/);
+    assert.equal(p.elements.get('start').disabled,false);
+    options.start=id=>{assert.equal(active,null);active=id;return startResponse(id);};options.stop=null;
+    await p.elements.get('start').onclick();assert.equal(p.elements.get('status').textContent,'Translating');p.close();
+  });
+}
+
+test('start cancellation stops a late header response without reading its body or stopping a replacement',{timeout:2000},async()=>{
+  let releaseHeaders,oldID,active,bodyRead=false;
+  const options={start(id){oldID=id;return new Promise(resolve=>{releaseHeaders=()=>resolve(startResponse(id,()=>{bodyRead=true;return new Promise(()=>{});}));});},
+    stop(url){if(url==='/stop?id='+active)active=null;return new Response(null,{status:204});}};
+  const p=page(options),opening=p.elements.get('start').onclick();await settle();
+  await p.elements.get('start').onclick();assert.equal(p.elements.get('status').textContent,'Ready');
+  assert.equal(p.calls.find(call=>call.url==='/start').config.signal.aborted,true);
+  options.start=id=>{active=id;return startResponse(id);};await p.elements.get('start').onclick();const replacement=active;
+  releaseHeaders();await opening;await settle();
+  assert.equal(bodyRead,false);assert.equal(active,replacement);assert.equal(p.elements.get('status').textContent,'Translating');
+  assert.equal(p.calls.filter(call=>call.url==='/stop?id='+oldID).length,1);p.close();
+});
+
+test('start cancellation preserves previous output when a canceled JSON read fails after retry',{timeout:2000},async()=>{
+  const options={},p=page(options);await p.elements.get('start').onclick();
+  const pcm=Buffer.alloc(48000);
+  p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64')});
+  p.emit({type:'session.output_transcript.delta',delta:'Previous translation.'});await settle();
+  await p.elements.get('start').onclick();await settle();p.elements.get('waveform').onclick({clientX:250});
+  let rejectJSON;
+  options.start=id=>startResponse(id,()=>new Promise((_,reject)=>{rejectJSON=reject;}));
+  options.stop=()=>new Response(null,{status:204});
+  const opening=p.elements.get('start').onclick();await settle();await p.elements.get('start').onclick();
+  assert.equal(p.elements.get('translated').textContent,'Previous translation.');assert.equal(p.elements.get('player').currentTime,.5);
+  p.elements.get('download').onclick();assert.deepEqual(Buffer.from(await p.downloads[0].blob.arrayBuffer()).subarray(44),pcm);
+  options.start=null;await p.elements.get('start').onclick();
+  rejectJSON(new Error('Late body failure'));await opening;
+  assert.equal(p.elements.get('status').textContent,'Translating');assert.equal(p.elements.get('error').textContent,'');p.close();
+});
+
+test('start cancellation on page close sends a scoped keepalive stop while JSON is pending',{timeout:2000},async()=>{
+  let resolveJSON,id;
+  const options={start(value){id=value;return startResponse(id,()=>new Promise(resolve=>{resolveJSON=resolve;}));},stop:()=>new Response(null,{status:204})};
+  const p=page(options),opening=p.elements.get('start').onclick();await settle();p.close();
+  const stopped=p.calls.find(call=>call.url==='/stop?id='+id);
+  assert.ok(stopped);assert.equal(stopped.config.keepalive,true);assert.equal(p.tracks[0].stopped,true);
+  resolveJSON({id});await opening;
+});
+
+for(const failure of ['timeout','rejected']) {
+  test(`start cancellation reports unconfirmed ${failure} cleanup without enabling retry`,{timeout:2000},async()=>{
+    let resolveJSON,cleanupSignal,id;
+    const options={start(value){id=value;return startResponse(id,()=>new Promise(resolve=>{resolveJSON=resolve;}));},
+      stop(_,config){cleanupSignal=config.signal;return failure==='timeout'?new Promise(()=>{}):Promise.reject(new Error('Synthetic stop failure'));}};
+    const p=page(options),opening=p.elements.get('start').onclick();await settle();
+    const canceling=p.elements.get('start').onclick();await settle();
+    if(failure==='timeout') {
+      const timer=p.timers.find(timer=>timer.active && timer.delay===2000);assert.ok(timer,'startup cleanup needs a deadline');timer.callback();
+    }
+    await canceling;assert.equal(cleanupSignal.aborted,true);
+    assert.equal(p.elements.get('status').textContent,'Stopped');assert.equal(p.elements.get('start').disabled,true);
+    assert.match(p.elements.get('error').textContent,/Could not confirm.*Reopen live translation from the CLI/);
+    const guidance=p.elements.get('error').textContent;
+    assert.equal(p.elements.get('clear').disabled,true);await p.elements.get('clear').onclick();
+    assert.equal(p.elements.get('error').textContent,guidance);assert.equal(p.elements.get('status').textContent,'Stopped');
+    assert.equal(p.timers.some(timer=>timer.active),false);
+    await p.elements.get('start').onclick();assert.equal(p.calls.filter(call=>call.url==='/start').length,1);
+    resolveJSON({id});await opening;p.close();
+  });
+}
+
+test('start cancellation with a missing identity preserves reopen guidance and blocks retry',async()=>{
+  const p=page({start:()=>new Response(JSON.stringify({id:'unknown-session'}))});
+  await p.elements.get('start').onclick();
+  const guidance=p.elements.get('error').textContent;
+  assert.match(guidance,/Reopen live translation from the CLI/);
+  assert.equal(p.elements.get('status').textContent,'Stopped');
+  assert.equal(p.elements.get('start').disabled,true);assert.equal(p.elements.get('clear').disabled,true);
+  await p.elements.get('clear').onclick();await p.elements.get('start').onclick();
+  assert.equal(p.elements.get('error').textContent,guidance);assert.equal(p.elements.get('status').textContent,'Stopped');
+  assert.equal(p.calls.filter(call=>call.url==='/start').length,1);
+  assert.equal(p.calls.filter(call=>call.url?.startsWith('/stop')).length,0);p.close();
+});
+
+test('start cancellation still permits retry when the server rejects an unpublished start',async()=>{
+  const options={failStart:true},p=page(options);await p.elements.get('start').onclick();
+  assert.match(p.elements.get('error').textContent,/API key was not accepted/);
+  assert.equal(p.elements.get('start').disabled,false);assert.equal(p.elements.get('clear').disabled,false);
+  options.failStart=false;await p.elements.get('start').onclick();
+  assert.equal(p.elements.get('status').textContent,'Translating');assert.equal(p.elements.get('error').textContent,'');p.close();
+});
+
+for(const outcome of ['resolved','rejected']) {
+test(`clearing an old recording cannot alter its replacement after ${outcome} cleanup`,async()=>{
+  let release;
+  const options={closeOutput:new Promise((resolve,reject)=>{release=()=>outcome==='resolved'?resolve():reject(new Error('Synthetic close failure'));})},p=page(options);
+  await p.elements.get('start').onclick();
+  p.emit({type:'session.output_audio.delta',delta:Buffer.from(new Int16Array([1,-1]).buffer).toString('base64')});
+  p.emit({type:'session.closed'});await settle();
+  const clearing=p.elements.get('clear').onclick();await settle();
+  assert.equal(p.elements.get('start').disabled,false);
+  options.closeOutput=null;await p.elements.get('start').onclick();
+  const replacement=Buffer.from(new Int16Array([7,-7]).buffer);
+  p.emit({type:'session.output_audio.delta',delta:replacement.toString('base64')});
+  p.emit({type:'session.output_transcript.delta',delta:'Replacement translation.'});
+  p.emit({type:'session.closed'});await settle();
+  release();await clearing;
+  assert.equal(p.elements.get('status').textContent,'Finished');
+  assert.equal(p.elements.get('error').textContent,'');
+  assert.equal(p.elements.get('translated').textContent,'Replacement translation.');
+  assert.equal(p.elements.get('download').disabled,false);assert.equal(p.elements.get('transcript').disabled,false);
+  p.elements.get('download').onclick();assert.deepEqual(Buffer.from(await p.downloads[0].blob.arrayBuffer()).subarray(44),replacement);p.close();
+});
+}
+
+test('clearing failure retains the recording and permits another Clear',async()=>{
+  let rejectClose;
+  const options={closeOutput:new Promise((_,reject)=>{rejectClose=reject;})},p=page(options);
+  await p.elements.get('start').onclick();
+  const pcm=Buffer.from(new Int16Array([6,-6]).buffer);
+  p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64')});
+  p.emit({type:'session.closed'});await settle();
+  const clearing=p.elements.get('clear').onclick();await settle();rejectClose(new Error('Synthetic close failure'));await clearing;
+  assert.match(p.elements.get('error').textContent,/Try Clear again/);
+  assert.equal(p.elements.get('clear').disabled,false);assert.equal(p.elements.get('start').disabled,false);
+  p.elements.get('download').onclick();assert.deepEqual(Buffer.from(await p.downloads[0].blob.arrayBuffer()).subarray(44),pcm);
+  await p.elements.get('clear').onclick();
+  assert.equal(p.elements.get('status').textContent,'Ready');assert.equal(p.elements.get('error').textContent,'');
+  assert.equal(p.elements.get('download').disabled,true);p.close();
+});
 
 function heldInputs(options) {
   const pending=[];
