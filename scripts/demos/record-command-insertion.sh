@@ -28,7 +28,8 @@ RPROMPT=''
 unset HISTFILE
 SAVEHIST=0
 bindkey -e
-stty columns 108 rows 36
+# The inner shell owns normal cooked-output translation between picker runs.
+stty opost onlcr columns 108 rows 36
 printf '\033[2J\033[H%s\n\n' "$DEMO_SCENE_LABEL"
 demo_capture_buffer() {
   printf '%s\n' "$BUFFER" >> "$DEMO_BUFFERS"
@@ -49,6 +50,10 @@ cat > "$demo_runtime/scene.sh" <<'SCENE'
 #!/bin/bash
 set -euo pipefail
 test -t 0 && test -t 1 && test -t 2
+# The inner PTY already applies its own output processing. A second ONLCR pass
+# would turn cursor-relative LF moves into CRLF and corrupt the captured frame.
+# This is the recorder-owned outer PTY, not the user's terminal.
+stty -opost
 unset OPENAI_API_KEY OPENAI_ADMIN_KEY
 exec "$DEMO_EXPECT" "$DEMO_DRIVER"
 SCENE
@@ -58,6 +63,7 @@ SCENE
   echo "before commit: $demo_before_sha (inspect build info for source identity)"
   echo "candidate commit: $demo_after_sha (inspect build info and source manifest for dirty state)"
   echo 'capture: actual binaries in isolated zsh PTYs, driven by Expect'
+  echo 'relay: outer PTY output processing disabled; inner terminal bytes remain unchanged'
   echo 'setup: actual candidate installer in each synthetic HOME, followed by a fresh zsh process'
   echo 'scenes: baseline help; recent-help search and draft restoration; explore search and prompt insertion'
   echo 'data: local help/search only; no API/admin key; loopback-only base URL'
