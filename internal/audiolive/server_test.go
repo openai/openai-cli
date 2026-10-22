@@ -496,3 +496,109 @@ func TestCompanionCanceledOpeningCannotPublishLateSession(t *testing.T) {
 		t.Fatal("canceled request published a session")
 	}
 }
+
+type heldCleanupSession struct {
+	*fakeSession
+	mode      string
+	entered   chan struct{}
+	release   chan struct{}
+	announced sync.Once
+}
+
+func (s *heldCleanupSession) Receive(ctx context.Context) (Event, error) {
+	event, err := s.fakeSession.Receive(ctx)
+	if s.mode == "receive" && ctx.Err() != nil {
+		s.announced.Do(func() { close(s.entered) })
+		<-s.release
+	}
+	return event, err
+}
+
+func (s *heldCleanupSession) Abort() {
+	s.fakeSession.Abort()
+	if s.mode == "abort" {
+		s.announced.Do(func() { close(s.entered) })
+		<-s.release
+	}
+}
+
+func TestCompanionAbortSubscribedWaitsForReleaseBeforeRetry(t *testing.T) {
+	for _, mode := range []string{"receive", "abort"} {
+		t.Run(mode, func(t *testing.T) {
+			held := &heldCleanupSession{fakeSession: newFakeSession(), mode: mode, entered: make(chan struct{}), release: make(chan struct{})}
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(held.release) }) }
+			defer release()
+			replacement := newFakeSession()
+			var starts atomic.Int32
+			c, _ := testCompanion(t, func(context.Context, Config) (Session, error) {
+				if starts.Add(1) == 1 {
+					return held, nil
+				}
+				return replacement, nil
+			})
+			id := startCapture(t, c)
+			stream := call(t, c, http.MethodGet, "/events?id="+id, nil)
+			defer stream.Body.Close()
+			if mode == "abort" {
+				held.events <- Event{Type: "session.closed"}
+				var terminal Event
+				if err := json.NewDecoder(stream.Body).Decode(&terminal); err != nil || terminal.Type != "session.closed" {
+					t.Fatalf("terminal event: %+v, %v", terminal, err)
+				}
+			}
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, c.origin+"/stop?id="+id+"&abort=1", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Origin", c.origin)
+			request.Header.Set("X-OpenAI-Audio", c.token)
+			type result struct {
+				response *http.Response
+				err      error
+			}
+			stopped := make(chan result, 1)
+			go func() { response, err := http.DefaultClient.Do(request); stopped <- result{response, err} }()
+			select {
+			case got := <-stopped:
+				if got.response != nil {
+					got.response.Body.Close()
+				}
+				t.Fatalf("abort returned before held cleanup: %v", got.err)
+			case <-held.entered:
+			case <-time.After(3 * time.Second):
+				t.Fatal("abort did not reach session cleanup")
+			}
+			select {
+			case got := <-stopped:
+				if got.response != nil {
+					got.response.Body.Close()
+				}
+				t.Fatalf("abort acknowledged while cleanup remained held: %v", got.err)
+			case <-time.After(20 * time.Millisecond):
+			}
+			release()
+			got := <-stopped
+			if got.err != nil {
+				t.Fatal(got.err)
+			}
+			got.response.Body.Close()
+			if got.response.StatusCode != http.StatusNoContent || held.finished.Load() != 0 {
+				t.Fatal("abort did not release without graceful drain")
+			}
+			next := startCapture(t, c)
+			for _, stale := range []string{id, "unknown-synthetic-session", ""} {
+				response := call(t, c, http.MethodPost, "/stop?id="+stale+"&abort=1", nil)
+				response.Body.Close()
+				if response.StatusCode != http.StatusNoContent {
+					t.Fatal("stale abort failed")
+				}
+			}
+			response := call(t, c, http.MethodPost, "/input?id="+next+"&sequence=0", strings.NewReader("xx"))
+			response.Body.Close()
+			if response.StatusCode != http.StatusNoContent {
+				t.Fatal("stale abort stopped the replacement")
+			}
+		})
+	}
+}

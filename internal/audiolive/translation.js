@@ -16,8 +16,9 @@
   const showError = message => { $('error').textContent = message; $('error').hidden = !message; };
   const time = value => `${String(Math.floor(value / 60)).padStart(2,'0')}:${String(Math.floor(value % 60)).padStart(2,'0')}.${String(Math.floor(value * 1000) % 1000).padStart(3,'0')}`;
   const endpoint = (route, id) => route + (id ? '?id=' + encodeURIComponent(id) : '');
-  async function request(route, options = {}) {
+  async function request(route, options = {}, received) {
     const response = await fetch(route, {...options, cache:'no-store', headers:{'X-OpenAI-Audio':token,...options.headers}});
+    received?.(response);
     if (!response.ok) throw new Error(await response.text());
     return response;
   }
@@ -115,6 +116,13 @@
       }
       if (current !== run) { releaseCapture(run); return; }
       if (!run.stream.getAudioTracks().length) throw new Error('No audio was shared. Choose a browser tab and enable Share tab audio.');
+      const ended = () => {
+        if (current !== run || run.failed) return;
+        if (state === 'starting') showError('Audio capture ended before translation started. Share audio or reconnect your microphone, then start again.');
+        if (state === 'starting' || state === 'running') stop().catch(error => fail(run,error));
+      };
+      for (const track of run.stream.getTracks()) track.addEventListener('ended',ended,{once:true});
+      if (run.stream.getTracks().some(track => track.readyState === 'ended')) { ended(); return; }
       devices().catch(() => {});
       run.context = new AudioContext({sampleRate:24000});
       if (run.context.sampleRate !== 24000) throw new Error('This browser cannot capture the required audio format. Try Chrome or Edge.');
@@ -128,18 +136,20 @@
       await playback.resume();
       if (current !== run) { releaseCapture(run); return; }
       status('Connecting');
-      const response = await request('/start',{method:'POST',signal:run.controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({language:$('language').value,noise_reduction:$('noise').checked})});
+      run.startSent = true;
+      const response = await request('/start',{method:'POST',signal:run.controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({language:$('language').value,noise_reduction:$('noise').checked})},response => { run.startRejected = !response.ok; });
       // Acquire the identity before awaiting the response body so Cancel can release it.
       run.id = response.headers.get('X-OpenAI-Audio-Session');
       if (!run.id) {
         run.cleanupUnconfirmed = true;
         throw new Error('The local translation page could not finish connecting. Reopen live translation from the CLI.');
       }
-      if (current !== run) { releaseCapture(run); request(endpoint('/stop',run.id),{method:'POST'}).catch(() => {}); return; }
+      if (current !== run) { releaseCapture(run); request(endpoint('/stop',run.id) + '&abort=1',{method:'POST'}).catch(() => {}); return; }
       let accepted;
       try { accepted = await response.json(); } catch (_) { throw new Error('The local translation page could not finish connecting. Start a new session.'); }
       if (accepted?.id !== run.id) throw new Error('The local translation page could not finish connecting. Start a new session.');
-      if (current !== run) { releaseCapture(run); request(endpoint('/stop',run.id),{method:'POST'}).catch(() => {}); return; }
+      if (current !== run) { releaseCapture(run); request(endpoint('/stop',run.id) + '&abort=1',{method:'POST'}).catch(() => {}); return; }
+      if (run.stream.getTracks().some(track => track.readyState === 'ended')) { ended(); return; }
       resetRecording(false); run.replaced = true;
       outputContext = playback; outputGain = gain;
       run.input = run.context.createMediaStreamSource(run.stream);
@@ -160,7 +170,6 @@
       // A zero-gain sink keeps capture processing active without monitoring source audio.
       run.sink = run.context.createGain(); run.sink.gain.value = 0;
       run.node.connect(run.sink); run.sink.connect(run.context.destination);
-      for (const track of run.stream.getTracks()) track.addEventListener('ended',() => { if (current === run && state === 'running') stop(); },{once:true});
       $('mute').textContent = 'Mute input';
       setState('running'); status('Translating');
       readEvents(run).catch(error => { if (!run.closed || error.name !== 'AbortError') return fail(run,error); });
@@ -186,14 +195,14 @@
         if (line) {
           let event;
           try { event = JSON.parse(line); } catch (_) { throw new Error('The service returned an unreadable translation update. Start a new session.'); }
-          receive(run,event);
+          await receive(run,event);
         }
       }
       if (start < value.length) pending.push(value.slice(start));
     }
-    if (current === run && !complete && !run.failed) await fail(run,new Error('The connection ended before translation finished. Received audio remains available.'));
+    if (current === run && !run.closed && !complete && !run.failed) await fail(run,new Error('The connection ended before translation finished. Received audio remains available.'));
   }
-  function receive(run,event) {
+  async function receive(run,event) {
     if (current !== run || run.failed) return;
     if (event.type === 'session.input_transcript.delta' && event.delta) { originalText.push(event.delta); $('original').append(document.createTextNode(event.delta)); $('transcript').disabled = false; }
     if (event.type === 'session.output_transcript.delta' && event.delta) { replaceRecording(run); outputText.push(event.delta); $('translated').append(document.createTextNode(event.delta)); $('transcript').disabled = false; }
@@ -201,7 +210,11 @@
     if (event.tokens) $('usage').textContent = event.tokens.toLocaleString() + ' tokens';
     if (event.type === 'error') fail(run,new Error(event.message));
     if (event.type === 'session.closed') {
-      run.closed = true; releaseCapture(run);
+      run.closed = true; releaseCapture(run); run.controller.abort();
+      setState('canceling'); status('Finishing translation');
+      try { await cancelSession(run); }
+      catch (error) { run.cleanupUnconfirmed = true; await fail(run,error); return; }
+      if (current !== run) return;
       if (!run.hasOutput) stopOutput().catch(() => {});
       const restored = restoreRecording(run);
       if (!restored) { complete = true; prepareRecording(); }
@@ -282,7 +295,7 @@
     if (state === 'starting') {
       setState('canceling'); status('Canceling connection');
       current = null; generation++; run.controller.abort(); releaseCapture(run); restoreRecording(run);
-      try { await cancelStarting(run); }
+      try { await cancelSession(run); }
       catch (error) { showError(error.message); setState('disconnected'); updateSource(); status('Stopped'); return; }
       await stopOutput();
       setState('ready'); updateSource(); status('Ready'); return;
@@ -300,13 +313,17 @@
     } catch (error) { if (!run.closed) await fail(run,error); }
     finally { run.flushed = null; }
   }
-  async function cancelStarting(run) {
-    if (!run.id) return;
+  async function cancelSession(run) {
+    const message = 'Could not confirm that the connection stopped. Reopen live translation from the CLI.';
+    if (!run.id) {
+      if (run.startSent && !run.startRejected) throw new Error(message);
+      return;
+    }
     const controller = new AbortController();
     try {
-      await waitForCapture({controller},request(endpoint('/stop',run.id),{method:'POST',signal:controller.signal}),2000,'');
+      await waitForCapture({controller},request(endpoint('/stop',run.id) + '&abort=1',{method:'POST',signal:controller.signal}),2000,'');
     } catch (_) {
-      throw new Error('Could not confirm that the connection stopped. Reopen live translation from the CLI.');
+      throw new Error(message);
     } finally { controller.abort(); }
   }
   async function fail(run,error) {
@@ -315,15 +332,21 @@
     run.failed = true; releaseCapture(run);
     run.controller.abort();
     let cleanupFailed = !!run.cleanupUnconfirmed;
-    if (starting) {
-      setState('canceling');
-      try { await cancelStarting(run); }
+    setState('canceling'); status('Stopping translation');
+    if (!cleanupFailed) {
+      try { await cancelSession(run); }
       catch (cleanupError) { error = cleanupError; cleanupFailed = true; }
-      if (current !== run) return;
-      // Local audio cleanup may still be pending; Cancel can dismiss it once the session is released.
-      if (!cleanupFailed) setState('starting');
-    } else if (run.id) request(endpoint('/stop',run.id),{method:'POST'}).catch(() => {});
-    if (!run.hasOutput) await stopOutput();
+    }
+    if (current !== run) return;
+    // Local audio cleanup may still be pending; Cancel can dismiss it once the session is released.
+    if (starting && !cleanupFailed) setState('starting');
+    if (!run.hasOutput) {
+      try { await stopOutput(); }
+      catch (_) {
+        error = new Error('Could not finish closing audio. Received audio and captions remain available. Reopen live translation from the CLI.');
+        cleanupFailed = true;
+      }
+    }
     if (current !== run) return;
     if (!restoreRecording(run)) { try { prepareRecording(); } catch (_) {} }
     showError(error.message || 'Translation stopped. Start a new session.'); status('Stopped'); setState(cleanupFailed ? 'disconnected' : 'ready'); updateSource();
@@ -417,7 +440,7 @@
     if (generation !== clearing) return;
     resetRecording(); showError(''); status('Ready');
   };
-  window.addEventListener('pagehide',() => { const run = current; current = null; if (run) { run.controller.abort(); releaseCapture(run); if (state === 'starting' && run.id) request(endpoint('/stop',run.id),{method:'POST',keepalive:true}).catch(() => {}); } stopOutput().catch(() => {}); });
+  window.addEventListener('pagehide',() => { const run = current; current = null; if (run) { run.controller.abort(); releaseCapture(run); if (state === 'starting' && run.id) request(endpoint('/stop',run.id) + '&abort=1',{method:'POST',keepalive:true}).catch(() => {}); } stopOutput().catch(() => {}); });
   if (!token) showError('Open live translation from the CLI to connect this page.');
   setState('ready'); devices().catch(() => {}); draw();
 })();

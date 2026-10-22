@@ -406,9 +406,9 @@ func (c *companion) stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	active.mu.Lock()
-	if !active.listening {
-		// Capture setup failed before the browser could read output. There is
-		// nothing to drain; release the session before accepting a retry.
+	if !active.listening || r.URL.Query().Get("abort") == "1" {
+		// Setup cancellation and failed captures have nothing left to drain.
+		// Confirm receiver teardown before the browser can accept a retry.
 		active.stopping = true
 		active.cancel()
 		active.session.Abort()

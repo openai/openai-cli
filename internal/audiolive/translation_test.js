@@ -8,9 +8,17 @@ const path = require('node:path');
 // These stand-ins exercise browser control flow without permissions or external requests.
 function page(options = {}) {
   const elements = new Map(), calls = [], contexts = [], nodes = [], blobs = new Map(), downloads = [], timers = [];
-  const tracks = [{kind:'audio',enabled:true,stopped:false,stop(){this.stopped=true;},addEventListener(){}}];
-  if (options.noTabAudio) tracks[0].kind = 'video';
-  const stream = {getTracks:()=>tracks,getAudioTracks:()=>tracks.filter(track=>track.kind==='audio')};
+  class Track extends EventTarget {
+    constructor(){super();this.kind=options.noTabAudio?'video':'audio';this.enabled=true;this.stopped=false;this.readyState=options.alreadyEnded?'ended':'live';}
+    stop(){this.stopped=true;this.readyState='ended';}
+    end(){this.readyState='ended';this.dispatchEvent(new Event('ended'));}
+  }
+  const tracks = [new Track()];
+  const capture = () => {
+    if(tracks[0].stopped)tracks[0]=new Track();
+    const captured=[...tracks];
+    return {getTracks:()=>captured,getAudioTracks:()=>captured.filter(track=>track.kind==='audio')};
+  };
   let eventController, frame, sessionNumber = 0;
   class Element {
     constructor(id) { this.id=id;this.value='';this.checked=true;this.hidden=false;this.disabled=false;this.options=[];this.children=[];this.currentTime=0;this.paused=true;this.clientWidth=500; }
@@ -33,8 +41,8 @@ function page(options = {}) {
   elements.get('source').value=options.tab?'tab':'microphone'; elements.get('language').value='en';
   elements.get('noise').checked=false;elements.get('player').hidden=true;
   class AudioContext {
-    constructor(config){this.output=!config;this.sampleRate=config?.sampleRate||48000;this.currentTime=0;this.state='running';this.destination={};this.audioWorklet={addModule:async()=>{}};contexts.push(this);}
-    resume(){return Promise.resolve();}
+    constructor(config){this.output=!config;this.sampleRate=config?.sampleRate||48000;this.currentTime=0;this.state='running';this.destination={};this.audioWorklet={addModule:()=>options.worklet||Promise.resolve()};contexts.push(this);}
+    resume(){return this.output && options.resumeOutput ? options.resumeOutput : Promise.resolve();}
     close(){this.state='closed';return this.output && options.closeOutput ? options.closeOutput : Promise.resolve();}
     createGain(){return {gain:{value:1},connect(){}};}
     createMediaStreamSource(){return {connect(){},disconnect(){}};}
@@ -51,7 +59,7 @@ function page(options = {}) {
     AudioContext,AudioWorkletNode,devicePixelRatio:1,Option:class{constructor(text,value){this.text=text;this.value=value;}},
     location:{hash:'#synthetic-local-test-token'},history:{replaceState(){context.location.hash='';}},
     document:{getElementById:id=>elements.get(id),documentElement:{},createTextNode:text=>({textContent:text}),createElement:()=>new Element('link')},
-    navigator:{mediaDevices:{enumerateDevices:async()=>[],getUserMedia:async()=>{calls.push({kind:'microphone'});if(options.permission)throw new DOMException('denied','NotAllowedError');return options.capture?options.capture:stream;},getDisplayMedia:async()=>{calls.push({kind:'tab'});return stream;}}},
+    navigator:{mediaDevices:{enumerateDevices:async()=>[],getUserMedia:async()=>{calls.push({kind:'microphone'});if(options.permission)throw new DOMException('denied','NotAllowedError');return options.capture?options.capture:capture();},getDisplayMedia:async()=>{calls.push({kind:'tab'});return options.capture?options.capture:capture();}}},
     fetch:async(url,config)=>{
       calls.push({url,config});
       if(url==='/start') {
@@ -61,7 +69,7 @@ function page(options = {}) {
       }
       if(url.startsWith('/events')){const eventStream=new ReadableStream({start(controller){eventController=controller;}});const controller=eventController;config.signal.addEventListener('abort',()=>{try{controller.error(new DOMException('aborted','AbortError'));}catch(_){}},{once:true});return new Response(eventStream);}
       if(url.startsWith('/input') && options.input)return options.input(url,config);
-      if(url.startsWith('/stop')){if(options.stop)return options.stop(url,config);if(eventController)emit({type:'session.closed'});}
+      if(url.startsWith('/stop')){if(options.stop)return options.stop(url,config);if(eventController && !url.endsWith('&abort=1'))emit({type:'session.closed'});}
       return new Response(null,{status:204});
     },
     URL:{createObjectURL(blob){if(options.recordingFail)throw new Error('Could not prepare the recording.');const id='blob:synthetic-'+blobs.size;blobs.set(id,blob);return id;},revokeObjectURL(){}},
@@ -85,7 +93,7 @@ function startResponse(id, json) {
 test('start cancellation waits for scoped cleanup while its JSON body is pending',{timeout:2000},async()=>{
   let releaseJSON,releaseStop,bodyRead=false,active,firstID;
   const options={start(id){active=id;firstID=id;return startResponse(id,()=>{bodyRead=true;return new Promise(resolve=>{releaseJSON=resolve;});});},
-    stop(url){assert.equal(url,'/stop?id='+firstID);return new Promise(resolve=>{releaseStop=()=>{active=null;resolve(new Response(null,{status:204}));};});}};
+    stop(url){assert.equal(url,'/stop?id='+firstID+'&abort=1');return new Promise(resolve=>{releaseStop=()=>{active=null;resolve(new Response(null,{status:204}));};});}};
   const p=page(options),opening=p.elements.get('start').onclick();await settle();
   assert.equal(bodyRead,true);assert.equal(p.elements.get('status').textContent,'Connecting');
   const canceling=p.elements.get('start').onclick();await settle();
@@ -95,11 +103,11 @@ test('start cancellation waits for scoped cleanup while its JSON body is pending
   await p.elements.get('start').onclick();assert.equal(p.calls.filter(call=>call.url==='/start').length,1);
   releaseStop();await canceling;assert.equal(active,null);assert.equal(p.elements.get('status').textContent,'Ready');
   options.start=id=>{assert.equal(active,null);active=id;return startResponse(id);};
-  options.stop=url=>{if(url==='/stop?id='+active)active=null;return new Response(null,{status:204});};
+  options.stop=url=>{if(url==='/stop?id='+active+'&abort=1')active=null;return new Response(null,{status:204});};
   await p.elements.get('start').onclick();const replacement=active;
   assert.notEqual(replacement,firstID);assert.equal(p.elements.get('status').textContent,'Translating');
   releaseJSON({id:firstID});await opening;await settle();
-  assert.equal(active,replacement);assert.equal(p.elements.get('status').textContent,'Translating');
+  assert.equal(active,replacement);assert.equal(p.elements.get('status').textContent,'Translating');assert.equal(p.tracks[0].stopped,false);
   assert.equal(p.elements.get('error').textContent,'');p.close();
 });
 
@@ -110,7 +118,7 @@ for(const kind of ['malformed','rejected','missing-id','different-id','null']) {
       if(kind==='malformed')return JSON.parse('{');
       if(kind==='rejected')throw new Error('Synthetic body read failed');
       return kind==='null'?null:kind==='missing-id'?{}:{id:'wrong-session'};
-    });},stop(url){assert.equal(url,'/stop?id='+firstID);return new Promise(resolve=>{releaseStop=()=>{active=null;resolve(new Response(null,{status:204}));};});}};
+    });},stop(url){assert.equal(url,'/stop?id='+firstID+'&abort=1');return new Promise(resolve=>{releaseStop=()=>{active=null;resolve(new Response(null,{status:204}));};});}};
     const p=page(options),opening=p.elements.get('start').onclick();await settle();
     assert.equal(typeof releaseStop,'function','failed JSON must still release the known session');
     assert.equal(p.elements.get('start').disabled,true);assert.equal(p.tracks[0].stopped,true);
@@ -122,17 +130,18 @@ for(const kind of ['malformed','rejected','missing-id','different-id','null']) {
   });
 }
 
-test('start cancellation stops a late header response without reading its body or stopping a replacement',{timeout:2000},async()=>{
-  let releaseHeaders,oldID,active,bodyRead=false;
+test('start cancellation before headers blocks retry and releases a late identity without reading its body',{timeout:2000},async()=>{
+  let releaseHeaders,oldID,bodyRead=false;
   const options={start(id){oldID=id;return new Promise(resolve=>{releaseHeaders=()=>resolve(startResponse(id,()=>{bodyRead=true;return new Promise(()=>{});}));});},
-    stop(url){if(url==='/stop?id='+active)active=null;return new Response(null,{status:204});}};
+    stop:()=>new Response(null,{status:204})};
   const p=page(options),opening=p.elements.get('start').onclick();await settle();
-  await p.elements.get('start').onclick();assert.equal(p.elements.get('status').textContent,'Ready');
+  await p.elements.get('start').onclick();assert.equal(p.elements.get('status').textContent,'Stopped');
   assert.equal(p.calls.find(call=>call.url==='/start').config.signal.aborted,true);
-  options.start=id=>{active=id;return startResponse(id);};await p.elements.get('start').onclick();const replacement=active;
+  assert.equal(p.elements.get('start').disabled,true);assert.match(p.elements.get('error').textContent,/Could not confirm.*Reopen live translation/);
+  await p.elements.get('start').onclick();assert.equal(p.calls.filter(call=>call.url==='/start').length,1);
   releaseHeaders();await opening;await settle();
-  assert.equal(bodyRead,false);assert.equal(active,replacement);assert.equal(p.elements.get('status').textContent,'Translating');
-  assert.equal(p.calls.filter(call=>call.url==='/stop?id='+oldID).length,1);p.close();
+  assert.equal(bodyRead,false);assert.equal(p.elements.get('status').textContent,'Stopped');assert.equal(p.elements.get('start').disabled,true);
+  assert.equal(p.calls.filter(call=>call.url==='/stop?id='+oldID+'&abort=1').length,1);p.close();
 });
 
 test('start cancellation preserves previous output when a canceled JSON read fails after retry',{timeout:2000},async()=>{
@@ -156,7 +165,7 @@ test('start cancellation on page close sends a scoped keepalive stop while JSON 
   let resolveJSON,id;
   const options={start(value){id=value;return startResponse(id,()=>new Promise(resolve=>{resolveJSON=resolve;}));},stop:()=>new Response(null,{status:204})};
   const p=page(options),opening=p.elements.get('start').onclick();await settle();p.close();
-  const stopped=p.calls.find(call=>call.url==='/stop?id='+id);
+  const stopped=p.calls.find(call=>call.url==='/stop?id='+id+'&abort=1');
   assert.ok(stopped);assert.equal(stopped.config.keepalive,true);assert.equal(p.tracks[0].stopped,true);
   resolveJSON({id});await opening;
 });
@@ -295,7 +304,8 @@ test('capture upload drains in order including the final partial block before St
     assert.deepEqual(Buffer.from(pending[i].config.body),Buffer.from(buffers[i]));
     pending[i].resolve();await settle();
   }
-  await stopping;assert.equal(p.calls.filter(call=>call.url?.startsWith('/stop')).length,1);
+  await stopping;
+  assert.deepEqual(p.calls.filter(call=>call.url?.startsWith('/stop')).map(call=>call.url),['/stop?id=synthetic-session-1','/stop?id=synthetic-session-1&abort=1']);
   assert.equal(p.timers.some(timer=>timer.active),false);p.close();
 });
 
@@ -655,4 +665,105 @@ test('late canceled setup cannot restore original captions over a newer session'
   assert.equal(p.elements.get('original').textContent,'New original.');
   assert.equal(p.elements.get('status').textContent,'Translating');assert.equal(p.elements.get('error').textContent,'');
   assert.equal(p.elements.get('transcript').disabled,false);p.close();
+});
+
+for (const ending of ['error','session.closed']) {
+  test(`lifecycle cleanup waits for release after ${ending} before retry`,async()=>{
+    let active,releaseStop;
+    const options={start(id){if(active)return new Response('Still active',{status:409});active=id;return startResponse(id);},
+      stop(url){assert.ok(url.startsWith('/stop?id='+active));return new Promise(resolve=>{releaseStop=()=>{active=null;resolve(new Response(null,{status:204}));};});}};
+    const p=page(options);await p.elements.get('start').onclick();
+    p.emit({type:'session.input_transcript.delta',delta:'Retained captions.'});
+    p.emit({type:ending,message:'Synthetic connection failure.'});await settle();
+    assert.equal(typeof releaseStop,'function');assert.equal(p.elements.get('start').disabled,true);
+    await p.elements.get('start').onclick();assert.equal(p.calls.filter(call=>call.url==='/start').length,1);
+    releaseStop();await settle();
+    assert.equal(p.elements.get('start').disabled,false);assert.equal(p.elements.get('transcript').disabled,false);
+    p.elements.get('transcript').onclick();assert.match(await p.downloads[0].blob.text(),/Retained captions\./);
+    await p.elements.get('start').onclick();assert.equal(p.elements.get('status').textContent,'Translating');
+    assert.equal(p.elements.get('error').textContent,'');p.close();
+  });
+}
+
+for (const outcome of ['timeout','rejected']) {
+  test(`lifecycle cleanup ${outcome} retains captions and prevents an unsafe retry`,async()=>{
+    const p=page({stop:()=>outcome==='timeout'?new Promise(()=>{}):Promise.reject(new Error('Synthetic stop failure'))});
+    await p.elements.get('start').onclick();
+    p.emit({type:'session.input_transcript.delta',delta:'Received before failure.'});
+    p.emit({type:'error',message:'Synthetic failure.'});await settle();
+    if(outcome==='timeout') {const timer=p.timers.find(timer=>timer.active&&timer.delay===2000);assert.ok(timer);timer.callback();await settle();}
+    assert.equal(p.elements.get('status').textContent,'Stopped');assert.equal(p.elements.get('start').disabled,true);
+    assert.match(p.elements.get('error').textContent,/Could not confirm.*Reopen live translation/);
+    assert.equal(p.elements.get('transcript').disabled,false);assert.equal(p.elements.get('original').textContent,'Received before failure.');
+    await p.elements.get('clear').onclick();await p.elements.get('start').onclick();
+    assert.equal(p.calls.filter(call=>call.url==='/start').length,1);assert.equal(p.elements.get('original').textContent,'Received before failure.');
+    assert.equal(p.timers.some(timer=>timer.active),false);p.close();
+  });
+}
+
+test('lifecycle cleanup handles rejected output close without losing captions',async()=>{
+  let rejectClose;const options={},p=page(options);await p.elements.get('start').onclick();
+  options.closeOutput=new Promise((_,reject)=>{rejectClose=reject;});
+  p.emit({type:'session.input_transcript.delta',delta:'Keep original captions.'});p.emit({type:'error',message:'Synthetic failure.'});await settle();
+  rejectClose(new Error('Synthetic close failure'));await settle();
+  assert.equal(p.elements.get('status').textContent,'Stopped');assert.equal(p.elements.get('start').disabled,true);
+  assert.match(p.elements.get('error').textContent,/Could not finish closing audio.*Reopen live translation/);
+  assert.equal(p.elements.get('original').textContent,'Keep original captions.');assert.equal(p.elements.get('transcript').disabled,false);p.close();
+});
+
+for (const phase of ['worklet','output-resume','headers','body']) {
+  test(`capture ending during ${phase} cancels setup and releases any late session`,{timeout:2000},async()=>{
+    let release,id;
+    const pending=new Promise(resolve=>{release=resolve;});
+    const options={stop:()=>new Response(null,{status:204})};
+    if(phase==='worklet')options.worklet=pending;
+    if(phase==='output-resume')options.resumeOutput=pending;
+    if(phase==='headers')options.start=value=>{id=value;return pending;};
+    if(phase==='body')options.start=value=>{id=value;return startResponse(id,()=>pending);};
+    const p=page(options),opening=p.elements.get('start').onclick();await settle();
+    p.tracks[0].end();await settle();
+    assert.equal(p.elements.get('status').textContent,phase==='headers'?'Stopped':'Ready');
+    assert.match(p.elements.get('error').textContent,phase==='headers'?/Could not confirm.*Reopen live translation/:/Audio capture ended before translation started/);
+    assert.equal(p.elements.get('start').disabled,phase==='headers');
+    assert.equal(p.tracks[0].stopped,true);
+    release(phase==='headers'?startResponse(id):phase==='body'?{id}:undefined);await opening;await settle();
+    assert.equal(p.calls.filter(call=>call.url?.startsWith('/events')).length,0);
+    assert.equal(p.calls.filter(call=>call.url==='/start').length,id?1:0);
+    if(id)assert.ok(p.calls.some(call=>call.url==='/stop?id='+id+'&abort=1'));
+    assert.equal(p.elements.get('status').textContent,phase==='headers'?'Stopped':'Ready');p.close();
+  });
+}
+
+test('capture already ended at acquisition cannot open a session',async()=>{
+  const p=page({alreadyEnded:true});await p.elements.get('start').onclick();await settle();
+  assert.equal(p.calls.filter(call=>call.url==='/start').length,0);
+  assert.match(p.elements.get('error').textContent,/Audio capture ended/);assert.equal(p.elements.get('status').textContent,'Ready');p.close();
+});
+
+test('capture ending while running drains normally and old track events cannot stop a replacement',async()=>{
+  const p=page();await p.elements.get('start').onclick();const old=p.tracks[0];
+  p.emit({type:'session.output_transcript.delta',delta:'Keep translated captions.'});await settle();
+  old.end();await settle();
+  assert.ok(p.calls.some(call=>call.url==='/stop?id=synthetic-session-1'));
+  assert.equal(p.elements.get('translated').textContent,'Keep translated captions.');assert.equal(p.elements.get('status').textContent,'Finished');
+  await p.elements.get('start').onclick();old.end();await settle();
+  assert.equal(p.elements.get('status').textContent,'Translating');assert.equal(p.tracks[0].stopped,false);p.close();
+});
+
+test('lifecycle completion restoring interrupted captions does not report a false early EOF',async()=>{
+  const p=page();await p.elements.get('start').onclick();
+  p.emit({type:'session.output_transcript.delta',delta:'Partial translated captions.'});
+  p.emit({type:'error',message:'Synthetic interruption.'});await settle();
+  await p.elements.get('start').onclick();p.emit({type:'session.closed'});await settle();
+  assert.match(p.elements.get('status').textContent,/Previous recording kept/);
+  assert.equal(p.elements.get('error').textContent,'');assert.equal(p.elements.get('translated').textContent,'Partial translated captions.');p.close();
+});
+
+test('late ended event from a released track cannot stop replacement capture',async()=>{
+  const p=page();await p.elements.get('start').onclick();const old=p.tracks[0];
+  await p.elements.get('start').onclick();await settle();
+  await p.elements.get('start').onclick();const stops=p.calls.filter(call=>call.url?.startsWith('/stop')).length;
+  old.end();await settle();
+  assert.equal(p.calls.filter(call=>call.url?.startsWith('/stop')).length,stops);
+  assert.equal(p.elements.get('status').textContent,'Translating');assert.equal(p.tracks[0].stopped,false);p.close();
 });
