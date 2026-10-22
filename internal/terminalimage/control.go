@@ -26,8 +26,7 @@ func WriteControl(ctx context.Context, out io.Writer, control string) error {
 func WriteFrame(ctx context.Context, out io.Writer, frame string, protocol string) error {
 	if protocol == "kitty" {
 		return writeKittyOutput(ctx, out, func(destination io.Writer) error {
-			_, err := io.WriteString(contextWriter{ctx, destination}, frame)
-			return err
+			return writeKittyView(ctx, destination, frame)
 		})
 	}
 	return WriteControl(ctx, out, frame)

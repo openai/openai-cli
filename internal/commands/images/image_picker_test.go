@@ -756,12 +756,30 @@ func TestImagePickerParentContextDuringInput(t *testing.T) {
 		defer control.Close()
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		options := imagePickerOptions{Prompt: "Synthetic context cancellation", Shell: "bash"}
+		if os.Getenv("OPENAI_PICKER_CONTEXT_TEST_MODE") == "workspace failure" {
+			// Fail the workspace writer without closing the terminal that owns
+			// input and mode restoration. Tea exits through private cancellation.
+			output, err := os.CreateTemp(t.TempDir(), "failed-workspace")
+			require.NoError(t, err)
+			require.NoError(t, output.Close())
+			options.workspace = &imagePickerWorkspace{out: output, context: ctx}
+			result, err := runImagePicker(ctx, os.Stdin, os.Stdout, options)
+			require.ErrorIs(t, err, os.ErrClosed)
+			require.NotErrorIs(t, err, context.Canceled)
+			require.False(t, result.Canceled)
+			require.Empty(t, result.Args)
+			var displayErr *SavingError
+			require.ErrorAs(t, err, &displayErr)
+			require.Contains(t, displayErr.ReadableMessage(nil), "Could not display the image picker.")
+			return
+		}
 		go func() {
 			var data [1]byte
 			_, _ = control.Read(data[:])
 			cancel()
 		}()
-		result, err := runImagePicker(ctx, os.Stdin, os.Stdout, imagePickerOptions{Prompt: "Synthetic context cancellation", Shell: "bash"})
+		result, err := runImagePicker(ctx, os.Stdin, os.Stdout, options)
 		require.ErrorIs(t, err, context.Canceled)
 		require.True(t, result.Canceled)
 		require.Empty(t, result.Args)
@@ -779,7 +797,7 @@ master,slave=pty.openpty()
 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
 initial=termios.tcgetattr(slave)
 control,writer=os.pipe()
-env=dict(os.environ,TERM='xterm-256color',NO_COLOR='1',OPENAI_PICKER_CONTEXT_TEST_FD=str(control))
+env=dict(os.environ,TERM='xterm-256color',TERM_PROGRAM='synthetic-pty',NO_COLOR='1',OPENAI_PICKER_CONTEXT_TEST_FD=str(control),OPENAI_PICKER_CONTEXT_TEST_MODE=sys.argv[2])
 child=subprocess.Popen([sys.argv[1],'-test.run=^TestImagePickerParentContextDuringInput$'],stdin=slave,stdout=slave,stderr=slave,env=env,pass_fds=(control,))
 os.close(control)
 raw=bytearray()
@@ -796,7 +814,7 @@ try:
             sent=True
     while select.select([master],[],[],.05)[0]:
         raw.extend(os.read(master,65536))
-    assert sent, raw
+    assert sent or sys.argv[2]=='workspace failure', raw
     assert child.returncode==0, raw
     restored=termios.tcgetattr(slave)
     if sys.platform=='darwin':
@@ -814,9 +832,13 @@ finally:
     os.close(master)
     os.close(slave)
 `
-	command := exec.Command(python, "-I", "-B", "-c", script, os.Args[0])
-	out, err := command.CombinedOutput()
-	require.NoError(t, err, "%s", out)
+	for _, mode := range []string{"parent cancellation", "workspace failure"} {
+		t.Run(mode, func(t *testing.T) {
+			command := exec.Command(python, "-I", "-B", "-c", script, os.Args[0], mode)
+			out, err := command.CombinedOutput()
+			require.NoError(t, err, "%s", out)
+		})
+	}
 }
 
 func TestImagePickerRejectsUnrepresentablePrompts(t *testing.T) {

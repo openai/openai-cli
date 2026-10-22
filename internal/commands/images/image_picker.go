@@ -180,13 +180,13 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	}
 	inline.close()
 	writeErr := tracked.Err()
+	if (writeErr != nil || inline.err != nil) && errors.Is(runErr, context.Canceled) {
+		// Rendering failures stop Tea through its private context. Keep their
+		// actual cause; real caller cancellation is joined separately below.
+		runErr = nil
+	}
 	if writeErr != nil {
-		// Stopping Tea after a failed write cancels its private context. That
-		// cancellation is not a user action; retain real parent cancellation below.
-		if errors.Is(runErr, context.Canceled) {
-			runErr = nil
-		}
-		writeErr = imageSavingFailure("Could not display the image picker. No new image request was started.", writeErr)
+		writeErr = imageSavingFailure("Could not display the image picker. Saved images remain available.", writeErr)
 	}
 	if inline.workspace != nil {
 		initialSettings = inline.savedSettings
