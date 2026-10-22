@@ -215,6 +215,57 @@ func TestCompanionPreservesAudioOrderingAndFinalOutput(t *testing.T) {
 	}
 }
 
+func TestCompanionStopBeforeSubscriptionAllowsImmediateRetry(t *testing.T) {
+	sessions := make(chan *fakeSession, 3)
+	c, _ := testCompanion(t, func(context.Context, Config) (Session, error) {
+		session := newFakeSession()
+		sessions <- session
+		return session, nil
+	})
+	previousID := ""
+	for attempt := 0; attempt < 3; attempt++ {
+		id := startCapture(t, c)
+		session := <-sessions
+		if previousID != "" {
+			response := call(t, c, http.MethodPost, "/stop?id="+previousID, nil)
+			response.Body.Close()
+			if response.StatusCode != http.StatusNoContent {
+				t.Fatalf("stale stop status %d", response.StatusCode)
+			}
+			select {
+			case <-session.closed:
+				t.Fatal("stale stop closed the replacement session")
+			default:
+			}
+			response = call(t, c, http.MethodPost, "/input?id="+id+"&sequence=0", strings.NewReader("xx"))
+			response.Body.Close()
+			if response.StatusCode != http.StatusNoContent {
+				t.Fatalf("replacement input status %d", response.StatusCode)
+			}
+		}
+		response := call(t, c, http.MethodPost, "/stop?id="+id, nil)
+		response.Body.Close()
+		if response.StatusCode != http.StatusNoContent {
+			t.Fatalf("stop status %d", response.StatusCode)
+		}
+		select {
+		case <-session.closed:
+		default:
+			t.Fatal("stop returned before releasing the unsubscribed session")
+		}
+		if session.finished.Load() != 0 {
+			t.Fatal("canceled setup attempted to drain without an event reader")
+		}
+		previousID = id
+		// Repeating an old stop must not prevent the next start.
+		response = call(t, c, http.MethodPost, "/stop?id="+id, nil)
+		response.Body.Close()
+		if response.StatusCode != http.StatusNoContent {
+			t.Fatalf("repeated stop status %d", response.StatusCode)
+		}
+	}
+}
+
 func TestCompanionRetainsEarlyAPIErrorsUntilBrowserSubscribes(t *testing.T) {
 	session := newFakeSession()
 	session.events <- Event{Type: "error", Message: "Your project cannot start live translation."}

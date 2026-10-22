@@ -404,6 +404,20 @@ func (c *companion) stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	active.mu.Lock()
+	if !active.listening {
+		// Capture setup failed before the browser could read output. There is
+		// nothing to drain; release the session before accepting a retry.
+		active.stopping = true
+		active.cancel()
+		active.session.Abort()
+		active.mu.Unlock()
+		select {
+		case <-active.done:
+		case <-r.Context().Done():
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	defer active.mu.Unlock()
 	if !active.stopping {
 		active.stopping = true
