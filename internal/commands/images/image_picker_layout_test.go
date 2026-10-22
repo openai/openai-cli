@@ -30,7 +30,7 @@ func TestImagePickerLayoutCommonSettingsVisible(t *testing.T) {
 			require.Contains(t, view, row.label, "focus=%s row=%s", focus, row.id)
 		}
 		require.Contains(t, view, "Transparent")
-		require.Contains(t, view, "Ctrl+C exit")
+		require.Contains(t, view, "[Ctrl+C] Quit")
 	}
 	pickerKey(m, tea.KeyEscape)
 	pickerKey(m, tea.KeyTab)
@@ -41,14 +41,15 @@ func TestImagePickerLayoutCommonSettingsVisible(t *testing.T) {
 	require.Len(t, m.rows(), 2)
 }
 
-func TestImagePickerLayoutFullCommandVisibleWithoutChangingFocus(t *testing.T) {
+func TestImagePickerLayoutCommandVisibleDuringEditing(t *testing.T) {
 	for _, prompt := range []string{"A tiny orange robot watering a plant", strings.Repeat("orange robot ", 8) + "final flower"} {
 		for _, note := range []string{"", "File type changed to PNG to keep transparency."} {
 			m := pickerForTest(t)
 			m.width, m.height = 80, 24
 			m.settings.prompt, m.draft, m.cursor = prompt, []rune(prompt), len([]rune(prompt))
 			m.note = note
-			commandLines := m.commandLines(74)
+			commandWidth, _ := m.commandDimensions()
+			commandLines := m.commandLines(commandWidth)
 			require.GreaterOrEqual(t, len(commandLines), 3)
 			require.LessOrEqual(t, len(commandLines), 4)
 			if strings.HasSuffix(prompt, "final flower") {
@@ -64,8 +65,8 @@ func TestImagePickerLayoutFullCommandVisibleWithoutChangingFocus(t *testing.T) {
 					require.Contains(t, view, row.label, "focus=%s note=%q row=%s", focus, note, row.id)
 				}
 				require.Contains(t, view, note)
-				require.Contains(t, view, "Ctrl+C exit")
-				require.Contains(t, view, "Enter ")
+				require.Contains(t, view, "[Ctrl+C] Quit")
+				require.Contains(t, view, "[Enter] ")
 				pickerLayoutAssertBounds(t, m)
 			}
 		}
@@ -82,12 +83,13 @@ func TestImagePickerLayoutFullCommandReturnsAfterNarrowResize(t *testing.T) {
 			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			view := ansi.Strip(m.View().Content)
 			require.Equal(t, focus, m.focus)
-			require.Contains(t, view, "Ctrl+C exit")
+			require.Contains(t, view, "[Ctrl+C] Quit")
 			if focus == "options" {
 				require.Contains(t, view, "› More options")
 			}
 			if size[0] == 80 {
-				for _, line := range m.commandLines(74) {
+				commandWidth, _ := m.commandDimensions()
+				for _, line := range m.commandLines(commandWidth) {
 					require.Contains(t, view, line, "focus=%s", focus)
 				}
 				for _, row := range m.rows() {
@@ -106,7 +108,7 @@ func pickerLayoutAssertBounds(t *testing.T, m *imagePicker) {
 	view := m.View()
 	require.False(t, view.AltScreen)
 	lines := strings.Split(view.Content, "\n")
-	require.LessOrEqual(t, len(lines), min(18, m.height-3))
+	require.LessOrEqual(t, len(lines), min(21, m.height-3))
 	for _, line := range lines {
 		require.LessOrEqual(t, ansi.StringWidth(line), m.width)
 	}
@@ -174,7 +176,7 @@ func TestImagePickerLayoutChoicesStayAccessibleAfterResize(t *testing.T) {
 		view := m.View()
 		require.False(t, view.AltScreen)
 		require.Contains(t, ansi.Strip(view.Content), "› 10")
-		require.Contains(t, ansi.Strip(view.Content), "Ctrl+C exit")
+		require.Contains(t, ansi.Strip(view.Content), "[Ctrl+C] Quit")
 		lines := strings.Split(view.Content, "\n")
 		require.LessOrEqual(t, len(lines), size[1]-3)
 		for _, line := range lines {
@@ -216,7 +218,8 @@ func TestImagePickerLayoutUnicodePromptSurvivesSettingsAndResize(t *testing.T) {
 		require.Equal(t, "雪 e\u0301 👨‍👩‍👧‍👦", m.settings.prompt)
 		require.Equal(t, len(m.draft), m.cursor)
 		require.True(t, utf8.ValidString(m.View().Content))
-		require.Contains(t, ansi.Strip(m.View().Content), "▏")
+		require.NotNil(t, m.View().Cursor)
+		require.Equal(t, tea.CursorBar, m.View().Cursor.Shape)
 	}
 	require.Empty(t, m.result.Args)
 }
@@ -236,8 +239,8 @@ func TestImagePickerLayoutNoColorKeepsSelectionVisible(t *testing.T) {
 			require.Regexp(t, `^\x1b\[(?:0|1|22)?m$`, sequence, "NO_COLOR permits emphasis without SGR colors")
 		}
 		require.Contains(t, ansi.Strip(view), "› Transparent")
-		require.Regexp(t, `(?m)^\s+Auto +✓`, ansi.Strip(view))
-		require.Contains(t, ansi.Strip(view), "Ctrl+C exit")
+		require.Regexp(t, `(?m)^\s+Auto +Model chooses +✓`, ansi.Strip(view))
+		require.Contains(t, ansi.Strip(view), "[Ctrl+C] Quit")
 	}
 }
 

@@ -77,7 +77,7 @@ func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
 		if len(flags) == 0 {
 			continue
 		}
-		fmt.Fprintf(&out, "\n\n   %s\n", group.Title)
+		fmt.Fprintf(&out, "\n   %s\n", group.Title)
 		for _, flag := range flags {
 			heading, description := flagReference(command, flag)
 			fmt.Fprintf(&out, "\n   %s\n", heading)

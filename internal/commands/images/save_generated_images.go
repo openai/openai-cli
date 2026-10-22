@@ -213,6 +213,17 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 			saveErr = imageSavingFailure(message, saveErr)
 		}
 	}
+	if workspace, _ := ctx.Value(imagePickerWorkspaceKey{}).(*imagePickerWorkspace); workspace != nil {
+		mode := p.inline
+		if saveErr != nil {
+			mode = "off"
+		}
+		previewErr := workspace.saved(ctx, saved, mode)
+		if previewErr != nil {
+			previewErr = imageSavingResultFailure("Images were saved, but the preview could not finish. Use the saved files; no need to generate again.", previewErr)
+		}
+		return errors.Join(saveErr, previewErr)
+	}
 	for _, file := range saved {
 		// Quoting keeps paths useful without allowing terminal control injection.
 		// Still report completed paths if cancellation occurred on a later image.

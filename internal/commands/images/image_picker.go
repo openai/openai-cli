@@ -17,6 +17,8 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/term"
+	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/forminput"
 	"github.com/openai/openai-cli/internal/readable"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
@@ -30,6 +32,8 @@ type imagePickerOptions struct {
 	initial      *imagePickerSettings
 	resuming     bool
 	initialNote  string
+	workspace    *imagePickerWorkspace
+	generate     func(context.Context, *imagePickerResult) error
 	printCommand func(string) error
 }
 
@@ -45,9 +49,16 @@ type imagePickerResult struct {
 	shell      string
 	changed    bool
 	draftSaved bool
+	workspace  *imagePickerWorkspace
 }
 
 func runImagePicker(parent context.Context, input, output *os.File, options imagePickerOptions) (result imagePickerResult, err error) {
+	workspaceClosed := false
+	defer func() {
+		if options.workspace != nil && !workspaceClosed {
+			err = errors.Join(err, options.workspace.close())
+		}
+	}()
 	if err := parent.Err(); err != nil {
 		return imagePickerResult{}, err
 	}
@@ -56,6 +67,7 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 		return imagePickerResult{}, err
 	}
 	initialSettings := model.settings
+	model.workspace = options.workspace != nil
 	defer model.cancelFolderWork()
 	if input == nil || output == nil || !term.IsTerminal(input.Fd()) || !term.IsTerminal(output.Fd()) {
 		return imagePickerResult{}, errors.New("the image picker needs terminal input and output")
@@ -78,11 +90,17 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	if err != nil {
 		return imagePickerResult{}, errors.New("could not read terminal output state")
 	}
+	// Intercept signals before raw setup and through terminal restoration.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(signals)
 	// Capture both states before setup: a platform setup can change input and
 	// then fail while enabling output. Restore both even after partial failure.
 	defer func() {
 		err = errors.Join(err, term.Restore(input.Fd(), inputState), term.Restore(output.Fd(), outputState))
 	}()
+	// Inspect the caller before raw input hides the cooked-shell boundary.
+	mouseShell := options.workspace != nil && imagePickerNativeMouseShell(parent, input, output)
 	console := uv.NewConsole(input, output, os.Environ())
 	_, err = console.MakeRaw()
 	if err != nil {
@@ -94,19 +112,22 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	defer cancel()
 	tracked := &imagePickerOutput{File: output, cancel: cancel}
 	inline := &imagePickerInline{model: model, output: tracked, profile: colorprofile.Detect(output, os.Environ()), resuming: options.resuming}
+	inline.workspace, inline.generate, inline.requestContext = options.workspace, options.generate, parent
+	inline.savedSettings = initialSettings
+	inline.mouseShell = mouseShell
 	programOptions := []tea.ProgramOption{tea.WithInput(input), tea.WithOutput(tracked), tea.WithContext(ctx), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutRenderer()}
 	if os.Getenv("NO_COLOR") != "" {
 		model.color = false
 		programOptions = append(programOptions, tea.WithColorProfile(colorprofile.NoTTY))
 	}
 	program := tea.NewProgram(inline, programOptions...)
+	if inline.workspace != nil {
+		inline.workspace.send = program.Send
+	}
 	// Route OS signals through the model so cleanup and exit status match
 	// keyboard cancellation, without treating a write failure as cancellation.
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	listenerDone := make(chan struct{})
 	defer func() {
-		signal.Stop(signals)
 		cancel()
 		<-listenerDone
 	}()
@@ -119,6 +140,8 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 		for {
 			select {
 			case received := <-signals:
+				// Keep signal interception until terminal-safe cleanup completes.
+				// A second signal must not interrupt mouse or input restoration.
 				code := 130
 				if received == syscall.SIGTERM {
 					code = 143
@@ -146,17 +169,44 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 		}
 	}()
 	_, runErr := program.Run()
+	if inline.workspace != nil {
+		inline.err = errors.Join(inline.err, inline.workspace.stopMouse())
+	}
+	inline.stopWorkspaceRequest()
+	if inline.workspace != nil {
+		// DECRC also restores wrapping. Finish every workspace cursor restore
+		// before the inline mode owner restores the caller's wrapping mode.
+		workspaceClosed = true
+		inline.err = errors.Join(inline.err, inline.workspace.close())
+	}
 	inline.close()
 	writeErr := tracked.Err()
-	if writeErr != nil {
-		// Stopping Tea after a failed write cancels its private context. That
-		// cancellation is not a user action; retain real parent cancellation below.
-		if errors.Is(runErr, context.Canceled) {
-			runErr = nil
-		}
-		writeErr = imageSavingFailure("Could not display the image picker. No new image request was started.", writeErr)
+	if (writeErr != nil || inline.err != nil) && errors.Is(runErr, context.Canceled) {
+		// Rendering failures stop Tea through its private context. Keep their
+		// actual cause; real caller cancellation is joined separately below.
+		runErr = nil
 	}
-	return model.snapshotResult(initialSettings), errors.Join(runErr, writeErr, inline.err, parent.Err())
+	if writeErr != nil {
+		writeErr = imagePickerDisplayFailure(writeErr)
+	}
+	if inline.workspace != nil {
+		initialSettings = inline.savedSettings
+		if inline.selection != nil && inline.selection.draftSaved {
+			initialSettings = inline.selection.settings
+		}
+	}
+	result = model.snapshotResult(initialSettings)
+	result.workspace = inline.workspace
+	err = errors.Join(runErr, writeErr, inline.err, parent.Err())
+	return result, err
+}
+
+func imagePickerDisplayFailure(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	// Display deadlines describe local output, not an uncertain API request.
+	return &localcommands.LocalError{Message: "Could not display the image picker. Saved images remain available.", Cause: cause}
 }
 
 // Capture the live draft even when cancellation intentionally discards Args.
@@ -225,8 +275,10 @@ type imagePicker struct {
 	width, height  int
 	color          bool
 	dark           bool
-	hidePromptHint bool
 	note           string
+	workspace      bool
+	hasImages      bool
+	generating     bool
 	result         imagePickerResult
 	folder         imagePickerFolder
 }
@@ -248,7 +300,6 @@ func newImagePicker(options imagePickerOptions) (*imagePicker, error) {
 		m.settings.prompt = options.Prompt
 	}
 	m.shell = options.Shell
-	m.hidePromptHint = options.resuming
 	m.note = options.initialNote
 	return m, nil
 }
@@ -433,17 +484,11 @@ func (m *imagePicker) rows() []imagePickerRow {
 }
 
 func (m *imagePicker) cycleFocus(backwards bool) {
-	focuses := []string{"prompt", "options", "command"}
-	for i, focus := range focuses {
-		if focus == m.focus {
-			delta := 1
-			if backwards {
-				delta = -1
-			}
-			m.focus = focuses[(i+len(focuses)+delta)%len(focuses)]
-			return
-		}
+	sections := []string{"prompt", "options", "command"}
+	if m.workspace && m.hasImages {
+		sections = append(sections, "images")
 	}
+	m.focus, _ = forminput.Cycle(sections, m.focus, backwards)
 }
 
 func (m *imagePicker) choices(field string) []imagePickerRow {
@@ -485,7 +530,7 @@ func (m *imagePicker) choices(field string) []imagePickerRow {
 			}
 		}
 		if value == "auto" {
-			row.detail = "Model chooses"
+			row.label = fmt.Sprintf("%-10s %s", row.label, "Model chooses")
 		}
 		rows = append(rows, row)
 	}
@@ -617,11 +662,9 @@ func (m *imagePicker) back() tea.Cmd {
 }
 
 func (m *imagePicker) insertPrompt(text string) {
-	insert := []rune(text)
-	tail := append([]rune(nil), m.draft[m.cursor:]...)
-	m.draft = append(m.draft[:m.cursor], insert...)
-	m.draft = append(m.draft, tail...)
-	m.cursor += len(insert)
+	editor := forminput.Editor{Text: m.draft, Cursor: m.cursor}
+	editor.Insert(text)
+	m.draft, m.cursor = editor.Text, editor.Cursor
 	m.settings.prompt = string(m.draft)
 	if text != "" {
 		m.commandOffset = 0
@@ -631,33 +674,32 @@ func (m *imagePicker) insertPrompt(text string) {
 
 func (m *imagePicker) editPrompt(key tea.KeyPressMsg) {
 	previous := m.settings.prompt
+	editor := forminput.Editor{Text: m.draft, Cursor: m.cursor}
 	switch key.String() {
 	case "left":
-		m.cursor = max(0, m.cursor-1)
+		editor.Move(-1)
 	case "right":
-		m.cursor = min(len(m.draft), m.cursor+1)
+		editor.Move(1)
 	case "home", "ctrl+a":
-		m.cursor = 0
+		editor.Cursor = 0
 	case "end", "ctrl+e":
-		m.cursor = len(m.draft)
+		editor.Cursor = len(editor.Text)
 	case "ctrl+u":
-		m.draft, m.cursor = m.draft[m.cursor:], 0
+		editor.DeleteBefore()
 	case "backspace":
-		if m.cursor > 0 {
-			m.draft = append(m.draft[:m.cursor-1], m.draft[m.cursor:]...)
-			m.cursor--
-		}
+		editor.Backspace()
 	case "delete":
-		if m.cursor < len(m.draft) {
-			m.draft = append(m.draft[:m.cursor], m.draft[m.cursor+1:]...)
-		}
+		editor.Delete()
 	case "alt+enter":
 		m.insertPrompt("\n")
+		return
 	default:
 		if key.Text != "" {
 			m.insertPrompt(key.Text)
+			return
 		}
 	}
+	m.draft, m.cursor = editor.Text, editor.Cursor
 	m.settings.prompt = string(m.draft)
 	if m.settings.prompt != previous {
 		m.commandOffset = 0

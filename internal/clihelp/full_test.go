@@ -181,6 +181,26 @@ func TestFullHelpSeparatesFlagEntries(t *testing.T) {
 	}
 }
 
+func TestFullHelpUsesOneBlankLineBetweenOptionGroups(t *testing.T) {
+	prompt := &cli.StringFlag{Name: "prompt", Required: true, Usage: "Describe the image."}
+	quality := &cli.StringFlag{Name: "quality", Usage: "Choose image quality."}
+	command := &cli.Command{Name: "generate", Flags: []cli.Flag{prompt, quality}, Metadata: map[string]any{
+		"help-flag-groups": []FlagGroup{{Title: "Image settings", Names: []string{"quality"}}},
+	}}
+	got := commandHelpAtWidth(command, "openai", "images generate", 80)
+	for _, want := range []string{
+		"OPTIONS:\n   Required inputs\n\n   --prompt TEXT\n",
+		"Describe the image.\n\n   Image settings\n\n   --quality TEXT\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("option group spacing differs from %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "\n\n\n") {
+		t.Fatalf("help contains redundant blank lines:\n%s", got)
+	}
+}
+
 func TestFlagReferenceNormalizesProseWithoutChangingValues(t *testing.T) {
 	flag := &cli.StringFlag{
 		Name: "path", Value: "`literal` [label](url)",

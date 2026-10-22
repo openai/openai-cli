@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -52,31 +53,36 @@ func (failedImagePickerWriter) Write([]byte) (int, error) { return 0, io.ErrClos
 func TestImagePickerRegistersOnlyExplicitSuccessfulPrint(t *testing.T) {
 	model, err := newImagePicker(imagePickerOptions{Prompt: "reviewed 'prompt'"})
 	require.NoError(t, err)
-	for _, printOnly := range []bool{false, true} {
-		for _, writeFails := range []bool{false, true} {
-			var output bytes.Buffer
-			var writer io.Writer = &output
-			if writeFails {
-				writer = failedImagePickerWriter{}
-			}
-			var commands []string
-			result := imagePickerResult{Args: model.settings.args(), settings: model.settings, PrintOnly: printOnly, shell: "bash"}
-			err := finishImagePickerSelection(t.Context(), writer, io.Discard, "", &result, func(text string) error {
-				if _, err := io.WriteString(writer, text+"\n"); err != nil {
-					return err
+	for _, workspace := range []*imagePickerWorkspace{nil, {}} {
+		for _, printOnly := range []bool{false, true} {
+			for _, writeFails := range []bool{false, true} {
+				var output bytes.Buffer
+				var writer io.Writer = &output
+				if writeFails {
+					writer = failedImagePickerWriter{}
 				}
-				commands = append(commands, text)
-				return nil
-			})
-			if writeFails {
-				require.ErrorIs(t, err, io.ErrClosedPipe)
-			} else {
-				require.NoError(t, err)
-			}
-			if printOnly && !writeFails {
-				require.Equal(t, []string{cliterminal.FormatCommand(result.Args, "bash")}, commands)
-			} else {
-				require.Empty(t, commands)
+				var commands []string
+				result := imagePickerResult{Args: model.settings.args(), settings: model.settings, PrintOnly: printOnly, shell: "bash", workspace: workspace}
+				err := finishImagePickerSelection(t.Context(), writer, io.Discard, "", &result, func(text string) error {
+					if _, err := io.WriteString(writer, text+"\n"); err != nil {
+						return err
+					}
+					commands = append(commands, text)
+					return nil
+				})
+				if writeFails && (printOnly || workspace == nil) {
+					require.ErrorIs(t, err, io.ErrClosedPipe)
+				} else {
+					require.NoError(t, err)
+				}
+				if printOnly && !writeFails {
+					require.Equal(t, []string{cliterminal.FormatCommand(result.Args, "bash")}, commands)
+				} else {
+					require.Empty(t, commands)
+				}
+				if workspace != nil && !printOnly {
+					require.Empty(t, output.String(), "retained generation must not print or register the command")
+				}
 			}
 		}
 	}
@@ -92,7 +98,7 @@ func TestImagePickerSelectionHistoryFollowsSuccessfulEcho(t *testing.T) {
 	require.NoError(t, err)
 	model.settings.prompt = "new prompt\n'絵'"
 	model.settings.quality = "high"
-	result := imagePickerResult{Args: model.settings.args(), settings: model.settings, PrintOnly: true, shell: "bash"}
+	result := imagePickerResult{Args: model.settings.args(), settings: model.settings, PrintOnly: true, shell: "bash", workspace: &imagePickerWorkspace{}}
 	var diagnostic bytes.Buffer
 	err = finishImagePickerSelection(ctx, failedImagePickerWriter{}, &diagnostic, path, &result)
 	require.ErrorIs(t, err, io.ErrClosedPipe)
@@ -125,6 +131,38 @@ func TestImagePickerOptionalHistoryFailureDoesNotBlockSelection(t *testing.T) {
 	require.Equal(t, invalid, after)
 	err = finishImagePickerSelection(context.Background(), &output, failedImagePickerWriter{}, path, &result)
 	require.ErrorIs(t, err, io.ErrClosedPipe)
+}
+
+func TestImagePickerPrintOnlyDraftWarningAfterWorkspaceClose(t *testing.T) {
+	for _, warningFails := range []bool{false, true} {
+		t.Run(map[bool]string{false: "visible warning", true: "warning write failure"}[warningFails], func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "image-picker.json")
+			invalid := []byte(`{"version":99,"prompt":"private old draft"}`)
+			require.NoError(t, os.WriteFile(path, invalid, 0600))
+			model := pickerForTest(t)
+			var queued []tea.Msg
+			workspace := &imagePickerWorkspace{send: func(msg tea.Msg) { queued = append(queued, msg) }}
+			result := imagePickerResult{Args: model.settings.args(), settings: model.settings, shell: "bash", PrintOnly: true, workspace: workspace}
+			var output, diagnostics bytes.Buffer
+			var warning io.Writer = &diagnostics
+			if warningFails {
+				warning = failedImagePickerWriter{}
+			}
+			err := finishImagePickerSelection(t.Context(), &output, warning, path, &result)
+			if warningFails {
+				require.ErrorIs(t, err, io.ErrClosedPipe)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, "Could not save the draft.\n", diagnostics.String())
+			}
+			require.Equal(t, cliterminal.FormatCommand(result.Args, "bash")+"\n", output.String())
+			require.False(t, result.draftSaved)
+			require.Empty(t, queued, "the closed workspace cannot display the warning")
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, invalid, after)
+		})
+	}
 }
 
 func TestImagePickerCanceledSelectionHasNoPersistenceOrOutput(t *testing.T) {

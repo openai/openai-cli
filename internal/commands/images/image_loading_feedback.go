@@ -16,6 +16,10 @@ import (
 // Feedback starts after request preparation, so it never changes stdin reading
 // or validation. It owns no request/output writers and cannot replace a failure.
 func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageOutputPlan, next cli.ActionFunc, opts SavingOptions) (err error) {
+	if workspace, _ := ctx.Value(imagePickerWorkspaceKey{}).(*imagePickerWorkspace); workspace != nil && plan != nil {
+		plan.loadingStage = func(stage clioutput.LoadingStage) { workspace.send(imagePickerWorkspaceStage(stage)) }
+		return next(ctx, command)
+	}
 	root := command.Root()
 	out := imageCommandWriter(command)
 	if plan == nil || !cliterminal.IsWriterTerminal(out) ||
