@@ -11,7 +11,8 @@ import (
 
 const (
 	FirstSupplementaryCodepoint = '\U000f0000'
-	LastSupplementaryCodepoint  = FirstSupplementaryCodepoint + rune(MaxGlyphs) - 1
+	LastSupplementaryCodepoint  = '\U000ffffd'
+	MaxPreservedGlyphs          = int(LastSupplementaryCodepoint-FirstSupplementaryCodepoint) + 1
 	maxPreservedBitmapPixels    = 64 * 1024 * 1024
 	maxPreservedBitmapScale     = 4
 )
@@ -23,10 +24,10 @@ func preparePreservingFrames(frames []Frame, cellWidth, cellHeight, pointSize in
 	if pointSize < 1 || pointSize > 1024 || cellWidth < 1 || cellWidth > 4096 || cellHeight < 1 || cellHeight > 4096 {
 		return nil, fmt.Errorf("invalid preserved font point size or terminal cell geometry")
 	}
-	if len(frames) > MaxGlyphs {
-		return nil, fmt.Errorf("a font supports at most %d image frames", MaxGlyphs)
+	if len(frames) > MaxPreservedGlyphs {
+		return nil, fmt.Errorf("a font supports at most %d image frames", MaxPreservedGlyphs)
 	}
-	var used [MaxGlyphs]bool
+	var used [MaxPreservedGlyphs]bool
 	prepared := make([]preparedFrame, 0, len(frames))
 	next := FirstSupplementaryCodepoint
 	var totalPixels int64
@@ -53,7 +54,7 @@ func preparePreservingFrames(frames []Frame, cellWidth, cellHeight, pointSize in
 		}
 		count := f.Columns * f.Rows
 		if f.CodepointStart < FirstSupplementaryCodepoint || f.CodepointStart > LastSupplementaryCodepoint || count > int(LastSupplementaryCodepoint-f.CodepointStart)+1 {
-			return nil, fmt.Errorf("frame %d character range must fit in U+F0000 through U+F18FF", i+1)
+			return nil, fmt.Errorf("frame %d character range must fit in U+F0000 through U+FFFFD", i+1)
 		}
 		width, height := f.Columns*cellWidth*2, f.Rows*cellHeight*2
 		// Check the larger strike before allocating or reading source pixels.

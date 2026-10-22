@@ -67,7 +67,7 @@ func TestImagePickerPreviewRowsRecoversFontFailureWithoutChangingFonts(t *testin
 	require.Equal(t, "font", protocol)
 }
 
-func TestImagePickerWorkspaceHeadingStartsOnItsOwnLineOnce(t *testing.T) {
+func TestImagePickerWorkspaceFrameSeparatesHeadingWithoutBlankLine(t *testing.T) {
 	out, err := os.CreateTemp(t.TempDir(), "screen")
 	require.NoError(t, err)
 	t.Cleanup(func() { out.Close() })
@@ -75,15 +75,16 @@ func TestImagePickerWorkspaceHeadingStartsOnItsOwnLineOnce(t *testing.T) {
 	m.width, m.height, m.workspace = 96, 40, true
 	w := &imagePickerWorkspace{out: out}
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-	require.Equal(t, "    Create image", ansi.Strip(w.painted[0]))
+	require.Contains(t, ansi.Strip(w.painted[0]), "╭")
+	require.Contains(t, ansi.Strip(w.painted[1]), "Create image")
 	m.width = 80
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 	_, err = out.Seek(0, io.SeekStart)
 	require.NoError(t, err)
 	raw, err := io.ReadAll(out)
 	require.NoError(t, err)
-	require.True(t, strings.HasPrefix(string(raw), "\r\n"))
-	require.Equal(t, 1, strings.Count(string(raw), "\n"), "redraw and resize must not add separator lines")
+	require.False(t, strings.HasPrefix(string(raw), "\r\n"))
+	require.NotContains(t, string(raw), "\n", "the frame and redraws must not add separator lines")
 }
 
 func TestImagePickerWorkspaceWrappedTextRetainsEveryBoundaryByte(t *testing.T) {
@@ -97,8 +98,8 @@ func TestImagePickerWorkspaceWrappedTextRetainsEveryBoundaryByte(t *testing.T) {
 		w := &imagePickerWorkspace{out: out, rows: []string{original}}
 		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 		var reconstructed strings.Builder
-		for _, row := range w.painted[w.top+1 : len(w.painted)-1] {
-			reconstructed.WriteString(strings.TrimSuffix(strings.TrimPrefix(ansi.Strip(row), "  │ "), "│"))
+		for _, row := range w.painted[w.bodyStart:w.bodyEnd] {
+			reconstructed.WriteString(strings.TrimPrefix(ansi.Strip(row), "    "))
 		}
 		require.Equal(t, original, reconstructed.String())
 	}
@@ -125,8 +126,8 @@ func TestImagePickerWorkspaceSeparatesImageContent(t *testing.T) {
 	}
 	w := &imagePickerWorkspace{}
 	w.appendImage(imagePickerWorkspaceImage{rows: []string{"pixels"}})
-	require.Equal(t, "", w.rows[w.images[0].start+1])
-	require.Equal(t, "pixels", w.rows[len(w.rows)-1])
+	require.Empty(t, w.rows, "captions must not enter request diagnostics")
+	require.Equal(t, []string{"pixels"}, w.images[0].rows)
 }
 
 func TestImagePickerWorkspaceTinyResultRemainsVisibleAfterBack(t *testing.T) {
@@ -295,7 +296,6 @@ func TestImagePickerImageScrollAndFailureStayOnSelectedFile(t *testing.T) {
 	w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: "/tmp/first.png"}, rows: strings.Split(strings.Repeat("pixel\n", 30), "\n")})
 	w.selected = 0
 	w.offset = int(^uint(0) >> 1)
-	w.followSelection = true
 	p := &imagePickerInline{model: m, workspace: w}
 	require.NoError(t, w.draw(m, 0, false, true))
 	require.Equal(t, 0, w.offset)
@@ -306,11 +306,11 @@ func TestImagePickerImageScrollAndFailureStayOnSelectedFile(t *testing.T) {
 	p.updateWorkspace(tea.KeyPressMsg{Code: tea.KeyF2})
 	require.False(t, w.expanded)
 	w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: "/tmp/second.png"}})
-	w.selected = 1
+	w.selectImage(1)
 	p.updateWorkspace(imagePickerOpened{err: errors.New("open failed"), index: 0})
-	require.NotContains(t, ansi.Strip(strings.Join(w.painted, "\n")), "Open failed")
-	require.Contains(t, ansi.Strip(strings.Join(w.painted, "\n")), "Saved: /tmp/second.png")
-	w.selected = 0
+	require.NotContains(t, ansi.Strip(strings.Join(w.painted, "\n")), "Could not open this image.")
+	require.Contains(t, ansi.Strip(strings.Join(w.painted, "\n")), "second.png")
+	w.selectImage(-1)
 	require.NoError(t, w.draw(m, 0, false, true))
-	require.Contains(t, ansi.Strip(strings.Join(w.painted, "\n")), "Open failed")
+	require.Contains(t, ansi.Strip(strings.Join(w.painted, "\n")), "Could not open this image.")
 }

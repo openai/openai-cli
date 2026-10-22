@@ -82,11 +82,17 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	if err != nil {
 		return imagePickerResult{}, errors.New("could not read terminal output state")
 	}
+	// Intercept signals before raw setup and through terminal restoration.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(signals)
 	// Capture both states before setup: a platform setup can change input and
 	// then fail while enabling output. Restore both even after partial failure.
 	defer func() {
 		err = errors.Join(err, term.Restore(input.Fd(), inputState), term.Restore(output.Fd(), outputState))
 	}()
+	// Inspect the caller before raw input hides the cooked-shell boundary.
+	mouseShell := options.workspace != nil && imagePickerNativeMouseShell(parent, input, output)
 	console := uv.NewConsole(input, output, os.Environ())
 	_, err = console.MakeRaw()
 	if err != nil {
@@ -100,6 +106,7 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	inline := &imagePickerInline{model: model, output: tracked, profile: colorprofile.Detect(output, os.Environ()), resuming: options.resuming}
 	inline.workspace, inline.generate, inline.requestContext = options.workspace, options.generate, parent
 	inline.savedSettings = initialSettings
+	inline.mouseShell = mouseShell
 	programOptions := []tea.ProgramOption{tea.WithInput(input), tea.WithOutput(tracked), tea.WithContext(ctx), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutRenderer()}
 	if os.Getenv("NO_COLOR") != "" {
 		model.color = false
@@ -111,11 +118,8 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	}
 	// Route OS signals through the model so cleanup and exit status match
 	// keyboard cancellation, without treating a write failure as cancellation.
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	listenerDone := make(chan struct{})
 	defer func() {
-		signal.Stop(signals)
 		cancel()
 		<-listenerDone
 	}()
@@ -128,9 +132,8 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 		for {
 			select {
 			case received := <-signals:
-				if options.workspace != nil {
-					signal.Stop(signals)
-				}
+				// Keep signal interception until terminal-safe cleanup completes.
+				// A second signal must not interrupt mouse or input restoration.
 				code := 130
 				if received == syscall.SIGTERM {
 					code = 143

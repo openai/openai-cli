@@ -30,13 +30,13 @@ func TestImagePickerWorkspaceCompactFormKeepsGeometryDuringGeneration(t *testing
 			require.Equal(t, strings.Count(before, "\n"), strings.Count(during, "\n"), "size=%v focus=%s", size, focus)
 			require.LessOrEqual(t, len(strings.Split(during, "\n")), m.viewHeight())
 			require.LessOrEqual(t, m.viewHeight(), 20)
-			require.NotContains(t, before, "[Ctrl+C] Quit")
+			require.NotContains(t, before, "Ctrl+C quit")
 			if focus == "command" {
-				require.Contains(t, before, "[Ctrl+P] Print")
+				require.NotContains(t, before, "[Ctrl+P]")
 			} else {
-				require.Contains(t, before, "[Ctrl+G] Generate")
+				require.Contains(t, before, "Ctrl+G generate")
 			}
-			require.Contains(t, during, "[Ctrl+C] Cancel generation")
+			require.Contains(t, during, "Ctrl+C cancel generation")
 			require.NotContains(t, during, "[Enter]")
 			for _, marker := range []string{"Create image", "Settings"} {
 				beforeRow, _ := pickerNavigationLine(t, before, marker)
@@ -44,8 +44,8 @@ func TestImagePickerWorkspaceCompactFormKeepsGeometryDuringGeneration(t *testing
 				require.Equal(t, beforeRow, duringRow)
 			}
 			if m.viewHeight() >= 12 {
-				beforeRow, _ := pickerNavigationLine(t, before, "Command preview")
-				duringRow, _ := pickerNavigationLine(t, during, "Command preview")
+				beforeRow, _ := pickerNavigationLine(t, before, "Command")
+				duringRow, _ := pickerNavigationLine(t, during, "Command")
 				require.Equal(t, beforeRow, duringRow)
 			}
 			for _, line := range strings.Split(m.View().Content, "\n") {
@@ -69,7 +69,8 @@ func TestImagePickerWorkspaceOverviewAndLongCommandStayLive(t *testing.T) {
 	for _, value := range []string{m.settings.model, "Size / aspect", "Quality", "Images", "Background", "JPEG", m.folderRow().value, "final petal"} {
 		require.Contains(t, text, value)
 	}
-	require.Contains(t, text, "Command preview ·")
+	require.Contains(t, text, "Command   openai images generate")
+	require.NotContains(t, text, "Command preview ·")
 	require.NotNil(t, view.Cursor)
 	require.Equal(t, tea.CursorBar, view.Cursor.Shape)
 	m.focus = "command"
@@ -93,7 +94,7 @@ func TestImagePickerWorkspaceCompactChoicesRemainAccessible(t *testing.T) {
 				for range len(m.rows()) {
 					view := ansi.Strip(m.View().Content)
 					require.Contains(t, view, "› "+m.rows()[m.selected].label)
-					require.Contains(t, view, "[Esc] Prompt")
+					require.Contains(t, view, "Esc prompt")
 					if m.selected < len(m.rows())-1 {
 						pickerKey(m, tea.KeyDown)
 					}
@@ -115,8 +116,8 @@ func TestImagePickerWorkspaceFolderPathRetainsCursorAndControls(t *testing.T) {
 		view := m.View()
 		text := ansi.Strip(view.Content)
 		require.Contains(t, text, "/synthetic/folder")
-		require.Contains(t, text, "[Tab] Complete")
-		require.Contains(t, text, "[Esc] Back")
+		require.Contains(t, text, "Tab complete")
+		require.Contains(t, text, "Esc back")
 		require.NotNil(t, view.Cursor)
 		require.Equal(t, tea.CursorBar, view.Cursor.Shape)
 		require.Equal(t, 8, view.Cursor.X, "the native cursor must not insert a cell")
@@ -174,7 +175,7 @@ func TestImagePickerWorkspaceProgressAndScrollingDoNotRepaintHeader(t *testing.T
 	require.NoError(t, err)
 	updates, err := io.ReadAll(out)
 	require.NoError(t, err)
-	for _, header := range []string{"Create image", "Settings", "Command preview", "\x1b[2J"} {
+	for _, header := range []string{"Create image", "Settings", "Command", "\x1b[2J"} {
 		require.NotContains(t, string(updates), header)
 	}
 	require.Contains(t, string(updates), "2s elapsed")
@@ -232,13 +233,13 @@ func TestImagePickerWorkspaceSeparatesSectionsWithoutCommandPadding(t *testing.T
 	m.width, m.height, m.workspace = 240, 60, true
 	text := ansi.Strip(m.View().Content)
 	lines := strings.Split(text, "\n")
-	command, _ := pickerNavigationLine(t, text, "Command preview")
-	require.Empty(t, strings.TrimSpace(lines[command-1]))
+	command, _ := pickerNavigationLine(t, text, "Command")
+	require.Contains(t, lines[command-1], "──")
 	require.Contains(t, lines[command-2], "More options")
-	require.Contains(t, lines[command+1], "openai images generate")
-	require.Empty(t, strings.TrimSpace(lines[command+2]))
-	require.Contains(t, lines[command+3], "[Ctrl+G] Generate")
-	require.Equal(t, command+5, len(lines))
+	require.Contains(t, lines[command], "openai images generate")
+	require.Contains(t, lines[command+1], "╰")
+	require.Contains(t, lines[command+2], "Ctrl+G generate")
+	require.Equal(t, command+3, len(lines))
 	require.NotContains(t, text, "[Enter] Generate")
 	require.NotContains(t, text, "[↓] Settings")
 	require.NotContains(t, text, "[↑↓] Move")
@@ -267,6 +268,25 @@ func TestImagePickerWorkspaceShowsAllSettingsWhileTyping(t *testing.T) {
 			require.Contains(t, text, label)
 		}
 		require.NotContains(t, text, "[Tab] Sections")
-		require.NotContains(t, text, "[Ctrl+C] Quit")
+		require.NotContains(t, text, "Ctrl+C quit")
+	}
+}
+
+func TestImagePickerWorkspaceInlinePromptKeepsNativeCursor(t *testing.T) {
+	for _, size := range [][2]int{{40, 12}, {96, 28}, {240, 40}} {
+		m := pickerForTest(t)
+		m.width, m.height, m.workspace, m.focus = size[0], size[1], true, "prompt"
+		m.settings.prompt = "abcdef"
+		m.draft, m.cursor = []rune("abcdef"), 3
+		view := m.View()
+		lines := strings.Split(ansi.Strip(view.Content), "\n")
+		require.NotNil(t, view.Cursor)
+		require.Equal(t, tea.CursorBar, view.Cursor.Shape)
+		require.Contains(t, lines[view.Cursor.Y], "Prompt abcdef")
+		require.True(t, strings.HasSuffix(ansi.Truncate(lines[view.Cursor.Y], view.Cursor.X, ""), "abc"))
+		require.NotContains(t, view.Content, "╭ Prompt")
+		for _, line := range lines {
+			require.LessOrEqual(t, ansi.StringWidth(line), m.width)
+		}
 	}
 }

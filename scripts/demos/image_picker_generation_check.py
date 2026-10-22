@@ -110,7 +110,7 @@ def check(binary, destination, case):
             process.wait_for(lambda: b'1s elapsed' in process.streams['stdout'][before:])
             raw = bytes(process.streams['stdout'])
             frame = screen(raw)
-            for marker in (b'Create image', PROMPT.encode(), b'Settings', b'Command preview', b'Generating image', b'[Ctrl+C]', b'Cancel'):
+            for marker in (b'Create image', PROMPT.encode(), b'Settings', b'Command', b'Generating image', b'Ctrl+C', b'cancel'):
                 assert marker in frame, (marker, frame)
             image_top = next(i for i, line in enumerate(frame.splitlines()) if b'Generating image' in line)
             form_top = next(i for i, line in enumerate(frame.splitlines()) if b'Create image' in line)
@@ -132,7 +132,7 @@ def check(binary, destination, case):
             process.wait_for(lambda: b'2s elapsed' in process.streams['stdout'][mark:])
             update = bytes(process.streams['stdout'][mark:])
             assert screen(bytes(process.streams['stdout'])).splitlines()[:image_top] == pinned, 'progress moved the controls'
-            assert not any(marker in update for marker in (b'Create image', b'Settings', b'Command preview', b'\x1b[2J')), 'progress repainted the pinned form'
+            assert not any(marker in update for marker in (b'Create image', b'Settings', b'Command', b'\x1b[2J')), 'progress repainted the pinned form'
             assert len(update) < 4096, 'animated row updates unexpectedly repainted the screen'
             assert not api.gates[0].is_set(), 'request completed before the form observation'
             if case in ('cancel', 'term', 'hup'):
@@ -149,7 +149,7 @@ def check(binary, destination, case):
                 process.wait_for(lambda: b'Create image' in process.streams['stdout'][mark:])
                 raw = bytes(process.streams['stdout'])
                 frame = screen(raw, 40, 12)
-                assert b'[Ctrl+C]' in frame and b'Cancel' in frame
+                assert b'Ctrl+C' in frame and b'cancel' in frame
                 fcntl.ioctl(process.fd, termios.TIOCSWINSZ, struct.pack('HHHH', 28, 96, 0, 0))
                 api.gates[0].set()
                 if case == 'retry':
@@ -162,22 +162,29 @@ def check(binary, destination, case):
                     mark = len(process.streams['stdout'])
                     process.wait_for(lambda: b'1s elapsed' in process.streams['stdout'][mark:])
                     api.gates[1].set()
-                process.wait_for(lambda: b'All images saved' in process.streams['stdout'])
+                process.wait_for(lambda: b'Saved in' in screen(bytes(process.streams['stdout'])) and b'Ctrl+C exit' in screen(bytes(process.streams['stdout'])))
                 complete = screen(bytes(process.streams['stdout']))
                 form_top = next(i for i, line in enumerate(complete.splitlines()) if b'Create image' in line)
                 image_top = form_top + control_rows
-                assert b'Images' in complete.splitlines()[image_top], 'completion changed the relative results boundary'
+                assert b'Image' in complete.splitlines()[image_top+1], 'completion changed the relative results boundary'
                 assert len(saved(home)) == (8 if case == 'history' else 1)
                 process.pump(0.9)
                 assert len(api.requests) == (2 if case == 'retry' else 1), 'reopening started another request'
                 if case == 'history':
+                    process.send(b'\x1b')
+                    process.pump(0.15)
+                    process.send(b'\x1b[Z')
+                    process.pump(0.15)
+                    process.send(b'\x1b[C' * 7)
+                    process.wait_for(lambda: '› Image 8 ·'.encode() in screen(bytes(process.streams['stdout'])))
                     old = screen(bytes(process.streams['stdout']))
                     mark = len(process.streams['stdout'])
-                    process.send(b'\x1b[<64;10;23M')
+                    process.send(b'\x1b[D')
+                    process.wait_for(lambda: '› Image 7 ·'.encode() in screen(bytes(process.streams['stdout'])))
                     process.pump(0.3)
                     new = screen(bytes(process.streams['stdout']))
                     assert old.splitlines()[:image_top] == new.splitlines()[:image_top], 'scrolling moved the pinned form'
-                    assert old.splitlines()[image_top+1:27] != new.splitlines()[image_top+1:27], 'mouse wheel did not scroll results'
+                    assert old.splitlines()[image_top+1:27] != new.splitlines()[image_top+1:27], 'image navigation did not change the selected image'
                     assert b'Create image' not in process.streams['stdout'][mark:], 'scrolling repainted the form'
                     (destination / 'scrolled.stdout.bin').write_bytes(process.streams['stdout'])
                 (destination / 'saved.stdout.bin').write_bytes(process.streams['stdout'])

@@ -20,7 +20,7 @@ func TestImagePickerWorkspaceStartsWithOnlyTheForm(t *testing.T) {
 	m.width, m.height, m.workspace = 96, 40, true
 	w := &imagePickerWorkspace{out: out}
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-	require.Len(t, w.painted, m.viewHeight())
+	require.Len(t, w.painted, len(strings.Split(m.View().Content, "\n")), "idle form has no detached status row")
 	require.NotContains(t, strings.Join(w.painted, "\n"), "Expand images")
 	require.NotContains(t, strings.Join(w.painted, "\n"), "Scroll images")
 	_, err = out.Seek(0, io.SeekStart)
@@ -40,10 +40,7 @@ func TestImagePickerWorkspaceExpandedBackPreservesFormAndScroll(t *testing.T) {
 	m.page, m.field, m.focus, m.selected = "choose", "quality", "options", 2
 	m.cursor = 5
 	w := &imagePickerWorkspace{out: out}
-	for range 40 {
-		w.rows = append(w.rows, "retained result")
-	}
-	w.images = []imagePickerWorkspaceImage{{rows: []string{"immutable preview"}, offset: 1}}
+	w.images = []imagePickerWorkspaceImage{{rows: strings.Split(strings.Repeat("immutable preview\n", 40), "\n"), offset: 1, inlineOffset: 7}}
 	w.offset = 7
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 	before := m.settings
@@ -71,7 +68,7 @@ func TestImagePickerWorkspaceExpandedBackPreservesFormAndScroll(t *testing.T) {
 		m.width, m.height = size[0], size[1]
 		w.expanded = true
 		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-		require.Contains(t, strings.Join(w.painted, "\n"), "Back")
+		require.Contains(t, strings.Join(w.painted, "\n"), "Esc back")
 	}
 }
 
@@ -122,7 +119,7 @@ func TestImagePickerWorkspaceMouseUsesReportedPanelOrigin(t *testing.T) {
 	w.offset = 12
 	p.updateWorkspace(tea.MouseWheelMsg{Y: w.top + 1, Button: tea.MouseWheelUp})
 	require.Equal(t, 12, w.offset)
-	p.updateWorkspace(tea.MouseWheelMsg{Y: 10 + w.top + 1, Button: tea.MouseWheelUp})
+	p.updateWorkspace(tea.MouseWheelMsg{Y: 10 + w.bodyStart, Button: tea.MouseWheelUp})
 	require.Equal(t, 9, w.offset)
 }
 
@@ -157,7 +154,7 @@ func TestImagePickerWorkspaceExpandedShowsRequestOutcome(t *testing.T) {
 		lines := w.expandedView(m, false)
 		require.Equal(t, "    "+note, lines[2])
 		require.Contains(t, lines[3], "retained image")
-		require.Contains(t, lines[len(lines)-1], "Back")
+		require.Contains(t, lines[len(lines)-1], "Esc back")
 	}
 	require.Contains(t, w.expandedView(m, true)[2], "Generating image")
 }

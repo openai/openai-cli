@@ -49,46 +49,57 @@ def run(binary, destination, narrow=False):
             def frame():
                 return screen(bytes(process.streams['stdout']), width, height)
 
+            def selected_caption(index):
+                label = ('Image %d ·' % index).encode()
+                current = frame()
+                return ('› '.encode() + label in current or
+                        any('╭'.encode() in line and label in line for line in current.splitlines()))
+
             process.ready()
             assert b'Expand images' not in frame() and b'Scroll images' not in frame()
             (destination / 'initial.stdout.bin').write_bytes(process.streams['stdout'])
             process.submit(PROMPT)
             process.wait_for(lambda: len(api.requests) == 1)
             api.gates[0].set()
-            process.wait_for(lambda: len(saved(home)) == 8 and b'Saved:' in frame() and b'8 of 8' in frame())
+            process.wait_for(lambda: len(saved(home)) == 8 and b'Saved in' in frame() and selected_caption(8) and b'Ctrl+C exit' in frame())
             process.pump(0.3)
             first = saved(home)
             raw = bytes(process.streams['stdout'])
-            first_preview = raw.index(BLOCK)
-            for path in first:
-                record = ('Saved image: "' + str(home / path) + '"').encode()
-                assert raw.index(record) < first_preview, 'complete receipt followed optional preview bytes'
+            assert BLOCK in raw
+            assert b'Saved image:' not in raw, 'active panel repeated final receipts'
+            focus_images(process)
+            process.send(b'\x1b[C' * 7)
+            process.wait_for(lambda: selected_caption(8))
             if narrow:
                 history = []
                 screen(raw, width, height, history)
                 assert 'SYNTHETIC SHELL HISTORY' in '\n'.join(history), 'receipt wrapping lost prior shell output'
-                assert b'[Ctrl+G] Generate' in frame()
+                assert b'Esc prompt' in frame()
                 (destination / 'wrapped-receipts.stdout.bin').write_bytes(raw)
                 width, height = 96, 28
                 fcntl.ioctl(process.fd, termios.TIOCSWINSZ, struct.pack('HHHH', height, width, 0, 0))
-                process.wait_for(lambda: b'Command preview' in frame())
+                process.wait_for(lambda: b'Command' in frame())
             else:
                 process.send(b'\x1b[<64;10;23M')
                 process.pump(0.2)
             focus_images(process)
+            process.send(b'\x1b[F')
+            process.wait_for(lambda: selected_caption(8))
             compact = frame()
             process.send(b'\r')
-            process.wait_for(lambda: b'[Esc] Back' in frame() and b'Create image' not in frame())
+            process.wait_for(lambda: b'Esc back' in frame() and b'Create image' not in frame())
             process.send(b'\x1b[D')
-            process.wait_for(lambda: b'7 of 8' in frame())
+            process.wait_for(lambda: 'Image 7 ·'.encode() in frame())
             process.send(b'\x1b[C')
-            process.wait_for(lambda: b'8 of 8' in frame())
+            process.wait_for(lambda: 'Image 8 ·'.encode() in frame())
             process.send(b'\x1b[200~HIDDEN PASTE\x1b[201~\r\x07')
             process.pump(0.2)
             assert len(api.requests) == 1
             (destination / 'expanded.stdout.bin').write_bytes(process.streams['stdout'])
             process.send(b'\x1b')
             process.wait_for(lambda: b'Create image' in frame())
+            (destination / 'compact-before.txt').write_bytes(compact)
+            (destination / 'compact-after.txt').write_bytes(frame())
             assert frame() == compact, 'Back changed inline image scroll'
             process.send(b'\r\x07')
             process.pump(0.2)
@@ -104,16 +115,13 @@ def run(binary, destination, narrow=False):
                 process.wait_for(lambda: b'Generating image' in frame())
                 assert '▀'.encode() in frame(), 'new generation removed previous images'
                 view_images(process)
-                process.wait_for(lambda: b'[Esc] Back' in frame())
+                process.wait_for(lambda: b'Esc back' in frame())
                 mark = len(process.streams['stdout'])
                 api.gates[1].set()
-                process.wait_for(lambda: len(saved(home)) == 16 and b'8 of 16' in frame() and b'[Ctrl+C] Quit' in frame())
+                process.wait_for(lambda: len(saved(home)) == 16 and 'Image 8 ·'.encode() in frame() and b'Ctrl+C quit' in frame())
                 process.pump(0.2)
                 second_raw = bytes(process.streams['stdout'][mark:])
-                first_new_preview = second_raw.index(BLOCK)
-                for path in set(saved(home)) - set(first):
-                    record = ('Saved image: "' + str(home / path) + '"').encode()
-                    assert second_raw.index(record) < first_new_preview
+                assert b'Saved image:' not in second_raw
                 assert len(api.requests) == 2
                 process.send(b'\x1b')
                 process.wait_for(lambda: PROMPT.encode() + b' second' in frame())
@@ -127,17 +135,17 @@ def run(binary, destination, narrow=False):
                 process.send(b'\r')
                 process.wait_for(lambda: len(api.requests) == 3)
                 view_images(process)
-                process.wait_for(lambda: b'[Esc] Back' in frame())
+                process.wait_for(lambda: b'Esc back' in frame())
                 api.gates[2].set()
                 process.wait_for(lambda: b'Request failed.' in frame())
-                assert b'8 of 16' in frame() and len(saved(home)) == 16
+                assert 'Image 8 ·'.encode() in frame() and len(saved(home)) == 16
                 assert '▀'.encode() in frame(), 'failure removed the previous image'
                 (destination / 'failed-expanded.stdout.bin').write_bytes(process.streams['stdout'])
                 process.send(b'\x1b')
-                process.wait_for(lambda: b'Create image' in frame() and b'Request failed.' in frame())
+                process.wait_for(lambda: b'Create image' in frame() and b'Authentication failed' in frame())
                 assert b'All images saved.' not in frame()
                 view_images(process)
-                process.wait_for(lambda: b'[Esc] Back' in frame() and b'Request failed.' in frame())
+                process.wait_for(lambda: b'Esc back' in frame() and b'Request failed.' in frame())
                 process.send(b'\x1b')
                 process.wait_for(lambda: b'Create image' in frame())
                 process.pump(0.9)
@@ -148,9 +156,12 @@ def run(binary, destination, narrow=False):
                 process.send(b'\r')
                 process.wait_for(lambda: len(api.requests) == 4)
                 view_images(process)
-                process.wait_for(lambda: b'[Esc] Back' in frame())
+                process.wait_for(lambda: b'Esc back' in frame())
             assert process.stop() == 130
             assert len(saved(home)) == (8 if narrow else 16)
+            for path in saved(home):
+                record = ('Saved image: \"' + str(home / path) + '\"').encode()
+                assert process.streams['stdout'].count(record) == 1, 'exit lost or repeated a receipt'
             assert b'\x1b[2J' not in process.streams['stdout']
             assert b'\x1b[?1049' not in process.streams['stdout']
             restored = termios.tcgetattr(process.fd)[3]
@@ -224,22 +235,26 @@ def run_font_fallback(binary, destination, color=True):
                 process.send(suffix)
                 process.pump(0.1)
                 process.send(b'\r')
-                process.wait_for(lambda: b'All images saved.' in frame() and len(saved(home)) == count)
+                process.wait_for(lambda: b'Saved in' in frame() and len(saved(home)) == count and b'Ctrl+C exit' in frame())
                 assert len(api.requests) == count // 3
                 if color:
                     assert '▀'.encode() in frame()
-                    assert b'Color preview. Saved files retain full quality.' in process.streams['stdout']
+                    assert b'Color preview' in frame()
                 else:
                     assert '▀'.encode() not in frame()
                 view_images(process)
-                process.wait_for(lambda: b'[Esc] Back' in frame())
+                process.wait_for(lambda: b'Esc back' in frame())
                 process.pump(0.2)
                 assert ('▀'.encode() in frame()) == color
                 process.send(b'\x1b')
                 process.wait_for(lambda: b'Create image' in frame())
             raw = bytes(process.streams['stdout'])
-            notice = b'Color preview. Saved files retain full quality.' if color else b'Sharp previews unavailable.'
-            assert frame().count(notice) == 1, 'font warning repeated across files or requests'
+            if color:
+                captions = [line for line in frame().splitlines() if b'Image ' in line and b'.png' in line]
+                assert captions and all(line.count(b'Color preview') == 1 for line in captions), 'each visible image needs one preview-mode caption'
+                assert frame().count(b'Color preview') == len(captions), 'preview labels escaped their image captions'
+            else:
+                assert frame().count(b'Sharp previews unavailable.') == 1, 'font warning repeated across files or requests'
             assert b'Sharp inline preview unavailable:' not in raw
             assert b'cannot be matched to the current session' not in raw
             assert process.stop() == 130

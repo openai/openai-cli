@@ -235,23 +235,27 @@ func displayImageFontReservedSession(ctx context.Context, out io.Writer, img ima
 		}
 		companions = append(companions, companion)
 	}
-	limit := imagefont.MaxGlyphs
-	if reserveGlyphs > 0 {
-		for _, face := range append([]imagefont.PreserveOptions{geometry}, companions...) {
-			capacity, err := imagefont.PreservedGlyphCapacity(face)
-			if err != nil {
-				return err
-			}
-			limit = min(limit, max(0, capacity-reserveGlyphs))
+	capacity := imagefont.MaxPreservedGlyphs
+	for _, face := range append([]imagefont.PreserveOptions{geometry}, companions...) {
+		faceCapacity, err := imagefont.PreservedGlyphCapacity(face)
+		if err != nil {
+			return err
 		}
+		capacity = min(capacity, faceCapacity)
 	}
-	revision, err := gallery.PrepareWithLimit(ctx, img, columns, limit)
+	// Replaying an existing placement still rebuilds every retained glyph.
+	// Reservation affects new allocations, not the actual budget for replay.
+	if state.UsedGlyphs > capacity {
+		return fmt.Errorf("sharp-preview capacity reached: %w", imagegallery.ErrFull)
+	}
+	limit := max(0, capacity-max(0, reserveGlyphs))
+	revision, err := gallery.PreparePreservingWithLimit(ctx, img, columns, limit)
 	if err != nil {
 		if errors.Is(err, imagegallery.ErrFull) {
 			if reserveGlyphs > 0 {
 				return errors.New("sharp progress preview skipped to leave room for the final image")
 			}
-			return errors.New("this image gallery is full. Open a new Terminal tab with your normal text font to display more sharp images")
+			return fmt.Errorf("sharp-preview capacity reached: %w", imagegallery.ErrFull)
 		}
 		return err
 	}

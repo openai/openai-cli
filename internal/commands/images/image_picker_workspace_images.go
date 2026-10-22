@@ -3,7 +3,6 @@ package images
 import (
 	"context"
 	"errors"
-	"fmt"
 	"image"
 	"net/url"
 	"os"
@@ -15,17 +14,18 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/openai/openai-cli/internal/imagegallery"
 	"github.com/openai/openai-cli/internal/imageoutput"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/terminalimage"
 )
 
 type imagePickerWorkspaceImage struct {
-	file                        imageoutput.SavedImage
-	protocol                    string
-	rows                        []string
-	columns                     int
-	start, displayStart, offset int
+	file                 imageoutput.SavedImage
+	protocol             string
+	rows                 []string
+	columns              int
+	offset, inlineOffset int
 }
 
 type imagePickerExpandedRows struct {
@@ -46,7 +46,7 @@ func imagePickerPreviewRows(ctx context.Context, out *os.File, img image.Image, 
 	if ctx.Err() != nil {
 		return nil, protocol, errors.Join(err, ctx.Err())
 	}
-	if protocol != "font" || !errors.As(err, &fontErr) || !imagePickerSafePreviewFailure(err) || !savedImageBlockColor(os.Getenv) {
+	if errors.Is(err, imagegallery.ErrFull) || protocol != "font" || !errors.As(err, &fontErr) || !imagePickerSafePreviewFailure(err) || !savedImageBlockColor(os.Getenv) {
 		return rows, protocol, err
 	}
 	rows, err = terminalimage.PrepareRows(ctx, out, img, "blocks", columns)
@@ -66,7 +66,7 @@ func (m *imagePicker) workspaceKeys(keys [][2]string, width int) string {
 		key = key.Foreground(lipgloss.Color(accent))
 		muted = muted.Foreground(lipgloss.Color(secondary))
 	}
-	return imagePickerShortcutLine(keys, width, key, muted)
+	return imagePickerWorkspaceShortcutLine(keys, width, key, muted)
 }
 
 func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string {
@@ -75,13 +75,10 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 	}
 	lines := make([]string, max(1, m.height))
 	entry := &w.images[w.selected]
-	title := fmt.Sprintf("Images · %d of %d", w.selected+1, len(w.images))
-	if entry.protocol == "blocks" {
-		title += " · Color preview"
-	}
+	title := w.imageTitle()
 	lines[0] = "    " + ansi.Truncate(title, max(0, m.width-6), "…")
 	if len(lines) > 1 {
-		lines[1] = "    " + ansi.Truncate(imagePickerLine(imagePickerFolderLabel(entry.file.Path)), max(0, m.width-6), "…")
+		lines[1] = "    " + ansi.Truncate(imagePickerLine("Saved in "+imagePickerFolderLabel(filepath.Dir(entry.file.Path))), max(0, m.width-6), "…")
 	}
 	if len(lines) > 3 {
 		if busy {
@@ -120,8 +117,16 @@ func (p *imagePickerInline) prepareExpanded() {
 	if len(w.images) == 0 {
 		return
 	}
-	if !w.expanded && (w.images[w.selected].columns <= max(1, p.model.width-8) || len(w.images[w.selected].rows) == 0) {
-		return
+	expanded := w.expanded
+	index := w.selected
+	if !expanded {
+		index = w.inlineResizeIndex(p.model.width)
+		if index < 0 {
+			return
+		}
+		if w.previewPending && !w.previewExpanded {
+			return
+		}
 	}
 	size, err := interactiveImageViewport(w.out)
 	if err != nil {
@@ -129,12 +134,8 @@ func (p *imagePickerInline) prepareExpanded() {
 		p.output.cancel()
 		return
 	}
-	expanded := w.expanded
-	entry := w.images[w.selected]
-	if !expanded && (entry.columns <= max(1, size.width-8) || len(entry.rows) == 0) {
-		return
-	}
-	if w.previewPending && w.previewIndex == w.selected && w.previewSize == size && w.previewExpanded == expanded {
+	entry := w.images[index]
+	if w.previewPending && w.previewIndex == index && w.previewSize == size && w.previewExpanded == expanded {
 		return
 	}
 	if expanded && w.expandedIndex == w.selected && w.expandedSize == size && len(w.expandedRows) > 0 {
@@ -144,7 +145,7 @@ func (p *imagePickerInline) prepareExpanded() {
 		w.previewCancel()
 	}
 	w.previewRevision++
-	revision, index := w.previewRevision, w.selected
+	revision := w.previewRevision
 	w.previewPending, w.previewIndex, w.previewSize, w.previewExpanded = true, index, size, expanded
 	parent := w.context
 	if parent == nil {
@@ -187,6 +188,9 @@ func (p *imagePickerInline) expandImages() {
 func (p *imagePickerInline) closeExpanded() {
 	w := p.workspace
 	w.expanded = false
+	if w.selected != w.layoutSelected {
+		w.galleryJump = true
+	}
 	w.previewPending = false
 	if w.previewCancel != nil {
 		w.previewCancel()
@@ -201,10 +205,13 @@ func (w *imagePickerWorkspace) selectImage(delta int) {
 	if len(w.images) == 0 {
 		return
 	}
-	w.selected = max(0, min(w.selected+delta, len(w.images)-1))
+	selected := max(0, min(w.selected+delta, len(w.images)-1))
+	if selected == w.selected {
+		return
+	}
+	w.selected = selected
 	if !w.expanded {
-		w.offset = w.images[w.selected].displayStart
-		w.scroll(0)
+		w.galleryJump = true
 	}
 }
 
@@ -228,14 +235,8 @@ func (w *imagePickerWorkspace) scrollExpanded(delta int) {
 }
 
 func (w *imagePickerWorkspace) appendImage(entry imagePickerWorkspaceImage) {
-	if len(w.images) > 0 {
-		w.rows = append(w.rows, "")
-	}
-	entry.start = len(w.rows)
-	w.rows = append(w.rows, fmt.Sprintf("Image %d · %s", len(w.images)+1, imagePickerLine(filepath.Base(entry.file.Path))))
-	w.rows = append(w.rows, "")
-	w.rows = append(w.rows, entry.rows...)
 	w.images = append(w.images, entry)
+	w.galleryRevision++
 }
 
 // Reserve the shared four-cell inset and two-cell right margin before encoding.
@@ -356,16 +357,8 @@ func imagePickerSafePreviewFailure(err error) bool {
 
 func (w *imagePickerWorkspace) replaceImageRows(index int, rows []string, columns int, protocol string) {
 	entry := &w.images[index]
-	start, end := entry.start+2, entry.start+2+len(entry.rows)
-	updated := append([]string(nil), w.rows[:start]...)
-	updated = append(updated, rows...)
-	w.rows = append(updated, w.rows[end:]...)
-	delta := len(rows) - len(entry.rows)
-	for i := index + 1; i < len(w.images); i++ {
-		w.images[i].start += delta
-	}
 	entry.rows, entry.columns, entry.protocol = rows, columns, protocol
-	w.layoutCount = -1
+	w.galleryRevision++
 }
 
 func imagePickerPrepareResize(ctx context.Context, out *os.File, entry imagePickerWorkspaceImage, size interactiveImageSize, expanded bool, prepare func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)) ([]string, string, int, error) {
@@ -397,4 +390,22 @@ func imagePickerPrepareResize(ctx context.Context, out *os.File, entry imagePick
 	}
 
 	return rows, protocol, preparedColumns, nil
+}
+
+// Resize only visible oversized previews, through the existing single worker.
+func (w *imagePickerWorkspace) inlineResizeIndex(width int) int {
+	needs := func(i int) bool { return w.images[i].columns > max(1, width-8) && len(w.images[i].rows) > 0 }
+	if needs(w.selected) {
+		return w.selected
+	}
+	for i, start := range w.galleryStarts {
+		end := len(w.displayRows)
+		if i+1 < len(w.galleryStarts) {
+			end = w.galleryStarts[i+1]
+		}
+		if start < w.offset+w.viewportRows && end > w.offset && needs(i) {
+			return i
+		}
+	}
+	return -1
 }

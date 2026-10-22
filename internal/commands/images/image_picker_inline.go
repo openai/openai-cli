@@ -27,6 +27,7 @@ type imagePickerInline struct {
 	profile        colorprofile.Profile
 	started        bool
 	modesActive    bool
+	mouseShell     bool
 	restoreWrap    bool
 	content        string
 	width, height  int
@@ -61,7 +62,11 @@ func (p *imagePickerInline) Init() tea.Cmd {
 		// Apple Terminal can expose the final p of unsupported DECRQM requests.
 		query = ""
 		if p.workspace != nil {
-			p.workspace.mouse.stopped = true
+			if p.mouseShell {
+				query = p.workspace.mouse.openShell()
+			} else {
+				p.workspace.mouse.stopped = true
+			}
 		}
 	} else if p.workspace != nil {
 		query += imagePickerMouseQuery
@@ -175,11 +180,12 @@ func (p *imagePickerInline) draw() {
 	p.model.width, p.model.height = width, height
 	p.model.clampCommandOffset()
 	if p.workspace != nil {
-		p.prepareExpanded()
 		if err := p.workspace.draw(p.model, p.profile, p.busy, true); err != nil {
 			p.err = err
 			p.output.cancel()
+			return
 		}
+		p.prepareExpanded()
 		if p.resuming {
 			p.submitAfter = time.Now().Add(imagePickerResumeQuiet)
 			p.resuming = false

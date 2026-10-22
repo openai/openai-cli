@@ -18,7 +18,9 @@ func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
 	p.model.result = imagePickerResult{}
 	p.model.generating, p.busy = true, true
 	p.model.note = ""
+	p.workspace.clearRequestDiagnostics()
 	p.workspace.animationFrame = 0
+	p.workspace.fontNotice = false
 	p.workspace.stage, p.workspace.since = clioutput.LoadingWaiting, time.Now()
 	ctx, cancel := context.WithCancel(p.requestContext)
 	ctx = context.WithValue(ctx, imagePickerWorkspaceKey{}, p.workspace)
@@ -27,6 +29,12 @@ func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
 	p.requestErr = nil
 	done := p.requestDone
 	p.draw()
+	if p.err != nil {
+		cancel()
+		p.requestErr = p.err
+		close(done)
+		return tea.Quit
+	}
 	go func() {
 		err := p.generate(ctx, &result)
 		if err != nil && imagePickerRecoverableRequest(err) && !cliterminal.IsWriterTerminal(os.Stderr) {
@@ -46,6 +54,10 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		if err := p.workspace.draw(p.model, p.profile, p.busy, header); err != nil {
 			p.err = err
 			p.output.cancel()
+			return
+		}
+		if p.err == nil {
+			p.prepareExpanded()
 		}
 	}
 	switch msg := msg.(type) {
@@ -90,39 +102,32 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		p.workspace.stage = clioutput.LoadingStage(msg)
 		draw(false)
 		return true, nil
-	case imagePickerWorkspaceReceipts:
-		p.workspace.pendingReceipts = append(p.workspace.pendingReceipts, msg.rows...)
-		return p.updateWorkspace(imagePickerWorkspaceRows{msg.rows})
 	case imagePickerWorkspaceRows:
-		bottom := p.workspace.offset >= max(0, len(p.workspace.displayRows)-max(0, p.workspace.height-p.workspace.top-2))
 		p.workspace.rows = append(p.workspace.rows, msg.rows...)
-		if bottom && !p.workspace.expanded {
-			p.workspace.offset = int(^uint(0) >> 1)
-		}
 		draw(false)
 		return true, nil
 	case imagePickerWorkspaceImage:
 		w := p.workspace
-		bottom := w.offset >= max(0, len(w.displayRows)-max(0, w.height-w.top-2))
+		follow := len(w.images) == 0 || (p.model.focus != "images" && !w.expanded && w.offset >= max(0, len(w.displayRows)-w.viewportRows))
 		w.appendImage(msg)
 		p.model.hasImages = true
-		if bottom && !w.expanded {
+		if follow {
 			w.selected = len(w.images) - 1
-			w.offset = int(^uint(0) >> 1)
-			w.followSelection = true
+			w.galleryJump = true
 		}
-		draw(false)
+		draw(true)
 		return true, nil
 	case imagePickerExpandedRows:
 		w := p.workspace
 		if msg.revision == w.previewRevision {
 			w.previewPending = false
 		}
-		if msg.revision == w.previewRevision && msg.index == w.selected {
+		if msg.revision == w.previewRevision && msg.index >= 0 && msg.index < len(w.images) && (msg.inline || msg.index == w.selected) {
 			w.previewPending = false
 			if msg.inline {
 				w.replaceImageRows(msg.index, msg.rows, msg.columns, msg.protocol)
 				draw(false)
+
 				return true, nil
 			}
 			w.expandedIndex, w.expandedSize, w.expandedRows = msg.index, msg.size, msg.rows
@@ -152,13 +157,12 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 				return true, tea.Quit
 			}
 			message := imagePickerRequestMessage(p.workspace.root, msg.err, msg.draftSaved)
-			bottom := p.workspace.offset >= max(0, len(p.workspace.displayRows)-max(0, p.workspace.height-p.workspace.top-2))
+
 			for _, line := range strings.Split(message, "\n") {
 				p.workspace.rows = append(p.workspace.rows, imagePickerLine(line))
 			}
-			if bottom && !p.workspace.expanded {
-				p.workspace.offset = int(^uint(0) >> 1)
-			}
+			p.workspace.offset = 0
+			p.workspace.galleryDetails = true
 			p.model.note = "Request failed. Edit your prompt or settings before trying again."
 		} else {
 			p.model.note = "All images saved."
@@ -184,12 +188,13 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		y := msg.Y - p.workspace.origin
-		if p.workspace.originKnown && y > p.workspace.top && y < len(p.workspace.painted)-1 {
+		if p.workspace.originKnown && y >= p.workspace.bodyStart && y < p.workspace.bodyEnd {
 			if msg.Button == tea.MouseWheelUp {
 				p.workspace.scroll(-3)
 			} else if msg.Button == tea.MouseWheelDown {
 				p.workspace.scroll(3)
 			}
+
 			draw(false)
 		}
 		return true, nil
@@ -220,7 +225,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 					delta = -1
 				}
 				w.selectImage(delta)
-				p.prepareExpanded()
+
 			case "up", "down", "pgup", "pgdown", "home", "end":
 				delta := 1
 				if msg.String() == "pgup" || msg.String() == "pgdown" {
@@ -266,10 +271,10 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 				p.workspace.scroll(1)
 			case "left":
 				p.workspace.selectImage(-1)
-				p.prepareExpanded()
+
 			case "right":
 				p.workspace.selectImage(1)
-				p.prepareExpanded()
+
 			case "home":
 				p.workspace.selectImage(-len(p.workspace.images))
 			case "end":
@@ -280,17 +285,18 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 				break
 			}
 			if msg.String() == "enter" || msg.String() == "left" || msg.String() == "right" || msg.String() == "up" || msg.String() == "down" || msg.String() == "home" || msg.String() == "end" || msg.String() == "esc" {
-				p.prepareExpanded()
+
 				draw(true)
 				return true, nil
 			}
 		}
 		if (p.busy || p.model.focus != "command") && (msg.String() == "pgup" || msg.String() == "pgdown") {
-			delta := max(1, p.workspace.height-p.workspace.top-2)
+			delta := max(1, p.workspace.viewportRows)
 			if msg.String() == "pgup" {
 				delta = -delta
 			}
 			p.workspace.scroll(delta)
+
 			draw(false)
 			return true, nil
 		}

@@ -13,31 +13,44 @@ import (
 // Keep the form's geometry independent of request state and result history.
 // Settings use the same bounded area for their overview and editable list.
 func (m *imagePicker) workspaceView(view tea.View, prompt string, strong, muted, accent, border, keyStyle lipgloss.Style) tea.View {
-	width, height := m.width-4, m.viewHeight()
-	lines := []string{strong.Render("  Create image")}
-	if height >= 12 && m.width >= 50 {
-		caption := "╭ Prompt "
-		prompt = cliterminal.FitPrompt(prompt, width-4)
-		lines = append(lines,
-			border.Render(caption+strings.Repeat("─", width-ansi.StringWidth(caption)-1)+"╮"),
-			border.Render("│")+ansi.EraseCharacter(width-2)+" "+prompt+" "+ansi.CursorHorizontalAbsolute(width+2)+border.Render("│"),
-			border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
-	} else {
-		caption := "  Prompt"
-		if m.focus == "prompt" {
-			caption = "› Prompt"
+	width, height := m.width-8, m.viewHeight()
+	framed := height >= 16 && m.width >= 50
+	frameRows := 0
+	if framed {
+		frameRows = 2
+	}
+	lines := []string{strong.Render("Create image")}
+	label := muted
+	if m.focus == "prompt" && !m.generating {
+		label = accent.Bold(false)
+	}
+	const promptPrefix = "Prompt "
+	promptInset := ansi.StringWidth(promptPrefix)
+	promptWidth := max(1, width-promptInset)
+	if m.focus == "prompt" {
+		var x int
+		prompt, x = imagePickerEditLine(m.draft, m.cursor, promptWidth)
+		if len(m.draft) == 0 {
+			prompt = muted.Render("Describe your image…")
 		}
-		lines = append(lines, border.Render(caption), "  "+prompt)
+		view.Cursor = tea.NewCursor(4+promptInset+x, len(lines)+frameRows/2)
+		view.Cursor.Shape = tea.CursorBar
 	}
-	commandWidth, commandHeight := m.commandDimensions()
-	command, commandStart, commandTotal := m.commandPreview(commandWidth, commandHeight)
-	footer := m.footer(width-2, keyStyle, muted)
-	commandHeading := height >= 12
-	reserved := len(lines) + 1 + commandHeight + len(footer)
+	prompt = cliterminal.FitPrompt(prompt, promptWidth)
+	lines = append(lines, label.Render("Prompt")+" "+prompt)
+	rule := m.workspaceImageBorder(strings.Repeat("─", width))
 	if height >= 12 {
-		reserved += 3 // Separate sections without empty command rows.
+		lines = append(lines, rule)
 	}
-	if commandHeading {
+	command := m.workspaceCommandLines(width, strong.Bold(false), muted, accent)
+	footer := m.footer(m.width-6, keyStyle, muted)
+	commandRule := height >= 12
+	reserved := len(lines) + 1 + len(command) + len(footer) + frameRows
+	// Keep one row available for results in short, unframed terminals.
+	if !framed {
+		reserved++
+	}
+	if commandRule {
 		reserved++
 	}
 	if m.page == "path" {
@@ -50,47 +63,80 @@ func (m *imagePicker) workspaceView(view tea.View, prompt string, strong, muted,
 	if len(rows) > available {
 		heading += fmt.Sprintf(" · %d–%d of %d", start+1, end, len(rows))
 	}
-	lines = append(lines, strong.Render("  "+heading))
+	headingStyle := muted
+	if !m.generating && (m.focus == "options" || m.focus == "path") {
+		headingStyle = accent.Bold(false)
+	}
+	lines = append(lines, headingStyle.Render(heading))
 	if m.page == "path" {
-		path, x := imagePickerEditLine(m.folder.draft, m.folder.cursor, width-2)
+		path, x := imagePickerEditLine(m.folder.draft, m.folder.cursor, width)
 		if len(m.folder.draft) == 0 {
 			path = muted.Render("Enter a folder path…")
 		}
 		if m.focus == "path" {
-			view.Cursor = tea.NewCursor(4+x, len(lines))
+			view.Cursor = tea.NewCursor(4+x, len(lines)+frameRows/2)
 			view.Cursor.Shape = tea.CursorBar
 		}
-		lines = append(lines, "  "+path)
+		lines = append(lines, path)
 	}
-	lines = append(lines, m.optionLines(rows, start, end, width, strong, accent, muted)...)
-	if height >= 12 {
-		lines = append(lines, "")
-	}
-	if commandHeading {
-		label := "Command preview"
-		if commandTotal > len(command) {
-			label += fmt.Sprintf(" · %d–%d of %d", commandStart+1, commandStart+len(command), commandTotal)
+	selection := strong
+	if m.color {
+		fill := "#E9EFFE"
+		if m.dark {
+			fill = "#343D58"
 		}
-		lines = append(lines, "  "+muted.Render(label))
+		selection = accent.Background(lipgloss.Color(fill)).Width(width - 2)
 	}
-	for i, line := range command {
-		if !m.generating && m.focus == "command" && i == 0 {
-			lines = append(lines, accent.Render("› ")+strong.Render(line))
+	lines = append(lines, m.optionLines(rows, start, end, width, selection, accent, muted)...)
+	if commandRule {
+		lines = append(lines, rule)
+	}
+	lines = append(lines, command...)
+	body := make([]string, 0, len(lines)+frameRows+len(footer)+1)
+	if framed {
+		body = append(body, m.workspaceImageFrame("", m.width, true))
+	}
+	for _, line := range lines {
+		line = ansi.Truncate(line, width, "…")
+		if framed {
+			body = append(body, m.workspaceImageRow(line, m.width))
 		} else {
-			lines = append(lines, "  "+muted.Render(line))
+			body = append(body, "    "+line)
 		}
 	}
-	if height >= 12 {
-		lines = append(lines, "")
+	if framed {
+		body = append(body, m.workspaceImageFrame("", m.width, false))
 	}
 	for _, line := range footer {
-		lines = append(lines, "  "+line)
+		body = append(body, "    "+line)
 	}
-	if height >= 12 {
-		lines = append(lines, "")
-	}
-	view.Content = m.fit(lines, width, height)
+	view.Content = strings.Join(body, "\n")
 	return view
+}
+
+// Keep the command quiet while editing. Focusing it reveals the complete,
+// scrollable preview; command printing always retains the original bytes.
+func (m *imagePicker) workspaceCommandLines(width int, text, muted, accent lipgloss.Style) []string {
+	if m.focus != "command" {
+		command := cliterminal.FormatCommand(m.settings.args(), m.shell)
+		if command == "" {
+			command = imagePickerUnsupportedShell
+		}
+		const label, gap = "Command", "   "
+		available := max(1, width-ansi.StringWidth(label+gap))
+		return []string{text.Render(label) + gap + muted.Render(ansi.Truncate(command, available, "…"))}
+	}
+	commandWidth, commandHeight := m.commandDimensions()
+	command, _, _ := m.commandPreview(commandWidth, commandHeight)
+	label := muted
+	if !m.generating {
+		label = accent.Bold(false)
+	}
+	lines := []string{label.Render("Command")}
+	for _, line := range command {
+		lines = append(lines, muted.Render(line))
+	}
+	return lines
 }
 
 // Show contextual shortcuts and retain their row count during a request.
@@ -99,18 +145,15 @@ func (m *imagePicker) workspaceFooter(width int, key, muted lipgloss.Style) []st
 	secondary := [][2]string{{"Ctrl+G", "Generate"}}
 	switch m.focus {
 	case "prompt":
-		if m.hasImages {
-			secondary = append(secondary, [2]string{"Shift+Tab", "Images"})
-		} else {
-			secondary = append(secondary, [2]string{"Tab", "Settings"})
-		}
+		secondary = append(secondary, [2]string{"Tab", "Settings"})
 		secondary = append(secondary, [2]string{"Alt+Enter", "New line"})
 	case "images":
-		secondary = [][2]string{{"↑↓", "Scroll"}, {"←→", "Images"}, {"O", "Open"}, {"Enter", "View"}, {"Esc", "Prompt"}}
+		secondary = [][2]string{{"Esc", "Prompt"}, {"←→", "Images"}, {"↑↓", "Scroll"}, {"O", "Open"}}
 	case "command":
 		secondary = [][2]string{{"Esc", "Prompt"}}
-		if cliterminal.ShellQuoter(m.shell) != nil {
-			secondary = append(secondary, [2]string{"Ctrl+P", "Print"})
+		commandWidth, commandHeight := m.commandDimensions()
+		if len(m.commandLines(commandWidth)) > commandHeight {
+			secondary = append(secondary, [2]string{"↑↓", "Scroll"})
 		}
 	case "path":
 		secondary = [][2]string{{"Tab", "Complete"}, {"Esc", "Back"}}
@@ -118,24 +161,64 @@ func (m *imagePicker) workspaceFooter(width int, key, muted lipgloss.Style) []st
 		secondary = append(secondary, [2]string{"Esc", "Prompt"})
 	}
 
-	rows := []string{imagePickerShortcutLine(append(append([][2]string(nil), primary...), secondary...), width, key, muted)}
-	if width < 84 {
-		rows = []string{imagePickerShortcutLine(primary, width, key, muted), imagePickerShortcutLine(secondary, width, key, muted)}
+	rows := imagePickerWorkspaceShortcutRows(append(primary, secondary...), width, key, muted)
+	controls := [][2]string{{"Ctrl+C", "Cancel generation"}}
+	if m.focus == "images" {
+		controls = append(controls, [2]string{"Esc", "Prompt"}, [2]string{"←→", "Images"}, [2]string{"↑↓", "Scroll"}, [2]string{"O", "Open"})
+	} else {
+		controls = append(controls, [2]string{"Tab", "Images"})
 	}
+	busy := imagePickerWorkspaceShortcutRows(controls, width, key, muted)
+	// The first arriving image enables navigation. Reserve that space before
+	// submission, without advertising image navigation before results exist.
+	count := max(len(rows), len(busy))
 	if m.generating {
-		controls := [][2]string{{"Ctrl+C", "Cancel generation"}}
 		if m.hasImages {
-			if m.focus == "images" {
-				controls = append(controls, [2]string{"↑↓", "Scroll"}, [2]string{"Enter", "View"}, [2]string{"O", "Open"}, [2]string{"Esc", "Prompt"})
-			} else {
-				controls = append(controls, [2]string{"Tab", "Images"})
-			}
+			rows = busy
+		} else {
+			rows = imagePickerWorkspaceShortcutRows(controls[:1], width, key, muted)
 		}
-		rows[0] = imagePickerShortcutLine(controls, width, key, muted)
-		if len(rows) > 1 {
-			rows[0] = imagePickerShortcutLine(controls[:1], width, key, muted)
-			rows[1] = imagePickerShortcutLine(controls[1:], width, key, muted)
-		}
+	}
+	for len(rows) < count {
+		rows = append(rows, "")
 	}
 	return rows
+}
+
+// Wrap complete key/action pairs only when they do not fit on the current row.
+func imagePickerWorkspaceShortcutRows(shortcuts [][2]string, width int, key, muted lipgloss.Style) []string {
+	var rows []string
+	start, used := 0, 0
+	for i, shortcut := range shortcuts {
+		cells := ansi.StringWidth(shortcut[0] + " " + strings.ToLower(shortcut[1]))
+		if i > start && used+3+cells > width {
+			rows = append(rows, imagePickerWorkspaceShortcutLine(shortcuts[start:i], width, key, muted))
+			start, used = i, 0
+		}
+		if i > start {
+			used += 3
+		}
+		used += cells
+	}
+	return append(rows, imagePickerWorkspaceShortcutLine(shortcuts[start:], width, key, muted))
+}
+
+// Keep key names distinct without turning every shortcut into a bold badge.
+func imagePickerWorkspaceShortcutLine(shortcuts [][2]string, width int, key, muted lipgloss.Style) string {
+	var parts []string
+	used := 0
+	for _, shortcut := range shortcuts {
+		label := strings.ToLower(shortcut[1])
+		cells := ansi.StringWidth(shortcut[0] + " " + label)
+		gap := 0
+		if len(parts) > 0 {
+			gap = 3
+		}
+		if used+gap+cells > width {
+			continue
+		}
+		parts = append(parts, key.Bold(false).Render(shortcut[0])+" "+muted.Render(label))
+		used += gap + cells
+	}
+	return strings.Join(parts, muted.Render(" · "))
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/imagegallery"
 	"github.com/openai/openai-cli/internal/imageoutput"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/terminalimage"
@@ -30,69 +31,67 @@ type imagePickerWorkspaceDone struct {
 	draftSaved bool
 }
 type imagePickerWorkspaceRows struct{ rows []string }
-type imagePickerWorkspaceReceipts struct{ rows []string }
 type imagePickerWorkspaceStage clioutput.LoadingStage
 
 // The UI goroutine owns the screen and history. Request workers publish events;
 // the receipt list also survives cancellation before the UI consumes an event.
 type imagePickerWorkspace struct {
-	out                                *os.File
-	context                            context.Context
-	root                               *cli.Command
-	send                               func(tea.Msg)
-	rows, painted                      []string
-	displayRows                        []string
-	layoutWidth, layoutCount           int
-	offset, top, width, height         int
-	origin                             int
-	originKnown, originQueryPending    bool
-	frameRevision, originQueryRevision uint64
-	header                             tea.View
-	started, kitty                     bool
-	animationFrame                     int
-	stage                              clioutput.LoadingStage
-	since                              time.Time
-	receiptMu                          sync.Mutex
-	receipts                           []string
-	images                             []imagePickerWorkspaceImage
-	selected                           int
-	expanded                           bool
-	mouse                              imagePickerMouseModes
-	expandedRows                       []string
-	expandedIndex                      int
-	expandedSize                       interactiveImageSize
-	previewRevision                    uint64
-	previewPending                     bool
-	previewIndex                       int
-	previewSize                        interactiveImageSize
-	previewExpanded                    bool
-	previewErrorMu                     sync.Mutex
-	previewError                       error
-	prepareRows                        func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)
-	previewCancel                      context.CancelFunc
-	previewWorkers                     sync.WaitGroup
-	pendingReceipts                    []string
-	opening                            bool
-	openWorkers                        sync.WaitGroup
-	openError                          bool
-	openErrorIndex                     int
-	followSelection                    bool
-	viewAfter                          time.Time
-	openCancel                         context.CancelFunc
-	openImage                          func(context.Context, string) error
-	fontNotice                         bool // Owned by the sequential request worker.
+	out                                      *os.File
+	context                                  context.Context
+	root                                     *cli.Command
+	send                                     func(tea.Msg)
+	rows, painted                            []string
+	displayRows                              []string
+	layoutWidth, layoutCount, layoutSelected int
+	messageRows                              int
+	galleryStarts                            []int
+	galleryRevision, layoutRevision          uint64
+	layoutCaptions                           bool
+	galleryJump, galleryDetails              bool
+	viewportRows, bodyStart, bodyEnd         int
+	offset, top, width, height               int
+	origin                                   int
+	originKnown, originQueryPending          bool
+	frameRevision, originQueryRevision       uint64
+	header                                   tea.View
+	started, kitty                           bool
+	animationFrame                           int
+	stage                                    clioutput.LoadingStage
+	since                                    time.Time
+	receiptMu                                sync.Mutex
+	receipts                                 []string
+	images                                   []imagePickerWorkspaceImage
+	selected                                 int
+	expanded                                 bool
+	mouse                                    imagePickerMouseModes
+	expandedRows                             []string
+	expandedIndex                            int
+	expandedSize                             interactiveImageSize
+	previewRevision                          uint64
+	previewPending                           bool
+	previewIndex                             int
+	previewSize                              interactiveImageSize
+	previewExpanded                          bool
+	previewErrorMu                           sync.Mutex
+	previewError                             error
+	prepareRows                              func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)
+	previewCancel                            context.CancelFunc
+	previewWorkers                           sync.WaitGroup
+	opening                                  bool
+	openWorkers                              sync.WaitGroup
+	openError                                bool
+	openErrorIndex                           int
+	viewAfter                                time.Time
+	openCancel                               context.CancelFunc
+	openImage                                func(context.Context, string) error
+	fontNotice                               bool // Owned by the sequential request worker.
 }
 
 func (w *imagePickerWorkspace) saved(ctx context.Context, files []imageoutput.SavedImage, mode string) error {
-	var receipts []string
 	for _, file := range files {
 		w.receiptMu.Lock()
 		w.receipts = append(w.receipts, file.Path)
 		w.receiptMu.Unlock()
-		receipts = append(receipts, fmt.Sprintf("Saved image: %+q", file.Path))
-	}
-	if len(receipts) > 0 {
-		w.send(imagePickerWorkspaceReceipts{receipts})
 	}
 	for _, file := range files {
 		protocol := savedImageProtocol(mode, true, os.Getenv)
@@ -117,11 +116,7 @@ func (w *imagePickerWorkspace) saved(ctx context.Context, files []imageoutput.Sa
 		columns := imagePickerPreviewColumns(img.Bounds(), width, max(3, height-form.viewHeight()-2), cw, ch)
 		var rows []string
 		if columns > 0 {
-			requested := protocol
 			rows, protocol, err = imagePickerPreviewRows(ctx, w.out, img, protocol, columns)
-			if err == nil && requested == "font" && protocol == "blocks" {
-				w.fontPreviewNotice("Color preview. Saved files retain full quality.")
-			}
 		}
 		if err != nil || columns < 1 {
 			if ctx.Err() != nil {
@@ -133,7 +128,11 @@ func (w *imagePickerWorkspace) saved(ctx context.Context, files []imageoutput.Sa
 			}
 			rows = []string{"Preview unavailable. Open the saved file; no need to generate again."}
 			if fontErr != nil {
-				w.fontPreviewNotice("Sharp previews unavailable. Open the saved files to view them.")
+				if errors.Is(err, imagegallery.ErrFull) {
+					w.fontPreviewNotice("Sharp-preview capacity reached. Open the saved image to view it at full quality.")
+				} else {
+					w.fontPreviewNotice("Sharp previews unavailable. Open the saved files to view them.")
+				}
 				rows = nil
 			}
 		}
@@ -150,7 +149,25 @@ func (w *imagePickerWorkspace) fontPreviewNotice(message string) {
 }
 
 func (w *imagePickerWorkspace) scroll(delta int) {
-	w.offset = max(0, min(w.offset+delta, max(0, len(w.displayRows)-max(0, w.height-w.top-2))))
+	before := w.offset
+	limit := max(0, len(w.displayRows)-w.viewportRows)
+	if delta >= limit {
+		w.offset = limit
+	} else if delta <= -limit {
+		w.offset = 0
+	} else {
+		w.offset = max(0, min(w.offset+delta, limit))
+	}
+	if delta != 0 && w.offset != before && len(w.galleryStarts) > 0 && w.offset >= w.galleryStarts[0] {
+		w.selected = w.galleryImageAt(w.offset + w.viewportRows/2)
+		if w.offset == limit {
+			w.selected = len(w.images) - 1
+		}
+		if w.offset == 0 {
+			w.selected = 0
+		}
+		w.images[w.selected].inlineOffset = max(0, w.offset-w.galleryStarts[w.selected])
+	}
 }
 
 func (w *imagePickerWorkspace) progress() string {
@@ -159,7 +176,7 @@ func (w *imagePickerWorkspace) progress() string {
 		label = "Saving image"
 	}
 	if w.stage == clioutput.LoadingSaved {
-		label = "Images saved"
+		label = "Preparing previews"
 	}
 	if clioutput.LoadingAnimationSupported(os.Getenv) {
 		animation := clioutput.LoadingSpinner(os.Getenv, runtime.GOOS)
@@ -182,120 +199,29 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		w.header = view
 	}
 	w.width, w.height = width, height
-	header := strings.Split(w.header.Content, "\n")
-	w.top = len(header)
-	if w.layoutWidth != width || w.layoutCount != len(w.rows) {
-		w.displayRows = nil
-		image := 0
-		for i, row := range w.rows {
-			if image < len(w.images) && w.images[image].start == i {
-				w.images[image].displayStart = len(w.displayRows)
-				image++
-			}
-			if strings.Contains(row, "\x1b_G") || strings.Contains(row, "\x1b]1337;") {
-				if cells := terminalimage.RowColumns(row); cells < 0 || cells > max(1, width-8) {
-					row = ""
-				}
-				w.displayRows = append(w.displayRows, row)
-			} else {
-				w.displayRows = append(w.displayRows, strings.Split(ansi.Wrap(row, max(1, width-8), ""), "\n")...)
-			}
-		}
-		w.layoutWidth, w.layoutCount = width, len(w.rows)
-	}
-	if w.followSelection && len(w.images) > 0 {
-		if height-w.top-2 >= 3 {
-			w.offset = w.images[w.selected].displayStart
-		}
-		w.followSelection = false
-	}
-	w.scroll(0)
-	lines := append([]string(nil), header...)
+	var lines []string
 	if w.expanded && len(w.images) > 0 {
 		lines = w.expandedView(m, busy)
 	} else {
-		if busy || len(w.rows) > 0 || m.note != "" {
-			status := ""
-			if len(w.rows) > 0 {
-				status = "Images"
-				if len(w.images) > 0 {
-					status += fmt.Sprintf(" · %d of %d", w.selected+1, len(w.images))
-				}
-				if m.focus == "images" && !busy {
-					status = "› " + status
-				}
-			}
-			if busy {
-				if status != "" {
-					status += " · "
-				}
-				status += w.progress()
-			} else if m.note != "" {
-				if status != "" {
-					status += " · "
-				}
-				status += imagePickerLine(m.note)
-			}
-			if len(w.displayRows) > 0 {
-				if w.offset > 0 {
-					status += " ↑"
-				}
-				if w.offset+max(0, height-w.top-2) < len(w.displayRows) {
-					status += " ↓"
-				}
-			}
-			lines = append(lines, m.workspaceImageFrame(status, width, true))
-		}
-		if len(w.rows) > 0 && width >= 40 && height >= 12 {
-			available := min(len(w.displayRows), max(0, height-len(lines)-1))
-			for i := 0; i < available; i++ {
-				row := ""
-				if w.offset+i < len(w.displayRows) {
-					row = w.displayRows[w.offset+i]
-				}
-				if !strings.Contains(row, "\x1b_G") && !strings.Contains(row, "\x1b]1337;") {
-					row = ansi.Truncate(row, max(0, width-8), "…")
-				}
-				lines = append(lines, m.workspaceImageRow(row, width))
-			}
-			label := ""
-			if len(w.images) > 0 {
-				label = "Saved: " + imagePickerLine(imagePickerFolderLabel(w.images[w.selected].file.Path))
-				if w.openError && w.openErrorIndex == w.selected {
-					label = "Open failed · " + label
-				}
-			}
-			lines = append(lines, m.workspaceImageFrame(label, width, false))
-		} else if busy || m.note != "" {
-			lines = append(lines, m.workspaceImageFrame("", width, false))
-		}
+		lines = w.inlineView(m, busy)
 	}
 	lines = lines[:min(len(lines), height)]
 	var output strings.Builder
 	if !w.started {
-		// Start a separate logical line, away from the shell's prompt mark.
-		output.WriteString("\r\n")
+		// The frame separates its title from the shell's prompt mark. Only
+		// unframed layouts need another logical line before their title.
+		if m.width < 50 || m.viewHeight() < 16 {
+			output.WriteString("\r\n")
+		}
 		w.started = true
 	}
 	if len(w.images) > 0 {
 		output.WriteString(w.mouse.enable())
 	}
 	output.WriteString(ansi.ResetModeTextCursorEnable)
-	receipts := len(w.pendingReceipts) > 0
-	if receipts {
-		// Preserve complete stream receipts even when history is scrolled away.
-		// Restore the same panel within this frame before optional preview bytes.
-		if len(w.painted) > 0 {
-			w.clearGraphics(&output)
-			output.WriteString(ansi.RestoreCursor)
-		}
-		output.WriteString(cliterminal.InlineASCIIRecords(w.pendingReceipts, width))
-		output.WriteString(ansi.SaveCursor)
-		w.pendingReceipts = nil
-	}
 	// The existing inline helper reserves one reflowable panel. Stable frames
 	// repaint changed rows only; resize and view changes replace that panel.
-	if receipts || resized || len(lines) != len(w.painted) || len(w.painted) == 0 {
+	if resized || len(lines) != len(w.painted) || len(w.painted) == 0 {
 		w.frameRevision++
 		w.origin, w.originKnown = 0, len(lines) == height
 		if len(w.painted) > 0 {
