@@ -43,7 +43,7 @@ function page(options = {}) {
     setSinkId(){return Promise.resolve();}
   }
   class AudioWorkletNode {
-    constructor(){if(options.nodeFail)throw new Error('Capture setup failed.');nodes.push(this);this.port={postMessage:value=>{if(value==='flush' && !options.holdFlush)queueMicrotask(()=>this.port.onmessage({data:'flushed'}));}};}
+    constructor(){if(options.nodeFail)throw new Error('Capture setup failed.');nodes.push(this);this.port={postMessage:value=>{if(value==='flush' && !options.holdFlush)queueMicrotask(()=>{options.flush?.(this);this.port.onmessage({data:'flushed'});});}};}
     connect(){} disconnect(){}
   }
   const context = {
@@ -56,10 +56,11 @@ function page(options = {}) {
       calls.push({url,config});
       if(url==='/start')return options.failStart ? new Response('Your API key was not accepted.',{status:401}) : new Response(JSON.stringify({id:'synthetic-session'}));
       if(url.startsWith('/events')){const eventStream=new ReadableStream({start(controller){eventController=controller;}});const controller=eventController;config.signal.addEventListener('abort',()=>{try{controller.error(new DOMException('aborted','AbortError'));}catch(_){}},{once:true});return new Response(eventStream);}
+      if(url.startsWith('/input') && options.input)return options.input(url,config);
       if(url.startsWith('/stop')){emit({type:'session.closed'});}
       return new Response(null,{status:204});
     },
-    URL:{createObjectURL(blob){const id='blob:synthetic-'+blobs.size;blobs.set(id,blob);return id;},revokeObjectURL(){}},
+    URL:{createObjectURL(blob){if(options.recordingFail)throw new Error('Could not prepare the recording.');const id='blob:synthetic-'+blobs.size;blobs.set(id,blob);return id;},revokeObjectURL(){}},
     getComputedStyle:()=>({getPropertyValue:()=> '#888'}),requestAnimationFrame:callback=>{frame=callback;},
     setTimeout:(callback,delay)=>{const timer={callback,delay,active:true};timers.push(timer);return timer;},clearTimeout(timer){timer.active=false;},addEventListener(name,callback){if(name==='pagehide')this.pagehide=callback;},
     atob:value=>Buffer.from(value,'base64').toString('binary'),queueMicrotask,
@@ -70,6 +71,166 @@ function page(options = {}) {
   return {elements,calls,contexts,nodes,tracks,downloads,emit,timers,frame:()=>frame(),close:()=>context.pagehide?.()};
 }
 const settle = () => new Promise(resolve=>setImmediate(resolve));
+
+function heldInputs(options) {
+  const pending=[];
+  options.input=(url,config)=>new Promise((resolve,reject)=>{
+    const abort=()=>reject(new DOMException('aborted','AbortError'));
+    if(!options.ignoreInputAbort)config.signal.addEventListener('abort',abort,{once:true});
+    pending.push({url,config,resolve:()=>{config.signal.removeEventListener('abort',abort);resolve(new Response(null,{status:204}));},
+      reject:()=>{config.signal.removeEventListener('abort',abort);reject(new Error('Late upload failure'));}});
+  });
+  return pending;
+}
+
+for (const bytes of [9600,2]) {
+  test(`capture upload backlog interrupts at25 pending chunks: ${bytes} bytes`,async()=>{
+    const options={},pending=heldInputs(options),p=page(options);await p.elements.get('start').onclick();
+    for(let i=0;i<25;i++)p.nodes[0].port.onmessage({data:new ArrayBuffer(bytes)});
+    await settle();assert.equal(pending.length,1);assert.equal(p.elements.get('error').textContent,'');
+    p.nodes[0].port.onmessage({data:new ArrayBuffer(bytes)});await settle();
+    assert.match(p.elements.get('error').textContent,/cannot keep up.*Start a new session/);
+    assert.equal(p.elements.get('status').textContent,'Stopped');assert.equal(p.tracks[0].stopped,true);
+    assert.equal(pending[0].config.signal.aborted,true);
+    for(let i=0;i<100;i++)p.nodes[0].port.onmessage({data:new ArrayBuffer(bytes)});
+    await settle();assert.equal(pending.length,1);p.close();
+  });
+}
+
+test('capture upload bounds pending bytes without a total-session limit',async()=>{
+  const options={},pending=heldInputs(options),p=page(options);await p.elements.get('start').onclick();
+  for(let i=0;i<30;i++){
+    p.nodes[0].port.onmessage({data:new ArrayBuffer(9600)});await settle();
+    assert.equal(pending.length,i+1);pending[i].resolve();await settle();
+  }
+  assert.equal(p.elements.get('status').textContent,'Translating');
+  p.nodes[0].port.onmessage({data:new ArrayBuffer(240000)});await settle();
+  assert.equal(pending.length,31);assert.equal(p.elements.get('error').textContent,'');
+  p.nodes[0].port.onmessage({data:new ArrayBuffer(2)});await settle();
+  assert.match(p.elements.get('error').textContent,/cannot keep up/);
+  assert.equal(pending[30].config.signal.aborted,true);p.close();
+});
+
+test('capture upload drains in order including the final partial block before Stop',async()=>{
+  const options={},pending=heldInputs(options),p=page(options);await p.elements.get('start').onclick();
+  const buffers=[new Int16Array([1,-1]).buffer,new Int16Array([2,-2]).buffer,new Int16Array([3]).buffer];
+  for(const data of buffers.slice(0,2))p.nodes[0].port.onmessage({data});
+  options.flush=node=>node.port.onmessage({data:buffers[2]});
+  const stopping=p.elements.get('start').onclick();await settle();
+  assert.equal(p.tracks[0].stopped,true);assert.equal(pending.length,1);
+  for(let i=0;i<buffers.length;i++){
+    assert.equal(p.calls.filter(call=>call.url?.startsWith('/stop')).length,0);
+    assert.equal(pending.length,i+1);assert.ok(pending[i].url.endsWith('sequence='+i));
+    assert.deepEqual(Buffer.from(pending[i].config.body),Buffer.from(buffers[i]));
+    pending[i].resolve();await settle();
+  }
+  await stopping;assert.equal(p.calls.filter(call=>call.url?.startsWith('/stop')).length,1);
+  assert.equal(p.timers.some(timer=>timer.active),false);p.close();
+});
+
+test('capture upload Stop interrupts a stalled drain and keeps received audio',async()=>{
+  const options={},pending=heldInputs(options),p=page(options);await p.elements.get('start').onclick();
+  const pcm=Buffer.from(new Int16Array([12,-12]).buffer);
+  p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64')});
+  p.emit({type:'session.output_transcript.delta',delta:'Received translation.'});await settle();
+  for(let i=0;i<4;i++)p.nodes[0].port.onmessage({data:new ArrayBuffer(9600)});
+  const stopping=p.elements.get('start').onclick();await settle();
+  assert.equal(p.elements.get('status').textContent,'Finishing translation');
+  assert.equal(p.tracks[0].stopped,true);assert.equal(pending.length,1);
+  const timer=p.timers.find(timer=>timer.active && timer.delay===2000);assert.ok(timer,'Stop needs a bounded upload drain');
+  timer.callback();await stopping;await settle();
+  assert.equal(pending[0].config.signal.aborted,true);assert.equal(pending.length,1);
+  assert.match(p.elements.get('error').textContent,/final input may be incomplete/);
+  assert.equal(p.elements.get('status').textContent,'Stopped');assert.equal(timer.active,false);
+  assert.equal(p.elements.get('translated').textContent,'Received translation.');
+  p.elements.get('download').onclick();assert.deepEqual(Buffer.from(await p.downloads[0].blob.arrayBuffer()).subarray(44),pcm);p.close();
+});
+
+test('capture upload interruption restores prior output and stale failure cannot affect retry',async()=>{
+  const options={},p=page(options);await p.elements.get('start').onclick();
+  const pcm=Buffer.alloc(48000);
+  p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64')});
+  p.emit({type:'session.output_transcript.delta',delta:'Previous translation.'});await settle();
+  await p.elements.get('start').onclick();await settle();p.elements.get('waveform').onclick({clientX:250});
+  options.ignoreInputAbort=true;const pending=heldInputs(options);
+  await p.elements.get('start').onclick();
+  for(let i=0;i<25;i++)p.nodes[1].port.onmessage({data:new ArrayBuffer(9600)});
+  await settle();p.nodes[1].port.onmessage({data:new ArrayBuffer(9600)});
+  await settle();assert.equal(p.elements.get('status').textContent,'Stopped');
+  assert.equal(p.elements.get('translated').textContent,'Previous translation.');
+  assert.equal(p.elements.get('player').currentTime,.5);
+  p.elements.get('download').onclick();assert.deepEqual(Buffer.from(await p.downloads[0].blob.arrayBuffer()).subarray(44),pcm);
+  options.input=null;await p.elements.get('start').onclick();
+  pending[0].reject();await settle();
+  assert.equal(p.elements.get('status').textContent,'Translating');assert.equal(p.elements.get('error').textContent,'');
+  p.nodes[2].port.onmessage({data:new Int16Array([7]).buffer});await settle();
+  const inputs=p.calls.filter(call=>call.url?.startsWith('/input'));
+  assert.equal(inputs.length,2);assert.ok(inputs[1].url.endsWith('sequence=0'));
+  assert.equal(p.timers.some(timer=>timer.active && (timer.delay===500 || timer.delay===2000)),false);p.close();
+});
+
+test('capture upload Stop now clears its drain timer before another session',async()=>{
+  const options={},pending=heldInputs(options),p=page(options);await p.elements.get('start').onclick();
+  p.nodes[0].port.onmessage({data:new ArrayBuffer(9600)});
+  const stopping=p.elements.get('start').onclick();await settle();
+  const timer=p.timers.find(timer=>timer.active && timer.delay===2000);assert.ok(timer);
+  await p.elements.get('start').onclick();await stopping;await settle();
+  assert.equal(timer.active,false);assert.equal(pending[0].config.signal.aborted,true);
+  options.input=null;await p.elements.get('start').onclick();
+  assert.equal(p.elements.get('status').textContent,'Translating');assert.equal(p.elements.get('error').textContent,'');p.close();
+});
+
+test('capture upload repeated retries reset the pending budget and sequence',async()=>{
+  const options={},pending=heldInputs(options),p=page(options);
+  for(let round=0;round<3;round++){
+    await p.elements.get('start').onclick();
+    for(let i=0;i<25;i++)p.nodes[round].port.onmessage({data:new ArrayBuffer(9600)});
+    await settle();assert.equal(pending.length,round+1);assert.ok(pending[round].url.endsWith('sequence=0'));
+    p.nodes[round].port.onmessage({data:new ArrayBuffer(9600)});await settle();
+    assert.equal(pending[round].config.signal.aborted,true);assert.equal(p.elements.get('status').textContent,'Stopped');
+  }
+  assert.equal(new Set(pending.map(input=>input.config.signal)).size,3);
+  options.input=null;await p.elements.get('start').onclick();
+  p.nodes[3].port.onmessage({data:new Int16Array([9]).buffer});await settle();
+  assert.equal(p.elements.get('status').textContent,'Translating');assert.equal(p.elements.get('error').textContent,'');
+  await p.elements.get('start').onclick();await settle();
+  assert.equal(p.timers.some(timer=>timer.active),false);p.close();
+});
+
+test('capture upload Stop now clears a pending flush and ignores its late acknowledgement',async()=>{
+  const options={holdFlush:true},p=page(options);await p.elements.get('start').onclick();
+  const stopping=p.elements.get('start').onclick();await settle();
+  const timer=p.timers.find(timer=>timer.active && timer.delay===500);assert.ok(timer);
+  await p.elements.get('start').onclick();await stopping;await settle();
+  assert.equal(timer.active,false);assert.equal(p.elements.get('status').textContent,'Stopped');
+  options.holdFlush=false;await p.elements.get('start').onclick();
+  p.nodes[0].port.onmessage({data:'flushed'});await settle();
+  assert.equal(p.elements.get('status').textContent,'Translating');assert.equal(p.elements.get('error').textContent,'');p.close();
+});
+
+test('capture upload completion releases stalled acknowledgements without replacing Finished',async()=>{
+  const options={ignoreInputAbort:true},pending=heldInputs(options),p=page(options);await p.elements.get('start').onclick();
+  const pcm=Buffer.from(new Int16Array([33,-33]).buffer);
+  p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64')});await settle();
+  p.nodes[0].port.onmessage({data:new ArrayBuffer(9600)});
+  const stopping=p.elements.get('start').onclick();await settle();
+  const timer=p.timers.find(timer=>timer.active && timer.delay===2000);assert.ok(timer);
+  p.emit({type:'session.closed'});await settle();await stopping;
+  assert.equal(timer.active,false);assert.equal(pending[0].config.signal.aborted,true);
+  assert.equal(p.elements.get('status').textContent,'Finished');assert.equal(p.elements.get('error').textContent,'');
+  pending[0].resolve();await settle();assert.equal(p.elements.get('status').textContent,'Finished');
+  p.elements.get('download').onclick();assert.deepEqual(Buffer.from(await p.downloads[0].blob.arrayBuffer()).subarray(44),pcm);p.close();
+});
+
+test('capture upload completion still reports recording preparation failures',async()=>{
+  const options={},p=page(options);await p.elements.get('start').onclick();
+  const pcm=Buffer.from(new Int16Array([44,-44]).buffer);
+  p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64')});await settle();
+  options.recordingFail=true;p.emit({type:'session.closed'});await settle();
+  assert.equal(p.elements.get('status').textContent,'Stopped');
+  assert.match(p.elements.get('error').textContent,/Could not prepare the recording/);
+  p.close();
+});
 
 test('microphone permission failures explain recovery without opening an API session',async()=>{
   const p=page({permission:true});await p.elements.get('start').onclick();

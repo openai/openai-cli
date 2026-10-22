@@ -4,6 +4,8 @@
   history.replaceState(null, '', '/');
   const $ = id => document.getElementById(id);
   const controls = ['source','language','microphone','noise'];
+  // Bound pending local capture to five seconds of 24 kHz PCM16 in 200 ms chunks.
+  const maxPendingInputChunks = 25, maxPendingInputBytes = 24000 * 2 * 5;
   let generation = 0, current = null, state = 'ready';
   let chunks = [], peaks = [], segments = [], outputText = [], originalText = [];
   let sampleCount = 0, nextStart = 0, outputContext = null, outputGain = null, recordingURL = '';
@@ -95,7 +97,7 @@
   async function start() {
     showError('');
     if (!navigator.mediaDevices || !window.AudioWorkletNode) { showError('This browser cannot capture live audio. Try Chrome or Edge.'); return; }
-    const run = {generation:++generation, controller:new AbortController(), stream:null, queue:Promise.resolve(), sequence:0, id:'', failed:false};
+    const run = {generation:++generation, controller:new AbortController(), stream:null, queue:Promise.resolve(), pendingInputs:0, pendingInputBytes:0, sequence:0, id:'', failed:false};
     run.previous = retainRecording();
     $('player').pause();
     current = run;
@@ -134,8 +136,15 @@
       run.node = new AudioWorkletNode(run.context,'translation-capture');
       run.node.port.onmessage = ({data}) => {
         if (data === 'flushed') { run.flushed?.(); return; }
-        if (current !== run || run.failed || run.closed) return;
-        run.queue = run.queue.then(() => { if (!run.closed && !run.failed) return request(endpoint('/input',run.id) + '&sequence=' + run.sequence++,{method:'POST',signal:run.controller.signal,body:data}); }).catch(error => { if (!run.closed) return fail(run,error); });
+        if (current !== run || run.failed || run.closed || run.controller.signal.aborted) return;
+        if (run.pendingInputs >= maxPendingInputChunks || run.pendingInputBytes + data.byteLength > maxPendingInputBytes) {
+          fail(run,new Error('Audio capture stopped because the connection cannot keep up. Some input was not sent. Received audio remains available. Check the connection. Start a new session.'));
+          return;
+        }
+        run.pendingInputs++; run.pendingInputBytes += data.byteLength;
+        run.queue = run.queue.then(() => { if (!run.closed && !run.failed) return request(endpoint('/input',run.id) + '&sequence=' + run.sequence++,{method:'POST',signal:run.controller.signal,body:data}); })
+          .catch(error => { if (!run.closed) return fail(run,error); })
+          .finally(() => { run.pendingInputs--; run.pendingInputBytes -= data.byteLength; });
       };
       run.input.connect(run.node);
       // A zero-gain sink keeps capture processing active without monitoring source audio.
@@ -144,7 +153,7 @@
       for (const track of run.stream.getTracks()) track.addEventListener('ended',() => { if (current === run && state === 'running') stop(); },{once:true});
       $('mute').textContent = 'Mute input';
       setState('running'); status('Translating');
-      readEvents(run).catch(error => fail(run,error));
+      readEvents(run).catch(error => { if (!run.closed || error.name !== 'AbortError') return fail(run,error); });
     } catch (error) {
       if (current !== run) { releaseCapture(run); return; }
       let message = error.message;
@@ -187,6 +196,7 @@
       const restored = restoreRecording(run);
       if (!restored) { complete = true; prepareRecording(); }
       setState('ready'); updateSource(); status(restored ? 'No translated output. Previous recording kept.' : run.hasOutput ? 'Finished' : 'No translated output.');
+      run.controller.abort();
     }
   }
   function playChunk(run,event) {
@@ -242,6 +252,20 @@
     recordingURL = URL.createObjectURL(wavBlob());
     $('player').src = recordingURL; $('download').disabled = false; $('playback').disabled = false;
   }
+  async function waitForCapture(run,pending,milliseconds,message) {
+    let timer, interrupted;
+    try {
+      await Promise.race([pending,new Promise((_,reject) => {
+        interrupted = () => reject(new DOMException('aborted','AbortError'));
+        if (run.controller.signal.aborted) { interrupted(); return; }
+        run.controller.signal.addEventListener('abort',interrupted,{once:true});
+        timer = setTimeout(() => reject(new Error(message)),milliseconds);
+      })]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      run.controller.signal.removeEventListener('abort',interrupted);
+    }
+  }
   async function stop() {
     const run = current;
     if (!run) return;
@@ -252,14 +276,15 @@
     if (state !== 'running') return;
     setState('finishing'); status('Finishing translation');
     try {
-      await new Promise((resolve,reject) => {
-        const timer = setTimeout(() => reject(new Error('Audio capture did not finish sending. The final input may be incomplete. Received audio remains available.')),500);
-        run.flushed = () => { clearTimeout(timer); resolve(); };
+      await waitForCapture(run,new Promise(resolve => {
+        run.flushed = resolve;
         run.node.port.postMessage('flush');
-      });
-      releaseCapture(run); await run.queue;
-      if (!run.failed) await request(endpoint('/stop',run.id),{method:'POST',signal:run.controller.signal});
-    } catch (error) { await fail(run,error); }
+      }),500,'Audio capture did not finish sending. The final input may be incomplete. Received audio remains available.');
+      releaseCapture(run);
+      await waitForCapture(run,run.queue,2000,'Audio upload did not finish. The final input may be incomplete. Received audio remains available. Check the connection. Start a new session.');
+      if (current === run && !run.failed && !run.closed) await request(endpoint('/stop',run.id),{method:'POST',signal:run.controller.signal});
+    } catch (error) { if (!run.closed) await fail(run,error); }
+    finally { run.flushed = null; }
   }
   async function fail(run,error) {
     if (current !== run || run.failed) return;
