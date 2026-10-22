@@ -80,7 +80,8 @@ func runWelcomeWindowsConsole(t *testing.T, args, extra []string) string {
 			process.Env = append(process.Env, name+"="+value)
 		}
 	}
-	process.Env = append(process.Env, "HOME="+home, "USERPROFILE="+home, "APPDATA="+home, "LOCALAPPDATA="+home,
+	// Keep the welcome-only fixture offline and independent of optional update checks.
+	process.Env = append(process.Env, "OPENAI_CLI_NO_UPDATE_CHECK=1", "HOME="+home, "USERPROFILE="+home, "APPDATA="+home, "LOCALAPPDATA="+home,
 		"TEMP="+home, "TMP="+home, "XDG_CONFIG_HOME="+home, "XDG_CACHE_HOME="+home,
 		"OPENAI_BASE_URL=not%url", "OPENAI_CLI_WELCOME_CONSOLE_CHILD=1", "GOMAXPROCS=2")
 	process.Env = append(process.Env, extra...)
