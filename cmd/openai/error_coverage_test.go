@@ -188,7 +188,9 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 		}
 		if entry.HasChildren && (command.Action != nil || len(command.Arguments) != 0 || command.ArgValidator != nil) {
 			switch name {
-			case "help", "help setup", "tokenizer":
+			case "help", "help setup", "tokenizer",
+				"admin limits", "admin organization limits",
+				"projects limits", "admin projects limits", "admin organization projects limits":
 				entry.Class += "; reviewed positional-error group"
 				entry.ActionContract = name
 			default:
@@ -511,6 +513,7 @@ func declaredErrorCoverageCases(manifest errorCoverageManifest) []errorCoverageC
 			}
 			message += " to see commands."
 			code := 3
+			suffix := []string{private}
 			switch path {
 			case "help":
 				message = "Unknown help topic. Run openai help to see commands."
@@ -520,8 +523,16 @@ func declaredErrorCoverageCases(manifest errorCoverageManifest) []errorCoverageC
 				// This action-bearing group owns positional input validation.
 				message = "Tokenizer takes no positional input. Open the editor without arguments, or use tokenizer count --text TEXT."
 				code = 1
+			case "admin limits", "admin organization limits",
+				"projects limits", "admin projects limits", "admin organization projects limits":
+				message = "Limits does not accept positional arguments. Use --help to inspect its options."
+				code = 1
+				if strings.HasSuffix(path, "projects limits") {
+					// Reach positional validation without masking it behind a missing project identifier.
+					suffix = []string{"--project-id=proj_synthetic", private}
+				}
 			}
-			add("unknown-child", "", []string{private}, code, message)
+			add("unknown-child", "", suffix, code, message)
 		}
 		var required, requiredAfterInput []string
 		aliasOwners := map[string]string{}

@@ -305,6 +305,16 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if err := opts.Context.Err(); err != nil {
 		return err
 	}
+	// Validate before projections or extraction can conceal an invalid response.
+	if isSpendMutationResponse(opts) && !gjson.Valid(res.Raw) {
+		var raw json.RawMessage
+		if err := json.Unmarshal([]byte(res.Raw), &raw); err != nil {
+			return errors.Join(spendMutationResponseFailure(err, opts), opts.Context.Err())
+		}
+	}
+	if err := opts.Context.Err(); err != nil {
+		return err
+	}
 	if handled, err := filecommands.ShowResult(res, filecommands.ResultOptions{ReadableOptions: fileResultOptions(opts), Quiet: quietOutput(opts.Context)}); handled {
 		return err
 	}
@@ -378,7 +388,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	opts.Transform = ""
 	formatted, err := formatJSON(res, opts)
 	if err != nil {
-		return err
+		return spendMutationResponseFailure(err, opts)
 	}
 	_, err = (clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}).Write(formatted)
 	return err
