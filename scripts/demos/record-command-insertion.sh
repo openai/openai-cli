@@ -62,6 +62,7 @@ SCENE
   echo 'scenes: baseline help; recent-help search and draft restoration; explore search and prompt insertion'
   echo 'data: local help/search only; no API/admin key; loopback-only base URL'
   echo 'scope: asciinema/agg terminal replay; not graphical-terminal or mouse-adapter validation'
+  echo 'terminal background query: driver reports the replay renderer Dracula background (#282a36)'
   echo 'picker screenshot: visible search frame; selection and cleanup continue after relay stops'
   echo "terminal dimensions: $demo_window_size"
   demo_capture_metadata

@@ -68,6 +68,12 @@ printf '%s' "$?" >"$SUGGESTION_TEST_DIR/replaced.status"
 				if shell == "fish" {
 					probe = strings.ReplaceAll(probe, `"$?"`, `"$status"`)
 					probe = strings.ReplaceAll(probe, `openai() { printf replaced >"$SUGGESTION_TEST_DIR/replaced-called"; }`, "function openai\n    printf replaced >\"$SUGGESTION_TEST_DIR/replaced-called\"\nend")
+					// Fish performs missing-command lookup before applying that
+					// command's redirections. Capture the known function instead,
+					// while retaining a real failed lookup and its public status.
+					probe = "\n" + probe
+					probe = strings.ReplaceAll(probe, "\nopneai ", "\nsuggestion_probe_missing ")
+					probe = "function suggestion_probe_missing\n    opneai $argv\nend\n" + probe
 				}
 				dir := runSuggestionShellPTY(t, shell, setup, probe, false, "send -- \"exit\\r\"\nexpect eof\n")
 				read := func(name string) string {

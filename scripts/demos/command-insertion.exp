@@ -5,6 +5,8 @@ spawn -noecho /bin/zsh -d -i
 expect_before {
     -exact "\033\1330c" { send -- "\033\133?1;2c"; exp_continue }
     -exact "\033\1336n" { send -- "\033\1331;1R"; exp_continue }
+    # Report the Dracula background used by the actual replay renderer.
+    -exact "\033\]11;?\007" { send -- "\033\]11;rgb:2828/2a2a/3636\007"; exp_continue }
 }
 expect_after timeout { puts stderr "command insertion demo timed out"; exit 1 }
 expect -exact "$ "
@@ -88,7 +90,11 @@ switch -- $env(DEMO_MODE) {
         type_line "openai explore"
         expect -exact "Search"
         type_text "models"
-        pause 3
+        pause 2
+        # The broad query ranks images models first on this command tree.
+        # Choose Models help explicitly; the buffer assertion verifies the row.
+        send -- "\033\133B"
+        pause 2
         if {$env(DEMO_MODE) eq "after-picker"} {
             # This separate scene supplies the open-picker screenshot.
             # The full after-explore scene shows the same selection visibly.
