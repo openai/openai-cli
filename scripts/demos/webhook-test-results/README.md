@@ -99,3 +99,26 @@ Inspect all PNGs and GIF frames for clipping, spacing, timing, and sensitive dat
 These artifacts show terminal replays with synthetic data.
 They do not establish native terminal appearance or live API behavior.
 Keep media and binaries outside Git.
+
+## Colored form and endpoint browser
+
+Record the current dark palette and endpoint browser with the same isolated capture lifecycle:
+
+```sh
+bash scripts/demos/webhook-test-results/record-workflow.sh \
+  /path/to/after/openai AFTER_SHA /path/outside/repository/webhooks-workflow
+```
+
+This scene uses an 80×28 outer terminal and an 80×24 child terminal.
+It shows category selection, search, Space selection, and Ctrl+A within the selected category.
+It opens Existing webhooks, inspects one endpoint, and returns to the retained draft.
+The confirmation starts at No. The driver explicitly selects Yes before creation.
+The fixture accepts exactly the expected subscriptions and rejects creation before the confirmation marker.
+Validation requires three successful requests: catalog, endpoint list, and endpoint creation.
+No request reaches the displayed receiver URL.
+
+`workflow.gif` contains the walkthrough. Named PNGs show each checkpoint, including `events.png`, `endpoints.png`, and `endpoint-details.png`.
+`confirmation.png` shows the initial No selection. `draft-return.png` shows retained settings and subscriptions.
+The driver retains exact child output, timing, request evidence, and source hashes.
+Colors use the existing CLI dark palette. Rendering uses Menlo and Dracula through agg.
+These recordings establish synthetic terminal behavior, not native graphical appearance or live API behavior.

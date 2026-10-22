@@ -10,6 +10,15 @@ import sys
 import threading
 
 CATALOG = {"object": "list", "data": ["response.completed", "batch.completed", "response.failed", "future.demo_event"]}
+WORKFLOW_CATALOG = {"object": "list", "data": ["agent.session.created", "agent.session.failed",
+    "batch.completed", "batch.failed", "response.completed", "response.failed", "video.completed"]}
+ENDPOINTS = {"object": "list", "has_more": False, "data": [
+    {"id": "whe_demo_responses", "name": "Response notifications", "url": "https://example.com/responses",
+     "event_types": ["response.completed", "response.failed"]},
+    {"id": "whe_demo_batches", "name": "Batch updates", "url": "https://example.com/batches",
+     "event_types": ["batch.completed", "batch.failed"]},
+    {"id": "whe_demo_videos", "name": "Video jobs", "url": "https://example.com/videos",
+     "event_types": ["video.completed"]}]}
 SETTINGS = {"name": "Response notifications", "url": "https://example.com/webhook",
             "event_types": ["response.completed", "response.failed"]}
 
@@ -53,9 +62,11 @@ def main():
                         result = {"object": "webhook_endpoint.test", "webhook_endpoint_id": "wh_demo",
                                   "event_type": "response.completed", "status_code": 500, "success": True}
                         operation = "test"
-                    elif scene in {"discovery", "guided"} and route == "GET /webhook_event_types":
-                        result, operation = CATALOG, "catalog"
-                    elif scene == "guided" and route == "POST /webhook_endpoints":
+                    elif scene in {"discovery", "guided", "workflow"} and route == "GET /webhook_event_types":
+                        result, operation = WORKFLOW_CATALOG if scene == "workflow" else CATALOG, "catalog"
+                    elif scene == "workflow" and route.split("?", 1)[0] == "GET /webhook_endpoints":
+                        result, operation = ENDPOINTS, "list"
+                    elif scene in {"guided", "workflow"} and route == "POST /webhook_endpoints":
                         if not confirmation.exists() or data != SETTINGS:
                             raise ValueError("creation preceded confirmation or changed settings")
                         result = {"object": "webhook_endpoint", "id": "whe_demo", **SETTINGS,
