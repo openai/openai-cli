@@ -55,7 +55,7 @@ func TestSuggestionNativeExecutableAdviceCoexistsWithInsertion(t *testing.T) {
 				} else {
 					probe = advice + "\n"
 				}
-				probe += `opneai --api-key=synthetic-private >"$SUGGESTION_TEST_DIR/advice.out" 2>"$SUGGESTION_TEST_DIR/advice.err"
+				lookups := `opneai --api-key=synthetic-private >"$SUGGESTION_TEST_DIR/advice.out" 2>"$SUGGESTION_TEST_DIR/advice.err"
 printf '%s' "$?" >"$SUGGESTION_TEST_DIR/advice.status"
 openai_command_insertion_disable
 opneai >"$SUGGESTION_TEST_DIR/after-disable.out" 2>"$SUGGESTION_TEST_DIR/after-disable.err"
@@ -66,15 +66,27 @@ opneai >"$SUGGESTION_TEST_DIR/replaced.out" 2>"$SUGGESTION_TEST_DIR/replaced.err
 printf '%s' "$?" >"$SUGGESTION_TEST_DIR/replaced.status"
 `
 				if shell == "fish" {
-					probe = strings.ReplaceAll(probe, `"$?"`, `"$status"`)
-					probe = strings.ReplaceAll(probe, `openai() { printf replaced >"$SUGGESTION_TEST_DIR/replaced-called"; }`, "function openai\n    printf replaced >\"$SUGGESTION_TEST_DIR/replaced-called\"\nend")
-					// Fish performs missing-command lookup before applying that
-					// command's redirections. Capture the known function instead,
-					// while retaining a real failed lookup and its public status.
-					probe = "\n" + probe
-					probe = strings.ReplaceAll(probe, "\nopneai ", "\nsuggestion_probe_missing ")
-					probe = "function suggestion_probe_missing\n    opneai $argv\nend\n" + probe
+					// Fish sends failed lookup diagnostics to the terminal, even
+					// through a redirected function. Assert that native transcript
+					// separately from the authored handler's output and privacy.
+					lookups = `function suggestion_probe_missing --argument-names stage
+    printf '\nSUGGESTION_LOOKUP_BEGIN:%s\n' "$stage"
+    opneai
+    printf '%s' "$status" >"$SUGGESTION_TEST_DIR/$stage.status"
+    printf '\nSUGGESTION_LOOKUP_END:%s\n' "$stage"
+    fish_command_not_found opneai --api-key=synthetic-private >"$SUGGESTION_TEST_DIR/$stage.out" 2>"$SUGGESTION_TEST_DIR/$stage.err"
+end
+suggestion_probe_missing advice
+openai_command_insertion_disable
+suggestion_probe_missing after-disable
+source "$SUGGESTION_TEST_DIR/hook"
+function openai
+    printf replaced >"$SUGGESTION_TEST_DIR/replaced-called"
+end
+suggestion_probe_missing replaced
+`
 				}
+				probe += lookups
 				dir := runSuggestionShellPTY(t, shell, setup, probe, false, "send -- \"exit\\r\"\nexpect eof\n")
 				read := func(name string) string {
 					data, err := os.ReadFile(filepath.Join(dir, name))
@@ -84,11 +96,32 @@ printf '%s' "$?" >"$SUGGESTION_TEST_DIR/replaced.status"
 				for _, stage := range []string{"advice", "after-disable"} {
 					require.Empty(t, read(stage+".out"))
 					require.Equal(t, "127", read(stage+".status"))
-					require.Contains(t, read(stage+".err"), "Command not found. Did you mean: openai?")
+					require.Equal(t, 1, strings.Count(read(stage+".err"), "Command not found. Did you mean: openai?"))
+					require.Equal(t, 1, strings.Count(read(stage+".err"), "Keep the remaining arguments unchanged."))
 					require.NotContains(t, read(stage+".err"), "synthetic-private")
 				}
 				require.Equal(t, "127", read("replaced.status"))
+				require.Empty(t, read("replaced.out"))
 				require.NotContains(t, read("replaced.err"), "Did you mean: openai?")
+				require.NotContains(t, read("replaced.err"), "synthetic-private")
+				if shell == "fish" {
+					transcript := strings.ReplaceAll(read("transcript"), "\r\n", "\n")
+					for _, stage := range []string{"advice", "after-disable", "replaced"} {
+						begin, end := "\nSUGGESTION_LOOKUP_BEGIN:"+stage+"\n", "\nSUGGESTION_LOOKUP_END:"+stage+"\n"
+						require.Equal(t, 1, strings.Count(transcript, begin))
+						require.Equal(t, 1, strings.Count(transcript, end))
+						_, remaining, _ := strings.Cut(transcript, begin)
+						output, _, found := strings.Cut(remaining, end)
+						require.True(t, found, "missing lookup end for %s", stage)
+						require.Contains(t, output, "fish: Unknown command: opneai")
+						count := 1
+						if stage == "replaced" {
+							count = 0
+						}
+						require.Equal(t, count, strings.Count(output, "Command not found. Did you mean: openai?"), stage)
+						require.Equal(t, count, strings.Count(output, "Keep the remaining arguments unchanged."), stage)
+					}
+				}
 				require.NoFileExists(t, filepath.Join(dir, "calls"), "advice must never execute the CLI")
 				require.NoFileExists(t, filepath.Join(dir, "replaced-called"), "ownership checks must not execute user functions")
 			})

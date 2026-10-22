@@ -717,6 +717,7 @@ expect -exact "SUGGESTION_TEST> "
 		"SUGGESTION_TEST_REAL_PICKER=" + os.Getenv("SUGGESTION_TEST_REAL_PICKER"),
 	}
 	out, err := cmd.CombinedOutput()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "transcript"), out, 0o600))
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("Native %s transcript: %s", shell, out)
