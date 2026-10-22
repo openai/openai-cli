@@ -8,7 +8,6 @@ import os
 import pathlib
 import shutil
 import signal
-import sys
 import termios
 import time
 
