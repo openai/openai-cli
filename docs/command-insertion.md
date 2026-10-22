@@ -131,6 +131,7 @@ The picker requires a terminal of at least 40 columns and 12 rows.
 Redirecting standard error can disable the picker.
 It supports `--format auto` and `--format text` only.
 Structured formats, transformations, and raw output are unavailable for command search.
+Command search also requires auto or text error output without error transformations.
 The existing `--format explore` JSON viewer remains separate.
 
 ## Experimental click insertion in Kitty with zsh

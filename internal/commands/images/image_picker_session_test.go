@@ -74,7 +74,7 @@ func TestImagePickerRegistersOnlyExplicitSuccessfulPrint(t *testing.T) {
 				require.NoError(t, err)
 			}
 			if printOnly && !writeFails {
-				require.Equal(t, []string{formatImagePickerCommand(result.Args, "bash")}, commands)
+				require.Equal(t, []string{cliterminal.FormatCommand(result.Args, "bash")}, commands)
 			} else {
 				require.Empty(t, commands)
 			}
