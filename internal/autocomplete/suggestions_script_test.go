@@ -485,6 +485,7 @@ func TestSuggestionBashPreservesPromptCallbacks(t *testing.T) {
 		`PROMPT_COMMAND='printf original >>"$SUGGESTION_TEST_DIR/prompt"'`,
 		`PROMPT_COMMAND=('printf first >>"$SUGGESTION_TEST_DIR/prompt"' 'printf second >>"$SUGGESTION_TEST_DIR/prompt"')`,
 		`readonly PROMPT_COMMAND='printf readonly >>"$SUGGESTION_TEST_DIR/prompt"'`,
+		`readonly -a PROMPT_COMMAND=([3]='printf readonly >>"$SUGGESTION_TEST_DIR/prompt"')`,
 	} {
 		t.Run(declaration, func(t *testing.T) {
 			setup := declaration + "\ndeclare -p PROMPT_COMMAND >\"$SUGGESTION_TEST_DIR/before\"\n"
@@ -496,6 +497,79 @@ func TestSuggestionBashPreservesPromptCallbacks(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, string(before), string(after))
 		})
+	}
+}
+
+func TestSuggestionNativeBashPromptArrayFreshness(t *testing.T) {
+	for _, tc := range []struct {
+		name, declaration string
+		first, second     bool
+	}{
+		{"dense", `PROMPT_COMMAND=(record_first record_second)`, true, true},
+		{"sparse", `PROMPT_COMMAND=([0]=record_first [4]=record_second)`, true, true},
+		{"without zero", `PROMPT_COMMAND=([4]=record_second)`, false, true},
+		{"empty", `PROMPT_COMMAND=()`, false, false},
+	} {
+		for _, legacy := range []bool{false, true} {
+			t.Run(tc.name+"/legacy="+strconv.FormatBool(legacy), func(t *testing.T) {
+				setup := `record_first() { printf 'first:%s\n' "$?" >>"$SUGGESTION_TEST_DIR/prompt"; }
+record_second() { printf 'second:%s\n' "$?" >>"$SUGGESTION_TEST_DIR/prompt"; }
+` + tc.declaration + `
+declare -p PROMPT_COMMAND >"$SUGGESTION_TEST_DIR/before"
+if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )); then
+  printf modern >"$SUGGESTION_TEST_DIR/prompt-array-support"
+fi
+`
+				if legacy {
+					// An older sourced hook saves values and appends its callback, without index metadata.
+					setup += `__openai_suggestions_prompt_kind=array
+declare -a __openai_suggestions_prompt_previous=("${PROMPT_COMMAND[@]}")
+PROMPT_COMMAND+=(__openai_suggestions_prompt)
+__openai_suggestions_prompt_installed=$(declare -p PROMPT_COMMAND)
+`
+				}
+				dir := runSuggestionShellPTY(t, "bash", setup, `source "$SUGGESTION_TEST_DIR/hook"`, false, `
+send -- "openai examples\r"
+expect -exact "EXAMPLES_FINISHED\r\n"
+expect -exact "SUGGESTION_TEST> "
+send -- "\030\011\030\007"
+expect -re {BUFFER_CAPTURED\r?\n}
+send -- "\025false\r"
+expect -exact "SUGGESTION_TEST> "
+send -- "draft\030\011\030\007"
+expect -re {BUFFER_CAPTURED\r?\n}
+send -- "\025openai_command_insertion_disable; declare -p PROMPT_COMMAND >\"\$SUGGESTION_TEST_DIR/after\"\r"
+expect -exact "SUGGESTION_TEST> "
+send -- "false\r"
+expect -exact "SUGGESTION_TEST> "
+send -- "exit\r"
+expect eof
+`)
+				read := func(name string) string {
+					data, err := os.ReadFile(filepath.Join(dir, name))
+					require.NoError(t, err)
+					return string(data)
+				}
+				require.Equal(t, "<openai models list>|18\n<draft>|5\n", read("buffers"))
+				require.Equal(t, "<examples>\n", read("calls"), "selection must not submit a command")
+				require.Equal(t, read("before"), read("after"), "disable must restore sparse indices and empty arrays")
+				_, modern := os.Stat(filepath.Join(dir, "prompt-array-support"))
+				var expected strings.Builder
+				for _, status := range []string{"0", "0", "1", "0", "1"} {
+					if tc.first {
+						expected.WriteString("first:" + status + "\n")
+					}
+					if tc.second && modern == nil {
+						expected.WriteString("second:" + status + "\n")
+					}
+				}
+				if expected.Len() == 0 {
+					require.NoFileExists(t, filepath.Join(dir, "prompt"))
+				} else {
+					require.Equal(t, expected.String(), read("prompt"), "existing prompt callbacks keep their native order and status")
+				}
+			})
+		}
 	}
 }
 

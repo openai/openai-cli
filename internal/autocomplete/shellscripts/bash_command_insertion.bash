@@ -154,7 +154,7 @@ if [[ $- == *i* && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]] &&
 
   __APPNAME___command_insertion_disable() {
     ____APPNAME___suggestions_enabled=0
-    local keymap key
+    local keymap key index
     for keymap in emacs-standard vi-insert; do
       for key in '\C-x\C-i' '\C-i\C-i'; do
         if builtin test "$(____APPNAME___suggestions_binding "$keymap" "$key")" = "\"$key\": \"__APPNAME___suggestion_next\""; then
@@ -168,7 +168,12 @@ if [[ $- == *i* && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]] &&
     if [[ -n ${____APPNAME___suggestions_prompt_installed-} ]] &&
       builtin test "$(declare -p PROMPT_COMMAND 2>/dev/null)" = "$____APPNAME___suggestions_prompt_installed"; then
       case $____APPNAME___suggestions_prompt_kind in
-        array) PROMPT_COMMAND=("${____APPNAME___suggestions_prompt_previous[@]}") ;;
+        array)
+          PROMPT_COMMAND=()
+          for index in "${!____APPNAME___suggestions_prompt_previous[@]}"; do
+            PROMPT_COMMAND[${____APPNAME___suggestions_prompt_indices[index]}]=${____APPNAME___suggestions_prompt_previous[index]}
+          done
+          ;;
         scalar) PROMPT_COMMAND=${____APPNAME___suggestions_prompt_previous[0]} ;;
         unset) unset PROMPT_COMMAND ;;
       esac
@@ -183,6 +188,18 @@ if [[ $- == *i* && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]] &&
     prompt_declaration=$(declare -p PROMPT_COMMAND 2>/dev/null)
     # Freshness requires a prompt hook. Leave readonly prompt configurations intact.
     [[ ! $prompt_declaration =~ ^declare\ -[^[:space:]]*r ]] || return 0
+    # Older scripts appended an array hook without saving the original indices.
+    # An unchanged owned array still contains those indices before its final hook.
+    if [[ -n ${____APPNAME___suggestions_prompt_installed-} && ${____APPNAME___suggestions_prompt_kind-} == array ]] &&
+      ! declare -p ____APPNAME___suggestions_prompt_indices &>/dev/null &&
+      builtin test "$prompt_declaration" = "$____APPNAME___suggestions_prompt_installed"; then
+      declare -ga ____APPNAME___suggestions_prompt_indices
+      ____APPNAME___suggestions_prompt_indices=("${!PROMPT_COMMAND[@]}")
+      local last_prompt_index=$((${#____APPNAME___suggestions_prompt_indices[@]} - 1))
+      unset "____APPNAME___suggestions_prompt_indices[$last_prompt_index]"
+      __APPNAME___command_insertion_disable
+      prompt_declaration=$(declare -p PROMPT_COMMAND 2>/dev/null)
+    fi
     function __APPNAME__ { ____APPNAME___suggestions_run "$@"; }
     ____APPNAME___suggestions_wrapper_body=$(declare -f '__APPNAME__')
     ____APPNAME___suggestions_enabled=1
@@ -194,7 +211,14 @@ if [[ $- == *i* && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]] &&
       if [[ $prompt_declaration =~ ^declare\ -[^[:space:]]*a ]]; then
         ____APPNAME___suggestions_prompt_kind=array
         ____APPNAME___suggestions_prompt_previous=("${PROMPT_COMMAND[@]}")
-        PROMPT_COMMAND+=(____APPNAME___suggestions_prompt)
+        declare -ga ____APPNAME___suggestions_prompt_indices
+        ____APPNAME___suggestions_prompt_indices=("${!PROMPT_COMMAND[@]}")
+        if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )); then
+          PROMPT_COMMAND+=(____APPNAME___suggestions_prompt)
+        else
+          # Bash 4.3 through 5.0 execute only element zero of an indexed prompt array.
+          PROMPT_COMMAND[0]+=$'\n____APPNAME___suggestions_prompt'
+        fi
       elif [[ ${PROMPT_COMMAND+x} ]]; then
         ____APPNAME___suggestions_prompt_kind=scalar
         ____APPNAME___suggestions_prompt_previous=("$PROMPT_COMMAND")

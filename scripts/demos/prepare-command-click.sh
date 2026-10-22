@@ -108,10 +108,14 @@ The preparation script does not launch Kitty.
 
 ## Keyboard fallback
 
-1. Press Ctrl+X, then Tab to insert the first Models navigation command.
-2. Press Ctrl+X, Ctrl+G to record the editable command line.
-3. Press Ctrl+X, Ctrl+R to restore the draft.
-4. Press Ctrl+U to clear the draft.
+1. Press Ctrl+X, then Tab to open the recent-command picker.
+2. Use the arrow keys to select a Models help command.
+3. Press Enter to fill the prompt without running the command.
+4. Verify that the picker closed and the selected command remains editable.
+5. Press Ctrl+X, Ctrl+G to record the editable command line.
+6. Verify that `submitted.txt` contains no selected command.
+7. Press Ctrl+X, Ctrl+R to restore the draft.
+8. Press Ctrl+U to clear the draft.
 
 ## Stale links
 
