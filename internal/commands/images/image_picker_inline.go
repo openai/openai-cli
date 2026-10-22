@@ -32,6 +32,7 @@ type imagePickerInline struct {
 	wrapKnown      bool
 	wrapQueryless  bool
 	wrapProbe      *imagePickerWrapProbe
+	wrapRevision   uint64
 	content        string
 	width, height  int
 	err            error
@@ -55,7 +56,7 @@ type imagePickerInline struct {
 // queued submit keys and ordinary auto-repeat when reopening after a request.
 const imagePickerResumeQuiet = 750 * time.Millisecond
 
-type imagePickerWrapTimeout struct{}
+type imagePickerWrapTimeout struct{ revision uint64 }
 type imagePickerSizeErrorMsg struct{}
 
 func (p *imagePickerInline) Init() tea.Cmd {

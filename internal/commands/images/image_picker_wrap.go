@@ -10,7 +10,11 @@ import (
 	"github.com/charmbracelet/x/term"
 )
 
-type imagePickerWrapProbe struct{ width, height int }
+type imagePickerWrapProbe struct {
+	width, height int
+	revision      uint64
+	invalid       bool
+}
 
 // Apple Terminal does not implement DECRQM or private mode save/restore.
 // Observe wrapping with spaces on the blank row the initial frame owns. DECRC
@@ -21,11 +25,13 @@ func (p *imagePickerInline) probeWrapping() tea.Cmd {
 		// No ambiguous one-column probe. Resize or cancellation remains usable.
 		return nil
 	}
-	p.wrapProbe = &imagePickerWrapProbe{width, height}
+	p.wrapRevision++
+	revision := p.wrapRevision
+	p.wrapProbe = &imagePickerWrapProbe{width: width, height: height, revision: revision}
 	_, _ = io.WriteString(p.output, ansi.SaveCursor+"\r"+ansi.EraseScreenBelow+
 		ansi.CursorHorizontalAbsolute(width)+"  "+ansi.RequestCursorPositionReport+
 		ansi.RestoreCursor+"\r"+ansi.EraseScreenBelow)
-	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return imagePickerWrapTimeout{} })
+	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return imagePickerWrapTimeout{revision} })
 }
 
 func (p *imagePickerInline) updateWrapProbe(msg tea.Msg) (bool, tea.Cmd) {
@@ -46,8 +52,17 @@ func (p *imagePickerInline) updateWrapProbe(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		probe := p.wrapProbe
 		width, height, err := term.GetSize(p.output.Fd())
-		if err != nil || width != probe.width || height != probe.height ||
-			msg.Y < 0 || msg.Y >= height || msg.X != 1 && msg.X != width-1 {
+		if err != nil {
+			return fail()
+		}
+		if probe.invalid || width != probe.width || height != probe.height {
+			// Consume the old CPR before probing the replacement geometry.
+			// There is only one outstanding request, despite untagged replies.
+			p.wrapProbe = nil
+			p.model.width, p.model.height = width, height
+			return true, p.probeWrapping()
+		}
+		if msg.Y < 0 || msg.Y >= height || msg.X != 1 && msg.X != width-1 {
 			return fail()
 		}
 		p.restoreWrap, p.wrapKnown, p.wrapProbe = msg.X == width-1, true, nil
@@ -56,17 +71,16 @@ func (p *imagePickerInline) updateWrapProbe(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	case tea.WindowSizeMsg:
 		if p.wrapProbe != nil {
-			// CPR has no request ID. Never accept a resize-confounded reply or
-			// start another probe while the old reply can still arrive.
 			if msg.Width != p.wrapProbe.width || msg.Height != p.wrapProbe.height {
-				return fail()
+				p.wrapProbe.invalid = true
 			}
+			p.model.width, p.model.height = msg.Width, msg.Height
 			return true, nil
 		}
 		p.model.width, p.model.height = msg.Width, msg.Height
 		return true, p.probeWrapping()
 	case imagePickerWrapTimeout:
-		if p.wrapProbe != nil {
+		if p.wrapProbe != nil && msg.revision == p.wrapProbe.revision {
 			return fail()
 		}
 		return true, nil
