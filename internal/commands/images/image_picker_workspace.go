@@ -86,6 +86,8 @@ type imagePickerWorkspace struct {
 	prepareRows                               func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)
 	previewCancel                             context.CancelFunc
 	previewWorkers                            sync.WaitGroup
+	fontPreviewOnce                           sync.Once
+	fontPreviewGate                           chan struct{}
 	opening                                   bool
 	openWorkers                               sync.WaitGroup
 	openError                                 bool
@@ -102,8 +104,22 @@ func (w *imagePickerWorkspace) saved(ctx context.Context, files []imageoutput.Sa
 		w.receipts = append(w.receipts, file.Path)
 		w.receiptMu.Unlock()
 	}
+	selectedProtocol := savedImageProtocol(mode, true, os.Getenv)
+	if selectedProtocol == "font" {
+		// Retain the gallery for the whole batch. Expanded and resized previews
+		// wait outside the input loop instead of competing for its file lock.
+		release, err := w.acquireFontPreview(ctx)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	prepare := w.prepareRows
+	if prepare == nil {
+		prepare = imagePickerPreviewRows
+	}
 	for _, file := range files {
-		protocol := savedImageProtocol(mode, true, os.Getenv)
+		protocol := selectedProtocol
 		if protocol == "" {
 			w.send(imagePickerWorkspaceImage{file: file})
 			continue
@@ -125,7 +141,7 @@ func (w *imagePickerWorkspace) saved(ctx context.Context, files []imageoutput.Sa
 		columns := imagePickerPreviewColumns(img.Bounds(), width, max(3, height-form.viewHeight()-2), cw, ch)
 		var rows []string
 		if columns > 0 {
-			rows, protocol, err = imagePickerPreviewRows(ctx, w.out, img, protocol, columns)
+			rows, protocol, err = prepare(ctx, w.out, img, protocol, columns)
 		}
 		if err != nil || columns < 1 {
 			if ctx.Err() != nil {

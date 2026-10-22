@@ -123,6 +123,22 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 	return lines
 }
 
+// All font preparation in this workspace shares one mutable per-tab gallery.
+// Waiting must remain cancellable when a view changes or the request exits.
+func (w *imagePickerWorkspace) acquireFontPreview(ctx context.Context) (func(), error) {
+	w.fontPreviewOnce.Do(func() { w.fontPreviewGate = make(chan struct{}, 1) })
+	select {
+	case w.fontPreviewGate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-w.fontPreviewGate
+			return nil, err
+		}
+		return func() { <-w.fontPreviewGate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 // Decode and encode outside the input loop. Only one expanded frame is cached.
 func (p *imagePickerInline) prepareExpanded() {
 	w := p.workspace
@@ -183,12 +199,24 @@ func (p *imagePickerInline) prepareExpanded() {
 		prepare = imagePickerPreviewRows
 	}
 	go func() {
+		var releaseFont func()
+		if entry.protocol == "font" {
+			var err error
+			releaseFont, err = w.acquireFontPreview(ctx)
+			if err != nil {
+				w.previewWorkers.Done()
+				return
+			}
+		}
 		var prepared imagePickerExpandedRows
 		var failure error
 		if reload {
 			prepared, failure = imagePickerPrepareReload(ctx, w.out, entry, columns, prepare)
 		} else {
 			prepared, failure = imagePickerPrepareResize(ctx, w.out, entry, size, expanded, prepare)
+		}
+		if releaseFont != nil {
+			releaseFont()
 		}
 		if failure != nil {
 			w.previewErrorMu.Lock()
