@@ -1746,9 +1746,50 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  wsl1-pager:
+  # Fetch once on Linux instead of four slow Ubuntu-origin transfers on Windows.
+  # Consumers recheck the pinned checksum; the artifact is only a transport.
+  wsl-image:
     if: github.event_name != 'push'
     needs: source
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - name: Download and verify pinned Ubuntu image
+        timeout-minutes: 8
+        run: |
+          python3 -I -B - <<'PYTHON'
+          import importlib.util, os, sys, time
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("wsl_image", "scripts/check-wsl-pager.py")
+          module = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = module
+          spec.loader.exec_module(module)
+          module.download_image(Path(os.environ["RUNNER_TEMP"]) / "ubuntu.wsl", time.monotonic() + 470)
+          PYTHON
+      - name: Stage verified Ubuntu image
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wsl-ubuntu-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ubuntu.wsl
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  wsl1-pager:
+    if: github.event_name != 'push'
+    needs: [source, wsl-image]
     permissions: {}
     name: ${{ matrix.name }}
     runs-on: windows-2025-vs2026
@@ -1844,7 +1885,16 @@ jobs:
           }
           go mod verify
           exit $LASTEXITCODE
+      - name: Download verified Ubuntu image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: 3
+        with:
+          artifact-ids: ${{ needs.wsl-image.outputs.artifact-id }}
+          path: ${{ runner.temp }}/wsl-image
+          merge-multiple: true
       - name: Run compatibility checks in disposable Ubuntu WSL 1
+        env:
+          WSL_PAGER_IMAGE: ${{ runner.temp }}/wsl-image/ubuntu.wsl
         shell: pwsh
         timeout-minutes: 16
         run: |

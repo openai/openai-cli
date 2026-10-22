@@ -29,7 +29,8 @@ import urllib.error
 import urllib.request
 
 
-IMAGE_URL = "https://releases.ubuntu.com/24.04.5/ubuntu-24.04.5-wsl-amd64.wsl"
+# Use the kernel.org Ubuntu mirror: the Canonical origin repeatedly stalls in CI.
+IMAGE_URL = "https://mirrors.edge.kernel.org/ubuntu-releases/24.04.5/ubuntu-24.04.5-wsl-amd64.wsl"
 # Canonical SHA256SUMS and Microsoft/WSL f72a0e04 DistributionInfo.json agree.
 IMAGE_SHA256 = "bb415d824822c4b878125729af451a5d18fb13d1cf5cbed9a7393ad64ac6039e"
 IMAGE_LIMIT = 512 * 1024 * 1024
@@ -394,7 +395,7 @@ class Commands:
 
 class HTTPSOnly(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, message, headers, newurl):
-        if not newurl.startswith("https://releases.ubuntu.com/"):
+        if not newurl.startswith("https://mirrors.edge.kernel.org/ubuntu-releases/"):
             raise RuntimeError("Unexpected Ubuntu image redirect")
         return super().redirect_request(request, fp, code, message, headers, newurl)
 
@@ -432,13 +433,22 @@ def open_image(opener, deadline, attempts):
     raise RuntimeError("Ubuntu download failed to open within retry policy")
 
 
-def download_image(path, deadline, attempts=None):
+def download_image(path, deadline, attempts=None, *, staged_image=None):
     # A socket read can take ten seconds. Reserve that time inside the 480-second cap.
     end = min(deadline, time.monotonic() + 470)
     hasher, size = hashlib.sha256(), 0
-    opener = urllib.request.build_opener(HTTPSOnly())
-    with open_image(opener, end, attempts if attempts is not None else []) as response, path.open("xb") as output:
-        if int(response.headers.get("Content-Length", "0")) > IMAGE_LIMIT:
+    if staged_image is None:
+        opener = urllib.request.build_opener(HTTPSOnly())
+        source = open_image(opener, end, attempts if attempts is not None else [])
+    else:
+        # Artifacts are transport only: verify the bytes again before WSL import.
+        if staged_image.is_symlink() or not staged_image.is_file():
+            raise RuntimeError("Staged Ubuntu image must be a regular file")
+        source = staged_image.open("rb")
+    with source as response, path.open("xb") as output:
+        declared_size = (int(response.headers.get("Content-Length", "0")) if staged_image is None
+                         else os.fstat(response.fileno()).st_size)
+        if declared_size > IMAGE_LIMIT:
             raise RuntimeError("Ubuntu image exceeds its download limit")
         while True:
             if STOP or time.monotonic() >= end:
@@ -1028,7 +1038,11 @@ def pilot(plan):
                 raise RuntimeError("Insufficient free space for the disposable distro")
             image = directory / "ubuntu.wsl"
             result["image_open_attempts"] = []
-            result["image_bytes"] = download_image(image, commands.deadline, result["image_open_attempts"])
+            staged = os.environ.get("WSL_PAGER_IMAGE")
+            result["image_transport"] = "artifact" if staged else "https"
+            result["image_bytes"] = download_image(
+                image, commands.deadline, result["image_open_attempts"],
+                staged_image=Path(staged) if staged else None)
             result["image_sha256"] = IMAGE_SHA256
             state["import_attempted"] = True
             write_json(state_path, state)
