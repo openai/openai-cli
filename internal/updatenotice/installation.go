@@ -56,6 +56,16 @@ func homebrewInstallation(executable, brew, current string) bool {
 		return false
 	}
 	prefix := filepath.Dir(caskroom)
+	// Homebrew derives its prefix from the invoked directory before resolving
+	// a final-file symlink. A PATH shim can therefore target another caskroom.
+	selectedDirectory, err := filepath.EvalSymlinks(filepath.Dir(brew))
+	if err != nil {
+		return false
+	}
+	expectedDirectory, err := filepath.EvalSymlinks(filepath.Join(prefix, "bin"))
+	if err != nil || selectedDirectory != expectedDirectory {
+		return false
+	}
 	selected, err := filepath.EvalSymlinks(brew)
 	if err != nil {
 		return false
@@ -108,13 +118,7 @@ func goInstallation(executable, directory, current string, info *debug.BuildInfo
 // Only explicit GOBIN establishes the destination without running Go or
 // approximating toolchain-specific GOROOT/go.env defaults.
 func goInstallDirectory() string {
-	if directory := os.Getenv("GOBIN"); directory != "" {
-		if filepath.IsAbs(directory) {
-			return directory
-		}
-		return ""
-	}
-	destination := ""
+	settings := make(map[string]string)
 	configuration := os.Getenv("GOENV")
 	if configuration != "off" {
 		if configuration == "" {
@@ -130,11 +134,22 @@ func goInstallDirectory() string {
 		}
 		for _, line := range strings.Split(string(data), "\n") {
 			key, value, ok := strings.Cut(line, "=")
-			if ok && key == "GOBIN" {
-				destination = value
+			if ok && (key == "GOBIN" || key == "GOOS" || key == "GOARCH") {
+				settings[key] = value
 			}
 		}
 	}
+	for _, key := range []string{"GOBIN", "GOOS", "GOARCH"} {
+		if value := os.Getenv(key); value != "" {
+			settings[key] = value
+		}
+	}
+	// Go rejects cross-compilation with GOBIN. Do not infer the selected Go
+	// toolchain's host from this CLI, which may itself run under emulation.
+	if settings["GOOS"] != "" || settings["GOARCH"] != "" {
+		return ""
+	}
+	destination := settings["GOBIN"]
 	if filepath.IsAbs(destination) {
 		return destination
 	}

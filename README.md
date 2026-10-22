@@ -49,11 +49,12 @@ Explicit help, commands, completion, CI, and redirected streams skip the check e
 The notice includes an update command when the CLI can verify its installation method.
 Verified Homebrew installations use `brew upgrade --cask openai/tools/openai`.
 Go commands require a verified binary, an available Go command, and an explicit matching `GOBIN`.
+Custom `GOOS` or `GOARCH` settings select the installation guide instead.
 Unknown installations receive the installation-guide link instead.
 The CLI never installs updates automatically.
 
 Checks use public GitHub release metadata without API credentials, at most once daily.
-The foreground wait is limited to 200 milliseconds. Failed checks remain silent.
+Update discovery waits at most 200 milliseconds. Failed checks remain silent.
 Package-manager availability can lag a new GitHub release.
 Set `OPENAI_CLI_NO_UPDATE_CHECK=1` to disable checks and notices.
 

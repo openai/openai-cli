@@ -101,6 +101,83 @@ func TestGoInstallationRequiresVersionedModuleAndLocation(t *testing.T) {
 	}
 }
 
+func TestHomebrewInstallationPreservesInvocationPrefix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Homebrew cask paths are Unix-specific")
+	}
+	root := t.TempDir()
+	prefix := filepath.Join(root, "brew prefix")
+	executable := filepath.Join(prefix, "Caskroom", "openai", "1.2.3", "openai")
+	brew := filepath.Join(prefix, "bin", "brew")
+	fixtureFile(t, executable, "synthetic executable")
+	fixtureFile(t, brew, "synthetic brew")
+	fixtureFile(t, filepath.Join(prefix, "Caskroom", "openai", ".metadata", "INSTALL_RECEIPT.json"), `{"source":{"tap":"openai/tools","version":"1.2.3"}}`)
+	binAlias := filepath.Join(root, "bin alias")
+	if err := os.Symlink(filepath.Dir(brew), binAlias); err != nil {
+		t.Fatal(err)
+	}
+	if !homebrewInstallation(executable, filepath.Join(binAlias, "brew"), "1.2.3") {
+		t.Fatal("alias of the same invoked directory was rejected")
+	}
+	shim := filepath.Join(root, "shim", "bin", "brew")
+	if err := os.MkdirAll(filepath.Dir(shim), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(brew, shim); err != nil {
+		t.Fatal(err)
+	}
+	if homebrewInstallation(executable, shim, "1.2.3") {
+		t.Fatal("final-file symlink with a different invoked prefix was accepted")
+	}
+}
+
+func TestGoInstallDirectoryRejectsCrossTargetConfiguration(t *testing.T) {
+	otherOS, otherArch := "windows", "amd64"
+	if runtime.GOOS == otherOS {
+		otherOS = "linux"
+	}
+	if runtime.GOARCH == otherArch {
+		otherArch = "arm64"
+	}
+	for _, tc := range []struct {
+		name, storedOS, storedArch, processOS, processArch string
+		processBin, disabled, accepted                     bool
+	}{
+		{name: "native defaults", accepted: true},
+		{name: "process OS", processOS: otherOS},
+		{name: "process architecture", processArch: otherArch},
+		{name: "persisted OS with process destination", storedOS: otherOS, processBin: true},
+		{name: "persisted architecture with process destination", storedArch: otherArch, processBin: true},
+		{name: "native process target remains custom", storedOS: otherOS, storedArch: otherArch, processOS: runtime.GOOS, processArch: runtime.GOARCH},
+		{name: "disabled persisted target", storedOS: otherOS, storedArch: otherArch, processBin: true, disabled: true, accepted: true},
+		{name: "disabled configuration retains process target", processOS: otherOS, processBin: true, disabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			directory := filepath.Join(root, "go bin")
+			configuration := filepath.Join(root, "go-env")
+			fixtureFile(t, configuration, "GOBIN="+directory+"\nGOOS="+tc.storedOS+"\nGOARCH="+tc.storedArch+"\n")
+			t.Setenv("GOENV", configuration)
+			t.Setenv("GOBIN", "")
+			t.Setenv("GOOS", tc.processOS)
+			t.Setenv("GOARCH", tc.processArch)
+			if tc.processBin {
+				t.Setenv("GOBIN", directory)
+			}
+			if tc.disabled {
+				t.Setenv("GOENV", "off")
+			}
+			want := ""
+			if tc.accepted {
+				want = directory
+			}
+			if got := goInstallDirectory(); got != want {
+				t.Fatalf("installation destination = %q; want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestGoInstallDirectoryHonorsPersistedAndProcessOverrides(t *testing.T) {
 	root := t.TempDir()
 	config := filepath.Join(root, "go-env")
@@ -109,6 +186,8 @@ func TestGoInstallDirectoryHonorsPersistedAndProcessOverrides(t *testing.T) {
 	processBin := filepath.Join(root, "process bin")
 	t.Setenv("GOENV", config)
 	t.Setenv("GOBIN", "")
+	t.Setenv("GOOS", "")
+	t.Setenv("GOARCH", "")
 	t.Setenv("GOPATH", "")
 	t.Setenv("HOME", root)
 	t.Setenv("USERPROFILE", root)
