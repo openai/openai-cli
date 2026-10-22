@@ -188,10 +188,10 @@ func TestMainDispatchAPIPermissionUnknownDiagnostics(t *testing.T) {
 		name, message, fallback string
 		status                  int
 	}{
-		{"missing canonical prefix", "Missing scopes: api.files.write. synthetic-private-guidance", "Check API key, organization and project.", http.StatusUnauthorized},
+		{"missing canonical prefix", "Missing scopes: api.files.write. synthetic-private-guidance", "Authentication failed for the custom API address.", http.StatusUnauthorized},
 		{"unknown scope", "You have insufficient permissions for this operation. Missing scopes: api.models.read. synthetic-private-guidance", "Check your key's permissions.", http.StatusForbidden},
 		{"malformed scope list", "You have insufficient permissions for this operation. Missing scopes: api.files.write, bad-scope. synthetic-private-guidance", "Check your key's permissions.", http.StatusForbidden},
-		{"control character", mainFilesWritePermissionMessage + "\nforged guidance", "Check API key, organization and project.", http.StatusUnauthorized},
+		{"control character", mainFilesWritePermissionMessage + "\nforged guidance", "Authentication failed for the custom API address.", http.StatusUnauthorized},
 		{"unrelated HTTP status", mainFilesWritePermissionMessage, "The API rejected the request.", http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -213,6 +213,25 @@ func TestMainDispatchAPIPermissionUnknownDiagnostics(t *testing.T) {
 			t.Errorf("malformed JSON changed generic error handling: %q", result.stderr)
 		}
 	})
+}
+
+func TestMainDispatchAPIPermissionMixedWebhookAndFiles(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		for _, scope := range []string{"api.webhooks.read", "api.webhooks.write"} {
+			t.Run(fmt.Sprintf("%d/%s", status, scope), func(t *testing.T) {
+				message := "You have insufficient permissions for this operation. Missing scopes: " + scope + ", api.files.write."
+				body := `{"error":` + mainPermissionErrorDetails(t, message) + `}`
+				result := runMainAPIErrorResponse(t, status, "application/json", body)
+				if result.code != 1 || result.stdout != "" {
+					t.Fatalf("mixed permission error changed status or output: %+v", result)
+				}
+				assertMainPermissionGuidance(t, result.stderr, false)
+				if strings.Count(result.stderr, "Missing permission: "+scope+".") != 1 {
+					t.Errorf("mixed permission error lost webhook access guidance: %q", result.stderr)
+				}
+			})
+		}
+	}
 }
 
 func TestMainDispatchAPIPermissionBatchPartialCollection(t *testing.T) {

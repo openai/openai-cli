@@ -49,6 +49,39 @@ type failedImagePickerWriter struct{}
 
 func (failedImagePickerWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
+func TestImagePickerRegistersOnlyExplicitSuccessfulPrint(t *testing.T) {
+	model, err := newImagePicker(imagePickerOptions{Prompt: "reviewed 'prompt'"})
+	require.NoError(t, err)
+	for _, printOnly := range []bool{false, true} {
+		for _, writeFails := range []bool{false, true} {
+			var output bytes.Buffer
+			var writer io.Writer = &output
+			if writeFails {
+				writer = failedImagePickerWriter{}
+			}
+			var commands []string
+			result := imagePickerResult{Args: model.settings.args(), settings: model.settings, PrintOnly: printOnly, shell: "bash"}
+			err := finishImagePickerSelection(t.Context(), writer, io.Discard, "", &result, func(text string) error {
+				if _, err := io.WriteString(writer, text+"\n"); err != nil {
+					return err
+				}
+				commands = append(commands, text)
+				return nil
+			})
+			if writeFails {
+				require.ErrorIs(t, err, io.ErrClosedPipe)
+			} else {
+				require.NoError(t, err)
+			}
+			if printOnly && !writeFails {
+				require.Equal(t, []string{cliterminal.FormatCommand(result.Args, "bash")}, commands)
+			} else {
+				require.Empty(t, commands)
+			}
+		}
+	}
+}
+
 func TestImagePickerSelectionHistoryFollowsSuccessfulEcho(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "image-picker.json")

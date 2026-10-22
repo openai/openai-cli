@@ -40,7 +40,7 @@ func commandGroup(command *cli.Command) bool {
 	return command.Category == "API RESOURCE" || len(command.VisibleCommands()) > 0
 }
 
-func commandList(command *cli.Command, width int) string {
+func commandList(command *cli.Command, width int, renderers ...func(*cli.Command) string) string {
 	var order []string
 	sections := map[string][]*cli.Command{}
 	for _, child := range VisibleCommands(command) {
@@ -63,7 +63,14 @@ func commandList(command *cli.Command, width int) string {
 		}
 		fmt.Fprintln(&out, strings.ToUpper(section))
 		for _, child := range sections[section] {
-			writeHelpEntry(&out, child.Name, shortDescription(child.Usage), width)
+			// Format plain text before adding links, so padding keeps its width.
+			var entry strings.Builder
+			writeHelpEntry(&entry, child.Name, shortDescription(child.Usage), width)
+			text := entry.String()
+			if len(renderers) > 0 && renderers[0] != nil {
+				text = "  " + renderers[0](child) + strings.TrimPrefix(text, "  "+child.Name)
+			}
+			out.WriteString(text)
 		}
 	}
 	return out.String()

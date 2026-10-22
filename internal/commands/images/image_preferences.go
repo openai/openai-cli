@@ -49,7 +49,7 @@ func imageInlineMode(ctx context.Context, command *cli.Command, terminal bool) (
 	return imageprefs.Load(ctx, path)
 }
 
-func imageInlinePreferenceCommands(receipt func(context.Context, string) error) []*cli.Command {
+func imageInlinePreferenceCommands(receipt func(context.Context, string) error, suggestedReceipts ...func(context.Context, *cli.Command, string, []string) error) []*cli.Command {
 	var commands []*cli.Command
 	for _, mode := range []string{"on", "off"} {
 		commands = append(commands, &cli.Command{
@@ -57,7 +57,7 @@ func imageInlinePreferenceCommands(receipt func(context.Context, string) error) 
 			Description: "Applies to future image generation, edits and variations on this computer. No API request or key is needed.\nPer-command --inline auto, on or off overrides it. Explicit images preview ignores this preference.\nTurning on also allows image-font activation in a local Apple Terminal tab.",
 			Action: func(ctx context.Context, command *cli.Command) error {
 				if command.Args().Len() != 0 {
-					return imageSavingFailure("This command takes no arguments. Use openai images inline on or openai images inline off.", nil)
+					return imageSavingFailure("This command takes no arguments. Use openai images inline on or openai images inline off.", nil, "openai images inline on", "openai images inline off")
 				}
 				if err := validateLocalImageOutput(command); err != nil {
 					return err
@@ -69,9 +69,12 @@ func imageInlinePreferenceCommands(receipt func(context.Context, string) error) 
 				if err := imageprefs.Save(ctx, path, mode == "on"); err != nil {
 					return imageSavingFailure("Could not save the inline preference. Existing settings were kept. Check permissions and settings in "+imageInlinePreferenceLocation(runtime.GOOS)+". Move an invalid settings file aside before trying again.", err)
 				}
-				message := "Automatic image previews " + mode + ".\nOverride once: --inline auto|on|off\nView a saved image: openai images preview FILE"
+				message := "Automatic image previews " + mode + ".\nOverride once: --inline auto|on|off\nImage preview help: openai images preview --help"
 				if mode == "on" {
 					message += "\nOn also permits image-font activation in local Apple Terminal."
+				}
+				if len(suggestedReceipts) > 0 && suggestedReceipts[0] != nil {
+					return suggestedReceipts[0](ctx, command, message, []string{"openai images preview --help"})
 				}
 				return receipt(ctx, message)
 			},

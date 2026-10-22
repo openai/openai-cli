@@ -15,6 +15,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/openai/openai-cli/internal/commandsuggest"
 	"github.com/urfave/cli/v3"
 )
 
@@ -28,21 +29,21 @@ const setupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up your
 
    Bash or zsh (macOS / Linux)
      Run this line, paste your key (hidden), then press Enter:
-       read -rs OPENAI_API_KEY
+       {{suggestFor . "read -rs OPENAI_API_KEY" "bash" "zsh"}}
      Then run this line so the CLI can read the key:
-       export OPENAI_API_KEY
-       printf '\n'
+       {{suggestFor . "export OPENAI_API_KEY" "bash" "zsh"}}
+       {{suggestFor . "printf '\\n'" "bash" "zsh"}}
 
    PowerShell (Windows, macOS, or Linux)
      Run this line, paste your key (hidden), then press Enter:
-       $openaiKey = Read-Host "API key" -AsSecureString
+       {{suggestFor . "$openaiKey = Read-Host \"API key\" -AsSecureString" "pwsh"}}
      Then run these lines:
-       $env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new("", $openaiKey).Password
-       Remove-Variable openaiKey
+       {{suggestFor . "$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new(\"\", $openaiKey).Password" "pwsh"}}
+       {{suggestFor . "Remove-Variable openaiKey" "pwsh"}}
 
-   Using Command Prompt (cmd.exe)? Run powershell first, then use the
+   Using Command Prompt (cmd.exe)? Run {{suggestFor . "powershell" "cmd"}} first, then use the
    PowerShell steps above. Run the CLI in that same PowerShell session.
-   Using Fish? Run bash first, then use the Bash steps above.
+   Using Fish? Run {{suggestFor . "bash" "fish"}} first, then use the Bash steps above.
 
    Windows command examples use PowerShell syntax. In cmd.exe, run
    openai from PATH or .\openai.exe from the folder containing the CLI.
@@ -50,7 +51,28 @@ const setupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up your
    These steps set the key for this shell session. A new window needs it again.
 
 3. TRY A COMMAND
-   {{$run}} models list
+   {{suggest . (printf "%s models list" $run)}}
+
+ALREADY HAVE A KEY?
+   An HTTP 401 means the server did not accept authentication.
+   It does not identify which credential or setting caused the failure.
+   Enter the appropriate key again using the hidden-input steps above.
+   Keep the key in the same shell session where you run the CLI.
+   A supplied --api-key overrides OPENAI_API_KEY, even when its value is empty.
+   Remove that override if you want to use the environment key.
+
+   For organization administration commands, use OPENAI_ADMIN_KEY instead of
+   OPENAI_API_KEY in the steps above. --admin-api-key overrides OPENAI_ADMIN_KEY.
+   Ask an organization owner for an admin key or the required access.
+
+   Match --project and --organization to the key's project and organization.
+   Their environment settings are OPENAI_PROJECT_ID and OPENAI_ORG_ID.
+   Explicit values, including empty values, override those environment settings.
+
+   A supplied --header Authorization overrides key options.
+   OPENAI_CUSTOM_HEADERS can also configure Authorization; key options can replace it.
+   Check the error's guidance before changing these settings.
+   Custom endpoints can require different credentials. Check their authentication instructions.
 
 This is a guide only. No key has been entered or checked by showing this page.
 `
@@ -345,6 +367,25 @@ func installSubcommandHelp() {
 			}
 			return commandHelp(ctx, command.Lineage()[1], command.Name)
 		}
+		customPrinter := cli.HelpPrinterCustom
+		cli.HelpPrinterCustom = func(out io.Writer, template string, data any, functions map[string]any) {
+			local := make(map[string]any, len(functions)+2)
+			for name, function := range functions {
+				local[name] = function
+			}
+			local["suggest"] = commandsuggest.Record
+			local["suggestFor"] = func(command *cli.Command, text string, shells ...string) string {
+				rendered := text
+				for _, shell := range shells {
+					if candidate := commandsuggest.RecordFor(command, shell, text); candidate != text {
+						rendered = candidate
+					}
+				}
+				return rendered
+			}
+			customPrinter(out, template, data, local)
+
+		}
 		fallback := cli.ShowSubcommandHelp
 		cli.ShowSubcommandHelp = func(command *cli.Command) error {
 			if _, configured := command.Root().Metadata["help-invocation"]; !configured || command.CustomHelpTemplate == "" {
@@ -423,8 +464,26 @@ func Invocation(fallback string, args []string) string {
 		return fallback
 	}
 	name := args[0]
-	if base := strings.TrimSuffix(filepath.Base(name), ".exe"); base != fallback {
+	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return fallback
+	}
+	if base := strings.TrimSuffix(filepath.Base(name), ".exe"); base != fallback {
+		// Preview builds can have different names. Trust that spelling only
+		// when it identifies this process, never an arbitrary argv[0]. Resolve
+		// bare names so shell builtins and keywords cannot intercept them.
+		running, err := os.Executable()
+		if err != nil {
+			return fallback
+		}
+		if filepath.Base(name) == name {
+			name, err = exec.LookPath(name)
+			if err == nil {
+				name, err = filepath.Abs(name)
+			}
+		}
+		if err != nil || !sameExecutable(name, running) {
+			return fallback
+		}
 	}
 	// go run uses either a temporary executable or a cached executable under
 	// <two hex digits>/<64 hex digits>-d. Neither path is a stable invocation.
@@ -436,9 +495,6 @@ func Invocation(fallback string, args []string) string {
 		if _, err := os.Stat("cmd/" + fallback + "/main.go"); err == nil {
 			return "go run ./cmd/" + fallback
 		}
-		return fallback
-	}
-	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return fallback
 	}
 	// Installed commands need no directory prefix when PATH selects this same
@@ -455,9 +511,10 @@ func Invocation(fallback string, args []string) string {
 	if filepath.IsAbs(name) {
 		if local, err := filepath.Abs(filepath.Base(name)); err == nil && sameExecutable(name, local) {
 			if runtime.GOOS == "windows" {
-				return `.\` + filepath.Base(name)
+				name = `.\` + filepath.Base(name)
+			} else {
+				name = "./" + filepath.Base(name)
 			}
-			return "./" + filepath.Base(name)
 		}
 	}
 	needsQuoting := strings.IndexFunc(name, func(r rune) bool {

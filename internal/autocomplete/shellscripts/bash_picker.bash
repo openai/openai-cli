@@ -27,7 +27,8 @@ if [[ $- == *i* && -t 0 && -t 1 && -t 2 && -n ${TERM-} && ${TERM-} != dumb ]]; t
       # `test` keeps exact case even with the user's nocasematch option set.
       [ ${#words[@]} -eq 3 ] && [ "${words[0]}" = '__APPNAME__' ] &&
         [ "${words[1]}" = images ] && [ "${words[2]}" = generate ] &&
-        [ "$(type -t '__APPNAME__')" = file ]
+        { [ "$(type -t '__APPNAME__')" = file ] ||
+          { declare -F ____APPNAME___suggestions_owns_command >/dev/null && ____APPNAME___suggestions_owns_command; }; }
     }
 
     ____APPNAME___picker_redraw() {
@@ -49,7 +50,11 @@ if [[ $- == *i* && -t 0 && -t 1 && -t 2 && -n ${TERM-} && ${TERM-} != dumb ]]; t
         READLINE_LINE=$leading$candidate
         READLINE_POINT=${#READLINE_LINE}
         printf '\n'
-        OPENAI_PICKER_SHELL=bash command '__APPNAME__' images generate <&2
+        if declare -F ____APPNAME___suggestions_owns_command >/dev/null && ____APPNAME___suggestions_owns_command; then
+          OPENAI_PICKER_SHELL=bash ____APPNAME___suggestions_run images generate <&2
+        else
+          OPENAI_PICKER_SHELL=bash command '__APPNAME__' images generate <&2
+        fi
       fi
       # Returning from bind -x asks Readline to redraw its own prompt/buffer.
     }

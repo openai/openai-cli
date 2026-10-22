@@ -54,8 +54,11 @@ func TestAPIPermissionErrorRecognizesOnlySupportedDiagnostics(t *testing.T) {
 						require.Contains(t, out.String(), step)
 					}
 				} else {
-					generic := readableAPIErrorMessage(readableErrorTestCommand(t), &openai.Error{}, &openai.Error{StatusCode: status})
-					require.Equal(t, generic+"\n", out.String())
+					// Authentication and generic access guidance have separate contracts.
+					// Unsupported diagnostics must never imply a Files permission.
+					require.NotContains(t, out.String(), "The API reports missing permission:")
+					require.NotContains(t, out.String(), "Files Write")
+					require.Contains(t, out.String(), fmt.Sprintf("HTTP %d", status))
 				}
 			})
 		}

@@ -86,6 +86,29 @@ func TestCompleteHelpKeepsExplicitFeatureTemplates(t *testing.T) {
 	}
 }
 
+func TestRootHelpIntroducesExploreFirst(t *testing.T) {
+	for _, invocation := range []string{"openai", "'/tmp/CLI build/openai'", "go run ./cmd/openai"} {
+		for _, width := range []int{40, 80} {
+			root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "explore"}}}
+			got := commandHelpAtWidth(root, invocation, "", width)
+			_, start, found := strings.Cut(got, "\nSTART HERE\n")
+			if !found || !strings.HasPrefix(start, "   "+invocation+" explore\n") ||
+				!strings.Contains(strings.Join(strings.Fields(start), " "), "Search commands and examples. No API key needed.") {
+				t.Errorf("invocation=%q width=%d: local search is not the first introduction:\n%s", invocation, width, got)
+			}
+			if !strings.Contains(start, "   "+invocation+" help setup\n   "+invocation+" models list\n") {
+				t.Errorf("existing start commands changed:\n%s", got)
+			}
+		}
+	}
+	for _, commands := range [][]*cli.Command{nil, {{Name: "explore", Hidden: true}}} {
+		got := commandHelpAtWidth(&cli.Command{Name: "openai", Commands: commands}, "openai", "", 80)
+		if strings.Contains(got, "openai explore") {
+			t.Errorf("root help advertised unavailable command search:\n%s", got)
+		}
+	}
+}
+
 func TestCompleteHelpExplainsOutputExamples(t *testing.T) {
 	command := &cli.Command{Name: "list", Flags: []cli.Flag{&requestflag.Flag[int64]{Name: "max-items", Usage: "Maximum items; use -1 for unlimited."}}}
 	for _, width := range []int{40, 80} {

@@ -1049,6 +1049,16 @@ jobs:
     permissions: {}
     runs-on: ubuntu-latest
     steps:
+      - name: Make room for cross-platform Go builds
+        shell: bash
+        run: |
+          # This Go-only job does not use the hosted runner's Android SDK.
+          # Reclaim its space before restoring caches and building every target.
+          df -h /
+          if [[ -d /usr/local/lib/android && ! -L /usr/local/lib/android ]]; then
+            sudo rm -rf -- /usr/local/lib/android
+          fi
+          df -h /
       - name: Download prepared source
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:

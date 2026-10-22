@@ -9,10 +9,12 @@ import (
 	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-cli/internal/commands/codex"
+	"github.com/openai/openai-cli/internal/commands/explore"
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/commands/manpages"
 	"github.com/openai/openai-cli/internal/commands/tokenize"
+	"github.com/openai/openai-cli/internal/commands/webhooks"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
@@ -41,11 +43,14 @@ func ConfigureCommand(root *cli.Command) {
 	images.ConfigureCompletion(root)
 	images.ConfigureShellSetup(root, writeOutputReceipt)
 	configureShellSuggestions(root)
+	explore.ConfigureCompletion(root)
+	explore.Register(root)
 	images.RegisterPreview(root, ImagePreviewOptions())
 	audio.ConfigureText(root)
 	configureReadableSpeech(root)
 	registerAdminSetup(root)
 	admin.ConfigureCredentials(root)
+	webhooks.Configure(root, webhookCommandOptions())
 	localcommands.ConfigureSubgroups(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
