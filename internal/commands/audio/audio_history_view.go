@@ -13,7 +13,7 @@ import (
 // Date headings replace repeated metadata. Keep each prompt on one selectable row.
 func (m *audioWorkbench) historyView(now time.Time) tea.View {
 	lines := []string{m.strong().Render("  History")}
-	footer := []string{"  " + m.muted().Render("Enter open · Esc back")}
+	footer := []string{"  " + m.hintLine([2]string{"Enter", "open"}, [2]string{"Esc", "back"})}
 	if len(m.entries) == 0 {
 		return tea.NewView(m.fitAudio(append(append(lines, "  No saved audio yet."), footer...)))
 	}

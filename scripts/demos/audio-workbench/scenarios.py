@@ -404,8 +404,9 @@ def navigation_case(ctx):
     check("More Down enters Play", "play", down)
     check("Result Down selects Save", "save", ss3_down)
     check("Result Down stays on Save", "save", down)
-    check("Result Up returns to Play", "play", up)
-    check("Result Up enters Settings More", "more", ss3_up)
+    check("Result Left returns to Play", "play", b"\x1b[D")
+    check("Result Up focuses waveform", "←→ seek", ss3_up)
+    check("Waveform Up enters Settings More", "more", ss3_up)
     check("Tab Settings to Result", "play", b"\t")
     check("Result End selects Save", "save", ctx.picker.END)
     check("Result Home selects Play", "play", ctx.picker.HOME)
@@ -421,7 +422,7 @@ def navigation_case(ctx):
     ctx.mark(terminal, result["case"] + "-complete", result)
     result["navigation_check_count"] = len(result["navigation_checks"])
     # Direct History adds a stop between Generate and More in both directions.
-    assert result["navigation_check_count"] == 187, "Navigation inventory changed"
+    assert result["navigation_check_count"] == 188, "Navigation inventory changed"
     zero_requests()
     terminal.send(b"\x03")
     terminal.finish(130)
@@ -780,6 +781,8 @@ def workflow_case(ctx):
     ctx.mark(terminal, "playback-progress", result)
     terminal.send(b" ")
     ctx.wait(terminal, "Play audio")
+    terminal.send(b"\x1b[A")
+    ctx.wait(terminal, "←→ seek")
     terminal.send(b"\x1b[D" * 35)
     ctx.wait(terminal, "00:00.000 / 00:02.000")
     # Seven boundaries at the wide layout's 35 bars select exactly 400 ms.

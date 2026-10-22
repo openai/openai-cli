@@ -74,7 +74,7 @@ func (m *audioWorkbench) failureView() tea.View {
 	for _, row := range rows[start:min(len(rows), start+height)] {
 		lines = append(lines, m.failureIndent()+row)
 	}
-	lines = append(lines, "", "  "+m.muted().Render("↑↓ scroll · Esc back"))
+	lines = append(lines, "", "  "+m.hintLine([2]string{"↑↓", "scroll"}, [2]string{"Esc", "back"}))
 	return tea.NewView(m.fitAudio(lines))
 }
 

@@ -101,6 +101,7 @@ type audioWorkbench struct {
 	failureOffset              int
 	moreChoice, recoveryChoice int
 	resultAction               int
+	waveformFocused            bool
 	recoveryParent             string
 	infoTitle, infoText        string
 	commandToPrint             string
@@ -181,15 +182,47 @@ func (m *audioWorkbench) resizeEditors() {
 			height = min(4, max(1, editor.LineInfo().Height), max(1, m.height-1-reserved))
 		}
 		if m.height >= 24 && (editor == &m.input || editor == &m.instructions) {
-			height = min(3, 1+strings.Count(editor.Value(), "\n"))
-			if editor == &m.input && m.width >= 60 {
-				height = max(2, height)
+			height = min(3, editor.LineCount())
+			if m.width >= 60 {
+				height = audioEditorHeight(*editor)
 			}
 		}
 		if editor.Height() != height {
-			editor.SetHeight(height)
+			// Dynamic sizing clamps the viewport against actual content rows.
+			// Keep the temporary display bounds out of input processing; Bubbles
+			// also uses MaxHeight as a legacy input limit.
+			dynamic, minimum, maximum := editor.DynamicHeight, editor.MinHeight, editor.MaxHeight
+			editor.DynamicHeight, editor.MinHeight, editor.MaxHeight = true, height, height
+			editor.SetWidth(editor.Width())
+			editor.DynamicHeight, editor.MinHeight, editor.MaxHeight = dynamic, minimum, maximum
 		}
 	}
+}
+
+// Measure wrapped rows without moving the editor's shared viewport.
+func audioEditorHeight(editor textarea.Model) int {
+	if editor.LineCount() >= 3 {
+		return 3
+	}
+	if editor.LineCount() == 1 {
+		return min(3, max(1, editor.LineInfo().Height))
+	}
+	// A textarea value copy still shares its viewport. Use a fresh measuring
+	// editor for two logical lines so cursor movement cannot scroll the form.
+	probe := textarea.New()
+	probe.Prompt, probe.ShowLineNumbers = "", false
+	probe.CharLimit, probe.MaxHeight, probe.MaxContentHeight, probe.MaxWidth = 0, 0, 0, 0
+	probe.SetStyles(textarea.Styles{})
+	probe.SetWidth(editor.Width())
+	height := 0
+	for _, line := range strings.Split(editor.Value(), "\n") {
+		probe.SetValue(line)
+		height += max(1, probe.LineInfo().Height)
+		if height >= 3 {
+			return 3
+		}
+	}
+	return height
 }
 
 func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.Cmd) {
@@ -255,6 +288,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			}
 			m.result = &msg.result
 			m.resultAction = 0
+			m.waveformFocused = false
 			m.focusSection(4)
 			if msg.kind == "open" {
 				m.settings = msg.result.entry.Settings
@@ -379,14 +413,14 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 		if m.focus == 4 {
 			switch key {
 			case "left", "right", "shift+left", "shift+right":
-				if m.resultAction == 0 {
+				if m.waveformFocused {
 					m.seekResult(key)
 				}
 			case "space", "enter":
 				if time.Since(m.lastFinished) < 750*time.Millisecond {
 					return m, nil
 				}
-				if key == "enter" && m.resultAction == 1 {
+				if key == "enter" && !m.waveformFocused && m.resultAction == 1 {
 					return m, m.openSave()
 				}
 				return m, m.togglePlayback()

@@ -73,8 +73,9 @@ The form keeps the original error for its existing exit diagnostics and status.
 Completed results show their format and byte count.
 When analysis succeeds, they also show a waveform derived from decoded samples and duration.
 Result labels retain the original generation settings when you change the form.
-Up and Down select Play audio or Save audio. Enter performs the selected action.
-Left and Right move the playback position. Shift moves five waveform bars. Seeking stops playback.
+Left and Right select Play audio or Save audio. Enter performs the selected action.
+Up focuses the waveform. Down returns to the selected action.
+On the waveform, Left and Right move the playback position. Shift moves five waveform bars. Seeking stops playback.
 Space plays from the selected position or stops playback.
 The marker follows player-reported progress. Players without progress reports keep a stationary marker.
 With the result focused, S opens Save and H opens History.
@@ -198,7 +199,7 @@ Roomy result views leave one blank row between the waveform and playback time.
 
 ## Layout
 
-Field labels use secondary text color. Values retain normal terminal text.
+Settings labels and values use normal terminal text. Save labels retain secondary styling.
 More actions reuses the form layout when space permits, keeping the draft and settings visible.
 Compact screens prioritize the selected action and return guidance.
 Roomy playback uses light waveform strokes and a distinct progress marker.
@@ -207,7 +208,7 @@ After export, that row shows the actual saved path instead.
 Filename and Save to keep their value columns while editing.
 
 Wide terminals use a reading column of at most 96 cells.
-Instructions follows the composer, separately from technical settings.
+Settings follows the composer. Instructions appears first within its aligned rows.
 Generate, History and More actions share a row when they fit.
 Left and Right move between these actions. Up and Down retain their existing behavior.
-Compact terminals retain stacked controls. Keyboard guidance uses secondary text styling.
+Compact terminals retain stacked controls. Keyboard keys use the accent color; descriptions use secondary text styling.

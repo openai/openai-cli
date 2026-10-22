@@ -399,13 +399,13 @@ func (m *audioWorkbench) informationView() tea.View {
 	start := audioScrollOffset(m.infoOffset, len(rows), height, "")
 	lines := []string{m.strong().Render(m.infoTitle), ""}
 	lines = append(lines, rows[start:min(len(rows), start+height)]...)
-	footer := "↑↓ scroll · Esc back"
+	footer := m.hintLine([2]string{"↑↓", "scroll"}, [2]string{"Esc", "back"})
 	if m.infoTitle == audioCommandTitle {
 		if _, omit := requestconfig.NextCommandOptions(m.command.Root()); !omit {
-			footer = "↑↓ · Ctrl+P print/exit · Esc back"
+			footer = m.hintLine([2]string{"↑↓", ""}, [2]string{"Ctrl+P", "print/exit"}, [2]string{"Esc", "back"})
 		}
 	}
-	lines = append(lines, "", m.muted().Render(footer))
+	lines = append(lines, "", footer)
 	return tea.NewView(m.fitAudio(lines))
 }
 
@@ -428,7 +428,9 @@ Clear removes the current draft, not History or saved files.
 
 Choose Play audio or Save audio in the result.
 Space plays or stops; S opens Save.
-Left and Right on Play choose the playback start.
+Left and Right choose Play or Save.
+Up focuses the waveform. Down returns to the selected action.
+Left and Right on the waveform choose the playback start.
 Shift+Left and Shift+Right move five waveform bars.
 Seeking stops playback. Press Space to play from the selected time.
 The marker follows FFplay's reported playback position.
@@ -439,10 +441,10 @@ Save always exports the complete original recording.
 Esc returns from a menu or result.
 Esc from the form exits. Ctrl+C cancels and exits.`
 
-func (m *audioWorkbench) progressText() string {
+func (m *audioWorkbench) progressView() string {
 	action := map[string]string{"Working: generate": "Creating speech", "Working: history": "Opening History", "Working: open": "Opening audio", "Working: export": "Saving audio"}[m.note]
 	if action == "" {
 		action = "Working"
 	}
-	return fmt.Sprintf("%s… %.1fs · Ctrl+C cancels", action, time.Since(m.started).Seconds())
+	return m.muted().Render(fmt.Sprintf("%s… %.1fs · ", action, time.Since(m.started).Seconds())) + m.keyHint("Ctrl+C", "cancels")
 }

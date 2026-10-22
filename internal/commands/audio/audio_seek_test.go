@@ -26,6 +26,7 @@ func audioSeekModel(t *testing.T) *audioWorkbench {
 	result.analysis.Duration = float64(audioWaveformBars(m.waveformWidth()))
 	m.result = &result
 	m.focusSection(4)
+	m.waveformFocused = true
 	t.Cleanup(m.stopPlayback)
 	return m
 }
@@ -116,7 +117,7 @@ func TestAudioSeekRespectsFocusModalBusyAndSizeGuards(t *testing.T) {
 		name  string
 		setup func(*audioWorkbench)
 	}{
-		{"save action", func(m *audioWorkbench) { m.resultAction = 1 }},
+		{"save action", func(m *audioWorkbench) { m.resultAction = 1; m.waveformFocused = false }},
 		{"text", func(m *audioWorkbench) { m.focusSection(0) }},
 		{"instructions", func(m *audioWorkbench) { m.focusSection(1) }},
 		{"settings", func(m *audioWorkbench) { m.focusSection(2) }},
@@ -178,6 +179,8 @@ func TestAudioSeekStopsOnlyForAChangedSelection(t *testing.T) {
 	require.Equal(t, 4, m.focus)
 	require.True(t, m.playing)
 	require.Zero(t, canceled)
+	audioReviewKey(m, tea.KeyUp)
+	require.True(t, m.waveformFocused)
 	// At the beginning, Left cannot change the selection or stop playback.
 	require.Nil(t, audioSeekKey(m, tea.KeyLeft, false))
 	require.True(t, m.playing)
@@ -206,6 +209,7 @@ func TestAudioSeekPreservesNewerFailureFeedback(t *testing.T) {
 	m.rememberFailure("export", m.lastErr)
 	require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 	m.focusSection(4)
+	audioReviewKey(m, tea.KeyUp)
 	note, failure, lastErr := m.note, m.failure, m.lastErr
 	require.Nil(t, audioSeekKey(m, tea.KeyRight, false))
 	require.False(t, m.playing)
@@ -262,6 +266,7 @@ func TestAudioSeekSaveExportsFullOriginal(t *testing.T) {
 	message := m.load(t.Context(), entry.ID, "open")
 	require.NoError(t, message.err)
 	m.Update(message)
+	audioReviewKey(m, tea.KeyUp)
 	require.Nil(t, audioSeekKey(m, tea.KeyRight, true))
 	require.Positive(t, m.result.position)
 	position := m.result.position
@@ -334,6 +339,7 @@ func TestAudioSeekWorkerCapturesOffsetAndPreservesOriginal(t *testing.T) {
 			loaded := m.load(ctx, entry.ID, "open")
 			require.NoError(t, loaded.err)
 			m.Update(loaded)
+			audioReviewKey(m, tea.KeyUp)
 			for range 2 {
 				require.Nil(t, audioSeekKey(m, tea.KeyRight, false))
 			}

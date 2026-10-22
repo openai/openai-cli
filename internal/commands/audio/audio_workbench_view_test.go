@@ -86,7 +86,7 @@ func TestAudioViewSelectedSettingAndPrimaryActionsStayVisible(t *testing.T) {
 
 func TestAudioViewEditorSizeTracksMultilineInput(t *testing.T) {
 	m := audioReviewModel(t)
-	require.Equal(t, 2, m.input.Height())
+	require.Equal(t, 1, m.input.Height())
 	m.Update(tea.PasteMsg{Content: "First\nSecond\nThird\nFourth"})
 	require.Equal(t, 3, m.input.Height())
 	require.Equal(t, "First\nSecond\nThird\nFourth", m.input.Value())
@@ -141,10 +141,10 @@ func TestAudioViewKeepsImageStyleFormStableAcrossFocus(t *testing.T) {
 			require.Equal(t, 4, strings.Index(rows[0], "Text to speech"))
 			require.Equal(t, min(96, width-4), ansi.StringWidth(rows[1])-2, "wide terminals must retain a bounded reading column")
 			require.Contains(t, rows[2], "A clear short example.")
-			require.Contains(t, rows[4], "╯")
-			require.Contains(t, rows[5], "Instructions", "delivery instructions must follow the composer")
-			require.Empty(t, strings.TrimSpace(rows[6]))
-			require.Equal(t, "    Settings", rows[7], "technical settings need a separate group")
+			require.Contains(t, rows[3], "╯")
+			require.Equal(t, "    Settings", rows[4], "settings must follow the composer")
+			require.Contains(t, rows[5], "Instructions", "delivery instructions belong inside Settings")
+			require.Contains(t, rows[6], "Model")
 			require.Equal(t, 1, strings.Count(view, "╭"), "Instructions must not replace the primary input")
 			require.NotContains(t, view, "› Text")
 			if focus == 2 {
@@ -153,6 +153,9 @@ func TestAudioViewKeepsImageStyleFormStableAcrossFocus(t *testing.T) {
 				require.Contains(t, view, "[Alt+Enter] New line")
 			}
 			next := "Settings"
+			if focus == 0 {
+				next = "Instructions"
+			}
 			if focus == 2 {
 				next = "Text"
 			}
@@ -241,4 +244,70 @@ func TestAudioWideFormKeepsActionRowAndEditorWithinReadingColumn(t *testing.T) {
 		}
 	}
 	require.Equal(t, 4, m.setting)
+}
+
+func TestAudioViewEditorGrowsWithWrappedText(t *testing.T) {
+	for _, size := range [][2]int{{60, 24}, {90, 34}} {
+		for _, unit := range []string{"word ", "界🙂e\u0301 "} {
+			m := audioReviewModel(t)
+			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			m.Update(tea.PasteMsg{Content: strings.Repeat(unit, 45)})
+			require.Equal(t, 3, m.input.Height(), "wrapped text needs visible editing space")
+			before := m.input.Value()
+			row, col := m.input.Line(), m.input.Column()
+			m.Update(tea.WindowSizeMsg{Width: size[0] + 5, Height: size[1]})
+			require.Equal(t, before, m.input.Value())
+			require.Equal(t, row, m.input.Line())
+			require.Equal(t, col, m.input.Column(), "resize moved the editing cursor")
+			view := ansi.Strip(m.View().Content)
+			for _, label := range []string{"Settings", "Instructions", "Generate speech", "History", "More actions…"} {
+				require.Contains(t, view, label)
+			}
+			m.input.SetValue("Short text.")
+			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			require.Equal(t, 1, m.input.Height(), "short text should not retain empty rows")
+		}
+	}
+}
+
+func TestAudioViewSizingPreservesWrappedCaretVisibility(t *testing.T) {
+	for _, text := range []string{strings.Repeat("wrapped text ", 60), strings.Repeat("wrapped text ", 30) + "\nLast line"} {
+		m := audioReviewModel(t)
+		m.Update(tea.WindowSizeMsg{Width: 90, Height: 34})
+		m.Update(tea.PasteMsg{Content: text})
+		m.input.MoveToEnd()
+		offset := m.input.ScrollYOffset()
+		require.Positive(t, offset)
+		before := m.input.View()
+		m.Update(tea.WindowSizeMsg{Width: 90, Height: 34})
+		require.Equal(t, offset, m.input.ScrollYOffset(), "sizing scrolled the active editor")
+		require.Equal(t, before, m.input.View(), "sizing changed the visible text or caret")
+		require.Equal(t, 3, m.input.Height())
+	}
+}
+
+func TestAudioViewExpandingEditorShowsAllFittingLines(t *testing.T) {
+	m := audioReviewModel(t)
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 34})
+	m.Update(tea.PasteMsg{Content: "First visible line.\nSecond visible line."})
+	assertLines := func() {
+		t.Helper()
+		view := ansi.Strip(m.View().Content)
+		require.Contains(t, view, "First visible line.")
+		require.Contains(t, view, "Second visible line.")
+		require.Equal(t, 2, m.input.Height())
+		require.Zero(t, m.input.ScrollYOffset())
+	}
+	assertLines()
+	m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	assertLines()
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 34})
+	assertLines()
+	require.Equal(t, 1, m.focus)
+	require.False(t, m.input.Focused())
+	require.True(t, m.instructions.Focused())
+	require.Equal(t, 1, m.input.Line())
+	require.Equal(t, len("Second visible line."), m.input.Column())
+	require.Equal(t, "First visible line.\nSecond visible line.", m.input.Value())
 }

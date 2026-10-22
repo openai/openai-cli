@@ -102,7 +102,7 @@ func TestAudioResultViewKeepsWaveformAndControlsVisible(t *testing.T) {
 						require.Contains(t, view, "█")
 					}
 					require.Contains(t, view, []string{"› Play audio", "› Save audio…"}[action])
-					require.Contains(t, view, []string{"←→ seek · Space play", "Enter save · Esc back"}[action])
+					require.Contains(t, view, []string{"Space play · Esc back", "Enter save · Esc back"}[action])
 					if action == 1 {
 						require.NotContains(t, view, "←→ seek")
 					}
@@ -143,7 +143,7 @@ func TestAudioResultViewLongTimesAndEndpoint(t *testing.T) {
 	require.Contains(t, view, "› Play audio · 149999999:59.000")
 	r.position = r.seekDuration()
 	view = ansi.Strip(m.View().Content)
-	require.Contains(t, view, "At end · ← to seek")
+	require.Contains(t, view, "At end")
 	require.Contains(t, view, "Save audio…")
 }
 
