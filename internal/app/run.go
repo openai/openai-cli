@@ -12,6 +12,7 @@ import (
 	"github.com/openai/openai-cli/internal/commandsuggest"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/terminalimage"
+	"github.com/openai/openai-cli/internal/updatenotice"
 	"github.com/urfave/cli/v3"
 )
 
@@ -69,6 +70,7 @@ func Run(ctx context.Context, argv []string, app *cli.Command) int {
 		}
 		return exitCode
 	}
+	showUpdateNotice(ctx, argv, app, updatenotice.Check)
 	return 0
 }
 
