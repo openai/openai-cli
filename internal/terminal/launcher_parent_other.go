@@ -1,9 +1,9 @@
 //go:build !darwin && !linux && !windows
 
-package files
+package terminal
 
 import "errors"
 
-func fileReceiptGoCallerName(int) (string, error) {
+func goCallerName(int) (string, error) {
 	return "", errors.New("Go launcher parent detection is unavailable on this platform")
 }

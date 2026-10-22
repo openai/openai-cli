@@ -339,7 +339,9 @@ func TestMainHelpSetupIsReadOnly(t *testing.T) {
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("setup guide failed: %+v", got)
 		}
-		for _, text := range []string{"https://platform.openai.com/", "/api-keys", "read -rs OPENAI_API_KEY", "export OPENAI_API_KEY", "-AsSecureString", "PowerShell"} {
+		for _, text := range []string{"https://platform.openai.com/", "/api-keys", "read -rs OPENAI_API_KEY", "export OPENAI_API_KEY", "-AsSecureString", "PowerShell",
+			"OPENAI_ADMIN_KEY", "--api-key overrides OPENAI_API_KEY", "--header Authorization overrides key options",
+			"OPENAI_CUSTOM_HEADERS", "OPENAI_PROJECT_ID", "OPENAI_ORG_ID", "Custom endpoints"} {
 			if !strings.Contains(got.stdout, text) {
 				t.Errorf("setup guide lacks %q", text)
 			}

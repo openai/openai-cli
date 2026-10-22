@@ -20,6 +20,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/audio"
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/images"
+	"github.com/openai/openai-cli/internal/commands/webhooks"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
@@ -41,7 +42,7 @@ func ValidateBaseURL(value, source string) error {
 
 // GetDefaultRequestOptions keeps feature middleware composition with its current owner.
 func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
-	return requestconfig.DefaultOptions(cmd, Version, audio.CaptureText, captureSaveReceiptPolicy(cmd))
+	return requestconfig.DefaultOptions(cmd, Version, audio.CaptureText, captureSaveReceiptPolicy(cmd), webhooks.CaptureTestRequest)
 }
 
 func isTerminal(w io.Writer) bool { return terminal.IsWriterTerminal(w) }
@@ -303,6 +304,9 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	opts.setDefaults()
 	stopModelsListLoading(opts)
 	if err := opts.Context.Err(); err != nil {
+		return err
+	}
+	if handled, err := webhooks.ShowResult(res, webhooks.ResultOptions{ReadableOptions: readableOutputOptions(opts), WriteHint: writeWebhookHint}); handled {
 		return err
 	}
 	if handled, err := filecommands.ShowResult(res, filecommands.ResultOptions{ReadableOptions: fileResultOptions(opts), Quiet: quietOutput(opts.Context)}); handled {
