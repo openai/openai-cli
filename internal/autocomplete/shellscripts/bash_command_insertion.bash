@@ -134,6 +134,8 @@ if [[ $- == *i* && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]] &&
     ____APPNAME___suggestions_index=$row
     ____APPNAME___suggestions_staged=''
     READLINE_LINE=$selected
+    # Bash 4.x uses byte offsets; Bash 5+ uses character offsets.
+    if (( BASH_VERSINFO[0] < 5 )); then local LC_ALL=C; fi
     READLINE_POINT=${#READLINE_LINE}
     ____APPNAME___suggestions_last=$READLINE_LINE
   }

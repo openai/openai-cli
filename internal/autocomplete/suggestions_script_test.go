@@ -456,6 +456,95 @@ expect eof
 	}
 }
 
+func TestSuggestionNativeBashUTF8CursorAndRestore(t *testing.T) {
+	unavailable := func(message string) {
+		t.Helper()
+		for _, shell := range strings.Split(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), ",") {
+			if strings.TrimSpace(shell) == "bash" {
+				t.Fatal(message + "; native bash checks are required")
+			}
+		}
+		t.Skip(message)
+	}
+	bash := pickerTestShell("bash")
+	for _, dependency := range []string{bash, "expect", "locale"} {
+		if _, err := exec.LookPath(dependency); err != nil {
+			unavailable(dependency + " is unavailable")
+		}
+	}
+	if err := exec.Command(bash, "--noprofile", "--norc", "-c", `(( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 3) ))`).Run(); err != nil {
+		unavailable("command insertion requires Bash 4.3+")
+	}
+	locales, err := exec.Command("locale", "-a").Output()
+	if err != nil {
+		unavailable("cannot list installed locales: " + err.Error())
+	}
+	var utf8Locale string
+	for _, name := range strings.Fields(string(locales)) {
+		normalized := strings.ToLower(strings.ReplaceAll(name, "-", ""))
+		if normalized == "en_us.utf8" || normalized == "c.utf8" {
+			utf8Locale = name
+			break
+		}
+	}
+	if utf8Locale == "" {
+		unavailable("native UTF-8 cursor checks require an installed UTF-8 locale")
+	}
+	t.Setenv("OPENAI_CLI_TEST_SUGGESTIONS_LOCALE", utf8Locale)
+	const selected = "openai responses create --input '雪 café 🦊'"
+	const draft = "draft 雪 café tail"
+	for _, source := range []string{"recent", "explore"} {
+		t.Run(source, func(t *testing.T) {
+			setup := `suggestion_test_character=雪
+printf '%s|%s\n' "$LC_ALL" "${#suggestion_test_character}" >"$SUGGESTION_TEST_DIR/locale.before"
+printf '%s\n' "openai responses create --input '雪 café 🦊'" >"$SUGGESTION_TEST_DIR/selection"
+`
+			command := "openai unicode"
+			if source == "explore" {
+				command = "openai explore"
+			}
+			dir := runSuggestionShellPTY(t, "bash", setup, "", false, `
+send -- "`+command+`\r"
+expect -exact "SUGGESTION_TEST> "
+send -- "`+draft+`\002\002\002\002\002\030\007"
+expect -re {BUFFER_CAPTURED\r?\n}
+send -- "\030\011\030\007"
+expect -re {BUFFER_CAPTURED\r?\n}
+send -- "\030\022\030\007"
+expect -re {BUFFER_CAPTURED\r?\n}
+send -- "!\030\007"
+expect -re {BUFFER_CAPTURED\r?\n}
+send -- "\030\011?\030\007"
+expect -re {BUFFER_CAPTURED\r?\n}
+send -- "\005\025printf '%s' \"\$LC_ALL\" >\"\$SUGGESTION_TEST_DIR/locale.after\"\r"
+expect -exact "SUGGESTION_TEST> "
+send -- "exit\r"
+expect eof
+`)
+			read := func(name string) string {
+				data, err := os.ReadFile(filepath.Join(dir, name))
+				require.NoError(t, err)
+				return string(data)
+			}
+			locale := strings.TrimSpace(read("locale.before"))
+			require.True(t, strings.HasSuffix(locale, "|1"), "native Bash must count a UTF-8 character as one character")
+			require.Equal(t, strings.TrimSuffix(locale, "|1"), read("locale.after"), "insertion must preserve the caller's locale")
+			buffers := strings.Split(strings.TrimSuffix(read("buffers"), "\n"), "\n")
+			require.Len(t, buffers, 5)
+			require.True(t, strings.HasPrefix(buffers[0], "<"+draft+">|"), buffers[0])
+			require.True(t, strings.HasPrefix(buffers[1], "<"+selected+">|"), buffers[1])
+			require.Equal(t, buffers[0], buffers[2], "restore must preserve Unicode draft text and its native cursor offset")
+			require.True(t, strings.HasPrefix(buffers[3], "<draft 雪 café! tail>|"), buffers[3])
+			require.True(t, strings.HasPrefix(buffers[4], "<"+selected+"?>|"), "typing must append after the selected command: %s", buffers[4])
+			if source == "recent" {
+				require.Equal(t, "<unicode>\n", read("calls"), "selection must not submit a command")
+			} else {
+				require.NoFileExists(t, filepath.Join(dir, "calls"), "explore selection must not submit a command")
+			}
+		})
+	}
+}
+
 func TestSuggestionNativePickerBridgeCapturesPrintedCommand(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh", "fish"} {
 		t.Run(shell, func(t *testing.T) {
@@ -721,6 +810,8 @@ if [ "$1" = explore ]; then
     choice=1
     if [ -f "$SUGGESTION_TEST_DIR/choice" ]; then read -r choice <"$SUGGESTION_TEST_DIR/choice"; fi
     sed -n "${choice}p"
+  elif [ -f "$SUGGESTION_TEST_DIR/selection" ]; then
+    cat "$SUGGESTION_TEST_DIR/selection"
   else
     printf 'openai models list\n'
   fi
@@ -752,6 +843,7 @@ examples)
 silent) ;;
 partial) if [ "$OPENAI_CLI_COMMANDS_FD" = 9 ]; then printf 'openai models li' >&9; fi ;;
 literal) if [ "$OPENAI_CLI_COMMANDS_FD" = 9 ]; then printf '%s\n' "openai responses create --input '雪 \$HOME \$(touch unsafe); end'" >&9; fi ;;
+unicode) if [ "$OPENAI_CLI_COMMANDS_FD" = 9 ]; then cat "$SUGGESTION_TEST_DIR/selection" >&9; fi ;;
 readfd) cat <&8 ;;
 wait) printf 'WAIT_READY\n'; read -r ignored ;;
 recovery)
@@ -783,8 +875,12 @@ expect -exact "SUGGESTION_TEST> "
 	defer cancel()
 	cmd := exec.CommandContext(ctx, expect, filepath.Join(dir, "driver.exp"))
 	cmd.Dir = dir
+	locale := os.Getenv("OPENAI_CLI_TEST_SUGGESTIONS_LOCALE")
+	if locale == "" {
+		locale = "C"
+	}
 	cmd.Env = []string{
-		"HOME=" + dir, "PATH=" + dir + ":" + os.Getenv("PATH"), "LC_ALL=C", "TERM=xterm-256color",
+		"HOME=" + dir, "PATH=" + dir + ":" + os.Getenv("PATH"), "LC_ALL=" + locale, "TERM=xterm-256color",
 		"TERMINFO=" + os.Getenv("TERMINFO"),
 		"TMPDIR=" + dir, "SUGGESTION_TEST_DIR=" + dir, "SUGGESTION_TEST_SHELL=" + binary,
 		"BASH_SILENCE_DEPRECATION_WARNING=1",
