@@ -224,6 +224,7 @@ def repeated_shell(binary, output):
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
+                    # Normal exit can remove the process group before teardown.
                     pass
             process.close()
         api.close()
