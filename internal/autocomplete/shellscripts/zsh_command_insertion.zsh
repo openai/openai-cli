@@ -125,7 +125,6 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     else
       code=$?
     fi
-    zle reset-prompt
     (( $+functions[____APPNAME___suggestions_click_publish] )) && ____APPNAME___suggestions_click_publish
     (( code == 0 )) || return 0
     # Accept only an exact current suggestion, never arbitrary helper output.
@@ -141,6 +140,9 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     BUFFER=$selected
     CURSOR=${#BUFFER}
     typeset -g ____APPNAME___suggestions_last=$BUFFER
+    # The picker returns at its origin. Rebuild ZLE's display before a message
+    # uses its cursor geometry, or the message can overwrite prior help output.
+    zle -R
     zle -M 'Command inserted. Enter runs it.'
   }
 
