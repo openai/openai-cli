@@ -23,8 +23,7 @@ files, submit batches, and inspect API results without writing an application.
 > **OpenAI CLI or Codex CLI?** Use `openai` when you want to call a specific API
 > or put API operations in a script. Use [Codex CLI](https://developers.openai.com/codex/cli)
 > (`codex`) when you want a coding agent to work on a project: read and edit code,
-> run commands, and help implement or debug a change. They are separate tools;
-> Codex handles its own sign-in. `openai codex` shows setup instructions and links.
+> run commands, and help implement or debug a change.
 
 ## Things to try
 
@@ -81,6 +80,13 @@ The default output is readable text, **even in pipes**. The first example uses
 <!-- x-release-please-start-version -->
 
 ## Installation
+
+### Installing a prebuilt binary
+
+Download the archive for your operating system and architecture from
+[GitHub Releases](https://github.com/openai/openai-cli/releases/latest).
+Binaries are available for macOS, Linux, and Windows. Extract the archive and
+place `openai` (`openai.exe` on Windows) in a directory on your `PATH`.
 
 ### Installing with Homebrew
 
