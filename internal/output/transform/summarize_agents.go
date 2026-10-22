@@ -25,7 +25,7 @@ func summarizeAgentsResource(ctx context.Context, value gjson.Result, route Rout
 		object, fields = "agent", "id name model"
 		omitted = "object created_at updated_at instructions tools reasoning text service_tier multi_agent metadata"
 	case "beta.agents.sessions":
-		object, fields = "agent.session", "id status error required_actions usage"
+		object, fields = "agent.session", "id status error required_actions usage spend_control"
 		omitted = "object created_at last_active_at agent environment metadata vault_ids"
 	case "beta.agents.sessions.subagents":
 		object, fields = "agent.session.subagent", "id session_id name status parent_agent_id"

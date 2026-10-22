@@ -95,7 +95,7 @@ func TestAgentsReasoningItemFallbackPreservesState(t *testing.T) {
 			var projector AgentsStreamProjector
 			_, _, err := projector.Project(t.Context(), agentsReasoningEvent("text.delta", `"delta":"Cached"`), agentsEventsRoute)
 			require.NoError(t, err)
-			before := projector
+			before := snapshotAgentsProjector(projector)
 			value := gjson.Parse(strings.Replace(base, change[0], change[1], 1))
 			event, projected, err := projector.Project(t.Context(), value, agentsEventsRoute)
 			require.NoError(t, err)
@@ -112,21 +112,19 @@ func TestAgentsReasoningItemFallbackPreservesState(t *testing.T) {
 	}
 }
 
-func TestAgentsReasoningItemCapacityRollback(t *testing.T) {
+func TestAgentsReasoningItemAfterLargeHistory(t *testing.T) {
 	var projector AgentsStreamProjector
-	for i := range agentsTrackedParts - 1 {
+	for i := range 2000 {
 		value := agentsReasoningEvent("text.delta", `"delta":"Cached"`)
 		value = gjson.Parse(strings.Replace(value.Raw, `"item_id":"msg_1"`, fmt.Sprintf(`"item_id":"other_%d"`, i), 1))
 		_, projected, err := projector.Project(t.Context(), value, agentsEventsRoute)
 		require.NoError(t, err)
 		require.True(t, projected)
 	}
-	before := projector
 	value := agentsReasoningItem("done", `[{"type":"summary_text","text":"First"},{"type":"summary_text","text":"Second"}]`, `null`)
 	_, projected, err := projector.Project(t.Context(), value, agentsEventsRoute)
 	require.NoError(t, err)
-	require.False(t, projected)
-	require.Equal(t, before, projector)
+	require.True(t, projected)
 	_, projected, err = projector.Project(t.Context(), agentsReasoningItem("done", `[{"type":"summary_text","text":"Fits"}]`, `null`), agentsEventsRoute)
 	require.NoError(t, err)
 	require.True(t, projected)

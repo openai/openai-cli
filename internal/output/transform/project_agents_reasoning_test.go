@@ -117,7 +117,7 @@ func TestAgentsReasoningAmbiguityDoesNotMutateState(t *testing.T) {
 				_, projected, err := projector.Project(t.Context(), agentsReasoningEvent(cached, field), agentsEventsRoute)
 				require.NoError(t, err)
 				require.True(t, projected)
-				before := projector
+				before := snapshotAgentsProjector(projector)
 				_, projected, err = projector.Project(t.Context(), gjson.Parse(raw), agentsEventsRoute)
 				require.NoError(t, err)
 				require.False(t, projected)
@@ -165,22 +165,20 @@ func TestAgentsReasoningMalformedIdentityAndFields(t *testing.T) {
 	}
 }
 
-func TestAgentsReasoningCapacityAndCancellation(t *testing.T) {
-	t.Run("capacity", func(t *testing.T) {
+func TestAgentsReasoningLargeHistoryAndCancellation(t *testing.T) {
+	t.Run("large_history", func(t *testing.T) {
 		var projector AgentsStreamProjector
-		for i := range agentsTrackedParts {
+		for i := range 2000 {
 			value := agentsReasoningEvent("text.delta", `"delta":"Existing"`)
 			value = gjson.Parse(strings.Replace(value.Raw, `"summary_index":0`, fmt.Sprintf(`"summary_index":%d`, i), 1))
 			_, projected, err := projector.Project(t.Context(), value, agentsEventsRoute)
 			require.NoError(t, err)
 			require.True(t, projected)
 		}
-		before := projector
-		value := gjson.Parse(strings.Replace(agentsReasoningEvent("text.done", `"text":"Overflow"`).Raw, `"summary_index":0`, `"summary_index":256`, 1))
+		value := gjson.Parse(strings.Replace(agentsReasoningEvent("text.done", `"text":"New part"`).Raw, `"summary_index":0`, `"summary_index":2000`, 1))
 		_, projected, err := projector.Project(t.Context(), value, agentsEventsRoute)
 		require.NoError(t, err)
-		require.False(t, projected)
-		require.Equal(t, before, projector)
+		require.True(t, projected)
 		_, projected, err = projector.Project(t.Context(), agentsReasoningEvent("text.done", `"text":"Existing complete"`), agentsEventsRoute)
 		require.NoError(t, err)
 		require.True(t, projected)

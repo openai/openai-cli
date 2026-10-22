@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 
@@ -108,20 +109,20 @@ func TestAgentsFutureFieldsAndToolFailuresRemainVisible(t *testing.T) {
 	require.Contains(t, output, "New field")
 }
 
-func TestAgentsProjectorFallsBackAtCapacityWithoutRejectingEvents(t *testing.T) {
+func TestAgentsProjectorContinuesAfterLargeHistory(t *testing.T) {
 	var projector AgentsStreamProjector
-	for i := 0; i < agentsTrackedParts; i++ {
+	for i := 0; i < 2000; i++ {
 		_, ok, err := projector.Project(context.Background(), agentsTextEvent("done", fmt.Sprint(i), "turn", fmt.Sprint(i), "answer"), agentsEventsRoute)
 		require.NoError(t, err)
 		require.True(t, ok)
 	}
-	value := agentsTextEvent("done", "extra", "turn", "extra", "preserved answer")
+	value := agentsTextEvent("done", "extra", "next_turn", "extra", "preserved answer")
 	for range 2 {
 		_, ok, err := projector.Project(context.Background(), value, agentsEventsRoute)
 		require.NoError(t, err)
-		require.False(t, ok)
+		require.True(t, ok)
 	}
-	require.Equal(t, agentsTrackedParts, projector.partCount)
+	require.Len(t, projector.parts, 2001)
 	require.LessOrEqual(t, projector.recentSize, agentsRecentEvents)
 }
 
@@ -132,8 +133,31 @@ func TestAgentsProjectionCancellationAndRouteIsolation(t *testing.T) {
 	cancel()
 	_, _, err := projector.Project(ctx, value, agentsEventsRoute)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Zero(t, projector.partCount)
+	require.Empty(t, projector.parts)
 	_, projected, err := projector.Project(context.Background(), value, streamTestRoute("responses"))
 	require.NoError(t, err)
 	require.False(t, projected)
+}
+
+func TestAgentsTextCancellationDoesNotCommitState(t *testing.T) {
+	for _, kind := range []string{"delta", "done"} {
+		for after := int32(1); after <= 2; after++ {
+			var projector AgentsStreamProjector
+			_, _, err := projector.Project(t.Context(), agentsTextEvent("delta", "initial", "turn", "item", "Initial"), agentsEventsRoute)
+			require.NoError(t, err)
+			before := snapshotAgentsProjector(projector)
+			ctx, cancel := context.WithCancel(t.Context())
+			controlled := &cancelSummaryContext{Context: ctx, cancel: cancel, after: after}
+			_, _, err = projector.Project(controlled, agentsTextEvent(kind, "cancelled", "turn", "item", "Cancelled"), agentsEventsRoute)
+			require.ErrorIs(t, err, context.Canceled)
+			require.Equal(t, before, projector, "canceled text must not finalize a part or consume an event ID")
+			cancel()
+		}
+	}
+}
+
+func snapshotAgentsProjector(projector AgentsStreamProjector) AgentsStreamProjector {
+	projector.parts = maps.Clone(projector.parts)
+	projector.pendingParts = maps.Clone(projector.pendingParts)
+	return projector
 }

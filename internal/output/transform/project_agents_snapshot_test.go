@@ -52,31 +52,31 @@ func TestAgentsAssistantAddedAcceptsNullOutputIndex(t *testing.T) {
 	require.True(t, projected, "item.added explicitly permits a null output index")
 	require.Len(t, event.Parts, 1)
 	require.Equal(t, "Historical assistant answer", event.Parts[0].Text)
-	require.False(t, projector.parts[0].final)
+	for _, final := range projector.parts {
+		require.False(t, final)
+	}
 }
 
 func TestAgentsMessageSnapshotFallbackDoesNotFinalizeCachedParts(t *testing.T) {
-	for _, scenario := range []string{"invalid_later_part", "capacity"} {
+	for _, scenario := range []string{"invalid_later_part", "invalid_later_part_after_history"} {
 		t.Run(scenario, func(t *testing.T) {
 			var projector AgentsStreamProjector
 			_, ok, err := projector.Project(t.Context(), agentsTextEvent("delta", "evt_cached", "turn_1", "msg_1", "Existing "), agentsEventsRoute)
 			require.NoError(t, err)
 			require.True(t, ok)
 			content := `[{"type":"output_text","text":"Existing answer"},{"type":"output_text","text":42}]`
-			if scenario == "capacity" {
-				for i := 0; i < agentsTrackedParts-2; i++ {
+			if scenario == "invalid_later_part_after_history" {
+				for i := 0; i < 2000; i++ {
 					_, _, err = projector.Project(t.Context(), agentsTextEvent("done", fmt.Sprint(i), "other_turn", fmt.Sprint(i), "Other answer"), agentsEventsRoute)
 					require.NoError(t, err)
 				}
-				content = `[{"type":"output_text","text":"Existing answer"},{"type":"output_text","text":"New second part"},{"type":"output_text","text":"New third part"}]`
+				content = `[{"type":"output_text","text":"Existing answer"},{"type":"output_text","text":"New second part"},{"type":"output_text","text":42}]`
 			}
-			before := projector
+			before := snapshotAgentsProjector(projector)
 			_, projected, err := projector.Project(context.Background(), agentsAssistantSnapshot(`"completed"`, content), agentsEventsRoute)
 			require.NoError(t, err)
 			require.False(t, projected)
-			if projector.parts != before.parts || projector.partCount != before.partCount || projector.recent != before.recent {
-				t.Error("fallback mutated the existing bounded cache")
-			}
+			require.Equal(t, before, projector, "fallback mutated the existing cache")
 			event, projected, err := projector.Project(t.Context(), agentsTextEvent("delta", "evt_recovery", "turn_1", "msg_1", "Recovered delta"), agentsEventsRoute)
 			require.NoError(t, err)
 			require.True(t, projected)
@@ -158,16 +158,14 @@ func TestAgentsAssistantAmbiguityPreservesExistingCache(t *testing.T) {
 				var projector AgentsStreamProjector
 				_, _, err := projector.Project(t.Context(), agentsTextEvent(cached, "evt_cached", "turn_1", "msg_1", "Existing"), agentsEventsRoute)
 				require.NoError(t, err)
-				before := projector
+				before := snapshotAgentsProjector(projector)
 				event, projected, err := projector.Project(t.Context(), gjson.Parse(raw), agentsEventsRoute)
 				require.NoError(t, err)
 				if projected {
 					require.Empty(t, event.Parts)
 					require.Equal(t, raw, event.Details.Raw, "fallback may retain the image pass's full record")
 				}
-				if projector != before {
-					t.Fatal("ambiguous event changed bounded part or recent-event state")
-				}
+				require.Equal(t, before, projector, "ambiguous event changed part or recent-event state")
 			})
 		}
 	}
@@ -181,13 +179,11 @@ func TestAgentsAssistantSnapshotCancellationDoesNotCommitState(t *testing.T) {
 		var projector AgentsStreamProjector
 		_, _, err := projector.Project(t.Context(), agentsTextEvent("delta", "evt_cached", "turn_1", "msg_1", "Existing"), agentsEventsRoute)
 		require.NoError(t, err)
-		before := projector
+		before := snapshotAgentsProjector(projector)
 		_, _, err = projector.Project(controlled, value, agentsEventsRoute)
 		if err != nil {
 			require.ErrorIs(t, err, context.Canceled)
-			if projector != before {
-				t.Fatalf("cancelled snapshot committed state at context check %d", after)
-			}
+			require.Equal(t, before, projector, "cancelled snapshot committed state at context check %d", after)
 		}
 		cancel()
 	}

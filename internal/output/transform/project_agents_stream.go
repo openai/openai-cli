@@ -11,23 +11,17 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const agentsTrackedParts = 256
 const agentsRecentEvents = 256
 
-type agentsTextState struct {
-	key   [32]byte
-	final bool
-}
-
-// AgentsStreamProjector bounds human-only identity tracking. Once part tracking
-// fills, new parts remain readable raw events. Machine output never calls it.
+// AgentsStreamProjector retains a digest and completion bit per text component,
+// never its text. Machine output never calls it.
 type AgentsStreamProjector struct {
-	parts      [agentsTrackedParts]agentsTextState
-	partCount  int
-	recent     [agentsRecentEvents][32]byte
-	recentSize int
-	recentNext int
-	omitted    bool
+	parts        map[[32]byte]bool
+	pendingParts map[[32]byte]bool
+	recent       [agentsRecentEvents][32]byte
+	recentSize   int
+	recentNext   int
+	omitted      bool
 }
 
 // HasOmissions reports whether projection omitted known fields from any event.
@@ -61,31 +55,45 @@ func (s *AgentsStreamProjector) textPart(value, text, item gjson.Result, content
 		return readable.StreamPart{}, false
 	}
 	key := agentsIdentity(session.Str, turn.Str, item.Str, content, label)
-	index := -1
-	for i := 0; i < s.partCount; i++ {
-		if s.parts[i].key == key {
-			index = i
-			break
-		}
+	wasFinal, exists := s.pendingParts[key]
+	if !exists {
+		wasFinal, exists = s.parts[key]
 	}
-	if index < 0 {
-		if s.partCount == len(s.parts) {
-			return readable.StreamPart{}, false
-		}
-		index = s.partCount
-		s.parts[index].key = key
-		s.partCount++
-	}
-	if s.parts[index].final && !final {
+	if wasFinal && !final {
 		return readable.StreamPart{}, true
 	}
-	s.parts[index].final = s.parts[index].final || final
+	if !exists || final && !wasFinal {
+		if s.pendingParts == nil {
+			s.pendingParts = make(map[[32]byte]bool)
+		}
+		s.pendingParts[key] = wasFinal || final
+	}
 	return readable.StreamPart{Key: "agents:" + hex.EncodeToString(key[:]), Text: text.Str, Label: label, Snapshot: snapshot}, true
 }
 
 // Project selects text and lifecycle details for the existing StreamWriter.
 // Unknown events and unsupported shapes return false for complete rendering.
 func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result, route Route) (readable.StreamEvent, bool, error) {
+	// Stage only this event's identities. Copying the full history per delta
+	// would make long streams quadratic. Failed or canceled events commit nothing.
+	pending := *s
+	pending.pendingParts = nil
+	event, projected, err := pending.project(ctx, value, route)
+	if err != nil || !projected {
+		return event, projected, err
+	}
+	if len(pending.pendingParts) > 0 && pending.parts == nil {
+		pending.parts = make(map[[32]byte]bool)
+	}
+	for key, final := range pending.pendingParts {
+		pending.parts[key] = final
+	}
+	pending.pendingParts = nil
+	*s = pending
+	return event, true, nil
+}
+
+func (s *AgentsStreamProjector) project(ctx context.Context, value gjson.Result, route Route) (readable.StreamEvent, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return readable.StreamEvent{}, false, err
 	}
@@ -97,13 +105,10 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 	var projected bool
 	var hidden bool
 	var err error
-	var projectedState *AgentsStreamProjector
 	switch kind {
 	case "agent.session.turn.reasoning_summary_text.delta", "agent.session.turn.reasoning_summary_text.done",
 		"agent.session.turn.reasoning_summary_part.added", "agent.session.turn.reasoning_summary_part.done":
-		pending := *s
-		event, projected = pending.reasoning(ctx, value, kind)
-		projectedState = &pending
+		event, projected = s.reasoning(ctx, value, kind)
 	case "agent.session.turn.output_text.delta", "agent.session.turn.output_text.done":
 		field, final := "delta", strings.HasSuffix(kind, ".done")
 		if final {
@@ -152,7 +157,7 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 		projected = true
 	case "agent.session.created", "agent.session.idle", "agent.session.in_progress", "agent.session.requires_action", "agent.session.failed":
 		event, projected, hidden, err = summarizeAgentsEvent(ctx, value, "session",
-			"id status error required_actions", "object created_at last_active_at agent environment metadata usage vault_ids")
+			"id status error required_actions spend_control", "object created_at last_active_at agent environment metadata usage vault_ids")
 	case "agent.session.turn.created", "agent.session.turn.in_progress", "agent.session.turn.completed",
 		"agent.session.turn.failed", "agent.session.turn.cancelled":
 		event, projected, hidden, err = summarizeAgentsEvent(ctx, value, "turn",
@@ -184,17 +189,11 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 			break
 		}
 		if item.Get("type").Str == "reasoning" {
-			pending := *s
-			event, projected = pending.reasoningItem(ctx, value, item, kind == "agent.session.turn.item.done")
-			projectedState = &pending
+			event, projected = s.reasoningItem(ctx, value, item, kind == "agent.session.turn.item.done")
 			break
 		}
 		if item.Get("type").String() == "message" && item.Get("role").String() == "assistant" {
-			// A failed multipart projection must not finalize earlier parts. Copy
-			// only bounded projector state, never the event or its text payloads.
-			pending := *s
-			event, projected = pending.message(ctx, value, item, kind == "agent.session.turn.item.done")
-			projectedState = &pending
+			event, projected = s.message(ctx, value, item, kind == "agent.session.turn.item.done")
 			break
 		}
 	}
@@ -203,9 +202,6 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 	}
 	if err := ctx.Err(); err != nil {
 		return readable.StreamEvent{}, false, err
-	}
-	if projected && projectedState != nil {
-		*s = *projectedState
 	}
 	s.omitted = s.omitted || projected && hidden
 	return event, projected, nil

@@ -9,7 +9,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// reasoning projects one summary component. Project commits its bounded state
+// reasoning projects one summary component. Project commits its staged state
 // only after this projection and the final context check succeed.
 func (s *AgentsStreamProjector) reasoning(ctx context.Context, value gjson.Result, kind string) (readable.StreamEvent, bool) {
 	final := strings.HasSuffix(kind, ".done")
