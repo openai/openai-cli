@@ -31,11 +31,42 @@ func releaseBody(version string) string {
 
 func unknownInstallation(string) string { return manualGuidance }
 
+func TestCheckGoGuidanceMatchesReleaseMajor(t *testing.T) {
+	for _, tc := range []struct{ name, latest, installed, want string }{
+		{"Go minor upgrade", "1.41.0", goGuidance, goGuidance},
+		{"Go major upgrade", "2.0.0", goGuidance, manualGuidance},
+		{"Go later major upgrade", "12.0.0", goGuidance, manualGuidance},
+		{"Homebrew major upgrade", "2.0.0", brewGuidance, brewGuidance},
+		{"unknown major upgrade", "2.0.0", manualGuidance, manualGuidance},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return response(releaseBody(tc.latest)), nil
+			})}
+			directory := privateCacheDirectory(t)
+			now := time.Now()
+			guidance := func(string) string { return tc.installed }
+			want := "Update to " + tc.latest + ": " + tc.want
+			if got := check(context.Background(), "1.40.1", directory, now, client, guidance); got != want {
+				t.Fatalf("notice = %q; want %q", got, want)
+			}
+			// Later notices must retain the same guidance after throttling expires.
+			if got := check(context.Background(), "1.40.1", directory, now.Add(noticeInterval), client, guidance); got != want {
+				t.Fatalf("repeat notice = %q; want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestNoticeFitsStandardTerminal(t *testing.T) {
 	for _, guidance := range []string{brewGuidance, goGuidance, manualGuidance} {
 		t.Run(guidance, func(t *testing.T) {
+			latest := "12.34.56"
+			if guidance == goGuidance {
+				latest = "1.234.567"
+			}
 			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-				return response(releaseBody("v12.34.56")), nil
+				return response(releaseBody(latest)), nil
 			})}
 			text := check(context.Background(), "1.0.0", privateCacheDirectory(t), time.Now(), client, func(string) string {
 				return guidance

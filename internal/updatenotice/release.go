@@ -15,19 +15,25 @@ const (
 	maxReleaseBytes = 256 * 1024
 )
 
-// This client has no SDK configuration, credentials, proxy, or redirect path.
+// This client uses environment proxies without SDK configuration, API credentials, or redirects.
 func releaseClient() *http.Client {
 	return &http.Client{
 		Timeout:       checkTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		Transport: &http.Transport{
-			DialContext:            (&net.Dialer{Timeout: checkTimeout}).DialContext,
+			Proxy:                  http.ProxyFromEnvironment,
+			DialContext:            releaseDialer().DialContext,
 			TLSHandshakeTimeout:    checkTimeout,
 			ResponseHeaderTimeout:  checkTimeout,
 			MaxResponseHeaderBytes: 16 * 1024,
 			DisableKeepAlives:      true,
 		},
 	}
+}
+
+func releaseDialer() *net.Dialer {
+	// Go's default 300ms fallback would outlast the entire discovery deadline.
+	return &net.Dialer{Timeout: checkTimeout, FallbackDelay: checkTimeout / 4}
 }
 
 func latestRelease(ctx context.Context, client *http.Client) string {

@@ -19,6 +19,15 @@ const (
 	manualGuidance  = installationURL
 )
 
+func guidanceForRelease(command, latest string) string {
+	// The verified unsuffixed Go module can install only v0/v1 releases.
+	// Future major versions require a new module path that we cannot infer.
+	if command == goGuidance && !strings.HasPrefix(latest, "0.") && !strings.HasPrefix(latest, "1.") {
+		return manualGuidance
+	}
+	return command
+}
+
 func installationGuidance(current string) string {
 	executable, err := os.Executable()
 	if err != nil {

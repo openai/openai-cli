@@ -98,7 +98,7 @@ func check(ctx context.Context, current, directory string, now time.Time, client
 	if state.Notified != 0 && now.Sub(time.Unix(state.Notified, 0)) < noticeInterval {
 		return ""
 	}
-	text := "Update to " + state.Latest + ": " + guidance(current)
+	text := "Update to " + state.Latest + ": " + guidanceForRelease(guidance(current), state.Latest)
 	state.Notified = now.Unix()
 	if ctx.Err() != nil || cache.save(state) != nil {
 		return ""
