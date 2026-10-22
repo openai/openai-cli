@@ -66,7 +66,7 @@ func runImagePickerSession(ctx context.Context, input, output *os.File, options 
 		}
 		return result, err
 	}
-	err = finishImagePickerSelection(ctx, output, os.Stderr, path, &result)
+	err = finishImagePickerSelection(ctx, output, os.Stderr, path, &result, options.printCommand)
 	if err != nil && result.changed {
 		result.draftSaved = saveImagePickerExitDraft(ctx, os.Stderr, path, result.settings)
 	}
@@ -103,7 +103,7 @@ func saveImagePickerExitDraft(parent context.Context, diagnostics io.Writer, pat
 // Show the command before saving the submitted draft or starting a request.
 // The retained busy form already displays it; print-only selections still echo.
 // Saving now prevents a slower API response from overwriting newer selections.
-func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writer, path string, result *imagePickerResult) error {
+func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writer, path string, result *imagePickerResult, printers ...func(string) error) error {
 	result.draftSaved = false
 	if err := ctx.Err(); err != nil {
 		return err
@@ -117,7 +117,11 @@ func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writ
 			return imageSavingFailure(imagePickerUnsupportedShell, nil)
 		}
 	} else if result.PrintOnly || result.workspace == nil {
-		if _, err := fmt.Fprintln(output, command); err != nil {
+		printCommand := func(text string) error { _, err := fmt.Fprintln(output, text); return err }
+		if result.PrintOnly && len(printers) > 0 && printers[0] != nil {
+			printCommand = printers[0]
+		}
+		if err := printCommand(command); err != nil {
 			return imageSavingFailure("Could not print the command. No image request was started.", err)
 		}
 	}

@@ -1657,6 +1657,95 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  picker-native-setup:
+    if: github.event_name != 'push'
+    needs: source
+    permissions: {}
+    name: Picker installation on native Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=1 -mod=readonly'
+      GOTOOLCHAIN: local
+      OPENAI_CLI_PICKER_SETUP_CONTRACT: supported
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-compatibility-go
+      - name: Check fixture interruption and cleanup controls
+        shell: bash
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          /usr/bin/timeout --signal=TERM --kill-after=5s 45s python3 -I -B scripts/test_wsl_shell_fixtures.py -v 2>&1 | tee "$RUNNER_TEMP/picker-fixture-controls.log"
+      - name: Build native setup executables
+        shell: bash
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          go test -c -o "$RUNNER_TEMP/picker-autocomplete.test" ./internal/autocomplete
+          go test -c -o "$RUNNER_TEMP/picker-custom.test" ./internal/commands/images
+          go test -c -o "$RUNNER_TEMP/picker-process.test" ./cmd/openai
+          go build -o "$RUNNER_TEMP/picker-openai" ./cmd/openai
+      - name: Require positive installation and native setup contracts
+        shell: bash
+        timeout-minutes: 4
+        run: |
+          python3 -I -B - <<'PY'
+          import importlib.util, json, os, subprocess
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("wsl_contracts", Path("scripts/check-wsl-pager.py"))
+          checks = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(checks)
+          suites, _ = checks.load_local_cases()
+          cases = {
+              "autocomplete": suites["autocomplete"],
+              "custom": {root: children for root, children in suites["custom"].items()
+                         if root in {checks.NATIVE_CUSTOM_ROOT, "TestImagePickerShellSetupCapabilityErrors"}},
+              "process": {root: children for root, children in suites["process"].items()
+                          if root not in checks.INDEPENDENT_PROCESS_ROOTS},
+          }
+          for package, selected in cases.items():
+              binary = Path(os.environ["RUNNER_TEMP"]) / ("picker-" + package + ".test")
+              result = subprocess.run([str(binary), "-test.v", "-test.timeout=60s",
+                                       "-test.run=^(" + "|".join(selected) + ")$"],
+                                      stdin=subprocess.DEVNULL, capture_output=True, timeout=70)
+              binary.with_suffix(".stdout").write_bytes(result.stdout)
+              binary.with_suffix(".stderr").write_bytes(result.stderr)
+              names = checks.require_test_pass(result.stdout, result.stderr, result.returncode,
+                                               checks.test_names(selected), package)
+              if package == "autocomplete":
+                  checks.require_capability_receipt(result.stdout, "supported")
+              print(json.dumps({"package": package, "contract": "supported", "tests": sorted(names)}))
+          PY
+      - name: Require positive Bash startup lifecycle
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          /usr/bin/timeout --signal=TERM --kill-after=5s 120s python3 -I -B scripts/check-wsl-shell-startup.py "$RUNNER_TEMP/picker-openai" /usr/bin/bash login --setup-contract supported | tee "$RUNNER_TEMP/picker-startup-login.log"
+          /usr/bin/timeout --signal=TERM --kill-after=5s 120s python3 -I -B scripts/check-wsl-shell-startup.py "$RUNNER_TEMP/picker-openai" /usr/bin/bash nonlogin --setup-contract supported | tee "$RUNNER_TEMP/picker-startup-nonlogin.log"
+      - name: Retain native setup evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: picker-native-setup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/picker-*.stdout
+            ${{ runner.temp }}/picker-*.stderr
+            ${{ runner.temp }}/picker-startup-*.log
+            ${{ runner.temp }}/picker-fixture-controls.log
+          if-no-files-found: warn
+          retention-days: 7
+
   wsl1-pager:
     if: github.event_name != 'push'
     needs: source
@@ -1676,6 +1765,15 @@ jobs:
             arguments: --command-contracts
             package: ./internal/app
             artifact: wsl-command-contracts
+          - name: Local state and offline commands on Ubuntu WSL 1
+            arguments: --profile local-state --setup-contract refused
+            profile: local-state
+            package: ./internal/commands/images
+            artifact: wsl-local-state
+          - name: Bash startup, first use and executable contracts on Ubuntu WSL 1
+            arguments: --profile shell-contracts --setup-contract refused
+            profile: shell-contracts
+            artifact: wsl-shell-contracts
     steps:
       - name: Reserve WSL cleanup time
         shell: pwsh
@@ -1701,7 +1799,11 @@ jobs:
       - name: Check the WSL pilot controls
         shell: pwsh
         timeout-minutes: 1
-        run: python -I -B scripts/test_wsl_pager.py
+        run: |
+          python -I -B scripts/test_wsl_pager.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -I -B scripts/test_wsl_profiles.py
+          exit $LASTEXITCODE
       - name: Build the Linux compatibility test executables
         shell: pwsh
         timeout-minutes: 6
@@ -1714,20 +1816,57 @@ jobs:
           GOTOOLCHAIN: local
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') '${{ matrix.package }}'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ('${{ matrix.profile }}' -ne 'shell-contracts') {
+            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') '${{ matrix.package }}'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ./cmd/openai
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-app.test') ./internal/app
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-images.test') ./internal/commands/images
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ('${{ matrix.profile }}' -eq '') {
+            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-app.test') ./internal/app
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-images.test') ./internal/commands/images
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          if ('${{ matrix.profile }}' -eq 'local-state') {
+            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-imageprefs.test') ./internal/imageprefs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-clihelp.test') ./internal/clihelp
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-autocomplete.test') ./internal/autocomplete
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          if ('${{ matrix.profile }}' -eq 'shell-contracts') {
+            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-autocomplete.test') ./internal/autocomplete
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            go build -o (Join-Path $env:RUNNER_TEMP 'wsl-openai') ./cmd/openai
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           go mod verify
           exit $LASTEXITCODE
       - name: Run compatibility checks in disposable Ubuntu WSL 1
         shell: pwsh
         timeout-minutes: 16
-        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test') --app-binary (Join-Path $env:RUNNER_TEMP 'wsl-app.test') --images-binary (Join-Path $env:RUNNER_TEMP 'wsl-images.test') ${{ matrix.arguments }}
+        run: |
+          $payloads = @('--process-binary', (Join-Path $env:RUNNER_TEMP 'wsl-process.test'))
+          if ('${{ matrix.profile }}' -eq '') {
+            $payloads += @('--app-binary', (Join-Path $env:RUNNER_TEMP 'wsl-app.test'))
+            $payloads += @('--images-binary', (Join-Path $env:RUNNER_TEMP 'wsl-images.test'))
+          }
+          if ('${{ matrix.profile }}' -ne 'shell-contracts') {
+            $payloads += @('--binary', (Join-Path $env:RUNNER_TEMP 'wsl-pager.test'))
+          }
+          if ('${{ matrix.profile }}' -eq 'local-state') {
+            $payloads += @('--imageprefs-binary', (Join-Path $env:RUNNER_TEMP 'wsl-imageprefs.test'))
+            $payloads += @('--clihelp-binary', (Join-Path $env:RUNNER_TEMP 'wsl-clihelp.test'))
+            $payloads += @('--autocomplete-binary', (Join-Path $env:RUNNER_TEMP 'wsl-autocomplete.test'))
+          }
+          if ('${{ matrix.profile }}' -eq 'shell-contracts') {
+            $payloads += @('--autocomplete-binary', (Join-Path $env:RUNNER_TEMP 'wsl-autocomplete.test'))
+            $payloads += @('--cli-binary', (Join-Path $env:RUNNER_TEMP 'wsl-openai'))
+          }
+          python -I -B scripts/check-wsl-pager.py @payloads ${{ matrix.arguments }}
+          exit $LASTEXITCODE
       - name: Reconcile the owned WSL distribution
         if: always()
         shell: pwsh

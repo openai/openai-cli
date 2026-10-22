@@ -22,6 +22,7 @@ func TestMainRecoveryCommandSuggestions(t *testing.T) {
 		{"nested operation", []string{"files", "lsit"}, "Unknown command. Did you mean: openai help files list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
 		{"help suffix", []string{"help", "modles", "list"}, "Unknown help topic. Did you mean: openai help models list?"},
 		{"help is not a help topic", []string{"help", "hepl"}, "Unknown help topic. Run openai help to see commands."},
+		{"explore help spelling", []string{"help", "explroe"}, "Unknown help topic. Did you mean: openai help explore?"},
 		{"nested help", []string{"audio", "help", "transcriptons", "create"}, "Unknown help topic. Did you mean: openai help audio transcriptions create?"},
 		{"help flag", []string{"--help", "modles", "list"}, "Unknown help topic. Did you mean: openai help models list?"},
 		{"false help", []string{"--help=false", "modles", "list"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},

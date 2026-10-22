@@ -33,6 +33,7 @@ type SavingOptions struct {
 
 // PreviewOptions connects local previews to receipt and error presentation.
 type PreviewOptions struct {
-	Receipt   func(context.Context, string) error
-	ShowError func(*cli.Command, error, io.Writer) error
+	Receipt          func(context.Context, string) error
+	SuggestedReceipt func(context.Context, *cli.Command, string, []string) error
+	ShowError        func(*cli.Command, error, io.Writer) error
 }

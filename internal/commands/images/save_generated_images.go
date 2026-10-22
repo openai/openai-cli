@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
+	"github.com/openai/openai-cli/internal/commandsuggest"
 	"github.com/openai/openai-cli/internal/imageoutput"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-go/v3/option"
@@ -19,7 +21,7 @@ import (
 const defaultSavedImageModel = "gpt-image-2.5-sunburst"
 
 const imageGenerationQuickHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}Generate an image
-  {{$bin}} images generate --prompt "A tiny orange robot"
+  {{suggest . (printf "%s images generate --prompt \"A tiny orange robot\"" $bin)}}
 
 Run without flags to choose settings
 in an interactive terminal. Ctrl+C exits.
@@ -33,13 +35,15 @@ COMMON OPTIONS
   --output-dir DIRECTORY Save in an existing folder
 Size and quality choices depend on the model.
 
-Help: {{$bin}} help images generate
-Key setup: {{$bin}} help setup
+Help: {{suggest . (printf "%s help images generate" $bin)}}
+Key setup: {{suggest . (printf "%s help setup" $bin)}}
 `
+
+const imageGenerationExample = `images generate --prompt "A tiny cat" --name cat`
 
 const imageGenerationSavingHelp = `EXAMPLE
 
-    openai images generate --prompt "A tiny cat" --name cat
+    openai ` + imageGenerationExample + `
 
 Run without flags to choose settings in a terminal.
 After saving, the picker reopens with your settings. Ctrl+C exits.
@@ -66,12 +70,20 @@ type SavingError struct {
 	message          string
 	cause            error
 	preserveOnCancel bool
+	suggestions      []string
 }
 
 func (e *SavingError) Error() string { return e.message }
 func (e *SavingError) Unwrap() error { return e.cause }
-func imageSavingFailure(message string, cause error) error {
-	return &SavingError{message: message, cause: cause}
+func imageSavingFailure(message string, cause error, suggestions ...string) error {
+	return &SavingError{message: message, cause: cause, suggestions: suggestions}
+}
+
+// ReadableMessage registers only explicitly authored recovery commands.
+func (e *SavingError) ReadableMessage(command *cli.Command, output ...io.Writer) string {
+	return commandsuggest.RenderText(e.message, e.suggestions, func(text string) string {
+		return clihelp.SuggestedCommand(command, output, text)
+	})
 }
 
 // Only path-free saving outcomes opt in; other image errors can include private paths.

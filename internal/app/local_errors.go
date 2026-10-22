@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -28,7 +29,7 @@ import (
 
 // Local diagnostics can contain rejected values, file names, and credentialed
 // URLs. Classify them into local prose; terminal escaping is not redaction.
-func localErrorMessage(root *cli.Command, failure error) string {
+func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) string {
 	command := root
 	var contextual *commandError
 	if errors.As(failure, &contextual) && contextual.command != nil {
@@ -70,7 +71,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return receiptFailure.Error()
 	case errors.Is(failure, context.Canceled):
 		if errors.As(failure, &imageFailure) && imageFailure.PreserveOnCancel() {
-			return imageFailure.Error()
+			return imageFailure.ReadableMessage(root, output...)
 		}
 		return "Request canceled."
 	case errors.As(failure, &utilityFailure):
@@ -82,7 +83,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &finiteListFailure):
 		return finiteListFailure.Error()
 	case errors.As(failure, &imageFailure):
-		return imageFailure.Error()
+		return imageFailure.ReadableMessage(root, output...)
 	case errors.As(failure, &scalarFailure):
 		return scalarFailure.Error()
 	case errors.As(failure, &navigationFailure):
@@ -105,7 +106,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 			}
 			break
 		}
-		return parserErrorGuidance(command, message)
+		return parserErrorGuidance(command, message, output...)
 	case errors.As(failure, &typeError):
 		return "Could not decode JSON: a value has an unexpected type."
 	case errors.As(failure, &syntaxError):
@@ -113,13 +114,13 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &pagerFailure):
 		return "The output pager failed. Check PAGER or use --format text to display the result without a pager."
 	case errors.As(failure, &imageModelsFailure):
-		return imageModelsFailure.Error()
+		return imageModelsFailure.ReadableMessage(root, output...)
 	case errors.As(failure, &projectAPIKeyUpdateFailure):
 		return projectAPIKeyUpdateFailure.Error()
 	case errors.As(failure, &voiceTypeFailure):
 		return voiceTypeFailure.Error()
 	case errors.As(failure, &helpTopicFailure):
-		return clihelp.RecoveryAt(helpTopicFailure.Parent, helpTopicFailure.Topic, helpTopicFailure.Remaining, true)
+		return clihelp.RecoveryAt(helpTopicFailure.Parent, helpTopicFailure.Topic, helpTopicFailure.Remaining, true, output...)
 	case errors.As(failure, &adminCredentialsFailure):
 		return adminCredentialsFailure.Error()
 	case errors.As(failure, &inputFailure), errors.As(failure, &pathError):
@@ -136,7 +137,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		}
 	}
 	for err := failure; err != nil; err = errors.Unwrap(err) {
-		if message := knownLocalError(command, err.Error()); message != "" {
+		if message := knownLocalError(command, err.Error(), output...); message != "" {
 			return message
 		}
 	}
@@ -149,8 +150,10 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	return "The command could not be completed. Check your arguments with --help."
 }
 
-func knownLocalError(command *cli.Command, message string) string {
+func knownLocalError(command *cli.Command, message string, output ...io.Writer) string {
 	switch message {
+	case "PowerShell uses normal Tab completion. Type openai images generate and press Enter to open the image picker.":
+		return "PowerShell uses normal Tab completion. Type " + clihelp.SuggestedCommand(command, output, "openai images generate") + " and press Enter to open the image picker."
 	case "mTLS client certificate and key files must be configured together",
 		"mTLS requires an explicit HTTPS base URL",
 		"mTLS client certificate and key must be a valid matching PEM pair",
@@ -168,7 +171,16 @@ func knownLocalError(command *cli.Command, message string) string {
 		"Setup help takes no additional arguments.",
 		"Use either a positional upload path or --file, not both.",
 		"The upload path must not be empty.",
-		"PowerShell uses normal Tab completion. Type openai images generate and press Enter to open the image picker.",
+		"--suggestions-double-tab requires --suggestions",
+		"--suggestions-only requires --suggestions and cannot include --picker",
+		"--suggestions-click requires --suggestions",
+		"click insertion currently supports zsh with a local Kitty adapter",
+		"--suggestions-adapter cannot be combined with a shell argument or completion options",
+		"the supported suggestion adapter is kitty",
+		"command insertion options cannot be combined with persistent picker setup",
+		"command insertion currently supports Bash 4.3+, zsh, and fish; PowerShell requires a separate shell integration",
+		"a command name is required for suggestion integration",
+		"suggestion integration requires a simple command name on PATH",
 		"COMPLETION_STYLE must be set to 'bash', 'zsh', 'pwsh', or 'fish'",
 		"COMPLETION_STYLE must be set to 'bash', 'zsh', 'pwsh', 'fish'":
 		return message
@@ -209,7 +221,7 @@ func knownLocalError(command *cli.Command, message string) string {
 			name, reason, found := strings.Cut(rest, ": ")
 			if flag := declaredErrorFlag(command, name); found && flag != "" {
 				if flag == "--base-url" && (reason == flag+requestconfig.BaseURLHTTPSRequired || reason == flag+requestconfig.BaseURLHostRequired) {
-					return parserErrorGuidance(command, reason+".")
+					return parserErrorGuidance(command, reason+".", output...)
 				}
 				if flag == "--format" || flag == "--format-error" {
 					return "Invalid output format. Choose one of: " + strings.Join(OutputFormats, ", ") + "."
@@ -218,13 +230,13 @@ func knownLocalError(command *cli.Command, message string) string {
 				if expected := parserFlagExpectedType(command, name); expected != "" {
 					message += " Expected " + expected + "."
 				}
-				return parserErrorGuidance(command, message)
+				return parserErrorGuidance(command, message, output...)
 			}
 		}
 	}
 	if rest, ok := strings.CutPrefix(message, "flag needs an argument: "); ok {
 		if flag := declaredErrorFlag(command, strings.TrimLeft(rest, "-")); flag != "" {
-			return parserErrorGuidance(command, "Add a value for "+flag+".")
+			return parserErrorGuidance(command, "Add a value for "+flag+".", output...)
 		}
 	}
 	// Required flag names originate in declarations, but verify them before
@@ -245,16 +257,16 @@ func knownLocalError(command *cli.Command, message string) string {
 				}
 				flags = append(flags, flag)
 			}
-			return parserErrorGuidance(command, "Missing required options: "+strings.Join(flags, ", ")+".")
+			return parserErrorGuidance(command, "Missing required options: "+strings.Join(flags, ", ")+".", output...)
 		}
 	}
 	switch {
 	case strings.HasPrefix(message, "Unexpected extra arguments: "):
-		return parserErrorGuidance(command, "Unexpected extra arguments.")
+		return parserErrorGuidance(command, "Unexpected extra arguments.", output...)
 	case strings.HasPrefix(message, "no shell provided for completion command. available shells are "):
-		return "Choose a shell for completion: openai @completion bash (or fish, pwsh, zsh)."
+		return "Choose a shell for completion: " + clihelp.SuggestedCommand(command, output, "openai @completion bash") + " (or fish, pwsh, zsh)."
 	case strings.HasPrefix(message, "unknown shell ") && strings.Contains(message, ", available shells are "):
-		return "Unsupported completion shell. Choose bash, fish, pwsh, or zsh: openai @completion zsh."
+		return "Unsupported completion shell. Choose bash, fish, pwsh, or zsh: " + clihelp.SuggestedCommand(command, output, "openai @completion zsh") + "."
 	case message == "format must be one of: "+strings.Join(OutputFormats, ", "),
 		strings.HasPrefix(message, "Invalid format: ") && strings.HasSuffix(message, ", valid formats are: "+strings.Join(OutputFormats, ", ")):
 		return "Invalid output format. Choose one of: " + strings.Join(OutputFormats, ", ") + "."
@@ -267,11 +279,11 @@ func knownLocalError(command *cli.Command, message string) string {
 		if suggestion := suggestParserFlag(command, name); suggestion != "" {
 			message += " Did you mean " + suggestion + "?"
 		}
-		return parserErrorGuidance(command, message)
+		return parserErrorGuidance(command, message, output...)
 	case strings.HasPrefix(message, "No help topic for '"):
-		return clihelp.RecoveryMessage(command)
+		return clihelp.RecoveryMessage(command, output...)
 	case strings.HasPrefix(message, "Unknown help topic "):
-		return "Unknown help topic. Run openai help to see commands."
+		return "Unknown help topic. Run " + clihelp.SuggestedCommand(command, output, "openai help") + " to see commands."
 	case strings.HasPrefix(message, "Failed to parse piped data as YAML/JSON:\n"):
 		return "Could not parse piped input as YAML or JSON. Check the input's syntax."
 	case strings.HasPrefix(message, "Cannot merge flags with a body that is not a map:"),
@@ -283,7 +295,7 @@ func knownLocalError(command *cli.Command, message string) string {
 	return ""
 }
 
-func parserErrorGuidance(command *cli.Command, message string) string {
+func parserErrorGuidance(command *cli.Command, message string, output ...io.Writer) string {
 	invocation := "openai"
 	if command != nil {
 		invocation = clihelp.DisplayInvocation(command.Root())
@@ -291,7 +303,7 @@ func parserErrorGuidance(command *cli.Command, message string) string {
 			invocation += " " + strings.Join(path[1:], " ")
 		}
 	}
-	return message + "\nOptions and examples: " + invocation + " --help"
+	return message + "\nOptions and examples: " + clihelp.SuggestedCommandPath(command, output, invocation+" --help")
 }
 
 // These flags match the parser's current scope, including inherited flags and

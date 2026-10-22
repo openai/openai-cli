@@ -246,6 +246,7 @@ func TestImagePickerWorkspaceSeparatesSectionsWithoutCommandPadding(t *testing.T
 }
 
 func TestImagePickerWorkspaceSpinnerAdvancesWithoutElapsedSecond(t *testing.T) {
+	t.Setenv("CI", "")
 	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("LC_ALL", "C")
 	w := &imagePickerWorkspace{since: time.Now()}

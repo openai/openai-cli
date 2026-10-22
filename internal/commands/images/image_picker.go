@@ -27,12 +27,13 @@ import (
 type imagePickerOptions struct {
 	Prompt string
 	// Shell selects quoting for the displayed command, never execution.
-	Shell       string
-	initial     *imagePickerSettings
-	resuming    bool
-	initialNote string
-	workspace   *imagePickerWorkspace
-	generate    func(context.Context, *imagePickerResult) error
+	Shell        string
+	initial      *imagePickerSettings
+	resuming     bool
+	initialNote  string
+	workspace    *imagePickerWorkspace
+	generate     func(context.Context, *imagePickerResult) error
+	printCommand func(string) error
 }
 
 // imagePickerResult contains arguments for the existing images generate command.

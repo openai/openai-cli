@@ -15,6 +15,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/clihelp"
+	"github.com/openai/openai-cli/internal/commandsuggest"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
@@ -47,7 +48,9 @@ func imagePickerWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 			defer func() { resultErr = errors.Join(resultErr, closeWorkspaceOutput()) }()
 			workspace := &imagePickerWorkspace{out: out, root: command.Root(), context: workspaceCtx}
 			defer func() { resultErr = errors.Join(resultErr, workspace.close()) }()
-			result, err := runImagePickerSession(workspaceCtx, os.Stdin, out, imagePickerOptions{workspace: workspace, generate: func(requestCtx context.Context, result *imagePickerResult) error {
+			result, err := runImagePickerSession(workspaceCtx, os.Stdin, out, imagePickerOptions{workspace: workspace, printCommand: func(text string) error {
+				return commandsuggest.WriteLine(command, out, text)
+			}, generate: func(requestCtx context.Context, result *imagePickerResult) error {
 				return runImagePickerAction(requestCtx, command, result.Args, next)
 			}})
 			if err != nil {
@@ -71,7 +74,8 @@ func imagePickerWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 // Sessions can restore a local draft. Each request still requires an explicit
 // selection from the picker; restoring text never starts generation.
 func runImagePickerDrafts(ctx context.Context, command *cli.Command, next cli.ActionFunc, diagnostics io.Writer, pick func(imagePickerOptions) (imagePickerResult, error)) error {
-	options := imagePickerOptions{}
+	printCommand := func(text string) error { return commandsuggest.WriteLine(command, command.Root().Writer, text) }
+	options := imagePickerOptions{printCommand: printCommand}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -93,7 +97,7 @@ func runImagePickerDrafts(ctx context.Context, command *cli.Command, next cli.Ac
 		if result.PrintOnly {
 			return nil
 		}
-		options = imagePickerOptions{Prompt: result.settings.prompt, initial: &result.settings, resuming: true}
+		options = imagePickerOptions{printCommand: printCommand, Prompt: result.settings.prompt, initial: &result.settings, resuming: true}
 		requestCtx := context.WithValue(ctx, imagePickerLoadingPromptKey{}, result.settings.prompt)
 		requestErr := runImagePickerAction(requestCtx, command, result.Args, next)
 		if err := requestErr; err != nil {

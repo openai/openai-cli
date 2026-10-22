@@ -1,0 +1,317 @@
+{
+  "imageprefs": {
+    "TestImagePreferenceDefaultAndReplacement": [],
+    "TestImagePreferenceInvalidSettingsRemainUntouched": [
+      "#00",
+      "private-not-json",
+      "{}",
+      "{\"version\":1}",
+      "{\"version\":1,\"inline\":null}",
+      "{\"version\":2,\"inline\":false}",
+      "{\"version\":1,\"inline\":\"off\"}",
+      "{\"version\":1,\"inline\":false,\"future\":true}",
+      "{\"version\":1,\"inline\":false}_{}",
+      "{\"version\":1,\"inline\":false,\"inline\":true}",
+      "____________________________________________________________"
+    ],
+    "TestImagePreferenceConcurrentWritesAndCancellation": [],
+    "TestImagePreferenceRejectsUnsafePaths": [],
+    "TestImagePreferencePermissionFailuresKeepFile": [],
+    "TestImagePreferenceWaitingWriterKeepsNewSchema": [
+      "missing/{\"version\":2,\"inline\":false}",
+      "missing/{\"version\":1,\"inline\":false,\"future\":\"keep\"}",
+      "valid/{\"version\":2,\"inline\":false}",
+      "valid/{\"version\":1,\"inline\":false,\"future\":\"keep\"}"
+    ],
+    "TestImagePreferenceWaitingWriterCancellationAndReplacement": [
+      "cancel",
+      "replace-lock"
+    ],
+    "TestImagePreferenceRejectsUnsafeWriterLocks": [
+      "directory",
+      "symlink",
+      "dangling-symlink",
+      "public"
+    ],
+    "TestImagePreferenceRejectsFIFOWriterLock": []
+  },
+  "custom": {
+    "TestImagePickerStateRejectsSpecialFilesAndSymlinks": [
+      "directory",
+      "symlink",
+      "fifo"
+    ],
+    "TestImagePickerStateRejectsExposedPermissions": [],
+    "TestImagePickerStateWriteFailureKeepsPrevious": [],
+    "TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration": [],
+    "TestImagePickerStateAcceptsExactPersistenceLimit": [],
+    "TestImagePickerStateRejectsUnstableSaveFolders": [],
+    "TestImagePickerFolderCompletionDirectoriesOnly": [],
+    "TestImagePickerFolderCompletionRejectsFIFO": [
+      "direct",
+      "symlink"
+    ],
+    "TestImagePickerDefaultFolderPrintHasNoSideEffects": [],
+    "TestImagePickerReadOnlyFolderKeepsPickerOpen": [],
+    "TestImagePickerFirstRunNativeSetupContract": [
+      "absent",
+      "existing"
+    ],
+    "TestImagePickerShellSetupCapabilityErrors": [
+      "direct/remove=false",
+      "direct/remove=true",
+      "path/remove=false",
+      "path/remove=true",
+      "link/remove=false",
+      "link/remove=true",
+      "wrapped/remove=false",
+      "wrapped/remove=true",
+      "joined/remove=false",
+      "joined/remove=true"
+    ]
+  },
+  "autocomplete": {
+    "TestPickerRenameNoReplace": [
+      "open_editor_continues_writing_to_the_retained_inode",
+      "only_one_competing_destination_move_can_succeed",
+      "capture_and_restore_preserve_the_original_inode",
+      "keep_destination_file",
+      "keep_destination_directory",
+      "keep_destination_symlink",
+      "keep_destination_dangling_symlink",
+      "move_the_source_symlink_without_following_it",
+      "missing_source_leaves_destination_absent",
+      "reject_escape_through_parent_symlink",
+      "reject_unsafe_names_before_moving"
+    ],
+    "TestPickerInstallRoundTrip": [
+      "bash/",
+      "bash/#_personal_setting",
+      "bash/#_personal_setting_",
+      "bash/\\ufeff#_Windows_setting__",
+      "zsh/",
+      "zsh/#_personal_setting",
+      "zsh/#_personal_setting_",
+      "zsh/\\ufeff#_Windows_setting__",
+      "fish/",
+      "fish/#_personal_setting",
+      "fish/#_personal_setting_",
+      "fish/\\ufeff#_Windows_setting__"
+    ],
+    "TestPickerRemoveRestoresAbsentProfile": [
+      "bash/missing-directory=false",
+      "bash/missing-directory=true",
+      "zsh/missing-directory=false",
+      "zsh/missing-directory=true",
+      "fish/missing-directory=false",
+      "fish/missing-directory=true"
+    ],
+    "TestPickerRenameCapabilityClassification": [
+      "success",
+      "ENOSYS",
+      "EOPNOTSUPP",
+      "EINVAL",
+      "EACCES",
+      "EPERM",
+      "EROFS",
+      "EBADF",
+      "wrapped_unrelated_EINVAL",
+      "EEXIST",
+      "ENOENT",
+      "EXDEV",
+      "canceled",
+      "deadline",
+      "wrapped_unrelated_operation"
+    ],
+    "TestPickerNativeSetupContract": [
+      "rename_absent",
+      "rename_existing",
+      "install_absent",
+      "install_existing",
+      "seeded_noop",
+      "seeded_remove",
+      "missing_profile_cleanup",
+      "pending_recovery",
+      "replaced_profile",
+      "canceled"
+    ]
+  },
+  "process": {
+    "TestMainPickerShellSetupRoundTrip": [
+      "bash",
+      "zsh",
+      "fish"
+    ],
+    "TestMainPickerShellSetupBashRemovalAfterLoginPrecedenceChanges": [],
+    "TestMainPickerShellSetupBashRemovalRestoresAbsentLoginProfile": [],
+    "TestMainPickerShellSetupPreservesModifiedProfileAndPrivateErrors": [
+      "text",
+      "json"
+    ],
+    "TestMainPickerShellSetupRefusesUnsafeConfigurationAncestry": [
+      "configuration/text",
+      "configuration/json",
+      "ancestor/text",
+      "ancestor/json"
+    ],
+    "TestMainPickerShellSetupReadOnlyModesDoNotWrite": [
+      "--help",
+      "images_generate_--help",
+      "--format_json_images_generate_--help",
+      "@completion_zsh",
+      "@completion_zsh_--picker",
+      "__complete_images_",
+      "@completion_--install-picker_--help"
+    ],
+    "TestMainPickerShellSetupPartialRemovalReportsFailureAfterCleanup": [
+      "auto",
+      "json"
+    ],
+    "TestMainLocalUtilitiesIgnoreRemoteConfiguration": [
+      "loopback_without_credentials",
+      "malformed_remote_environment",
+      "loopback_without_credentials/text",
+      "loopback_without_credentials/json",
+      "malformed_remote_environment/text",
+      "malformed_remote_environment/json"
+    ],
+    "TestMainLocalUtilitiesRootFlagPlacement": [
+      "--format/json/tokenizer/count/--text/",
+      "tokenizer/--format/json/count/--text/",
+      "tokenizer/count/--text//--format/json"
+    ],
+    "TestMainLocalUtilitiesLegacyTokenizers": [
+      "r50k_base",
+      "p50k_base"
+    ],
+    "TestMainLocalUtilitiesNamesDoNotBypassRemoteValidation": [
+      "base_URL/tokenizer",
+      "base_URL/codex",
+      "mTLS/tokenizer",
+      "mTLS/codex"
+    ],
+    "TestMainLocalUtilitiesPreserveRemoteTokenCounter": [
+      "nested",
+      "legacy",
+      "YAML_scalar_compatibility",
+      "piped_JSON"
+    ],
+    "TestMainLocalUtilitiesErrorsRemainLocal": [
+      "encoding/text",
+      "encoding/json",
+      "sources/text",
+      "sources/json",
+      "destination/text",
+      "destination/json",
+      "open_without_destination/text",
+      "open_without_destination/json",
+      "extra_argument/text",
+      "extra_argument/json",
+      "unknown_option/text",
+      "unknown_option/json",
+      "unsupported_format/text",
+      "unsupported_format/json",
+      "malformed_explicit_option/text",
+      "malformed_explicit_option/json"
+    ],
+    "TestMainTokenizerEditorNeverCapturesRedirectedInput": [
+      "#00",
+      "--format/text"
+    ],
+    "TestMainTokenizerEditorPlainFallbackEnvironments": [
+      "TERM=dumb",
+      "TERM=Dumb",
+      "TERM=xterm-256color/CI=true",
+      "TERM=xterm-256color/GITHUB_ACTIONS=1",
+      "TERM=xterm-256color/NO_COLOR=1",
+      "TERM=xterm-256color/FORCE_COLOR=1"
+    ],
+    "TestMainTokenizerEditorRejectsUnsupportedModes": [
+      "--format/json",
+      "--format/jsonl",
+      "--transform/.synthetic-private-field",
+      "--raw-output",
+      "--text/synthetic-private-input",
+      "synthetic-private-argument"
+    ],
+    "TestMainTokenizerEditorLeavesScriptResultsUnchanged": [],
+    "TestMainWelcomeRedirectedOutputMatchesHelp": [],
+    "TestMainWelcomeExplicitArgumentsStayPlain": [
+      "--help",
+      "-h",
+      "help",
+      "help/--all",
+      "--",
+      "--version",
+      "--debug/--help",
+      "--format/json",
+      "--format/json/--help",
+      "--format/jsonl/help",
+      "--format-error/json/--help",
+      "--raw-output/--help",
+      "--transform/id/--help",
+      "models",
+      "models/--help",
+      "help/models",
+      "models/list/--help",
+      "--quiet",
+      "--verbose",
+      "--quiet/--verbose",
+      "--verbose/--quiet",
+      "--quiet=false/--verbose=false",
+      "--verbose/help",
+      "--quiet/--format/json/--help",
+      "files/upload/--help",
+      "files/get/--help",
+      "files/download/--help"
+    ],
+    "TestMainWelcomeBareInvocationStaysOffline": [
+      "<loopback>",
+      "not%url"
+    ],
+    "TestMainAdminSetupOfflineRoutes": [
+      "help/setup/admin",
+      "help/setup/admin/--help",
+      "help/setup/admin/-h",
+      "help/--all/setup/admin",
+      "--debug/help/setup/admin",
+      "--format/json/help/setup/admin"
+    ],
+    "TestMainAdminSetupIsReadOnly": [],
+    "TestMainAdminSetupPreservesOrdinarySetup": [],
+    "TestMainAdminSetupRejectsExtraArguments": [
+      "text",
+      "json"
+    ],
+    "TestMainImageModelsRequestDeadlineCancelsHTTP": [],
+    "TestMainImageModelsInterruptPreservesCompletedResults": [],
+    "TestMainCommandSubgroupsBareInvocation": [
+      "admin",
+      "admin_organization",
+      "admin_organization_projects",
+      "admin_organization_projects_service-accounts",
+      "chat",
+      "chat_completions",
+      "audio",
+      "beta_threads_runs",
+      "containers_files",
+      "skills_versions"
+    ],
+    "TestMainDispatchOutputManpagesDeepSubgroups": [],
+    "TestMainPickerShellSetupNativeContract": [
+      "absent_text",
+      "absent_json",
+      "existing_text",
+      "existing_json"
+    ]
+  },
+  "clihelp": {
+    "TestHelpInvocationUsesSameExecutableOnPath": [],
+    "TestHelpInvocationFollowsInstalledSymlink": [],
+    "TestHelpInvocationKeepsPowerShellScriptOnPath": [
+      "dangling_symlink"
+    ],
+    "TestHelpInvocationKeepsDifferentExecutable": [],
+    "TestHelpInvocationKeepsLocalPathWithImplicitLookup": []
+  }
+}

@@ -29,6 +29,7 @@ func TestMainHelpScriptsRunUsesCopyableInvocation(t *testing.T) {
 			args []string
 			want []string
 		}{
+			{[]string{"--help"}, []string{"START HERE\n   go run ./cmd/openai explore\n"}},
 			{[]string{"images", "preview", "--help"}, []string{`go run ./cmd/openai images preview "photo.png"`, "Key setup: go run ./cmd/openai help setup"}},
 			{[]string{"help", "images", "generate"}, []string{`    go run ./cmd/openai images generate --prompt "A tiny cat" --name cat`}},
 			{[]string{"help", "images", "edit"}, []string{`    go run ./cmd/openai images edit --image "photo.png" --prompt "Make the sky purple" --name purple-sky`}},

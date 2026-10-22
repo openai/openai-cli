@@ -11,8 +11,15 @@ if [[ $- != *i* ]]; then
     return 0
 fi
 # A hashed command can retain its classification after its file disappears.
-if [[ $(builtin type -t '__APPNAME__') != file ||
-      ! -f $(builtin type -p '__APPNAME__') || ! -x $(builtin type -p '__APPNAME__') ]]; then
+# The separately enabled command-insertion wrapper is identifiable by its live
+# definition. Use exact comparisons even when nocasematch is enabled.
+# Never invoke that wrapper or accept a replaced user function.
+if ! { [[ $(builtin type -t '__APPNAME__') == file &&
+          -f $(builtin type -p '__APPNAME__') && -x $(builtin type -p '__APPNAME__') ]] ||
+       { [[ $(builtin type -t '__APPNAME__') == function &&
+            ${____APPNAME___suggestions_enabled-} == 1 && -n ${____APPNAME___suggestions_wrapper_body-} ]] &&
+         builtin test "$(builtin declare -f '__APPNAME__')" = "$____APPNAME___suggestions_wrapper_body" &&
+         [[ -f $(builtin type -P '__APPNAME__') && -x $(builtin type -P '__APPNAME__') ]]; }; }; then
     builtin printf '%s\n' 'Executable suggestions require __APPNAME__ on PATH. No suggestion hook was installed.' >&2
     if (( __openai_suggestions_bash_source_trace )); then builtin unset __openai_suggestions_bash_source_trace; builtin set -x; else builtin unset __openai_suggestions_bash_source_trace; fi
     return 2
@@ -91,8 +98,13 @@ function command_not_found_handle {
     case $- in *x*) __openai_suggestions_trace=1; builtin set +x ;; esac
     local __openai_suggestions_target
     if builtin test "${__openai_suggestions_bash_state-}" = active &&
-       "__openai_suggestions_bash_match" "${1-}" && [[ $(builtin type -t '__APPNAME__') == file ]] &&
-       __openai_suggestions_target=$(builtin type -p '__APPNAME__') &&
+       "__openai_suggestions_bash_match" "${1-}" &&
+       { { [[ $(builtin type -t '__APPNAME__') == file ]] &&
+           __openai_suggestions_target=$(builtin type -p '__APPNAME__'); } ||
+         { [[ $(builtin type -t '__APPNAME__') == function &&
+              ${____APPNAME___suggestions_enabled-} == 1 && -n ${____APPNAME___suggestions_wrapper_body-} ]] &&
+           builtin test "$(builtin declare -f '__APPNAME__')" = "$____APPNAME___suggestions_wrapper_body" &&
+           __openai_suggestions_target=$(builtin type -P '__APPNAME__'); }; } &&
        [[ -f $__openai_suggestions_target && -x $__openai_suggestions_target ]]; then
         builtin printf '%s\n' 'Command not found. Did you mean: __APPNAME__?' \
             'Keep the remaining arguments unchanged.' >&2

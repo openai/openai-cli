@@ -14,7 +14,6 @@ import (
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	clioutput "github.com/openai/openai-cli/internal/output"
-	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/tidwall/gjson"
@@ -110,18 +109,19 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 	var streamerr *ssestream.StreamError
 	isStream := !errors.Is(failure, context.Canceled) && errors.As(failure, &streamerr)
 	if format == "text" && root.String("transform-error") == "" {
+		presenter := clihelp.NewSuggestedText(out, root)
 		message := ""
 		var batchFailure *batchcommands.WorkflowError
 		if errors.As(failure, &batchFailure) {
 			message = batchFailure.Error()
 		} else if isAPI && !errors.Is(failure, context.Canceled) {
-			message = readableAPIErrorMessage(root, failure, apierr)
+			message = readableAPIErrorMessageTo(root, failure, apierr, presenter)
 		} else if isStream {
 			message = readableStreamErrorText
 		} else {
-			message = localErrorMessage(root, failure)
+			message = localErrorMessage(root, failure, presenter)
 		}
-		return readable.WriteText(out, message)
+		return presenter.WriteText(message)
 	}
 	var value gjson.Result
 	if isAPI {
@@ -156,11 +156,15 @@ const readableStreamErrorMessage = "The response stream failed. Output may be in
 const readableStreamErrorText = "The response stream failed.\nOutput may be incomplete.\nAPI error details: --format-error json."
 
 func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Error) string {
+	return readableAPIErrorMessageTo(root, failure, apierr)
+}
+
+func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.Error, output ...io.Writer) string {
 	invocation := clihelp.DisplayInvocation(root)
 	message := "The API could not complete the request."
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
-		message = "Check API key, organization and project.\nKey setup: " + invocation + " help setup"
+		message = "Check API key, organization and project.\nKey setup: " + clihelp.SuggestedCommand(root, output, invocation+" help setup")
 	case http.StatusForbidden:
 		message = "Check your key's permissions.\nCheck project access to this resource."
 	case http.StatusNotFound:
@@ -171,7 +175,7 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 		if errors.As(failure, &contextual) {
 			command = contextual.command
 		}
-		message = readableAPIArgumentMessage(apierr, command)
+		message = readableAPIArgumentMessage(apierr, command, output...)
 	case http.StatusTooManyRequests:
 		message = "Wait before trying again."
 		switch apierr.Code {
@@ -208,7 +212,7 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 // Parameter names are untrusted API data. Match only paths declared by this
 // exact command, and print only the matching locally defined flag name. Never
 // display an arbitrary param, server message, rejected value, or remote choice.
-func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command) string {
+func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command, output ...io.Writer) string {
 	flagName, path := clioutput.ParameterFlag(command, apierr.Param)
 	message := "The API rejected the request."
 	if flagName != "" {
@@ -251,7 +255,7 @@ func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command) stri
 	}
 	invocation := clihelp.DisplayInvocation(command.Root())
 	pathToCommand := strings.TrimPrefix(command.FullName(), command.Root().Name+" ")
-	return message + "\nOptions and examples: " + invocation + " help " + pathToCommand
+	return message + "\nOptions and examples: " + clihelp.SuggestedCommandPath(command, output, invocation+" help "+pathToCommand)
 }
 
 func readableParameterChoices(command *cli.Command, path string) string {

@@ -9,6 +9,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-cli/internal/commands/codex"
+	"github.com/openai/openai-cli/internal/commands/explore"
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/commands/manpages"
@@ -41,6 +42,8 @@ func ConfigureCommand(root *cli.Command) {
 	images.ConfigureCompletion(root)
 	images.ConfigureShellSetup(root, writeOutputReceipt)
 	configureShellSuggestions(root)
+	explore.ConfigureCompletion(root)
+	explore.Register(root)
 	images.RegisterPreview(root, ImagePreviewOptions())
 	audio.ConfigureText(root)
 	configureReadableSpeech(root)

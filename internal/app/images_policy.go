@@ -3,8 +3,11 @@ package app
 import (
 	"context"
 	"io"
+	"os"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/commands/images"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -49,5 +52,17 @@ func ImageSavingOptions() images.SavingOptions {
 
 // ImagePreviewOptions binds local previews to application receipt and error policy.
 func ImagePreviewOptions() images.PreviewOptions {
-	return images.PreviewOptions{Receipt: writeOutputReceipt, ShowError: ShowCommandError}
+	return images.PreviewOptions{Receipt: writeOutputReceipt, SuggestedReceipt: writeSuggestedImageReceipt, ShowError: ShowCommandError}
+}
+
+// Keep image preference receipts on the existing optional diagnostic channel.
+func writeSuggestedImageReceipt(ctx context.Context, command *cli.Command, message string, suggestions []string) error {
+	if !outputDiagnosticsAllowed(ctx) {
+		return nil
+	}
+	presenter := clihelp.NewSuggestedTextTo(clioutput.Writer{Context: ctx, Sink: os.Stderr}, os.Stderr, command)
+	for _, suggestion := range suggestions {
+		clihelp.SuggestedCommand(command, []io.Writer{presenter}, suggestion)
+	}
+	return presenter.WriteText(message)
 }
