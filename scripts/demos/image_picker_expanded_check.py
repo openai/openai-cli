@@ -63,7 +63,6 @@ def run(binary, destination, narrow=False):
             api.gates[0].set()
             process.wait_for(lambda: len(saved(home)) == 8 and b'Saved in' in frame() and selected_caption(8) and b'Ctrl+C exit' in frame())
             process.pump(0.3)
-            first = saved(home)
             raw = bytes(process.streams['stdout'])
             assert BLOCK in raw
             assert b'Saved image:' not in raw, 'active panel repeated final receipts'

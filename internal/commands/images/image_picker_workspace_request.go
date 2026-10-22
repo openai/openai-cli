@@ -11,6 +11,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+const imagePickerRequestFailureNote = "Request failed. Edit your prompt or settings before trying again."
+
 func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
 	result := p.model.result
 	result.settings, result.workspace = p.model.settings, p.workspace
@@ -163,7 +165,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			p.workspace.offset = 0
 			p.workspace.galleryDetails = true
-			p.model.note = "Request failed. Edit your prompt or settings before trying again."
+			p.model.note = imagePickerRequestFailureNote
 		} else {
 			p.model.note = "All images saved."
 		}
@@ -257,6 +259,9 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		if p.model.focus == "images" {
 			switch msg.String() {
 			case "o":
+				if !p.workspace.opening && len(p.workspace.images) > 0 && p.model.note != imagePickerRequestFailureNote {
+					p.model.note = ""
+				}
 				return true, p.openSavedImage()
 			case "enter":
 				now := time.Now()

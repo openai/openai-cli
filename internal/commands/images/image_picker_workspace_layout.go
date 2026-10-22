@@ -25,14 +25,13 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 	status := ""
 	if busy {
 		status = w.progress()
+	} else if m.note != "" && m.note != "All images saved." && (m.note != imagePickerRequestFailureNote || len(w.rows) == 0) {
+		// New form notices take precedence over retained request or image-open errors.
+		status = imagePickerLine(m.note)
 	} else if w.openError && w.openErrorIndex == w.selected {
 		status = "Could not open this image."
-	} else if m.note != "All images saved." {
-		if len(w.rows) == 0 {
-			status = imagePickerLine(m.note)
-		} else if w.offset >= w.messageRows && m.note != "" {
-			status = "Request failed."
-		}
+	} else if m.note == imagePickerRequestFailureNote && w.offset >= w.messageRows {
+		status = "Request failed."
 	}
 	lines := append([]string(nil), header...)
 	if status != "" || len(w.displayRows) > 0 {

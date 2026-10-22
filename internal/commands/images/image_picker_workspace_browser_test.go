@@ -166,6 +166,70 @@ func TestImagePickerWorkspaceFailedPaintDoesNotStartGeneration(t *testing.T) {
 	require.Zero(t, calls, "a failed initial screen must not submit a request")
 }
 
+func TestImagePickerWorkspaceValidationVisibleAfterFailure(t *testing.T) {
+	for _, size := range [][2]int{{40, 12}, {96, 28}} {
+		for _, failure := range []string{"request", "open"} {
+			for _, scrolled := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%dx%d/%s/scrolled=%t", size[0], size[1], failure, scrolled), func(t *testing.T) {
+					m, w := browserForTest(t, size[0], size[1])
+					w.appendImage(imagePickerWorkspaceImage{rows: strings.Split(strings.Repeat("pixels\n", 50), "\n")})
+					p := &imagePickerInline{model: m, workspace: w, requestCancel: func() {}}
+					if failure == "request" {
+						p.updateWorkspace(imagePickerWorkspaceDone{err: &url.Error{Op: "Post", URL: "http://synthetic.invalid", Err: errors.New("synthetic connection failure")}})
+					} else {
+						p.updateWorkspace(imagePickerOpened{err: errors.New("synthetic open failure"), index: 0})
+					}
+					if scrolled {
+						p.updateWorkspace(tea.KeyPressMsg{Code: tea.KeyPgDown})
+					}
+					diagnostics := append([]string(nil), w.rows...)
+					offset := w.offset
+					m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+					m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+					m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+					m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+					require.Equal(t, "Add a prompt first.", m.note)
+					require.Empty(t, m.result.Args, "invalid input must not submit another request")
+					require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+					require.Contains(t, ansi.Strip(strings.Join(w.painted, "\n")), m.note)
+					require.Equal(t, diagnostics, w.rows, "validation must retain request diagnostics")
+					require.Equal(t, offset, w.offset, "validation must preserve gallery scrolling")
+					require.Len(t, w.images, 1)
+				})
+			}
+		}
+	}
+}
+
+func TestImagePickerWorkspaceOpenFailureDoesNotHideLaterValidation(t *testing.T) {
+	for _, laterValidation := range []bool{false, true} {
+		t.Run(fmt.Sprint(laterValidation), func(t *testing.T) {
+			m, w := browserForTest(t, 96, 28)
+			w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: t.TempDir() + "/missing.png"}})
+			messages := make(chan tea.Msg, 1)
+			w.send = func(msg tea.Msg) { messages <- msg }
+			p := &imagePickerInline{model: m, workspace: w}
+			m.settings.prompt = ""
+			m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+			require.Equal(t, "Add a prompt first.", m.note)
+			p.updateWorkspace(tea.KeyPressMsg{Code: 'o', Text: "o"})
+			require.Empty(t, m.note, "a deliberate open starts a new action")
+			if laterValidation {
+				m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+			}
+			p.updateWorkspace(<-messages)
+			w.openWorkers.Wait()
+			text := ansi.Strip(strings.Join(w.painted, "\n"))
+			if laterValidation {
+				require.Contains(t, text, "Add a prompt first.")
+				require.NotContains(t, text, "Could not open this image.")
+			} else {
+				require.Contains(t, text, "Could not open this image.")
+			}
+		})
+	}
+}
+
 func TestImagePickerWorkspaceFailureKeepsControlsAttachedAndDetailsScrollable(t *testing.T) {
 	for _, size := range [][2]int{{40, 12}, {80, 24}, {96, 28}} {
 		m, w := browserForTest(t, size[0], size[1])
