@@ -82,13 +82,13 @@ The default output is readable text, **even in pipes**. The first example uses
 
 ## Installation
 
-### Homebrew
+### Installing with Homebrew
 
 ```sh
 brew install openai/tools/openai
 ```
 
-### Go
+### Installing with Go
 
 Requires [Go 1.26 or later](https://go.dev/doc/install).
 
