@@ -1,4 +1,4 @@
-package files
+package terminal
 
 import (
 	"errors"
@@ -7,7 +7,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func fileReceiptGoCallerName(pid int) (string, error) {
+func goCallerName(pid int) (string, error) {
+	if uint64(pid) > uint64(^uint32(0)) {
+		return "", errors.New("Go launcher process is unavailable")
+	}
 	launcher, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
 		return "", err

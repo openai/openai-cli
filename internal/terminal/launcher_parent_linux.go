@@ -1,4 +1,4 @@
-package files
+package terminal
 
 import (
 	"errors"
@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func fileReceiptGoCallerName(pid int) (string, error) {
+func goCallerName(pid int) (string, error) {
 	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
 		return "", err

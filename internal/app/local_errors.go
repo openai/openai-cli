@@ -20,6 +20,7 @@ import (
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/commands/models"
+	"github.com/openai/openai-cli/internal/commands/webhooks"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/listview"
 	requestconfig "github.com/openai/openai-cli/internal/request"
@@ -60,6 +61,8 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	var modelsListFailure *models.ListError
 	var batchFailure *batchcommands.WorkflowError
 	var finiteListFailure *clioutput.FiniteJSONListError
+	var webhookFailure *webhooks.WorkflowError
+	var webhookCanceled *webhooks.CreateCanceledError
 	switch {
 	case errors.As(failure, &batchFailure):
 		return batchFailure.Error()
@@ -69,11 +72,15 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 		return downloadFailure.Error()
 	case errors.As(failure, &receiptFailure):
 		return receiptFailure.Error()
+	case errors.As(failure, &webhookCanceled):
+		return webhookCanceled.Error()
 	case errors.Is(failure, context.Canceled):
 		if errors.As(failure, &imageFailure) && imageFailure.PreserveOnCancel() {
 			return imageFailure.ReadableMessage(root, output...)
 		}
 		return "Request canceled."
+	case errors.As(failure, &webhookFailure):
+		return webhookFailure.Error()
 	case errors.As(failure, &utilityFailure):
 		return utilityFailure.Error()
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():

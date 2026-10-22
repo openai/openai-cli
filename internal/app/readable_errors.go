@@ -13,6 +13,7 @@ import (
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
+	"github.com/openai/openai-cli/internal/commands/webhooks"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/ssestream"
@@ -160,13 +161,15 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 }
 
 func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.Error, output ...io.Writer) string {
-	invocation := clihelp.DisplayInvocation(root)
 	message := "The API could not complete the request."
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
-		message = "Check API key, organization and project.\nKey setup: " + clihelp.SuggestedCommand(root, output, invocation+" help setup")
+		message = readableAPIAuthenticationMessage(root, failure, apierr, output...)
 	case http.StatusForbidden:
 		message = "Check your key's permissions.\nCheck project access to this resource."
+		if permission := readableAPIAccessPermissionMessage(root, failure, apierr); permission != "" {
+			message = permission
+		}
 	case http.StatusNotFound:
 		message = "Check the resource or model ID.\nCheck your key's access to it."
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
@@ -192,9 +195,18 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 		}
 	}
 	if guidance := readableAPIPermissionMessage(failure, apierr); guidance != "" {
-		message = guidance
+		if strings.Contains(message, "Missing permission: api.webhooks.") {
+			message += "\n" + guidance
+		} else {
+			message = guidance
+		}
 	}
-
+	// Workflow messages contain fixed local stage/outcome guidance. Preserve
+	// the underlying API error for structured formats and error identity.
+	var workflow *webhooks.WorkflowError
+	if errors.As(failure, &workflow) {
+		message = workflow.Error() + "\n" + message
+	}
 	if apierr.StatusCode > 0 {
 		status := fmt.Sprintf("HTTP %d", apierr.StatusCode)
 		if reason := http.StatusText(apierr.StatusCode); reason != "" {

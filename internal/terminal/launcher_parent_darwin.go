@@ -1,4 +1,4 @@
-package files
+package terminal
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func fileReceiptGoCallerName(pid int) (string, error) {
+func goCallerName(pid int) (string, error) {
 	launcher, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
 	if err != nil {
 		return "", err
