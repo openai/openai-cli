@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,7 +115,11 @@ func Run(ctx context.Context, options Options) error {
 	defer listener.Close()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	c := &companion{ctx: ctx, options: options, origin: "http://" + listener.Addr().String(), token: rand.Text()}
+	// A fresh hostname isolates browser storage even when the listener reuses a port.
+	var hostname [16]byte
+	rand.Read(hostname[:])
+	origin := "http://" + net.JoinHostPort(hex.EncodeToString(hostname[:])+".localhost", strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
+	c := &companion{ctx: ctx, options: options, origin: origin, token: rand.Text()}
 	launch, cleanup, err := c.launchFile()
 	if err != nil {
 		return Failure("Could not create the private browser launch page. Check temporary-folder permissions.")
@@ -137,9 +142,9 @@ func Run(ctx context.Context, options Options) error {
 	err = options.OpenBrowser(openCtx, (&url.URL{Scheme: "file", Path: launchPath}).String())
 	stopOpen()
 	if err != nil {
-		_, err = fmt.Fprintln(options.Writer, "Open this private launch page in your browser:\n"+launch+"\nCtrl+C to close.")
+		_, err = fmt.Fprintln(options.Writer, "Open this private launch page in Chrome or Edge:\n"+launch+"\nCtrl+C to close.")
 	} else {
-		_, err = fmt.Fprintln(options.Writer, "Live translation opened in your browser.\nCtrl+C to close.")
+		_, err = fmt.Fprintln(options.Writer, "Live translation opened in your browser.\nIf the page does not load, open this private launch page in Chrome or Edge:\n"+launch+"\nCtrl+C to close.")
 	}
 	if err != nil {
 		return err
@@ -173,7 +178,22 @@ func (c *companion) launchFile() (string, func(), error) {
 		return "", nil, err
 	}
 	// The capability stays in a private file and browser memory, never process arguments.
-	_, err = fmt.Fprintf(file, `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="refresh" content="0;url=%s/#%s"><title>Open live translation</title>`, c.origin, c.token)
+	// The launch requires desktop Chromium's built-in loopback resolution.
+	// Client Hints exclude browsers that merely advertise a compatible user-agent string.
+	launchURL, _ := json.Marshal(c.origin + "/#" + c.token)
+	_, err = fmt.Fprintf(file, `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Open live translation</title>
+<p>Open this private launch page in current Chrome or Edge.</p>
+<script>
+try {
+  const agent = navigator.userAgentData;
+  if (globalThis.isSecureContext === true && agent && agent.mobile === false &&
+      ["Windows", "macOS", "Linux", "Chrome OS"].includes(agent.platform) &&
+      Array.isArray(agent.brands) && agent.brands.some(entry => entry && entry.brand === "Chromium" &&
+        typeof entry.version === "string" && /^[0-9]{3}$/.test(entry.version) && Number(entry.version) >= 100)) {
+    location.replace(%s);
+  }
+} catch {}
+</script>`, launchURL)
 	err = errors.Join(err, file.Close())
 	if err != nil {
 		cleanup()

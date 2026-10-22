@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -447,8 +449,8 @@ func TestCompanionRunCancellationRemovesPrivateLaunchFile(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if !bytes.Contains(data, []byte("127.0.0.1:")) {
-				t.Error("launch file omitted loopback address")
+			if !bytes.Contains(data, []byte(".localhost:")) {
+				t.Error("launch file omitted the private localhost origin")
 			}
 			cancel()
 			return nil
@@ -466,6 +468,160 @@ func TestCompanionRunCancellationRemovesPrivateLaunchFile(t *testing.T) {
 	if _, err := os.Stat(filepath.Dir(launch)); !os.IsNotExist(err) {
 		t.Fatal("private launch directory remained")
 	}
+}
+
+func TestCompanionRunIsolatesLaunchOrigins(t *testing.T) {
+	hosts := make(map[string]bool)
+	for _, mode := range []string{"browser", "manual-fallback"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var output bytes.Buffer
+			var calls atomic.Int32
+			var launch, origin, token string
+			err := Run(ctx, Options{
+				Connect: func(context.Context, Config) (Session, error) {
+					calls.Add(1)
+					return newFakeSession(), nil
+				},
+				Writer: &output,
+				OpenBrowser: func(_ context.Context, target string) error {
+					defer cancel()
+					fileURL, err := url.Parse(target)
+					if err != nil {
+						return err
+					}
+					path := fileURL.Path
+					if runtime.GOOS == "windows" {
+						path = strings.TrimPrefix(path, "/")
+					}
+					launch = filepath.FromSlash(path)
+					data, err := os.ReadFile(launch)
+					if err != nil {
+						return err
+					}
+					_, navigation, ok := strings.Cut(string(data), "location.replace(")
+					if !ok {
+						t.Fatal("private launch page omitted its destination")
+					}
+					encoded, _, ok := strings.Cut(navigation, ");")
+					if !ok {
+						t.Fatal("private launch destination was not delimited")
+					}
+					var address string
+					if err := json.Unmarshal([]byte(encoded), &address); err != nil {
+						t.Fatal("private launch destination was not encoded safely")
+					}
+					u, err := url.Parse(address)
+					if err != nil {
+						t.Fatal("private launch destination was not a URL")
+					}
+					label, local := strings.CutSuffix(u.Hostname(), ".localhost")
+					if !local || len(label) != 32 || strings.Trim(label, "0123456789abcdef") != "" {
+						t.Fatal("launch hostname did not contain a legal random localhost label")
+					}
+					if hosts[u.Hostname()] {
+						t.Fatal("separate launches reused a hostname")
+					}
+					hosts[u.Hostname()] = true
+					origin, token = u.Scheme+"://"+u.Host, u.Fragment
+					if u.Scheme != "http" || u.Path != "/" || u.Port() == "" || u.RawQuery != "" || token == "" || strings.Contains(u.Host, strings.ToLower(token)) {
+						t.Fatal("launch URL did not separate its origin and fragment capability")
+					}
+					// Dial the owned IPv4 listener directly; browser DNS support is separate evidence.
+					loopback := net.JoinHostPort("127.0.0.1", u.Port())
+					transport := &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+						return (&net.Dialer{}).DialContext(ctx, network, loopback)
+					}}
+					defer transport.CloseIdleConnections()
+					client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
+					for _, test := range []struct {
+						name, method, path, host, origin, token, site string
+						status                                        int
+					}{
+						{"page", "GET", "/", u.Host, "", "", "", 200},
+						{"worklet", "GET", "/capture-worklet.js", u.Host, "", "", "", 200},
+						{"numeric-host-page", "GET", "/", loopback, "", "", "", 403},
+						{"numeric-host-api", "POST", "/start", loopback, origin, token, "same-origin", 403},
+						{"localhost-host", "POST", "/start", "localhost:" + u.Port(), origin, token, "same-origin", 403},
+						{"other-host", "POST", "/start", "other.localhost:" + u.Port(), origin, token, "same-origin", 403},
+						{"other-origin", "POST", "/start", u.Host, "http://other.localhost:" + u.Port(), token, "same-origin", 403},
+						{"missing-origin", "POST", "/start", u.Host, "", token, "same-origin", 403},
+						{"query-token", "POST", "/start?token=" + url.QueryEscape(token), u.Host, origin, "", "same-origin", 403},
+						{"wrong-token", "POST", "/start", u.Host, origin, "wrong-synthetic-token", "same-origin", 403},
+						{"cross-site", "POST", "/start", u.Host, origin, token, "cross-site", 403},
+						{"authorized-start", "POST", "/start", u.Host, origin, token, "same-origin", 200},
+					} {
+						t.Run(test.name, func(t *testing.T) {
+							if calls.Load() != 0 {
+								t.Fatal("an unauthorized request reached the API")
+							}
+							request, err := http.NewRequestWithContext(t.Context(), test.method, origin+test.path, strings.NewReader(`{"language":"en"}`))
+							if err != nil {
+								t.Fatal("could not construct loopback request")
+							}
+							request.Host = test.host
+							request.Header.Set("Origin", test.origin)
+							request.Header.Set("X-OpenAI-Audio", test.token)
+							request.Header.Set("Sec-Fetch-Site", test.site)
+							response, err := client.Do(request)
+							if err != nil {
+								t.Fatal("loopback request failed")
+							}
+							defer response.Body.Close()
+							if response.StatusCode != test.status {
+								t.Fatalf("status %d, want %d", response.StatusCode, test.status)
+							}
+							if response.Header.Get("Access-Control-Allow-Origin") != "" {
+								t.Fatal("cross-origin access enabled")
+							}
+							if _, err := io.Copy(io.Discard, response.Body); err != nil {
+								t.Fatal("could not finish loopback response")
+							}
+						})
+					}
+					if calls.Load() != 1 {
+						t.Fatal("authorized request did not reach the API exactly once")
+					}
+					if mode == "manual-fallback" {
+						return errors.New("synthetic browser launch failure")
+					}
+					return nil
+				},
+			})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected cancellation, got %v", err)
+			}
+			if strings.Contains(output.String(), origin) || strings.Contains(output.String(), token) {
+				t.Error("terminal output exposed the launch origin or capability")
+			}
+			if !strings.Contains(output.String(), launch) || !strings.Contains(output.String(), "Chrome or Edge") {
+				t.Error("terminal output omitted the supported private-file fallback")
+			}
+			if _, err := os.Stat(filepath.Dir(launch)); !os.IsNotExist(err) {
+				t.Error("private launch directory remained")
+			}
+		})
+	}
+}
+
+func TestCompanionLaunchFileBrowserGate(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node.js is required to execute the private launch script")
+	}
+	c := &companion{origin: "http://0123456789abcdef0123456789abcdef.localhost:12345", token: "synthetic-local-test-token"}
+	launch, cleanup, err := c.launchFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	command := exec.CommandContext(t.Context(), node, "server_launch_test.js", launch)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("private launch script failed: %v\n%s", err, output)
+	}
+	t.Log(strings.TrimSpace(string(output)))
 }
 
 func TestCompanionCanceledOpeningCannotPublishLateSession(t *testing.T) {

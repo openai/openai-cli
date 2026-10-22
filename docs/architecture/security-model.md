@@ -8,10 +8,11 @@ disclosure.
 
 ## 1. Overview
 
-`openai-cli` is a local Go command-line client for the OpenAI REST API. It is
-not a daemon and does not expose an inbound network listener. A user invokes
-resource commands, the CLI parses flags or piped YAML/JSON, may read local
-files, constructs requests through `openai-go`, and renders API responses to a
+`openai-cli` is a local Go command-line client for OpenAI APIs. It is
+not a background daemon. Ordinary API commands do not open inbound listeners.
+The explicit `audio translate --live` mode opens the private loopback browser
+companion described below. A user invokes resource commands; the CLI parses flags
+or piped YAML/JSON, may read local files, constructs requests through `openai-go`, and renders API responses to a
 terminal, pager, pipe, or file. The entry point runs the generated command
 tree, validates an environment-selected base URL, and formats API errors
 ([internal/app/run.go](../../internal/app/run.go),
@@ -56,6 +57,51 @@ flowchart LR
 | Ordinary test/build pull-request CI | Candidate checkout execution | A separate preparation job checks out the candidate as data; CI execution jobs restore its same-run artifact and run tracked scripts/tests. | Preparation has read-only repository credentials and executes only reviewed workflow instructions and trusted-main tooling. Candidate execution has `permissions: {}` and no repository-read or protected credentials. | Source preparation, then candidate runners and configured test dependencies. | Separate runners and immutable same-run source artifacts; no candidate helper or local action runs in preparation. | [.github/workflows/ci.yml:1-27](../../.github/workflows/ci.yml#L1-L27), [.github/workflows/ci.yml:110-127](../../.github/workflows/ci.yml#L110-L127) |
 | CodeQL analysis and publication | Candidate analysis; trusted result publication | `.github/workflows/codeql.yml` analyzes the candidate with autobuild and stages SARIF. `codeql-upload.yml` runs separately on `workflow_run` using trusted main tooling. | Analysis has `permissions: {}` and consumes prepared same-run source artifacts. Only the trusted publisher has `security-events: write` and `statuses: write`; neither job receives release/signing credentials. | Candidate runner writes untrusted report artifacts; trusted publisher submits them to GitHub code scanning. | Publisher executes no candidate code, reads fixed ZIP members as data, verifies the source run/attempt and current GitHub SHA/ref, and fixes the tool/language categories. This confines publication authority; it does not attest candidate report correctness. | [.github/workflows/codeql.yml](../../.github/workflows/codeql.yml), [.github/workflows/codeql-upload.yml](../../.github/workflows/codeql-upload.yml), [.github/scripts/codeql_upload.py](../../.github/scripts/codeql_upload.py) |
 | Release | Official artifacts and publishing credentials | A job without protected write/signing credentials generates fixed release inputs from a validated tag; a protected publisher verifies them before obtaining publishing credentials. | Fixed artifact paths, protected `publish` environment, scoped app tokens, signing/notarization secrets. | Release jobs, GitHub releases, Homebrew, artifact attestation. | Tag-on-main and SHA binding, fixed artifact verification, verified GoReleaser, protected environment, and isolated attestation permissions. | [docs/releasing.md:3-29](../releasing.md#L3-L29), [.github/workflows/publish-release.yml:17-90](../../.github/workflows/publish-release.yml#L17-L90), [.github/workflows/publish-release.yml:92-152](../../.github/workflows/publish-release.yml#L92-L152), [.github/workflows/publish-release.yml:247-273](../../.github/workflows/publish-release.yml#L247-L273) |
+
+### Optional live translation browser companion
+
+Only `audio translate --live` starts the browser companion. It binds
+`127.0.0.1` on an operating-system-selected port, not a public interface.
+Each launch uses a separate `.localhost` hostname containing 128 random bits.
+The browser origin changes independently of the port and authorization capability.
+The private launch page opens the companion only when desktop Chromium
+Client Hints confirm a supported browser. Otherwise, it shows instructions
+for current Chrome or Edge without navigating to the local address.
+The CLI prints the private launch file path for opening it in another browser.
+Loopback binding alone does not authorize private operations.
+The server validates the exact Host on every request. Private routes require
+an unpredictable capability header. They reject a supplied Origin that differs
+from the local Origin. Write requests also require that Origin header.
+If supplied on private routes, `Sec-Fetch-Site` must be `same-origin`.
+The server grants no CORS permission
+([companion server](../../internal/audiolive/server.go)).
+
+A private launch file carries the local address and capability fragment.
+The browser removes that fragment from its current history entry after reading it.
+The opener receives only the file URL, without the capability in its arguments.
+The launch directory and file use private creation permissions, including the
+existing protected Windows file helpers
+([launch ownership](../../internal/audiolive/server.go),
+[Non-Windows private files](../../internal/audiolive/private_other.go),
+[Windows private files](../../internal/audiolive/private_windows.go)).
+Static page assets contain no credential or retained recording. Their delivery
+does not authorize private routes.
+
+On explicit Start, the page requests microphone or display-capture permission
+through browser APIs. Tab capture forwards audio samples, not its video track.
+The API key stays in the CLI; the browser uses the local capability.
+The Go adapter retains the application's configured SDK credential and transport
+policy. Browser capture permission does not establish remote API authorization
+([capture controls](../../internal/audiolive/translation.js),
+[API adapter](../../internal/commands/audio/audio_translation.go),
+[application policy](../../internal/app/audio_policy.go)).
+
+The CLI owns the listener, private launch file, API sessions, and receive workers.
+Shutdown closes the listener, cancels active work, aborts owned sessions, waits
+for owned workers, and attempts to remove the private launch file and directory.
+A disconnected event reader aborts its active translation without stopping the
+companion listener. New sessions still require capability and origin checks
+([session lifecycle](../../internal/audiolive/server.go)).
 
 ## 2. Threat model, trust boundaries, and assumptions
 
