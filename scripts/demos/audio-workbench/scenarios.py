@@ -161,7 +161,7 @@ def failure_case(ctx):
     terminal.send(b"\x1b")
     main_form()
     terminal.send(b"\t\t" + ctx.picker.END + b"\r")
-    visible_failure(("More actions", "Esc back"), absent=("Last error",))
+    visible_failure(("More actions", "[Esc] Back"), absent=("Last error",))
     terminal.send(b"\x1b")
     main_form()
     visible_failure(("› More actions…",))
@@ -357,8 +357,8 @@ def navigation_case(ctx):
     result["exact_width_editor_columns"] = {}
     for editor in ("text", "instructions"):
         editor_columns = terminal.initial_size[0] - 8
-        if terminal.initial_size[0] >= 60 and terminal.initial_size[1] >= 24:
-            editor_columns = min(92, terminal.initial_size[0] - 8) - 17
+        if editor == "instructions" and terminal.initial_size[0] >= 60 and terminal.initial_size[1] >= 24:
+            editor_columns = min(100, terminal.initial_size[0] - 4) - 17
         result["exact_width_editor_columns"][editor] = editor_columns
         for name, value in (("single-line", "Boundary"), ("multiline", "First line\nSecond line\nThird line"),
                             ("wrapped-unicode", "界🙂e\u0301 " * 26), ("exact-width-unicode", "界" * editor_columns)):
@@ -679,7 +679,7 @@ def workflow_case(ctx):
                 width = int(event[2].split("x")[0])
         physical = []
         for line in visible.splitlines():
-            assert all(32 <= ord(char) < 127 or char in "╭╮╰╯│┃╷╵█▀▄─·›…←→↑↓" for char in line), \
+            assert all(32 <= ord(char) < 127 or char in "│┃╷╵█▀▄─·›…←→↑↓" for char in line), \
                 "Waveform fixture contains a character with an unverified cell width"
             physical.extend([line[start:start + width] for start in range(0, len(line), width)] or [""])
         indices = [index for index, row in enumerate(physical) if "┃" in row]
@@ -987,7 +987,7 @@ def wide_case(ctx):
     ctx.mark(terminal, "wide-actions", result)
     terminal.send(b"\r")
     visible = ctx.wait(terminal, "› History")
-    assert draft in visible and "Open a previous recording" in visible, "More actions lost draft context"
+    assert draft in visible and "Settings" in visible, "More actions lost form context"
     ctx.mark(terminal, "wide-more", result)
     terminal.send(b"\x1b")
     ctx.wait(terminal, "› More actions…")

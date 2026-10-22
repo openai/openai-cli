@@ -13,9 +13,9 @@ import (
 // Date headings replace repeated metadata. Keep each prompt on one selectable row.
 func (m *audioWorkbench) historyView(now time.Time) tea.View {
 	lines := []string{m.strong().Render("  History")}
-	footer := []string{"  " + m.keyHint("Enter open · Esc back")}
+	footer := []string{"  " + m.muted().Render("Enter open · Esc back")}
 	if len(m.entries) == 0 {
-		return m.panelView(append(lines, "  No saved audio yet."), footer...)
+		return tea.NewView(m.fitAudio(append(append(lines, "  No saved audio yet."), footer...)))
 	}
 	choice := max(0, min(m.choice, len(m.entries)-1))
 	selected := m.entries[choice]
@@ -24,8 +24,7 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 		if selected.Bytes > 0 {
 			metadata += " · " + audioFileSize(selected.Bytes)
 		}
-		footer = append([]string{"  " + m.muted().Render(readable.Text(metadata))}, footer...)
-		lines = append(lines, m.divider())
+		footer = append([]string{"", "  " + m.muted().Render(readable.Text(metadata))}, footer...)
 	}
 
 	type row struct {
@@ -45,10 +44,7 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 		}
 		rows = append(rows, row{entry: i, date: date})
 	}
-	budget := max(1, m.height-1-m.frameRows()-len(lines)-len(footer))
-	if m.framed() {
-		budget = min(10, budget)
-	}
+	budget := max(1, m.height-1-len(lines)-len(footer))
 	start := max(0, selectedRow-budget+1)
 	// Scrolling within a group needs a replacement date heading.
 	if start > 0 && rows[start].entry >= 0 && budget > 1 {
@@ -69,7 +65,7 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 			prompt = "Generated speech"
 		}
 		if m.width < 60 {
-			lines = append(lines, m.selectedRow(prompt, r.entry == choice, m.audioWidth()))
+			lines = append(lines, m.label(prompt, r.entry == choice))
 			continue
 		}
 		stamp := "--:--"
@@ -80,9 +76,9 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 		promptWidth := max(1, width-7)
 		prompt = ansi.Truncate(prompt, promptWidth, "…")
 		padding := strings.Repeat(" ", max(2, width-ansi.StringWidth(prompt)-len(stamp)))
-		lines = append(lines, m.selectedRow(prompt+padding+m.muted().Render(stamp), r.entry == choice, m.audioWidth()))
+		lines = append(lines, m.label(prompt+padding+m.muted().Render(stamp), r.entry == choice))
 	}
-	return m.panelView(lines, footer...)
+	return tea.NewView(m.fitAudio(append(lines, footer...)))
 }
 
 func audioHistoryDate(created, now time.Time) string {

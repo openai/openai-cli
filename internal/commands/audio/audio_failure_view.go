@@ -64,7 +64,7 @@ func (m *audioWorkbench) failureIndent() string {
 	return "  "
 }
 
-func (m *audioWorkbench) failureDetailHeight() int { return max(1, m.height-5-m.frameRows()) }
+func (m *audioWorkbench) failureDetailHeight() int { return max(1, m.height-5) }
 
 func (m *audioWorkbench) failureView() tea.View {
 	rows := m.failureDetailRows()
@@ -74,8 +74,8 @@ func (m *audioWorkbench) failureView() tea.View {
 	for _, row := range rows[start:min(len(rows), start+height)] {
 		lines = append(lines, m.failureIndent()+row)
 	}
-	lines = append(lines, "")
-	return m.panelView(lines, "  "+m.keyHint("↑↓ scroll · Esc back"))
+	lines = append(lines, "", "  "+m.muted().Render("↑↓ scroll · Esc back"))
+	return tea.NewView(m.fitAudio(lines))
 }
 
 func (m *audioWorkbench) recoveryView() tea.View {
@@ -88,14 +88,14 @@ func (m *audioWorkbench) recoveryView() tea.View {
 		lines = append(lines, m.failureIndent()+m.muted().Render(row))
 	}
 	// Keep every action reachable when long guidance consumes a small terminal.
-	budget := m.height - 2 - m.frameRows() - len(items)
+	budget := m.height - 2 - len(items)
 	if len(lines) > budget {
 		lines = lines[:max(1, budget)]
 		lines[len(lines)-1] = ansi.Truncate(lines[len(lines)-1], max(1, m.audioWidth()-1), "") + "…"
 	}
 	lines = append(lines, "")
 	for index, item := range items {
-		lines = append(lines, m.selectedRow(item, m.recoveryChoice == index, m.audioWidth()))
+		lines = append(lines, m.label(item, m.recoveryChoice == index))
 	}
-	return m.panelView(lines)
+	return tea.NewView(m.fitAudio(lines))
 }

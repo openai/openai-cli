@@ -102,7 +102,7 @@ func TestAudioMoreActionsPreservesEveryActionAtCompactSizes(t *testing.T) {
 					view := ansi.Strip(m.moreView().Content)
 					require.Contains(t, view, "› "+item)
 					require.NotContains(t, view, "Back to form")
-					require.Contains(t, view, "Esc back")
+					require.Contains(t, view, "[Esc] Back")
 					require.LessOrEqual(t, len(strings.Split(view, "\n")), height-1)
 				}
 			}
@@ -118,22 +118,14 @@ func TestAudioMoreActionsKeepsDraftContextAndEscapePreservesResult(t *testing.T)
 	m.modal = "more"
 	view := ansi.Strip(m.View().Content)
 	require.Contains(t, view, m.input.Value())
+	require.Contains(t, view, "Text to speech")
 	require.Contains(t, view, "More actions")
-	require.Contains(t, view, "Open a previous recording and its settings.")
+	require.Contains(t, view, "Settings")
+	require.Contains(t, view, m.settings.Model)
 	require.Equal(t, 1, strings.Count(view, "›"), "only the menu may show a focus marker")
 	require.NotContains(t, view, "Back to form")
 	audioReviewKey(m, tea.KeyEscape)
 	require.Empty(t, m.modal)
 	require.Equal(t, "Keep this draft while browsing actions.", m.input.Value())
 	require.Same(t, &r, m.result)
-}
-
-func TestAudioMoreActionsHandlesExpiredFailureSelection(t *testing.T) {
-	m := audioReviewModel(t)
-	m.modal = "more"
-	m.moreChoice = 5 // Last error can disappear after successful work completes.
-	view := ansi.Strip(m.View().Content)
-	require.Contains(t, view, "› Help")
-	require.Contains(t, view, "Read the audio controls and keyboard shortcuts.")
-	require.Contains(t, view, "Esc back")
 }

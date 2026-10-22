@@ -198,13 +198,16 @@ Roomy result views leave one blank row between the waveform and playback time.
 
 ## Layout
 
-Roomy terminals use one quiet panel, following the command explorer's visual hierarchy.
-The panel contains the draft and controls. Keyboard guidance sits outside it.
-Headings use bold text. Focused choices use a blue marker, blue text, and a subtle selected background.
-Text editors retain the terminal background. Their active labels use blue text without bold styling.
-Keyboard names use blue text; their explanations and metadata use secondary text.
-The panel stays within 96 columns. Compact terminals use the existing unframed layout.
-Generate, History, and More actions share one row when they fit.
-Left and Right move across that row. Up and Down retain their existing behavior.
-More actions retains a prompt summary and explains the selected action below the list.
-All menus retain their drafts when dismissed.
+Field labels use secondary text color. Values retain normal terminal text.
+More actions reuses the form layout when space permits, keeping the draft and settings visible.
+Compact screens prioritize the selected action and return guidance.
+Roomy playback uses light waveform strokes and a distinct progress marker.
+Play and Save share one row when they fit. The next row shows the suggested export folder.
+After export, that row shows the actual saved path instead.
+Filename and Save to keep their value columns while editing.
+
+Wide terminals use a reading column of at most 96 cells.
+Instructions follows the composer, separately from technical settings.
+Generate, History and More actions share a row when they fit.
+Left and Right move between these actions. Up and Down retain their existing behavior.
+Compact terminals retain stacked controls. Keyboard guidance uses secondary text styling.
