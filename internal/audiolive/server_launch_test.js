@@ -4,7 +4,7 @@ const vm = require("node:vm");
 
 // The Go test supplies the actual private file emitted by companion.launchFile.
 const html = fs.readFileSync(process.argv[2], "utf8");
-const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gi)];
 assert.equal(scripts.length, 1, "launch page must contain one inline script");
 assert.doesNotMatch(html, /\b(?:src|href|action)\s*=|http-equiv\s*=/i);
 const staticPage = html.replace(scripts[0][0], "");
