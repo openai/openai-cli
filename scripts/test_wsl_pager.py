@@ -295,6 +295,51 @@ class AcceptanceTests(unittest.TestCase):
                 with patch.object(pilot, "IMAGE_SHA256", pilot.hashlib.sha256(b"synthetic image").hexdigest()):
                     self.assertEqual(pilot.download_image(Path(directory) / "good-image", time.monotonic() + 5), 15)
 
+    def test_image_redirects_stay_on_https_mirror(self):
+        handler = pilot.HTTPSOnly()
+        request = pilot.urllib.request.Request(pilot.IMAGE_URL)
+        allowed = pilot.IMAGE_URL + "?mirror=1"
+        redirected = handler.redirect_request(request, None, 302, "Found", {}, allowed)
+        self.assertEqual(redirected.full_url, allowed)
+        for url in ("http://mirrors.edge.kernel.org/ubuntu-releases/image.wsl",
+                    "https://mirrors.edge.kernel.org.attacker.example/ubuntu-releases/image.wsl",
+                    "https://attacker.example/image.wsl"):
+            with self.subTest(url=url), self.assertRaisesRegex(RuntimeError, "Unexpected Ubuntu image redirect"):
+                handler.redirect_request(request, None, 302, "Found", {}, url)
+
+    def test_staged_image_is_verified_without_network(self):
+        data = b"synthetic staged Ubuntu image"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staged = root / "staged.wsl"
+            staged.write_bytes(data)
+            with patch.object(pilot.urllib.request, "build_opener", side_effect=AssertionError("No network")), \
+                    patch.object(pilot, "IMAGE_SHA256", pilot.hashlib.sha256(data).hexdigest()):
+                destination = root / "owned.wsl"
+                self.assertEqual(pilot.download_image(destination, time.monotonic() + 5,
+                                                     staged_image=staged), len(data))
+                self.assertEqual(destination.read_bytes(), data)
+                self.assertEqual(staged.read_bytes(), data)
+                with self.assertRaises(FileExistsError):
+                    pilot.download_image(destination, time.monotonic() + 5, staged_image=staged)
+                staged.write_bytes(b"corrupted artifact")
+                with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
+                    pilot.download_image(root / "corrupt.wsl", time.monotonic() + 5,
+                                         staged_image=staged)
+                with patch.object(pilot, "IMAGE_LIMIT", 3):
+                    with self.assertRaisesRegex(RuntimeError, "download limit"):
+                        pilot.download_image(root / "large.wsl", time.monotonic() + 5,
+                                             staged_image=staged)
+                with self.assertRaisesRegex(RuntimeError, "timed out"):
+                    pilot.download_image(root / "late.wsl", time.monotonic() - 1,
+                                         staged_image=staged)
+                with self.assertRaisesRegex(RuntimeError, "regular file"):
+                    pilot.download_image(root / "missing.wsl", time.monotonic() + 5,
+                                         staged_image=root / "absent")
+                with self.assertRaisesRegex(RuntimeError, "regular file"):
+                    pilot.download_image(root / "directory.wsl", time.monotonic() + 5,
+                                         staged_image=root)
+
     def test_late_download_eof_is_failure(self):
         clock = [0.0]
 
