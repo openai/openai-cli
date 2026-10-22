@@ -3,8 +3,18 @@
 ## [1.40.3](https://github.com/openai/openai-cli/compare/v1.40.2...v1.40.3) (2026-10-22)
 
 
+### Features
+
+* **audio:** improve speech playback, seeking, history, and saving. Add opt-in live microphone and browser-tab translation. ([#575](https://github.com/openai/openai-cli/pull/575)) ([7cd714d](https://github.com/openai/openai-cli/commit/7cd714d74c83bccdd07b8982912a85485a786d0a))
+* **explore:** add local command search with `openai explore` and optional shell prompt insertion. ([#580](https://github.com/openai/openai-cli/pull/580)) ([a740376](https://github.com/openai/openai-cli/commit/a74037654d66266e566a7a34730c27f7e5e1419c))
+* **images:** keep generation forms, progress, and saved images in a persistent terminal workspace. Retained gallery metadata uses version 2; older binaries need a fresh Terminal tab with the normal text font. ([#574](https://github.com/openai/openai-cli/pull/574)) ([b868ab4](https://github.com/openai/openai-cli/commit/b868ab40449d99e5ad336d5d47900969eafbfaba))
+* **updates:** show quiet update notices during eligible interactive startup. Updates remain manual. ([#581](https://github.com/openai/openai-cli/pull/581)) ([46f130b](https://github.com/openai/openai-cli/commit/46f130b4aac0183c7623f56f9958bc9bbfc2cc36))
+* **webhooks:** add guided endpoint creation, endpoint inspection, and delivery recovery guidance. ([#404](https://github.com/openai/openai-cli/pull/404)) ([16f624b](https://github.com/openai/openai-cli/commit/16f624b4f22535f9559ad1249926b9da6b7568d5))
+
+
 ### Chores
 
+* **agents:** prepare the session runtime. This adds no public Agents commands or workspace UI. ([#396](https://github.com/openai/openai-cli/pull/396)) ([70c7452](https://github.com/openai/openai-cli/commit/70c745204954412f83b230e0b54d8ef253be1ba7))
 * **deps:** update openai-go to v3.85.1 ([#584](https://github.com/openai/openai-cli/issues/584)) ([44f4156](https://github.com/openai/openai-cli/commit/44f41561b93f67f9f3a84c6896d6644e474ed221))
 
 
