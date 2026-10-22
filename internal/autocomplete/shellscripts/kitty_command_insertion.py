@@ -8,7 +8,6 @@ Use this kitten from an explicitly configured open-actions.conf rule:
 import os
 import re
 import stat
-from contextlib import ExitStack
 
 from kittens.tui.handler import result_handler
 
@@ -28,34 +27,39 @@ def request_insertion(uri, window_id):
         return False
     session, generation, identifier = match.groups()
     try:
-        # Each descriptor gains an owner immediately. ExitStack attempts every
-        # close even when another close fails, including validation failures.
-        with ExitStack() as descriptors:
-            uid = os.getuid()
-            directory = os.open(
-                f"/tmp/openai-click-{uid}.{session}",
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK,
-            )
-            descriptors.callback(os.close, directory)
+        uid = os.getuid()
+        directory = os.open(
+            f"/tmp/openai-click-{uid}.{session}",
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK,
+        )
+        # Each descriptor has its own cleanup scope. Outer scopes still close
+        # their descriptors when validation or another descriptor's close fails.
+        try:
             if not _private(os.fstat(directory), stat.S_ISDIR, 0o700, uid):
                 return False
             ready = os.open("ready", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-            descriptors.callback(os.close, ready)
-            info = os.fstat(ready)
-            if not _private(info, stat.S_ISREG, 0o600, uid) or info.st_nlink != 1 or info.st_size > 256:
-                return False
-            state = _READY.fullmatch(os.read(ready, 257))
-            if (state is None or state[2].decode("ascii") != generation
-                    or int(state[3]) != os.getpid() or int(state[4]) != window_id):
-                return False
-            requests = os.open("requests", os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-            descriptors.callback(os.close, requests)
-            if not _private(os.fstat(requests), stat.S_ISFIFO, 0o600, uid):
-                return False
-            # The shell rechecks this epoch and generation inside its active editor.
-            # One short write is atomic. A full FIFO or absent reader fails immediately.
-            message = state[1] + b" " + state[2] + b" " + identifier.encode("ascii") + b"\n"
-            return os.write(requests, message) == len(message)
+            try:
+                info = os.fstat(ready)
+                if not _private(info, stat.S_ISREG, 0o600, uid) or info.st_nlink != 1 or info.st_size > 256:
+                    return False
+                state = _READY.fullmatch(os.read(ready, 257))
+                if (state is None or state[2].decode("ascii") != generation
+                        or int(state[3]) != os.getpid() or int(state[4]) != window_id):
+                    return False
+                requests = os.open("requests", os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+                try:
+                    if not _private(os.fstat(requests), stat.S_ISFIFO, 0o600, uid):
+                        return False
+                    # The shell rechecks this epoch and generation inside its active editor.
+                    # One short write is atomic. A full FIFO or absent reader fails immediately.
+                    message = state[1] + b" " + state[2] + b" " + identifier.encode("ascii") + b"\n"
+                    return os.write(requests, message) == len(message)
+                finally:
+                    os.close(requests)
+            finally:
+                os.close(ready)
+        finally:
+            os.close(directory)
     except (OSError, AttributeError):
         return False
 

@@ -9,7 +9,7 @@ import string
 import sys
 import types
 import unittest
-from unittest import mock
+import unittest.mock
 
 sys.dont_write_bytecode = True
 handler = types.ModuleType("kittens.tui.handler")
@@ -163,8 +163,8 @@ class AdapterTest(unittest.TestCase):
                 raise OSError("synthetic close failure")
 
         try:
-            with mock.patch.object(adapter.os, "open", side_effect=track_open), \
-                    mock.patch.object(adapter.os, "close", side_effect=track_close):
+            with unittest.mock.patch.object(adapter.os, "open", side_effect=track_open), \
+                    unittest.mock.patch.object(adapter.os, "close", side_effect=track_close):
                 result = self.request(window=window)
             self.assertEqual(closed, list(reversed(opened)))
             for descriptor in opened:
