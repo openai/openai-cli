@@ -295,6 +295,18 @@ class AcceptanceTests(unittest.TestCase):
                 with patch.object(pilot, "IMAGE_SHA256", pilot.hashlib.sha256(b"synthetic image").hexdigest()):
                     self.assertEqual(pilot.download_image(Path(directory) / "good-image", time.monotonic() + 5), 15)
 
+    def test_image_redirects_stay_on_https_mirror(self):
+        handler = pilot.HTTPSOnly()
+        request = pilot.urllib.request.Request(pilot.IMAGE_URL)
+        allowed = pilot.IMAGE_URL + "?mirror=1"
+        redirected = handler.redirect_request(request, None, 302, "Found", {}, allowed)
+        self.assertEqual(redirected.full_url, allowed)
+        for url in ("http://mirrors.edge.kernel.org/ubuntu-releases/image.wsl",
+                    "https://mirrors.edge.kernel.org.attacker.example/ubuntu-releases/image.wsl",
+                    "https://attacker.example/image.wsl"):
+            with self.subTest(url=url), self.assertRaisesRegex(RuntimeError, "Unexpected Ubuntu image redirect"):
+                handler.redirect_request(request, None, 302, "Found", {}, url)
+
     def test_staged_image_is_verified_without_network(self):
         data = b"synthetic staged Ubuntu image"
         with tempfile.TemporaryDirectory() as directory:

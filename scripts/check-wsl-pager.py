@@ -29,7 +29,8 @@ import urllib.error
 import urllib.request
 
 
-IMAGE_URL = "https://releases.ubuntu.com/24.04.5/ubuntu-24.04.5-wsl-amd64.wsl"
+# Use the kernel.org Ubuntu mirror: the Canonical origin repeatedly stalls in CI.
+IMAGE_URL = "https://mirrors.edge.kernel.org/ubuntu-releases/24.04.5/ubuntu-24.04.5-wsl-amd64.wsl"
 # Canonical SHA256SUMS and Microsoft/WSL f72a0e04 DistributionInfo.json agree.
 IMAGE_SHA256 = "bb415d824822c4b878125729af451a5d18fb13d1cf5cbed9a7393ad64ac6039e"
 IMAGE_LIMIT = 512 * 1024 * 1024
@@ -394,7 +395,7 @@ class Commands:
 
 class HTTPSOnly(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, message, headers, newurl):
-        if not newurl.startswith("https://releases.ubuntu.com/"):
+        if not newurl.startswith("https://mirrors.edge.kernel.org/ubuntu-releases/"):
             raise RuntimeError("Unexpected Ubuntu image redirect")
         return super().redirect_request(request, fp, code, message, headers, newurl)
 
