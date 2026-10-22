@@ -1,30 +1,11 @@
 package terminal
 
 import (
-	"fmt"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 )
-
-func TestImagePickerInlineReceiptsKeepCompleteRecordsAndReflow(t *testing.T) {
-	records := []string{fmt.Sprintf("Saved image: %+q", "/synthetic/雪/first.png"), fmt.Sprintf("Saved image: %+q", "/synthetic/"+strings.Repeat("long-path-", 40)+"/last.png")}
-	for _, width := range []int{1, 7, 40, 80} {
-		frame := InlineASCIIRecords(records, width)
-		require.NotContains(t, frame, "\n")
-		require.NotContains(t, frame, "雪", "receipt layout must use unambiguous ASCII cells")
-		first := -1
-		for _, record := range records {
-			index := strings.Index(frame, record)
-			require.Greater(t, index, first, "full receipt records must remain contiguous and ordered")
-			first = index
-		}
-		require.Contains(t, frame, `\u96ea`)
-	}
-	require.Empty(t, InlineASCIIRecords(records, 0))
-	require.Empty(t, InlineASCIIRecords(nil, 40))
-}
 
 func TestImagePickerInlineFrameHasOneLogicalLine(t *testing.T) {
 	for _, width := range []int{1, 7, 40, 80, 120} {

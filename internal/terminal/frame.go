@@ -46,34 +46,6 @@ func InlineFrame(content string, width int) string {
 	return frame.String()
 }
 
-// InlineASCIIRecords emits complete escaped ASCII records as one soft-wrapped
-// logical line. It returns to that line's visible origin without hard newlines.
-func InlineASCIIRecords(records []string, width int) string {
-	if width < 1 || len(records) == 0 {
-		return ""
-	}
-	var frame strings.Builder
-	frame.WriteString("\r" + ansi.EraseScreenBelow)
-	rows := 0
-	for i, record := range records {
-		if i > 0 {
-			frame.WriteString(" \r")
-		}
-		frame.WriteString(record)
-		rows += max(1, (len(record)+width-1)/width)
-		if remainder := len(record) % width; remainder > 0 {
-			frame.WriteString(strings.Repeat(" ", width-remainder))
-		} else if record == "" {
-			frame.WriteString(strings.Repeat(" ", width))
-		}
-	}
-	frame.WriteByte('\r')
-	if rows > 1 {
-		frame.WriteString(ansi.CursorUp(rows - 1))
-	}
-	return frame.String()
-}
-
 // Sequence counts a complete printable cluster, including ASCII-led keycap emoji.
 // text must be nonempty. ANSI's
 // sequence decoder alone treats the leading digit as a separate byte. Taking
