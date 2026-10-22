@@ -64,6 +64,11 @@ def run(binary, output, case):
             width, height = 96, 28
             def frame():
                 return screen(bytes(process.streams['stdout']), width, height)
+            if case == 'apple-terminal':
+                # A fresh, wrapping PTY starts at row 1. Two spaces from the
+                # final column leave the startup probe at row 2, column 2.
+                process.wait_for(lambda: b'\x1b[6n' in process.streams['stdout'])
+                process.send(b'\x1b[2;2R')
             process.ready()
             assert (b'$p' not in process.streams['stdout']) if case=='apple-terminal' else all(('\x1b[?%d$p' % mode).encode() in process.streams['stdout'] for mode in MODES)
             if case != 'unknown-terminal':
@@ -73,7 +78,7 @@ def run(binary, output, case):
             process.submit('SYNTHETIC mouse cleanup')
             process.wait_for(lambda: len(api.requests) == 1)
             api.gates[0].set()
-            process.wait_for(lambda: b'All images saved.' in frame() and len(saved(home)) == 1)
+            process.wait_for(lambda: len(saved(home)) == 1 and b'Saved in' in frame() and b'Ctrl+G generate' in frame())
             active = mouse_state(bytes(process.streams['stdout']), original)
             owned = case not in ('unknown-terminal', 'inherited-tracking','apple-terminal')
             assert active[1000] == owned
@@ -84,7 +89,7 @@ def run(binary, output, case):
             if case == 'resize':
                 for width, height in [(40, 12), (96, 28)]:
                     fcntl.ioctl(process.fd, termios.TIOCSWINSZ, struct.pack('HHHH', height, width, 0, 0))
-                    process.wait_for(lambda: b'Create image' in frame() and b'[Ctrl+G] Generate' in frame())
+                    process.wait_for(lambda: b'Create image' in frame() and b'Ctrl+G generate' in frame())
                     process.pump(0.15)
             if case=='open-full':
                 process.send(b'\x1b[Z');process.pump(0.2)
@@ -99,7 +104,7 @@ def run(binary, output, case):
                 process.send(scroll)
             for _ in range(3):
                 view_images(process)
-                process.wait_for(lambda: b'[Esc] Back' in frame())
+                process.wait_for(lambda: b'Esc back' in frame())
                 if owned:
                     process.send(scroll)
                 process.send(b'\x1b')
@@ -115,7 +120,7 @@ def run(binary, output, case):
             if case == 'generation-failure':
                 api.failed_requests.add(2)
                 api.gates[1].set()
-                process.wait_for(lambda: b'Request failed.' in frame())
+                process.wait_for(lambda: b'Authentication failed' in frame() and b'Ctrl+G generate' in frame())
                 assert len(saved(home)) == 1
             expected = 130
             if case == 'print-only':
@@ -193,7 +198,7 @@ def repeated_shell(binary, output):
                 process.submit('SYNTHETIC scrolling')
                 process.wait_for(lambda: len(api.requests) == round_number)
                 api.gates[round_number - 1].set()
-                process.wait_for(lambda: b'All images saved.' in screen(bytes(process.streams['stdout'])) and len(saved(home)) == round_number)
+                process.wait_for(lambda: len(saved(home)) == round_number and b'Saved in' in screen(bytes(process.streams['stdout'])) and b'Ctrl+G generate' in screen(bytes(process.streams['stdout'])))
                 assert mouse_state(bytes(process.streams['stdout']), original)[1000]
                 burst = b'\x1b[<64;10;20M\x1b[<65;10;20M' * 20
                 for _ in range(3):
