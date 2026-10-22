@@ -6,7 +6,7 @@
   <p>
     <a href="#installation"><strong>Install</strong></a>
     ·
-    <a href="https://developers.openai.com/api/reference/overview">API reference</a>
+    <a href="docs/cli-reference.md">CLI reference</a>
     ·
     <a href="#guides">Guides</a>
   </p>
@@ -222,6 +222,12 @@ In PowerShell, press Enter after `openai images generate` to open the picker.
 | Test webhook handling | [Webhooks](docs/webhook-testing.md) |
 | Parse results in scripts | [Output formats](docs/readable-output.md) |
 | Configure headers, mTLS, and file input | [CLI reference](docs/cli-reference.md) |
+
+> [!TIP]
+> **Managing OpenAI resources with Terraform?** Use the official
+> [OpenAI Terraform provider](https://github.com/openai/terraform-provider-openai)
+> to manage projects, service accounts, rate limits, and other supported resources
+> as infrastructure as code.
 
 ## Development
 
