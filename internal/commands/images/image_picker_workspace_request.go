@@ -127,7 +127,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		if msg.revision == w.previewRevision && msg.index >= 0 && msg.index < len(w.images) && (msg.inline || msg.index == w.selected) {
 			w.previewPending = false
 			if msg.inline {
-				w.replaceImageRows(msg.index, msg.rows, msg.columns, msg.protocol)
+				w.replaceImageRows(msg)
 				draw(false)
 
 				return true, nil

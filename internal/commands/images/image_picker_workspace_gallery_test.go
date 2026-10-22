@@ -59,7 +59,7 @@ func TestImagePickerGalleryPreservesAnchorWhenEarlierRowsChange(t *testing.T) {
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	w.scroll(4)
 	relative := w.offset - w.galleryStarts[1]
-	w.replaceImageRows(0, []string{"shorter preview"}, 1, "blocks")
+	w.replaceImageRows(imagePickerExpandedRows{index: 0, rows: []string{"shorter preview"}, columns: 1, protocol: "blocks"})
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	require.Equal(t, relative, w.offset-w.galleryStarts[1])
 	require.Equal(t, 1, w.selected)
@@ -94,7 +94,7 @@ func TestImagePickerGalleryFindsVisibleOversizedPreview(t *testing.T) {
 	w.appendImage(imagePickerWorkspaceImage{columns: 16, rows: []string{"fits"}})
 	w.appendImage(imagePickerWorkspaceImage{columns: 64, protocol: "font", rows: []string{"cached wide row"}})
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-	require.Equal(t, 1, w.inlineResizeIndex(m.width))
+	require.Equal(t, 1, w.inlineResizeIndex(interactiveImageSize{width: m.width, height: m.height}))
 	require.NotContains(t, strings.Join(w.painted, "\n"), "cached wide row")
 	require.Equal(t, []string{"cached wide row"}, w.images[1].rows)
 }
@@ -107,7 +107,7 @@ func TestImagePickerGalleryClampsAnchorWhenItsOwnPreviewShrinks(t *testing.T) {
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 	w.scroll(20)
 	require.Equal(t, 0, w.selected)
-	w.replaceImageRows(0, []string{"smaller preview"}, 1, "font")
+	w.replaceImageRows(imagePickerExpandedRows{index: 0, rows: []string{"smaller preview"}, columns: 1, protocol: "font"})
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	require.Equal(t, 0, w.galleryImageAt(w.offset))
 	require.Contains(t, strings.Join(w.painted, "\n"), "smaller preview")
@@ -147,9 +147,9 @@ func TestImagePickerGalleryJumpRevealsAnotherResizeCandidate(t *testing.T) {
 	w.appendImage(imagePickerWorkspaceImage{columns: 64, protocol: "font", rows: []string{"wide native preview"}})
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 	w.selectImage(1)
-	require.Equal(t, -1, w.inlineResizeIndex(m.width), "the old viewport cannot reveal the next resize candidate")
+	require.Equal(t, -1, w.inlineResizeIndex(interactiveImageSize{width: m.width, height: m.height}), "the old viewport cannot reveal the next resize candidate")
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
-	require.Equal(t, 2, w.inlineResizeIndex(m.width), "preparation must inspect the viewport after applying the jump")
+	require.Equal(t, 2, w.inlineResizeIndex(interactiveImageSize{width: m.width, height: m.height}), "preparation must inspect the viewport after applying the jump")
 }
 
 func TestImagePickerGalleryPagesByItsTinyViewport(t *testing.T) {

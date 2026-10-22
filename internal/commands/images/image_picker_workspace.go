@@ -136,7 +136,11 @@ func (w *imagePickerWorkspace) saved(ctx context.Context, files []imageoutput.Sa
 				rows = nil
 			}
 		}
-		w.send(imagePickerWorkspaceImage{file: file, protocol: protocol, rows: rows, columns: columns})
+		entry := imagePickerWorkspaceImage{file: file, protocol: protocol, rows: rows, columns: columns}
+		if columns < 1 {
+			entry.unavailableSize = &interactiveImageSize{width, height, cw, ch}
+		}
+		w.send(entry)
 	}
 	return nil
 }

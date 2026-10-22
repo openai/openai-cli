@@ -61,7 +61,7 @@ func TestImagePickerResizePreparationPreservesUnsafeFontFailure(t *testing.T) {
 			}
 			return nil, "font", rollback
 		}
-		_, _, _, err := imagePickerPrepareResize(ctx, nil, entry, interactiveImageSize{80, 28, 8, 16}, true, prepare)
+		_, err := imagePickerPrepareResize(ctx, nil, entry, interactiveImageSize{80, 28, 8, 16}, true, prepare)
 		require.ErrorIs(t, err, rollback)
 		require.False(t, imagePickerSafePreviewFailure(err))
 		if cancelFirst {
@@ -109,7 +109,7 @@ func TestImagePickerReplacingResizedRowsPreservesLaterImages(t *testing.T) {
 	w.appendImage(imagePickerWorkspaceImage{rows: []string{"old one", "old two"}})
 	w.appendImage(imagePickerWorkspaceImage{rows: []string{"other image"}})
 	w.rows = append(w.rows, "retained diagnostic")
-	w.replaceImageRows(0, []string{"resized"}, 16, "blocks")
+	w.replaceImageRows(imagePickerExpandedRows{index: 0, rows: []string{"resized"}, columns: 16, protocol: "blocks"})
 	require.Equal(t, 16, w.images[0].columns)
 	require.Equal(t, "other image", w.images[1].rows[0])
 	require.Equal(t, "retained diagnostic", w.rows[len(w.rows)-1])
@@ -134,4 +134,90 @@ func TestImagePickerBackCancelsPendingPreviewForReentry(t *testing.T) {
 	require.ErrorIs(t, ctx.Err(), context.Canceled)
 	require.False(t, w.previewPending, "returning to this image must permit a new worker")
 	require.False(t, w.expanded)
+}
+
+func TestImagePickerInlineResizeRecoversAfterUnavailableViewport(t *testing.T) {
+	for name, small := range map[string]interactiveImageSize{
+		"width":  {8, 28, 8, 16},
+		"height": {40, 4, 8, 16},
+	} {
+		t.Run(name, func(t *testing.T) {
+			entry := recoverySavedImage(t)
+			entry.rows, entry.columns, entry.inlineOffset = []string{"cached pixels"}, 64, 7
+			w := &imagePickerWorkspace{images: []imagePickerWorkspaceImage{entry}}
+			calls := 0
+			prepare := func(context.Context, *os.File, image.Image, string, int) ([]string, string, error) {
+				calls++
+				return []string{"recovered pixels"}, "font", nil
+			}
+			result, err := imagePickerPrepareResize(t.Context(), nil, entry, small, false, prepare)
+			require.NoError(t, err)
+			result.size = small
+			w.replaceImageRows(result)
+			require.Zero(t, calls, "a viewport that cannot fit pixels must not invoke the encoder")
+			require.Equal(t, entry.rows, w.images[0].rows)
+			require.Equal(t, entry.columns, w.images[0].columns)
+			require.Equal(t, entry.inlineOffset, w.images[0].inlineOffset)
+			for range 3 {
+				require.Equal(t, -1, w.inlineResizeIndex(small), "progress ticks must not retry the same unusable viewport")
+			}
+			large := small
+			if name == "width" {
+				large.width = 96
+			} else {
+				large.height = 28
+			}
+			require.Equal(t, 0, w.inlineResizeIndex(large), "enlarging either dimension must retry the saved image")
+			result, err = imagePickerPrepareResize(t.Context(), nil, w.images[0], large, false, prepare)
+			require.NoError(t, err)
+			w.replaceImageRows(result)
+			require.Equal(t, 1, calls)
+			require.Equal(t, []string{"recovered pixels"}, w.images[0].rows)
+			require.Nil(t, w.images[0].unavailableSize)
+			require.Equal(t, -1, w.inlineResizeIndex(large), "a recovered preview must not keep encoding")
+		})
+	}
+}
+
+func TestImagePickerUnavailableViewportDoesNotBlockOtherImages(t *testing.T) {
+	size := interactiveImageSize{40, 12, 8, 16}
+	w := &imagePickerWorkspace{images: []imagePickerWorkspaceImage{
+		{unavailableSize: &size, rows: []string{"cached"}, columns: 64},
+		{rows: []string{"other"}, columns: 64},
+	}, galleryStarts: []int{0, 2}, displayRows: make([]string, 4), viewportRows: 4}
+	require.Equal(t, 1, w.inlineResizeIndex(size))
+	changed := size
+	changed.cellHeight++
+	require.Equal(t, 0, w.inlineResizeIndex(changed), "changed cell geometry can make a preview fit")
+}
+
+func TestImagePickerFailedPreviewDoesNotRetryAsViewportRecovery(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		entry := recoverySavedImage(t)
+		if disabled {
+			entry.protocol = ""
+		} else {
+			require.NoError(t, os.Remove(entry.file.Path))
+		}
+		size := interactiveImageSize{80, 28, 8, 16}
+		result, err := imagePickerPrepareResize(t.Context(), nil, entry, size, false, nil)
+		require.NoError(t, err)
+		w := &imagePickerWorkspace{images: []imagePickerWorkspaceImage{entry}}
+		w.replaceImageRows(result)
+		require.Equal(t, -1, w.inlineResizeIndex(size))
+		size.width++
+		require.Equal(t, -1, w.inlineResizeIndex(size), "disabled or unreadable files must retain their existing failure behavior")
+	}
+}
+
+func TestImagePickerStaleViewportFailureCannotBlockCurrentPreview(t *testing.T) {
+	w := &imagePickerWorkspace{previewRevision: 4, images: []imagePickerWorkspaceImage{{rows: []string{"current pixels"}, columns: 32}}}
+	p := &imagePickerInline{workspace: w}
+	handled, _ := p.updateWorkspace(imagePickerExpandedRows{
+		revision: 3, index: 0, inline: true, viewportUnavailable: true,
+		size: interactiveImageSize{8, 28, 8, 16},
+	})
+	require.True(t, handled)
+	require.Nil(t, w.images[0].unavailableSize)
+	require.Equal(t, []string{"current pixels"}, w.images[0].rows)
 }

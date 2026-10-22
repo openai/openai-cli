@@ -26,16 +26,18 @@ type imagePickerWorkspaceImage struct {
 	rows                 []string
 	columns              int
 	offset, inlineOffset int
+	unavailableSize      *interactiveImageSize
 }
 
 type imagePickerExpandedRows struct {
-	revision uint64
-	index    int
-	size     interactiveImageSize
-	rows     []string
-	protocol string
-	inline   bool
-	columns  int
+	revision            uint64
+	index               int
+	size                interactiveImageSize
+	rows                []string
+	protocol            string
+	inline              bool
+	columns             int
+	viewportUnavailable bool
 }
 
 // FontError guarantees that no image glyphs were written and rollback succeeded.
@@ -120,7 +122,7 @@ func (p *imagePickerInline) prepareExpanded() {
 	expanded := w.expanded
 	index := w.selected
 	if !expanded {
-		index = w.inlineResizeIndex(p.model.width)
+		index = w.inlineResizeIndex(interactiveImageSize{width: p.model.width, height: p.model.height})
 		if index < 0 {
 			return
 		}
@@ -133,6 +135,12 @@ func (p *imagePickerInline) prepareExpanded() {
 		p.err = err
 		p.output.cancel()
 		return
+	}
+	if !expanded {
+		index = w.inlineResizeIndex(size)
+		if index < 0 {
+			return
+		}
 	}
 	entry := w.images[index]
 	if w.previewPending && w.previewIndex == index && w.previewSize == size && w.previewExpanded == expanded {
@@ -159,7 +167,7 @@ func (p *imagePickerInline) prepareExpanded() {
 		prepare = imagePickerPreviewRows
 	}
 	go func() {
-		rows, protocol, preparedColumns, failure := imagePickerPrepareResize(ctx, w.out, entry, size, expanded, prepare)
+		prepared, failure := imagePickerPrepareResize(ctx, w.out, entry, size, expanded, prepare)
 		if failure != nil {
 			w.previewErrorMu.Lock()
 			w.previewError = errors.Join(w.previewError, failure)
@@ -171,7 +179,8 @@ func (p *imagePickerInline) prepareExpanded() {
 			return
 		}
 		if ctx.Err() == nil {
-			w.send(imagePickerExpandedRows{revision: revision, index: index, size: size, rows: rows, protocol: protocol, inline: !expanded, columns: preparedColumns})
+			prepared.revision, prepared.index, prepared.size, prepared.inline = revision, index, size, !expanded
+			w.send(prepared)
 		}
 	}()
 }
@@ -355,17 +364,22 @@ func imagePickerSafePreviewFailure(err error) bool {
 	return err == context.Canceled || err == context.DeadlineExceeded
 }
 
-func (w *imagePickerWorkspace) replaceImageRows(index int, rows []string, columns int, protocol string) {
-	entry := &w.images[index]
-	entry.rows, entry.columns, entry.protocol = rows, columns, protocol
+func (w *imagePickerWorkspace) replaceImageRows(result imagePickerExpandedRows) {
+	entry := &w.images[result.index]
+	if result.viewportUnavailable {
+		// Retain the cached preview and its scroll anchor until the viewport fits.
+		entry.unavailableSize = &result.size
+		return
+	}
+	entry.unavailableSize = nil
+	entry.rows, entry.columns, entry.protocol = result.rows, result.columns, result.protocol
 	w.galleryRevision++
 }
 
-func imagePickerPrepareResize(ctx context.Context, out *os.File, entry imagePickerWorkspaceImage, size interactiveImageSize, expanded bool, prepare func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)) ([]string, string, int, error) {
-	rows := []string{"Preview unavailable. Open the saved file; no need to generate again."}
-	protocol, preparedColumns := entry.protocol, 0
+func imagePickerPrepareResize(ctx context.Context, out *os.File, entry imagePickerWorkspaceImage, size interactiveImageSize, expanded bool, prepare func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)) (imagePickerExpandedRows, error) {
+	result := imagePickerExpandedRows{protocol: entry.protocol, rows: []string{"Preview unavailable. Open the saved file; no need to generate again."}}
 	if entry.protocol == "" {
-		rows = []string{"Previews are disabled. The image is saved; open the saved file to view it."}
+		result.rows = []string{"Previews are disabled. The image is saved; open the saved file to view it."}
 	} else if img, err := terminalimage.ReadSavedMatching(ctx, entry.file.Path, entry.file.SHA256); err == nil {
 		viewport := size
 		viewport.width -= 5 // The shared helper also reserves its final column.
@@ -380,21 +394,28 @@ func imagePickerPrepareResize(ctx context.Context, out *os.File, entry imagePick
 		}
 		if columns > 0 {
 			if prepared, actual, err := prepare(ctx, out, img, entry.protocol, columns); err == nil {
-				rows, protocol, preparedColumns = prepared, actual, columns
+				result.rows, result.protocol, result.columns = prepared, actual, columns
 			} else if !imagePickerSafePreviewFailure(err) {
-				return nil, protocol, 0, err
+				return result, err
 			}
 		} else {
-			rows = []string{"Enlarge the terminal to view this image. Escape returns to the form."}
+			result.viewportUnavailable = true
+			result.rows = []string{"Enlarge the terminal to view this image. Escape returns to the form."}
 		}
 	}
 
-	return rows, protocol, preparedColumns, nil
+	return result, nil
 }
 
-// Resize only visible oversized previews, through the existing single worker.
-func (w *imagePickerWorkspace) inlineResizeIndex(width int) int {
-	needs := func(i int) bool { return w.images[i].columns > max(1, width-8) && len(w.images[i].rows) > 0 }
+// Resize visible oversized or viewport-blocked previews through the single worker.
+func (w *imagePickerWorkspace) inlineResizeIndex(size interactiveImageSize) int {
+	needs := func(i int) bool {
+		entry := &w.images[i]
+		if entry.unavailableSize != nil {
+			return *entry.unavailableSize != size
+		}
+		return entry.columns > max(1, size.width-8) && len(entry.rows) > 0
+	}
 	if needs(w.selected) {
 		return w.selected
 	}
