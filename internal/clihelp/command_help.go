@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/commandsuggest"
 	"github.com/urfave/cli/v3"
 )
 
@@ -81,7 +82,14 @@ func commandHelpAtWidth(command *cli.Command, invocation, path string, width int
 		out.WriteString(wrapDescription(description, "   ", width))
 	}
 	if path == "" {
-		fmt.Fprintf(&out, "\nSTART HERE\n   %s help setup\n   %s models list\n", invocation, invocation)
+		out.WriteString("\nSTART HERE\n")
+		if explore := command.Command("explore"); explore != nil && !explore.Hidden {
+			fmt.Fprintf(&out, "   %s\n", commandsuggest.Record(command, invocation+" explore"))
+			out.WriteString(wrapPlainDescription("Search commands and examples. No API key needed.", "      ", width))
+		}
+		fmt.Fprintf(&out, "   %s\n   %s\n",
+			commandsuggest.Record(command, invocation+" help setup"),
+			commandsuggest.Record(command, invocation+" models list"))
 	}
 	if len(content.Examples) > 0 {
 		out.WriteString("\nEXAMPLES:\n")
@@ -90,7 +98,7 @@ func commandHelpAtWidth(command *cli.Command, invocation, path string, width int
 				out.WriteByte('\n')
 			}
 			out.WriteString(wrapDescription(example.Description, "   ", width))
-			fmt.Fprintf(&out, "     %s %s\n", invocation, example.Command)
+			fmt.Fprintf(&out, "     %s\n", commandsuggest.Record(command, invocation+" "+example.Command))
 		}
 		if !supplied && (path == "files create" || path == "files upload") {
 			out.WriteString(wrapDescription("example.txt is the path to your existing file. Replace it with your file's path.", "   ", width))
@@ -98,7 +106,8 @@ func commandHelpAtWidth(command *cli.Command, invocation, path string, width int
 	}
 	if len(VisibleCommands(command)) > 0 {
 		out.WriteByte('\n')
-		out.WriteString(commandList(command, width))
+		out.WriteString(commandList(command, width, navigationSuggestions(command, invocation, path)))
+		// This is syntax guidance, not an executable command suggestion.
 		fmt.Fprintf(&out, "\nCommand help: %s COMMAND --help\n", name)
 	}
 	if flags := command.VisibleFlags(); len(flags) > 0 {
@@ -116,12 +125,12 @@ func commandHelpAtWidth(command *cli.Command, invocation, path string, width int
 			out.WriteByte('\n')
 			out.WriteString(wrapDescription(content.GlobalOptionsNote, "   ", width))
 		}
-		fmt.Fprintf(&out, "\n   Global option details: %s --help\n", invocation)
+		fmt.Fprintf(&out, "\n   Global option details: %s\n", commandsuggest.Record(command, invocation+" --help"))
 	}
 	if path == "" {
 		out.WriteString("\nAdd --help (or -h) to any command. Help needs no API key or internet.\n")
 	}
-	fmt.Fprintf(&out, "\nKey setup: %s help setup\n", invocation)
+	fmt.Fprintf(&out, "\nKey setup: %s\n", commandsuggest.Record(command, invocation+" help setup"))
 	return out.String()
 }
 

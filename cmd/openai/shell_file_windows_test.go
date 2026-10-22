@@ -989,8 +989,32 @@ func TestShellFileWindowsConsoleHelper(t *testing.T) {
 	observation.TimedOut = ctx.Err() != nil
 	observation.ForcedKill = observation.ForcedKill || observation.TimedOut
 	writeWindowsConsoleResult(t, observation)
+	if os.Getenv("OPENAI_CLI_TEST_CONSOLE_ACK") == "1" && !waitWindowsConsoleAcknowledgement(ctx) {
+		os.Exit(126) // A failed acknowledgement cannot resemble CLI cancellation.
+	}
 	if helperCode >= 0 {
 		os.Exit(helperCode)
 	}
 	os.Exit(code)
+}
+
+// Keep the Job Object open while a caller checks cleanup after the CLI exits.
+// Existing callers omit this opt-in and retain their single-byte input protocol.
+func waitWindowsConsoleAcknowledgement(ctx context.Context) bool {
+	acknowledged := make(chan bool, 1)
+	go func() {
+		var ack [1]byte
+		_, err := io.ReadFull(os.Stdin, ack[:])
+		acknowledged <- err == nil && ack[0] == 1
+	}()
+	timer := time.NewTimer(3 * time.Second)
+	defer timer.Stop()
+	select {
+	case accepted := <-acknowledged:
+		return accepted && ctx.Err() == nil
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return false
+	}
 }

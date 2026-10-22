@@ -56,7 +56,7 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
-          python3 -I scripts/castiron/custom_code_report.py trusted-report \
+          python3 -I generated/castiron/custom_code_report.py trusted-report \
             --repo "$RUNNER_TEMP/castiron-objects.git" \
             --base "$(git rev-parse HEAD)" \
             --repository "$REPOSITORY" --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
@@ -70,7 +70,7 @@ jobs:
       - name: Upload the trusted report and patch
         id: artifact
         if: steps.report.outputs.number != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: castiron-custom-code-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/castiron-custom-code/
@@ -98,7 +98,7 @@ jobs:
           if [[ "$SOURCE_EVENT" == pull_request ]]; then
             reuse=(--trusted-report-dir "$RUNNER_TEMP/castiron-custom-code")
           fi
-          python3 -I scripts/castiron/custom_code_budget.py github \
+          python3 -I generated/castiron/custom_code_budget.py github \
             --repository "$REPOSITORY" --event-path "$GITHUB_EVENT_PATH" \
             --trusted-sha "$trusted_sha" --repo "$RUNNER_TEMP/castiron-objects.git" \
             "${reuse[@]}" --out "$RUNNER_TEMP/custom-code-budget"
@@ -112,7 +112,7 @@ jobs:
 
       - name: Upload trusted budget measurements
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: custom-code-budget-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/custom-code-budget/
@@ -168,9 +168,13 @@ jobs:
                 if (pr.state === 'open' && pr.head.sha === head &&
                     ['main', 'next'].includes(pr.base.ref) && pr.base.repo.full_name === `${context.repo.owner}/${context.repo.repo}`) current.push(pr);
               }
-              if (current.length !== 1) return;
-              branch = current[0].base.ref;
-              number = current[0].number;
+              // Match compute's preference for required main checks when
+              // fallback discovery finds an advisory next PR for the same head.
+              const main = current.filter(pr => pr.base.ref === 'main');
+              const selected = main.length ? main : current;
+              if (selected.length !== 1) return;
+              branch = selected[0].base.ref;
+              number = selected[0].number;
             } else {
               const match = run.head_branch.match(/^gh-readonly-queue\/(main|next)\//);
               if (run.event !== 'merge_group' || !match) return;
@@ -254,7 +258,7 @@ jobs:
 
       - name: Download this workflow's trusted report
         if: needs.compute.result == 'success'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.compute.outputs.artifact-id }}
           merge-multiple: true
@@ -272,7 +276,7 @@ jobs:
           ARTIFACT_RUN_ID: ${{ github.run_id }}
           ARTIFACT_RUN_ATTEMPT: ${{ needs.compute.outputs.artifact-run-attempt }}
         run: |
-          python3 -I scripts/castiron/custom_code_report.py comment \
+          python3 -I generated/castiron/custom_code_report.py comment \
             --report "$RUNNER_TEMP/castiron-custom-code/report.json" \
             --repository "$REPOSITORY" --pr "$PR_NUMBER" --run-id "$RUN_ID" \
             --run-attempt "$RUN_ATTEMPT" \

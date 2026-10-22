@@ -15,6 +15,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/openai/openai-cli/internal/commandsuggest"
 	"github.com/urfave/cli/v3"
 )
 
@@ -28,21 +29,21 @@ const setupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up your
 
    Bash or zsh (macOS / Linux)
      Run this line, paste your key (hidden), then press Enter:
-       read -rs OPENAI_API_KEY
+       {{suggestFor . "read -rs OPENAI_API_KEY" "bash" "zsh"}}
      Then run this line so the CLI can read the key:
-       export OPENAI_API_KEY
-       printf '\n'
+       {{suggestFor . "export OPENAI_API_KEY" "bash" "zsh"}}
+       {{suggestFor . "printf '\\n'" "bash" "zsh"}}
 
    PowerShell (Windows, macOS, or Linux)
      Run this line, paste your key (hidden), then press Enter:
-       $openaiKey = Read-Host "API key" -AsSecureString
+       {{suggestFor . "$openaiKey = Read-Host \"API key\" -AsSecureString" "pwsh"}}
      Then run these lines:
-       $env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new("", $openaiKey).Password
-       Remove-Variable openaiKey
+       {{suggestFor . "$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new(\"\", $openaiKey).Password" "pwsh"}}
+       {{suggestFor . "Remove-Variable openaiKey" "pwsh"}}
 
-   Using Command Prompt (cmd.exe)? Run powershell first, then use the
+   Using Command Prompt (cmd.exe)? Run {{suggestFor . "powershell" "cmd"}} first, then use the
    PowerShell steps above. Run the CLI in that same PowerShell session.
-   Using Fish? Run bash first, then use the Bash steps above.
+   Using Fish? Run {{suggestFor . "bash" "fish"}} first, then use the Bash steps above.
 
    Windows command examples use PowerShell syntax. In cmd.exe, run
    openai from PATH or .\openai.exe from the folder containing the CLI.
@@ -50,7 +51,7 @@ const setupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up your
    These steps set the key for this shell session. A new window needs it again.
 
 3. TRY A COMMAND
-   {{$run}} models list
+   {{suggest . (printf "%s models list" $run)}}
 
 This is a guide only. No key has been entered or checked by showing this page.
 `
@@ -344,6 +345,25 @@ func installSubcommandHelp() {
 				return cli.ShowRootCommandHelp(command)
 			}
 			return commandHelp(ctx, command.Lineage()[1], command.Name)
+		}
+		customPrinter := cli.HelpPrinterCustom
+		cli.HelpPrinterCustom = func(out io.Writer, template string, data any, functions map[string]any) {
+			local := make(map[string]any, len(functions)+2)
+			for name, function := range functions {
+				local[name] = function
+			}
+			local["suggest"] = commandsuggest.Record
+			local["suggestFor"] = func(command *cli.Command, text string, shells ...string) string {
+				rendered := text
+				for _, shell := range shells {
+					if candidate := commandsuggest.RecordFor(command, shell, text); candidate != text {
+						rendered = candidate
+					}
+				}
+				return rendered
+			}
+			customPrinter(out, template, data, local)
+
 		}
 		fallback := cli.ShowSubcommandHelp
 		cli.ShowSubcommandHelp = func(command *cli.Command) error {

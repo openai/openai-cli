@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/commands"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/urfave/cli/v3"
 )
 
@@ -24,8 +24,8 @@ func TestCommandSubgroupsKeepActionsFlagsAndParents(t *testing.T) {
 			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard, Flags: []cli.Flag{&cli.StringFlag{Name: "format"}, &cli.StringFlag{Name: "admin-api-key"}}, Commands: []*cli.Command{
 				{Name: "admin:organization:users:roles", Category: "API RESOURCE", Commands: []*cli.Command{{Name: "list"}}}, original,
 			}}
-			custom.ConfigureCommand(root)
-			custom.ConfigureCommand(root)
+			appconfig.ConfigureCommand(root)
+			appconfig.ConfigureCommand(root)
 			users := root.Command("admin").Command("organization").Command("users")
 			if !original.Hidden || users.Hidden || users.Command("roles") == nil || users.Command("list") == leaf {
 				t.Fatal("missing subgroup or shared command node")

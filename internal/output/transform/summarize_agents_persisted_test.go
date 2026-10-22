@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/app"
 	clioutput "github.com/openai/openai-cli/internal/output"
-	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -52,14 +52,14 @@ func persistedImageRecord(kind, encoded string) (string, string, string) {
 	}
 }
 
-func showPersistedRecord(value, resource, method string, opts custom.ShowJSONOpts) error {
+func showPersistedRecord(value, resource, method string, opts app.ShowJSONOpts) error {
 	opts.Operation = "(resource) " + resource + " > (method) " + method
 	if method == "list" {
-		opts.OutputKind = custom.OutputPageItem
-		return custom.ShowJSONIterator(&persistedRows{values: []persistedRecord{persistedRecord(value)}}, -1, opts)
+		opts.OutputKind = app.OutputPageItem
+		return app.ShowJSONIterator(&persistedRows{values: []persistedRecord{persistedRecord(value)}}, -1, opts)
 	}
-	opts.OutputKind = custom.OutputResponse
-	return custom.ShowJSON(gjson.Parse(value), opts)
+	opts.OutputKind = app.OutputResponse
+	return app.ShowJSON(gjson.Parse(value), opts)
 }
 
 func TestAgentsPersistedImagesHumanRoutes(t *testing.T) {
@@ -70,7 +70,7 @@ func TestAgentsPersistedImagesHumanRoutes(t *testing.T) {
 				t.Run(resource+"/"+kind+"/"+format, func(t *testing.T) {
 					value, _, _ := persistedImageRecord(kind, encoded)
 					var out, diagnostic bytes.Buffer
-					require.NoError(t, showPersistedRecord(value, resource, "list", custom.ShowJSONOpts{
+					require.NoError(t, showPersistedRecord(value, resource, "list", app.ShowJSONOpts{
 						Format: format, Stdout: &out, Stderr: &diagnostic,
 					}))
 					if strings.Contains(out.String(), encoded) {
@@ -109,7 +109,7 @@ func TestAgentsSubagentResourcesSummarizeInstructions(t *testing.T) {
 			t.Run(method+"/"+format, func(t *testing.T) {
 				var out, diagnostic bytes.Buffer
 				require.NoError(t, showPersistedRecord(persistedSubagentRecord(), "beta.agents.sessions.subagents", method,
-					custom.ShowJSONOpts{Format: format, Stdout: &out, Stderr: &diagnostic}))
+					app.ShowJSONOpts{Format: format, Stdout: &out, Stderr: &diagnostic}))
 				if strings.Contains(out.String(), "synthetic task instructions") || strings.Contains(out.String(), "synthetic encrypted instructions") {
 					t.Fatal("human subagent output retained required instructions")
 				}
@@ -134,7 +134,7 @@ func TestAgentsPersistedResourcesPreserveExplicitData(t *testing.T) {
 		for _, format := range []string{"json", "jsonl", "pretty", "raw", "yaml", "explore"} {
 			t.Run(kind+"/"+format, func(t *testing.T) {
 				var out, diagnostic bytes.Buffer
-				require.NoError(t, showPersistedRecord(value, resource, method, custom.ShowJSONOpts{
+				require.NoError(t, showPersistedRecord(value, resource, method, app.ShowJSONOpts{
 					Format: format, ExplicitFormat: true, Stdout: &out, Stderr: &diagnostic,
 				}))
 				require.Contains(t, out.String(), expected)
@@ -157,7 +157,7 @@ func TestAgentsPersistedResourcesPreserveExplicitData(t *testing.T) {
 		}
 		t.Run(kind+"/extraction", func(t *testing.T) {
 			var out, diagnostic bytes.Buffer
-			require.NoError(t, showPersistedRecord(value, resource, method, custom.ShowJSONOpts{
+			require.NoError(t, showPersistedRecord(value, resource, method, app.ShowJSONOpts{
 				Format: "text", Transform: path, RawOutput: true, Stdout: &out, Stderr: &diagnostic,
 			}))
 			require.Equal(t, expected+"\n", out.String())
@@ -176,12 +176,12 @@ func TestAgentsPersistedResourcesHintPolicyAndPartialFailure(t *testing.T) {
 			root := &cli.Command{Name: "openai", Flags: []cli.Flag{
 				&cli.StringFlag{Name: "format"}, &cli.StringFlag{Name: "format-error"}, &cli.StringFlag{Name: "transform-error"},
 			}, Action: func(ctx context.Context, _ *cli.Command) error {
-				return custom.ShowJSONIterator(rows, -1, custom.ShowJSONOpts{
-					Context: ctx, Operation: "(resource) beta.agents.sessions.items > (method) list", OutputKind: custom.OutputPageItem,
+				return app.ShowJSONIterator(rows, -1, app.ShowJSONOpts{
+					Context: ctx, Operation: "(resource) beta.agents.sessions.items > (method) list", OutputKind: app.OutputPageItem,
 					Stdout: &out, Stderr: &diagnostic,
 				})
 			}}
-			custom.ConfigureCommand(root)
+			app.ConfigureCommand(root)
 			require.ErrorIs(t, root.Run(t.Context(), append([]string{"openai"}, flags...)), pageErr)
 			require.Equal(t, 2, strings.Count(out.String(), "8 base64 characters"))
 			if len(flags) == 0 {
@@ -199,7 +199,7 @@ func TestAgentsSubagentResourcesUnknownFieldsKeepFullData(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			var out, diagnostic bytes.Buffer
 			require.NoError(t, showPersistedRecord(value, "beta.agents.sessions.subagents", method,
-				custom.ShowJSONOpts{Stdout: &out, Stderr: &diagnostic}))
+				app.ShowJSONOpts{Stdout: &out, Stderr: &diagnostic}))
 			require.Contains(t, out.String(), "synthetic task instructions")
 			require.Contains(t, out.String(), "synthetic encrypted instructions")
 			require.Contains(t, out.String(), "Future setting: (null)")

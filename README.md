@@ -40,6 +40,26 @@ them. See [shortcut setup and removal](docs/image-picker-shell-setup.md) for
 requirements and opt-out. PowerShell keeps normal Tab completion; press Enter
 after `openai images generate` to open the picker.
 
+### Update notices
+
+Bare `openai` checks for newer stable releases when stdin, stdout, and stderr are terminals.
+It adds a plain-text notice below help, at most once every seven days.
+Explicit help, commands, completion, CI, and redirected streams skip the check entirely.
+
+The notice includes an update command when the CLI can verify its installation method.
+Verified Homebrew installations use `brew upgrade --cask openai/tools/openai`.
+Go commands require a verified binary, an available Go command, and an explicit matching `GOBIN`.
+Custom `GOOS` or `GOARCH` settings select the installation guide instead.
+Go upgrades to major version 2 or later also select the installation guide.
+Unknown installations receive the installation-guide link instead.
+The CLI never installs updates automatically.
+
+Checks use public GitHub release metadata without API credentials, at most once daily.
+Checks respect `HTTPS_PROXY` and `NO_PROXY`, including their lowercase forms.
+Update discovery waits at most 200 milliseconds. Failed checks remain silent.
+Package-manager availability can lag a new GitHub release.
+Set `OPENAI_CLI_NO_UPDATE_CHECK=1` to disable checks and notices.
+
 ### Running Locally
 
 After cloning the git repository for this project, you can use the
@@ -102,6 +122,10 @@ Command behavior, defaults, and output formats remain unchanged.
 Tab completion follows the same group order and supports help topics and file input paths.
 After upgrading, [reload shell completion](docs/shell-completion.md) to enable the new file-path behavior.
 Older loaded completion scripts keep their previous behavior until refreshed.
+
+Enable [command insertion](docs/command-insertion.md) to fill your command line
+from examples, setup guidance, and recovery commands. Ctrl+X, then Tab searches suggestions
+without running them. Double Tab is an optional binding for Bash, zsh, and fish.
 
 Successful JSON responses print readable text by default, including in pipes.
 Use `--format json` or `--format jsonl` in scripts that parse API data.
@@ -175,7 +199,9 @@ explicit API error details can contain server-supplied sensitive data.
 - `--help` - Show command line usage
 - `--debug` - Enable debug logging. This includes HTTP request/response details and bodies; do not share debug logs if they may contain sensitive payloads.
 - `--version`, `-v` - Show the CLI version
-- `--base-url` - Use a custom API backend URL
+- `--base-url` - Use a custom API backend URL. HTTPS is required except for
+  `localhost` or literal loopback IP addresses such as `127.0.0.1` and `::1`.
+  This also applies to `OPENAI_BASE_URL`; remote HTTP backends must enable HTTPS.
 - `--header`, `-H` - Add a literal request header as `Name: Value`; repeat for multiple headers
 - `--format` - Change the output format (`auto`, `text`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`); `auto` selects readable text unless extracting data
 - `--format-error` - Change the stderr error format (`auto`, `text`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`); `auto` selects readable summaries unless extracting error data

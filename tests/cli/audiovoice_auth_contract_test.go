@@ -8,7 +8,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/mocktest"
 	"github.com/openai/openai-cli/internal/requestflag"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -52,7 +52,7 @@ func TestAudioVoicesCreateCredentialSelection(t *testing.T) {
 					// Match the real root's flag type and env sources: these affect precedence.
 					&requestflag.Flag[string]{Name: "api-key", Sources: cli.EnvVars("OPENAI_API_KEY")},
 					&requestflag.Flag[string]{Name: "admin-api-key", Sources: cli.EnvVars("OPENAI_ADMIN_KEY")},
-					custom.NewRequestHeaderFlag(),
+					appconfig.NewRequestHeaderFlag(),
 					&cli.StringFlag{Name: "format", Value: "json"},
 					&cli.StringFlag{Name: "transform"},
 					&cli.BoolFlag{Name: "raw-output"},
