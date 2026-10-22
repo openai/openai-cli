@@ -188,3 +188,50 @@ func TestAgentsAssistantSnapshotCancellationDoesNotCommitState(t *testing.T) {
 		cancel()
 	}
 }
+
+func TestAgentsLateIdentitySnapshotCancellationRollback(t *testing.T) {
+	for _, reasoning := range []bool{false, true} {
+		t.Run(fmt.Sprint(reasoning), func(t *testing.T) {
+			partType, field, itemType := "output_text", "content", `"type":"message","role":"assistant"`
+			if reasoning {
+				partType, field, itemType = "summary_text", "summary", `"type":"reasoning"`
+			}
+			parts := strings.TrimSuffix(strings.Repeat(fmt.Sprintf(`{"type":%q,"text":"snapshot"},`, partType), 2000), ",")
+			value := gjson.Parse(fmt.Sprintf(`{"type":"agent.session.turn.item.done","item":{%q:[%s],%s,"status":"completed","id":"msg_1","turn_id":"turn_1"},"event_id":"evt_late_ids","session_id":"sess_test","turn_id":"turn_1","output_index":0}`, field, parts, itemType))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			completed := &cancelSummaryContext{Context: ctx, cancel: cancel, after: -1}
+			_, ok, err := new(AgentsStreamProjector).Project(completed, value, agentsEventsRoute)
+			require.NoError(t, err)
+			require.True(t, ok)
+			checks := completed.checks.Load()
+			for _, after := range []int32{checks / 2, checks - 2, checks} {
+				var projector AgentsStreamProjector
+				_, ok, err := projector.Project(t.Context(), agentsTextEvent("delta", "evt_cached", "turn_1", "msg_1", "Existing"), agentsEventsRoute)
+				require.NoError(t, err)
+				require.True(t, ok)
+				before := snapshotAgentsProjector(projector)
+				ctx, cancel := context.WithCancel(t.Context())
+				controlled := &cancelSummaryContext{Context: ctx, cancel: cancel, after: after}
+				_, _, err = projector.Project(controlled, value, agentsEventsRoute)
+				require.ErrorIs(t, err, context.Canceled)
+				require.Equal(t, before, projector, "cancelled snapshot committed state at check %d", after)
+				cancel()
+			}
+		})
+	}
+}
+
+func TestAgentsTextIdentityHashCancellation(t *testing.T) {
+	longID := strings.Repeat("identity", 16*1024)
+	value := gjson.Parse(fmt.Sprintf(`{"session_id":%q,"turn_id":%q}`, longID, longID))
+	item := gjson.Parse(fmt.Sprintf("%q", longID))
+	for after := int32(1); after <= 12; after++ {
+		ctx, cancel := context.WithCancel(t.Context())
+		controlled := &cancelSummaryContext{Context: ctx, cancel: cancel, after: after}
+		require.False(t, newAgentsTextIdentity(controlled, value, item).valid)
+		require.ErrorIs(t, ctx.Err(), context.Canceled)
+		cancel()
+	}
+	require.True(t, newAgentsTextIdentity(t.Context(), value, item).valid)
+}

@@ -3,6 +3,7 @@ package transform
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"strconv"
 	"strings"
@@ -48,13 +49,40 @@ func (s *AgentsStreamProjector) duplicate(value gjson.Result) bool {
 	return false
 }
 
-func (s *AgentsStreamProjector) textPart(value, text, item gjson.Result, content, label string, snapshot, final bool) (readable.StreamPart, bool) {
-	session, turn := value.Get("session_id"), value.Get("turn_id")
-	if text.Type != gjson.String || session.Type != gjson.String || session.Str == "" ||
-		turn.Type != gjson.String || turn.Str == "" || item.Type != gjson.String || item.Str == "" {
+// Cache the common identity once per event/item. Scanning late JSON fields or
+// hashing long IDs for every component would make large snapshots quadratic.
+type agentsTextIdentity struct {
+	digest [32]byte
+	valid  bool
+}
+
+func newAgentsTextIdentity(ctx context.Context, value, item gjson.Result) agentsTextIdentity {
+	digest := sha256.New()
+	var length [8]byte
+	for _, id := range []gjson.Result{value.Get("session_id"), value.Get("turn_id"), item} {
+		if id.Type != gjson.String || id.Str == "" {
+			return agentsTextIdentity{}
+		}
+		binary.BigEndian.PutUint64(length[:], uint64(len(id.Str)))
+		_, _ = digest.Write(length[:])
+		// Bound each hash operation, not the accepted identity length.
+		for start := 0; start < len(id.Str); start += 32 * 1024 {
+			if ctx.Err() != nil {
+				return agentsTextIdentity{}
+			}
+			_, _ = digest.Write([]byte(id.Str[start:min(start+32*1024, len(id.Str))]))
+		}
+	}
+	identity := agentsTextIdentity{valid: true}
+	copy(identity.digest[:], digest.Sum(nil))
+	return identity
+}
+
+func (s *AgentsStreamProjector) textPart(identity agentsTextIdentity, text gjson.Result, content, label string, snapshot, final bool) (readable.StreamPart, bool) {
+	if text.Type != gjson.String || !identity.valid {
 		return readable.StreamPart{}, false
 	}
-	key := agentsIdentity(session.Str, turn.Str, item.Str, content, label)
+	key := agentsIdentity(string(identity.digest[:]), content, label)
 	wasFinal, exists := s.pendingParts[key]
 	if !exists {
 		wasFinal, exists = s.parts[key]
@@ -123,7 +151,7 @@ func (s *AgentsStreamProjector) project(ctx context.Context, value gjson.Result,
 			break
 		}
 		var part readable.StreamPart
-		part, projected = s.textPart(value, value.Get(field), value.Get("item_id"), content, "Agent", final, final)
+		part, projected = s.textPart(newAgentsTextIdentity(ctx, value, value.Get("item_id")), value.Get(field), content, "Agent", final, final)
 		if projected {
 			if s.duplicate(value) {
 				return readable.StreamEvent{}, true, ctx.Err()
@@ -144,7 +172,7 @@ func (s *AgentsStreamProjector) project(ctx context.Context, value gjson.Result,
 			break
 		}
 		final := strings.HasSuffix(kind, ".done")
-		text, ok := s.textPart(value, part.Get("text"), value.Get("item_id"), content, "Agent", true, final)
+		text, ok := s.textPart(newAgentsTextIdentity(ctx, value, value.Get("item_id")), part.Get("text"), content, "Agent", true, final)
 		if !ok {
 			break
 		}
@@ -211,6 +239,7 @@ func (s *AgentsStreamProjector) message(ctx context.Context, value, item gjson.R
 	if !agentsMessageSnapshotValid(ctx, value, item) {
 		return readable.StreamEvent{}, false
 	}
+	identity := newAgentsTextIdentity(ctx, value, item.Get("id"))
 	content := item.Get("content")
 	var event readable.StreamEvent
 	var residual strings.Builder
@@ -223,7 +252,7 @@ func (s *AgentsStreamProjector) message(ctx context.Context, value, item gjson.R
 		}
 		remaining := part
 		if part.Get("type").String() == "output_text" {
-			projected, ok := s.textPart(value, part.Get("text"), item.Get("id"), strconv.Itoa(index), "Agent", true, final)
+			projected, ok := s.textPart(identity, part.Get("text"), strconv.Itoa(index), "Agent", true, final)
 			if !ok {
 				valid = false
 				return false
@@ -264,7 +293,7 @@ func (s *AgentsStreamProjector) message(ctx context.Context, value, item gjson.R
 }
 
 // Metadata removed from a text event must have an understood shape. Identity
-// strings and text values receive their remaining checks in textPart.
+// strings and text values receive their remaining checks during text projection.
 func agentsTextMetadataValid(value gjson.Result) bool {
 	if id := value.Get("event_id"); id.Exists() && id.Type != gjson.String {
 		return false

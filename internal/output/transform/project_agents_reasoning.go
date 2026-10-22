@@ -51,7 +51,7 @@ func (s *AgentsStreamProjector) reasoning(ctx context.Context, value gjson.Resul
 	if ctx.Err() != nil {
 		return readable.StreamEvent{}, false
 	}
-	part, ok := s.textPart(value, text, value.Get("item_id"), value.Get("summary_index").Raw, "Reasoning", partEvent || final, final)
+	part, ok := s.textPart(newAgentsTextIdentity(ctx, value, value.Get("item_id")), text, value.Get("summary_index").Raw, "Reasoning", partEvent || final, final)
 	if !ok {
 		return readable.StreamEvent{}, false
 	}
@@ -81,7 +81,7 @@ func (s *AgentsStreamProjector) reasoningItem(ctx context.Context, value, item g
 	}
 	var event readable.StreamEvent
 	var residual strings.Builder
-	itemID := item.Get("id")
+	identity := newAgentsTextIdentity(ctx, value, item.Get("id"))
 	residual.WriteByte('[')
 	index, hasResidual, valid := 0, false, true
 	item.Get("summary").ForEach(func(_, part gjson.Result) bool {
@@ -91,7 +91,7 @@ func (s *AgentsStreamProjector) reasoningItem(ctx context.Context, value, item g
 		}
 		remaining := part
 		if part.Get("type").Str == "summary_text" {
-			text, ok := s.textPart(value, part.Get("text"), itemID, strconv.Itoa(index), "Reasoning", true, final)
+			text, ok := s.textPart(identity, part.Get("text"), strconv.Itoa(index), "Reasoning", true, final)
 			if !ok {
 				valid = false
 				return false
