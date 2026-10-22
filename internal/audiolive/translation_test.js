@@ -566,3 +566,93 @@ test('an empty replacement closes its output context and restores the previous s
   assert.match(p.elements.get('status').textContent,/Previous recording kept/);
   p.elements.get('download').onclick();assert.equal((await p.downloads[0].blob.arrayBuffer()).byteLength,48044);p.close();
 });
+
+for (const ending of ['error','session.closed']) {
+  test(`original-only captions survive first-session ${ending}`,async()=>{
+    const p=page();await p.elements.get('start').onclick();
+    p.emit({type:'session.input_transcript.delta',delta:'Original <script>literal</script>.'});await settle();
+    p.emit({type:ending,message:'Synthetic translation failure.'});await settle();
+    assert.equal(p.elements.get('original').textContent,'Original <script>literal</script>.');
+    assert.equal(p.elements.get('translated').textContent,'');
+    assert.equal(p.elements.get('transcript').disabled,false);
+    assert.equal(p.elements.get('download').disabled,true);assert.equal(p.elements.get('playback').disabled,true);
+    p.elements.get('transcript').onclick();
+    assert.equal(await p.downloads[0].blob.text(),'Original\nOriginal <script>literal</script>.\n\nTranslation\n');
+    assert.equal(p.tracks[0].stopped,true);
+    assert.equal(p.elements.get('status').textContent,ending==='error'?'Stopped':'No translated output.');
+    if(ending==='error')assert.equal(p.elements.get('error').textContent,'Synthetic translation failure.');
+    await p.elements.get('clear').onclick();
+    assert.equal(p.elements.get('original').textContent,'');assert.equal(p.elements.get('transcript').disabled,true);p.close();
+  });
+}
+
+for (const track of ['input','output']) {
+  test(`caption export accepts a nonempty ${track} track during capture`,async()=>{
+    const p=page();await p.elements.get('start').onclick();
+    p.emit({type:`session.${track}_transcript.delta`,delta:'Synthetic captions.'});await settle();
+    assert.equal(p.elements.get('transcript').disabled,false);
+    p.elements.get('transcript').onclick();
+    assert.equal(await p.downloads[0].blob.text(),track==='input'?'Original\nSynthetic captions.\n\nTranslation\n':'Original\n\n\nTranslation\nSynthetic captions.');
+    assert.equal(p.elements.get('status').textContent,'Translating');p.close();
+  });
+}
+
+test('empty caption deltas neither enable export nor replace retained captions',async()=>{
+  const p=page();await p.elements.get('start').onclick();
+  for(const track of ['input','output'])p.emit({type:`session.${track}_transcript.delta`,delta:''});
+  await settle();assert.equal(p.elements.get('transcript').disabled,true);
+  p.emit({type:'session.closed'});await settle();
+  await p.elements.get('start').onclick();
+  p.emit({type:'session.input_transcript.delta',delta:'Retained original.'});
+  p.emit({type:'session.closed'});await settle();
+  await p.elements.get('start').onclick();
+  for(const track of ['input','output'])p.emit({type:`session.${track}_transcript.delta`,delta:''});
+  p.emit({type:'session.closed'});await settle();
+  assert.equal(p.elements.get('original').textContent,'Retained original.');
+  assert.equal(p.elements.get('transcript').disabled,false);p.close();
+});
+
+for (const previous of ['original-only','recording']) for (const ending of ['error','session.closed']) {
+  test(`caption-only replacement preserves prior ${previous} after ${ending}`,async()=>{
+    const p=page();await p.elements.get('start').onclick();
+    p.emit({type:'session.input_transcript.delta',delta:'Previous original.'});
+    const pcm=Buffer.from(new Int16Array([123,-123]).buffer);
+    if(previous==='recording') {
+      p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64')});
+      p.emit({type:'session.output_transcript.delta',delta:'Previous translation.'});
+    }
+    p.emit({type:'session.closed'});await settle();
+    await p.elements.get('start').onclick();
+    p.emit({type:'session.input_transcript.delta',delta:'Replacement original.'});
+    p.emit({type:'session.output_transcript.delta',delta:''});
+    p.emit({type:ending,message:'Synthetic replacement failure.'});await settle();
+    assert.equal(p.elements.get('original').textContent,'Previous original.');
+    assert.equal(p.elements.get('translated').textContent,previous==='recording'?'Previous translation.':'');
+    assert.equal(p.elements.get('transcript').disabled,false);
+    p.elements.get('transcript').onclick();
+    assert.equal(await p.downloads[0].blob.text(),'Original\nPrevious original.\n\nTranslation\n'+(previous==='recording'?'Previous translation.':''));
+    if(previous==='recording') {
+      p.elements.get('download').onclick();
+      assert.deepEqual(Buffer.from(await p.downloads[1].blob.arrayBuffer()).subarray(44),pcm);
+    } else assert.equal(p.elements.get('download').disabled,true);
+    if(ending==='session.closed')assert.match(p.elements.get('status').textContent,/Previous recording kept/);
+    p.close();
+  });
+}
+
+test('late canceled setup cannot restore original captions over a newer session',{timeout:2000},async()=>{
+  const options={},p=page(options);await p.elements.get('start').onclick();
+  p.emit({type:'session.input_transcript.delta',delta:'Previous original.'});
+  p.emit({type:'session.closed'});await settle();
+  let rejectJSON;
+  options.start=id=>startResponse(id,()=>new Promise((_,reject)=>{rejectJSON=reject;}));
+  options.stop=()=>new Response(null,{status:204});
+  const opening=p.elements.get('start').onclick();await settle();await p.elements.get('start').onclick();
+  assert.equal(p.elements.get('original').textContent,'Previous original.');
+  options.start=null;await p.elements.get('start').onclick();
+  p.emit({type:'session.input_transcript.delta',delta:'New original.'});await settle();
+  rejectJSON(new Error('Late body failure'));await opening;
+  assert.equal(p.elements.get('original').textContent,'New original.');
+  assert.equal(p.elements.get('status').textContent,'Translating');assert.equal(p.elements.get('error').textContent,'');
+  assert.equal(p.elements.get('transcript').disabled,false);p.close();
+});

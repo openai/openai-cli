@@ -63,6 +63,7 @@
     recordingURL = '';
   }
   function retainRecording() {
+    if (!sampleCount && !outputText.length && !originalText.length) return null;
     return {chunks,peaks,outputText,originalText,sampleCount,outputRate,outputChannels,
       peakFrames,peakValue,framesPerPeak,complete,recordingURL,position:playbackPosition(),usage:$('usage').textContent};
   }
@@ -83,9 +84,9 @@
     if (recordingURL) $('player').src = recordingURL;
     $('player').currentTime = old.position;
     $('download').disabled = !sampleCount; $('playback').disabled = !sampleCount;
-    $('transcript').disabled = !outputText.length;
+    $('transcript').disabled = !(outputText.length || originalText.length);
     run.previous = null;
-    return !!(sampleCount || outputText.length);
+    return !!(sampleCount || outputText.length || originalText.length);
   }
   function releaseCapture(run) {
     for (const track of run.stream?.getTracks() || []) track.stop();
@@ -194,7 +195,7 @@
   }
   function receive(run,event) {
     if (current !== run || run.failed) return;
-    if (event.type === 'session.input_transcript.delta') { originalText.push(event.delta); $('original').append(document.createTextNode(event.delta)); }
+    if (event.type === 'session.input_transcript.delta' && event.delta) { originalText.push(event.delta); $('original').append(document.createTextNode(event.delta)); $('transcript').disabled = false; }
     if (event.type === 'session.output_transcript.delta' && event.delta) { replaceRecording(run); outputText.push(event.delta); $('translated').append(document.createTextNode(event.delta)); $('transcript').disabled = false; }
     if (event.type === 'session.output_audio.delta') playChunk(run,event);
     if (event.tokens) $('usage').textContent = event.tokens.toLocaleString() + ' tokens';
