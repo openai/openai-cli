@@ -57,6 +57,8 @@ cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
   echo 'render: asciinema + agg resvg, Menlo20px, asciinema theme, 80x28, line height1.3'
   echo 'viewport: normal terminal scrolling; full output remains in casts and transcripts'
   echo 'captions: scene script prints the final shell comment; CLI output is unchanged'
+  echo 'comparison: repeated CR immediately before LF collapses to one CR; other bytes must match'
+  echo 'raw evidence: original casts and CLI tty files retain all captured newline bytes'
   echo 'scope: terminal replay; not native graphical terminal or font validation'
   demo_capture_metadata
   "$demo_python" --version
