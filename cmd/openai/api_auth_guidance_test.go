@@ -194,13 +194,7 @@ func TestMainAPIAuthGuidanceNativeCopiedSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(work, "openai-current-main")
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
-	defer cancel()
-	build := exec.CommandContext(ctx, filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-p", "2", "-o", binary, ".")
-	build.Env = append(os.Environ(), "GOMAXPROCS=2")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build renamed CLI: %v\n%s", err, output)
-	}
+	copyShellTestCLI(t, binary)
 	quotedName := "openai preview's build"
 	if err := os.Link(binary, filepath.Join(work, quotedName)); err != nil {
 		t.Fatal(err)

@@ -65,7 +65,7 @@ func TestMainImageSettingsHelpScope(t *testing.T) {
 					require.Contains(t, text, want)
 				}
 				if operation == "edit" {
-					require.NotContains(t, full.stdout, "\n   --moderation ")
+					require.NotRegexp(t, `(?m)^\s+--moderation(?:[=,\s]|$)`, full.stdout)
 				}
 			}
 		})

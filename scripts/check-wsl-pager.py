@@ -145,7 +145,7 @@ INDEPENDENT_PROCESS_ROOTS = {
     "TestMainAdminSetupRejectsExtraArguments",
     "TestMainImageModelsRequestDeadlineCancelsHTTP",
     "TestMainImageModelsInterruptPreservesCompletedResults",
-    "TestMainWelcomeRedirectedOutputMatchesHelp",
+    "TestMainDispatchEmptyArguments",
     "TestMainWelcomeExplicitArgumentsStayPlain",
     "TestMainWelcomeBareInvocationStaysOffline",
     "TestMainCommandSubgroupsBareInvocation",

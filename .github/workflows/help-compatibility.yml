@@ -275,14 +275,14 @@ jobs:
         run: |
           set -euo pipefail
           go test -p 2 ./cmd/openai -count=1 -timeout=2m -v -json \
-            -run '^(TestMainWelcomeRedirectedOutputMatchesHelp|TestMainWelcomeExplicitArgumentsStayPlain|TestMainWelcomeBareInvocationStaysOffline)$' \
+            -run '^(TestMainDispatchEmptyArguments|TestMainWelcomeExplicitArgumentsStayPlain|TestMainWelcomeBareInvocationStaysOffline)$' \
             | tee "$RUNNER_TEMP/welcome-public-tests.jsonl"
       - name: Test Windows public welcome startup
         if: matrix.welcome-public && runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=2m -v -json -run '^(TestMainWelcomeRedirectedOutputMatchesHelp|TestMainWelcomeExplicitArgumentsStayPlain|TestMainWelcomeBareInvocationStaysOffline)$' |
+          go test -p 2 ./cmd/openai -count=1 -timeout=2m -v -json -run '^(TestMainDispatchEmptyArguments|TestMainWelcomeExplicitArgumentsStayPlain|TestMainWelcomeBareInvocationStaysOffline)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'welcome-public-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       # The exhaustive command/flag inventory remains in CI's full Linux
@@ -966,7 +966,7 @@ jobs:
 
           if os.environ["CHECK_WELCOME_PUBLIC"] == "true":
               suites["welcome-public-tests.jsonl"] = required_cases(
-                  "TestMainWelcomeRedirectedOutputMatchesHelp", [],
+                  "TestMainDispatchEmptyArguments", [],
               ) | required_cases(
                   "TestMainWelcomeExplicitArgumentsStayPlain",
                   ["--help", "-h", "help", "help/--all", "--", "--version", "--debug/--help",
@@ -1882,9 +1882,7 @@ jobs:
           }
           go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ./cmd/openai
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ('${{ matrix.profile }}' -eq '') {
-            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-app.test') ./internal/app
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ('${{ matrix.arguments }}' -eq '--command-contracts') {
             go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-images.test') ./internal/commands/images
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
@@ -1918,8 +1916,8 @@ jobs:
         timeout-minutes: 16
         run: |
           $payloads = @('--process-binary', (Join-Path $env:RUNNER_TEMP 'wsl-process.test'))
-          if ('${{ matrix.profile }}' -eq '') {
-            $payloads += @('--app-binary', (Join-Path $env:RUNNER_TEMP 'wsl-app.test'))
+          if ('${{ matrix.arguments }}' -eq '--command-contracts') {
+            $payloads += @('--app-binary', (Join-Path $env:RUNNER_TEMP 'wsl-pager.test'))
             $payloads += @('--images-binary', (Join-Path $env:RUNNER_TEMP 'wsl-images.test'))
           }
           if ('${{ matrix.profile }}' -ne 'shell-contracts') {

@@ -865,7 +865,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $env:PATH = $env:SELECTED_POWERSHELL_DIRECTORY + [IO.Path]::PathSeparator + $env:PATH
-          go test -p 1 ./cmd/openai -run '^(TestMainShellSuggestions|TestMainShellWindowsProcessDiagnostics$)' -count=1 -timeout=3m -v -json |
+          $selector = '^TestMainShellSuggestions'
+          if ('${{ matrix.powershell }}' -eq 'current') {
+            $selector = '^(TestMainShellSuggestions|TestMainShellWindowsProcessDiagnostics$)'
+          }
+          go test -p 1 ./cmd/openai -run $selector -count=1 -timeout=3m -v -json |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'public-shell-suggestion-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
         env:
@@ -873,10 +877,11 @@ jobs:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
           SELECTED_POWERSHELL_DIRECTORY: ${{ steps.powershell.outputs.selected-directory }}
       - name: Check Windows stdin startup probing
+        if: matrix.powershell == 'current'
         run: go test ./internal/input -run '^TestWindowsPipedDataAvailable$' -count=1 -v
       - name: Check native Windows shell and file commands
         if: matrix.existing-checks
-        run: go test -p 2 ./cmd/openai -run '^TestMainShell' -skip '^TestMainShellSuggestions' -count=1 -v
+        run: go test -p 2 ./cmd/openai -run '^TestMainShell' -skip '^TestMainShell(Suggestions|WindowsProcessDiagnostics$)' -count=1 -v
         env:
           GOMAXPROCS: '2'
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: cmd,powershell,pwsh
@@ -886,6 +891,7 @@ jobs:
         env:
           GOMAXPROCS: '2'
       - name: Check native Windows Batch stdin and private staging
+        if: matrix.powershell == 'current'
         run: |
           go test -p 2 ./internal/commands/batches -run '^TestWindowsBatch(DownloadPrivateStagingAndPublication|OutputDirectory.*)$' -count=1 -timeout=1m -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -974,10 +980,12 @@ jobs:
                   for flag in ["--install-picker", "--uninstall-picker", "--automatic"]
               ])
           )
-          public.update(cases(
-              "TestMainShellWindowsProcessDiagnostics", ["success", "nonzero", "timeout"],
-          ))
-          require((len(powershell), len(adapters), len(public)) == (49, 8, 27),
+          if os.environ["EXPECTED_POWERSHELL"] == "current":
+              public.update(cases(
+                  "TestMainShellWindowsProcessDiagnostics", ["success", "nonzero", "timeout"],
+              ))
+          expected_public_count = 27 if os.environ["EXPECTED_POWERSHELL"] == "current" else 23
+          require((len(powershell), len(adapters), len(public)) == (49, 8, expected_public_count),
                   "Suggestion inventory contains missing or duplicate names")
           suites = {
               "powershell-suggestion-tests.jsonl": ("internal/autocomplete", powershell),

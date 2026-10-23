@@ -77,6 +77,31 @@ func TestMainHelpCommandRoutes(t *testing.T) {
 				routes = append(routes, append([]string{"openai", path[0], "--transform", "help", "help"}, path[1:]...))
 				routes = append(routes, append([]string{"openai", path[0], "help", "--"}, path[1:]...))
 			}
+			if slices.Equal(path, []string{"images", "generate"}) {
+				// Check reference details once; every route compares the full result.
+				for _, text := range []string{"--prompt=TEXT", "-n=INTEGER, --count=INTEGER", "Default: auto", "Default: 1", "Default: png", "Default: 100", "Default: 0"} {
+					if !strings.Contains(want.stdout, text) {
+						t.Errorf("full help lost label/default %q", text)
+					}
+				}
+				for _, text := range []string{"--prompt dall-e-2", "-n dall-e-3", "--size gpt-image-2"} {
+					if strings.Contains(want.stdout, text) {
+						t.Errorf("misleading value label %q", text)
+					}
+				}
+				for _, flag := range commands.Command.Command("images").Command("generate").VisibleFlags() {
+					name := flag.Names()[0]
+					if !strings.Contains(want.stdout, "-"+name) {
+						t.Errorf("full reference lost option %q", name)
+					}
+				}
+				for _, text := range []string{"32000 characters", "Legacy response format parameter for retired image models", "base64-encoded images", "divisible by 16"} {
+					if !strings.Contains(strings.Join(strings.Fields(want.stdout), " "), text) {
+						t.Errorf("full reference lost detail %q", text)
+					}
+				}
+				routes = append(routes, []string{"openai", "help", "images", "generate", "-h"})
+			}
 			for _, args := range routes {
 				if got := runMainDispatch(t, "bash", args...); got != want {
 					t.Errorf("args %q: got %+v; want %+v", args, got, want)
@@ -157,50 +182,6 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 	visit(commands.Command, nil, nil)
 	if visited < 100 {
 		t.Fatalf("complete-help coverage visited only %d commands", visited)
-	}
-}
-
-func TestMainHelpFullReferenceRoutes(t *testing.T) {
-	// Full reference routes must also agree on default values, not just names.
-	var reference string
-	for _, args := range [][]string{
-		{"openai", "help", "images", "generate"},
-		{"openai", "help", "images", "generate", "-h"},
-		{"openai", "images", "help", "generate"},
-		{"openai", "--debug", "help", "images", "generate"},
-		{"openai", "images", "--debug", "help", "generate"},
-		{"openai", "images", "help", "--", "generate"},
-	} {
-		got := runMainDispatch(t, "bash", args...)
-		if got.code != 0 || got.stderr != "" {
-			t.Fatalf("args %q: full reference failed: %+v", args, got)
-		}
-		if reference == "" {
-			reference = got.stdout
-		} else if got.stdout != reference {
-			t.Errorf("args %q: full help differs between routes", args)
-		}
-		for _, text := range []string{"--prompt=TEXT", "-n=INTEGER, --count=INTEGER", "Default: auto", "Default: 1", "Default: png", "Default: 100", "Default: 0"} {
-			if !strings.Contains(got.stdout, text) {
-				t.Errorf("args %q: full help lost label/default %q", args, text)
-			}
-		}
-		for _, text := range []string{"--prompt dall-e-2", "-n dall-e-3", "--size gpt-image-2"} {
-			if strings.Contains(got.stdout, text) {
-				t.Errorf("args %q: misleading value label %q", args, text)
-			}
-		}
-		for _, flag := range commands.Command.Command("images").Command("generate").VisibleFlags() {
-			name := flag.Names()[0]
-			if !strings.Contains(got.stdout, "-"+name) {
-				t.Errorf("args %q: full reference lost option %q", args, name)
-			}
-		}
-		for _, text := range []string{"32000 characters", "Legacy response format parameter for retired image models", "base64-encoded images", "divisible by 16"} {
-			if !strings.Contains(strings.Join(strings.Fields(got.stdout), " "), text) {
-				t.Errorf("args %q: full reference lost detail %q", args, text)
-			}
-		}
 	}
 }
 

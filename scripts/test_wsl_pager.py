@@ -661,8 +661,10 @@ class CommandContractTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory)
-            custom, process, app, images = (parent / name for name in ("custom.test", "process.test", "app.test", "images.test"))
-            for path in (custom, process, app, images):
+            custom, process, images = (parent / name for name in ("custom.test", "process.test", "images.test"))
+            # Both application phases share compiled bytes but keep separate guest files.
+            app = custom
+            for path in (custom, process, images):
                 path.write_bytes(b"synthetic")
             owned = parent / "owned"
             commands = FakeCommands()

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/openai/openai-cli/internal/mocktest"
 )
 
 func TestDownloadCLITerminalOutput(t *testing.T) {
@@ -22,9 +24,7 @@ func TestDownloadCLITerminalOutput(t *testing.T) {
 		t.Skip("python3 is required for the standard-library pseudo-terminal harness")
 	}
 	binary := filepath.Join(t.TempDir(), "openai")
-	if output, err := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../cmd/openai").CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	mocktest.CopyCLI(t, binary)
 	suffix := "\x1b[2J\x1b]2;synthetic\a\u009b31m\r\b\x7f\x9b\n\t世界☕"
 	safeSuffix := `\u001b[2J\u001b]2;synthetic\u0007\u009b31m\r\b\u007f` + "�\n\t世界☕"
 	for _, endpoint := range []struct {

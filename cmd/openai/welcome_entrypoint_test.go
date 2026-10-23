@@ -6,18 +6,6 @@ import (
 	"testing"
 )
 
-func TestMainWelcomeRedirectedOutputMatchesHelp(t *testing.T) {
-	want := runMainDispatch(t, "bash", "openai", "--help")
-	if want.code != 0 || want.stderr != "" || !strings.HasPrefix(want.stdout, "OpenAI CLI") || !strings.Contains(want.stdout, "\nUse the OpenAI API from your terminal.\n\nUSAGE\n") {
-		t.Fatalf("root help control failed: %+v", want)
-	}
-	for _, argv := range [][]string{nil, {"openai"}, {""}} {
-		if got := runMainDispatch(t, "bash", argv...); got != want {
-			t.Errorf("redirected bare invocation changed help: argv=%q got=%+v", argv, got)
-		}
-	}
-}
-
 func TestMainWelcomeExplicitArgumentsStayPlain(t *testing.T) {
 	for _, args := range [][]string{
 		{"--help"}, {"-h"}, {"help"}, {"help", "--all"}, {"--"},

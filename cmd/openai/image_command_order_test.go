@@ -57,13 +57,11 @@ func TestMainImageCommandCompletionOrder(t *testing.T) {
 			require.Empty(t, result.stderr)
 			want := []string{"generate", "edit", "preview", "models", "inline", "create-variation"}
 			var names []string
-			for _, line := range strings.Split(result.stdout, "\n") {
-				// zsh and fish append descriptions, including existing newlines.
+			for _, line := range strings.Split(strings.TrimSuffix(result.stdout, "\n"), "\n") {
+				// zsh and fish append descriptions to each candidate record.
 				name, _, _ := strings.Cut(line, ":")
 				name, _, _ = strings.Cut(name, "\t")
-				if slices.Contains(want, name) {
-					names = append(names, name)
-				}
+				names = append(names, name)
 			}
 			require.Equal(t, want, names, result.stdout)
 		})

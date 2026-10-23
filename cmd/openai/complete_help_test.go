@@ -118,7 +118,7 @@ func TestMainCompleteHelpTypedLegacyCompletion(t *testing.T) {
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
 		for _, flag := range []string{"--all", "-all", "--all=false", "-all=true"} {
 			got := runMainDispatch(t, style, mainCompletionArgs(style, "help", flag, "responses", "cr")...)
-			if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, "create") {
+			if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, "create") || strings.Contains(got.stdout, "setup") {
 				t.Errorf("%s lost supported legacy %q completion: %+v", style, flag, got)
 			}
 		}

@@ -96,17 +96,23 @@ func TestMainDispatchOrdinaryArguments(t *testing.T) {
 	if want.code != 0 || want.stderr != "" || !strings.Contains(want.stdout, "openai models retrieve") {
 		t.Fatalf("ordinary help control failed: %+v", want)
 	}
+	values := []string{"ordinary", "__complete", "before__complete", "__complete_after", ""}
+	controls := make(map[string]mainDispatchResult, len(values))
+	for _, value := range values {
+		// Help displays the parsed value as a default. The equals form never
+		// selects completion and does not depend on the candidate's prefix.
+		control := runMainDispatch(t, "bash", "openai", "models", "retrieve", "--model="+value, "--help")
+		if control.code != 0 || control.stderr != "" || !strings.Contains(control.stdout, "openai models retrieve") {
+			t.Fatalf("equals-form help control failed: %+v", control)
+		}
+		controls[value] = control
+	}
 	for _, prefix := range [][]string{nil, {"--debug"}, {"--base-url", "http://127.0.0.1:1"}} {
-		for _, value := range []string{"ordinary", "__complete", "before__complete", "__complete_after", ""} {
+		for _, value := range values {
 			argv := append([]string{"openai"}, prefix...)
 			argv = append(argv, "models", "retrieve", "--model", value, "--help")
 			t.Run(strings.Join(argv, "/"), func(t *testing.T) {
-				// Help displays the parsed value as a default, so compare with
-				// the equivalent equals form, which never selected completion.
-				want := runMainDispatch(t, "bash", "openai", "models", "retrieve", "--model="+value, "--help")
-				if want.code != 0 || want.stderr != "" || !strings.Contains(want.stdout, "openai models retrieve") {
-					t.Fatalf("equals-form help control failed: %+v", want)
-				}
+				want := controls[value]
 				if got := runMainDispatch(t, "bash", argv...); got != want {
 					t.Fatalf("got %+v; want %+v", got, want)
 				}
@@ -127,7 +133,7 @@ func TestMainDispatchOrdinaryArguments(t *testing.T) {
 
 func TestMainDispatchEmptyArguments(t *testing.T) {
 	want := runMainDispatch(t, "bash", "openai", "--help")
-	if want.code != 0 || want.stderr != "" || !strings.HasPrefix(want.stdout, "OpenAI CLI") || !strings.Contains(want.stdout, "\nUse the OpenAI API from your terminal.") {
+	if want.code != 0 || want.stderr != "" || !strings.HasPrefix(want.stdout, "OpenAI CLI") || !strings.Contains(want.stdout, "\nUse the OpenAI API from your terminal.\n\nUSAGE\n") {
 		t.Fatalf("root help control failed: %+v", want)
 	}
 	for _, argv := range [][]string{nil, {"openai"}, {""}, {"__complete"}, {"openai", "", "--help"}} {

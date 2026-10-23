@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"slices"
 	"testing"
+
+	"github.com/openai/openai-cli/internal/mocktest"
 )
 
 func TestDecisionsUsageRepeatedFilters(t *testing.T) {
@@ -17,9 +19,7 @@ func TestDecisionsUsageRepeatedFilters(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	if output, err := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../cmd/openai").CombinedOutput(); err != nil {
-		t.Fatalf("building CLI: %v\n%s", err, output)
-	}
+	mocktest.CopyCLI(t, binary)
 	for _, repeated := range []bool{false, true} {
 		t.Run(map[bool]string{false: "omitted", true: "repeated"}[repeated], func(t *testing.T) {
 			received := make(chan url.Values, 1)
