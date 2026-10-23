@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -288,6 +287,11 @@ func TestMainDebugTimingAPIFailurePreservesExitStatus(t *testing.T) {
 }
 
 func TestMainDebugTimingLargePayloads(t *testing.T) {
+	testMainDebugLargePayloads(t, nil)
+}
+
+func testMainDebugLargePayloads(t *testing.T, captureFlags []string) {
+	t.Helper()
 	// These sequential probes preserve accepted large bodies. Their size is
 	// intentional, not a new API maximum. Keep each SSE line below 32 MiB.
 	for _, stream := range []bool{false, true} {
@@ -320,6 +324,7 @@ func TestMainDebugTimingLargePayloads(t *testing.T) {
 			if stream {
 				args = streamingTextArgs("responses", "--debug", "--format", "text")
 			}
+			args = append(args, captureFlags...)
 			child, stdout, stderr, _ := startDebugTimingProcess(t, server, args...)
 			gotHash := sha256.New()
 			n, err := io.Copy(gotHash, stdout)
@@ -341,6 +346,18 @@ func TestMainDebugTimingLargePayloads(t *testing.T) {
 			assertDebugTimingStage(t, log, 1, "response headers received", "200 OK")
 			assertDebugTimingStage(t, log, 1, "first response data read", "")
 			assertDebugTimingStage(t, log, 1, "response body fully consumed", "")
+			if len(captureFlags) != 0 {
+				if !strings.Contains(log, "request body (") || !strings.Contains(log, "response body (") {
+					t.Fatalf("large-payload capture omitted body diagnostics: %q", log)
+				}
+				marker := "capture truncated"
+				if stream {
+					marker = "SSE diagnostics truncated by capture limits"
+				}
+				if !strings.Contains(log, marker) {
+					t.Fatalf("large-payload capture omitted its limit notice: %q", log)
+				}
+			}
 			for _, private := range []string{"xxxxxxxxxxxxxxxx", "synthetic input", "sk-fake-debug-timing"} {
 				if strings.Contains(log, private) {
 					t.Errorf("debug disclosed large-payload content %q", private)
@@ -404,14 +421,14 @@ func (c *debugTimingCapture) waitFor(t *testing.T, ctx context.Context, text str
 
 func startDebugTimingProcess(t *testing.T, server *httptest.Server, args ...string) (*exec.Cmd, io.ReadCloser, *debugTimingCapture, context.Context) {
 	t.Helper()
-	binary, err := os.Executable()
+	binary, err := shellTestCLI()
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	child := exec.CommandContext(ctx, binary, append([]string{"-test.run=^TestMainDispatchProcess$", "--", "openai"}, args...)...)
+	child := exec.CommandContext(ctx, binary, args...)
 	home := t.TempDir()
-	child.Env = []string{"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "OPENAI_API_KEY=sk-fake-debug-timing",
+	child.Env = []string{"OPENAI_API_KEY=sk-fake-debug-timing",
 		"OPENAI_BASE_URL=" + server.URL, "HOME=" + home, "USERPROFILE=" + home, "APPDATA=" + home,
 		"LOCALAPPDATA=" + home, "XDG_CONFIG_HOME=" + home, "GOMAXPROCS=2", "FORCE_COLOR=0"}
 	stderr := &debugTimingCapture{changed: make(chan struct{}, 1)}

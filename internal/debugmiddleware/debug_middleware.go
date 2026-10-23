@@ -35,13 +35,20 @@ type RequestLogger struct {
 	logger           interface{ Printf(string, ...any) } // field for testability; usually log.Default()
 	sensitiveHeaders []string                            // field for testability; usually sensitiveHeaders
 	attempts         atomic.Uint64
+	capture          CaptureOptions
 }
 
 // NewRequestLogger redacts known credential headers and any additional header names.
 func NewRequestLogger(additionalSensitiveHeaders ...string) *RequestLogger {
+	return NewRequestLoggerWithOptions(CaptureOptions{}, additionalSensitiveHeaders...)
+}
+
+// NewRequestLoggerWithOptions adds explicit bounded payload diagnostics.
+func NewRequestLoggerWithOptions(capture CaptureOptions, additionalSensitiveHeaders ...string) *RequestLogger {
 	return &RequestLogger{
 		logger:           log.Default(),
 		sensitiveHeaders: slices.Concat(sensitiveHeaders, additionalSensitiveHeaders),
+		capture:          capture.normalized(),
 	}
 }
 
@@ -56,9 +63,20 @@ func (m *RequestLogger) Middleware() Middleware {
 		}
 
 		attempt := m.attempts.Add(1)
+		var requestCapture *captureRequestBody
+		if m.capture.Bodies && req.Body != nil && req.Body != http.NoBody {
+			requestCapture = &captureRequestBody{ReadCloser: req.Body, capture: newBodyCapture(req.Header.Get("Content-Type"), m.capture.MaxBytes), expected: req.ContentLength}
+			cloned := new(http.Request)
+			*cloned = *req
+			cloned.Body = requestCapture
+			req = cloned
+		}
 		started := time.Now()
 		resp, err := mn(req)
 		elapsed := time.Since(started)
+		if requestCapture != nil {
+			m.logger.Printf("HTTP attempt %d: %s", attempt, requestCapture.finish())
+		}
 		if err != nil || resp == nil {
 			outcome := "transport failed"
 			if req.Context().Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -78,9 +96,15 @@ func (m *RequestLogger) Middleware() Middleware {
 		}
 		if resp.Body != nil {
 			timing := &responseTiming{logger: m, attempt: attempt, started: started}
+			if m.capture.Bodies {
+				timing.capture = newBodyCapture(resp.Header.Get("Content-Type"), m.capture.MaxBytes)
+			}
+			if (m.capture.SSEFrames || m.capture.EventTiming) && mediaType(resp.Header.Get("Content-Type")) == "text/event-stream" {
+				timing.sse = newSSECapture(m.capture)
+			}
 			resp.Body = &timedResponseBody{body: resp.Body, context: req.Context(), responseTiming: timing}
 			// Keep the final request's context, including redirects and deadlines.
-			// A clone carries only timing metadata; the transport's request stays intact.
+			// A clone carries bounded diagnostic state; the transport's request stays intact.
 			finalRequest := resp.Request
 			if finalRequest == nil {
 				finalRequest = req

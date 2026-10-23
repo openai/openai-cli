@@ -23,16 +23,29 @@ import (
 )
 
 func TestMainDebugTimingBlockedStderrDownloadCleanup(t *testing.T) {
+	testMainDebugBlockedStderrDownloadCleanup(t, false)
+}
+
+func TestMainDebugCaptureBlockedStderrDownloadCleanup(t *testing.T) {
+	testMainDebugBlockedStderrDownloadCleanup(t, true)
+}
+
+func testMainDebugBlockedStderrDownloadCleanup(t *testing.T, capture bool) {
+	t.Helper()
 	for _, interrupts := range []int{1, 2} {
 		t.Run(fmt.Sprintf("interrupts=%d", interrupts), func(t *testing.T) {
-			const prefix = "synthetic first download bytes"
+			prefix, contentType := "synthetic first download bytes", "application/octet-stream"
+			if capture {
+				prefix = "data: {\"type\":\"future.event\",\"delta\":\"synthetic-private-download\"}\n\n"
+				contentType = "text/event-stream"
+			}
 			const original = "synthetic prior destination"
 			release, disconnected := make(chan struct{}), make(chan struct{})
 			var releaseOnce sync.Once
 			releaseBody := func() { releaseOnce.Do(func() { close(release) }) }
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				defer close(disconnected)
-				w.Header().Set("Content-Type", "application/octet-stream")
+				w.Header().Set("Content-Type", contentType)
 				w.Header().Set("Content-Length", "4096")
 				w.WriteHeader(http.StatusOK)
 				w.(http.Flusher).Flush()
@@ -58,14 +71,18 @@ func TestMainDebugTimingBlockedStderrDownloadCleanup(t *testing.T) {
 			if err := os.WriteFile(destination, []byte(original), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			binary, err := os.Executable()
+			binary, err := shellTestCLI()
 			if err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-			child := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--", "openai",
-				"--debug", "--quiet", "files", "content", "file_synthetic", "--output", destination)
-			child.Env = []string{"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "OPENAI_API_KEY=sk-fake-blocked-timing",
+			args := []string{"--debug", "--quiet"}
+			if capture {
+				args = append(args, "--debug-body", "--debug-sse", "--debug-event-timing")
+			}
+			args = append(args, "files", "content", "file_synthetic", "--output", destination)
+			child := exec.CommandContext(ctx, binary, args...)
+			child.Env = []string{"OPENAI_API_KEY=sk-fake-blocked-timing",
 				"OPENAI_BASE_URL=" + server.URL, "HOME=" + home, "USERPROFILE=" + home,
 				"XDG_CONFIG_HOME=" + home, "GOMAXPROCS=2", "FORCE_COLOR=0"}
 			var stdout bytes.Buffer
@@ -170,8 +187,15 @@ func TestMainDebugTimingBlockedStderrDownloadCleanup(t *testing.T) {
 				log := headers.String() + string(result.data)
 				if interrupts == 1 {
 					assertDebugTimingStage(t, log, 1, "first response data read", "")
+					if capture {
+						for _, marker := range []string{"response body (redacted;", "SSE frame 1 (redacted;", "SSE event 1 complete frame observed after"} {
+							if !strings.Contains(log, marker) {
+								t.Errorf("deferred capture omitted %q after cleanup: %q", marker, log)
+							}
+						}
+					}
 				}
-				if strings.Contains(log, "response body fully consumed") || strings.Contains(log, prefix) || strings.Contains(log, "sk-fake-blocked-timing") {
+				if strings.Contains(log, "response body fully consumed") || strings.Contains(log, prefix) || strings.Contains(log, "synthetic-private-download") || strings.Contains(log, "sk-fake-blocked-timing") {
 					t.Fatalf("incomplete download diagnostics misreported completion or disclosed data: %q", log)
 				}
 			case <-time.After(5 * time.Second):

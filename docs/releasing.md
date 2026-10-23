@@ -1,5 +1,10 @@
 # Release tooling maintenance
 
+GoReleaser embeds the exact release version and commit for [automatic updates](automatic-updates.md).
+Ordinary builds and Go installations do not receive those metadata values.
+Automatic activation requires the published archive's existing provenance and a successful publishing workflow run attempt.
+Missing or incomplete attestations keep the installed binary unchanged. No additional signing key or release channel is introduced.
+
 CI and release publishing install GoReleaser with `scripts/install-goreleaser`.
 The installer downloads only the version in `.goreleaser-version`, requires a
 matching, repository-reviewed SHA-256 digest in `.goreleaser-checksums`, and

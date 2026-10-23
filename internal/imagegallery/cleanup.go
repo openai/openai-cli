@@ -22,24 +22,40 @@ type TerminalSession struct {
 // gallery lock makes ownership recording and font activation indivisible with
 // respect to cleanup. Older galleries acquire ownership on their next use.
 func (g *Gallery) BindTTY(ctx context.Context, tty string) error {
-	if err := g.check(ctx); err != nil {
+	exists, err := g.checkTTY(ctx, tty)
+	if err != nil || exists {
 		return err
+	}
+	return writeNew(ctx, filepath.Join(g.directory, ".tty"), []byte(tty))
+}
+
+// CheckTTY reads ownership without binding unowned legacy galleries.
+func (g *Gallery) CheckTTY(ctx context.Context, tty string) error {
+	_, err := g.checkTTY(ctx, tty)
+	return err
+}
+
+func (g *Gallery) checkTTY(ctx context.Context, tty string) (bool, error) {
+	if err := g.check(ctx); err != nil {
+		return false, err
 	}
 	if !ownerTTY.MatchString(tty) {
-		return errors.New("invalid image gallery owner TTY")
+		return false, errors.New("invalid image gallery owner TTY")
 	}
-	path := filepath.Join(g.directory, ".tty")
-	data, err := readPrivate(path, 64)
-	if err == nil {
-		if string(data) != tty {
-			return errors.New("image gallery belongs to another Terminal tab")
-		}
-		return nil
+	data, err := readPrivate(filepath.Join(g.directory, ".tty"), 64)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return err
+	if err != nil {
+		return false, err
 	}
-	return writeNew(ctx, path, []byte(tty))
+	if !ownerTTY.MatchString(string(data)) {
+		return true, errors.New("invalid recorded image gallery owner TTY")
+	}
+	if string(data) != tty {
+		return true, ErrOtherTTY
+	}
+	return true, nil
 }
 
 // CleanupClosed reclaims galleries only after inventory returns a complete,

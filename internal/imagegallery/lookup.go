@@ -2,6 +2,7 @@ package imagegallery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -40,4 +41,75 @@ func (g *Gallery) LookupFontPS(ctx context.Context, postScript string) (string, 
 		return "", fmt.Errorf("check cached image font: %w", safePathError(err))
 	}
 	return path, nil
+}
+
+// FindFontGallery locates the exact selected immutable font, including legacy
+// root galleries. It does not transfer TTY ownership or change native state.
+func FindFontGallery(ctx context.Context, root, postScript string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	parts := strings.Split(postScript, "-")
+	if len(parts) != 4 || parts[0] != "OpenAIImages" || !isHex(parts[1], 8) || !isHex(parts[2], 32) {
+		return "", nil
+	}
+	switch parts[3] {
+	case "Regular", "Bold", "Italic", "BoldItalic":
+	default:
+		return "", nil
+	}
+	if err := checkPrivate(root, true); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", err
+	}
+	candidates := []string{root}
+	for _, entry := range entries {
+		if entry.IsDir() && isHex(entry.Name(), 32) {
+			candidates = append(candidates, filepath.Join(root, entry.Name()))
+		}
+	}
+	found := ""
+	for _, directory := range candidates {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if err := checkPrivate(directory, true); err != nil {
+			return "", err
+		}
+		data, err := readPrivate(filepath.Join(directory, "state.json"), 1<<20)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		var identity struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(data, &identity) != nil || !isHex(identity.ID, 32) || !strings.HasPrefix(identity.ID, parts[1]) {
+			continue
+		}
+		gallery, err := Open(ctx, directory)
+		if err != nil {
+			return "", err
+		}
+		path, lookupErr := gallery.LookupFontPS(ctx, postScript)
+		closeErr := gallery.Close()
+		if err := errors.Join(lookupErr, closeErr); err != nil {
+			return "", err
+		}
+		if path != "" {
+			if found != "" {
+				return "", errors.New("the selected image font matches multiple galleries")
+			}
+			found = directory
+		}
+	}
+	return found, nil
 }

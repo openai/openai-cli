@@ -27,7 +27,7 @@ func testImage(t *testing.T) image.Image {
 
 func TestWritePreservesImageAndFitsWidth(t *testing.T) {
 	img := testImage(t)
-	for _, protocol := range []string{"kitty", "iterm", "iterm-auto"} {
+	for _, protocol := range []string{"kitty", "iterm", "iterm-auto", "iterm-konsole"} {
 		t.Run(protocol, func(t *testing.T) {
 			var output bytes.Buffer
 			require.NoError(t, Write(t.Context(), &output, img, protocol, 50))
@@ -84,7 +84,7 @@ func (f writerFunc) Write(data []byte) (int, error) { return f(data) }
 
 func TestWriteErrorsAndCancellation(t *testing.T) {
 	img := testImage(t)
-	for _, protocol := range []string{"kitty", "iterm", "iterm-auto", "blocks"} {
+	for _, protocol := range []string{"kitty", "iterm", "iterm-auto", "iterm-konsole", "blocks"} {
 		t.Run(protocol, func(t *testing.T) {
 			sinkErr := errors.New("synthetic output failure")
 			require.ErrorIs(t, Write(t.Context(), writerFunc(func([]byte) (int, error) {
@@ -104,7 +104,7 @@ func TestWriteErrorsAndCancellation(t *testing.T) {
 			})
 			require.ErrorIs(t, Write(ctx, writer, img, protocol, 50), context.Canceled)
 			wantWrites := 1
-			if protocol == "iterm" || protocol == "iterm-auto" {
+			if protocol == "iterm" || protocol == "iterm-auto" || protocol == "iterm-konsole" {
 				wantWrites++ // Close the OSC.
 			}
 			require.Equal(t, wantWrites, writes)
@@ -150,7 +150,7 @@ func TestWriteNativeStopsDuringPNGPreparation(t *testing.T) {
 			img.SetRGBA(x, y, color.RGBA{R: byte(x), G: byte(y), A: 255})
 		}
 	}
-	for _, protocol := range []string{"kitty", "iterm", "iterm-auto"} {
+	for _, protocol := range []string{"kitty", "iterm", "iterm-auto", "iterm-konsole"} {
 		t.Run(protocol, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()

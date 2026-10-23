@@ -19,20 +19,22 @@ cp "$demo_source/scene.sh" "$demo_runtime/scene.sh"
   echo 'fixture: identical synthetic model; 180 ms before headers; two further 240 ms body delays'
   echo 'capture: shared lifecycle; isolated Bash PTYs; synthetic credentials'
   echo 'scope: terminal replay; no native Terminal appearance or live API claim'
-  echo 'render: 112 columns x 43 rows; Menlo 18px; asciinema theme'
+  echo 'render: 112 columns x 43 rows; Menlo 18px; line height 1.4; background #171717; foreground #eeeeee'
   demo_capture_metadata
   shasum -a 256 "$demo_source/record.sh" "$demo_source/scene.sh" "$demo_source/validate.py"
 } > "$demo_output/metadata.txt"
 demo_window_size=112x43
-demo_render_options=(--renderer resvg --font-family Menlo --font-size 18 --line-height 1.2 \
-  --theme asciinema --fps-cap 20 --last-frame-duration 3)
+demo_palette='171717,eeeeee,000000,cd3131,0dbc79,e5e510,2472c8,bc3fbc,11a8cd,e5e5e5,666666,f14c4c,23d18b,f5f543,3b8eea,d670d6,29b8db,ffffff'
+demo_render_options=(--renderer resvg --font-family Menlo --font-size 18 --line-height 1.4 \
+  --theme "$demo_palette" --fps-cap 20 --last-frame-duration 3)
 for demo_scene in before after; do
   mkdir -p "$demo_runtime/$demo_scene-home"
   demo_label='Before: redacted headers without timing'
   if [ "$demo_scene" = after ]; then demo_label='After: headers, first response data, and complete body timing'; fi
   demo_capture_scene "$demo_scene" 0 "$demo_runtime/$demo_scene" "$demo_api_url" "$demo_label" \
     "HOME=$demo_runtime/$demo_scene-home" "XDG_CONFIG_HOME=$demo_runtime/$demo_scene-home" \
-    NO_COLOR=1 FORCE_COLOR=0 GOMAXPROCS=2
+    "XDG_CACHE_HOME=$demo_runtime/$demo_scene-home/cache" \
+    OPENAI_CLI_NO_UPDATE_CHECK=1 NO_COLOR=1 FORCE_COLOR=0 GOMAXPROCS=2
 done
 demo_stop_api
 "$demo_python" -I -B "$demo_source/validate.py" "$demo_output" | tee "$demo_output/validation.txt"

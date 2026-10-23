@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live translation · OpenAI CLI</title>
+<link rel="stylesheet" href="/translation.css">
+<script src="/translation.js" defer></script>
+</head>
+<body>
+<main>
+<header><h1>Live translation</h1><span id="status" role="status">Ready</span></header>
+<div class="layout">
+<section class="settings" aria-label="Translation settings">
+<label for="source">Audio source</label>
+<select id="source"><option value="microphone">Microphone</option><option value="tab">Browser tab</option></select>
+<p id="tab-hint" class="hint" hidden>Choose a tab and enable “Share tab audio.”</p>
+<label for="language">Translate into</label>
+<select id="language"><option value="zh">Chinese</option><option value="en" selected>English</option><option value="fr">French</option><option value="de">German</option><option value="hi">Hindi</option><option value="id">Indonesian</option><option value="it">Italian</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="pt">Portuguese</option><option value="ru">Russian</option><option value="es">Spanish</option><option value="vi">Vietnamese</option></select>
+<label for="microphone">Microphone</label><select id="microphone"><option value="">System default</option></select>
+<label for="output">Output device</label><select id="output"><option value="">System default</option></select>
+<label class="toggle"><input type="checkbox" id="listen" checked>Play translated audio</label>
+<label class="toggle"><input type="checkbox" id="noise">Noise reduction</label>
+<details><summary>Models</summary><dl><dt>Translation</dt><dd>gpt-realtime-translate</dd><dt>Input transcription</dt><dd>gpt-realtime-whisper</dd></dl></details>
+<div class="actions"><button id="start">Start session</button><button id="mute" hidden>Mute input</button></div>
+</section>
+<section class="recording" aria-label="Translation output">
+<p id="error" role="alert" hidden></p>
+<div class="captions"><section><h2>Original</h2><p id="original" aria-label="Original transcript"></p></section><section><h2>Translation</h2><p id="translated" aria-label="Translated transcript"></p></section></div>
+<canvas id="waveform" height="120" role="slider" aria-label="Seek translated audio" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="-1"></canvas>
+<div class="timing"><span id="time">00:00 / 00:00</span><span id="usage"></span></div>
+<audio id="player" hidden></audio>
+<div class="actions"><button id="playback" disabled>Play</button><button id="download" disabled>Save audio</button><button id="transcript" disabled>Save transcript</button><button id="clear">Clear</button></div>
+</section>
+</div>
+</main>
+</body>
+</html>

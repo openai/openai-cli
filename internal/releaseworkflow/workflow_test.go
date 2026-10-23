@@ -20,8 +20,8 @@ const (
 	releaseInputsArtifact  = "openai-release-inputs"
 	checkoutAction         = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 	setupGoAction          = "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
-	uploadArtifactAction   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-	downloadArtifactAction = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+	uploadArtifactAction   = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+	downloadArtifactAction = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 )
 
 var releaseInputPaths = []string{
@@ -38,6 +38,13 @@ type workflow struct {
 }
 
 type workflowJob struct {
+	ContinueOnError bool `yaml:"continue-on-error"`
+	Strategy        struct {
+		FailFast *bool `yaml:"fail-fast"`
+		Matrix   struct {
+			Shard []int `yaml:"shard"`
+		} `yaml:"matrix"`
+	} `yaml:"strategy"`
 	Env         map[string]string `yaml:"env"`
 	If          string            `yaml:"if"`
 	Environment string            `yaml:"environment"`
@@ -49,12 +56,15 @@ type workflowJob struct {
 }
 
 type workflowStep struct {
-	Name string         `yaml:"name"`
-	Uses string         `yaml:"uses"`
-	Run  string         `yaml:"run"`
-	ID   string         `yaml:"id"`
-	With map[string]any `yaml:"with"`
-	Env  map[string]any `yaml:"env"`
+	ContinueOnError bool           `yaml:"continue-on-error"`
+	If              string         `yaml:"if"`
+	Shell           string         `yaml:"shell"`
+	Name            string         `yaml:"name"`
+	Uses            string         `yaml:"uses"`
+	Run             string         `yaml:"run"`
+	ID              string         `yaml:"id"`
+	With            map[string]any `yaml:"with"`
+	Env             map[string]any `yaml:"env"`
 }
 
 func readWorkflow(t *testing.T, name string) workflow {
@@ -103,7 +113,7 @@ func TestWorkflowPermissionsRemainLeastPrivileged(t *testing.T) {
 	}
 
 	ciJobs := readWorkflow(t, "ci.yml").Jobs
-	for _, name := range []string{"lint", "macos-uploads", "build-artifacts", "test"} {
+	for _, name := range []string{"lint", "macos-uploads", "build-artifacts", "test", "test-linux", "test-windows-compile", "error-audit"} {
 		if ciJobs[name].Permissions == nil || len(ciJobs[name].Permissions) != 0 {
 			t.Errorf("CI job %s permissions changed: %v", name, ciJobs[name].Permissions)
 		}
@@ -359,30 +369,42 @@ esac
 					failed = "1"
 				}
 				command := exec.Command("bash", "-e", "-c", tag.Run)
-				command.Env = append(os.Environ(),
-					"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
-					"GITHUB_TOKEN="+token,
+				// Keep host credentials and shell startup variables out of the fixture.
+				command.Env = []string{
+					"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+					"HOME=" + bin,
+					"TMPDIR=" + bin,
+					"GITHUB_TOKEN=" + token,
 					"GITHUB_REPOSITORY=openai/openai-cli",
-					"GITHUB_OUTPUT="+filepath.Join(t.TempDir(), "github-output"),
+					"GITHUB_OUTPUT=" + filepath.Join(t.TempDir(), "github-output"),
 					"TAG=v1.2.3",
-					"EXPECTED_TAG_SHA="+tagSHA,
-					"FAKE_TAG_SHA="+tagSHA,
-					"EXPECTED_AUTH_HEADER="+encodedToken,
-					"FAKE_GIT_FAILURE="+failed,
-				)
-				output, err := command.CombinedOutput()
-				if failure && err == nil || !failure && err != nil {
-					t.Fatalf("trusted tag command error=%v, failure=%t, output:\n%s", err, failure, output)
+					"EXPECTED_TAG_SHA=" + tagSHA,
+					"FAKE_TAG_SHA=" + tagSHA,
+					"EXPECTED_AUTH_HEADER=" + encodedToken,
+					"FAKE_GIT_FAILURE=" + failed,
 				}
-				visible := string(output)
-				for _, line := range strings.Split(visible, "\n") {
-					if mask, ok := strings.CutPrefix(line, "::add-mask::"); ok {
-						visible = strings.ReplaceAll(visible, line+"\n", "")
-						visible = strings.ReplaceAll(visible, mask, "***")
+				output, err := command.CombinedOutput()
+				// Apply workflow masking before any diagnostic, including unexpected
+				// exits. A mask directive need not end with a newline.
+				lines := strings.Split(string(output), "\n")
+				var masks []string
+				for i, line := range lines {
+					if mask, ok := strings.CutPrefix(strings.TrimSuffix(line, "\r"), "::add-mask::"); ok {
+						lines[i] = ""
+						if mask != "" {
+							masks = append(masks, mask)
+						}
 					}
 				}
+				visible := strings.Join(lines, "\n")
+				for _, mask := range masks {
+					visible = strings.ReplaceAll(visible, mask, "***")
+				}
 				if strings.Contains(visible, token) || strings.Contains(visible, encodedToken) {
-					t.Fatalf("Git failure exposed a raw or derived credential in workflow logs:\n%s", visible)
+					t.Fatal("Git failure exposed a raw or derived credential in workflow logs (output withheld)")
+				}
+				if failure && err == nil || !failure && err != nil {
+					t.Fatalf("trusted tag command error=%v, failure=%t, sanitized output:\n%s", err, failure, visible)
 				}
 			})
 		}
@@ -747,7 +769,7 @@ assert link.existing_snapshot(api, context, 7) is False
 
 func TestCandidateJobsUseOnlySameRunSourceArtifacts(t *testing.T) {
 	for filename, names := range map[string][]string{
-		"ci.yml":                 {"lint", "test", "build-artifacts", "macos-uploads"},
+		"ci.yml":                 {"lint", "test-linux", "test-windows-compile", "error-audit", "build-artifacts", "macos-uploads"},
 		"help-compatibility.yml": {"help"}, "codeql.yml": {"analyze"},
 	} {
 		jobs := readWorkflow(t, filename).Jobs
@@ -860,5 +882,104 @@ class GitHub:
 				t.Fatalf("unexpected staged artifact: %v", artifactErr)
 			}
 		})
+	}
+}
+
+func TestParallelTestGateRequiresAllJobs(t *testing.T) {
+	job := readWorkflow(t, "ci.yml").Jobs["test"]
+	if got := fmt.Sprint(job.Needs); got != "[source test-linux test-windows-compile error-audit]" || job.If != "always()" || job.ContinueOnError {
+		t.Fatalf("test gate needs=%v if=%q continue-on-error=%v, want all dependencies and mandatory always() gate", job.Needs, job.If, job.ContinueOnError)
+	}
+	_, step := requireStep(t, job, "Require successful tests and error audits")
+	for name, dependency := range map[string]string{"SOURCE_RESULT": "source", "LINUX_RESULT": "test-linux", "WINDOWS_RESULT": "test-windows-compile", "AUDIT_RESULT": "error-audit"} {
+		if step.Env[name] != "${{ needs."+dependency+".result }}" {
+			t.Fatalf("test gate %s=%v, want result from %s", name, step.Env[name], dependency)
+		}
+	}
+	if step.ContinueOnError {
+		t.Fatal("test gate must not ignore its result")
+	}
+	results := []string{"success", "failure", "cancelled", "skipped", ""}
+	for _, source := range results {
+		for _, linux := range results {
+			for _, windows := range results {
+				for _, audit := range results {
+					t.Run(fmt.Sprintf("source=%s/linux=%s/windows=%s/audit=%s", source, linux, windows, audit), func(t *testing.T) {
+						command := exec.Command("bash", "-c", step.Run)
+						command.Env = append(os.Environ(), "SOURCE_RESULT="+source, "LINUX_RESULT="+linux, "WINDOWS_RESULT="+windows, "AUDIT_RESULT="+audit)
+						output, err := command.CombinedOutput()
+						wantSuccess := source == "success" && linux == "success" && windows == "success" && audit == "success"
+						if (err == nil) != wantSuccess {
+							t.Errorf("test gate success=%v, want %v: %s", err == nil, wantSuccess, output)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestErrorAuditShardsRemainRequired(t *testing.T) {
+	jobs := readWorkflow(t, "ci.yml").Jobs
+	audit := jobs["error-audit"]
+	if audit.ContinueOnError || audit.Strategy.FailFast == nil || *audit.Strategy.FailFast || !reflect.DeepEqual(audit.Strategy.Matrix.Shard, []int{0, 1, 2, 3}) {
+		t.Fatalf("audit must retain four mandatory shards without fail-fast: %+v", audit)
+	}
+	_, shard := requireStep(t, audit, "Run exhaustive error audit shard")
+	if shard.ContinueOnError || shard.Shell != "bash" || shard.Env["OPENAI_CLI_ERROR_COVERAGE_MODE"] != "exhaustive" || shard.Env["OPENAI_CLI_ERROR_COVERAGE_SHARD_INDEX"] != "${{ matrix.shard }}" || shard.Env["OPENAI_CLI_ERROR_COVERAGE_SHARD_COUNT"] != "4" {
+		t.Fatalf("audit execution contract changed: %+v", shard)
+	}
+	for _, command := range []string{
+		"go test -p 1 ./cmd/openai -run '^Test(MainErrorCoverageAcrossCommandTree|ErrorCoverage)' -count=1 -timeout=10m -json",
+		"python3 scripts/check-error-audit.py --log \"$RUNNER_TEMP/error-audit.jsonl\" --shard-index \"$OPENAI_CLI_ERROR_COVERAGE_SHARD_INDEX\" --shard-count \"$OPENAI_CLI_ERROR_COVERAGE_SHARD_COUNT\"",
+	} {
+		if !strings.Contains(shard.Run, command) {
+			t.Errorf("audit execution is missing %q", command)
+		}
+	}
+	linux := jobs["test-linux"]
+	_, validator := requireStep(t, linux, "Check error audit validator")
+	_, bash := requireStep(t, linux, "Check native Bash executable suggestions")
+	launcherIndex, launcher := requireStep(t, linux, "Check test launcher failure handling")
+	testsIndex, tests := requireStep(t, linux, "Run tests")
+	if launcherIndex >= testsIndex || launcher.If != "" || launcher.ContinueOnError || launcher.Run != "go test ./scripts -run '^TestTestRunner$' -count=1" {
+		t.Fatal("Linux tests must check launcher failures independently before running the launcher")
+	}
+	if validator.Run != "python3 scripts/test-error-audit.py" || validator.ContinueOnError || bash.ContinueOnError || bash.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"] != "bash" || !strings.Contains(bash.Run, "-run '^TestShellSuggestionsBash'") {
+		t.Fatal("Linux tests must retain the audit validator and mandatory native Bash suggestion checks")
+	}
+	if linux.ContinueOnError || tests.Env["SKIP_WINDOWS_TEST_COMPILE"] != "1" || tests.Run != "./scripts/test -p 1" || tests.ContinueOnError {
+		t.Fatalf("Linux tests must preserve their separate Windows compile contract: %+v", tests)
+	}
+	windows := jobs["test-windows-compile"]
+	_, compilation := requireStep(t, windows, "Compile all test packages for Windows")
+	if windows.ContinueOnError || compilation.ContinueOnError || !strings.Contains(compilation.Run, "GOARCH=amd64 GOOS=windows go test -exec=true ./... -p 1") {
+		t.Fatalf("Windows test compilation must remain mandatory: %+v", compilation)
+	}
+}
+
+func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
+	job := readWorkflow(t, "ci.yml").Jobs["build-artifacts"]
+	setupIndex, setup := requireStep(t, job, "Set up Go for artifact builds")
+	cacheIndex, cache := requireStep(t, job, "Cache artifact build dependencies and compilation")
+	bootstrapIndex, _ := requireStep(t, job, "Bootstrap")
+	buildIndex, _ := requireStep(t, job, "Run GoReleaser")
+	if setup.Uses != setupGoAction || setup.With["cache"] != false {
+		t.Errorf("artifact Go setup=%v, want pinned setup-go with default cache disabled", setup)
+	}
+	if !(setupIndex < cacheIndex && cacheIndex < bootstrapIndex && bootstrapIndex < buildIndex) {
+		t.Errorf("artifact setup/cache/bootstrap/build order=%v, want setup before restore before bootstrap before build", []int{setupIndex, cacheIndex, bootstrapIndex, buildIndex})
+	}
+	prefix := "artifact-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-"
+	if cache.With["key"] != prefix+"${{ github.sha }}" || strings.TrimSpace(fmt.Sprint(cache.With["restore-keys"])) != prefix {
+		t.Errorf("artifact cache inputs=%v, want revision-specific save and compatible artifact-only restore", cache.With)
+	}
+	if cache.Uses != "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" {
+		t.Errorf("artifact cache action=%q, want reviewed cache action with success-only post-save", cache.Uses)
+	}
+	for _, step := range job.Steps {
+		if step.Uses == "./.github/actions/setup-go" {
+			t.Error("artifact build uses shared setup-go cache, want dedicated artifact cache only")
+		}
 	}
 }
