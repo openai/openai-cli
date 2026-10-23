@@ -306,12 +306,12 @@ jobs:
           exit $LASTEXITCODE
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
-      - name: Test Windows tokenizer console reader
+      - name: Test Windows tokenizer console reader and preview worker
         if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./internal/commands/tokenize -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes)' |
+          go test -p 2 ./internal/commands/tokenize -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes|Preview(MatchesExactEncodings|CancellationDuringChildWork|PreservesDeadline|LegacyCancellationDuringNumericWork))' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'tokenizer-reader-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test image command ordering
@@ -991,12 +991,30 @@ jobs:
               suites["tokenizer-reader-tests.jsonl"] = {
                   "TestTokenizerConsoleInputPreservesUnicode",
                   "TestTokenizerConsoleInputRecordSemantics",
+                  "TestTokenizerConsoleInputRecordSemantics/repeats",
+                  "TestTokenizerConsoleInputRecordSemantics/nontext",
+                  "TestTokenizerConsoleInputRecordSemantics/translated_NUL",
+                  "TestTokenizerConsoleInputRecordSemantics/Alt_composition",
+                  "TestTokenizerConsoleInputRecordSemantics/Alt_surrogate_pair",
+                  "TestTokenizerConsoleInputRecordSemantics/ordinary_surrogate_releases",
                   "TestTokenizerConsoleInputRejectsMalformedUTF16",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/isolated_low",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/following_text",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/repeated_high",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/repeat_mismatch",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/channel_mismatch",
                   "TestTokenizerConsoleInputBoundedRepeatsAndCancellation",
                   "TestTokenizerConsoleInputClosePreservesBorrowedHandle",
                   "TestTokenizerConsoleInputReadFailure",
                   "TestTokenizerInputSourcePreservesNonConsoleBytes",
+                  "TestTokenizerPreviewMatchesExactEncodings",
+                  "TestTokenizerPreviewCancellationDuringChildWork",
+                  "TestTokenizerPreviewPreservesDeadline",
+                  "TestTokenizerPreviewLegacyCancellationDuringNumericWork",
+                  "TestTokenizerPreviewLegacyCancellationDuringNumericWork/r50k_base",
+                  "TestTokenizerPreviewLegacyCancellationDuringNumericWork/p50k_base",
               }
+              strict_packages["tokenizer-reader-tests.jsonl"] = "github.com/openai/openai-cli/internal/commands/tokenize"
               files_cases = {
                   "UploadPaths": ["spaces", "options_first", "apostrophe", "literal_at", "literal_dash",
                                   "literal_double_dash", "empty", "binary", "upload_flag", "create_flag",
