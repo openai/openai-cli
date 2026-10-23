@@ -16,19 +16,19 @@ jobs:
       contents: read
       actions: read
 
-  # These platforms have no other main-branch CI producer. PR/queue caches
-  # cannot seed the default branch, so warm compilation on trusted main pushes.
+  # Required native jobs only restore caches. Warm and save compilation on main
+  # so optional cache compression cannot cancel otherwise passing test jobs.
   warm-native-cache:
     if: github.event_name == 'push'
     needs: source
     permissions: {}
     name: Warm compatibility cache on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15-intel, windows-11-arm]
+        os: [macos-15-intel, windows-11-arm, windows-latest]
     steps:
       - name: Download prepared source
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -40,9 +40,11 @@ jobs:
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-compatibility-go
+        id: go-cache
         with:
           cache-compilation: 'true'
       - name: Warm native test and CLI compilation
+        timeout-minutes: 10
         shell: bash
         env:
           GOMAXPROCS: '2'
@@ -51,6 +53,16 @@ jobs:
           go test -p 1 ./cmd/openai ./internal/... -run '^$'
           go build -p 1 -o "$RUNNER_TEMP/openai.exe" ./cmd/openai
           go mod verify
+      - name: Save native compatibility compilation
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ steps.go-cache.outputs.build-cache }}
+            ${{ steps.go-cache.outputs.module-cache }}
+          key: ${{ steps.go-cache.outputs.cache-key }}
 
   help:
     if: github.event_name != 'push'
@@ -157,7 +169,7 @@ jobs:
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-compatibility-go
         with:
-          cache-compilation: ${{ matrix.os == 'macos-15-intel' || matrix.os == 'windows-11-arm' }}
+          cache-compilation: ${{ matrix.os == 'macos-15-intel' || startsWith(matrix.os, 'windows-') }}
       - name: Verify native Go platform
         id: native-go-platform
         shell: bash
