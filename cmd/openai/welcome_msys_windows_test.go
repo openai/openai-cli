@@ -52,6 +52,9 @@ func TestMainDispatchWelcomeMSYSPipes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got := runWelcomeMSYSPipes(t, server.URL, tc.prefix, tc.suffix, tc.redirect, tc.args, tc.env)
 			want := control
+			if tc.redirect == "stdout" || tc.prefix == "ordinary" {
+				want.stdout = strings.TrimSuffix(want.stdout, "\n")
+			}
 			if tc.banner {
 				header, rest, found := strings.Cut(got.stdout, "\n\n")
 				plain := ansi.Strip(header)

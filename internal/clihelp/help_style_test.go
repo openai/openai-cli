@@ -62,6 +62,7 @@ func TestStyledHelpPreservesContentAndColorOptOuts(t *testing.T) {
 				want := commandHelpAtWidth(root, "openai", "", width)
 				if !tc.pipe {
 					root.Writer = &out
+					want += "\n" // Separate terminal help from the next shell prompt.
 				}
 				got := commandHelpAtWidth(root, "openai", "", width)
 				if ansi.Strip(got) != want {

@@ -2,6 +2,7 @@ package clihelp
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -190,6 +191,13 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 		out.WriteString(style.render(style.note, wrapDescription("Help needs no API key or internet.", "  ", width)))
 	} else {
 		fmt.Fprintf(&out, "  Key setup: %s\n", commandsuggest.Record(command, invocation+" help setup"))
+	}
+	output := command.Root().Writer
+	if output == nil {
+		output = os.Stdout
+	}
+	if welcomeTerminal(output) {
+		out.WriteByte('\n')
 	}
 	return out.String()
 }
