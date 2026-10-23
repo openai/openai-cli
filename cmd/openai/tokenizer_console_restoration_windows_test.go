@@ -216,14 +216,22 @@ func observeTokenizerRestoration(t *testing.T, binary string, input, output *os.
 	if err != nil || strings.Contains(screen, frameMarker) {
 		t.Fatalf("fresh screen prerequisite failed: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, binary, "tokenizer")
+	processCtx, stopProcess := context.WithCancel(t.Context())
+	defer stopProcess()
+	command := exec.CommandContext(processCtx, binary, "tokenizer")
 	command.Stdin, command.Stdout, command.Stderr = input, output, output
 	command.WaitDelay = 3 * time.Second
+	starting := time.Now()
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
+	startElapsed := time.Since(starting)
+	// Windows process creation can block before CommandContext watches cancellation.
+	// The owner still bounds the whole scenario. Start the response deadline here.
+	ctx, cancel := context.WithTimeout(processCtx, 5*time.Second)
+	defer cancel()
+	stopDeadline := context.AfterFunc(ctx, stopProcess)
+	defer stopDeadline()
 	evidence.PID = command.Process.Pid
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
@@ -257,9 +265,9 @@ func observeTokenizerRestoration(t *testing.T, binary string, input, output *os.
 		select {
 		case err := <-done:
 			waited = true
-			t.Fatalf("tokenizer exited before active mode and fresh-frame readiness: %v; state=%+v", err, evidence.Active)
+			t.Fatalf("tokenizer exited before active mode and fresh-frame readiness: %v; invocation=%d; process_start=%s; frame=%t; state=%+v", err, invocation, startElapsed, strings.Contains(screen, frameMarker), evidence.Active)
 		case <-ctx.Done():
-			t.Fatalf("tokenizer readiness deadline: %v; state=%+v", ctx.Err(), evidence.Active)
+			t.Fatalf("tokenizer readiness deadline: %v; invocation=%d; process_start=%s; frame=%t; state=%+v", ctx.Err(), invocation, startElapsed, strings.Contains(screen, frameMarker), evidence.Active)
 		case <-ticker.C:
 		}
 	}
