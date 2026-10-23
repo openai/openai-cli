@@ -16,19 +16,19 @@ jobs:
       contents: read
       actions: read
 
-  # Required native jobs only restore caches. Warm and save compilation on main
-  # so optional cache compression cannot cancel otherwise passing test jobs.
+  # Required native jobs only restore caches. Warm these platforms on main;
+  # Windows x64 reuses the cache saved by existing CI jobs.
   warm-native-cache:
     if: github.event_name == 'push'
     needs: source
     permissions: {}
     name: Warm compatibility cache on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15-intel, windows-11-arm, windows-latest]
+        os: [macos-15-intel, windows-11-arm]
     steps:
       - name: Download prepared source
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -44,7 +44,6 @@ jobs:
         with:
           cache-compilation: 'true'
       - name: Warm native test and CLI compilation
-        timeout-minutes: 10
         shell: bash
         env:
           GOMAXPROCS: '2'
