@@ -402,6 +402,9 @@ func testUpdateVerifierCancellation(t *testing.T, capabilities bool) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	if !updateTestProcessRunning(t, pid) {
+		t.Fatal("verifier descendant exited before cancellation")
+	}
 	cancel()
 	select {
 	case err := <-finished:
@@ -412,7 +415,7 @@ func testUpdateVerifierCancellation(t *testing.T, capabilities bool) {
 		t.Fatal("verifier cancellation did not finish")
 	}
 	deadline = time.Now().Add(3 * time.Second)
-	for syscall.Kill(pid, 0) == nil {
+	for updateTestProcessRunning(t, pid) {
 		if time.Now().After(deadline) {
 			t.Fatal("verifier descendant survived cancellation")
 		}
@@ -421,4 +424,32 @@ func testUpdateVerifierCancellation(t *testing.T, capabilities bool) {
 	if _, err := cache.root.Stat("next"); !os.IsNotExist(err) {
 		t.Fatal("cancellation prepared an executable")
 	}
+}
+
+func updateTestProcessRunning(t *testing.T, pid int) bool {
+	t.Helper()
+	if runtime.GOOS == "linux" {
+		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if os.IsNotExist(err) {
+			return false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The command name can contain spaces and parentheses. The state follows its final closing parenthesis.
+		end := strings.LastIndex(string(stat), ") ")
+		if end < 0 || len(stat) <= end+2 {
+			t.Fatal("invalid descendant process status")
+		}
+		// A zombie has terminated even when the container's PID 1 has not reaped it.
+		return stat[end+2] != 'Z'
+	}
+	err := syscall.Kill(pid, 0)
+	if err == syscall.ESRCH {
+		return false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return true
 }
