@@ -133,6 +133,20 @@ class ReceiptTest(unittest.TestCase):
         )
         picker.check_receipts(terminal, iter((Path('/tmp/first.png'), Path('/tmp/second.png'))))
 
+    def test_receipts_after_cursor_restoration_accept_terminal_line_boundaries(self):
+        # The real close path retains DEC cursor controls before a bare CR.
+        prefix = (b'completed workspace\x1b[m\x1b[140G \r\x1b[5A'
+                  b'\x1b7\x1b8\x1b[6n\x1b8')
+        teardown = b'\x1b[J\x1b[0 q\x1b[?25h'
+        receipt = b'Saved image: "/tmp/pictures with spaces \\u96ea/image.png"\n'
+        for boundary in (b'\r', b'\r\n', b'\n'):
+            with self.subTest(boundary=boundary):
+                terminal = TranscriptTerminal(
+                    prefix + boundary + teardown + receipt
+                    + b'\x1b[?2004lopenai images generate --prompt synthetic\r\n'
+                )
+                picker.check_receipts(terminal, [Path('/tmp/pictures with spaces 雪/image.png')])
+
     def test_receipts_follow_go_ascii_quoting(self):
         # image_picker_workspace.go prints %+q. fmt delegates to QuoteToASCII.
         # strconv uses \U for astral runes, \a/\v, and \x for other ASCII controls.
@@ -142,6 +156,7 @@ class ReceiptTest(unittest.TestCase):
             ('/tmp/bell\a-and-vertical\v.png', r'"/tmp/bell\a-and-vertical\v.png"'),
             ('/tmp/escape\x1b-and-delete\x7f.png', r'"/tmp/escape\x1b-and-delete\x7f.png"'),
             ('/tmp/tab\t-and-newline\n.png', r'"/tmp/tab\t-and-newline\n.png"'),
+            ('/tmp/carriage\rreturn.png', r'"/tmp/carriage\rreturn.png"'),
             ('/tmp/quote"-and-backslash\\.png', r'"/tmp/quote\"-and-backslash\\.png"'),
         )
         for path, literal in cases:

@@ -480,7 +480,8 @@ def wait_resumed(terminal, mark, prompt):
 def check_receipts(terminal, files):
     """Require each saved path exactly once after workspace closure."""
     files = tuple(files)
-    text = terminal.text()
+    # Workspace teardown can return the cursor without emitting a newline.
+    text = terminal.text().replace('\r\n', '\n').replace('\r', '\n')
     assert text.count('Saved image: ') == len(files), text
     quoted = re.findall(r'^Saved image: ("(?:[^"\\\r\n]|\\.)*")\r?$', text, re.MULTILINE)
     assert len(quoted) == len(files), text
