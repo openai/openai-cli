@@ -30,7 +30,7 @@ import time
 import zlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from image_picker_harness import END, Terminal, check_receipts, generate as submit_picker, ready, wait_for_request, wait_resumed, wait_submit_guard
+from image_picker_harness import END, Terminal, check_receipts, generate as submit_picker, ready, screen, wait_for_request, wait_resumed, wait_submit_guard
 
 
 def require(condition, message):
@@ -112,6 +112,61 @@ def check_frames(raw, count, fixture, picker=False):
         forbidden += (b'\x1b[6n', b'\x1b[c', b'\x1b[0c', b'\x1b]11;')
     for query in forbidden:
         require(query not in raw, f'unexpected terminal query or graphics command: {query!r}')
+
+
+# The 120x32 picker fixture uses a 21-cell preview with eight one-cell strips.
+# Its 4x3 source preserves each RGBA row, including repeated rows when enlarged.
+PICKER_SOURCE_ROWS = [0, 0, 0, 1, 1, 1, 2, 2]
+
+
+def check_picker_rows(raw, fixture):
+    """Validate every native row from the fixed repeated-picker fixture."""
+    for forbidden in (b'\x1b_G', b'1337;Clear'):
+        require(forbidden not in raw, f'unexpected picker graphics command: {forbidden!r}')
+    frames = re.findall(rb'\x1b\]1337;File=([^:]*):([^\x07\x1b]*)(?:\x07|\x1b\\)', raw)
+    require(len(frames) == raw.count(b'\x1b]1337;'), 'incomplete picker image frame')
+    width, height, pixels = fixture
+    require((width, height) == (4, 3), 'unexpected picker fixture dimensions')
+    source_rows = [pixels[y * width * 4:(y + 1) * width * 4] for y in range(height)]
+    observed = []
+    for header, payload in frames:
+        fields = [field.split(b'=', 1) for field in header.split(b';')]
+        require(all(len(field) == 2 for field in fields), 'malformed picker image header')
+        options = dict(fields)
+        require(len(options) == len(fields), 'duplicate picker image option')
+        require(all(options.get(key) == value for key, value in
+                    {b'inline': b'1', b'width': b'21', b'height': b'1'}.items()),
+                f'wrong picker row sizing: {header!r}')
+        image = base64.b64decode(payload, validate=True)
+        require(options.get(b'size') == str(len(image)).encode(), 'picker image size does not match payload')
+        tile_width, tile_height, tile_pixels = decode_png(image)
+        require((tile_width, tile_height) == (width, 1), 'wrong picker PNG tile dimensions')
+        require(tile_pixels in source_rows, 'picker tile changed pixels or alpha')
+        observed.append(source_rows.index(tile_pixels))
+    return observed
+
+
+def wait_picker_rows(terminal, mark, count, fixture):
+    """Require the new caption and its complete ordered preview after generation."""
+    busy = terminal.raw.index(b'Generating image', mark)
+    caption = f'Image {count} '.encode()
+    deadline = time.monotonic() + 12
+    while True:
+        fresh = bytes(terminal.raw[busy:])
+        start = fresh.find(caption)
+        try:
+            observed = check_picker_rows(fresh, fixture)
+            rows = check_picker_rows(fresh[start:], fixture) if start >= 0 else []
+        except AssertionError as error:
+            if str(error) != 'incomplete picker image frame':
+                raise
+            rows = []
+        if len(rows) >= len(PICKER_SOURCE_ROWS):
+            require(rows[:len(PICKER_SOURCE_ROWS)] == PICKER_SOURCE_ROWS, 'picker source row order changed')
+            if caption in screen(bytes(terminal.raw), *terminal.size()):
+                return len(observed)
+        require(terminal.child.poll() is None and time.monotonic() < deadline, 'picker row preview did not complete')
+        terminal.read()
 
 
 class Response:
@@ -287,6 +342,7 @@ def main():
             server.case = case = Response('ok', normal)
             terminal = Terminal(str(executable), ['images', 'generate'], env, width=120, height=32)
             prompts = ['Synthetic first picker image', 'Synthetic second picker image']
+            preview_rows = []
             try:
                 ready(terminal)
                 for index, prompt in enumerate(prompts):
@@ -296,7 +352,7 @@ def main():
                     submit_picker(terminal)
                     wait_for_request(terminal, case.started)
                     wait_resumed(terminal, mark, prompt)
-                    check_frames(bytes(terminal.raw), index + 1, normal_shape, picker=True)
+                    preview_rows.append(wait_picker_rows(terminal, mark, index + 1, normal_shape))
                     check_saved(home, normal, index + 1)
                     require(len(case.requests) == index + 1, 'picker submitted an extra request')
                     require(case.requests[-1]['prompt'] == prompt, 'picker changed request prompt')
@@ -310,12 +366,13 @@ def main():
                         require(len(case.requests) == 1, 'restoring the draft generated an image')
                 terminal.send(b'\x03')
                 terminal.finish(130)
-                check_frames(bytes(terminal.raw), 2, normal_shape, picker=True)
+                frames = check_picker_rows(bytes(terminal.raw), normal_shape)
                 require(not case.errors, case.errors)
                 require(len(case.requests) == 2, 'Ctrl+C submitted another request')
                 check_saved(home, normal, 2)
                 check_receipts(terminal, (home/'Downloads'/'gpt-images').glob('*.png'))
-                passed(name, exit=130, frames=2, requests=2, executable_replaced=replace)
+                passed(name, exit=130, frames=len(frames), preview_rows_per_request=preview_rows,
+                       requests=2, executable_replaced=replace)
             finally:
                 try:
                     terminal.save(output / name)
