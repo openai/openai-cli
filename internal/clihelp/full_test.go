@@ -9,6 +9,25 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+func TestFlagAliasesWrapWithoutSplittingValues(t *testing.T) {
+	command := &cli.Command{Writer: &bytes.Buffer{}}
+	flag := &cli.StringFlag{Name: "long-header-option", Aliases: []string{"H"}, Usage: "Add a header."}
+	got := flagList(command, []cli.Flag{flag}, 35)
+	if !strings.Contains(got, "    --long-header-option=TEXT,\n    -H=TEXT\n") {
+		t.Fatalf("aliases must wrap as complete labels: %s", got)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if len(line) > 35 {
+			t.Fatalf("flag line exceeds terminal width: %q", line)
+		}
+	}
+	for _, line := range strings.Split(flagList(command, []cli.Flag{flag}, 30), "\n") {
+		if len(line) > 30 {
+			t.Fatalf("alias separator exceeds terminal width: %q", line)
+		}
+	}
+}
+
 func TestFullFlagUsesTypesInsteadOfExamples(t *testing.T) {
 	for _, tc := range []struct {
 		name, heading, details string
@@ -102,9 +121,9 @@ func TestFullHelpPreservesCategoriesGlobalOptionsAndDescriptions(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := out.String()
-			globalDetails := []string{"GLOBAL OPTIONS:", "--api-key", "Global option details: openai --help"}
+			globalDetails := []string{"GLOBAL FLAGS", "--api-key", "Run $ openai --help for details."}
 			if args[len(args)-1] == "--all" {
-				globalDetails = []string{"GLOBAL OPTIONS:", "--api-key TEXT", "OPENAI_TEST_HELP_KEY"}
+				globalDetails = []string{"GLOBAL FLAGS", "--api-key=TEXT", "OPENAI_TEST_HELP_KEY"}
 			}
 			for _, want := range globalDetails {
 				if !strings.Contains(got, want) {
@@ -117,11 +136,11 @@ func TestFullHelpPreservesCategoriesGlobalOptionsAndDescriptions(t *testing.T) {
 			if args[len(args)-1] != "--all" && strings.Contains(got, "OPENAI_TEST_HELP_KEY") {
 				t.Fatal("child help repeated the global reference instead of its index")
 			}
-			if args[len(args)-1] == "images" && (!strings.Contains(got, "--limit INTEGER") || !strings.Contains(got, "Up to ten images.")) {
+			if args[len(args)-1] == "images" && (!strings.Contains(got, "--limit=INTEGER") || !strings.Contains(got, "Up to ten images.")) {
 				t.Fatal("group help lost its complete local flag description")
 			}
 			if args[len(args)-1] == "generate" {
-				for _, want := range []string{"Image inputs", "--prompt TEXT", "Complete image reference.", "Use a description with blue and cat.", "All limits stay here."} {
+				for _, want := range []string{"Image inputs", "--prompt=TEXT", "Complete image reference.", "Use a description with blue and cat.", "All limits stay here."} {
 					if !strings.Contains(got, want) {
 						t.Errorf("leaf help missing %q:\n%s", want, got)
 					}
@@ -157,10 +176,10 @@ func TestFullHelpGroupingKeepsEachFlagAndItsDetails(t *testing.T) {
 			}
 		}
 		for _, expected := range []struct{ heading, details string }{
-			{"--optional TEXT", "A future setting must remain visible."},
-			{"--prompt TEXT", "Required text. Keep the important limit."},
-			{"--image, -i TEXT", "Path to your file."},
-			{"--categorized INTEGER", "Original category. Default: 12"},
+			{"--optional=TEXT", "A future setting must remain visible."},
+			{"--prompt=TEXT", "Required text. Keep the important limit."},
+			{"--image=TEXT, -i=TEXT", "Path to your file."},
+			{"--categorized=INTEGER", "Original category. Default: 12"},
 		} {
 			heading, details := expected.heading, expected.details
 			if strings.Count(got, heading) != 1 || !strings.Contains(strings.Join(strings.Fields(got), " "), strings.Join(strings.Fields(details), " ")) {
@@ -176,7 +195,7 @@ func TestFullHelpSeparatesFlagEntries(t *testing.T) {
 		&cli.StringFlag{Name: "second", Usage: "Second setting."},
 	}
 	got := fullFlagGroups(&cli.Command{}, flags, 80)
-	if !strings.Contains(got, "First setting.\n\n   --second TEXT\n") {
+	if !strings.Contains(got, "First setting.\n\n    --second=TEXT\n") {
 		t.Fatalf("flag entries lack a blank line: %q", got)
 	}
 }
@@ -189,8 +208,8 @@ func TestFullHelpUsesOneBlankLineBetweenOptionGroups(t *testing.T) {
 	}}
 	got := commandHelpAtWidth(command, "openai", "images generate", 80)
 	for _, want := range []string{
-		"OPTIONS:\n   Required inputs\n\n   --prompt TEXT\n",
-		"Describe the image.\n\n   Image settings\n\n   --quality TEXT\n",
+		"FLAGS\n  Required inputs\n    --prompt=TEXT\n",
+		"Describe the image.\n\n  Image settings\n    --quality=TEXT\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("option group spacing differs from %q:\n%s", want, got)

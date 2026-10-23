@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/urfave/cli/v3"
 )
 
@@ -40,6 +41,7 @@ func commandFlagUsage(command *cli.Command, flag cli.Flag, usage string) string 
 }
 
 func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
+	style := commandHelpStyle(command)
 	groups := []FlagGroup{{Title: "Required inputs"}}
 	if configured, ok := command.Metadata["help-flag-groups"].([]FlagGroup); ok {
 		groups = append(groups, configured...)
@@ -77,13 +79,53 @@ func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
 		if len(flags) == 0 {
 			continue
 		}
-		fmt.Fprintf(&out, "\n   %s\n", group.Title)
-		for _, flag := range flags {
-			heading, description := flagReference(command, flag)
-			fmt.Fprintf(&out, "\n   %s\n", heading)
-			writeFlagDescription(&out, description, width)
+		if out.Len() > 0 {
+			out.WriteByte('\n')
 		}
+		fmt.Fprintf(&out, "  %s\n", style.render(style.section, group.Title))
+		out.WriteString(flagList(command, flags, width))
 		delete(grouped, group.Title)
+	}
+	return out.String()
+}
+
+func flagList(command *cli.Command, flags []cli.Flag, width int) string {
+	style := commandHelpStyle(command)
+	var out strings.Builder
+	for i, flag := range flags {
+		if i > 0 {
+			out.WriteByte('\n')
+		}
+		heading, description := flagReference(command, flag)
+		var labels []string
+		for _, label := range strings.Split(heading, ", ") {
+			name, value, hasValue := strings.Cut(label, "=")
+			if hasValue && value == "" {
+				labels = append(labels, style.render(style.section, label))
+			} else {
+				labels = append(labels, style.flag(name, value))
+			}
+		}
+		out.WriteString("    ")
+		column := 4
+		for i, label := range labels {
+			if i > 0 {
+				if column+2+ansi.StringWidth(label) > width {
+					if column < width {
+						out.WriteByte(',')
+					}
+					out.WriteString("\n    ")
+					column = 4
+				} else {
+					out.WriteString(", ")
+					column += 2
+				}
+			}
+			out.WriteString(label)
+			column += ansi.StringWidth(label)
+		}
+		out.WriteByte('\n')
+		writeFlagDescription(&out, description, width, style)
 	}
 	return out.String()
 }
@@ -102,12 +144,12 @@ func flagReference(command *cli.Command, flag cli.Flag) (string, string) {
 		if len(name) == 1 {
 			prefix = "-"
 		}
+		if label := commandFlagValueLabel(command, flag); label != "" {
+			name += "=" + label
+		}
 		names = append(names, prefix+name)
 	}
 	heading = strings.Join(names, ", ")
-	if label := commandFlagValueLabel(command, flag); label != "" {
-		heading += " " + label
-	}
 	usage := fileInputUsage(flag, commandFlagUsage(command, flag, doc.GetUsage()))
 	if multi, ok := flag.(cli.DocGenerationMultiValueFlag); ok && multi.IsMultiValueFlag() &&
 		!strings.Contains(strings.ToLower(usage), "repeat") {
@@ -132,7 +174,7 @@ func flagReference(command *cli.Command, flag cli.Flag) (string, string) {
 	return heading, strings.TrimSpace(usage)
 }
 
-func writeFlagDescription(out *strings.Builder, description string, width int) {
+func writeFlagDescription(out *strings.Builder, description string, width int, style helpStyle) {
 	var prose []string
 	flush := func() {
 		if len(prose) > 0 {
@@ -145,7 +187,7 @@ func writeFlagDescription(out *strings.Builder, description string, width int) {
 		// their boundaries without inferring values from arbitrary flag prose.
 		if strings.HasPrefix(line, "Default:") || strings.HasPrefix(line, "Env:") {
 			flush()
-			out.WriteString(wrapPlainDescription(line, "      ", width))
+			out.WriteString(style.render(style.note, wrapPlainDescription(line, "      ", width)))
 		} else {
 			prose = append(prose, line)
 		}

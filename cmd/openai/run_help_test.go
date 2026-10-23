@@ -29,11 +29,11 @@ func TestMainHelpScriptsRunUsesCopyableInvocation(t *testing.T) {
 			args []string
 			want []string
 		}{
-			{[]string{"--help"}, []string{"START HERE\n   go run ./cmd/openai explore\n"}},
+			{[]string{"--help"}, []string{"START HERE\n  go run ./cmd/openai help setup", "Set up your API key."}},
 			{[]string{"images", "preview", "--help"}, []string{`go run ./cmd/openai images preview "photo.png"`, "Key setup: go run ./cmd/openai help setup"}},
-			{[]string{"help", "images", "generate"}, []string{`    go run ./cmd/openai images generate --prompt "A tiny cat" --name cat`}},
-			{[]string{"help", "images", "edit"}, []string{`    go run ./cmd/openai images edit --image "photo.png" --prompt "Make the sky purple" --name purple-sky`}},
-			{[]string{"help", "images", "create-variation"}, []string{"retired and no longer available", `    go run ./cmd/openai images edit --image "photo.png" --prompt "Create a variation of this image" --name variation`}},
+			{[]string{"help", "images", "generate"}, []string{`    $ go run ./cmd/openai images generate --prompt "A tiny cat" --name cat`}},
+			{[]string{"help", "images", "edit"}, []string{`    $ go run ./cmd/openai images edit --image "photo.png" --prompt "Make the sky purple" --name purple-sky`}},
+			{[]string{"help", "images", "create-variation"}, []string{"retired and no longer available", `    $ go run ./cmd/openai images edit --image "photo.png" --prompt "Create a variation of this image" --name variation`}},
 		} {
 			child := exec.CommandContext(ctx, "./scripts/run", tc.args...)
 			child.Dir = root

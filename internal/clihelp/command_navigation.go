@@ -41,9 +41,12 @@ func commandGroup(command *cli.Command) bool {
 }
 
 func commandList(command *cli.Command, width int, renderers ...func(*cli.Command) string) string {
+	style := commandHelpStyle(command)
 	var order []string
+	var names []string
 	sections := map[string][]*cli.Command{}
 	for _, child := range VisibleCommands(command) {
+		names = append(names, child.Name)
 		section, _ := child.Metadata["help-command-section"].(string)
 		if section == "" {
 			section = "Actions"
@@ -51,26 +54,31 @@ func commandList(command *cli.Command, width int, renderers ...func(*cli.Command
 				section = "Command groups"
 			}
 		}
+		section = strings.ToUpper(section)
 		if _, seen := sections[section]; !seen {
 			order = append(order, section)
 		}
 		sections[section] = append(sections[section], child)
 	}
 	var out strings.Builder
-	for i, section := range order {
-		if i > 0 {
+	column := helpDescriptionColumn(width, names)
+	for _, section := range order {
+		if len(sections[section]) == 0 {
+			continue
+		}
+		if out.Len() > 0 {
 			out.WriteByte('\n')
 		}
-		fmt.Fprintln(&out, strings.ToUpper(section))
-		for _, child := range sections[section] {
-			// Format plain text before adding links, so padding keeps its width.
-			var entry strings.Builder
-			writeHelpEntry(&entry, child.Name, shortDescription(child.Usage), width)
-			text := entry.String()
-			if len(renderers) > 0 && renderers[0] != nil {
-				text = "  " + renderers[0](child) + strings.TrimPrefix(text, "  "+child.Name)
+		fmt.Fprintln(&out, style.render(style.section, section))
+		for i, child := range sections[section] {
+			if column == 0 && i > 0 {
+				out.WriteByte('\n')
 			}
-			out.WriteString(text)
+			name := child.Name
+			if len(renderers) > 0 && renderers[0] != nil {
+				name = renderers[0](child)
+			}
+			out.WriteString(style.entry(child.Name, shortDescription(child.Usage), name, width, column))
 		}
 	}
 	return out.String()
@@ -81,6 +89,6 @@ func configureCommandList(command *cli.Command) {
 		command.Metadata = map[string]any{}
 	}
 	command.Metadata["help-command-list"] = func() string {
-		return commandList(command, helpWidth(command))
+		return commandList(command, helpNavigationWidth(command))
 	}
 }

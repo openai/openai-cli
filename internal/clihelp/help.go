@@ -75,6 +75,8 @@ ALREADY HAVE A KEY?
    Custom endpoints can require different credentials. Check their authentication instructions.
 
 This is a guide only. No key has been entered or checked by showing this page.
+
+Admin key setup: {{suggest . (printf "%s help setup admin" $run)}}
 `
 
 // Configure keeps onboarding in CLI help, never in a shell startup file or
@@ -90,6 +92,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	}
 	root.Metadata["help-invocation"] = Invocation(root.Name, args)
 	root.Metadata["help-legacy-all"] = false
+	root.Metadata["help-welcome"] = len(args) <= 1
 	delete(root.Metadata, "help-selected-command")
 	if root.Command("help") == nil {
 		root.Commands = append(root.Commands, &cli.Command{
@@ -100,6 +103,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 			Action:             showHelpTopics,
 			Commands: []*cli.Command{{
 				Name: "setup", Usage: "Learn how to enter your API key", HideHelpCommand: true,
+				Metadata:           map[string]any{"help-guide": true},
 				CustomHelpTemplate: setupHelp,
 				Action: func(_ context.Context, command *cli.Command) error {
 					if command.Args().Present() {
@@ -130,10 +134,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	}
 	configureCommandHelp(root, root.Metadata["help-invocation"].(string), "")
 	if len(args) <= 1 {
-		// Preserve original invocation intent before normalizing bare startup
-		// to help. Each Configure call installs a fresh, unwrapped callback.
-		complete := root.Metadata["complete-help"].(func() string)
-		root.Metadata["complete-help"] = func() string { return welcomeHeader(root) + complete() }
+		// Bare startup adds the existing terminal banner to the complete reference.
 		return []string{root.Name, "--help"}, true, nil
 	}
 	if args[1] == "__complete" {
@@ -350,6 +351,12 @@ func installSubcommandHelp() {
 			if command, ok := data.(*cli.Command); ok {
 				if notice := legacyHelpNotice(command); notice != "" {
 					_, _ = fmt.Fprintln(writer, notice)
+				}
+				if command.Metadata["help-guide"] == true {
+					var text strings.Builder
+					printer(&text, template, data)
+					_, _ = io.WriteString(writer, formatGuide(command, text.String()))
+					return
 				}
 			}
 			printer(writer, template, data)

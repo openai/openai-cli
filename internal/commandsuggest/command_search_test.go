@@ -19,6 +19,7 @@ func TestCommandSearchRanksNamesBeforeDescriptionsAndExamples(t *testing.T) {
 		t.Run(query, func(t *testing.T) {
 			matches := searchCandidates(candidates, query)
 			require.Equal(t, []int{3, 2, 0, 1}, matches)
+			require.Equal(t, []Candidate{candidates[3], candidates[2], candidates[0], candidates[1]}, Search(candidates, query))
 		})
 	}
 	require.Equal(t, []int{2}, searchCandidates(candidates, "--format json"))

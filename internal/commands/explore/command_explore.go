@@ -37,22 +37,35 @@ func Register(root *cli.Command) {
 	if root.Command("explore") != nil {
 		return
 	}
-	root.Commands = append(root.Commands, &cli.Command{
+	command := &cli.Command{
 		Name:        "explore",
-		Metadata:    map[string]any{localcommands.LocalUtilityMetadata: true},
+		Metadata:    map[string]any{localcommands.LocalUtilityMetadata: true, "help-command-section": "Local tools"},
 		Usage:       "Search local CLI commands and examples without running them.",
-		Description: "Type to search. Arrow keys choose a command. Enter selects it; Escape cancels.\nWith command insertion enabled, zsh and fish fill your editable prompt. Bash stages the selection; Ctrl+X, then Tab inserts it. Without integration, selection prints the command. Search needs no API key or internet.",
+		ArgsUsage:   "[SEARCH_TERMS...]",
+		Description: "Pass search terms to print all matching commands and examples, ranked by relevance. This works in pipes and does not read stdin or run the results. Search needs no API key or internet. Use auto or text formats for search output and errors.\n\nWithout search terms, open the interactive picker. Type to search. Arrow keys choose a command. Enter selects it; Escape cancels.\nWith command insertion enabled, zsh and fish fill your editable prompt. Bash stages the selection; Ctrl+X, then Tab inserts it. Without integration, selection prints the command.",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "suggestions", Hidden: true},
 			&cli.BoolFlag{Name: "shell-integration", Hidden: true},
 			&cli.StringFlag{Name: "shell", Hidden: true},
 		},
 		Action: commandExplore,
-	})
+	}
+	command.Metadata["help-content"] = clihelp.Content{
+		Description: command.Description,
+		Examples: []clihelp.Example{
+			{Description: "Open interactive command search:", Command: "explore"},
+			{Description: "Print matching commands without opening the picker:", Command: "explore images"},
+		},
+	}
+	root.Commands = append(root.Commands, command)
 }
 
 func exploreCandidates(root *cli.Command, invocation string) []commandsuggest.Candidate {
 	return commandsuggest.Catalog(root, invocation, clihelp.VisibleCommands, func(command *cli.Command, path string) []commandsuggest.Candidate {
+		// Search examples describe queries, not additional destinations.
+		if path == "explore" {
+			return nil
+		}
 		var candidates []commandsuggest.Candidate
 		for _, example := range clihelp.CommandExamples(command, path) {
 			candidates = append(candidates, commandsuggest.Candidate{Command: invocation + " " + example.Command, Description: example.Description})
@@ -72,8 +85,12 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 		return exploreFailure("Command search requires auto or text error output without transformations.", 2, nil)
 	}
 	integration := command.Bool("shell-integration")
-	if command.Args().Len() != 0 || command.Bool("suggestions") && !integration {
-		return exploreFailure("Run openai explore without arguments. Recent suggestions require shell integration.", 2, nil)
+	query := strings.Join(strings.Fields(strings.Join(command.Args().Slice(), " ")), " ")
+	if command.Args().Len() > 0 && (query == "" || integration || command.Bool("suggestions") || command.IsSet("shell")) {
+		return exploreFailure("Provide nonempty search terms without shell-integration options.", 2, nil)
+	}
+	if command.Bool("suggestions") && !integration {
+		return exploreFailure("Recent suggestions require shell integration.", 2, nil)
 	}
 	switch command.String("shell") {
 	case "", "bash", "zsh", "fish":
@@ -82,6 +99,26 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 	}
 	if err := ctx.Err(); err != nil {
 		return exploreFailure("Command search was interrupted.", 130, err)
+	}
+	if query != "" {
+		matches := commandsuggest.Search(exploreCandidates(root, clihelp.Invocation(root.Name, os.Args)), query)
+		if err := ctx.Err(); err != nil {
+			return exploreFailure("Command search was interrupted.", 130, err)
+		}
+		output := root.Writer
+		if output == nil {
+			output = os.Stdout
+		}
+		text := clihelp.SearchResults(command, matches)
+		n, err := io.WriteString(output, text)
+		if err == nil && n != len(text) {
+			err = io.ErrShortWrite
+		}
+		if err != nil {
+			commandsuggest.Invalidate(command)
+			return exploreFailure("Could not write command search results.", 1, err)
+		}
+		return nil
 	}
 	if !term.IsTerminal(os.Stderr.Fd()) || os.Getenv("TERM") == "dumb" {
 		return exploreFailure("Command search needs an interactive terminal with cursor support.", 2, nil)

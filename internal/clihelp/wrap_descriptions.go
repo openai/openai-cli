@@ -1,7 +1,6 @@
 package clihelp
 
 import (
-	"fmt"
 	"os"
 	"strings"
 	"unicode"
@@ -12,16 +11,25 @@ import (
 )
 
 func helpWidth(command *cli.Command) int {
+	return helpOutputWidth(command, 79)
+}
+
+// Navigation can use more terminal space while prose and flags keep short lines.
+func helpNavigationWidth(command *cli.Command) int {
+	return helpOutputWidth(command, 100)
+}
+
+func helpOutputWidth(command *cli.Command, maximum int) int {
 	out := command.Root().Writer
 	if out == nil {
 		out = os.Stdout
 	}
 	if file, ok := out.(interface{ Fd() uintptr }); ok {
 		if width, _, err := term.GetSize(file.Fd()); err == nil && width > 0 {
-			return min(width, 100)
+			return min(width, maximum)
 		}
 	}
-	return 80 // Stable text for redirected help and documentation.
+	return 79 // Match gcloud's 80-column reference with the final column unused.
 }
 
 // Wrap prose without splitting words, paths, flags or copyable commands.
@@ -37,13 +45,24 @@ func wrapPlainDescription(text, indent string, width int) string {
 	var out strings.Builder
 	var fence descriptionFence
 	for _, line := range reflowDescription(text) {
+		if strings.TrimSpace(line) == "" {
+			out.WriteByte('\n')
+			continue
+		}
 		if fence.contains(line) || isCodeLine(line) {
 			out.WriteString(indent + line + "\n")
 			continue
 		}
+		line = strings.TrimRightFunc(line, unicode.IsSpace)
 		out.WriteString(indent)
 		column := len(indent)
 		leading := line[:len(line)-len(strings.TrimLeftFunc(line, unicode.IsSpace))]
+		for _, marker := range []string{"- ", "* ", "• "} {
+			if strings.HasPrefix(strings.TrimLeftFunc(line, unicode.IsSpace), marker) {
+				leading += strings.Repeat(" ", ansi.StringWidth(marker))
+				break
+			}
+		}
 		first := true
 		for line != "" {
 			spaces := line[:len(line)-len(strings.TrimLeftFunc(line, unicode.IsSpace))]
@@ -106,19 +125,4 @@ func isCodeLine(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	return strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") ||
 		strings.HasPrefix(trimmed, "openai ") || strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "}")
-}
-
-func writeHelpEntry(out *strings.Builder, name, description string, width int) {
-	if width < 72 || ansi.StringWidth(name) > 22 {
-		fmt.Fprintf(out, "  %s\n", name)
-		out.WriteString(wrapDescription(description, "    ", width))
-		return
-	}
-	prefix := fmt.Sprintf("  %-22s ", name)
-	wrapped := wrapDescription(description, strings.Repeat(" ", 25), width)
-	if wrapped == "" {
-		fmt.Fprintf(out, "  %s\n", name)
-		return
-	}
-	out.WriteString(prefix + strings.TrimPrefix(wrapped, strings.Repeat(" ", 25)))
 }

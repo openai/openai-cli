@@ -43,7 +43,7 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 			require.Zero(t, got.code, got.stderr)
 			require.Empty(t, got.stderr)
 			if len(path) > 0 {
-				_, index, found := strings.Cut(got.stdout, "GLOBAL OPTIONS:\n")
+				_, index, found := strings.Cut(got.stdout, "GLOBAL FLAGS\n")
 				require.True(t, found)
 				for _, group := range groups {
 					for _, flag := range group.flags {
@@ -54,7 +54,7 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 						require.Contains(t, index, flag)
 					}
 				}
-				require.Contains(t, index, "Global option details: openai --help")
+				require.Contains(t, index, "Run $ openai --help for details.")
 				// Execute the reference before checking the full global descriptions.
 				got = runMainDispatch(t, "bash", "openai", "--help")
 				require.Zero(t, got.code, got.stderr)
@@ -168,7 +168,7 @@ func TestMainGlobalFlagHelpHidesConfiguredValues(t *testing.T) {
 					require.Contains(t, got.stdout, "https://api.openai.com/v1")
 					require.Contains(t, got.stdout, "OPENAI_BASE_URL")
 				} else {
-					require.Contains(t, got.stdout, "Global option details: openai --help")
+					require.Contains(t, got.stdout, "Run $ openai --help for details.")
 				}
 			})
 		}

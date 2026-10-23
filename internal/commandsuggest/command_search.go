@@ -8,6 +8,16 @@ import (
 	"unicode/utf8"
 )
 
+// Search returns declared candidates in the same order as the interactive picker.
+func Search(candidates []Candidate, query string) []Candidate {
+	indices := searchCandidates(candidates, query)
+	matches := make([]Candidate, 0, len(indices))
+	for _, index := range indices {
+		matches = append(matches, candidates[index])
+	}
+	return matches
+}
+
 // Search only ranks declared candidates. It never completes or invents a command.
 func searchCandidates(candidates []Candidate, query string) []int {
 	words := strings.Fields(strings.ToLower(query))

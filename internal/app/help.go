@@ -18,6 +18,7 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 	configureGlobalFlagDescriptions(root)
 	configureHelpGroups(root)
 	configureImageHelpContent(root)
+	configureLocalHelpContent(root)
 	args, handled, err := clihelp.Configure(root, args)
 	admin.ConfigureSetupHelp(root)
 	return args, handled, err
@@ -193,6 +194,44 @@ func setCompleteHelpContent(command *cli.Command, content clihelp.Content) {
 	}
 	command.Metadata["help-content"] = content
 	command.CustomHelpTemplate = ""
+}
+
+// Known local utilities use the shared layout while retaining their authored
+// descriptions, examples, and restrictions. Unrelated custom guides stay intact.
+func configureLocalHelpContent(root *cli.Command) {
+	localOutput := "Local output supports --format auto, text, or json. It does not support --transform or --raw-output."
+	for _, path := range [][]string{{"codex"}, {"tokenizer"}, {"tokenizer", "count"}, {"tokenizer", "inspect"}, {"tokenizer", "encodings"}, {"tokenizer", "licenses"}} {
+		command := root
+		for _, name := range path {
+			command = command.Command(name)
+			if command == nil {
+				break
+			}
+		}
+		if command == nil {
+			continue
+		}
+		content := clihelp.Content{
+			Description:       command.Description,
+			GlobalOptionsNote: localOutput,
+			Notes:             "This command runs locally. No API key or internet is required.",
+		}
+		switch strings.Join(path, " ") {
+		case "codex":
+			content.Examples = []clihelp.Example{{Description: "Show the Codex configuration guide URL:", Command: "codex --destination config"}}
+		case "tokenizer":
+			command.Metadata["help-optional-command"] = true
+			content.GlobalOptionsNote = "The editor supports --format auto or text. For JSON, use tokenizer count or inspect. --transform and --raw-output are unsupported."
+			content.Description = "Opens the live editor in a terminal. Use count or inspect for scripts.\n\n" + content.Description
+			content.Examples = []clihelp.Example{{Description: "Open the live tokenizer editor:", Command: "tokenizer"}}
+		case "tokenizer count", "tokenizer inspect":
+			content.Examples = []clihelp.Example{{Description: "Tokenize literal text:", Command: strings.Join(path, " ") + ` --text "Hello, world!"`}}
+			labels, _ := command.Metadata["help-flag-labels"].([]clihelp.FlagLabel)
+			command.Metadata["help-flag-labels"] = append(labels, clihelp.FlagLabel{Owner: command, Names: []string{"encoding"}, Label: "ENCODING"})
+		}
+		delete(command.Metadata, "local-help-full")
+		setCompleteHelpContent(command, content)
+	}
 }
 
 func configureHelpGroups(root *cli.Command) {

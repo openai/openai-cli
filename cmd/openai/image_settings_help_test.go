@@ -25,14 +25,14 @@ func TestMainImageSettingsHelpScope(t *testing.T) {
 			short := runMainDispatchWithEnv(t, "bash", env, "openai", "images", operation, "--help")
 			require.Zero(t, short.code, short.stderr)
 			require.Empty(t, short.stderr)
-			require.Contains(t, short.stdout, "OPTIONS:")
+			require.Contains(t, short.stdout, "FLAGS")
 			require.NotContains(t, short.stdout, "Full help:")
 			if operation != "create-variation" {
 				require.Contains(t, short.stdout, "~/Downloads/gpt-images/")
 			}
 			if operation != "create-variation" {
-				require.Contains(t, short.stdout, "--name NAME")
-				require.Contains(t, short.stdout, "--output-dir DIRECTORY")
+				require.Contains(t, short.stdout, "--name=NAME")
+				require.Contains(t, short.stdout, "--output-dir=DIRECTORY")
 				if operation == "generate" {
 					require.Contains(t, short.stdout, "choose settings in an interactive terminal")
 				}
@@ -42,9 +42,9 @@ func TestMainImageSettingsHelpScope(t *testing.T) {
 			require.Zero(t, full.code, full.stderr)
 			require.Empty(t, full.stderr)
 			require.Equal(t, short.stdout, full.stdout)
-			_, description, found := strings.Cut(full.stdout, "\nDESCRIPTION:\n")
+			_, description, found := strings.Cut(full.stdout, "\nDESCRIPTION\n")
 			require.True(t, found, "full help must include the command description")
-			description, _, found = strings.Cut(description, "\nEXAMPLES:")
+			description, _, found = strings.Cut(description, "\nEXAMPLES")
 			require.True(t, found, "full help must retain the separate option reference")
 			require.NotEmpty(t, description, "preserve the detailed command guidance")
 			name := helpSection(full.stdout, "NAME", "SYNOPSIS")

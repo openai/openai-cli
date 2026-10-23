@@ -22,7 +22,7 @@ func TestMainHelpWelcome(t *testing.T) {
 		t.Fatalf("welcome failed: %+v", want)
 	}
 
-	for _, text := range []string{"openai help setup", "openai models list", "NAME:", "SYNOPSIS:", "GLOBAL OPTIONS:", "--base-url URL", "--header"} {
+	for _, text := range []string{"openai help setup", "openai models list", "USAGE\n  openai [GLOBAL FLAGS] COMMAND", "GLOBAL FLAGS", "--base-url=URL", "--header"} {
 		if !strings.Contains(want.stdout, text) {
 			t.Errorf("welcome lacks %q: %s", text, want.stdout)
 		}
@@ -47,7 +47,11 @@ func TestMainHelpCommandRoutes(t *testing.T) {
 			if want.code != 0 || want.stderr != "" || want.stdout == "" {
 				t.Fatalf("command help failed: %+v", want)
 			}
-			for _, heading := range []string{"NAME:", "SYNOPSIS:", "GLOBAL OPTIONS:"} {
+			headings := []string{"NAME", "SYNOPSIS", "GLOBAL FLAGS"}
+			if len(path) == 0 {
+				headings = []string{"NAME", "SYNOPSIS", "GLOBAL FLAGS"}
+			}
+			for _, heading := range headings {
 				if !strings.Contains(want.stdout, heading) {
 					t.Errorf("complete help lacks %q: %s", heading, want.stdout)
 				}
@@ -130,7 +134,7 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 					t.Errorf("full help lost command %q", child.Name)
 				}
 			}
-			headerReference := []string{"--header", "Global option details: openai --help"}
+			headerReference := []string{"--header", "Run $ openai --help for details."}
 			if len(path) == 0 {
 				headerReference = []string{"--header", "OPENAI_CUSTOM_HEADERS"}
 			}
@@ -176,7 +180,7 @@ func TestMainHelpFullReferenceRoutes(t *testing.T) {
 		} else if got.stdout != reference {
 			t.Errorf("args %q: full help differs between routes", args)
 		}
-		for _, text := range []string{"--prompt TEXT", "-n, --count INTEGER", "Default: auto", "Default: 1", "Default: png", "Default: 100", "Default: 0"} {
+		for _, text := range []string{"--prompt=TEXT", "-n=INTEGER, --count=INTEGER", "Default: auto", "Default: 1", "Default: png", "Default: 100", "Default: 0"} {
 			if !strings.Contains(got.stdout, text) {
 				t.Errorf("args %q: full help lost label/default %q", args, text)
 			}
@@ -205,8 +209,8 @@ func TestMainHelpKeepsAPIProjectInCommandOptions(t *testing.T) {
 	if got.code != 0 || got.stderr != "" {
 		t.Fatalf("full help failed: %+v", got)
 	}
-	local, global, ok := strings.Cut(got.stdout, "GLOBAL OPTIONS:")
-	if !ok || !strings.Contains(local, "--project VALUE") || !strings.Contains(local, "membership is granted") {
+	local, global, ok := strings.Cut(got.stdout, "GLOBAL FLAGS")
+	if !ok || !strings.Contains(local, "--project=VALUE") || !strings.Contains(local, "membership is granted") {
 		t.Fatalf("API project input is missing: %s", got.stdout)
 	}
 	for _, heading := range []string{"Authentication", "Output", "Request options", "Troubleshooting"} {
@@ -214,7 +218,7 @@ func TestMainHelpKeepsAPIProjectInCommandOptions(t *testing.T) {
 			t.Errorf("global group %q appeared among local API fields: %s", heading, got.stdout)
 		}
 	}
-	if !strings.Contains(global, "--base-url") || !strings.Contains(global, "--format") || !strings.Contains(global, "Global option details: openai --help") {
+	if !strings.Contains(global, "--base-url") || !strings.Contains(global, "--format") || !strings.Contains(global, "Run $ openai --help for details.") {
 		t.Errorf("global configuration is missing: %s", global)
 	}
 }
@@ -224,20 +228,20 @@ func TestMainHelpFullReferenceNullableDefaults(t *testing.T) {
 		path              []string
 		flag, wantDefault string
 	}{
-		{[]string{"beta:assistants", "create"}, "--description TEXT", ""},
-		{[]string{"images", "generate"}, "--output-format FORMAT", "Default: png"},
+		{[]string{"beta:assistants", "create"}, "--description=TEXT", ""},
+		{[]string{"images", "generate"}, "--output-format=FORMAT", "Default: png"},
 	} {
 		t.Run(strings.Join(tc.path, "/"), func(t *testing.T) {
 			got := runMainDispatch(t, "bash", append([]string{"openai", "help"}, tc.path...)...)
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("full reference failed: %+v", got)
 			}
-			_, details, found := strings.Cut(got.stdout, "\n   "+tc.flag+"\n")
+			_, details, found := strings.Cut(got.stdout, "\n    "+tc.flag+"\n")
 			if !found {
 				t.Fatalf("full reference lost %s", tc.flag)
 			}
 			// Keep wrapped prose and defaults, stopping at the next flag.
-			details, _, _ = strings.Cut(details, "\n   --")
+			details, _, _ = strings.Cut(details, "\n    --")
 			details = strings.Join(strings.Fields(details), " ")
 			if tc.wantDefault == "" {
 				if strings.Contains(details, "Default:") {

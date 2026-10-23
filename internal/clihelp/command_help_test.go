@@ -46,7 +46,7 @@ func TestCompleteHelpIncludesEveryInput(t *testing.T) {
 		command.Flags = append(command.Flags, &cli.StringFlag{Name: fmt.Sprintf("optional-%d", i), Usage: "Future options remain visible."})
 	}
 	got := commandHelpAtWidth(command, "openai", "example create", 100)
-	for _, want := range []string{"Required inputs", "--body-input TEXT", "--ordinary-input TEXT", "--optional-4 TEXT", "Keep the full constraint."} {
+	for _, want := range []string{"Required inputs", "--body-input=TEXT", "--ordinary-input=TEXT", "--optional-4=TEXT", "Keep the full constraint."} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q: %s", want, got)
 		}
@@ -86,17 +86,18 @@ func TestCompleteHelpKeepsExplicitFeatureTemplates(t *testing.T) {
 	}
 }
 
-func TestRootHelpIntroducesExploreFirst(t *testing.T) {
+func TestRootHelpIntroducesSetupModelsAndSearch(t *testing.T) {
 	for _, invocation := range []string{"openai", "'/tmp/CLI build/openai'", "go run ./cmd/openai"} {
 		for _, width := range []int{40, 80} {
 			root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "explore"}}}
 			got := commandHelpAtWidth(root, invocation, "", width)
 			_, start, found := strings.Cut(got, "\nSTART HERE\n")
-			if !found || !strings.HasPrefix(start, "   "+invocation+" explore\n") ||
-				!strings.Contains(strings.Join(strings.Fields(start), " "), "Search commands and examples. No API key needed.") {
-				t.Errorf("invocation=%q width=%d: local search is not the first introduction:\n%s", invocation, width, got)
+			if !found || strings.Index(start, "  "+invocation+" explore images") < 0 ||
+				!strings.Contains(strings.Join(strings.Fields(start), " "), "Find image commands and examples offline.") {
+				t.Errorf("invocation=%q width=%d: local search is missing from the introduction:\n%s", invocation, width, got)
 			}
-			if !strings.Contains(start, "   "+invocation+" help setup\n   "+invocation+" models list\n") {
+			setup, models := strings.Index(start, "  "+invocation+" help setup"), strings.Index(start, "  "+invocation+" models list")
+			if setup < 0 || models <= setup || strings.Index(start, "  "+invocation+" explore images") <= models {
 				t.Errorf("existing start commands changed:\n%s", got)
 			}
 		}
@@ -113,7 +114,7 @@ func TestCompleteHelpExplainsOutputExamples(t *testing.T) {
 	command := &cli.Command{Name: "list", Flags: []cli.Flag{&requestflag.Flag[int64]{Name: "max-items", Usage: "Maximum items; use -1 for unlimited."}}}
 	for _, width := range []int{40, 80} {
 		got := commandHelpAtWidth(command, "'/tmp/CLI build/openai'", "models list", width)
-		for _, want := range []string{"EXAMPLES:", "Return complete JSON:", "Print model IDs for a script:", "'/tmp/CLI build/openai' models list --format json", "'/tmp/CLI build/openai' models list --transform id --raw-output", "--max-items INTEGER"} {
+		for _, want := range []string{"EXAMPLES", "Return complete JSON:", "Print model IDs for a script:", "'/tmp/CLI build/openai' models list --format json", "'/tmp/CLI build/openai' models list --transform id --raw-output", "--max-items=INTEGER"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("width %d missing %q: %s", width, want, got)
 			}
@@ -142,11 +143,11 @@ func TestCommandNameKeepsLongUsageInDescription(t *testing.T) {
 		Description: "Keep the authored caveat.",
 	}
 	got := commandHelpAtWidth(command, "openai", "responses create", 80)
-	name, rest, found := strings.Cut(got, "\nSYNOPSIS:")
-	if !found || !strings.Contains(name, "Create a response.") || strings.Contains(name, "restriction") {
+	name, rest, found := strings.Cut(got, "\nSYNOPSIS")
+	if !found || !strings.Contains(name, "Create a response") || strings.Contains(name, "restriction") {
 		t.Fatalf("NAME is not a short command identity: %s", name)
 	}
-	_, description, found := strings.Cut(rest, "\nDESCRIPTION:\n")
+	_, description, found := strings.Cut(rest, "\nDESCRIPTION\n")
 	if !found {
 		t.Fatal("long usage has no DESCRIPTION")
 	}
@@ -165,8 +166,8 @@ func TestAuthoredSummaryPreservesUsageAndContentContract(t *testing.T) {
 		}},
 	}
 	got := commandHelpAtWidth(command, "openai", "items create", 100)
-	name, _, _ := strings.Cut(got, "\nSYNOPSIS:")
-	if !strings.Contains(name, "Create an item.") || strings.Contains(name, "existing usage") {
+	name, _, _ := strings.Cut(got, "\nSYNOPSIS")
+	if !strings.Contains(name, "Create an item") || strings.Contains(name, "existing usage") {
 		t.Fatalf("authored summary was not used: %s", name)
 	}
 	if !strings.Contains(got, command.Usage) || !strings.Contains(got, "Keep the complete feature caveat.") || strings.Contains(got, "Superseded") {
@@ -228,13 +229,13 @@ func TestInheritedGlobalIndexKeepsEveryNameAndRootReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	_, index, found := strings.Cut(got, "\nGLOBAL OPTIONS:\n")
+	_, index, found := strings.Cut(got, "\nGLOBAL FLAGS\n")
 	if !found {
 		t.Fatal("missing inherited flag index")
 	}
-	rootReference := "Global option details: '/tmp/CLI build/openai' --help"
+	rootReference := "Run $ '/tmp/CLI build/openai' --help for details."
 	if runtime.GOOS == "windows" {
-		rootReference = "Global option details: & '/tmp/CLI build/openai' --help"
+		rootReference = "Run $ & '/tmp/CLI build/openai' --help for details."
 	}
 	for _, want := range []string{"--root-option, -r", "--future-00", "--future-11", rootReference, "This command supports text output only."} {
 		if !strings.Contains(index, want) {

@@ -300,6 +300,10 @@ func TestMainLocalUtilitiesHelpAndCompletion(t *testing.T) {
 				require.Contains(t, got.stdout, "openai "+route.path)
 				require.Contains(t, got.stdout, route.flag)
 				require.NotContains(t, got.stdout, "Key setup:", "local help must not imply an API-key requirement")
+				for _, line := range strings.Split(got.stdout, "\n") {
+					require.LessOrEqual(t, len(line), 79, "local help prose must wrap: %q", line)
+					require.Equal(t, strings.TrimRight(line, " \t"), line, "help must not retain trailing whitespace")
+				}
 			}
 		})
 	}
