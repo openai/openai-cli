@@ -57,6 +57,7 @@ type workflowJob struct {
 
 type workflowStep struct {
 	ContinueOnError bool           `yaml:"continue-on-error"`
+	If              string         `yaml:"if"`
 	Shell           string         `yaml:"shell"`
 	Name            string         `yaml:"name"`
 	Uses            string         `yaml:"uses"`
@@ -941,7 +942,7 @@ func TestErrorAuditShardsRemainRequired(t *testing.T) {
 	_, bash := requireStep(t, linux, "Check native Bash executable suggestions")
 	launcherIndex, launcher := requireStep(t, linux, "Check test launcher failure handling")
 	testsIndex, tests := requireStep(t, linux, "Run tests")
-	if launcherIndex >= testsIndex || launcher.ContinueOnError || launcher.Run != "go test ./scripts -run '^TestTestRunner$' -count=1" {
+	if launcherIndex >= testsIndex || launcher.If != "" || launcher.ContinueOnError || launcher.Run != "go test ./scripts -run '^TestTestRunner$' -count=1" {
 		t.Fatal("Linux tests must check launcher failures independently before running the launcher")
 	}
 	if validator.Run != "python3 scripts/test-error-audit.py" || validator.ContinueOnError || bash.ContinueOnError || bash.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"] != "bash" || !strings.Contains(bash.Run, "-run '^TestShellSuggestionsBash'") {
