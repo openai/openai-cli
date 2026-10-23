@@ -19,6 +19,9 @@ import (
 // Run executes one CLI process invocation and returns its exit status.
 // The caller supplies the process-scoped command tree; Run is called once per process.
 func Run(ctx context.Context, argv []string, app *cli.Command) int {
+	if updatenotice.RunUpdateHelper(argv) {
+		return 0
+	}
 	if handled, err := terminalimage.RunKittyOutputHelper(argv); handled {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Image output helper failed.")
@@ -70,7 +73,7 @@ func Run(ctx context.Context, argv []string, app *cli.Command) int {
 		}
 		return exitCode
 	}
-	showUpdateNotice(ctx, argv, app, updatenotice.Check)
+	showUpdateNotice(ctx, argv, app, updatenotice.CheckOrUpdate)
 	return 0
 }
 
