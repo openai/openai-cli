@@ -10,6 +10,7 @@ import json
 import os
 import pathlib
 import pty
+import re
 import shutil
 import signal
 import subprocess
@@ -132,7 +133,10 @@ def main():
                 while b'\x1b[78G' not in terminal.raw[mark:]:
                     terminal.read()
                     assert terminal.child.poll() is None and time.monotonic() < deadline, 'right-border positioning was stripped'
-                assert b'\x1b[74X' in terminal.raw[mark:], 'prompt interior fill control was stripped'
+                # The workspace clears and pads the complete prompt row.
+                repaint = (rb'\r\x1b\[0K' + re.escape(('  │ Prompt '+prompt).encode())
+                           + rb' +\x1b\[78G' + '│'.encode())
+                assert re.search(repaint, terminal.raw[mark:]), 'prompt repaint, padding, or right border was stripped'
                 assert b';2;' not in terminal.raw[mark:] and b';5;' not in terminal.raw[mark:], 'NO_COLOR emitted color'
                 mark = len(terminal.raw)
                 terminal.send(b'\r')
