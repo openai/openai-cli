@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -430,7 +431,7 @@ func updateTestProcessRunning(t *testing.T, pid int) bool {
 	t.Helper()
 	if runtime.GOOS == "linux" {
 		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || errors.Is(err, syscall.ESRCH) {
 			return false
 		}
 		if err != nil {

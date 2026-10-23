@@ -1205,13 +1205,17 @@ jobs:
         # Run outside the launcher so it cannot hide a regression in its own exit status.
         run: go test ./scripts -run '^TestTestRunner$' -count=1
 
-      - name: Run tests
-        # Large-payload and subprocess suites share this runner. Avoid running
-        # packages concurrently; retain every test, payload and deadline.
-        run: ./scripts/test -p 1
+      - name: Check native Bash executable suggestions
+        run: go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsBash' -count=1 -timeout=5m -v
         env:
           GOMAXPROCS: '2'
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: bash
+
+      - name: Run tests
+        # Large-payload and subprocess suites share this runner. Avoid running
+        # packages concurrently; retain every test, payload and deadline.
+        run: ./scripts/test -p 1 -skip '^TestShellSuggestionsBash'
+        env:
           SKIP_WINDOWS_TEST_COMPILE: '1'
 
   test-windows-compile:
