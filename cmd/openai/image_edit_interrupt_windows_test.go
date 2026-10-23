@@ -68,10 +68,10 @@ func imageEditInterruptCommand(t *testing.T, ctx context.Context, binary, home s
 }
 
 func verifyImageEditInterruptControllerResult(result windowsConsoleResult, helperExit int) error {
-	// Piped image output uses the default Windows Ctrl-C termination path.
+	// Saving handles Ctrl-C cooperatively, including redirected output.
 	// A queued event must not validate an unrelated early CLI failure.
 	if !result.Started || !result.EventSent || result.Event != windows.CTRL_C_EVENT || result.ChildExit == nil ||
-		uint32(*result.ChildExit) != uint32(windows.STATUS_CONTROL_C_EXIT) ||
+		*result.ChildExit != 130 ||
 		*result.ChildExit != helperExit || result.TimedOut || result.ForcedKill {
 		return fmt.Errorf("controller result does not establish image-edit cancellation")
 	}
@@ -85,10 +85,13 @@ func TestImageEditInterruptControllerResult(t *testing.T) {
 		change func(*windowsConsoleResult, *int)
 		valid  bool
 	}{
-		{"CTRL_C exit", nil, true},
-		{"signed CTRL_C exit", func(result *windowsConsoleResult, helper *int) {
+		{"cooperative CTRL_C exit", nil, true},
+		{"legacy CTRL_C exit", func(result *windowsConsoleResult, helper *int) {
+			*result.ChildExit, *helper = int(controlExit), int(controlExit)
+		}, false},
+		{"signed legacy CTRL_C exit", func(result *windowsConsoleResult, helper *int) {
 			*result.ChildExit, *helper = int(int32(controlExit)), int(int32(controlExit))
-		}, true},
+		}, false},
 		{"unrelated exit 1", func(result *windowsConsoleResult, helper *int) { *result.ChildExit, *helper = 1, 1 }, false},
 		{"unrelated exit 7", func(result *windowsConsoleResult, helper *int) { *result.ChildExit, *helper = 7, 7 }, false},
 		{"missing startup", func(result *windowsConsoleResult, _ *int) { result.Started = false }, false},
@@ -101,7 +104,7 @@ func TestImageEditInterruptControllerResult(t *testing.T) {
 		{"forced kill", func(result *windowsConsoleResult, _ *int) { result.ForcedKill = true }, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			childExit, helperExit := int(controlExit), int(controlExit)
+			childExit, helperExit := 130, 130
 			result := windowsConsoleResult{Started: true, EventSent: true, Event: windows.CTRL_C_EVENT, ChildExit: &childExit}
 			if test.change != nil {
 				test.change(&result, &helperExit)

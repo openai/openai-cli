@@ -1,5 +1,3 @@
-//go:build !windows
-
 package main
 
 import (
@@ -12,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -85,10 +82,10 @@ func TestMainImageSavingInterruptRemovesIncompleteFile(t *testing.T) {
 				}
 				ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 				defer cancel()
-				child := exec.CommandContext(ctx, binary, append([]string{"-test.run=^TestMainDispatchProcess$", "--"}, args...)...)
-				child.Env = append(imageGenerationEnv(server, home), "OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "GOMAXPROCS=2")
+				child, interrupt, verifyFixture := imageEditInterruptCommand(t, ctx, binary, home, imageGenerationEnv(server, home), args...)
 				var stdout, stderr bytes.Buffer
 				child.Stdout, child.Stderr = &stdout, &stderr
+				started := time.Now()
 				if err := child.Start(); err != nil {
 					t.Fatal(err)
 				}
@@ -120,17 +117,21 @@ func TestMainImageSavingInterruptRemovesIncompleteFile(t *testing.T) {
 					}
 					time.Sleep(100 * time.Microsecond)
 				}
-				if err := child.Process.Signal(os.Interrupt); err != nil {
+				if err := interrupt(); err != nil {
 					t.Fatal(err)
 				}
+				var waitErr error
 				select {
-				case <-done:
+				case waitErr = <-done:
 					waited = true
 				case <-ctx.Done():
 					t.Fatal("interrupted image command did not stop")
 				}
 				if code := child.ProcessState.ExitCode(); code != 130 {
 					t.Errorf("interrupt status=%d, want 130; stderr=%q", code, stderr.String())
+				}
+				if err := verifyFixture(waitErr, stderr.Bytes(), time.Since(started)); err != nil {
+					t.Errorf("interrupt fixture: %v", err)
 				}
 				if info, err := os.Stat(partial); !os.IsNotExist(err) {
 					if err != nil {
