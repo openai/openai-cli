@@ -2,10 +2,39 @@ package mocktest
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(RunTests(m))
+}
+
+func TestRunTestsHelperExitLeavesNoDirectory(t *testing.T) {
+	const child = "OPENAI_MOCKTEST_EXIT_HELPER"
+	if os.Getenv(child) == "1" {
+		os.Exit(0)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	command := exec.CommandContext(t.Context(), executable, "-test.run=^TestRunTestsHelperExitLeavesNoDirectory$")
+	command.Env = append(os.Environ(), child+"=1", "TMPDIR="+directory, "TMP="+directory, "TEMP="+directory)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("helper process: %v\n%s", err, output)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("helper process leaked %d temporary entries: %v", len(entries), entries)
+	}
+}
 
 func TestCopyCLIUsesIndependentPrivateFiles(t *testing.T) {
 	directory := t.TempDir()

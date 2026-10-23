@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 
@@ -73,6 +75,11 @@ func TestAudioVoicesCreateSampleContract(t *testing.T) {
 }
 
 func TestAudioVoicesCreateRequiresName(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "openai")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	mocktest.CopyCLI(t, binary)
 	for _, tc := range []struct {
 		name  string
 		flags []string
@@ -93,10 +100,13 @@ func TestAudioVoicesCreateRequiresName(t *testing.T) {
 			defer server.Close()
 
 			// A new CLI process gives every case fresh request flags, as in actual use.
-			args := []string{"run", "../../cmd/openai", "--base-url", server.URL + "/", "audio:voices", "create"}
-			command := exec.Command("go", append(args, tc.flags...)...)
+			args := []string{"--base-url", server.URL + "/", "audio:voices", "create"}
+			command := exec.CommandContext(t.Context(), binary, append(args, tc.flags...)...)
 			output, err := command.CombinedOutput()
 			require.Error(t, err, "missing voice name must be rejected locally: %s", output)
+			var exit *exec.ExitError
+			require.ErrorAs(t, err, &exit)
+			require.Equal(t, 1, exit.ExitCode())
 			require.Contains(t, string(output), "Missing required options: --name.")
 			require.Zero(t, requests.Load(), "invalid voice requests must not reach the server")
 		})

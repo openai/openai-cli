@@ -17,23 +17,28 @@ var suiteCLI func(context.Context) (string, error)
 // RunTests owns one lazily built CLI for a package's tests. Each invocation still
 // runs in a fresh process; only compilation is shared. Call it from TestMain.
 func RunTests(m *testing.M) (code int) {
-	directory, err := os.MkdirTemp("", "openai-mock-tests-")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "create test CLI directory: %v\n", err)
-		return 1
-	}
+	var directory string
 	defer func() {
 		suiteCLI = nil
+		if directory == "" {
+			return
+		}
 		if err := os.RemoveAll(directory); err != nil {
 			fmt.Fprintf(os.Stderr, "remove test CLI directory: %v\n", err)
 			code = 1
 		}
 	}()
 	var once sync.Once
-	binary := filepath.Join(directory, "openai.exe")
+	var binary string
 	var buildErr error
 	suiteCLI = func(ctx context.Context) (string, error) {
 		once.Do(func() {
+			directory, buildErr = os.MkdirTemp("", "openai-mock-tests-")
+			if buildErr != nil {
+				buildErr = fmt.Errorf("create test CLI directory: %w", buildErr)
+				return
+			}
+			binary = filepath.Join(directory, "openai.exe")
 			_, filename, _, ok := runtime.Caller(0)
 			if !ok {
 				buildErr = fmt.Errorf("locate CLI source")
