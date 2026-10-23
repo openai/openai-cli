@@ -57,6 +57,7 @@ type workflowJob struct {
 
 type workflowStep struct {
 	ContinueOnError bool           `yaml:"continue-on-error"`
+	If              string         `yaml:"if"`
 	Shell           string         `yaml:"shell"`
 	Name            string         `yaml:"name"`
 	Uses            string         `yaml:"uses"`
@@ -939,7 +940,11 @@ func TestErrorAuditShardsRemainRequired(t *testing.T) {
 	linux := jobs["test-linux"]
 	_, validator := requireStep(t, linux, "Check error audit validator")
 	_, bash := requireStep(t, linux, "Check native Bash executable suggestions")
-	_, tests := requireStep(t, linux, "Run tests")
+	launcherIndex, launcher := requireStep(t, linux, "Check test launcher failure handling")
+	testsIndex, tests := requireStep(t, linux, "Run tests")
+	if launcherIndex >= testsIndex || launcher.If != "" || launcher.ContinueOnError || launcher.Run != "go test ./scripts -run '^TestTestRunner$' -count=1" {
+		t.Fatal("Linux tests must check launcher failures independently before running the launcher")
+	}
 	if validator.Run != "python3 scripts/test-error-audit.py" || validator.ContinueOnError || bash.ContinueOnError || bash.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"] != "bash" || !strings.Contains(bash.Run, "-run '^TestShellSuggestionsBash'") {
 		t.Fatal("Linux tests must retain the audit validator and mandatory native Bash suggestion checks")
 	}
