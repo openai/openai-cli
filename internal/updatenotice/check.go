@@ -1,4 +1,4 @@
-// Package updatenotice checks public releases and throttles optional update notices.
+// Package updatenotice handles release notices and authenticated self-managed updates.
 package updatenotice
 
 import (

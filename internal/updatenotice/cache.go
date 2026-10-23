@@ -113,24 +113,11 @@ func privateFile(info os.FileInfo) bool {
 
 func (cache *noticeCache) load(now time.Time) (cacheState, error) {
 	state := cacheState{Schema: 1}
-	info, err := cache.root.Lstat(stateName)
-	if errors.Is(err, os.ErrNotExist) {
-		return state, nil
-	}
-	if err != nil || !privateFile(info) {
-		return state, errCache
-	}
-	file, err := cache.root.OpenFile(stateName, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
+	data, err := cache.readState()
+	if err != nil || data == nil {
 		return state, err
 	}
-	defer file.Close()
-	actual, err := file.Stat()
-	if err != nil || !privateFile(actual) || !os.SameFile(info, actual) {
-		return state, errCache
-	}
-	data, err := io.ReadAll(io.LimitReader(file, 4097))
-	if err != nil || len(data) > 4096 || !decodeState(data, &state) {
+	if !decodeState(data, &state) {
 		return state, errCache
 	}
 	if state.Checked <= 0 || state.Checked > now.Unix() || state.Notified < 0 || state.Notified > now.Unix() {
@@ -142,8 +129,32 @@ func (cache *noticeCache) load(now time.Time) (cacheState, error) {
 			return state, errCache
 		}
 	}
-	cache.stateIdentity, cache.stateData = actual, data
 	return state, nil
+}
+
+func (cache *noticeCache) readState() ([]byte, error) {
+	info, err := cache.root.Lstat(stateName)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil || !privateFile(info) {
+		return nil, errCache
+	}
+	file, err := cache.root.OpenFile(stateName, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	actual, err := file.Stat()
+	if err != nil || !privateFile(actual) || !os.SameFile(info, actual) {
+		return nil, errCache
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 4097))
+	if err != nil || len(data) > 4096 {
+		return nil, errCache
+	}
+	cache.stateIdentity, cache.stateData = actual, data
+	return data, nil
 }
 
 // Cooperating writers hold the permanent lock. Also preserve distinguishable
@@ -208,6 +219,10 @@ func decodeState(data []byte, state *cacheState) bool {
 }
 
 func (cache *noticeCache) save(state cacheState) error {
+	return cache.saveState(state)
+}
+
+func (cache *noticeCache) saveState(state any) error {
 	if !cache.validLock() || !cache.unchangedState() {
 		return errCache
 	}
@@ -223,9 +238,10 @@ func (cache *noticeCache) save(state cacheState) error {
 	defer cache.root.Remove(name)
 	data = append(data, '\n')
 	_, writeErr := file.Write(data)
+	syncErr := file.Sync()
 	identity, statErr := file.Stat()
 	closeErr := file.Close()
-	if err := errors.Join(writeErr, statErr, closeErr); err != nil {
+	if err := errors.Join(writeErr, syncErr, statErr, closeErr); err != nil {
 		return err
 	}
 	if !cache.validLock() || !cache.unchangedState() {
