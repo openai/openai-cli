@@ -1192,6 +1192,10 @@ jobs:
       - name: Check error audit validator
         run: python3 scripts/test-error-audit.py
 
+      - name: Check test launcher failure handling
+        # Run outside the launcher so it cannot hide a regression in its own exit status.
+        run: go test ./scripts -run '^TestTestRunner$' -count=1
+
       - name: Check Linux picker metadata and profile identity
         run: go test ./internal/autocomplete -run '^TestPicker(InstallRetainsLinuxSELinuxLabel|SecurityLabel.*|InstallPreservesLinuxFileMetadata|LinuxMetadataAddedAfterSnapshotIsKept|UnixProfileIdentityKeepsDistinctCaseNames)$' -count=1 -v
 
