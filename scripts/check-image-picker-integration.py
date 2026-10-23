@@ -129,13 +129,14 @@ def main():
                 mark = len(terminal.raw)
                 terminal.send(b'\x1b[200~'+prompt.encode()+b'\x1b[201~')
                 terminal.wait(prompt, after=mark)
-                deadline = time.monotonic()+8
-                while b'\x1b[78G' not in terminal.raw[mark:]:
-                    terminal.read()
-                    assert terminal.child.poll() is None and time.monotonic() < deadline, 'right-border positioning was stripped'
                 # The workspace clears and pads the complete prompt row.
                 repaint = (rb'\r\x1b\[0K' + re.escape(('  │ Prompt '+prompt).encode())
                            + rb' +\x1b\[78G' + '│'.encode())
+                deadline = time.monotonic()+8
+                # The border bytes can arrive in a later read.
+                while not re.search(repaint, terminal.raw[mark:]):
+                    terminal.read()
+                    assert terminal.child.poll() is None and time.monotonic() < deadline, 'prompt repaint was incomplete'
                 assert re.search(repaint, terminal.raw[mark:]), 'prompt repaint, padding, or right border was stripped'
                 assert b';2;' not in terminal.raw[mark:] and b';5;' not in terminal.raw[mark:], 'NO_COLOR emitted color'
                 mark = len(terminal.raw)
