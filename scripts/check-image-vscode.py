@@ -352,7 +352,7 @@ def main():
             _, _, settings_stdout, _ = tty('remember-off', ['images', 'inline', 'off'],
                 home_name='preferences', images=0, saved=0, success_stderr=(
                     b'Automatic image previews off.\nOverride once: --inline auto|on|off\n'
-                    b'View a saved image: openai images preview FILE\n'))
+                    b'Image preview help: openai images preview --help\n'))
             require(not settings_stdout, 'local setting receipt contaminated stdout')
             tty('persisted-off', generate, home_name='preferences', images=0)
             tty('override-off-with-on', generate + ['--inline', 'on'], home_name='preferences', saved=2)
