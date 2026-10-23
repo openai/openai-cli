@@ -66,6 +66,7 @@ exit "$TEST_RUNNER_NATIVE_STATUS"
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			command := exec.CommandContext(ctx, "bash", append([]string{launcherPath}, arguments...)...)
+			command.WaitDelay = time.Second
 			command.Dir = filepath.Join(root, "outside")
 			command.Env = []string{
 				"PATH=" + binDir + ":/usr/bin:/bin",
