@@ -24,13 +24,14 @@ const (
 )
 
 type updateState struct {
-	Schema            int             `json:"schema"`
-	Checked           int64           `json:"checked"`
-	ActivationChecked int64           `json:"activation_checked"`
-	Starting          int64           `json:"starting"`
-	Pending           *preparedUpdate `json:"pending,omitempty"`
-	Applied           string          `json:"applied,omitempty"`
-	Announced         bool            `json:"announced"`
+	Schema              int             `json:"schema"`
+	Checked             int64           `json:"checked"`
+	ActivationChecked   int64           `json:"activation_checked"`
+	Starting            int64           `json:"starting"`
+	Pending             *preparedUpdate `json:"pending,omitempty"`
+	Applied             string          `json:"applied,omitempty"`
+	Announced           bool            `json:"announced"`
+	VerifierUnavailable bool            `json:"verifier_unavailable,omitempty"`
 }
 
 type preparedUpdate struct {
@@ -99,7 +100,10 @@ func Automatic(ctx context.Context, current string) (string, bool) {
 		return "", false
 	}
 	pin, enabled := updatePolicy(os.Getenv)
-	if !enabled || ctx.Err() != nil {
+	if !enabled {
+		return "", false
+	}
+	if ctx.Err() != nil {
 		return "", true
 	}
 	cache, err := openCache(ctx, installation.stateDirectory())
@@ -141,7 +145,7 @@ func Automatic(ctx context.Context, current string) (string, bool) {
 	if start && installation.unchanged() && ctx.Err() == nil {
 		startUpdateWorker(installation.path, current)
 	}
-	return message, true
+	return message, message != "" || !state.VerifierUnavailable
 }
 
 // RunUpdateHelper handles the private, detached worker entrypoint. No update
@@ -178,6 +182,7 @@ func RunUpdateHelper(argv []string) bool {
 }
 
 type updateDelivery interface {
+	checkVerifier(context.Context, *noticeCache) error
 	selectRelease(context.Context, string) (releaseSelection, error)
 	prepare(context.Context, *noticeCache, releaseSelection) (string, error)
 	stillPublished(context.Context, releaseSelection) error
@@ -226,6 +231,16 @@ func (worker updateWorker) run(ctx context.Context) error {
 	}
 	state.Checked, state.ActivationChecked = worker.now.Unix(), 0
 	state.Pending = nil
+	// Check capabilities in the detached worker, before downloading anything.
+	// Persist fallback first so failed or interrupted probes retain notices.
+	state.VerifierUnavailable = true
+	if err := cache.saveState(state); err != nil {
+		return err
+	}
+	if err := worker.delivery.checkVerifier(ctx, cache); err != nil {
+		return err
+	}
+	state.VerifierUnavailable = false
 	if err := cache.saveState(state); err != nil {
 		return err
 	}

@@ -187,12 +187,9 @@ func (d *releaseDelivery) authenticate(ctx context.Context, cache *noticeCache, 
 	if err := bundle.Close(); err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, d.verifier, "attestation", "verify", filepath.Join(cache.directory, "archive"),
+	command := d.verifierCommand(ctx, cache, "attestation", "verify", filepath.Join(cache.directory, "archive"),
 		"--bundle", filepath.Join(cache.directory, "bundle"), "--hostname", "github.com", "--repo", "openai/openai-cli",
 		"--cert-identity", workflowIdentity, "--source-ref", "refs/heads/main", "--deny-self-hosted-runners", "--format", "json")
-	command.Env = append(updateEnvironment(), "GH_CONFIG_DIR="+filepath.Join(cache.directory, "gh-config"), "GH_NO_UPDATE_NOTIFIER=1", "GH_NO_EXTENSION_UPDATE_NOTIFIER=1", "GH_PROMPT_DISABLED=1")
-	command.WaitDelay = time.Second
-	isolateVerifier(command)
 	var output limitedVerification
 	command.Stdout = &output
 	if err := command.Run(); err != nil {
@@ -213,6 +210,35 @@ func (d *releaseDelivery) authenticate(ctx context.Context, cache *noticeCache, 
 		return errUpdate
 	}
 	return d.completedPublication(ctx, verified, selected)
+}
+
+func (d *releaseDelivery) verifierCommand(ctx context.Context, cache *noticeCache, args ...string) *exec.Cmd {
+	command := exec.CommandContext(ctx, d.verifier, args...)
+	command.Env = append(updateEnvironment(), "GH_CONFIG_DIR="+filepath.Join(cache.directory, "gh-config"), "GH_NO_UPDATE_NOTIFIER=1", "GH_NO_EXTENSION_UPDATE_NOTIFIER=1", "GH_PROMPT_DISABLED=1")
+	command.WaitDelay = time.Second
+	isolateVerifier(command)
+	return command
+}
+
+func (d *releaseDelivery) checkVerifier(ctx context.Context, cache *noticeCache) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	command := d.verifierCommand(ctx, cache, "attestation", "verify", "--help")
+	var output limitedVerification
+	command.Stdout = &output
+	if err := command.Run(); err != nil || output.exceeded {
+		return errUpdate
+	}
+	flags := make(map[string]bool)
+	for _, field := range strings.Fields(output.String()) {
+		flags[field] = true
+	}
+	for _, flag := range []string{"--bundle", "--hostname", "--repo", "--cert-identity", "--source-ref", "--deny-self-hosted-runners", "--format"} {
+		if !flags[flag] {
+			return errUpdate
+		}
+	}
+	return nil
 }
 
 type limitedVerification struct {

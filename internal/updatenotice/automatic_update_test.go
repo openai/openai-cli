@@ -45,7 +45,14 @@ type syntheticDelivery struct {
 	content                                    []byte
 	selectCalls, prepareCalls, validationCalls int
 	prepareError, validationError              error
+	verifierError                              error
+	verifierCalls                              int
 	beforePrepare, beforeValidation            func()
+}
+
+func (d *syntheticDelivery) checkVerifier(context.Context, *noticeCache) error {
+	d.verifierCalls++
+	return d.verifierError
 }
 
 func (d *syntheticDelivery) selectRelease(context.Context, string) (releaseSelection, error) {
@@ -301,6 +308,53 @@ func TestAutomaticUpdateInstallationOwnership(t *testing.T) {
 				t.Fatal("unsupported installation admitted")
 			}
 		})
+	}
+}
+
+func TestAutomaticUpdateVerifierFallbackRecovery(t *testing.T) {
+	t.Setenv("OPENAI_CLI_NO_AUTO_UPDATE", "")
+	t.Setenv("OPENAI_CLI_NO_UPDATE_CHECK", "")
+	t.Setenv("OPENAI_CLI_VERSION_PIN", "")
+	i := updateTestInstallation(t, []byte("old"))
+	d := &syntheticDelivery{selected: syntheticSelection(), verifierError: errUpdate, prepareError: errUpdate}
+	w := updateWorker{installation: i, current: "1.0.0", now: time.Now(), delivery: d}
+	if err := w.run(t.Context()); err == nil {
+		t.Fatal("unsupported verifier accepted")
+	}
+	readState := func() updateState {
+		t.Helper()
+		cache, err := openCache(t.Context(), i.stateDirectory())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cache.close()
+		state, err := loadUpdateState(cache, w.now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	if state := readState(); !state.VerifierUnavailable || state.Checked != w.now.Unix() || state.Pending != nil {
+		t.Fatalf("unsupported verifier lost fallback or throttle: %+v", state)
+	}
+	if d.selectCalls != 0 || d.prepareCalls != 0 {
+		t.Fatal("unsupported verifier triggered release requests")
+	}
+	w.now = w.now.Add(automaticInterval - time.Second)
+	if err := w.run(t.Context()); err != nil || d.verifierCalls != 1 {
+		t.Fatal("retried capabilities before four hours")
+	}
+	d.verifierError = nil
+	w.now = w.now.Add(time.Second)
+	if err := w.run(t.Context()); err == nil {
+		t.Fatal("expected synthetic preparation failure")
+	}
+	if readState().VerifierUnavailable || d.verifierCalls != 2 || d.selectCalls != 1 || d.prepareCalls != 1 {
+		t.Fatal("compatible verifier did not restore update preparation")
+	}
+	content, err := os.ReadFile(i.path)
+	if err != nil || string(content) != "old" {
+		t.Fatal("capability probes changed installation")
 	}
 }
 

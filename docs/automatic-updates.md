@@ -16,6 +16,9 @@ Automatic installation requires all these conditions:
 GitHub CLI verifies existing GitHub artifact provenance. The updater downloads public attestation bundles without GitHub credentials.
 It supplies those bundles to `gh attestation verify`. It does not install GitHub CLI or request login.
 Verification requires `--bundle`, `--cert-identity`, `--source-ref`, and `--deny-self-hosted-runners` support.
+The detached helper checks required options before downloading an update.
+If GitHub CLI lacks support, later eligible invocations retain manual update notices.
+Capability checks retry at most every four hours, so upgrading GitHub CLI can restore automatic updates.
 
 Homebrew, Linux packages, Go installations, unknown locations, and development builds remain outside automatic installation.
 A symlink from `$HOME/.openai/bin/openai` to a Go installation remains owned by Go.
@@ -59,6 +62,8 @@ Disable automatic installation through your shell environment:
 ```sh
 export OPENAI_CLI_NO_AUTO_UPDATE=1
 ```
+
+Manual update notices remain enabled.
 
 Disable all update discovery and notices with the existing control:
 

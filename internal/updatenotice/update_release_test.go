@@ -170,7 +170,7 @@ func TestAutomaticUpdateAuthenticatedPreparation(t *testing.T) {
 	t.Setenv("GH_TOKEN", "synthetic-token")
 	t.Setenv("GH_DEBUG", "api")
 	binary := buildUpdateFixture(t, t.TempDir(), "1.0.1")
-	for _, scenario := range []string{"valid", "digest_mismatch", "truncated", "verifier_failure", "wrong_identity", "wrong_subject", "wrong_run_sha", "incomplete_run", "failed_run", "wrong_attempt", "wrong_version", "duplicate_binary", "oversized_output"} {
+	for _, scenario := range []string{"valid", "bare_workflow_path", "wrong_workflow_ref", "wrong_workflow_path", "digest_mismatch", "truncated", "verifier_failure", "wrong_identity", "wrong_subject", "wrong_run_sha", "incomplete_run", "failed_run", "wrong_attempt", "wrong_version", "duplicate_binary", "oversized_output"} {
 		t.Run(scenario, func(t *testing.T) {
 			content := binary
 			if scenario == "wrong_version" {
@@ -226,8 +226,14 @@ func TestAutomaticUpdateAuthenticatedPreparation(t *testing.T) {
 				if strings.Contains(request.URL.Path, "/attestations/") {
 					return jsonUpdateResponse(t, map[string]any{"attestations": []any{map[string]any{"bundle": map[string]any{"synthetic": true}}}}), nil
 				}
-				run := map[string]any{"id": 123, "run_attempt": 2, "status": "completed", "conclusion": "success", "event": "workflow_dispatch", "path": ".github/workflows/publish-release.yml", "head_sha": syntheticCommit, "head_branch": "main", "repository": map[string]any{"full_name": "openai/openai-cli"}}
+				run := map[string]any{"id": 123, "run_attempt": 2, "status": "completed", "conclusion": "success", "event": "workflow_dispatch", "path": ".github/workflows/publish-release.yml@main", "head_sha": syntheticCommit, "head_branch": "main", "repository": map[string]any{"full_name": "openai/openai-cli"}}
 				switch scenario {
+				case "bare_workflow_path":
+					run["path"] = ".github/workflows/publish-release.yml"
+				case "wrong_workflow_ref":
+					run["path"] = ".github/workflows/publish-release.yml@other"
+				case "wrong_workflow_path":
+					run["path"] = ".github/workflows/other.yml@main"
 				case "wrong_run_sha":
 					run["head_sha"] = strings.Repeat("2", 40)
 				case "incomplete_run":
@@ -240,7 +246,7 @@ func TestAutomaticUpdateAuthenticatedPreparation(t *testing.T) {
 				return jsonUpdateResponse(t, run), nil
 			})}}
 			digest, err := d.prepare(t.Context(), cache, selected)
-			if scenario == "valid" {
+			if scenario == "valid" || scenario == "bare_workflow_path" {
 				want := sha256.Sum256(binary)
 				if err != nil || digest != hex.EncodeToString(want[:]) {
 					t.Fatalf("prepare: %s %v", digest, err)
@@ -281,6 +287,53 @@ func TestAutomaticUpdateCanceledExtraction(t *testing.T) {
 	}
 }
 
+func TestAutomaticUpdateVerifierCapabilities(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "synthetic-secret")
+	t.Setenv("GH_TOKEN", "synthetic-token")
+	t.Setenv("GH_DEBUG", "api")
+	const help = "--bundle string\n--hostname string\n--repo string\n--cert-identity string\n--source-ref string\n--deny-self-hosted-runners\n--format string\n"
+	for _, missing := range []string{"", "--bundle", "--hostname", "--repo", "--cert-identity", "--source-ref", "--deny-self-hosted-runners", "--format", "command", "oversized", "canceled"} {
+		name := missing
+		if name == "" {
+			name = "supported"
+		}
+		t.Run(name, func(t *testing.T) {
+			cache, err := openCache(t.Context(), filepath.Join(t.TempDir(), "update"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cache.close()
+			output := help
+			if strings.HasPrefix(missing, "--") {
+				output = strings.ReplaceAll(output, missing, missing+"-unsupported")
+			}
+			script := "#!/bin/sh\nset -eu\ntest -z \"${OPENAI_API_KEY-}${GH_TOKEN-}${GH_DEBUG-}\"\ntest \"$*\" = 'attestation verify --help'\n"
+			switch missing {
+			case "command":
+				script += "exit 1\n"
+			case "oversized":
+				script += "/usr/bin/head -c 1100000 /dev/zero\n"
+			default:
+				script += "printf '%s' '" + output + "'\n"
+			}
+			verifier := filepath.Join(t.TempDir(), "gh")
+			if err := os.WriteFile(verifier, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			d := releaseDelivery{verifier: verifier}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if missing == "canceled" {
+				cancel()
+			}
+			err = d.checkVerifier(ctx, cache)
+			if (err == nil) != (missing == "") {
+				t.Fatalf("capability check = %v, missing %q", err, missing)
+			}
+		})
+	}
+}
+
 func Example_updatePolicy() {
 	pin, enabled := updatePolicy(func(key string) string {
 		if key == "OPENAI_CLI_VERSION_PIN" {
@@ -293,6 +346,17 @@ func Example_updatePolicy() {
 }
 
 func TestAutomaticUpdateVerifierCancellation(t *testing.T) {
+	for _, capabilities := range []bool{false, true} {
+		name := "verification"
+		if capabilities {
+			name = "capabilities"
+		}
+		t.Run(name, func(t *testing.T) { testUpdateVerifierCancellation(t, capabilities) })
+	}
+}
+
+func testUpdateVerifierCancellation(t *testing.T, capabilities bool) {
+	t.Helper()
 	archive := updateArchive(t, []byte("synthetic binary never extracted"), false)
 	selected := syntheticSelection()
 	sum := sha256.Sum256(archive)
@@ -318,7 +382,14 @@ func TestAutomaticUpdateVerifierCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	finished := make(chan error, 1)
-	go func() { _, err := d.prepare(ctx, cache, selected); finished <- err }()
+	go func() {
+		if capabilities {
+			finished <- d.checkVerifier(ctx, cache)
+			return
+		}
+		_, err := d.prepare(ctx, cache, selected)
+		finished <- err
+	}()
 	deadline := time.Now().Add(5 * time.Second)
 	var pid int
 	for pid == 0 {

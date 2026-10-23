@@ -263,7 +263,9 @@ func (d *releaseDelivery) completedPublication(ctx context.Context, verified []v
 		if d.get(ctx, endpoint, maxReleaseBytes, &run) != nil {
 			continue
 		}
-		if run.ID == runID && run.Attempt == attempt && run.Status == "completed" && run.Conclusion == "success" && run.Event == "workflow_dispatch" && run.Path == ".github/workflows/publish-release.yml" && run.HeadBranch == "main" && run.HeadSHA == certificate.SourceRepositoryDigest && run.Repository.FullName == "openai/openai-cli" {
+		// GitHub returns both bare paths and paths qualified by the dispatch ref.
+		workflowPath := run.Path == ".github/workflows/publish-release.yml" || run.Path == ".github/workflows/publish-release.yml@main"
+		if run.ID == runID && run.Attempt == attempt && run.Status == "completed" && run.Conclusion == "success" && run.Event == "workflow_dispatch" && workflowPath && run.HeadBranch == "main" && run.HeadSHA == certificate.SourceRepositoryDigest && run.Repository.FullName == "openai/openai-cli" {
 			return nil
 		}
 	}

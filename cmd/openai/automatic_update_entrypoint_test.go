@@ -10,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -97,6 +99,23 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 		return mainDispatchResult{result.Code, result.Stdout, result.Stderr}
 	}
 	message := "Updated to v" + app.Version + "."
+	noticeDirectory := filepath.Join(home, "cache", "openai-cli", "update-notice")
+	if runtime.GOOS == "darwin" {
+		noticeDirectory = filepath.Join(home, "Library", "Caches", "openai-cli", "update-notice")
+	}
+	if err := os.MkdirAll(noticeDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeNotice := func() {
+		t.Helper()
+		data, err := json.Marshal(map[string]any{"schema": 1, "checked": time.Now().Unix(), "notified": 0, "latest": "99.0.0"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(noticeDirectory, "state.json"), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, test := range []struct {
 		name, redirect string
 		extra, args    []string
@@ -112,11 +131,14 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 		{"ci", "", []string{"CI=1"}, nil}, {"dumb", "", []string{"TERM=dumb"}, nil},
 		{"existing_optout", "", []string{"OPENAI_CLI_NO_UPDATE_CHECK=1"}, nil},
 		{"auto_optout", "", []string{"OPENAI_CLI_NO_AUTO_UPDATE=1"}, nil},
+		{"both_optouts", "", []string{"OPENAI_CLI_NO_AUTO_UPDATE=1", "OPENAI_CLI_NO_UPDATE_CHECK=1"}, nil},
+		{"auto_optout_pin", "", []string{"OPENAI_CLI_NO_AUTO_UPDATE=1", "OPENAI_CLI_VERSION_PIN=v0.0.1"}, nil},
 		{"conflicting_pin", "", []string{"OPENAI_CLI_VERSION_PIN=v0.0.1"}, nil},
 		{"invalid_pin", "", []string{"OPENAI_CLI_VERSION_PIN=latest"}, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			before := writeState()
+			writeNotice()
 			result := run(test.redirect, test.extra, test.args...)
 			if strings.Contains(result.stdout+result.stderr, message) {
 				t.Fatal("ineligible invocation consumed confirmation")
@@ -127,6 +149,13 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 			}
 			if test.name == "command_failure" && result.code == 0 {
 				t.Fatal("updater suppressed error exit")
+			}
+			if test.name == "auto_optout" {
+				if result.code != 0 || strings.TrimSpace(result.stderr) != updateNoticeMessage {
+					t.Fatalf("automatic-install opt-out suppressed manual notice: %+v", result)
+				}
+			} else if strings.Contains(result.stdout+result.stderr, "Update to 99.0.0") {
+				t.Fatal("ineligible invocation emitted a manual notice")
 			}
 		})
 	}
@@ -157,12 +186,28 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var got struct{ Checked int64 }
+			var got struct {
+				Checked             int64
+				VerifierUnavailable bool `json:"verifier_unavailable"`
+			}
 			if err := json.Unmarshal(data, &got); err != nil {
 				t.Fatal(err)
 			}
 			if got.Checked > 0 {
-				break
+				if !got.VerifierUnavailable {
+					t.Fatal("unsupported verifier did not enable notice fallback")
+				}
+				// State is reserved before probing. Wait for the worker's lock
+				// release before testing the next independent invocation.
+				lock, err := os.Open(filepath.Join(stateDirectory, ".lock"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+				lock.Close()
+				if err == nil {
+					break
+				}
 			}
 			if time.Now().After(deadline) {
 				t.Fatal("detached helper did not reserve discovery")
@@ -172,6 +217,11 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 		current, err := os.ReadFile(binary)
 		if err != nil || sha256.Sum256(current) != digest {
 			t.Fatal("failed discovery changed installation")
+		}
+		writeNotice()
+		result = run("", nil)
+		if result.code != 0 || strings.TrimSpace(result.stderr) != updateNoticeMessage {
+			t.Fatalf("unsupported verifier suppressed manual notice: %+v", result)
 		}
 	})
 }
