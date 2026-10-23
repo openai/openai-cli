@@ -10,6 +10,7 @@ import base64
 import importlib.util
 import json
 import pathlib
+import re
 import shutil
 import struct
 import tempfile
@@ -46,14 +47,23 @@ def wait_previews(terminal, mark, count):
     busy = terminal.raw.index(b'Generating image', mark)
     deadline = time.monotonic() + 12
     while True:
+        fresh = terminal.raw[busy:]
         try:
-            images = compatibility.kitty_images(terminal.raw[busy:], allow_cursor_deletes=True)
+            images = compatibility.kitty_images(fresh, allow_cursor_deletes=True)
         except AssertionError as error:
             if str(error) not in ('incomplete Kitty frame', 'unfinished Kitty image'):
                 raise
             images = []
         frame = picker.screen(bytes(terminal.raw), *terminal.size())
-        if images and all(f'Image {index} '.encode() in frame for index in range(1, count + 1)):
+        # These compact gallery frames print each caption before its preview.
+        # A redraw under another caption cannot satisfy the new gallery entry.
+        sections = re.split(rb'(Image [1-9][0-9]* )', fresh)
+        new_preview = images and any(
+            compatibility.kitty_images(content, allow_cursor_deletes=True)
+            for caption, content in zip(sections[1::2], sections[2::2])
+            if caption == f'Image {count} '.encode()
+        )
+        if new_preview and all(f'Image {index} '.encode() in frame for index in range(1, count + 1)):
             for image in images:
                 compatibility.check_fixture_png(image)
             return len(images)

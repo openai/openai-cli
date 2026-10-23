@@ -98,7 +98,7 @@ class TranscriptTerminal:
 
 class NativePreviewWaitTest(unittest.TestCase):
     def test_every_byte_split_waits_for_complete_preview_and_caption(self):
-        raw = image(native.fixture_png()) + b'\r\nImage 1 synthetic.png'
+        raw = b'Image 1 synthetic.png\r\n' + image(native.fixture_png())
         for cut in range(len(raw) + 1):
             terminal = TranscriptTerminal(b'Generating image\r\n' + raw[:cut], [raw[cut:]])
             with self.subTest(cut=cut), unittest.mock.patch.object(native.time, 'monotonic', return_value=0):
@@ -111,12 +111,35 @@ class NativePreviewWaitTest(unittest.TestCase):
             native.wait_previews(terminal, len(raw), 1)
 
     def test_preview_without_gallery_growth_is_rejected(self):
-        terminal = TranscriptTerminal(b'Generating image' + image(native.fixture_png()) + b'\r\nImage 1 first.png')
+        terminal = TranscriptTerminal(b'Generating image\r\nImage 1 first.png\r\n' + image(native.fixture_png()))
         with self.assertRaisesRegex(AssertionError, 'transcript ended'):
             native.wait_previews(terminal, 0, 2)
 
+    def test_old_image_redraw_cannot_satisfy_new_preview(self):
+        redraw = b'Image 1 first.png\r\n' + image(native.fixture_png()) + b'\r\n'
+        for repeats in (1, 2):
+            terminal = TranscriptTerminal(b'Generating image\r\n' + redraw * repeats + b'Image 2 second.png')
+            with self.subTest(repeats=repeats), self.assertRaisesRegex(AssertionError, 'transcript ended'):
+                native.wait_previews(terminal, 0, 2)
+
+    def test_later_old_image_redraw_cannot_fill_new_preview(self):
+        redraw = b'Image 1 first.png\r\n' + image(native.fixture_png()) + b'\r\n'
+        terminal = TranscriptTerminal(b'Generating image\r\n' + redraw + b'Image 2 second.png\r\n' + redraw)
+        with self.assertRaisesRegex(AssertionError, 'transcript ended'):
+            native.wait_previews(terminal, 0, 2)
+
+    def test_every_byte_split_waits_for_new_gallery_preview(self):
+        encoded = base64.b64encode(native.fixture_png())
+        preview = frame(b'a=T,f=100,q=2,m=1', encoded[:32]) + frame(b'q=2,m=0', encoded[32:])
+        raw = b'Image 1 first.png\r\n' + preview + b'\r\nImage 2 second.png\r\n' + preview
+        for cut in range(len(raw) + 1):
+            terminal = TranscriptTerminal(b'Generating image\r\n' + raw[:cut], [raw[cut:]])
+            with self.subTest(cut=cut), unittest.mock.patch.object(native.time, 'monotonic', return_value=0):
+                self.assertEqual(native.wait_previews(terminal, 0, 2), 2)
+                self.assertEqual(bytes(terminal.raw), b'Generating image\r\n' + raw)
+
     def test_corrupt_preview_is_rejected(self):
-        terminal = TranscriptTerminal(b'Generating image' + image(b'not a PNG') + b'\r\nImage 1 first.png')
+        terminal = TranscriptTerminal(b'Generating image\r\nImage 1 first.png\r\n' + image(b'not a PNG'))
         with self.assertRaisesRegex(RuntimeError, 'not PNG'):
             native.wait_previews(terminal, 0, 1)
 
