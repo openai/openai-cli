@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.4](https://github.com/openai/openai-cli/compare/v1.40.3...v1.40.4) (2026-10-23)
+
+
+### Documentation
+
+* complete 1.40.3 release notes ([#588](https://github.com/openai/openai-cli/issues/588)) ([494b628](https://github.com/openai/openai-cli/commit/494b628c3ef50853dc6b6554139bfec544f9a21a))
+
 ## [1.40.3](https://github.com/openai/openai-cli/compare/v1.40.2...v1.40.3) (2026-10-22)
 
 
