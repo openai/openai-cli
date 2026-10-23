@@ -14,6 +14,7 @@ import shutil
 import struct
 import tempfile
 import threading
+import time
 import zlib
 
 
@@ -37,6 +38,27 @@ def fixture_png():
             + chunk(b'IHDR', struct.pack('>IIBBBBB', 2, 1, 8, 6, 0, 0, 0))
             + chunk(b'IDAT', zlib.compress(b'\x00' + compatibility.PIXELS))
             + chunk(b'IEND', b''))
+
+
+
+def wait_previews(terminal, mark, count):
+    """Require fresh complete previews and the growing gallery before continuing."""
+    busy = terminal.raw.index(b'Generating image', mark)
+    deadline = time.monotonic() + 12
+    while True:
+        try:
+            images = compatibility.kitty_images(terminal.raw[busy:], allow_cursor_deletes=True)
+        except AssertionError as error:
+            if str(error) not in ('incomplete Kitty frame', 'unfinished Kitty image'):
+                raise
+            images = []
+        frame = picker.screen(bytes(terminal.raw), *terminal.size())
+        if images and all(f'Image {index} '.encode() in frame for index in range(1, count + 1)):
+            for image in images:
+                compatibility.check_fixture_png(image)
+            return len(images)
+        assert terminal.child.poll() is None and time.monotonic() < deadline, 'native preview did not complete'
+        terminal.read()
 
 
 def main():
@@ -97,6 +119,7 @@ def main():
                 picker.ready(terminal)
                 if phase == 'picker':
                     replace_executable()
+                preview_counts = []
                 for number in range(2):
                     mark = len(terminal.raw)
                     prompt = 'synthetic image ' + str(number)
@@ -106,17 +129,19 @@ def main():
                     # Respect the resumed picker's existing submit-key quiet guard.
                     picker.wait_submit_guard(terminal)
                     assert len(server.requests) == number + 1, 'resumed picker submitted another request'
+                    preview_counts.append(wait_previews(terminal, mark, number + 1))
                 terminal.send(b'\x03')
                 terminal.finish(130)
                 assert len(server.requests) == 2, 'unexpected request count'
                 files = list((home / 'Downloads' / 'gpt-images').glob('*.png'))
                 assert len(files) == 2 and all(path.read_bytes() == png for path in files)
                 picker.check_receipts(terminal, files)
-                images = compatibility.kitty_images(terminal.raw)
-                assert len(images) == 2, 'missing or partial preview'
+                images = compatibility.kitty_images(terminal.raw, allow_cursor_deletes=True)
+                assert len(images) >= 2, 'missing or partial preview'
                 for png_image in images:
                     compatibility.check_fixture_png(png_image)
-                results.append({'case': name, 'requests': 2, 'exact_pixel_previews': 2,
+                results.append({'case': name, 'requests': 2, 'exact_pixel_previews': len(images),
+                                'preview_transmissions_per_request': preview_counts,
                                 'saved_originals': 2, 'picker_returns': 2, 'exit': 130, 'passed': True})
                 print('PASS', name, flush=True)
             finally:
