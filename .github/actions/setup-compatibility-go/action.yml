@@ -1,9 +1,22 @@
 name: Set up compatibility Go
-description: Keep native compatibility compilation separate from other Go jobs
+description: Restore compatibility compilation without saving from required jobs
 inputs:
   cache-compilation:
-    description: Use the revisioned cache maintained by the main-branch producer
+    description: Restore compilation from existing main-branch cache producers
     default: 'false'
+outputs:
+  cache-key:
+    description: Native cache key resolved before SDK source linking
+    value: ${{ steps.cache.outputs.cache-primary-key }}
+  cache-hit:
+    description: Whether the exact native cache key was restored
+    value: ${{ steps.cache.outputs.cache-hit }}
+  build-cache:
+    description: Go compilation cache directory
+    value: ${{ steps.paths.outputs.build }}
+  module-cache:
+    description: Go module cache directory
+    value: ${{ steps.paths.outputs.modules }}
 runs:
   using: composite
   steps:
@@ -21,15 +34,26 @@ runs:
       run: |
         echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
         echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
-    - name: Cache native compatibility compilation
-      if: inputs.cache-compilation == 'true'
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+    - name: Restore native compatibility compilation
+      if: inputs.cache-compilation == 'true' && !(runner.os == 'Windows' && runner.arch == 'X64')
+      id: cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: |
           ${{ steps.paths.outputs.build }}
           ${{ steps.paths.outputs.modules }}
-        # Each successful revision refreshes compilation, rather than freezing
-        # the first build until go.sum changes. PR caches retain GitHub's scope.
+        # Only the main-branch warmer saves these caches. Required test jobs
+        # must not spend their remaining timeout compressing cache archives.
         key: native-compat-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
         restore-keys: |
           native-compat-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
+    - name: Restore existing Windows x64 Go cache
+      if: inputs.cache-compilation == 'true' && runner.os == 'Windows' && runner.arch == 'X64'
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        # Match pinned setup-go v7's key and path order. Existing CI jobs save
+        # this cache; Windows x64 needs no additional compilation producer.
+        path: |
+          ${{ steps.paths.outputs.modules }}
+          ${{ steps.paths.outputs.build }}
+        key: setup-go-Windows-x64-go-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}

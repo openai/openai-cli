@@ -161,6 +161,9 @@ openai <command> --arg @data://file.txt
 
 ## Update notices
 
+Supported self-managed release installations use [automatic updates](automatic-updates.md), including four-hour discovery and exact-version pins.
+The following notice behavior applies to other installations.
+
 Bare `openai` checks for newer stable releases when stdin, stdout, and stderr are terminals.
 It adds a plain-text notice below help, at most once every seven days.
 Explicit help, commands, completion, CI, and redirected streams skip the check entirely.
@@ -171,7 +174,7 @@ Go commands require a verified binary, an available Go command, and an explicit 
 Custom `GOOS` or `GOARCH` settings select the installation guide instead.
 Go upgrades to major version 2 or later also select the installation guide.
 Unknown installations receive the installation-guide link instead.
-The CLI never installs updates automatically.
+Package-manager and Go installations retain their existing installation ownership.
 
 Checks use public GitHub release metadata without API credentials, at most once daily.
 Checks respect `HTTPS_PROXY` and `NO_PROXY`, including their lowercase forms.

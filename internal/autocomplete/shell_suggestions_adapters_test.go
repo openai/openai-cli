@@ -133,10 +133,15 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 		command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
 	}
 	command.Dir = directory
+	// PowerShell lookup must inspect fixture executables, not unrelated host tools.
+	searchPath := bin
+	if shell != "pwsh" {
+		searchPath += string(os.PathListSeparator) + os.Getenv("PATH")
+	}
 	command.Env = []string{
 		"HOME=" + directory, "USERPROFILE=" + directory,
 		"XDG_CONFIG_HOME=" + filepath.Join(directory, "config"),
-		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"PATH=" + searchPath,
 		"LANG=C", "TERM=dumb", "NO_COLOR=1",
 		"POWERSHELL_TELEMETRY_OPTOUT=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "POWERSHELL_UPDATECHECK=Off",
 		"SUGGEST_HOOK=" + hook, "SUGGEST_PROBE=" + probe, "SUGGEST_EXEC_LOG=" + filepath.Join(directory, "launched"),
@@ -1268,6 +1273,25 @@ try { opneai 'FAKE_PRIVATE_MARKER' '' 'space value' } catch {
 			}
 		})
 	}
+}
+
+func TestShellSuggestionsPowerShellPathIsolation(t *testing.T) {
+	ambient := t.TempDir()
+	name, script := "opneai", "#!/bin/sh\nprintf 'AMBIENT_COMMAND_EXECUTED\\n'\n"
+	if runtime.GOOS == "windows" {
+		name, script = "opneai.cmd", "@echo off\r\necho AMBIENT_COMMAND_EXECUTED\r\n"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(ambient, name), []byte(script), 0700))
+	t.Setenv("PATH", ambient+string(os.PathListSeparator)+os.Getenv("PATH"))
+	probe := `
+try { opneai } catch { [Console]::Out.WriteLine($_.FullyQualifiedErrorId) }
+`
+	baselineOut, baselineErr := runSuggestionAdapter(t, "pwsh", "$ErrorActionPreference = 'Stop'", probe, "")
+	out, errOut := runSuggestionAdapter(t, "pwsh", "$ErrorActionPreference = 'Stop'", ". $env:SUGGEST_HOOK\n"+probe, "")
+	require.Equal(t, "CommandNotFoundException\n", baselineOut)
+	require.Equal(t, baselineOut, out)
+	require.Empty(t, baselineErr)
+	require.Equal(t, suggestionAdvice, errOut)
 }
 
 func TestShellSuggestionsPowerShellMatchesAndWindowsExtension(t *testing.T) {

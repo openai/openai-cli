@@ -116,9 +116,10 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 
 <!-- x-release-please-end -->
 
-The CLI checks for updates on eligible interactive runs; it never installs them
-automatically. Set `OPENAI_CLI_NO_UPDATE_CHECK=1` to disable checks and notices.
-See [update notices](docs/cli-reference.md#update-notices) for details.
+Supported self-managed release installations prepare automatic updates during eligible interactive runs.
+Package-manager and Go installations retain update notices and their existing installation ownership.
+Set `OPENAI_CLI_NO_AUTO_UPDATE=1` to disable automatic installation, or `OPENAI_CLI_NO_UPDATE_CHECK=1` to disable all update checks.
+See [automatic updates](docs/automatic-updates.md) for installation requirements, exact-version pins, and activation behavior.
 
 ## Authentication
 

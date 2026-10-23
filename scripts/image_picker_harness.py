@@ -2,6 +2,7 @@
 """Shared PTY and synthetic loopback fixtures for picker process checks."""
 from contextlib import ExitStack
 from functools import partial
+import ast
 import base64
 import errno
 import fcntl
@@ -21,17 +22,93 @@ import subprocess
 import sys
 import termios
 import time
+import unicodedata
 
 # Public fixtures used by the dynamically loaded picker process checks.
 __all__ = [
     'ANSI', 'DOWN', 'END', 'Fixture', 'HOME', 'PNG', 'PRINT', 'Terminal', 'UP',
-    'generate', 'http', 'printed_flags', 'ready', 'wait_for_request', 'wait_resumed', 'wait_submit_guard',
+    'check_receipts', 'generate', 'http', 'printed_flags', 'ready', 'screen',
+    'wait_for_request', 'wait_resumed', 'wait_submit_guard',
 ]
 
 PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP438AAAAQBAYDFKhhdAAAAAElFTkSuQmCC')
 ANSI = re.compile(r'\x1b\][^\x07]*?(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]')
 DOWN, UP, HOME, END = b'\x1b[B', b'\x1b[A', b'\x1b[H', b'\x1b[F'
 PRINT = b'\x10'  # Ctrl+P prints the complete command without making a request.
+
+SCREEN_ANSI = re.compile(rb'\x1b\][^\x07]*?(?:\x07|\x1b\\)|\x1b_[\s\S]*?\x1b\\|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[78]')
+
+
+def screen(raw, width=96, height=28, history=None):
+    """Receive inline-panel wrapping, saved cursors, relative moves and erases."""
+    raw += b'\x1b[0m'
+    rows = [[' '] * width for _ in range(height)]
+    y = x = 0
+    saved_position = (0, 0)
+    pending = False
+    position = 0
+
+    def newline():
+        nonlocal y
+        y += 1
+        if y >= height:
+            previous=rows.pop(0)
+            if history is not None:
+                history.append(''.join(previous).rstrip())
+            rows.append([' '] * width)
+            y = height - 1
+
+    for match in SCREEN_ANSI.finditer(raw):
+        text = raw[position:match.start()].decode('utf-8', errors='replace')
+        for char in text:
+            if char == '\r':
+                x, pending = 0, False
+            elif char == '\n':
+                newline()
+                pending = False
+            elif char >= ' ' and not unicodedata.combining(char):
+                cells = 2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
+                if pending or x + cells > width:
+                    newline()
+                    x = 0
+                if 0 <= y < height and 0 <= x < width:
+                    rows[y][x] = char
+                pending = x + cells >= width
+                x = min(width - 1, x + cells)
+        control = match.group()
+        if control == b'\x1b7':
+            saved_position = (y, x)
+        elif control == b'\x1b8':
+            y, x = saved_position
+            pending = False
+        elif control == b'\x1b[2J':
+            rows = [[' '] * width for _ in range(height)]
+        elif control.startswith(b'\x1b['):
+            final = control[-1:]
+            values = control[2:-1].decode()
+            if not values or all(c in '0123456789;' for c in values):
+                numbers = [int(v or '1') for v in values.split(';')]
+                if final in (b'H', b'f'):
+                    y = min(height - 1, max(0, numbers[0] - 1))
+                    x = min(width - 1, max(0, (numbers[1] if len(numbers) > 1 else 1) - 1))
+                    pending = False
+                elif final == b'G':
+                    x, pending = min(width - 1, max(0, numbers[0] - 1)), False
+                elif final in (b'A', b'B'):
+                    y = max(0, min(height - 1, y + numbers[0] * (-1 if final == b'A' else 1)))
+                    pending = False
+                elif final == b'K':
+                    rows[y][x:] = [' '] * (width - x)
+                elif final == b'J':
+                    rows[y][x:] = [' '] * (width - x)
+                    for row in range(y + 1, height):
+                        rows[row] = [' '] * width
+                elif final == b'X':
+                    for col in range(x, min(width, x + numbers[0])):
+                        rows[y][col] = ' '
+        position = match.end()
+    return '\n'.join(''.join(row).rstrip() for row in rows).encode()
+
 
 
 def cleanup_fixture_resources(*actions):
@@ -99,6 +176,11 @@ class Terminal:
         if notify:
             self._event('r', f'{width}x{height}')
             os.kill(self.child.pid, signal.SIGWINCH)
+
+    def size(self):
+        height, width, _, _ = struct.unpack(
+            "HHHH", fcntl.ioctl(self.master, termios.TIOCGWINSZ, bytes(8)))
+        return width, height
 
     def _event(self, kind, text):
         size = len(text.encode('utf-8'))
@@ -375,14 +457,38 @@ def ready(terminal):
 
 
 def wait_resumed(terminal, mark, prompt):
-    """Require a saved result and a new picker frame with the retained prompt."""
-    terminal.wait('Saved image:', after=mark)
-    saved = terminal.raw.index(b'Saved image:', mark)
-    terminal.wait('Create image', after=saved)
-    resumed = terminal.raw.index(b'Create image', saved)
+    """Require a fresh completed request and the retained workspace form."""
+    terminal.wait('Generating image', after=mark)
+    busy = terminal.raw.index(b'Generating image', mark)
+    terminal.wait('Saved in ', after=busy)
+    saved = terminal.raw.index(b'Saved in ', busy)
+    terminal.wait('Ctrl+C exit', after=saved)
+    width, height = terminal.size()
+    frame = screen(bytes(terminal.raw), width, height)
+    for marker in ('Create image', 'Settings', 'Command', 'Ctrl+C exit'):
+        assert marker.encode() in frame, (marker, frame)
+    assert b'Generating image' not in frame, 'workspace remains busy'
     for line in prompt.splitlines():
         if line:
-            terminal.wait(line, after=resumed)
+            terminal.wait(line, after=mark)
+            # Use the same cell receiver for wide and joined Unicode characters.
+            visible = screen(line.encode(), width, height).rstrip()
+            assert visible in frame, (line, frame)
+    assert b'Saved image:' not in terminal.raw[mark:], 'receipt escaped the active workspace'
+
+
+def check_receipts(terminal, files):
+    """Require each saved path exactly once after workspace closure."""
+    files = tuple(files)
+    # Workspace teardown can return the cursor without emitting a newline.
+    text = terminal.text().replace('\r\n', '\n').replace('\r', '\n')
+    assert text.count('Saved image: ') == len(files), text
+    quoted = re.findall(r'^Saved image: ("(?:[^"\\\r\n]|\\.)*")\r?$', text, re.MULTILINE)
+    assert len(quoted) == len(files), text
+    # Go %+q uses ASCII escapes, including \x and \U forms absent from JSON.
+    paths = [ast.literal_eval(value) for value in quoted]
+    for path in files:
+        assert paths.count(str(path)) == 1, (str(path), paths)
 
 
 def wait_submit_guard(terminal):

@@ -16,8 +16,8 @@ jobs:
       contents: read
       actions: read
 
-  # These platforms have no other main-branch CI producer. PR/queue caches
-  # cannot seed the default branch, so warm compilation on trusted main pushes.
+  # Required native jobs only restore caches. Warm these platforms on main;
+  # Windows x64 reuses the cache saved by existing CI jobs.
   warm-native-cache:
     if: github.event_name == 'push'
     needs: source
@@ -40,6 +40,7 @@ jobs:
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-compatibility-go
+        id: go-cache
         with:
           cache-compilation: 'true'
       - name: Warm native test and CLI compilation
@@ -51,6 +52,16 @@ jobs:
           go test -p 1 ./cmd/openai ./internal/... -run '^$'
           go build -p 1 -o "$RUNNER_TEMP/openai.exe" ./cmd/openai
           go mod verify
+      - name: Save native compatibility compilation
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ steps.go-cache.outputs.build-cache }}
+            ${{ steps.go-cache.outputs.module-cache }}
+          key: ${{ steps.go-cache.outputs.cache-key }}
 
   help:
     if: github.event_name != 'push'
@@ -157,7 +168,7 @@ jobs:
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-compatibility-go
         with:
-          cache-compilation: ${{ matrix.os == 'macos-15-intel' || matrix.os == 'windows-11-arm' }}
+          cache-compilation: ${{ matrix.os == 'macos-15-intel' || startsWith(matrix.os, 'windows-') }}
       - name: Verify native Go platform
         id: native-go-platform
         shell: bash

@@ -36,12 +36,7 @@ func TestMainShellWindowsNative(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(work, "openai.exe")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	build := exec.CommandContext(ctx, filepath.Join(runtime.GOROOT(), "bin", "go.exe"), "build", "-p", "2", "-o", binary, ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build native CLI: %v\n%s", err, output)
-	}
+	copyShellTestCLI(t, binary)
 	file, err := os.Open(binary)
 	if err != nil {
 		t.Fatal(err)
@@ -388,22 +383,56 @@ func ownWindowsTestProcessTree(t *testing.T) {
 	// Keep this handle open until process exit; closing it would kill this helper.
 }
 
+const windowsShellDiagnosticTimeout = 100 * time.Millisecond
+
 func TestShellFileWindowsProcessHelper(t *testing.T) {
 	separator := slices.Index(os.Args, "--")
 	if separator < 0 {
 		return
 	}
 	args := os.Args[separator+1:]
+	controlledTimeout := len(args) > 0 && args[0] == "timeout-after-ready"
+	if controlledTimeout {
+		args = args[1:]
+	}
 	if len(args) < 2 {
 		t.Fatal("invalid shell helper arguments")
 	}
 	ownWindowsTestProcessTree(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 18*time.Second)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(context.Canceled)
+	started := time.Now()
+	var timeout atomic.Int64
+	timeout.Store(int64(18 * time.Second))
+	// Keep process creation inside the ordinary deadline and the caller's watchdog.
+	watchdog := time.AfterFunc(18*time.Second, func() { cancel(context.DeadlineExceeded) })
+	defer watchdog.Stop()
 	child := exec.CommandContext(ctx, args[0], args[1:]...)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
-	started := time.Now()
-	err := child.Run()
+	if controlledTimeout {
+		// The diagnostic parent signals only after both owned processes are ready.
+		// Keep this control pipe separate from the stalled child's input.
+		child.Stdin = nil
+		go func() {
+			var signal [1]byte
+			if _, err := io.ReadFull(os.Stdin, signal[:]); err != nil || signal[0] != '!' {
+				cancel(errors.New("invalid diagnostic timeout signal"))
+				return
+			}
+			if !watchdog.Stop() {
+				cancel(errors.New("diagnostic fallback elapsed before readiness signal"))
+				return
+			}
+			timeout.Store(int64(windowsShellDiagnosticTimeout))
+			watchdog.Reset(windowsShellDiagnosticTimeout)
+		}()
+	}
+	starting := time.Now()
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	startup := time.Since(starting)
+	err := child.Wait()
 	if ctx.Err() != nil {
 		pid, exit, userCPU, systemCPU := "unavailable", "unavailable", "unavailable", "unavailable"
 		if child.Process != nil {
@@ -413,8 +442,8 @@ func TestShellFileWindowsProcessHelper(t *testing.T) {
 			exit = strconv.Itoa(child.ProcessState.ExitCode())
 			userCPU, systemCPU = child.ProcessState.UserTime().String(), child.ProcessState.SystemTime().String()
 		}
-		t.Fatalf("native shell timed out: %v; elapsed=%s process=%t process_state=%t pid=%s exit=%s user_cpu=%s system_cpu=%s error_type=%T",
-			ctx.Err(), time.Since(started), child.Process != nil, child.ProcessState != nil, pid, exit, userCPU, systemCPU, err)
+		t.Fatalf("native shell timed out: %v; timeout=%s startup=%s elapsed=%s process=%t process_state=%t pid=%s exit=%s user_cpu=%s system_cpu=%s error_type=%T",
+			context.Cause(ctx), time.Duration(timeout.Load()), startup, time.Since(started), child.Process != nil, child.ProcessState != nil, pid, exit, userCPU, systemCPU, err)
 	}
 	if err == nil {
 		os.Exit(0)
@@ -517,6 +546,17 @@ func TestMainShellWindowsProcessDiagnostics(t *testing.T) {
 			defer cancel()
 			process := exec.CommandContext(ctx, helper, "-test.run=^TestShellFileWindowsProcessHelper$", "--",
 				helper, "-test.run=^TestMainShellWindowsProcessDiagnostics$", "--", control.name, work, privateArgument)
+			var deadlineWriter *os.File
+			if control.name == "timeout" {
+				reader, writer, err := os.Pipe()
+				if err != nil {
+					t.Fatalf("create diagnostic control pipe: error_type=%T", err)
+				}
+				defer reader.Close()
+				defer writer.Close()
+				deadlineWriter, process.Stdin = writer, reader
+				process.Args = slices.Insert(process.Args, 3, "timeout-after-ready")
+			}
 			process.Dir = work
 			for _, name := range []string{"SystemRoot", "WINDIR"} {
 				if value, ok := os.LookupEnv(name); ok {
@@ -595,6 +635,7 @@ func TestMainShellWindowsProcessDiagnostics(t *testing.T) {
 			if stdoutCloseErr != nil || stderrCloseErr != nil {
 				t.Fatalf("close parent capture writers: stdout_error_type=%T stderr_error_type=%T", stdoutCloseErr, stderrCloseErr)
 			}
+			var signaled time.Time
 			if control.name == "timeout" {
 				readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
 				defer readyCancel()
@@ -602,7 +643,9 @@ func TestMainShellWindowsProcessDiagnostics(t *testing.T) {
 					for {
 						data, readErr := os.ReadFile(filepath.Join(work, name+".ready"))
 						if readErr != nil && !os.IsNotExist(readErr) {
-							t.Fatalf("read control readiness: error_type=%T", readErr)
+							var errno syscall.Errno
+							hasErrno := errors.As(readErr, &errno)
+							t.Fatalf("read control readiness: error_type=%T errno_available=%t errno=%d", readErr, hasErrno, uintptr(errno))
 						}
 						if readErr == nil {
 							var identity processIdentity
@@ -637,6 +680,10 @@ func TestMainShellWindowsProcessDiagnostics(t *testing.T) {
 					}
 				}
 				t.Log("stalled child and inherited-pipe descendant ready; process handles anchored")
+				signaled = time.Now()
+				if n, err := deadlineWriter.Write([]byte{'!'}); err != nil || n != 1 {
+					t.Fatalf("signal diagnostic deadline: bytes=%d error_type=%T", n, err)
+				}
 			}
 			err = <-done
 			waited = true
@@ -686,20 +733,20 @@ func TestMainShellWindowsProcessDiagnostics(t *testing.T) {
 					t.Fatal("timeout diagnostic exposed private control data")
 				}
 			}
-			pattern := regexp.MustCompile(`(?m)^\s+shell_file_windows_test\.go:[0-9]+: native shell timed out: context deadline exceeded; elapsed=(\S+) process=true process_state=true pid=([0-9]+) exit=(-?[0-9]+) user_cpu=(\S+) system_cpu=(\S+) error_type=\*exec\.ExitError$`)
+			pattern := regexp.MustCompile(`(?m)^\s+shell_file_windows_test\.go:[0-9]+: native shell timed out: context deadline exceeded; timeout=100ms startup=(\S+) elapsed=(\S+) process=true process_state=true pid=([0-9]+) exit=(-?[0-9]+) user_cpu=(\S+) system_cpu=(\S+) error_type=\*exec\.ExitError$`)
 			fields := pattern.FindSubmatch(diagnostic)
-			if len(diagnostic) > 2048 || len(fields) != 6 || string(fields[2]) != strconv.Itoa(pids[0]) {
+			if len(diagnostic) > 2048 || len(fields) != 7 || string(fields[3]) != strconv.Itoa(pids[0]) {
 				t.Fatal("timeout diagnostic lacks bounded process metadata")
 			}
-			for _, index := range []int{1, 4, 5} {
+			for _, index := range []int{1, 2, 5, 6} {
 				if duration, err := time.ParseDuration(string(fields[index])); err != nil || duration < 0 {
 					t.Fatal("timeout diagnostic contains an invalid duration")
 				}
 			}
-			if elapsed, _ := time.ParseDuration(string(fields[1])); elapsed < 17*time.Second || elapsed >= 20*time.Second {
+			if elapsed, _ := time.ParseDuration(string(fields[2])); elapsed < windowsShellDiagnosticTimeout || elapsed >= 20*time.Second || time.Since(signaled) < windowsShellDiagnosticTimeout {
 				t.Fatal("timeout diagnostic does not match the inner deadline")
 			}
-			t.Logf("process helper failed before outer cancellation; elapsed=%s", time.Since(started))
+			t.Logf("process helper failed before outer cancellation; elapsed=%s signal_to_exit=%s", time.Since(started), time.Since(signaled))
 		})
 	}
 }

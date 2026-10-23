@@ -31,13 +31,16 @@ type tokenizerRestorationState struct {
 }
 
 type tokenizerRestorationEvidence struct {
-	Invocation int                       `json:"invocation"`
-	PID        int                       `json:"cli_pid"`
-	Exit       int                       `json:"cli_exit"`
-	FreshFrame bool                      `json:"fresh_frame"`
-	Before     tokenizerRestorationState `json:"before"`
-	Active     tokenizerRestorationState `json:"active"`
-	After      tokenizerRestorationState `json:"after"`
+	Invocation   int                       `json:"invocation"`
+	PID          int                       `json:"cli_pid"`
+	Exit         int                       `json:"cli_exit"`
+	FreshFrame   bool                      `json:"fresh_frame"`
+	StartElapsed time.Duration             `json:"process_start_ns"`
+	ReadyElapsed time.Duration             `json:"readiness_ns"`
+	ExitElapsed  time.Duration             `json:"exit_ns"`
+	Before       tokenizerRestorationState `json:"before"`
+	Active       tokenizerRestorationState `json:"active"`
+	After        tokenizerRestorationState `json:"after"`
 }
 
 // Existing native CI selects TestMainDispatch on Windows x64 and ARM64.
@@ -221,9 +224,12 @@ func observeTokenizerRestoration(t *testing.T, binary string, input, output *os.
 	command := exec.CommandContext(ctx, binary, "tokenizer")
 	command.Stdin, command.Stdout, command.Stderr = input, output, output
 	command.WaitDelay = 3 * time.Second
+	starting := time.Now()
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
+	evidence.StartElapsed = time.Since(starting)
+	readinessStarted := time.Now()
 	evidence.PID = command.Process.Pid
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
@@ -252,20 +258,23 @@ func observeTokenizerRestoration(t *testing.T, binary string, input, output *os.
 		// The first frame follows input-bridge startup flushing. Raw mode alone does not.
 		if evidence.Active == active && strings.Contains(screen, frameMarker) {
 			evidence.FreshFrame = true
+			evidence.ReadyElapsed = time.Since(readinessStarted)
 			break
 		}
 		select {
 		case err := <-done:
 			waited = true
-			t.Fatalf("tokenizer exited before active mode and fresh-frame readiness: %v; state=%+v", err, evidence.Active)
+			t.Fatalf("tokenizer exited before active mode and fresh-frame readiness: %v; invocation=%d; process_start=%s; readiness=%s; frame=%t; state=%+v", err, invocation, evidence.StartElapsed, time.Since(readinessStarted), strings.Contains(screen, frameMarker), evidence.Active)
 		case <-ctx.Done():
-			t.Fatalf("tokenizer readiness deadline: %v; state=%+v", ctx.Err(), evidence.Active)
+			t.Fatalf("tokenizer readiness deadline: %v; invocation=%d; process_start=%s; readiness=%s; frame=%t; state=%+v", ctx.Err(), invocation, evidence.StartElapsed, time.Since(readinessStarted), strings.Contains(screen, frameMarker), evidence.Active)
 		case <-ticker.C:
 		}
 	}
+	exitStarted := time.Now()
 	writeTokenizerRestorationRecord(t, input, character)
 	err = <-done
 	waited = true
+	evidence.ExitElapsed = time.Since(exitStarted)
 	// Query before closing handles, fixture cleanup, or any subsequent process.
 	evidence.After = tokenizerRestorationSnapshot(t, input, output)
 	evidence.Exit = command.ProcessState.ExitCode()

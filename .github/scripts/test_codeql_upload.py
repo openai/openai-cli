@@ -1,5 +1,7 @@
 """Offline tests of the privileged publisher's input boundary."""
+import base64
 import copy
+import gzip
 import importlib.util
 import io
 import json
@@ -160,6 +162,53 @@ class PublisherTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             publisher.publish(self.get, "test/cli", 1, {"id": 42, "run_attempt": 2})
         self.assertEqual(self.writes, [])
+
+    def test_publish_preserves_each_language_analysis(self):
+        artifacts, expected_reports = [], []
+        languages = ("actions", "go", "javascript-typescript", "python")
+        for index, language in enumerate(languages):
+            rules = [{"id": f"test/{language}/{i}", "shortDescription": {"text": "Synthetic rule"}}
+                     for i in range(2)]
+            findings = [{"ruleId": rule["id"], "ruleIndex": i, "level": "warning",
+                         "message": {"text": f"Synthetic {language} finding {i}: café\nsecond line"},
+                         "locations": [{"physicalLocation": {
+                             "artifactLocation": {"uri": f"synthetic/{language}/sample.txt"},
+                             "region": {"startLine": i + 1, "startColumn": 3}}}],
+                         "partialFingerprints": {"synthetic/v1": f"{language}-{i}"}}
+                        for i, rule in enumerate(rules)]
+            expected = {"version": "2.1.0", "runs": [{
+                "tool": {"driver": {"name": "CodeQL", "version": "0.0.0", "rules": rules},
+                         "extensions": [{"name": f"synthetic/{language}/queries", "rules": [{
+                             "id": f"test/{language}/extension-rule",
+                             "shortDescription": {"text": "Synthetic extension rule"}}]}]},
+                "automationDetails": {"id": publisher.CATEGORIES[language] + "/"},
+                "invocations": [{"executionSuccessful": True}],
+                "results": findings, "properties": {"syntheticLanguage": language}}]}
+            expected_reports.append(expected)
+
+            def populate(context, report):
+                report.clear()
+                report.update(copy.deepcopy(expected))
+                run = report["runs"][0]
+                run["automationDetails"] = {"id": "untrusted-category/"}
+                run["versionControlProvenance"] = [{"revisionId": BASE}]
+                run["runAggregates"] = [{"id": "untrusted-aggregate/"}]
+                run["tool"]["driver"]["guid"] = "00000000-0000-4000-8000-000000000000"
+
+            artifacts.append(dict(id=index, name=f"codeql-sarif-42-2-{language}", expired=False))
+            self.responses[f"actions/artifacts/{index}/zip"] = self.archive(language, mutate=populate)
+        self.responses["actions/runs/42/artifacts?per_page=100&page=1"] = {"artifacts": artifacts}
+
+        publisher.publish(self.get, "test/cli", 1, {"id": 42, "run_attempt": 2})
+
+        self.assertEqual(len(self.writes), len(expected_reports))
+        for language, payload, expected in zip(languages, self.writes, expected_reports):
+            with self.subTest(language=language):
+                self.assertEqual(payload["commit_sha"], MERGE)
+                self.assertEqual(payload["ref"], self.target["ref"])
+                self.assertEqual(payload["tool_name"], "CodeQL")
+                decoded = json.loads(gzip.decompress(base64.b64decode(payload["sarif"], validate=True)))
+                self.assertEqual(decoded, expected)
 
     def test_required_statuses_wait_for_successful_publication(self):
         for index, language in enumerate(publisher.CATEGORIES):

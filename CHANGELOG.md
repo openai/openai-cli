@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.40.6](https://github.com/openai/openai-cli/compare/v1.40.5...v1.40.6) (2026-10-23)
+
+
+### Chores
+
+* **deps:** update openai-go to v3.86.0 ([#596](https://github.com/openai/openai-cli/issues/596)) ([f354dfb](https://github.com/openai/openai-cli/commit/f354dfbe86f97d27ffd4b9e7c77b890451455ddc))
+
+## [1.40.5](https://github.com/openai/openai-cli/compare/v1.40.4...v1.40.5) (2026-10-23)
+
+
+### Bug Fixes
+
+* **images:** clean up interrupted saves with redirected output ([#592](https://github.com/openai/openai-cli/issues/592)) ([b6f1082](https://github.com/openai/openai-cli/commit/b6f10828ce3b2fd96431ae693c3834698f2244c8))
+
 ## [1.40.4](https://github.com/openai/openai-cli/compare/v1.40.3...v1.40.4) (2026-10-23)
 
 
