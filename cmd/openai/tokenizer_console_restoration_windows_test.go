@@ -49,7 +49,7 @@ func TestMainDispatchTokenizerConsoleRestoration(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "openai.exe")
 	runTokenizerRestorationHelper(t, "build", binary)
 	adminConsoleLogExecutable(t, "tokenizer restoration production CLI", binary)
-	for _, scenario := range []string{"cancel_repeat_cp437", "cancel_cp65001", "invalid_utf16_cp65001"} {
+	run := func(t *testing.T, scenario, binary string) {
 		t.Run(scenario, func(t *testing.T) {
 			output := runTokenizerRestorationHelper(t, scenario, binary)
 			line, remainder, found := strings.Cut(output, "\n")
@@ -58,7 +58,7 @@ func TestMainDispatchTokenizerConsoleRestoration(t *testing.T) {
 				t.Fatalf("console owner omitted its complete evidence: %q", output)
 			}
 			wantCount, wantExit := 1, 130
-			if scenario == "cancel_repeat_cp437" {
+			if scenario == "cancel_repeat_cp437" || scenario == "probe_output_first_cp437" {
 				wantCount = 2
 			} else if scenario == "invalid_utf16_cp65001" {
 				wantExit = 1
@@ -74,6 +74,10 @@ func TestMainDispatchTokenizerConsoleRestoration(t *testing.T) {
 			t.Logf("native production restoration, shared stdout/stderr console buffer: %s", line)
 		})
 	}
+	for _, scenario := range []string{"cancel_repeat_cp437", "cancel_cp65001", "invalid_utf16_cp65001"} {
+		run(t, scenario, binary)
+	}
+	probeTokenizerRestorationStartup(t, binary, run)
 }
 
 func runTokenizerRestorationHelper(t *testing.T, scenario, binary string) string {
@@ -88,7 +92,11 @@ func runTokenizerRestorationHelper(t *testing.T, scenario, binary string) string
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, helper, "-test.run=^TestTokenizerConsoleRestorationProcess$", "--", scenario, binary)
+	checkpoint := filepath.Join(t.TempDir(), "phases.jsonl")
+	if err := os.WriteFile(checkpoint, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(ctx, helper, "-test.run=^TestTokenizerConsoleRestorationProcess$", "--", scenario, binary, checkpoint)
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if scenario != "build" {
 		command.SysProcAttr.CreationFlags = windows.CREATE_NEW_CONSOLE
@@ -99,7 +107,14 @@ func runTokenizerRestorationHelper(t *testing.T, scenario, binary string) string
 	command.WaitDelay = 3 * time.Second
 	var stdout, stderr adminConsoleCapture
 	command.Stdout, command.Stderr = &stdout, &stderr
-	err = command.Run()
+	starting := time.Now()
+	err = command.Start()
+	startElapsed := time.Since(starting)
+	t.Logf("console owner start scenario=%s process_start=%s deadline=%v", scenario, startElapsed, ctx.Err())
+	if err == nil {
+		err = command.Wait()
+	}
+	logTokenizerRestorationCheckpoints(t, checkpoint)
 	out, diagnostic := stdout.checkedText(t), stderr.checkedText(t)
 	if err != nil || ctx.Err() != nil || diagnostic != "" {
 		t.Fatalf("console owner %s failed: %v; deadline=%v; stdout=%q stderr=%q", scenario, err, ctx.Err(), out, diagnostic)
@@ -115,10 +130,12 @@ func TestTokenizerConsoleRestorationProcess(t *testing.T) {
 		return
 	}
 	args := os.Args[separator+1:]
-	if len(args) != 2 {
+	if len(args) != 3 {
 		t.Fatal("invalid tokenizer restoration helper arguments")
 	}
 	scenario, binary := args[0], args[1]
+	tokenizerRestorationCheckpointPath = args[2]
+	tokenizerRestorationCheckpoint(t, "owner_entered", tokenizerRestorationEvidence{})
 	ownWindowsTestProcessTree(t)
 	if scenario == "build" {
 		ctx, cancel := context.WithTimeout(t.Context(), 110*time.Second)
@@ -136,7 +153,7 @@ func TestTokenizerConsoleRestorationProcess(t *testing.T) {
 	seed := tokenizerRestorationState{InputMode: 0x87, OutputMode: 0x7, InputCP: 65001, OutputCP: 437}
 	runs, character, wantExit := 1, uint16(3), 130
 	switch scenario {
-	case "cancel_repeat_cp437":
+	case "cancel_repeat_cp437", "probe_output_first_cp437":
 		seed = tokenizerRestorationState{InputMode: 0xa7, OutputMode: 0x3, InputCP: 437, OutputCP: 65001}
 		runs = 2
 	case "cancel_cp65001":
@@ -177,6 +194,10 @@ func TestTokenizerConsoleRestorationProcess(t *testing.T) {
 	}
 	if err := windows.SetConsoleOutputCP(seed.OutputCP); err != nil {
 		t.Fatal(err)
+	}
+	tokenizerRestorationCheckpoint(t, "owner_seeded", tokenizerRestorationEvidence{Before: tokenizerRestorationSnapshot(t, input, output)})
+	if scenario == "probe_output_first_cp437" {
+		preflightTokenizerRestorationOutput(t, binary, input, output, seed)
 	}
 	var evidence []tokenizerRestorationEvidence
 	for i := range runs {
@@ -219,6 +240,7 @@ func observeTokenizerRestoration(t *testing.T, binary string, input, output *os.
 	if err != nil || strings.Contains(screen, frameMarker) {
 		t.Fatalf("fresh screen prerequisite failed: %v", err)
 	}
+	tokenizerRestorationCheckpoint(t, "before_start", evidence)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, "tokenizer")
@@ -244,6 +266,7 @@ func observeTokenizerRestoration(t *testing.T, binary string, input, output *os.
 			}
 		}
 	}()
+	tokenizerRestorationCheckpoint(t, "started", evidence)
 	active := seed
 	active.InputMode = (active.InputMode &^ 0x7) | 0x200
 	active.OutputMode |= 0xc
@@ -264,12 +287,13 @@ func observeTokenizerRestoration(t *testing.T, binary string, input, output *os.
 		select {
 		case err := <-done:
 			waited = true
-			t.Fatalf("tokenizer exited before active mode and fresh-frame readiness: %v; invocation=%d; process_start=%s; readiness=%s; frame=%t; state=%+v", err, invocation, evidence.StartElapsed, time.Since(readinessStarted), strings.Contains(screen, frameMarker), evidence.Active)
+			t.Fatalf("tokenizer exited before active mode and fresh-frame readiness: %v; deadline=%v; invocation=%d; process_start=%s; readiness=%s; frame=%t; state=%+v", err, ctx.Err(), invocation, evidence.StartElapsed, time.Since(readinessStarted), strings.Contains(screen, frameMarker), evidence.Active)
 		case <-ctx.Done():
 			t.Fatalf("tokenizer readiness deadline: %v; invocation=%d; process_start=%s; readiness=%s; frame=%t; state=%+v", ctx.Err(), invocation, evidence.StartElapsed, time.Since(readinessStarted), strings.Contains(screen, frameMarker), evidence.Active)
 		case <-ticker.C:
 		}
 	}
+	tokenizerRestorationCheckpoint(t, "ready", evidence)
 	exitStarted := time.Now()
 	writeTokenizerRestorationRecord(t, input, character)
 	err = <-done
@@ -278,6 +302,7 @@ func observeTokenizerRestoration(t *testing.T, binary string, input, output *os.
 	// Query before closing handles, fixture cleanup, or any subsequent process.
 	evidence.After = tokenizerRestorationSnapshot(t, input, output)
 	evidence.Exit = command.ProcessState.ExitCode()
+	tokenizerRestorationCheckpoint(t, "exited", evidence)
 	var exit *exec.ExitError
 	if ctx.Err() != nil || !errors.As(err, &exit) || evidence.Exit != wantExit {
 		t.Fatalf("tokenizer exit=%d, want=%d; error=%v; deadline=%v; evidence=%+v", evidence.Exit, wantExit, err, ctx.Err(), evidence)

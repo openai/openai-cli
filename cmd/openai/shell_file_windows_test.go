@@ -391,6 +391,31 @@ func TestShellFileWindowsProcessHelper(t *testing.T) {
 		return
 	}
 	args := os.Args[separator+1:]
+	var trace *os.File
+	if len(args) >= 3 && args[0] == "observe-start" {
+		var err error
+		trace, err = os.OpenFile(args[1], os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		args = args[2:]
+	}
+	closeTrace := func() {
+		if trace != nil {
+			if err := trace.Close(); err != nil {
+				t.Fatalf("close startup checkpoints: %v", err)
+			}
+			trace = nil
+		}
+	}
+	defer closeTrace()
+	checkpoint := func(phase string) {
+		if trace != nil {
+			if _, err := fmt.Fprintf(trace, "%s supervisor_pid=%d utc=%s\n", phase, os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	controlledTimeout := len(args) > 0 && args[0] == "timeout-after-ready"
 	if controlledTimeout {
 		args = args[1:]
@@ -427,12 +452,16 @@ func TestShellFileWindowsProcessHelper(t *testing.T) {
 			watchdog.Reset(windowsShellDiagnosticTimeout)
 		}()
 	}
+	checkpoint("before-shell-start")
 	starting := time.Now()
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
 	startup := time.Since(starting)
+	checkpoint(fmt.Sprintf("after-shell-start shell_pid=%d process_start_ns=%d", child.Process.Pid, startup.Nanoseconds()))
 	err := child.Wait()
+	checkpoint("after-shell-exit")
+	closeTrace()
 	if ctx.Err() != nil {
 		pid, exit, userCPU, systemCPU := "unavailable", "unavailable", "unavailable", "unavailable"
 		if child.Process != nil {
