@@ -153,18 +153,20 @@ def wait_picker_rows(terminal, mark, count, fixture):
     deadline = time.monotonic() + 12
     while True:
         fresh = bytes(terminal.raw[busy:])
-        start = fresh.find(caption)
+        sections = re.split(rb'(Image [1-9][0-9]* )', fresh)
         try:
             observed = check_picker_rows(fresh, fixture)
-            rows = check_picker_rows(fresh[start:], fixture) if start >= 0 else []
+            previews = [check_picker_rows(content, fixture)
+                        for title, content in zip(sections[1::2], sections[2::2]) if title == caption]
         except AssertionError as error:
             if str(error) != 'incomplete picker image frame':
                 raise
-            rows = []
-        if len(rows) >= len(PICKER_SOURCE_ROWS):
-            require(rows[:len(PICKER_SOURCE_ROWS)] == PICKER_SOURCE_ROWS, 'picker source row order changed')
-            if caption in screen(bytes(terminal.raw), *terminal.size()):
-                return len(observed)
+            previews = []
+        for rows in previews:
+            if len(rows) >= len(PICKER_SOURCE_ROWS):
+                require(rows[:len(PICKER_SOURCE_ROWS)] == PICKER_SOURCE_ROWS, 'picker source row order changed')
+                if caption in screen(bytes(terminal.raw), *terminal.size()):
+                    return len(observed)
         require(terminal.child.poll() is None and time.monotonic() < deadline, 'picker row preview did not complete')
         terminal.read()
 

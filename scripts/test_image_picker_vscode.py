@@ -121,6 +121,17 @@ class PickerRowsWaitTest(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'transcript ended'):
             vscode.wait_picker_rows(terminal, 0, 2, FIXTURE)
 
+    def test_later_old_redraw_cannot_satisfy_new_image(self):
+        for partial in (b'', ROWS[:-len(tile(2) + b'\r\n')]):
+            raw = b'Generating image\r\nImage 2 new.png\r\n' + partial + b'Image 1 old.png\r\n' + ROWS
+            with self.subTest(partial=bool(partial)), self.assertRaisesRegex(AssertionError, 'transcript ended'):
+                vscode.wait_picker_rows(TranscriptTerminal(raw), 0, 2, FIXTURE)
+
+    def test_complete_new_redraw_after_partial_section_is_accepted(self):
+        raw = (b'Generating image\r\nImage 2 new.png\r\n' + tile(0)
+               + b'Image 1 old.png\r\n' + ROWS + b'Image 2 new.png\r\n' + ROWS)
+        self.assertEqual(vscode.wait_picker_rows(TranscriptTerminal(raw), 0, 2, FIXTURE), 17)
+
     def test_missing_last_row_remains_incomplete(self):
         raw = b'Generating image\r\nImage 1 new.png\r\n' + ROWS[:-len(tile(2) + b'\r\n')]
         with self.assertRaisesRegex(AssertionError, 'transcript ended'):
