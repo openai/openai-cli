@@ -116,6 +116,13 @@ jobs:
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-go
+      - name: Test minimum shell archive recovery
+        run: python3 -I -B -m unittest discover -s .github/scripts -p 'test_download_minimum_shells.py' -v
+      - name: Cache pinned minimum shell archives
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/minimum-shell-archives
+          key: ${{ runner.os }}-minimum-shell-archives-v1-${{ hashFiles('.github/scripts/download_minimum_shells.py') }}
       - name: Prepare exact minimum Unix shells
         shell: bash
         timeout-minutes: 8
@@ -124,22 +131,13 @@ jobs:
           test "$(uname -m)" = x86_64
           test "$(go env GOOS)/$(go env GOARCH)" = linux/amd64
           tools_dir="$RUNNER_TEMP/minimum-shells"
+          archives="$RUNNER_TEMP/minimum-shell-archives"
+          python3 -I -B .github/scripts/download_minimum_shells.py "$archives"
           mkdir -p "$tools_dir/bin" "$tools_dir/home" "$tools_dir/config" "$tools_dir/data" "$tools_dir/cache"
           cd "$tools_dir"
-          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
-            https://ftp.gnu.org/gnu/bash/bash-4.0.tar.gz -o bash-4.0.tar.gz
-          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
-            https://www.zsh.org/pub/old/zsh-5.8.tar.xz -o zsh-5.8.tar.xz
-          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
-            https://github.com/fish-shell/fish-shell/releases/download/4.0.0/fish-static-amd64-4.0.0.tar.xz -o fish-4.0.0.tar.xz
-          sha256sum --check <<'SHA256'
-          9793d394f640a95030c77d5ac989724afe196921956db741bcaf141801c50518  bash-4.0.tar.gz
-          dcc4b54cc5565670a65581760261c163d720991f0d06486da61f8d839b52de27  zsh-5.8.tar.xz
-          e7bc962652763e9ca396fd81c1a6cc6105c78f4a82ec35b6bf5c3edacfbd2114  fish-4.0.0.tar.xz
-          SHA256
-          tar -xzf bash-4.0.tar.gz
-          tar -xJf zsh-5.8.tar.xz
-          tar -xJf fish-4.0.0.tar.xz -C bin fish
+          tar -xzf "$archives/bash-4.0.tar.gz"
+          tar -xJf "$archives/zsh-5.8.tar.xz"
+          tar -xJf "$archives/fish-4.0.0.tar.xz" -C bin fish
           (
             cd bash-4.0
             # GCC 10 changed the historical common-symbol default.
@@ -595,7 +593,7 @@ jobs:
           powershell = {
               "TestShellSuggestionsPowerShell" + suffix
               for suffix in [
-                  "PublicLookupAndPrivacy", "ModuleIsolation", "MatchesAndWindowsExtension",
+                  "PublicLookupAndPrivacy", "ModuleIsolation", "PathIsolation", "MatchesAndWindowsExtension",
                   "WindowsMatchingIgnoresCurrentCulture", "UppercaseBinding",
                   "CanonicalCaseUsesExistingCommand", "PreservesResolutionAndDisable",
                   "PreservesPriorExceptions", "PriorResolutionWinsNearMiss",
@@ -633,7 +631,7 @@ jobs:
           ))
 
           public = cases("TestMainShellSuggestionsNative", ["pwsh"])
-          require((len(powershell), len(adapters), len(public)) == (48, 8, 2), "Suggestion inventory differs")
+          require((len(powershell), len(adapters), len(public)) == (49, 8, 2), "Suggestion inventory differs")
           suites = {
               "unix-powershell-suggestion-tests.jsonl": ("internal/autocomplete", powershell),
               "unix-powershell-adapter-tests.jsonl": ("internal/autocomplete", adapters),
@@ -925,7 +923,7 @@ jobs:
           powershell = {
               "TestShellSuggestionsPowerShell" + suffix
               for suffix in [
-                  "PublicLookupAndPrivacy", "ModuleIsolation", "MatchesAndWindowsExtension",
+                  "PublicLookupAndPrivacy", "ModuleIsolation", "PathIsolation", "MatchesAndWindowsExtension",
                   "WindowsMatchingIgnoresCurrentCulture", "UppercaseBinding",
                   "CanonicalCaseUsesExistingCommand", "PreservesResolutionAndDisable",
                   "PreservesPriorExceptions", "PriorResolutionWinsNearMiss",
@@ -976,7 +974,7 @@ jobs:
           public.update(cases(
               "TestMainShellWindowsProcessDiagnostics", ["success", "nonzero", "timeout"],
           ))
-          require((len(powershell), len(adapters), len(public)) == (48, 8, 27),
+          require((len(powershell), len(adapters), len(public)) == (49, 8, 27),
                   "Suggestion inventory contains missing or duplicate names")
           suites = {
               "powershell-suggestion-tests.jsonl": ("internal/autocomplete", powershell),
