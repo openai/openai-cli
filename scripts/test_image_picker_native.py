@@ -6,7 +6,7 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest import mock
+import unittest.mock
 
 spec = importlib.util.spec_from_file_location(
     'check_image_picker_native', Path(__file__).with_name('check-image-picker-native.py'))
@@ -101,7 +101,7 @@ class NativePreviewWaitTest(unittest.TestCase):
         raw = image(native.fixture_png()) + b'\r\nImage 1 synthetic.png'
         for cut in range(len(raw) + 1):
             terminal = TranscriptTerminal(b'Generating image\r\n' + raw[:cut], [raw[cut:]])
-            with self.subTest(cut=cut), mock.patch.object(native.time, 'monotonic', return_value=0):
+            with self.subTest(cut=cut), unittest.mock.patch.object(native.time, 'monotonic', return_value=0):
                 self.assertEqual(native.wait_previews(terminal, 0, 1), 1)
 
     def test_prior_preview_cannot_satisfy_fresh_busy_cycle(self):

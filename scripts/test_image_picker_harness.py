@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import struct
 import unittest
-from unittest import mock
+import unittest.mock
 
 import image_picker_harness as picker
 
@@ -119,7 +119,7 @@ class WorkspaceLifecycleTest(unittest.TestCase):
         terminal = TranscriptTerminal(workspace(busy=True) + workspace())
         terminal.initial_size = (140, 28)
         terminal.dimensions = (80, 24)
-        with mock.patch.object(picker, 'screen', wraps=picker.screen) as receiver:
+        with unittest.mock.patch.object(picker, 'screen', wraps=picker.screen) as receiver:
             picker.wait_resumed(terminal, 0, 'first request')
         self.assertEqual(receiver.call_args_list[0].args[1:], (80, 24))
 
@@ -202,12 +202,12 @@ class TerminalReceiverTest(unittest.TestCase):
         terminal.initial_size = (140, 28)
         dimensions = (struct.pack('HHHH', 24, 80, 0, 0),
                       struct.pack('HHHH', 40, 120, 0, 0))
-        with mock.patch.object(picker.fcntl, 'ioctl', side_effect=dimensions) as ioctl:
+        with unittest.mock.patch.object(picker.fcntl, 'ioctl', side_effect=dimensions) as ioctl:
             self.assertEqual(terminal.size(), (80, 24))
             self.assertEqual(terminal.size(), (120, 40))
         self.assertEqual(ioctl.call_args_list, [
-            mock.call(73, picker.termios.TIOCGWINSZ, bytes(8)),
-            mock.call(73, picker.termios.TIOCGWINSZ, bytes(8)),
+            unittest.mock.call(73, picker.termios.TIOCGWINSZ, bytes(8)),
+            unittest.mock.call(73, picker.termios.TIOCGWINSZ, bytes(8)),
         ])
 
     def test_wrap_and_scroll_keep_current_rows_and_history(self):

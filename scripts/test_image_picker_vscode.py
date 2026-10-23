@@ -7,7 +7,7 @@ from pathlib import Path
 import struct
 from types import SimpleNamespace
 import unittest
-from unittest import mock
+import unittest.mock
 import zlib
 
 spec = importlib.util.spec_from_file_location(
@@ -107,7 +107,7 @@ class PickerRowsWaitTest(unittest.TestCase):
         raw = b'Image 1 synthetic.png\r\n' + ROWS
         for cut in range(len(raw) + 1):
             terminal = TranscriptTerminal(b'Generating image\r\n' + raw[:cut], [raw[cut:]])
-            with self.subTest(cut=cut), mock.patch.object(vscode.time, 'monotonic', return_value=0):
+            with self.subTest(cut=cut), unittest.mock.patch.object(vscode.time, 'monotonic', return_value=0):
                 self.assertEqual(vscode.wait_picker_rows(terminal, 0, 1, FIXTURE), 8)
 
     def test_prior_rows_do_not_satisfy_new_generation(self):
