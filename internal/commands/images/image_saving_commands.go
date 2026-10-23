@@ -171,7 +171,7 @@ func imageSavingWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 		command.Metadata[imageSavingRequestMetadata] = &preparedImageSavingRequest{options: options, bodyType: bodyType}
 		defer delete(command.Metadata, imageSavingRequestMetadata)
 		ctx = context.WithValue(ctx, imagePresentationKey{}, imagePresentation{plan, command.Root().Writer})
-		if err := runWithImageLoading(ctx, command, plan, next, opts); err != nil {
+		if err := runWithImageSaving(ctx, command, plan, next, opts); err != nil {
 			return err
 		}
 		if warnPreference && opts.DiagnosticsAllowed(ctx) {

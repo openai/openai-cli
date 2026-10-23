@@ -2,9 +2,7 @@ package images
 
 import (
 	"context"
-	"errors"
 	"os"
-	"os/signal"
 	"runtime"
 
 	"github.com/charmbracelet/x/term"
@@ -15,7 +13,7 @@ import (
 
 // Feedback starts after request preparation, so it never changes stdin reading
 // or validation. It owns no request/output writers and cannot replace a failure.
-func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageOutputPlan, next cli.ActionFunc, opts SavingOptions) (err error) {
+func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageOutputPlan, next cli.ActionFunc, opts SavingOptions) error {
 	if workspace, _ := ctx.Value(imagePickerWorkspaceKey{}).(*imagePickerWorkspace); workspace != nil && plan != nil {
 		plan.loadingStage = func(stage clioutput.LoadingStage) { workspace.send(imagePickerWorkspaceStage(stage)) }
 		return next(ctx, command)
@@ -41,11 +39,6 @@ func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageO
 	case "create-variation":
 		label = "Creating image variation"
 	}
-	parent := ctx
-	ctx, stopSignals := signal.NotifyContext(ctx, os.Interrupt)
-	// Restore normal signal handling once cancellation starts. A second Ctrl-C
-	// can still terminate the process if a terminal write or cleanup is blocked.
-	stopReset := context.AfterFunc(ctx, stopSignals)
 	stopLoading := func() {}
 	advance := func(clioutput.LoadingStage) {}
 	if opts.DiagnosticsAllowed(ctx) {
@@ -56,28 +49,9 @@ func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageO
 	}
 	plan.stopLoading = stopLoading
 	plan.loadingStage = advance
-	defer func() {
-		stopLoading()
-		stopReset()
-		interrupted := ctx.Err() != nil && parent.Err() == nil
-		stopSignals()
-		var exit cli.ExitCoder
-		if interrupted && (err == nil || errors.Is(err, context.Canceled)) && !errors.As(err, &exit) {
-			if err == nil {
-				err = ctx.Err()
-			}
-			err = &imageLoadingInterrupt{err}
-		}
-	}()
+	defer stopLoading()
 	return next(ctx, command)
 }
-
-// Keep the cancellation cause and any saving guidance while using the shell's
-// conventional Ctrl-C status. Ordinary API/local errors keep their own status.
-type imageLoadingInterrupt struct{ error }
-
-func (e *imageLoadingInterrupt) Unwrap() error { return e.error }
-func (e *imageLoadingInterrupt) ExitCode() int { return 130 }
 
 func (p *imageOutputPlan) stopLoadingFeedback() {
 	if p.stopLoading != nil {
