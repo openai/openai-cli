@@ -68,6 +68,9 @@ jobs:
 
       - uses: ./.github/actions/setup-go
 
+      - name: Test picker fixture lifecycle
+        run: python3 -I -B -m unittest discover -s scripts -p 'test_image_picker_harness.py' -v
+
       - name: Run lints
         run: ./scripts/lint
 

@@ -30,7 +30,7 @@ import time
 import zlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from image_picker_harness import END, Terminal, generate as submit_picker, ready, wait_for_request, wait_resumed, wait_submit_guard
+from image_picker_harness import END, Terminal, check_receipts, generate as submit_picker, ready, wait_for_request, wait_resumed, wait_submit_guard
 
 
 def require(condition, message):
@@ -314,6 +314,7 @@ def main():
                 require(not case.errors, case.errors)
                 require(len(case.requests) == 2, 'Ctrl+C submitted another request')
                 check_saved(home, normal, 2)
+                check_receipts(terminal, (home/'Downloads'/'gpt-images').glob('*.png'))
                 passed(name, exit=130, frames=2, requests=2, executable_replaced=replace)
             finally:
                 try:

@@ -6,90 +6,19 @@ import hashlib
 import json
 import os
 import pathlib
-import re
 import signal
 import struct
 import sys
 import tempfile
 import termios
-import unicodedata
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from image_picker_loading_streams_check import SplitProcess, environment, fixture, saved
 
-ANSI = re.compile(rb'\x1b\][^\x07]*?(?:\x07|\x1b\\)|\x1b_[\s\S]*?\x1b\\|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[78]')
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from image_picker_harness import screen
+
 PROMPT = 'SYNTHETIC horse'
-
-
-def screen(raw, width=96, height=28, history=None):
-    """Receive inline-panel wrapping, saved cursors, relative moves and erases."""
-    raw += b'\x1b[0m'
-    rows = [[' '] * width for _ in range(height)]
-    y = x = 0
-    saved_position = (0, 0)
-    pending = False
-    position = 0
-
-    def newline():
-        nonlocal y
-        y += 1
-        if y >= height:
-            previous=rows.pop(0)
-            if history is not None:
-                history.append(''.join(previous).rstrip())
-            rows.append([' '] * width)
-            y = height - 1
-
-    for match in ANSI.finditer(raw):
-        text = raw[position:match.start()].decode('utf-8', errors='replace')
-        for char in text:
-            if char == '\r':
-                x, pending = 0, False
-            elif char == '\n':
-                newline()
-                pending = False
-            elif char >= ' ' and not unicodedata.combining(char):
-                cells = 2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
-                if pending or x + cells > width:
-                    newline()
-                    x = 0
-                if 0 <= y < height and 0 <= x < width:
-                    rows[y][x] = char
-                pending = x + cells >= width
-                x = min(width - 1, x + cells)
-        control = match.group()
-        if control == b'\x1b7':
-            saved_position = (y, x)
-        elif control == b'\x1b8':
-            y, x = saved_position
-            pending = False
-        elif control == b'\x1b[2J':
-            rows = [[' '] * width for _ in range(height)]
-        elif control.startswith(b'\x1b['):
-            final = control[-1:]
-            values = control[2:-1].decode()
-            if not values or all(c in '0123456789;' for c in values):
-                numbers = [int(v or '1') for v in values.split(';')]
-                if final in (b'H', b'f'):
-                    y = min(height - 1, max(0, numbers[0] - 1))
-                    x = min(width - 1, max(0, (numbers[1] if len(numbers) > 1 else 1) - 1))
-                    pending = False
-                elif final == b'G':
-                    x, pending = min(width - 1, max(0, numbers[0] - 1)), False
-                elif final in (b'A', b'B'):
-                    y = max(0, min(height - 1, y + numbers[0] * (-1 if final == b'A' else 1)))
-                    pending = False
-                elif final == b'K':
-                    rows[y][x:] = [' '] * (width - x)
-                elif final == b'J':
-                    rows[y][x:] = [' '] * (width - x)
-                    for row in range(y + 1, height):
-                        rows[row] = [' '] * width
-                elif final == b'X':
-                    for col in range(x, min(width, x + numbers[0])):
-                        rows[y][col] = ' '
-        position = match.end()
-    return '\n'.join(''.join(row).rstrip() for row in rows).encode()
 
 
 def check(binary, destination, case):

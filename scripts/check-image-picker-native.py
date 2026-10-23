@@ -111,6 +111,7 @@ def main():
                 assert len(server.requests) == 2, 'unexpected request count'
                 files = list((home / 'Downloads' / 'gpt-images').glob('*.png'))
                 assert len(files) == 2 and all(path.read_bytes() == png for path in files)
+                picker.check_receipts(terminal, files)
                 images = compatibility.kitty_images(terminal.raw)
                 assert len(images) == 2, 'missing or partial preview'
                 for png_image in images:

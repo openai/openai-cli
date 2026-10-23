@@ -142,6 +142,7 @@ def main():
                 assert len(server.requests) == before+1, 'expected one image request'
                 check_body(server.requests[-1], {'prompt': prompt})
                 check_saved(home)
+                picker.check_receipts(terminal, (home/'Downloads'/'gpt-images').glob('*.png'))
                 passed(name)
             finally:
                 try:
@@ -183,6 +184,7 @@ def main():
                         'count': '1', 'output_dir': ''}, saved_state
                     terminal.send(b'\x03')
                     terminal.finish(130)
+                    picker.check_receipts(terminal, (home/'Downloads'/'gpt-images').glob('*.png'))
                     reopened = picker.Terminal(binary, ['images', 'generate'], env)
                     try:
                         reopened.wait(prompt.splitlines()[0])
@@ -332,6 +334,7 @@ def main():
                                     assert len(saved) == 2 and all(f.read_bytes() == picker.PNG for f in saved)
                                 else:
                                     check_saved(home)
+                                picker.check_receipts(terminal, (home/'Downloads'/'gpt-images').glob('*.png'))
                     states = list(home.rglob('image-picker.json'))
                     assert len(states) == int(action != 'cancel'), (name, states)
                     if states:
