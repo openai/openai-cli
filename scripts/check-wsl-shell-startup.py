@@ -266,7 +266,7 @@ def first_use_admission(binary, bash, env, deadline, report):
                 assert terminal.child.returncode == 0 and terminal.eof, "ordinary help failed or lacked PTY EOF"
                 assert raw.endswith(b"\r\nFIRST_USE_STATUS:0\r\n"), "ordinary help lost its real status"
                 if baseline is None:
-                    assert b"NAME:\r\n   openai" in raw and b"SYNOPSIS:\r\n" in raw, "negative control did not execute help"
+                    assert b"OpenAI CLI" in raw and b"USAGE\r\n  openai [GLOBAL FLAGS] COMMAND\r\n" in raw, "negative control did not execute help"
                     baseline = raw
                 assert raw == baseline, "first-use setup changed ordinary help output"
                 events = observer.read()

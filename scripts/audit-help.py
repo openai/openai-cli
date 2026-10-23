@@ -6,7 +6,6 @@ Usage: python3 scripts/audit-help.py CATALOG BINARY OUTPUT_DIRECTORY
 """
 import concurrent.futures
 import json
-import os
 from pathlib import Path
 import re
 import subprocess

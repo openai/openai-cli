@@ -38,7 +38,7 @@ func TestMainWebhookWorkflowHelp(t *testing.T) {
 					t.Fatalf("webhook help failed: %+v", got)
 				}
 				section := webhookHelpExamples(t, got.stdout)
-				if strings.Count(section, "\n     openai ") != 1 {
+				if strings.Count(section, "\n    $ openai ") != 1 {
 					t.Fatalf("expected one runnable example: %q", section)
 				}
 				if operation == "" {
@@ -61,11 +61,11 @@ func TestMainWebhookWorkflowHelp(t *testing.T) {
 
 func webhookHelpExamples(t *testing.T, output string) string {
 	t.Helper()
-	_, section, ok := strings.Cut(output, "EXAMPLES:\n")
+	_, section, ok := strings.Cut(output, "EXAMPLES\n")
 	if !ok {
 		t.Fatalf("help omitted its example: %s", output)
 	}
-	for _, next := range []string{"\nOPTIONS:", "\nCOMMANDS:", "\nGLOBAL OPTIONS:"} {
+	for _, next := range []string{"\nFLAGS\n", "\nCOMMANDS\n", "\nGLOBAL FLAGS\n", "\nNOTES\n"} {
 		section, _, _ = strings.Cut(section, next)
 	}
 	return "\n" + section
@@ -1081,8 +1081,8 @@ func TestMainWebhookWorkflowNativeCopiedCommands(t *testing.T) {
 							}
 							var command string
 							for line := range strings.SplitSeq(webhookHelpExamples(t, help.stdout), "\n") {
-								if strings.HasPrefix(strings.TrimSpace(line), printedInvocation+" webhooks ") {
-									command = strings.TrimSpace(line)
+								if example, found := strings.CutPrefix(strings.TrimSpace(line), "$ "); found && strings.HasPrefix(example, printedInvocation+" webhooks ") {
+									command = example
 								}
 							}
 							if command == "" {

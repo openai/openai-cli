@@ -195,7 +195,7 @@ def require_first_use_receipt(receipt):
         raw = receipt_bytes(item, "pty", 1048576)
         if baseline is None:
             baseline = raw
-        if (raw != baseline or b"NAME:\r\n   openai" not in raw or b"SYNOPSIS:\r\n" not in raw
+        if (raw != baseline or b"OpenAI CLI" not in raw or b"USAGE\r\n  openai [GLOBAL FLAGS] COMMAND\r\n" not in raw
                 or not raw.endswith(b"\r\nFIRST_USE_STATUS:0\r\n")):
             raise RuntimeError("First-use receipt changed ordinary help output")
         stages = item.get("staging")

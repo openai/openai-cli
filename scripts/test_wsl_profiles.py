@@ -116,7 +116,7 @@ def capability_output(contract="refused", errno="ENOSYS", receipt=None):
 
 
 def first_use_receipt():
-    output = b"NAME:\r\n   openai - Synthetic help\r\nSYNOPSIS:\r\n   openai [options]\r\n\r\nFIRST_USE_STATUS:0\r\n"
+    output = b"OpenAI CLI\r\nSynthetic help\r\nUSAGE\r\n  openai [GLOBAL FLAGS] COMMAND\r\n\r\nFIRST_USE_STATUS:0\r\n"
     profiles = [{"path": "/home/cli-compat/" + name, "present": False}
                 for name in (".bashrc", ".bash_profile", ".bash_login", ".profile", ".bash_logout")]
     result = {"account": {"name": "cli-compat", "uid": 2000, "home": "/home/cli-compat"},
@@ -827,6 +827,15 @@ class ProfileAdmissionTests(unittest.TestCase):
 
 
 class DriverReceiptTests(unittest.TestCase):
+    def test_first_use_rejects_missing_help_content(self):
+        for removed in (b"OpenAI CLI", b"USAGE\r\n  openai [GLOBAL FLAGS] COMMAND\r\n"):
+            bad = first_use_receipt()
+            for call in bad["calls"]:
+                raw = base64.b64decode(call["pty_base64"]).replace(removed, b"")
+                call.update(captured_fields("pty", raw))
+            with self.subTest(removed=removed), self.assertRaises(RuntimeError):
+                receipts.require_first_use_receipt(bad)
+
     def test_first_use_requires_two_attempts_and_two_negative_controls(self):
         receipts.require_first_use_receipt(first_use_receipt())
         for index in range(4):

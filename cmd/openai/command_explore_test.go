@@ -71,7 +71,7 @@ func TestMainExploreQueryWorksOfflineInPipes(t *testing.T) {
 			"OPENAI_MTLS_CLIENT_CERT_FILE=/synthetic-private/cert.pem",
 			"OPENAI_MTLS_CLIENT_KEY_FILE=/synthetic-private/key.pem",
 		}, append([]string{"openai", "explore"}, query...)...)
-		if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, "MATCHING COMMANDS\n  openai models list ") {
+		if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, "MATCHING COMMANDS\n  openai models list\n") {
 			t.Fatalf("offline ranked search failed: %+v", got)
 		}
 		if strings.Contains(got.stdout, "\x1b") || strings.Contains(got.stdout, "synthetic-private") {
