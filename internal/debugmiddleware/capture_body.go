@@ -93,30 +93,66 @@ func (c *bodyCapture) finish(direction string, complete bool) string {
 	return fmt.Sprintf("%s body (redacted; %d bytes observed; %s): %s", direction, c.observed, state, preview)
 }
 
-// captureRequestBody observes only reads requested by the transport. GetBody,
-// ContentLength, replay policy, and the original body's ownership stay intact.
+// captureRequestBody observes transport reads without changing body ownership.
+// All replay readers share one bounded snapshot, selected when a reader is used.
 type captureRequestBody struct {
 	io.ReadCloser
-	mu       sync.Mutex
-	capture  *bodyCapture
-	eof      bool
-	expected int64
+	state      *requestBodyCapture
+	generation uint64
+}
+
+type requestBodyCapture struct {
+	mu             sync.Mutex
+	capture        *bodyCapture
+	eof            bool
+	expected       int64
+	generation     uint64
+	nextGeneration uint64
+}
+
+func newCaptureRequestBody(body io.ReadCloser, contentType string, limit int, expected int64) *captureRequestBody {
+	return &captureRequestBody{ReadCloser: body, state: &requestBodyCapture{
+		capture: newBodyCapture(contentType, limit), expected: expected,
+	}}
+}
+
+func (b *captureRequestBody) replay(body io.ReadCloser) *captureRequestBody {
+	b.state.mu.Lock()
+	b.state.nextGeneration++
+	generation := b.state.nextGeneration
+	b.state.mu.Unlock()
+	return &captureRequestBody{ReadCloser: body, state: b.state, generation: generation}
 }
 
 func (b *captureRequestBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
-	b.mu.Lock()
-	b.capture.observe(p[:n])
-	if err == io.EOF {
-		b.eof = true
+	s := b.state
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.capture.finished || b.generation < s.generation {
+		return n, err
 	}
-	b.mu.Unlock()
+	if b.generation > s.generation {
+		// Opening an unused replay must not discard an already observed body.
+		if n == 0 && err != io.EOF {
+			return n, err
+		}
+		s.generation = b.generation
+		s.capture.data = s.capture.data[:0]
+		s.capture.observed = 0
+		s.eof = false
+	}
+	s.capture.observe(p[:n])
+	if err == io.EOF {
+		s.eof = true
+	}
 	return n, err
 }
 
 func (b *captureRequestBody) finish() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	complete := b.eof || (b.expected > 0 && b.capture.observed == uint64(b.expected))
-	return b.capture.finish("request", complete)
+	s := b.state
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	complete := s.eof || (s.expected > 0 && s.capture.observed == uint64(s.expected))
+	return s.capture.finish("request", complete)
 }

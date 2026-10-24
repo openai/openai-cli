@@ -36,6 +36,8 @@ They preserve the original request and response bytes for the API and normal out
 
 Capture observes reads that the transport or response consumer already performs. It never reads ahead to complete a preview.
 Request previews describe bytes consumed during that attempt. A partial read remains labeled partial.
+Redirected request previews show the latest replay body that the transport reads, without combining repeated payloads.
+Opening an unused replay does not replace an already observed request preview.
 Response previews describe the consumed body, including error responses.
 Non-JSON bodies, including multipart uploads and binary responses, receive an omission marker.
 Malformed or incomplete JSON receives a safe omission marker instead of an unredacted fallback.
@@ -108,6 +110,7 @@ Retry delays before that attempt are excluded.
 
 Body durations include time between caller reads. They can include parsing, output backpressure, and pauses in the consumer.
 Empty bodies have no first-data diagnostic. The caller retains responsibility for closing the response body.
+Protocol upgrades retain header timing. Upgraded protocol data and connection lifetime remain outside HTTP-body diagnostics.
 
 Binary-response commands record body diagnostics during reads and report them after body closure and consumer cleanup.
 This includes downloads and speech responses. Durations retain their original measurement times.

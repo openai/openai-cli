@@ -3,6 +3,7 @@ package debugmiddleware
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -65,10 +66,19 @@ func (m *RequestLogger) Middleware() Middleware {
 		attempt := m.attempts.Add(1)
 		var requestCapture *captureRequestBody
 		if m.capture.Bodies && req.Body != nil && req.Body != http.NoBody {
-			requestCapture = &captureRequestBody{ReadCloser: req.Body, capture: newBodyCapture(req.Header.Get("Content-Type"), m.capture.MaxBytes), expected: req.ContentLength}
+			requestCapture = newCaptureRequestBody(req.Body, req.Header.Get("Content-Type"), m.capture.MaxBytes, req.ContentLength)
 			cloned := new(http.Request)
 			*cloned = *req
 			cloned.Body = requestCapture
+			if getBody := req.GetBody; getBody != nil {
+				cloned.GetBody = func() (io.ReadCloser, error) {
+					body, err := getBody()
+					if err != nil || body == nil || body == http.NoBody {
+						return body, err
+					}
+					return requestCapture.replay(body), nil
+				}
+			}
 			req = cloned
 		}
 		started := time.Now()
@@ -93,6 +103,11 @@ func (m *RequestLogger) Middleware() Middleware {
 
 		if respBytes, err := httputil.DumpResponse(m.redactResponse(resp), false); err == nil {
 			m.logger.Printf("Response Content:\n%s\n", respBytes)
+		}
+		// The upgraded protocol owns this connection, including its write and
+		// shutdown interfaces. HTTP body diagnostics must leave it unchanged.
+		if resp.StatusCode == http.StatusSwitchingProtocols {
+			return resp, nil
 		}
 		if resp.Body != nil {
 			timing := &responseTiming{logger: m, attempt: attempt, started: started}
