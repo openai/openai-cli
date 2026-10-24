@@ -32,7 +32,7 @@ PY
   demo_capture_metadata
   shasum -a 256 "$demo_source/workflow_fixture.py" "$demo_source/workflow_scene.sh" "$demo_source/record-workflows.sh"
 } > "$demo_output/metadata.txt"
-demo_window_size=104x46
+demo_window_size=104x54
 demo_render_options=(--renderer resvg --font-family Menlo --font-size 18 --line-height 1.2 \
   --theme asciinema --fps-cap 20 --last-frame-duration 3)
 for demo_scene in before after-submit after-results; do
