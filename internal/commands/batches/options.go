@@ -18,6 +18,7 @@ import (
 type Options struct {
 	DefaultRequestOptions func(*cli.Command) []option.RequestOption
 	RequestOptions        func(*cli.Command, io.Reader) ([]option.RequestOption, error)
+	CreateRequestOptions  func(*cli.Command, io.Reader) ([]option.RequestOption, gjson.Result, error)
 	ShowResult            func(context.Context, *cli.Command, gjson.Result, string, io.Writer, io.Writer) error
 	HumanTerminal         func(context.Context, *cli.Command) bool
 	APIErrorMessage       func(*cli.Command, error, *openai.Error) string

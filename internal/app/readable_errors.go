@@ -145,6 +145,7 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 		}{message})
 		value = gjson.ParseBytes(data)
 	}
+	value = batchcommands.SubmissionErrorValue(failure, value)
 	return ShowJSON(value, ShowJSONOpts{
 		Context: outputPolicyContext(ctx, root), Operation: "", OutputKind: OutputUnspecified,
 		Format: format, ExplicitFormat: root.IsSet("format-error") || root.IsSet("format"),
