@@ -9,7 +9,7 @@ demo_root="$(cd "$demo_source/../../.." && pwd)"
 source "$demo_source/../capture_and_render.sh"
 # These help-only scenes require no API fixture process.
 demo_prepare_capture "$demo_root" "$1" "$2" "$3" "$4" "$5" /usr/bin/true
-demo_window_size=90x26
+demo_window_size=90x38
 demo_render_options=(--font-family Menlo --font-size 18 --line-height 1.2 \
   --theme dracula --fps-cap 20 --last-frame-duration 3)
 cat > "$demo_runtime/scene.sh" <<'SCENE'
