@@ -37,6 +37,10 @@ func RunWithPager(ctx context.Context, root *cli.Command, argv []string, run fun
 		!welcomeEnvironment(os.Getenv, runtime.GOOS) {
 		return run()
 	}
+	if runtime.GOOS == "windows" && os.Getenv("TERM") == "" && os.Getenv("WT_SESSION") == "" {
+		// Preserve escape-free, noninteractive help in classic Windows consoles.
+		return run()
+	}
 	width, height, err := term.GetSize(out.Fd())
 	if err != nil || width < 2 || height < 3 {
 		return run()

@@ -5,6 +5,7 @@ Use arrows, Page Up/Down, Space, Home/End, or the mouse wheel to scroll.
 Press `q`, Escape, or Enter to return to the shell. Ctrl+C exits with status 130.
 `openai --help`, subcommands, pipes, CI, and redirected streams retain ordinary output.
 Windows requires a native terminal; unsupported terminal inputs retain ordinary output.
+Classic Windows consoles without TERM or WT_SESSION also retain ordinary output.
 Automatic update notices appear after the viewer closes successfully.
 
 Build the baseline and proposed CLI separately. Build the existing rejecting fixture:

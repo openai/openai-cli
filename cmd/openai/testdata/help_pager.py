@@ -14,7 +14,7 @@ import termios
 import time
 
 
-def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width=100):
+def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width=100, cancel_context=False):
     with tempfile.TemporaryDirectory(prefix="help-pager-") as home:
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, width, 0, 0))
@@ -36,8 +36,13 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
         streams = {stream: slave for stream in ("stdin", "stdout", "stderr")}
         if redirected:
             streams[redirected] = subprocess.DEVNULL
-        command = [sys.argv[1], "-test.run=^TestMainDispatchProcess$", "--", "openai", *args]
-        child = subprocess.Popen(command, env=env, cwd=home, **streams)
+        control = os.pipe() if cancel_context else ()
+        process_test = "TestMainDispatchProcess"
+        if cancel_context:
+            env["OPENAI_CLI_HELP_PAGER_CONTEXT_FD"] = str(control[0])
+            process_test = "TestMainHelpPagerContextProcess"
+        command = [sys.argv[1], f"-test.run=^{process_test}$", "--", "openai", *args]
+        child = subprocess.Popen(command, env=env, cwd=home, pass_fds=control[:1], **streams)
         data = bytearray()
         deadline = time.monotonic() + 10
 
@@ -81,7 +86,9 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
                     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 12, 40, 0, 0))
                     child.send_signal(signal.SIGWINCH)
                     read_until(b"q: quit", start)
-                if action == "signal":
+                if cancel_context:
+                    os.write(control[1], b"x")
+                elif action == "signal":
                     child.send_signal(signal.SIGINT)
                 else:
                     os.write(master, action)
@@ -112,6 +119,8 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
                 child.wait()
             os.close(master)
             os.close(slave)
+            for fd in control:
+                os.close(fd)
 
 
 check("navigation")
@@ -119,6 +128,7 @@ check("no-color", extra={"NO_COLOR": "1"}, width=40)
 check("escape", action=b"\x1b")
 check("ctrl-c", action=b"\x03", code=130)
 check("interrupt", action="signal", code=130)
+check("context-cancel", cancel_context=True, code=1)
 for name, args in (("explicit-help", ("--help",)), ("help-command", ("help",)),
                    ("nested-help", ("models", "--help")), ("explicit-format", ("--format=json",))):
     check(name, args, action=None)
