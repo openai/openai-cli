@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -44,6 +43,8 @@ func testRetiredCommand(t *testing.T, input []byte, args []string) bool {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, append([]string{"--base-url", server.URL}, args...)...)
+	// Use the public invocation name instead of the temporary binary's path.
+	command.Args[0] = "openai"
 	command.Env = []string{"HOME=" + t.TempDir(), "SystemRoot=" + os.Getenv("SystemRoot"),
 		"OPENAI_CLI_NO_UPDATE_CHECK=1", "OPENAI_CLI_NO_AUTO_UPDATE=1"}
 	command.Stdin = bytes.NewReader(input)
@@ -57,6 +58,7 @@ func testRetiredCommand(t *testing.T, input []byte, args []string) bool {
 	message := stderr.String()
 	if strings.HasPrefix(message, "Unknown command.") {
 		require.Equal(t, 3, exit.ExitCode())
+		require.Equal(t, "Unknown command. Run openai help to see commands.\n", message)
 	} else {
 		// Root flag validation precedes unknown-command dispatch. Removed
 		// operation flags therefore retain the ordinary local option error.
@@ -66,7 +68,7 @@ func testRetiredCommand(t *testing.T, input []byte, args []string) bool {
 			firstLine == "The --max-items option is not available for this command."
 		require.True(t, unknownOption, "unexpected rejection: %s", message)
 		require.Equal(t, 1, exit.ExitCode())
-		require.Equal(t, firstLine+"\nOptions and examples: "+filepath.Base(binary)+" --help\n", message)
+		require.Equal(t, firstLine+"\nOptions and examples: openai --help\n", message)
 	}
 	require.Zero(t, requests.Load(), "retired command sent an API request")
 	return true
