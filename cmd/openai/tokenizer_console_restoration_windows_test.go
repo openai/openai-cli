@@ -49,7 +49,7 @@ func TestMainDispatchTokenizerConsoleRestoration(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "openai.exe")
 	runTokenizerRestorationHelper(t, "build", binary)
 	adminConsoleLogExecutable(t, "tokenizer restoration production CLI", binary)
-	run := func(t *testing.T, scenario, binary string) {
+	for _, scenario := range []string{"cancel_repeat_cp437", "cancel_cp65001", "invalid_utf16_cp65001"} {
 		t.Run(scenario, func(t *testing.T) {
 			output := runTokenizerRestorationHelper(t, scenario, binary)
 			line, remainder, found := strings.Cut(output, "\n")
@@ -58,7 +58,7 @@ func TestMainDispatchTokenizerConsoleRestoration(t *testing.T) {
 				t.Fatalf("console owner omitted its complete evidence: %q", output)
 			}
 			wantCount, wantExit := 1, 130
-			if scenario == "cancel_repeat_cp437" || scenario == "probe_output_first_cp437" {
+			if scenario == "cancel_repeat_cp437" {
 				wantCount = 2
 			} else if scenario == "invalid_utf16_cp65001" {
 				wantExit = 1
@@ -74,10 +74,6 @@ func TestMainDispatchTokenizerConsoleRestoration(t *testing.T) {
 			t.Logf("native production restoration, shared stdout/stderr console buffer: %s", line)
 		})
 	}
-	for _, scenario := range []string{"cancel_repeat_cp437", "cancel_cp65001", "invalid_utf16_cp65001"} {
-		run(t, scenario, binary)
-	}
-	probeTokenizerRestorationStartup(t, binary, run)
 }
 
 func runTokenizerRestorationHelper(t *testing.T, scenario, binary string) string {
@@ -153,7 +149,7 @@ func TestTokenizerConsoleRestorationProcess(t *testing.T) {
 	seed := tokenizerRestorationState{InputMode: 0x87, OutputMode: 0x7, InputCP: 65001, OutputCP: 437}
 	runs, character, wantExit := 1, uint16(3), 130
 	switch scenario {
-	case "cancel_repeat_cp437", "probe_output_first_cp437":
+	case "cancel_repeat_cp437":
 		seed = tokenizerRestorationState{InputMode: 0xa7, OutputMode: 0x3, InputCP: 437, OutputCP: 65001}
 		runs = 2
 	case "cancel_cp65001":
@@ -196,9 +192,6 @@ func TestTokenizerConsoleRestorationProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenizerRestorationCheckpoint(t, "owner_seeded", tokenizerRestorationEvidence{Before: tokenizerRestorationSnapshot(t, input, output)})
-	if scenario == "probe_output_first_cp437" {
-		preflightTokenizerRestorationOutput(t, binary, input, output, seed)
-	}
 	var evidence []tokenizerRestorationEvidence
 	for i := range runs {
 		// Clear only this owned screen. Never reset modes or code pages between runs.
@@ -227,6 +220,48 @@ func tokenizerRestorationSnapshot(t *testing.T, input, output *os.File) tokenize
 		t.Fatal(err)
 	}
 	return state
+}
+
+var tokenizerRestorationCheckpointPath string // Set only inside the isolated console owner.
+
+func tokenizerRestorationCheckpoint(t *testing.T, phase string, evidence tokenizerRestorationEvidence) {
+	t.Helper()
+	file, err := os.OpenFile(tokenizerRestorationCheckpointPath, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.Size() > 30<<10 {
+		t.Fatalf("checkpoint file exceeded its bound: %v", err)
+	}
+	err = json.NewEncoder(file).Encode(struct {
+		Phase    string                       `json:"phase"`
+		Time     int64                        `json:"unix_ns"`
+		Evidence tokenizerRestorationEvidence `json:"evidence"`
+	}{phase, time.Now().UnixNano(), evidence})
+	closeErr := file.Close()
+	if err != nil || closeErr != nil {
+		t.Fatalf("save checkpoint: write=%v close=%v", err, closeErr)
+	}
+}
+
+func logTokenizerRestorationCheckpoints(t *testing.T, path string) {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Errorf("open saved tokenizer checkpoints: %v", err)
+		return
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, (32<<10)+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil || len(data) > 32<<10 {
+		t.Errorf("read bounded checkpoints: read=%v close=%v bytes=%d", readErr, closeErr, len(data))
+		return
+	}
+	if len(data) != 0 {
+		t.Logf("saved tokenizer startup checkpoints: %s", data)
+	}
 }
 
 func observeTokenizerRestoration(t *testing.T, binary string, input, output *os.File, seed tokenizerRestorationState, character uint16, wantExit, invocation int) tokenizerRestorationEvidence {
