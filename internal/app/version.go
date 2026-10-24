@@ -1,3 +1,3 @@
 package app
 
-const Version = "1.40.6" // x-release-please-version
+const Version = "1.41.0" // x-release-please-version

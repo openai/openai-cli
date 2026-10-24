@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.41.0](https://github.com/openai/openai-cli/compare/v1.40.6...v1.41.0) (2026-10-24)
+
+
+### Features
+
+* add request timing and redacted body and SSE diagnostics ([#402](https://github.com/openai/openai-cli/issues/402)) ([b9e2d8b](https://github.com/openai/openai-cli/commit/b9e2d8be01c5fa0599ff078f573153d2b7619397))
+* **projects:** clarify lifecycle results and help ([#423](https://github.com/openai/openai-cli/issues/423)) ([927f1c9](https://github.com/openai/openai-cli/commit/927f1c90a429c55a23e61060202a36aad13db4cf))
+
+
+### Documentation
+
+* explain development helper behavior ([#609](https://github.com/openai/openai-cli/issues/609)) ([56b7e29](https://github.com/openai/openai-cli/commit/56b7e29aa5a41b7f8172f417448e2a0745903072))
+
 ## [1.40.6](https://github.com/openai/openai-cli/compare/v1.40.5...v1.40.6) (2026-10-23)
 
 
