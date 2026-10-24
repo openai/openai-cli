@@ -512,10 +512,6 @@ func runNativeShell(t *testing.T, shell nativeShell, work, home, baseURL, script
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
 		name = strings.ToUpper(name)
-		// PowerShell 7 cannot reset module paths across this Go intermediary.
-		if runtime.GOOS == "windows" && shell.name == "powershell" && name == "PSMODULEPATH" {
-			continue
-		}
 		if strings.HasPrefix(name, "OPENAI_") || slices.Contains([]string{"HOME", "USERPROFILE", "APPDATA", "XDG_CONFIG_HOME", "ZDOTDIR", "BASH_ENV", "ENV", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "PAGER", "TERM", "NO_COLOR"}, name) {
 			continue
 		}

@@ -23,6 +23,8 @@ import (
 	"unicode/utf8"
 )
 
+var finiteJSONListControlObserver func(*testing.T, nativeShell) (func(bool, string), func())
+
 // These checks cover native noninteractive shells, not terminal applications.
 func TestMainNativeShellFiniteJSONList(t *testing.T) {
 	work, binary := buildNativeShellCLI(t)
@@ -89,6 +91,12 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 			}
 			// Unchanged native producers distinguish shell text conversion from
 			// CLI behavior. Only the Unicode filename may vary in PowerShell.
+			var recordControl func(bool, string)
+			stopControlTrace := func() {}
+			if finiteJSONListControlObserver != nil {
+				recordControl, stopControlTrace = finiteJSONListControlObserver(t, shell)
+				defer stopControlTrace()
+			}
 			controls := make(map[bool][]map[string]any, 2)
 			controlEncodings := make(map[bool]string, 2)
 			for _, pipeline := range []bool{false, true} {
@@ -119,6 +127,9 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 				script, status := finiteJSONListShellScript(t, shell, directory, producer, consumer, output)
 				if trace != "" {
 					script = "[IO.File]::WriteAllText(" + finiteJSONListShellQuote(shell, trace+".entered") + ", [DateTime]::UtcNow.ToString('O')); " + script
+				}
+				if recordControl != nil {
+					recordControl(pipeline, trace)
 				}
 				got := runNativeShell(t, observedShell, directory, t.TempDir(), "http://127.0.0.1:1", script)
 				assertFiniteJSONListShellStatus(t, status, 0, got, fmt.Sprintf("native producer control pipeline=%t", pipeline))
@@ -156,6 +167,7 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 				controlEncodings[pipeline] = encoding
 				t.Logf("native control: pipeline=%t encoding=%s Unicode-preserved=%t", pipeline, encoding, reflect.DeepEqual(observed, original))
 			}
+			stopControlTrace()
 			for _, test := range []struct {
 				name, format             string
 				pipeline, empty, failure bool
