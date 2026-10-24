@@ -6,9 +6,12 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -79,15 +82,42 @@ func RunWithPager(ctx context.Context, root *cli.Command, argv []string, run fun
 	if err != nil {
 		return &PagerError{Cause: err}
 	}
+	// Tea treats SIGTERM as a successful quit. Keep signal exit statuses while
+	// allowing cancellation to finish terminal cleanup before releasing signals.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	var signalCode atomic.Int32
+	listenerDone := make(chan struct{})
+	go func() {
+		defer close(listenerDone)
+		select {
+		case received := <-signals:
+			code := int32(130)
+			if received == syscall.SIGTERM {
+				code = 143
+			}
+			signalCode.Store(code)
+			cancel()
+		case <-programContext.Done():
+		}
+	}()
+	defer func() {
+		signal.Stop(signals)
+		cancel()
+		<-listenerDone
+	}()
 	defer func() {
 		if restoreErr := errors.Join(term.Restore(in.Fd(), inputState), term.Restore(out.Fd(), outputState)); restoreErr != nil {
 			returnErr = errors.Join(returnErr, &PagerError{Cause: restoreErr})
 		}
 	}()
 	_, err = tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(tracked), tea.WithContext(programContext),
-		tea.WithWindowSize(width, height), tea.WithColorProfile(commandHelpStyle(root).profile)).Run()
+		tea.WithWindowSize(width, height), tea.WithColorProfile(commandHelpStyle(root).profile), tea.WithoutSignalHandler()).Run()
 	if writeErr := tracked.failure(); writeErr != nil {
 		return writeErr
+	}
+	if code := signalCode.Load(); code != 0 {
+		return cli.Exit(errors.Join(context.Canceled, err), int(code))
 	}
 	if m.interrupted || errors.Is(err, tea.ErrInterrupted) {
 		return cli.Exit(errors.Join(context.Canceled, err), 130)

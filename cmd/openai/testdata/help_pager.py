@@ -95,6 +95,8 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
                     os.write(control[1], b"x")
                 elif action == "signal":
                     child.send_signal(signal.SIGINT)
+                elif action == "terminate":
+                    child.send_signal(signal.SIGTERM)
                 else:
                     os.write(master, action)
             read_until()
@@ -136,6 +138,7 @@ check("no-color", extra={"NO_COLOR": "1"}, width=40)
 check("escape", action=b"\x1b")
 check("ctrl-c", action=b"\x03", code=130)
 check("interrupt", action="signal", code=130)
+check("terminate", action="terminate", code=143)
 check("context-cancel", cancel_context=True, code=1)
 check("startup-failure", startup_failure=True, action=None, code=1)
 for name, args in (("explicit-help", ("--help",)), ("help-command", ("help",)),
