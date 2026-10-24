@@ -17,7 +17,7 @@ func TestSynopsisShowsRequiredInputsAndStdinKeys(t *testing.T) {
 		&cli.BoolFlag{Name: "hidden", Hidden: true},
 	}}
 	got := commandSynopsis(command, "openai files create", "openai", 64)
-	for _, want := range []string{"[--file PATH]", "[--file-purpose TEXT]", "--required-cli TEXT", "[--limit INTEGER]"} {
+	for _, want := range []string{"[--file=PATH]", "[--file-purpose=TEXT]", "--required-cli=TEXT", "[--limit=INTEGER]"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("synopsis lost %q: %s", want, got)
 		}
@@ -41,7 +41,7 @@ func TestSynopsisUsesOnlyVerifiedPositionalAliases(t *testing.T) {
 		&requestflag.Flag[string]{Name: "hidden", PathParam: "hidden", Hidden: true},
 	}, Metadata: map[string]any{"help-positional-flags": []string{"model", "format", "unknown", "hidden", "model"}}}
 	got := commandSynopsis(command, "openai models retrieve", "openai", 100)
-	if strings.Count(got, "[MODEL | --model MODEL]") != 1 || !strings.Contains(got, "[--other TEXT]") {
+	if strings.Count(got, "[MODEL | --model=MODEL]") != 1 || !strings.Contains(got, "[--other=TEXT]") {
 		t.Fatalf("positional metadata did not match visible path flags: %s", got)
 	}
 	for _, absent := range []string{"FORMAT |", "unknown", "hidden", "TEXT | --other"} {
@@ -59,16 +59,16 @@ func TestSynopsisOmitsNestedFieldsOnlyWithVisibleParent(t *testing.T) {
 	inner := &visibleSynopsisInnerFlag{InnerFlag: &requestflag.InnerFlag[string]{Name: "settings.mode", OuterFlag: outer}}
 	command := &cli.Command{Name: "create", Flags: []cli.Flag{outer, inner}}
 	got := commandSynopsis(command, "openai items create", "openai", 80)
-	if !strings.Contains(got, "[--settings TEXT=VALUE]") || strings.Contains(got, "settings.mode") {
+	if !strings.Contains(got, "[--settings=TEXT=VALUE]") || strings.Contains(got, "settings.mode") {
 		t.Fatalf("nested synopsis is redundant: %s", got)
 	}
 	help := commandHelpAtWidth(command, "openai", "items create", 80)
-	if !strings.Contains(help, "--settings.mode TEXT") {
+	if !strings.Contains(help, "--settings.mode=TEXT") {
 		t.Fatalf("nested option disappeared from the full reference: %s", help)
 	}
 	outer.Hidden = true
 	got = commandSynopsis(command, "openai items create", "openai", 80)
-	if !strings.Contains(got, "[--settings.mode TEXT]") {
+	if !strings.Contains(got, "[--settings.mode=TEXT]") {
 		t.Fatalf("nested flag lacks a visible parent and was omitted: %s", got)
 	}
 }
@@ -83,14 +83,29 @@ func TestSynopsisPreservesAuthoredUsageAndSafeInvocation(t *testing.T) {
 	invocation := "'/tmp/CLI build/openai'"
 	command := &cli.Command{UsageText: "openai images preview [--inline auto|on] FILE\nAn openai token inside prose stays unchanged."}
 	got := commandSynopsis(command, invocation+" images preview", invocation, 40)
-	want := "   " + invocation + " images preview [--inline auto|on] FILE\n   An openai token inside prose stays unchanged.\n"
+	want := "  " + invocation + " images preview [--inline auto|on] FILE\n  An openai token inside prose stays unchanged.\n"
 	if got != want {
 		t.Fatalf("authored usage changed: %q", got)
 	}
 	command.UsageText = ""
 	command.Flags = []cli.Flag{&cli.StringFlag{Name: "first"}, &cli.StringFlag{Name: "second"}}
 	got = commandSynopsis(command, invocation+" items create", invocation, 40)
-	if !strings.Contains(got, invocation) || !strings.Contains(got, "\n       [--first TEXT]") || !strings.Contains(got, "[--second TEXT]") {
+	if !strings.Contains(got, invocation) || !strings.Contains(got, "\n    [--first=TEXT]") || !strings.Contains(got, "[--second=TEXT]") {
 		t.Fatalf("synopsis split the invocation or failed to wrap options: %s", got)
+	}
+}
+
+func TestSynopsisWrapsLongAlternativesBetweenCompleteTokens(t *testing.T) {
+	flag := &requestflag.Flag[string]{Name: "fine-tuned-model-checkpoint", PathParam: "fine_tuned_model_checkpoint", Required: true}
+	command := &cli.Command{Flags: []cli.Flag{flag}, Metadata: map[string]any{"help-positional-flags": []string{flag.Name}}}
+	command.Metadata["help-flag-labels"] = []FlagLabel{{Owner: command, Names: []string{flag.Name}, Label: "FINE_TUNED_MODEL_CHECKPOINT"}}
+	got := commandSynopsis(command, "openai checkpoints retrieve", "openai", 79)
+	for _, line := range strings.Split(got, "\n") {
+		if len(line) > 79 {
+			t.Fatalf("synopsis exceeds available width: %q", line)
+		}
+	}
+	if !strings.Contains(strings.Join(strings.Fields(got), " "), "[FINE_TUNED_MODEL_CHECKPOINT | --fine-tuned-model-checkpoint=FINE_TUNED_MODEL_CHECKPOINT]") {
+		t.Fatalf("synopsis changed positional alternatives: %s", got)
 	}
 }

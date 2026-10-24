@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestMainParserErrorGuidance(t *testing.T) {
@@ -27,9 +25,11 @@ func TestMainParserErrorGuidance(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{"integer", []string{"models", "list", "--max-items", "synthetic-private-value"}, []string{"Invalid value for --max-items. Expected an integer.", "openai models list --help"}},
-		{"number", []string{"responses", "create", "--temperature", "synthetic-private-value"}, []string{"Invalid value for --temperature. Expected a number.", "openai responses create --help"}},
+		{"integer", []string{"models", "list", "--max-items", "synthetic-private-value"}, []string{"Invalid value for --max-items. Expected an integer, such as 1.", "openai models list --help"}},
+		{"number", []string{"responses", "create", "--temperature", "synthetic-private-value"}, []string{"Invalid value for --temperature. Expected a number, such as 0.5.", "openai responses create --help"}},
 		{"boolean", []string{"responses", "create", "--background", "synthetic-private-value"}, []string{"Invalid value for --background. Expected a boolean (true or false).", "openai responses create --help"}},
+		{"poll duration", []string{"batches", "retrieve", "--poll-interval", "synthetic-private-value"}, []string{"Invalid value for --poll-interval. Expected a duration, such as 1s.", "openai batches retrieve --help"}},
+		{"timeout duration", []string{"batches", "retrieve", "--wait-timeout", "synthetic-private-value"}, []string{"Invalid value for --wait-timeout. Expected a duration, such as 1s.", "openai batches retrieve --help"}},
 		{"transposed flag", []string{"models", "list", "--max-itmes=synthetic-private-value"}, []string{"Did you mean --max-items?", "openai models list --help"}},
 		{"inherited flag", []string{"models", "list", "--formta=synthetic-private-value"}, []string{"Did you mean --format?", "openai models list --help"}},
 		{"missing value", []string{"models", "retrieve", "--model"}, []string{"Add a value for --model.", "openai models retrieve --help"}},
@@ -77,12 +77,7 @@ func TestMainParserRecoveryNativeShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(work, "openai")
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
-	defer cancel()
-	build := exec.CommandContext(ctx, filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-o", binary, ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	copyShellTestCLI(t, binary)
 	other := t.TempDir()
 	if err := os.WriteFile(filepath.Join(other, "openai"), []byte("#!/bin/sh\nexit 99\n"), 0o700); err != nil {
 		t.Fatal(err)
@@ -104,7 +99,7 @@ func TestMainParserRecoveryNativeShell(t *testing.T) {
 			}
 			shell.executable = path
 			dir := t.TempDir()
-			for _, args := range []string{"models list --max-itmes=synthetic-private-value", "models list --max-items=synthetic-private-value", "models retrieve --model"} {
+			for _, args := range []string{"models list --max-itmes=synthetic-private-value", "models list --max-items=synthetic-private-value", "models retrieve --model", "batches retrieve --poll-interval=synthetic-private-value"} {
 				got := runNativeShell(t, shell, other, dir, "http://127.0.0.1:1", invocation+" "+args)
 				_, recovery, found := strings.Cut(got.stderr, "Options and examples: ")
 				recovery = strings.TrimSpace(recovery)
@@ -112,7 +107,7 @@ func TestMainParserRecoveryNativeShell(t *testing.T) {
 					t.Fatalf("recovery lost executable identity or privacy: %+v", got)
 				}
 				copied := runNativeShell(t, shell, other, dir, "not-a-url", recovery)
-				if copied.code != 0 || copied.stderr != "" || !strings.Contains(copied.stdout, "models") {
+				if copied.code != 0 || copied.stderr != "" || !strings.Contains(copied.stdout, strings.Fields(args)[0]) {
 					t.Fatalf("copied recovery failed: %+v", copied)
 				}
 			}

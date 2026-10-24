@@ -51,7 +51,7 @@ func (g *Gallery) FontForTypography(ctx context.Context, revision *Revision, sou
 		}
 	}
 	text := strings.Map(func(r rune) rune {
-		if r >= imagefont.FirstCodepoint && r <= imagefont.LastCodepoint {
+		if r >= imagefont.FirstCodepoint && r < imagefont.FirstCodepoint+rune(imagefont.MaxPreservedGlyphs) {
 			return 0xf0000 + r - imagefont.FirstCodepoint
 		}
 		return r

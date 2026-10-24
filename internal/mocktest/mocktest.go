@@ -10,12 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -58,12 +56,14 @@ func restoreNetwork(origClient, origDefault http.RoundTripper) {
 // TestRunMockTestWithFlags runs a test against a mock server with the provided
 // CLI args and ensures it succeeds
 func TestRunMockTestWithFlags(t *testing.T, args ...string) {
+	t.Helper()
 	TestRunMockTestWithPipeAndFlags(t, nil, args...)
 }
 
 // TestRunMockTestWithPipeAndFlags runs a test against a mock server with the provided
 // data piped over stdin and CLI args and ensures it succeeds
 func TestRunMockTestWithPipeAndFlags(t *testing.T, pipeData []byte, args ...string) {
+	t.Helper()
 	origClient, origDefault := blockNetworkExceptMockServer()
 	defer restoreNetwork(origClient, origDefault)
 
@@ -75,20 +75,21 @@ func TestRunMockTestWithPipeAndFlags(t *testing.T, pipeData []byte, args ...stri
 		conn.Close()
 	}
 
-	// Get the path to the main command
-	_, filename, _, ok := runtime.Caller(0)
-	require.True(t, ok, "Could not get current file path")
-	dirPath := filepath.Dir(filename)
-	project := filepath.Join(dirPath, "..", "..", "cmd", "openai")
-
-	args = append([]string{"run", project, "--base-url", mockServerURL.String()}, args...)
-
-	t.Logf("Testing command: go run ./cmd/openai %s", strings.Join(args[2:], " "))
-
-	cmd := exec.Command("go", args...)
+	if suiteCLI == nil {
+		t.Fatal("mock CLI tests must call mocktest.RunTests from TestMain")
+	}
+	binary, err := suiteCLI(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	args = append([]string{"--base-url", mockServerURL.String()}, args...)
+	t.Logf("Testing command: openai %s", strings.Join(args, " "))
+	cmd := exec.CommandContext(t.Context(), binary, args...)
 	cmd.Stdin = bytes.NewReader(pipeData)
 	output, err := cmd.CombinedOutput()
-	assert.NoError(t, err, "Test failed\nError: %v\nOutput: %s", err, output)
+	if err != nil {
+		t.Fatalf("CLI command %q failed: %v\nOutput: %s", args, err, output)
+	}
 
 	t.Logf("Test passed successfully\nOutput:\n%s", string(output))
 }

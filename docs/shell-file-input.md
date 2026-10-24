@@ -105,8 +105,13 @@ A nonzero exit status remains necessary when checking a transfer.
 
 An explicit file destination stages the complete download before changing an existing ordinary file.
 A failed network transfer leaves the existing file unchanged.
-Successful completion preserves its inode, permissions, symlinks, and hardlinks.
+Successful completion preserves its inode, permissions, and hardlinks.
 Linked names therefore continue to expose the saved bytes.
+
+The final output entry must not be a symlink, including a dangling symlink or a chain.
+To save through a link, select the target path explicitly instead.
+Parent directories remain caller-trusted and retain normal symlink traversal;
+this rule does not confine writes against attacker-controlled parents or hardlinks.
 
 On Windows, new explicit file destinations use protected permissions for the current user, SYSTEM, and Administrators.
 Existing files retain their access-control lists.

@@ -49,6 +49,41 @@ func TestMainCompleteHelpAfterOptions(t *testing.T) {
 	}
 }
 
+// Keep the TestMainDispatch prefix selected by the native OS help matrix.
+func TestMainDispatchHelpPreservesFlagValues(t *testing.T) {
+	server, requests := localUtilitiesRequestTrap(t)
+	env := []string{"OPENAI_BASE_URL=" + server.URL, "OPENAI_API_KEY="}
+	want := runMainDispatchWithEnv(t, "bash", env, "openai", "help", "models", "list")
+	if want.code != 0 || want.stderr != "" || !strings.Contains(want.stdout, "openai models list") {
+		t.Fatalf("canonical help failed: %+v", want)
+	}
+	for _, value := range []string{"--help", "-h", "--h", "--", "help", "--help=true"} {
+		for _, route := range []struct {
+			name           string
+			prefix, suffix []string
+		}{
+			{"root help", []string{"openai", "help"}, []string{"models", "list"}},
+			{"nested help", []string{"openai", "models", "help"}, []string{"list"}},
+			{"after topics", []string{"openai", "help", "models", "list"}, nil},
+		} {
+			t.Run(route.name+"/"+value, func(t *testing.T) {
+				for _, flags := range [][]string{{"--project=" + value}, {"--project", value}} {
+					args := append(append(append([]string{}, route.prefix...), flags...), route.suffix...)
+					for _, tail := range [][]string{nil, {"--help"}} {
+						argv := append(append([]string{}, args...), tail...)
+						if got := runMainDispatchWithEnv(t, "bash", env, argv...); got != want {
+							t.Errorf("help changed a global flag value: args=%q got=%+v", argv, got)
+						}
+					}
+				}
+			})
+		}
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("help made %d requests", requests.Load())
+	}
+}
+
 func TestMainCompleteHelpLegacyMigration(t *testing.T) {
 	for _, path := range [][]string{nil, {"images", "generate"}, {"admin", "organization", "audit-logs", "list"}} {
 		t.Run(strings.Join(append([]string{"root"}, path...), "/"), func(t *testing.T) {
@@ -83,7 +118,7 @@ func TestMainCompleteHelpTypedLegacyCompletion(t *testing.T) {
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
 		for _, flag := range []string{"--all", "-all", "--all=false", "-all=true"} {
 			got := runMainDispatch(t, style, mainCompletionArgs(style, "help", flag, "responses", "cr")...)
-			if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, "create") {
+			if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, "create") || strings.Contains(got.stdout, "setup") {
 				t.Errorf("%s lost supported legacy %q completion: %+v", style, flag, got)
 			}
 		}
@@ -135,10 +170,10 @@ func TestMainCompleteHelpGlobalMetadata(t *testing.T) {
 		t.Fatalf("root help failed: %+v", got)
 	}
 	for _, heading := range []string{
-		"--api-key KEY", "--admin-api-key KEY", "--organization ID", "--project ID", "--webhook-secret SECRET",
-		"--header, -H 'NAME: VALUE'", "--base-url URL", "--mtls-client-cert-file PATH", "--mtls-client-key-file PATH",
+		"--api-key=KEY", "--admin-api-key=KEY", "--organization=ID", "--project=ID", "--webhook-secret=SECRET",
+		"--header='NAME: VALUE', -H='NAME: VALUE'", "--base-url=URL", "--mtls-client-cert-file=PATH", "--mtls-client-key-file=PATH",
 	} {
-		if !strings.Contains(got.stdout, "\n   "+heading+"\n") {
+		if !strings.Contains(got.stdout, "\n    "+heading+"\n") {
 			t.Errorf("missing semantic flag heading %q", heading)
 		}
 	}
