@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.1](https://github.com/openai/openai-cli/compare/v1.41.0...v1.41.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **webhooks:** clear prompt marks and highlight focused events ([#611](https://github.com/openai/openai-cli/issues/611)) ([1139fa3](https://github.com/openai/openai-cli/commit/1139fa3c5a2d593834e412e21a5217f7d3717d7f))
+
 ## [1.41.0](https://github.com/openai/openai-cli/compare/v1.40.6...v1.41.0) (2026-10-24)
 
 
