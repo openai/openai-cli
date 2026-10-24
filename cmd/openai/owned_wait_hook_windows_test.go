@@ -108,25 +108,20 @@ func beginOwnedWaitTrace(t *testing.T, shell nativeShell) (func(bool, string), f
 			t.Logf("owned-wait recorder error_type=%T context=%v stdout_bytes=%d stderr_bytes=%d", recorderError, ctx.Err(), len(stdout.checkedText(t)), len(stderr.checkedText(t)))
 			cleanupOK := runOwnedWaitTool(t, helper, "Cleanup", script, directory, profile, 60*time.Second)
 			exportOK := false
+			xperfOK := false
 			if recorderError == nil && cleanupOK {
 				exportOK = runOwnedWaitTool(t, helper, "Export", script, directory, profile, 150*time.Second)
+				xperfOK = runOwnedWaitTool(t, helper, "ExportXperf", script, directory, profile, 120*time.Second)
 			}
 			reductionOK := false
 			if exportOK {
-				reduceCtx, stop := context.WithTimeout(context.Background(), 60*time.Second)
-				reduce := exec.CommandContext(reduceCtx, helper, "-test.run=^TestOwnedWaitReductionProcess$", "--", directory)
-				reduce.WaitDelay = 3 * time.Second
-				var out, diagnostic adminConsoleCapture
-				reduce.Stdout, reduce.Stderr = &out, &diagnostic
-				err := reduce.Run()
-				stop()
-				reductionOK = err == nil
-				t.Logf("owned-wait reduction error_type=%T stdout_bytes=%d stderr_bytes=%d", err, len(out.checkedText(t)), len(diagnostic.checkedText(t)))
+				reductionOK = runOwnedWaitAnalysis(t, helper, directory, "TestOwnedWaitReductionProcess")
 			}
-			for _, name := range []string{"wait-trace-ready.json", "wait-trace-request.json", "wait-trace-owner.json", "wait-trace-status.json", "wait-trace-input.json", "wait-cleanup-status.json", "wait-export-status.json", "wait-reduction.json"} {
+			xperfEvidenceOK := runOwnedWaitAnalysis(t, helper, directory, "TestOwnedWaitXperfEvidenceProcess")
+			for _, name := range []string{"wait-trace-ready.json", "wait-trace-request.json", "wait-trace-owner.json", "wait-trace-status.json", "wait-trace-input.json", "wait-cleanup-status.json", "wait-export-status.json", "wait-reduction.json", "wait-xperf-export-status.json", "wait-xperf-evidence.json"} {
 				emitOwnedWaitArtifact(t, directory, name)
 			}
-			if recorderError != nil || !cleanupOK || !exportOK || !reductionOK {
+			if recorderError != nil || !cleanupOK || !exportOK || !reductionOK || !xperfOK || !xperfEvidenceOK {
 				t.Error("owned-wait collection did not complete; inspect safe status artifacts")
 			}
 			// A fatal metadata startup failure must not discard the completed trace.
@@ -172,6 +167,19 @@ func beginOwnedWaitTrace(t *testing.T, shell nativeShell) (func(bool, string), f
 	}
 }
 
+func runOwnedWaitAnalysis(t *testing.T, helper, directory, testName string) bool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, helper, "-test.run=^"+testName+"$", "--", directory)
+	command.WaitDelay = 3 * time.Second
+	var stdout, stderr adminConsoleCapture
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err := command.Run()
+	t.Logf("owned-wait analysis=%s error_type=%T context=%v stdout_bytes=%d stderr_bytes=%d", testName, err, ctx.Err(), len(stdout.checkedText(t)), len(stderr.checkedText(t)))
+	return err == nil
+}
+
 func runOwnedWaitTool(t *testing.T, helper, mode, script, directory, profile string, timeout time.Duration) bool {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -191,7 +199,7 @@ func TestOwnedWaitToolProcess(t *testing.T) {
 		return
 	}
 	args := os.Args[separator+1:]
-	if len(args) != 4 || !slices.Contains([]string{"Record", "Export", "Cleanup"}, args[0]) {
+	if len(args) != 4 || !slices.Contains([]string{"Record", "Export", "ExportXperf", "Cleanup"}, args[0]) {
 		t.Fatal("invalid trace tool arguments")
 	}
 	ownWindowsTestProcessTree(t)

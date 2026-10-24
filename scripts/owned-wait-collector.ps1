@@ -1,7 +1,7 @@
-# Temporary experiment. Raw ETL, XML, and native-tool output remain private.
+# Temporary experiment. Raw ETL, XML, CSV, and native-tool output remain private.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Record', 'Export', 'Cleanup')][string]$Mode,
+    [Parameter(Mandatory)][ValidateSet('Record', 'Export', 'ExportXperf', 'Cleanup')][string]$Mode,
     [Parameter(Mandatory)][string]$OutputDirectory,
     [string]$ProfilePath
 )
@@ -77,7 +77,8 @@ function Tool-Identity([string]$Name, [string]$Path) {
 }
 
 function Invoke-Tool([string]$Label, [string]$Tool, [string[]]$Arguments,
-                     [int]$Seconds, [string]$WatchedPath = '', [long]$WatchedLimit = 0) {
+                     [int]$Seconds, [string]$WatchedPath = '', [long]$WatchedLimit = 0,
+                     [string]$SymbolDirectory = '') {
     if ($Label -notmatch '^[a-z0-9-]+$') { throw 'Invalid command label.' }
     $outPath = Join-Path $root ('private-' + $Label + '.stdout')
     $errPath = Join-Path $root ('private-' + $Label + '.stderr')
@@ -97,6 +98,10 @@ function Invoke-Tool([string]$Label, [string]$Tool, [string[]]$Arguments,
         $info.CreateNoWindow = $true
         $info.RedirectStandardOutput = $true
         $info.RedirectStandardError = $true
+        if ($SymbolDirectory) {
+            $info.Environment['_NT_SYMBOL_PATH'] = $SymbolDirectory
+            $info.Environment['_NT_ALT_SYMBOL_PATH'] = $SymbolDirectory
+        }
         foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
         $process = [Diagnostics.Process]::new()
         $process.StartInfo = $info
@@ -406,6 +411,7 @@ public static class OwnedWaitNative {
     exit 0
 }
 
+if ($Mode -eq 'Export') {
 try {
     $phase = 'verify_recording'
     $recording = Read-Record 'wait-trace-status.json'
@@ -434,5 +440,100 @@ try {
 finally {
     $status.finished_utc = [DateTime]::UtcNow.ToString('O')
     Save-Record 'wait-export-status.json' $status
+}
+if ($status.state -ne 'exported') { exit 1 }
+exit 0
+}
+
+# The completed XML export status above remains immutable if xperf fails.
+$commands = [Collections.Generic.List[object]]::new()
+$status = [ordered]@{
+    schema = 1; state = 'failed'; failure_phase = $null; error_type = $null; hresult = $null
+    native_error_code = $null; reason = $null; commands = $commands; tools = @()
+    started_utc = [DateTime]::UtcNow.ToString('O'); finished_utc = $null
+    completion = 'incomplete'; cleanup = 'unconfirmed'; trace_sha256 = $null
+    symbol_policy = 'child_local_empty'; symbols_requested = $false
+    help_validation = 'unavailable'; help_flags = $null
+    csv_bytes = 0; csv_sha256 = $null; csv_limit_bytes = 0
+    aggregate_limit_bytes = 512MB; capture_reserve_bytes = 2MB
+    owned_bytes_before_csv = 0; owned_bytes_after_csv = 0
+    budget_scope = 'new_csv_only_after_existing_owned_files'
+}
+$phase = 'prepare_xperf'
+try {
+    $phase = 'verify_xperf_recording'
+    $recording = Read-Record 'wait-trace-status.json'
+    $cleanup = Read-Record 'wait-cleanup-status.json'
+    if ($recording.state -ne 'recorded' -or $recording.cleanup -ne 'confirmed') {
+        Stop-Collection 'xperf_recording_incomplete'
+    }
+    if ($cleanup.state -ne 'cleaned' -or $cleanup.cleanup -ne 'confirmed' -or $cleanup.instance -ne $recording.instance) {
+        Stop-Collection 'xperf_cleanup_unconfirmed'
+    }
+    $status.cleanup = 'confirmed'
+    if ((File-Bytes $privateTrace) -le 0 -or (File-Bytes $privateTrace) -gt 256MB) {
+        Stop-Collection 'xperf_invalid_trace_bytes'
+    }
+    if ((File-Digest $privateTrace) -ne $recording.trace_sha256) { Stop-Collection 'xperf_trace_changed' }
+    $status.trace_sha256 = $recording.trace_sha256
+    $phase = 'prepare_xperf'
+    $privateCsv = Join-Path $root 'private-events.csv'
+    $symbolDirectory = Join-Path $root 'private-empty-symbols'
+    foreach ($name in @('private-events.csv', 'wait-xperf-export-status.json', 'private-empty-symbols')) {
+        if ([IO.File]::Exists((Join-Path $root $name)) -or [IO.Directory]::Exists((Join-Path $root $name))) {
+            Stop-Collection 'xperf_output_exists'
+        }
+    }
+    $null = [IO.Directory]::CreateDirectory($symbolDirectory)
+    $xperf = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Windows Performance Toolkit\xperf.exe'
+    $status.tools = @(Tool-Identity 'xperf' $xperf)
+    $phase = 'xperf_dumper_help'
+    $dumperHelp = Invoke-Tool 'xperf-dumper-help' $xperf @('-help', 'dumper') 15 -SymbolDirectory $symbolDirectory
+    $phase = 'xperf_format_help'
+    $formatHelp = Invoke-Tool 'xperf-format-help' $xperf @('-help', 'format') 15 -SymbolDirectory $symbolDirectory
+    $dumperComplete = $dumperHelp.exit_code -eq 0 -and -not $dumperHelp.timed_out -and -not $dumperHelp.byte_limit -and $null -eq $dumperHelp.error_type
+    $formatComplete = $formatHelp.exit_code -eq 0 -and -not $formatHelp.timed_out -and -not $formatHelp.byte_limit -and $null -eq $formatHelp.error_type
+    $dumperText = if ($dumperComplete) { Private-Text 'xperf-dumper-help' } else { '' }
+    $formatText = if ($formatComplete) { Private-Text 'xperf-format-help' } else { '' }
+    $status.help_flags = [ordered]@{
+        dumper_complete = $dumperComplete; format_complete = $formatComplete
+        stacktimeshifting = $dumperText -match '(?i)(?<![\w-])-stacktimeshifting(?![\w-])'
+        milliseconds = $formatText -match '(?i)\bmilliseconds\b'
+        microseconds = $formatText -match '(?i)\bmicroseconds\b'
+        nanoseconds = $formatText -match '(?i)\bnanoseconds\b'
+        seconds = $formatText -match '(?i)\bseconds\b'
+        trace_dump = $formatText -match '(?i)\btrace\s+dump\b'
+        dump_unit = 'unavailable'
+    }
+    $unit = [Text.RegularExpressions.Regex]::Match($formatText,
+        '(?im)\bevent\s+timestamps\s+in\s+the\s+xperf\s+trace\s+dump\s+are\s+always\s+presented\s+in\s+(milliseconds|microseconds|nanoseconds|seconds)\b')
+    if ($unit.Success) { $status.help_flags.dump_unit = $unit.Groups[1].Value.ToLowerInvariant() }
+    $status.help_validation = if ($dumperComplete -and $formatComplete) {
+        if ($status.help_flags.stacktimeshifting) { 'recognized_command_shape' } else { 'unrecognized' }
+    } else { 'unavailable' }
+    # Unrecognized help never becomes a semantic acceptance claim.
+    $phase = 'xperf_budget'
+    foreach ($path in [IO.Directory]::EnumerateFiles($root, '*', [IO.SearchOption]::AllDirectories)) {
+        $status.owned_bytes_before_csv += File-Bytes $path
+    }
+    $remaining = $status.aggregate_limit_bytes - $status.owned_bytes_before_csv - $status.capture_reserve_bytes
+    $status.csv_limit_bytes = [Math]::Max([long]0, [Math]::Min([long](256MB), [long]$remaining))
+    if ($status.csv_limit_bytes -le 0) { Stop-Collection 'xperf_budget_exhausted' }
+    $phase = 'xperf_csv_export'
+    $csvExport = Invoke-Tool 'xperf-csv-export' $xperf @('-i', $privateTrace, '-o', $privateCsv, '-a', 'dumper', '-stacktimeshifting') 45 $privateCsv $status.csv_limit_bytes -SymbolDirectory $symbolDirectory
+    $status.csv_bytes = File-Bytes $privateCsv
+    foreach ($path in [IO.Directory]::EnumerateFiles($root, '*', [IO.SearchOption]::AllDirectories)) {
+        $status.owned_bytes_after_csv += File-Bytes $path
+    }
+    Require-Success $csvExport
+    if ($status.csv_bytes -le 0) { Stop-Collection 'xperf_csv_empty' }
+    if ($status.owned_bytes_after_csv -gt $status.aggregate_limit_bytes) { Stop-Collection 'xperf_aggregate_limit' }
+    $status.csv_sha256 = File-Digest $privateCsv
+    $status.completion = 'complete'
+    $status.state = 'exported'
+} catch { Failure-Record $_ }
+finally {
+    $status.finished_utc = [DateTime]::UtcNow.ToString('O')
+    Save-Record 'wait-xperf-export-status.json' $status
 }
 if ($status.state -ne 'exported') { exit 1 }
