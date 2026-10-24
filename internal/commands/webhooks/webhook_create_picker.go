@@ -46,6 +46,7 @@ func runWebhookCreatePicker(ctx context.Context, input, output *os.File, events 
 	model.width, model.height = width, height
 	model.color = os.Getenv("NO_COLOR") == ""
 	model.dark = terminal.DarkBackground(os.Getenv("COLORFGBG"))
+	model.clearPromptMarks = os.Getenv("TERM_PROGRAM") == "Apple_Terminal"
 	// Parent cancellation must reach the model so Tea paints its final frame.
 	// Only a failed output write immediately stops the private program context.
 	programContext, stop := context.WithCancel(context.WithoutCancel(ctx))
@@ -172,6 +173,7 @@ type webhookCreatePicker struct {
 	confirmed, canceled  bool
 	color                bool
 	dark                 bool
+	clearPromptMarks     bool
 	ownedHeight          int
 	note                 string
 }
@@ -247,6 +249,21 @@ func (m *webhookCreatePicker) chooseCategory(index int) {
 }
 
 func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	model, command := m.update(message)
+	if key, ok := message.(tea.KeyPressMsg); ok && m.clearPromptMarks {
+		switch key.String() {
+		case "enter", "tab", "shift+tab", "ctrl+c", "ctrl+d":
+			// Terminal.app marks these keys as shell prompts even in raw mode.
+			// Request a repaint of owned rows before forwarding the next command.
+			// This includes unchanged input rows. Editable cursors
+			// stay below the first row, whose mark ED0 would preserve.
+			command = tea.Sequence(tea.ClearScreen, command)
+		}
+	}
+	return model, command
+}
+
+func (m *webhookCreatePicker) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if _, canceled := message.(webhookCreateCancelMsg); canceled {
 		m.canceled, m.confirmed = true, false
 		return m, tea.Quit
@@ -757,6 +774,10 @@ func (m *webhookCreatePicker) View() tea.View {
 			if emphasized {
 				checkbox = selected.Render(checkbox)
 			}
+			if marker == "›" {
+				rows = append(rows, checkbox+strong.Render(name))
+				continue
+			}
 			leaf := name
 			if dot := strings.LastIndex(name, "."); dot >= 0 {
 				leaf = name[dot+1:]
@@ -764,9 +785,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			} else {
 				name = ""
 			}
-			if marker == "›" {
-				leaf = strong.Render(leaf)
-			} else if emphasized {
+			if emphasized {
 				leaf = selected.Render(leaf)
 			}
 			row := checkbox + name + leaf

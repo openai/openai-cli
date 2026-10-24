@@ -22,6 +22,42 @@ func webhookCreatePaste(m *webhookCreatePicker, text string) {
 	m.Update(tea.PasteMsg{Content: text})
 }
 
+func TestWebhookCreatePickerRepaintsPromptMarkKeys(t *testing.T) {
+	for _, key := range []tea.KeyPressMsg{
+		{Code: tea.KeyEnter}, {Code: tea.KeyTab}, {Code: tea.KeyTab, Mod: tea.ModShift},
+		{Code: 'd', Mod: tea.ModCtrl},
+	} {
+		t.Run(key.String(), func(t *testing.T) {
+			m := newWebhookCreatePicker([]string{"response.completed"})
+			m.clearPromptMarks = true
+			_, command := m.Update(key)
+			require.NotNil(t, command)
+			require.IsType(t, tea.ClearScreen(), command())
+		})
+	}
+	for _, clear := range []bool{false, true} {
+		m := newWebhookCreatePicker([]string{"response.completed"})
+		m.clearPromptMarks = clear
+		_, command := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+		require.Nil(t, command, "ordinary typing retains incremental rendering")
+		require.Equal(t, "x", m.settings().name)
+	}
+}
+
+func TestWebhookCreatePickerTextCursorsStayBelowEraseOrigin(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {40, 16}, {36, 10}} {
+		for _, stage := range []int{0, 1, 2} {
+			m := newWebhookCreatePicker([]string{"response.completed"})
+			m.width, m.height, m.stage = size[0], size[1], stage
+			m.eventFocus = webhookCreateSearch
+			view := m.View()
+			require.NotNil(t, view.Cursor)
+			require.Greater(t, view.Cursor.Y, 0, "ED0 preserves marks on its first row")
+			require.False(t, view.AltScreen, "the form stays inline")
+		}
+	}
+}
+
 func webhookCreateReview(t *testing.T, m *webhookCreatePicker) {
 	t.Helper()
 	webhookCreateKey(m, tea.KeyEnter)

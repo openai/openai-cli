@@ -762,7 +762,7 @@ func TestMainWebhookWorkflowPTYBrowseEndpointsKeepsCreationDraft(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	got := runWebhookCreateWorkflowPTYMode(t, server, webhookCreateWorkflowPTYOptions{Browse: true})
+	got := runWebhookCreateWorkflowPTYMode(t, server, webhookCreateWorkflowPTYOptions{Browse: true, PromptMarks: true})
 	if got.code != 130 || catalogs.Load() != 1 || lists.Load() != 1 || creates.Load() != 0 {
 		t.Fatalf("endpoint browsing changed creation: %+v, catalogs=%d lists=%d creates=%d", got, catalogs.Load(), lists.Load(), creates.Load())
 	}
@@ -878,6 +878,48 @@ func TestMainWebhookWorkflowPTYBrowseEndpointsKeepsPartialResults(t *testing.T) 
 type webhookCreateWorkflowPTYOptions struct {
 	Confirm, Browse     bool
 	CancellationSignals string
+	PromptMarks         bool
+}
+
+func TestMainWebhookWorkflowPTYRepaintsApplePromptMarks(t *testing.T) {
+	var catalogs, mutations atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/webhook_event_types" {
+			catalogs.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"object":"list","data":["response.completed"]}`)
+			return
+		}
+		mutations.Add(1)
+		http.Error(w, "unexpected request", http.StatusBadRequest)
+	}))
+	t.Cleanup(server.Close)
+	got := runWebhookCreateWorkflowPTYMode(t, server, webhookCreateWorkflowPTYOptions{PromptMarks: true})
+	if got.code != 130 || catalogs.Load() != 1 || mutations.Load() != 0 {
+		t.Fatalf("repainting changed cancellation or requests: code=%d catalogs=%d mutations=%d", got.code, catalogs.Load(), mutations.Load())
+	}
+	if strings.Count(got.stdout, "Create webhook endpoint") < 4 || strings.Count(got.stdout, "\x1b[J") < 4 {
+		t.Fatalf("prompt-mark keys did not repaint unchanged form rows: %q", got.stdout)
+	}
+	for _, forbidden := range []string{"\x1b[2J", "\x1b[3J", "\x1b[?1049h"} {
+		if strings.Contains(got.stdout, forbidden) {
+			t.Fatalf("repainting cleared the screen or changed screen buffers: %q", forbidden)
+		}
+	}
+	if !strings.Contains(got.stdout, "Webhook creation canceled.") {
+		t.Fatal("repainting lost the cancellation result")
+	}
+}
+
+func TestMainWebhookWorkflowPTYAppleRepaintPreservesConfirmation(t *testing.T) {
+	server, catalogs, creates := webhookCreateFailureFixture(t, `{"object":"list","data":["response.completed"]}`, false)
+	got := runWebhookCreateWorkflowPTYMode(t, server, webhookCreateWorkflowPTYOptions{Confirm: true, PromptMarks: true})
+	if got.code != 0 || catalogs.Load() != 1 || creates.Load() != 1 {
+		t.Fatalf("repainting changed confirmed creation: %+v, catalogs=%d creates=%d", got, catalogs.Load(), creates.Load())
+	}
+	if !strings.Contains(got.stdout, "Create endpoint now?") {
+		t.Fatal("repainting lost explicit confirmation")
+	}
 }
 
 func runWebhookCreateWorkflowPTYMode(t *testing.T, server *httptest.Server, options webhookCreateWorkflowPTYOptions) mainDispatchResult {
@@ -929,6 +971,8 @@ env = {"PATH": "/usr/bin:/bin", "HOME": config["Work"], "XDG_CONFIG_HOME": confi
        "TERM": "xterm-256color", "NO_COLOR": "1", "FORCE_COLOR": "0", "LANG": "en_US.UTF-8",
        "GOMAXPROCS": "2", "OPENAI_CLI_MAIN_DISPATCH_PROCESS": "1",
        "OPENAI_API_KEY": "sk-fake-webhook-workflow", "OPENAI_BASE_URL": config["Endpoint"]}
+if config["PromptMarks"]:
+    env["TERM_PROGRAM"] = "Apple_Terminal"
 master, slave = pty.openpty()
 tty.setraw(slave)
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
@@ -938,6 +982,11 @@ process = None
 completed = False
 steps = [(b"\xe2\x80\xba Name", b"Synthetic receiver\x1b[Bhttps://example.com/webhook\x1b[B\x1b[B\x1b[B \r"),
          (b"Create endpoint now?", b"y\r\r\r")] if config["Confirm"] else []
+if config["PromptMarks"] and not config["Confirm"] and not config["Browse"]:
+    steps = [(b"\xe2\x80\xba Name", b"\x04"),
+             (b"Create webhook endpoint", b"\t"),
+             (b"Create webhook endpoint", b"\r"),
+             (b"Use lowercase https://", b"\x03")]
 if config["Browse"]:
     steps = [(b"\xe2\x80\xba Name", b"Draft receiver\x1b[Bhttps://example.invalid/draft\x1b[B\x1b[B\x1b[B\t\x1b[C\r"),
              (b"Synthetic first", b"\r"), (b"https://example.invalid/receiver", b"\x1b"),
