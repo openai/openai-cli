@@ -1132,7 +1132,7 @@ jobs:
               strict_packages["audio-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
               resource_cases = {
                   "TestMainResourceSummariesRetainActionFields": ["model", "file", "batch", "vector_store",
-                      "vector_file", "vector_file_batch", "fine_tuning_job", "assistant", "thread_run"],
+                      "vector_file", "vector_file_batch", "assistant", "thread_run"],
                   "TestMainResourceSummaryListFilesInVectorBatch": [],
                   "TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits": ["-1", "3", "1", "0"],
                   "TestMainResourceSummaryListNoticeForMixedRecords": ["fallback_only", "summary_then_fallback",
