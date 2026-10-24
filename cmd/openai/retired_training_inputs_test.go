@@ -123,9 +123,12 @@ func TestMainTrainingReferencesAreAbsentFromHelp(t *testing.T) {
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("full help %v = %+v", route, got)
 		}
+		// Startup can retain the test executable in a custom usage synopsis.
+		// Its temporary directory may contain the retired feature's name.
+		help := strings.ReplaceAll(got.stdout, os.Args[0], "openai")
 		for _, forbidden := range []string{"fine-tun", "fine_tun", "distillation", "vision fine"} {
-			if strings.Contains(strings.ToLower(got.stdout), forbidden) {
-				t.Errorf("help %v retains %q", route, forbidden)
+			if strings.Contains(strings.ToLower(help), forbidden) {
+				t.Errorf("help %v retains %q:\n%s", route, forbidden, help)
 			}
 		}
 		for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {

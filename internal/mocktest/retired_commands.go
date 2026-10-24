@@ -20,10 +20,14 @@ import (
 func testRetiredCommand(t *testing.T, input []byte, args []string) bool {
 	t.Helper()
 	retired := false
+	helpTopic := ""
 	for index, argument := range args {
 		if strings.HasPrefix(argument, "fine-tuning:") ||
 			(argument == "models" && index+1 < len(args) && args[index+1] == "delete") {
 			retired = true
+			if argument == "models" {
+				helpTopic = " models"
+			}
 			break
 		}
 	}
@@ -59,7 +63,7 @@ func testRetiredCommand(t *testing.T, input []byte, args []string) bool {
 	message := stderr.String()
 	if strings.HasPrefix(message, "Unknown command.") {
 		require.Equal(t, 3, exit.ExitCode())
-		require.Equal(t, "Unknown command. Run openai help to see commands.\n", message)
+		require.Equal(t, "Unknown command. Run openai help"+helpTopic+" to see commands.\n", message)
 	} else {
 		// Root flag validation precedes unknown-command dispatch. Removed
 		// operation flags therefore retain the ordinary local option error.
@@ -69,7 +73,7 @@ func testRetiredCommand(t *testing.T, input []byte, args []string) bool {
 			firstLine == "The --max-items option is not available for this command."
 		require.True(t, unknownOption, "unexpected rejection: %s", message)
 		require.Equal(t, 1, exit.ExitCode())
-		require.Equal(t, firstLine+"\nOptions and examples: openai --help\n", message)
+		require.Equal(t, firstLine+"\nOptions and examples: openai"+helpTopic+" --help\n", message)
 	}
 	require.Zero(t, requests.Load(), "retired command sent an API request")
 	return true
