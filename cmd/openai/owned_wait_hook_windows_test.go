@@ -130,10 +130,8 @@ func beginOwnedWaitTrace(t *testing.T, shell nativeShell) (func(bool, string), f
 				t.Error("owned-wait collection did not complete; inspect safe status artifacts")
 			}
 			// A fatal metadata startup failure must not discard the completed trace.
-			if exportOK {
-				captureOwnedWaitIdentity(t, shell, directory, filepath.Join(working, "..", "..", "scripts", "owned-module-identity.ps1"))
-				emitOwnedWaitArtifact(t, directory, "wait-module-identity.json")
-			}
+			captureOwnedWaitIdentity(t, shell, directory, filepath.Join(working, "..", "..", "scripts", "owned-module-identity.ps1"))
+			emitOwnedWaitArtifact(t, directory, "wait-module-identity.json")
 		})
 	}
 	// This also handles failure before the caller installs its deferred completion.

@@ -118,6 +118,8 @@ function Invoke-Tool([string]$Label, [string]$Tool, [string[]]$Arguments,
         if (-not $process.WaitForExit(5000)) { throw 'The owned native command did not exit.' }
         if (-not [Threading.Tasks.Task]::WaitAll($copies, 5000)) { throw 'The owned command output did not close.' }
         $stdout.Flush(); $stderr.Flush()
+        $stdout.Dispose(); $stdout = $null
+        $stderr.Dispose(); $stderr = $null
         $result.timed_out = $result.timed_out -or $watch.Elapsed.TotalSeconds -ge $Seconds
         $result.exit_code = $process.ExitCode
         $result.stdout_bytes = File-Bytes $outPath
