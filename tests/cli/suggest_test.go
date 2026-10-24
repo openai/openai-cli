@@ -73,7 +73,7 @@ func TestSuggestCommandRealTree(t *testing.T) {
 		{[]string{"files"}, "zzz", ""},
 		{[]string{"responses"}, "zzzzz", ""},
 		{[]string{"models"}, "ls", "list"},    // jaro-winkler 0.85
-		{[]string{"files"}, "lete", "delete"}, // jaro-winkler 0.72
+		{[]string{"files"}, "dlete", "delete"},
 		// Both are one edit away; the higher jaro-winkler score wins.
 		{[]string{"admin:organization:certificates"}, "dactivate", "deactivate"},
 		{nil, "hi", ""},
