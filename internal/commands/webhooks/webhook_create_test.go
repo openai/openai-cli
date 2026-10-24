@@ -154,6 +154,20 @@ func TestWebhookCreateCatalogKeepsUnknownOrdinaryFields(t *testing.T) {
 	require.Equal(t, []string{"new.event"}, events)
 }
 
+func TestWebhookCreateCatalogExcludesRetiredEvents(t *testing.T) {
+	events, err := parseWebhookCreateEvents([]byte(`{"object":"list","data":["fine_tuning.job.succeeded","response.completed","fine_tuning.future.event","future.event"],"future":true}`))
+	require.NoError(t, err)
+	require.Equal(t, []string{"response.completed", "future.event"}, events)
+	events, err = parseWebhookCreateEvents([]byte(`{"object":"list","data":["fine_tuning.job.failed"]}`))
+	require.Error(t, err)
+	require.Nil(t, events)
+	require.EqualError(t, err, "The available webhook events are not supported by the CLI. No endpoint was created. Use the Platform API directly for these events.")
+	events, err = parseWebhookCreateEvents([]byte(`{"object":"list","data":[]}`))
+	require.Error(t, err)
+	require.Nil(t, events)
+	require.EqualError(t, err, "No webhook event types are available for this project. "+webhookCreateCatalogRetry)
+}
+
 func TestWebhookCreateDiscoveryUsesProjectAndHeaderOptions(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test-webhook-synthetic")
 	t.Setenv("OPENAI_CUSTOM_HEADERS", "")

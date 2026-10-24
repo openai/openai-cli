@@ -96,16 +96,16 @@ func TestSynopsisPreservesAuthoredUsageAndSafeInvocation(t *testing.T) {
 }
 
 func TestSynopsisWrapsLongAlternativesBetweenCompleteTokens(t *testing.T) {
-	flag := &requestflag.Flag[string]{Name: "fine-tuned-model-checkpoint", PathParam: "fine_tuned_model_checkpoint", Required: true}
+	flag := &requestflag.Flag[string]{Name: "project-resource-identifier", PathParam: "project_resource_identifier", Required: true}
 	command := &cli.Command{Flags: []cli.Flag{flag}, Metadata: map[string]any{"help-positional-flags": []string{flag.Name}}}
-	command.Metadata["help-flag-labels"] = []FlagLabel{{Owner: command, Names: []string{flag.Name}, Label: "FINE_TUNED_MODEL_CHECKPOINT"}}
-	got := commandSynopsis(command, "openai checkpoints retrieve", "openai", 79)
+	command.Metadata["help-flag-labels"] = []FlagLabel{{Owner: command, Names: []string{flag.Name}, Label: "PROJECT_RESOURCE_IDENTIFIER"}}
+	got := commandSynopsis(command, "openai collections retrieve", "openai", 79)
 	for _, line := range strings.Split(got, "\n") {
 		if len(line) > 79 {
 			t.Fatalf("synopsis exceeds available width: %q", line)
 		}
 	}
-	if !strings.Contains(strings.Join(strings.Fields(got), " "), "[FINE_TUNED_MODEL_CHECKPOINT | --fine-tuned-model-checkpoint=FINE_TUNED_MODEL_CHECKPOINT]") {
+	if !strings.Contains(strings.Join(strings.Fields(got), " "), "[PROJECT_RESOURCE_IDENTIFIER | --project-resource-identifier=PROJECT_RESOURCE_IDENTIFIER]") {
 		t.Fatalf("synopsis changed positional alternatives: %s", got)
 	}
 }

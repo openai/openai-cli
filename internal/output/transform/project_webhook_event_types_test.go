@@ -29,6 +29,7 @@ func TestProjectWebhookEventTypesFallback(t *testing.T) {
 	for _, body := range []string{
 		`{}`, `null`, `[]`, `{"object":"list","data":["response.completed"]`,
 		`{"object":"list","data":["response.completed"],"has_more":false}`,
+		`{"object":"list","data":["fine_tuning.job.succeeded"],"future":true}`,
 		`{"object":"other","data":["response.completed"]}`,
 		`{"object":"list","data":[null]}`, `{"object":"list","data":false}`,
 		`{"object":"list","data":[],"data":["response.completed"]}`,
@@ -38,6 +39,22 @@ func TestProjectWebhookEventTypesFallback(t *testing.T) {
 		if err != nil || got.Raw != original.Raw {
 			t.Fatalf("fallback changed %q: %q, %v", body, got.Raw, err)
 		}
+	}
+}
+
+func TestProjectWebhookEventTypesExcludesRetiredEvents(t *testing.T) {
+	value := gjson.Parse(`{"object":"list","data":["fine_tuning.job.succeeded","response.completed","fine_tuning.future.event","future.event","custom.fine_tuning.job"]}`)
+	got, err := ProjectWebhookEventTypes(context.Background(), value)
+	if err != nil || got.Get("background_responses").Raw != `["response.completed"]` ||
+		got.Get("other").Raw != `["future.event","custom.fine_tuning.job"]` || got.Get("fine_tuning").Exists() {
+		t.Fatalf("retired event filtering lost supported events: %s, %v", got.Raw, err)
+	}
+	if value.Get("data.0").Str != "fine_tuning.job.succeeded" {
+		t.Fatal("readable projection changed the original response")
+	}
+	got, err = ProjectWebhookEventTypes(context.Background(), gjson.Parse(`{"object":"list","data":["fine_tuning.job.failed"]}`))
+	if err != nil || got.Str != "The available webhook events are not supported by the CLI." {
+		t.Fatalf("retired-only catalog: %q %v", got.Raw, err)
 	}
 }
 

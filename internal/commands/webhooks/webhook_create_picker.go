@@ -182,7 +182,7 @@ func newWebhookCreatePicker(events []string) *webhookCreatePicker {
 	m := &webhookCreatePicker{selected: map[string]bool{}, width: 80, height: 24, dark: true}
 	seen := map[string]bool{}
 	for _, event := range events {
-		if !seen[event] {
+		if !unavailableWebhookEvent(event) && !seen[event] {
 			m.events = append(m.events, event)
 			seen[event] = true
 		}
@@ -568,14 +568,14 @@ func validateWebhookCreateURL(value string) error {
 func webhookCreateEventGroup(event string) (int, string) {
 	for i, group := range []struct{ prefix, label string }{
 		{"agent.session.", "Agents"}, {"batch.", "Batches"}, {"response.", "Background responses"},
-		{"eval.run.", "Eval runs"}, {"fine_tuning.job.", "Fine-tuning"}, {"realtime.", "Realtime API"},
+		{"eval.run.", "Eval runs"}, {"realtime.", "Realtime API"},
 		{"video.", "Videos"}, {"safety.", "Safety"},
 	} {
 		if strings.HasPrefix(event, group.prefix) {
 			return i, group.label
 		}
 	}
-	return 8, "Other"
+	return 7, "Other"
 }
 
 func webhookCreateLine(text string) string {

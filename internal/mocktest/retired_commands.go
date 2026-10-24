@@ -20,8 +20,9 @@ import (
 func testRetiredCommand(t *testing.T, input []byte, args []string) bool {
 	t.Helper()
 	retired := false
-	for _, argument := range args {
-		if strings.HasPrefix(argument, "fine-tuning:") {
+	for index, argument := range args {
+		if strings.HasPrefix(argument, "fine-tuning:") ||
+			(argument == "models" && index+1 < len(args) && args[index+1] == "delete") {
 			retired = true
 			break
 		}

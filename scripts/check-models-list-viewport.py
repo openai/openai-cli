@@ -61,7 +61,7 @@ def main():
     navigation.ASCIINEMA = args.asciinema
     binary, output = pathlib.Path(args.binary).resolve(), pathlib.Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    items = [{"id": f"synthetic-finetune-model-for-viewport-regression-with-long-readable-id-{i:05d}",
+    items = [{"id": f"synthetic-standard-model-for-viewport-regression-with-long-readable-id-{i:05d}",
               "object": "model", "created": 1700000000, "owned_by": "synthetic-owner",
               "shutdown_date": "2030-01-01" if i % 2 else None} for i in range(args.count)]
     if args.table:

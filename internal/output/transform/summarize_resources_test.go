@@ -20,8 +20,8 @@ func TestSummaryManagementResources(t *testing.T) {
 		},
 		{
 			"files",
-			`{"object":"file","id":"file_example","bytes":9007199254740993,"created_at":123,"filename":"training data.jsonl","purpose":"fine-tune","status":"processed","expires_at":null,"status_details":null}`,
-			`{"id":"file_example","filename":"training data.jsonl","purpose":"fine-tune","bytes":9007199254740993,"status":"processed"}`,
+			`{"object":"file","id":"file_example","bytes":9007199254740993,"created_at":123,"filename":"research data.jsonl","purpose":"user_data","status":"processed","expires_at":null,"status_details":null}`,
+			`{"id":"file_example","filename":"research data.jsonl","purpose":"user_data","bytes":9007199254740993,"status":"processed"}`,
 		},
 		{
 			"batches",

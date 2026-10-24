@@ -64,14 +64,14 @@ func serve(w http.ResponseWriter, r *http.Request) {
 		return map[string]any{"id": id, "object": "model", "created": 1704067200, "owned_by": "demo-project"}
 	}
 	files := []map[string]any{
-		{"id": "file_training", "object": "file", "created_at": 1704067200, "filename": "training.jsonl", "purpose": "fine-tune", "bytes": 8192, "status": "processed"},
+		{"id": "file_batch", "object": "file", "created_at": 1704067200, "filename": "requests.jsonl", "purpose": "batch", "bytes": 8192, "status": "processed"},
 		{"id": "file_reference", "object": "file", "created_at": 1704067100, "filename": "reference.pdf", "purpose": "assistants", "bytes": 4096, "status": "processed"},
 	}
 	var response any
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/files":
-		response = map[string]any{"object": "list", "data": files, "has_more": false, "first_id": "file_training", "last_id": "file_reference"}
-	case r.Method == http.MethodGet && r.URL.Path == "/v1/files/file_training":
+		response = map[string]any{"object": "list", "data": files, "has_more": false, "first_id": "file_batch", "last_id": "file_reference"}
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/files/file_batch":
 		response = files[0]
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/images/generations":
 		serveImageGeneration(w, r)

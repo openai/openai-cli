@@ -1,21 +1,17 @@
 # Fine-tuning command removal
 
 The CLI no longer exposes fine-tuning commands, including their colon aliases.
-This removes jobs, events, checkpoints, checkpoint permissions, and alpha graders.
+This removes jobs, events, checkpoints, checkpoint permissions, alpha graders, and `models delete`.
 Existing scripts must call the Platform API directly or use an OpenAI SDK.
 
-For example, the Python SDK reads the API key from `OPENAI_API_KEY`:
-
-```python
-from openai import OpenAI
-
-page = OpenAI().fine_tuning.jobs.list(limit=20)
-for job in page.data:
-    print(job.id, job.status)
-```
+File uploads and file filters reject `fine-tune`, `fine-tune-results`, and `vision` purposes.
+Webhook creation, subscription updates, and tests reject `fine_tuning.*` events.
+Guided choices, help, completions, and command suggestions omit these features.
+The `store` option remains available for stored Chat Completions and evals.
 
 This CLI change does not change API access or model availability.
 The [official fine-tuning notice](https://developers.openai.com/api/docs/deprecations#update-to-openais-self-serve-fine-tuning)
 defines eligibility restrictions and retirement dates.
 
-Files, models, inference, usage records, and webhook event data remain available through their existing commands.
+General file operations, model listing, model retrieval, inference, usage records, and existing webhook records remain available.
+API responses retain their original fields, including historical records.
