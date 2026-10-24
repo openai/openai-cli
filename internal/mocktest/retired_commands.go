@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -61,11 +62,11 @@ func testRetiredCommand(t *testing.T, input []byte, args []string) bool {
 		// operation flags therefore retain the ordinary local option error.
 		firstLine, _, _ := strings.Cut(message, "\n")
 		unknownOption := firstLine == "An option is not recognized." ||
-			(strings.HasPrefix(firstLine, "The --") && strings.HasSuffix(firstLine, " option is not available for this command."))
+			firstLine == "The --model option is not available for this command." ||
+			firstLine == "The --max-items option is not available for this command."
 		require.True(t, unknownOption, "unexpected rejection: %s", message)
 		require.Equal(t, 1, exit.ExitCode())
-		require.Contains(t, message, "Options and examples:")
-		require.True(t, strings.HasSuffix(message, " --help\n"), "expected root help recovery: %s", message)
+		require.Equal(t, firstLine+"\nOptions and examples: "+filepath.Base(binary)+" --help\n", message)
 	}
 	require.Zero(t, requests.Load(), "retired command sent an API request")
 	return true
