@@ -155,7 +155,7 @@ func TestMainDebugLiveAudioPreservesWebSocket(t *testing.T) {
 				} else {
 					assertDebugTimingStage(t, log, 1, "response headers received", "101 Switching Protocols")
 				}
-				assertDebugCapturePrivate(t, log, "synthetic-private-input", "synthetic-private-output", "AQIDBA==", base64.StdEncoding.EncodeToString(pcm))
+				assertDebugCapturePrivate(t, log, "synthetic-private-input", "synthetic-private-output", "AQIDBA==", base64.StdEncoding.EncodeToString(pcm[:12]))
 			})
 		}
 	}
