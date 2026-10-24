@@ -20,7 +20,6 @@ unset OPENAI_API_KEY
 printf '\033[2J\033[H%s\n\n' "$DEMO_SCENE_LABEL"
 printf '$ openai fine-tuning --help\n\n'
 if openai fine-tuning --help; then demo_status=0; else demo_status=$?; fi
-printf '\nExit: %s\n' "$demo_status"
 sleep 3
 exit "$demo_status"
 SCENE
