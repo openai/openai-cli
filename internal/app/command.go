@@ -30,6 +30,7 @@ func ConfigureCommand(root *cli.Command) {
 		return
 	}
 	root.Metadata[configuredCommandMetadata] = true
+	root.Flags = append(root.Flags, debugCaptureFlags()...)
 	configureCertificateCompatibility(root)
 	configureAudioVoices(root)
 	requestconfig.ConfigureRootFlags(root)
@@ -68,6 +69,9 @@ func ConfigureCommand(root *cli.Command) {
 	root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
 	previousBefore := root.Before
 	root.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
+		if _, err := debugCaptureOptions(command); err != nil {
+			return ctx, err
+		}
 		if previousBefore != nil {
 			var err error
 			ctx, err = previousBefore(ctx, command)

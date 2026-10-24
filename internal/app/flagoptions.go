@@ -50,10 +50,15 @@ func flagOptionsWithStdin(
 	stdin io.Reader,
 	observeJSON ...func([]byte),
 ) (options []option.RequestOption, err error) {
+	captureOptions, err := debugCaptureOptions(cmd)
+	if err != nil {
+		return nil, err
+	}
 	if prepared, ok, err := images.ConsumeSavingRequest(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin); ok {
 		return prepared, err
 	}
 	hooks := requestconfig.PreparationHooks{
+		DebugCapture:        captureOptions,
 		PreflightMultipart:  func(body map[string]any) error { return audio.PreflightVoiceBody(cmd, body) },
 		ValidateCredentials: func() error { return admin.CheckCredentials(cmd) },
 		ResolvedJSONOptions: func(parameters map[string]any, headers http.Header, body []byte) []option.RequestOption {

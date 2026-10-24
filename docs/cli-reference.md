@@ -29,7 +29,10 @@ Run `openai --help` for the full set of global options.
 - `--mtls-client-cert-file` (can also be set with `OPENAI_MTLS_CLIENT_CERT_FILE` env var)
 - `--mtls-client-key-file` (can also be set with `OPENAI_MTLS_CLIENT_KEY_FILE` env var)
 - `--help` - Show command line usage
-- `--debug` - Enable debug logging. This includes HTTP request/response details and bodies; do not share debug logs if they may contain sensitive payloads.
+- `--debug` - Log redacted HTTP headers and per-attempt timing to stderr. Bodies are omitted by default.
+- `--debug-body` - Add bounded, redacted JSON request and response previews. Requires `--debug`.
+- `--debug-sse`, `--debug-event-timing` - Add redacted SSE frame previews and observed data-frame timing. Requires `--debug`.
+- `--debug-max-bytes`, `--debug-max-events` - Bound capture diagnostics without limiting API payloads. See [HTTP debugging](debugging.md).
 - `--version`, `-v` - Show the CLI version
 - `--base-url` - Use a custom API backend URL. HTTPS is required except for
   `localhost` or literal loopback IP addresses such as `127.0.0.1` and `::1`.

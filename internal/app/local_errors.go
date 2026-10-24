@@ -52,6 +52,7 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	var projectAPIKeyUpdateFailure *projectAPIKeyUpdateError
 	var voiceTypeFailure *audio.VoiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
+	var debugCaptureFailure *debugCaptureOptionError
 	var adminCredentialsFailure *admin.CredentialsError
 	var adminSetupFailure *admin.SetupError
 	var utilityFailure *localcommands.LocalError
@@ -79,6 +80,8 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 			return imageFailure.ReadableMessage(root, output...)
 		}
 		return "Request canceled."
+	case errors.As(failure, &debugCaptureFailure):
+		return debugCaptureFailure.Error()
 	case errors.As(failure, &webhookFailure):
 		return webhookFailure.Error()
 	case errors.As(failure, &utilityFailure):

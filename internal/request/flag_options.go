@@ -21,6 +21,7 @@ import (
 // PreparationHooks keeps feature validation and multipart specialization with
 // assembly while shared request code owns input precedence and upload cleanup.
 type PreparationHooks struct {
+	DebugCapture        debugmiddleware.CaptureOptions
 	PreflightMultipart  func(map[string]any) error
 	ValidateCredentials func() error
 	// ResolvedJSONOptions inspects finalized inputs before JSON observers run.
@@ -80,7 +81,7 @@ func FlagOptions(
 				sensitiveHeaders = append(sensitiveHeaders, strings.TrimSpace(name))
 			}
 		}
-		options = append(options, option.WithMiddleware(debugmiddleware.NewRequestLogger(sensitiveHeaders...).Middleware()))
+		options = append(options, option.WithMiddleware(debugmiddleware.NewRequestLoggerWithOptions(hooks.DebugCapture, sensitiveHeaders...).Middleware()))
 	}
 
 	requestContents := requestflag.ExtractRequestContents(cmd)

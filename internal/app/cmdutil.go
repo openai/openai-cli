@@ -21,6 +21,7 @@ import (
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/commands/webhooks"
+	"github.com/openai/openai-cli/internal/debugmiddleware"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
@@ -52,6 +53,7 @@ func isTerminal(w io.Writer) bool { return terminal.IsWriterTerminal(w) }
 //
 // Takes in a stdout reference so we can test this function without overriding os.Stdout in tests.
 func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (message string, err error) {
+	finishTiming := debugmiddleware.DeferResponseBodyTiming(response)
 	body := &clioutput.DownloadResponseBody{ReadCloser: response.Body}
 	copyResponse := *response
 	copyResponse.Body = body
@@ -71,6 +73,7 @@ func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile stri
 				err = errors.Join(err, closeErr)
 			}
 		}
+		finishTiming()
 		if err != nil {
 			message = ""
 		}

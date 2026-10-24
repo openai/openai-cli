@@ -187,6 +187,10 @@ details, or `--transform-error` to extract error fields. Explicit `--format json
 them; `--format-error text` restores summaries. API error details and `--debug`
 logs can contain sensitive data: sanitize them before sharing.
 
+`--debug` adds per-attempt HTTP timing. Add `--debug-body` for redacted JSON
+previews or `--debug-sse --debug-event-timing` for bounded stream diagnostics.
+See [HTTP debugging](docs/debugging.md) for capture limits and timing boundaries.
+
 Check the command's exit status before using redirected results; a failed request
 can leave an incomplete output file. See [reading command results](docs/readable-output.md)
 for list formats, streaming, binary downloads, and error behavior.
