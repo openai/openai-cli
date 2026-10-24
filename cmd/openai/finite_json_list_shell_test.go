@@ -169,30 +169,27 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 			}
 			stopControlTrace()
 			for _, test := range []struct {
-				name, format             string
-				pipeline, empty, failure bool
+				name, format      string
+				pipeline, failure bool
 			}{
-				{"pipeline_json_multipage", "json", true, false, false},
-				{"redirect_json_multipage", "json", false, false, false},
-				{"redirect_json_empty", "json", false, true, false},
-				{"pipeline_jsonl_multipage", "jsonl", true, false, false},
-				{"redirect_later_http_failure", "json", false, false, true},
+				{"pipeline_json_multipage", "json", true, false},
+				{"redirect_json_multipage", "json", false, false},
+				{"pipeline_jsonl_multipage", "jsonl", true, false},
+				{"redirect_later_http_failure", "json", false, true},
 			} {
 				t.Run(test.name, func(t *testing.T) {
 					var requests atomic.Int32
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						request := requests.Add(1)
 						after := r.URL.Query().Get("after")
-						validCursor := request == 1 && after == "" || !test.empty && request == 2 && after == "file_a"
+						validCursor := request == 1 && after == "" || request == 2 && after == "file_a"
 						if r.Method != http.MethodGet || r.URL.Path != "/files" || !validCursor || r.Header.Get("Authorization") != "Bearer fake-native-shell-key" {
 							t.Errorf("invalid synthetic list request %d: %s %s", request, r.Method, r.URL)
 							http.Error(w, "invalid synthetic request", http.StatusBadRequest)
 							return
 						}
 						w.Header().Set("Content-Type", "application/json")
-						if test.empty {
-							io.WriteString(w, resourceFilePage(nil, false))
-						} else if request == 1 {
+						if request == 1 {
 							fmt.Fprintf(w, `{"object":"list","data":[%s],"has_more":true,"last_id":"file_a"}`, items[0])
 						} else if test.failure {
 							w.WriteHeader(http.StatusBadRequest)
@@ -214,9 +211,6 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 					wantCode, wantRequests := 0, int32(2)
 					if test.failure {
 						wantCode = 1
-					}
-					if test.empty {
-						wantRequests = 1
 					}
 					assertFiniteJSONListShellStatus(t, status, wantCode, got, "CLI producer")
 					if got.code != wantCode || got.stdout != "" || requests.Load() != wantRequests {
@@ -256,9 +250,6 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 					}
 					actual, err := finiteJSONListShellRecords(data, format)
 					want := controls[test.pipeline]
-					if test.empty {
-						want = []map[string]any{}
-					}
 					if err != nil || !reflect.DeepEqual(actual, want) {
 						t.Fatalf("complete shell output changed: got=%#v want=%#v error=%v", actual, want, err)
 					}

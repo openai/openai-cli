@@ -2,6 +2,7 @@ package main
 
 // Temporary xperf evidence reader. It does not accept causal attribution.
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/csv"
@@ -65,16 +66,48 @@ type xperfImage struct {
 }
 
 type xperfCSVRejection struct {
-	Ordinal    int    `json:"record_ordinal"`
-	Offset     int64  `json:"input_offset"`
-	ColumnName string `json:"declared_column,omitempty"`
-	Category   string `json:"category"`
-	Pass       string `json:"pass"`
-	StartLine  int    `json:"start_line"`
-	Line       int    `json:"line"`
-	Column     int    `json:"column"`
-	Fields     int    `json:"partial_field_count"`
-	Kind       string `json:"allowlisted_event_kind,omitempty"`
+	Framing    xperfCSVFraming `json:"framing"`
+	Ordinal    int             `json:"record_ordinal"`
+	Offset     int64           `json:"input_offset"`
+	ColumnName string          `json:"declared_column,omitempty"`
+	Category   string          `json:"category"`
+	Pass       string          `json:"pass"`
+	StartLine  int             `json:"start_line"`
+	Line       int             `json:"line"`
+	Column     int             `json:"column"`
+	Fields     int             `json:"partial_field_count"`
+	Kind       string          `json:"allowlisted_event_kind,omitempty"`
+}
+
+type xperfCSVFraming struct {
+	HeaderState    string        `json:"header_state"`
+	BeginRecord    int           `json:"begin_header_record"`
+	EndRecord      int           `json:"end_header_record"`
+	PreviousOffset int64         `json:"previous_record_offset"`
+	FirstCell      string        `json:"first_cell_category"`
+	Shape          xperfCSVShape `json:"shape"`
+}
+
+// The snapshot can differ from parsed bytes after an in-place rewrite.
+// These fields describe diagnostic byte structure, not verified parser input.
+type xperfCSVShape struct {
+	State                string   `json:"state"`
+	SnapshotBasis        string   `json:"snapshot_basis"`
+	ParserBytesVerified  bool     `json:"parser_bytes_verified"`
+	RecordBytes          int64    `json:"record_bytes"`
+	SliceBytes           int      `json:"slice_bytes"`
+	QuoteOffsets         []int    `json:"quote_byte_offsets"`
+	CommaOffsets         []int    `json:"comma_byte_offsets"`
+	Quotes               int      `json:"quote_count"`
+	Commas               int      `json:"comma_count"`
+	AdjacentQuotes       int      `json:"adjacent_quote_pairs"`
+	BackslashQuotes      int      `json:"backslash_quote_pairs"`
+	LineFeeds            int      `json:"line_feed_count"`
+	CarriageReturns      int      `json:"carriage_return_count"`
+	PositionsTruncated   bool     `json:"positions_truncated"`
+	ErrorPosition        string   `json:"error_position_state"`
+	ErrorOffset          *int     `json:"error_byte_offset,omitempty"`
+	ErrorAdjacentClasses []string `json:"before_at_after_coordinate_classes,omitempty"`
 }
 
 type xperfEvidence struct {
@@ -339,8 +372,13 @@ func (r *xperfReader) header(kind string, fields []string) error {
 	return nil
 }
 
-func (r *xperfReader) csvRejection(err error, cells []string, discovery bool, ordinal int, offset int64) {
+func (r *xperfReader) csvRejection(err error, cells []string, discovery bool, ordinal int, offset int64, framing xperfCSVFraming, file io.Reader) {
 	rejection := &xperfCSVRejection{Category: "other_reader_error", Pass: "observation", Fields: len(cells), Ordinal: ordinal, Offset: offset}
+	framing.FirstCell = "unavailable"
+	framing.Shape.State = "deadline"
+	if r.ctx.Err() == nil {
+		framing.Shape = xperfCSVShapeAt(file, framing.PreviousOffset, offset, err)
+	}
 	if discovery {
 		rejection.Pass = "discovery"
 	}
@@ -364,7 +402,17 @@ func (r *xperfReader) csvRejection(err error, cells []string, discovery bool, or
 	}
 	if len(cells) > 0 {
 		kind := strings.TrimSpace(strings.TrimPrefix(cells[0], "\ufeff"))
+		framing.FirstCell = "unknown"
+		switch {
+		case kind == "BeginHeader":
+			framing.FirstCell = "begin_header"
+		case kind == "EndHeader":
+			framing.FirstCell = "end_header"
+		case strings.HasPrefix(kind, "OS Version:"):
+			framing.FirstCell = "os_version_prefix"
+		}
 		if xperfKind(kind) {
+			framing.FirstCell = "allowlisted_event"
 			rejection.Kind = kind
 			if index, exists := r.index[kind]; exists {
 				schema := r.result.Schemas[index]
@@ -375,7 +423,122 @@ func (r *xperfReader) csvRejection(err error, cells []string, discovery bool, or
 			}
 		}
 	}
+	rejection.Framing = framing
 	r.result.CSVRejection = rejection
+}
+
+func xperfCSVShapeAt(file io.Reader, previous, current int64, failure error) xperfCSVShape {
+	shape := xperfCSVShape{State: "not_parse_error", SnapshotBasis: "none", ErrorPosition: "unavailable"}
+	var parse *csv.ParseError
+	if !errors.As(failure, &parse) {
+		return shape
+	}
+	if previous < 0 || current <= previous || current > xperfCSVLimit+1 {
+		shape.State = "invalid_range"
+		return shape
+	}
+	shape.RecordBytes = current - previous
+	source, ok := file.(io.ReaderAt)
+	if !ok {
+		shape.State = "reader_at_unavailable"
+		return shape
+	}
+	shape.SnapshotBasis = "same_handle_after_rejection"
+	const sliceLimit = 4096
+	data := make([]byte, min(shape.RecordBytes, sliceLimit))
+	n, err := source.ReadAt(data, previous)
+	if n != len(data) || err != nil {
+		shape.State = "read_failed"
+		return shape
+	}
+	shape.State = "observed"
+	shape.SliceBytes = len(data)
+	if shape.RecordBytes > sliceLimit {
+		shape.State = "clipped"
+	}
+	for offset, value := range data {
+		switch value {
+		case '"':
+			shape.Quotes++
+			if len(shape.QuoteOffsets) < 64 {
+				shape.QuoteOffsets = append(shape.QuoteOffsets, offset)
+			} else {
+				shape.PositionsTruncated = true
+			}
+			if offset > 0 && data[offset-1] == '"' {
+				shape.AdjacentQuotes++
+			}
+			if offset > 0 && data[offset-1] == '\\' {
+				shape.BackslashQuotes++
+			}
+		case ',':
+			shape.Commas++
+			if len(shape.CommaOffsets) < 64 {
+				shape.CommaOffsets = append(shape.CommaOffsets, offset)
+			} else {
+				shape.PositionsTruncated = true
+			}
+		case '\n':
+			shape.LineFeeds++
+		case '\r':
+			shape.CarriageReturns++
+		}
+	}
+	if parse.StartLine <= 0 || parse.Line < parse.StartLine || parse.Column <= 0 {
+		return shape
+	}
+	// InputOffset precedes empty lines that encoding/csv skips before a record.
+	position := 0
+	for position < len(data) {
+		if data[position] == '\n' {
+			position++
+		} else if position+1 < len(data) && data[position] == '\r' && data[position+1] == '\n' {
+			position += 2
+		} else {
+			break
+		}
+	}
+	for line := parse.StartLine; line < parse.Line; line++ {
+		next := bytes.IndexByte(data[position:], '\n')
+		if next < 0 {
+			shape.ErrorPosition = "outside_slice"
+			return shape
+		}
+		position += next + 1
+	}
+	position += parse.Column - 1
+	if position > len(data) || (position == len(data) && shape.State == "clipped") {
+		shape.ErrorPosition = "outside_slice"
+		return shape
+	}
+	shape.ErrorPosition = "mapped_candidate"
+	shape.ErrorOffset = &position
+	for _, offset := range []int{position - 1, position, position + 1} {
+		shape.ErrorAdjacentClasses = append(shape.ErrorAdjacentClasses, xperfCSVByteClass(data, offset))
+	}
+	return shape
+}
+
+func xperfCSVByteClass(data []byte, offset int) string {
+	if offset < 0 || offset >= len(data) {
+		return "boundary"
+	}
+	switch data[offset] {
+	case '"':
+		return "quote"
+	case ',':
+		return "comma"
+	case '\\':
+		return "backslash"
+	case ' ', '\t':
+		return "space"
+	case '\r':
+		return "carriage_return"
+	case '\n':
+		return "line_feed"
+	default:
+		return "other"
+	}
 }
 
 func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
@@ -388,9 +551,11 @@ func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
 	row := 0
 	inHeader := false
 	headerEnded := false
+	framing := xperfCSVFraming{HeaderState: "before"}
 	for {
+		framing.PreviousOffset = parser.InputOffset()
 		if err := r.ctx.Err(); err != nil {
-			r.csvRejection(err, nil, discovery, row+1, parser.InputOffset())
+			r.csvRejection(err, nil, discovery, row+1, parser.InputOffset(), framing, file)
 			return "", errors.New("csv_deadline")
 		}
 		budget.remaining = 128 << 10
@@ -402,7 +567,7 @@ func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
 			break
 		}
 		if err != nil {
-			r.csvRejection(err, cells, discovery, row+1, parser.InputOffset())
+			r.csvRejection(err, cells, discovery, row+1, parser.InputOffset(), framing, file)
 			return "", errors.New("csv_syntax")
 		}
 		row++
@@ -424,6 +589,8 @@ func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
 				return "", errors.New("header_section_order")
 			}
 			inHeader = true
+			framing.HeaderState = "inside"
+			framing.BeginRecord = row
 			continue
 		}
 		if kind == "EndHeader" && len(cells) == 1 {
@@ -432,6 +599,8 @@ func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
 			}
 			inHeader = false
 			headerEnded = true
+			framing.HeaderState = "after"
+			framing.EndRecord = row
 			continue
 		}
 		if kind == "" {

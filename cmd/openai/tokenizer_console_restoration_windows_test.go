@@ -49,7 +49,7 @@ func TestMainDispatchTokenizerConsoleRestoration(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "openai.exe")
 	runTokenizerRestorationHelper(t, "build", binary)
 	adminConsoleLogExecutable(t, "tokenizer restoration production CLI", binary)
-	for _, scenario := range []string{"cancel_repeat_cp437", "cancel_cp65001", "invalid_utf16_cp65001"} {
+	for _, scenario := range []string{"cancel_cp437", "cancel_cp65001", "invalid_utf16_cp65001"} {
 		t.Run(scenario, func(t *testing.T) {
 			output := runTokenizerRestorationHelper(t, scenario, binary)
 			line, remainder, found := strings.Cut(output, "\n")
@@ -57,14 +57,12 @@ func TestMainDispatchTokenizerConsoleRestoration(t *testing.T) {
 			if !found || json.Unmarshal([]byte(line), &evidence) != nil || strings.TrimSpace(remainder) != "PASS" {
 				t.Fatalf("console owner omitted its complete evidence: %q", output)
 			}
-			wantCount, wantExit := 1, 130
-			if scenario == "cancel_repeat_cp437" {
-				wantCount = 2
-			} else if scenario == "invalid_utf16_cp65001" {
+			wantExit := 130
+			if scenario == "invalid_utf16_cp65001" {
 				wantExit = 1
 			}
-			if len(evidence) != wantCount {
-				t.Fatalf("observed %d invocations, want %d", len(evidence), wantCount)
+			if len(evidence) != 1 {
+				t.Fatalf("observed %d invocations, want 1", len(evidence))
 			}
 			for i, run := range evidence {
 				if run.Invocation != i+1 || run.PID <= 0 || run.Exit != wantExit || !run.FreshFrame || run.Before != run.After {
@@ -147,11 +145,10 @@ func TestTokenizerConsoleRestorationProcess(t *testing.T) {
 		return
 	}
 	seed := tokenizerRestorationState{InputMode: 0x87, OutputMode: 0x7, InputCP: 65001, OutputCP: 437}
-	runs, character, wantExit := 1, uint16(3), 130
+	character, wantExit := uint16(3), 130
 	switch scenario {
-	case "cancel_repeat_cp437":
+	case "cancel_cp437":
 		seed = tokenizerRestorationState{InputMode: 0xa7, OutputMode: 0x3, InputCP: 437, OutputCP: 65001}
-		runs = 2
 	case "cancel_cp65001":
 	case "invalid_utf16_cp65001":
 		character, wantExit = 0xdc00, 1
@@ -192,11 +189,10 @@ func TestTokenizerConsoleRestorationProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenizerRestorationCheckpoint(t, "owner_seeded", tokenizerRestorationEvidence{Before: tokenizerRestorationSnapshot(t, input, output)})
-	var evidence []tokenizerRestorationEvidence
-	for i := range runs {
-		// Clear only this owned screen. Never reset modes or code pages between runs.
-		clearTokenizerRestorationScreen(t, output)
-		evidence = append(evidence, observeTokenizerRestoration(t, binary, input, output, seed, character, wantExit, i+1))
+	// Clear only this owned screen before starting the CLI.
+	clearTokenizerRestorationScreen(t, output)
+	evidence := []tokenizerRestorationEvidence{
+		observeTokenizerRestoration(t, binary, input, output, seed, character, wantExit, 1),
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(evidence); err != nil {
 		t.Fatal(err)

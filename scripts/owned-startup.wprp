@@ -14,9 +14,7 @@
         <Keyword Value="ReadyThread" Strict="true"/>
       </Keywords>
       <Stacks>
-        <Stack Value="SampledProfile"/>
         <Stack Value="CSwitch"/>
-        <Stack Value="ReadyThread"/>
       </Stacks>
     </SystemProvider>
     <Profile Id="OwnedStartup.Verbose.Memory" Name="OwnedStartup"
