@@ -15,7 +15,7 @@ import (
 const purposeContextMetadata = "openai-file-purpose-context"
 
 // RequestInput borrows stdin without closing it or changing its descriptor state.
-// Scalar inspection must stop when the selected file command is canceled.
+// Scalar inspection uses the shared platform-specific cancellation behavior.
 func RequestInput(command *cli.Command, reader io.Reader) io.Reader {
 	ctx, _ := command.Metadata[purposeContextMetadata].(context.Context)
 	file, ok := reader.(*os.File)
