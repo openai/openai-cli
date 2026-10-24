@@ -66,17 +66,18 @@ type xperfImage struct {
 }
 
 type xperfCSVRejection struct {
-	Framing    xperfCSVFraming `json:"framing"`
-	Ordinal    int             `json:"record_ordinal"`
-	Offset     int64           `json:"input_offset"`
-	ColumnName string          `json:"declared_column,omitempty"`
-	Category   string          `json:"category"`
-	Pass       string          `json:"pass"`
-	StartLine  int             `json:"start_line"`
-	Line       int             `json:"line"`
-	Column     int             `json:"column"`
-	Fields     int             `json:"partial_field_count"`
-	Kind       string          `json:"allowlisted_event_kind,omitempty"`
+	Framing    xperfCSVFraming             `json:"framing"`
+	Input      xperfCSVInputClassification `json:"parser_input"`
+	Ordinal    int                         `json:"record_ordinal"`
+	Offset     int64                       `json:"input_offset"`
+	ColumnName string                      `json:"declared_column,omitempty"`
+	Category   string                      `json:"category"`
+	Pass       string                      `json:"pass"`
+	StartLine  int                         `json:"start_line"`
+	Line       int                         `json:"line"`
+	Column     int                         `json:"column"`
+	Fields     int                         `json:"partial_field_count"`
+	Kind       string                      `json:"allowlisted_event_kind,omitempty"`
 }
 
 type xperfCSVFraming struct {
@@ -372,12 +373,16 @@ func (r *xperfReader) header(kind string, fields []string) error {
 	return nil
 }
 
-func (r *xperfReader) csvRejection(err error, cells []string, discovery bool, ordinal int, offset int64, framing xperfCSVFraming, file io.Reader) {
+func (r *xperfReader) csvRejection(err error, cells []string, discovery bool, ordinal int, offset int64, framing xperfCSVFraming, file io.Reader, captured *xperfCSVInputWindow) {
 	rejection := &xperfCSVRejection{Category: "other_reader_error", Pass: "observation", Fields: len(cells), Ordinal: ordinal, Offset: offset}
 	framing.FirstCell = "unavailable"
 	framing.Shape.State = "deadline"
+	rejection.Input.State = "deadline"
 	if r.ctx.Err() == nil {
 		framing.Shape = xperfCSVShapeAt(file, framing.PreviousOffset, offset, err)
+	}
+	if r.ctx.Err() == nil {
+		rejection.Input = xperfClassifyCSVInput(captured, framing.PreviousOffset, offset, err, cells)
 	}
 	if discovery {
 		rejection.Pass = "discovery"
@@ -519,6 +524,145 @@ func xperfCSVShapeAt(file io.Reader, previous, current int64, failure error) xpe
 	return shape
 }
 
+// This window copies only bytes returned to encoding/csv. ReadAt is not a source.
+// Read-ahead remains in the window until later reads evict it.
+type xperfCSVInputWindow struct {
+	source    io.Reader
+	data      [16 << 10]byte
+	delivered int64
+	retained  int
+}
+
+func (w *xperfCSVInputWindow) Read(p []byte) (int, error) {
+	n, err := w.source.Read(p)
+	if n > 0 {
+		end := w.delivered + int64(n)
+		keep := min(n, len(w.data))
+		start := int((end - int64(keep)) % int64(len(w.data)))
+		first := min(keep, len(w.data)-start)
+		copy(w.data[start:], p[n-keep:n-keep+first])
+		copy(w.data[:], p[n-keep+first:n])
+		w.delivered = end
+		w.retained = min(len(w.data), w.retained+n)
+	}
+	return n, err
+}
+
+type xperfCSVInputClassification struct {
+	State               string `json:"state"`
+	ParserBytesVerified bool   `json:"parser_bytes_verified"`
+	RecordBytes         int64  `json:"record_bytes"`
+	Boundary            string `json:"boundary"`
+	QuotePrefix         string `json:"quote_prefix"`
+	QuotedPrefix        string `json:"quoted_prefix"`
+	Suffix              string `json:"suffix"`
+	SuffixBytes         int    `json:"suffix_bytes"`
+	Delimiter           string `json:"delimiter"`
+}
+
+func xperfClassifyCSVInput(w *xperfCSVInputWindow, previous, current int64, failure error, cells []string) xperfCSVInputClassification {
+	result := xperfCSVInputClassification{State: "not_quote_error", Boundary: "unavailable", QuotePrefix: "ambiguous", QuotedPrefix: "ambiguous", Suffix: "ambiguous", Delimiter: "unavailable"}
+	var parse *csv.ParseError
+	if !errors.As(failure, &parse) || !errors.Is(failure, csv.ErrQuote) {
+		return result
+	}
+	if previous < 0 || current <= previous || current > xperfCSVLimit+1 {
+		result.State = "invalid_range"
+		return result
+	}
+	result.RecordBytes = current - previous
+	if result.RecordBytes > 4096 {
+		result.State = "record_bound"
+		return result
+	}
+	if w == nil || previous < w.delivered-int64(w.retained) || current > w.delivered {
+		result.State = "window_unavailable"
+		return result
+	}
+	data := make([]byte, int(result.RecordBytes))
+	start := int(previous % int64(len(w.data)))
+	first := min(len(data), len(w.data)-start)
+	copy(data, w.data[start:start+first])
+	copy(data[first:], w.data[:len(data)-first])
+	result.ParserBytesVerified = true
+	// InputOffset includes empty physical lines skipped before this record.
+	for len(data) > 0 {
+		if data[0] == '\n' {
+			data = data[1:]
+		} else if bytes.HasPrefix(data, []byte("\r\n")) {
+			data = data[2:]
+		} else {
+			break
+		}
+	}
+	data = bytes.TrimSuffix(data, []byte("\n"))
+	data = bytes.TrimSuffix(data, []byte("\r"))
+	if parse.StartLine <= 0 || parse.Line != parse.StartLine || bytes.ContainsAny(data, "\r\n") {
+		result.State = "multiline_ambiguous"
+		return result
+	}
+	result.Boundary = "single_physical_line"
+	quote := parse.Column - 1
+	if quote < 0 || quote >= len(data) || data[quote] != '"' {
+		result.State = "quote_coordinate_unavailable"
+		return result
+	}
+	// The artificial EOF validates this quoted prefix, not the rejected full row.
+	prefix := csv.NewReader(bytes.NewReader(data[:quote+1]))
+	prefix.FieldsPerRecord = -1
+	prefix.TrimLeadingSpace = true
+	values, err := prefix.Read()
+	if err != nil || len(values) != len(cells)+1 || !slices.Equal(values[:len(cells)], cells) {
+		result.State = "quoted_prefix_ambiguous"
+		return result
+	}
+	line, column := prefix.FieldPos(len(cells))
+	opening := column - 1
+	if line != 1 || opening < 0 || opening >= quote || data[opening] != '"' {
+		result.State = "quoted_prefix_ambiguous"
+		return result
+	}
+	result.State = "classified"
+	paddingStart := bytes.LastIndexByte(data[:opening], ',') + 1
+	result.QuotePrefix = "other"
+	if len(bytes.Trim(data[paddingStart:opening], " \t")) == 0 {
+		result.QuotePrefix = "padding"
+	}
+	result.QuotedPrefix = "other"
+	switch values[len(cells)] {
+	case "Unknown":
+		result.QuotedPrefix = "fixed_Unknown"
+	case "unknown":
+		result.QuotedPrefix = "fixed_unknown"
+	}
+	suffix := data[quote+1:]
+	result.Delimiter = "range_end"
+	if comma := bytes.IndexByte(suffix, ','); comma >= 0 {
+		suffix = suffix[:comma]
+		result.Delimiter = "comma"
+	}
+	result.SuffixBytes = len(suffix)
+	if bytes.IndexByte(suffix, '"') >= 0 {
+		return result
+	}
+	trimmed := bytes.Trim(suffix, " \t")
+	result.Suffix = "other"
+	if len(trimmed) == 0 {
+		result.Suffix = "padding"
+	} else if len(trimmed) >= 3 && trimmed[0] == '(' && trimmed[len(trimmed)-1] == ')' {
+		digits := bytes.Trim(trimmed[1:len(trimmed)-1], " \t")
+		category := "parenthesized_unsigned_decimal"
+		if len(digits) > 0 && (digits[0] == '+' || digits[0] == '-') {
+			category = "parenthesized_signed_decimal"
+			digits = digits[1:]
+		}
+		if len(digits) > 0 && bytes.IndexFunc(digits, func(r rune) bool { return r < '0' || r > '9' }) < 0 {
+			result.Suffix = category
+		}
+	}
+	return result
+}
+
 func xperfCSVByteClass(data []byte, offset int) string {
 	if offset < 0 || offset >= len(data) {
 		return "boundary"
@@ -545,7 +689,8 @@ func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
 	hash := sha256.New()
 	limited := io.LimitReader(file, xperfCSVLimit+1)
 	budget := &waitBudgetReader{source: io.TeeReader(limited, hash), ctx: r.ctx, remaining: 128 << 10}
-	parser := csv.NewReader(budget)
+	captured := &xperfCSVInputWindow{source: budget}
+	parser := csv.NewReader(captured)
 	parser.FieldsPerRecord = -1
 	parser.TrimLeadingSpace = true
 	row := 0
@@ -555,7 +700,7 @@ func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
 	for {
 		framing.PreviousOffset = parser.InputOffset()
 		if err := r.ctx.Err(); err != nil {
-			r.csvRejection(err, nil, discovery, row+1, parser.InputOffset(), framing, file)
+			r.csvRejection(err, nil, discovery, row+1, parser.InputOffset(), framing, file, captured)
 			return "", errors.New("csv_deadline")
 		}
 		budget.remaining = 128 << 10
@@ -567,7 +712,7 @@ func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
 			break
 		}
 		if err != nil {
-			r.csvRejection(err, cells, discovery, row+1, parser.InputOffset(), framing, file)
+			r.csvRejection(err, cells, discovery, row+1, parser.InputOffset(), framing, file, captured)
 			return "", errors.New("csv_syntax")
 		}
 		row++
