@@ -129,17 +129,27 @@ observable behavior changes.
 
 ## Running and building locally
 
-Run the CLI directly from your working tree:
+Use the development helper to run the CLI from your working tree:
 
 ```sh
 ./scripts/run --help
 ```
+
+`scripts/run` changes to the repository root and executes `go run ./cmd/openai`
+with your arguments. The CLI inherits your permissions and environment, including
+API credentials. Go may download missing modules or the required toolchain
+before running the CLI. Relative input and output paths resolve from the
+repository root.
 
 Build an `openai` executable in the repository root:
 
 ```sh
 ./scripts/build
 ```
+
+For automation that needs exact CLI exit codes, run the built executable directly.
+[`go run`](https://pkg.go.dev/cmd/go#hdr-Compile_and_run_Go_program) reports its own
+exit status, which can differ from the CLI's exit status.
 
 You can also install the local checkout into your Go binary directory:
 
