@@ -238,11 +238,14 @@ In PowerShell, press Enter after `openai images generate` to open the picker.
 
 ## Development
 
-From a clone of this repository, run the CLI with:
+`scripts/run` is a development helper for running the CLI from a cloned checkout:
 
 ```sh
 ./scripts/run --help
 ```
+
+See the [development instructions](CONTRIBUTING.md#running-and-building-locally)
+for its dependency, credential, path, and exit-status behavior.
 
 To test against another OpenAI Go SDK version, use `./scripts/link`:
 
@@ -259,6 +262,7 @@ for setup, checks, and repository structure.
 Please share bug reports and feature requests through [GitHub issues](https://github.com/openai/openai-cli/issues).
 Pull requests are limited to repository collaborators; we do not accept pull requests from non-collaborators.
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution policy and development guide.
+See the [security model](docs/architecture/security-model.md) for trust boundaries.
 For security vulnerabilities, follow [SECURITY.md](SECURITY.md).
 
 ## License
