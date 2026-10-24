@@ -14,5 +14,6 @@ The [official fine-tuning notice](https://developers.openai.com/api/docs/depreca
 defines eligibility restrictions and retirement dates.
 
 General file operations, model listing, model retrieval, inference, usage records, and existing webhook records remain available.
+The CLI does not reject model IDs based on their prefix. The API determines which models you can use.
 Explicit machine output and extraction retain original API fields, including historical records.
 Readable webhook discovery lists events supported by the CLI.
