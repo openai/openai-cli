@@ -72,8 +72,8 @@ func TestSuggestCommandRealTree(t *testing.T) {
 		{[]string{"admin:organization:external-storage"}, "valdate", "validate"},
 		{[]string{"files"}, "zzz", ""},
 		{[]string{"responses"}, "zzzzz", ""},
-		{[]string{"models"}, "ls", "list"},     // jaro-winkler 0.85
-		{[]string{"models"}, "lete", "delete"}, // jaro-winkler 0.72
+		{[]string{"models"}, "ls", "list"},    // jaro-winkler 0.85
+		{[]string{"files"}, "lete", "delete"}, // jaro-winkler 0.72
 		// Both are one edit away; the higher jaro-winkler score wins.
 		{[]string{"admin:organization:certificates"}, "dactivate", "deactivate"},
 		{nil, "hi", ""},
@@ -96,6 +96,14 @@ func TestSuggestCommandRealTree(t *testing.T) {
 				t.Errorf("got %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestSuggestCommandOmitsRetiredModelDeletion(t *testing.T) {
+	for _, typo := range []string{"delete", "lete", "delet"} {
+		if got := cli.SuggestCommand(findCommand(t, "models").Commands, typo); strings.Contains(got, "delete") {
+			t.Errorf("retired model deletion suggested for %q: %q", typo, got)
+		}
 	}
 }
 

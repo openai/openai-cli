@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -201,6 +202,74 @@ func TestMainRetirementPreservesSharedAPIData(t *testing.T) {
 	}
 	if requests.Load() != 3 {
 		t.Fatalf("shared requests = %d; want 3", requests.Load())
+	}
+}
+
+func TestMainRetirementPreservesOpaqueModelIDs(t *testing.T) {
+	const model = "ft:synthetic-model:example:custom:abc"
+	const metadata = `{"purpose":"fine-tune","filename":"fine_tuning.jsonl"}`
+	const object = `{"id":"` + model + `","object":"model","created":1,"owned_by":"synthetic","metadata":` + metadata + `}`
+	const response = `{"id":"resp_synthetic","object":"response","model":"` + model + `","output":[],"metadata":` + metadata + `}`
+	const completion = `{"id":"chatcmpl_synthetic","object":"chat.completion","model":"` + model + `","choices":[],"metadata":` + metadata + `}`
+	const embedding = `{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1]}],"model":"` + model + `","usage":{"prompt_tokens":1,"total_tokens":1}}`
+	for _, test := range []struct {
+		name, method, path, input, response, output string
+		args                                        []string
+	}{
+		{"responses", "POST", "/responses", `{"model":"` + model + `","input":"fine-tuning is arbitrary text","metadata":` + metadata + `}`, response, response, []string{"responses", "create"}},
+		{"chat completions", "POST", "/chat/completions", `{"model":"` + model + `","messages":[{"role":"user","content":"synthetic input"}],"metadata":` + metadata + `}`, completion, completion, []string{"chat", "completions", "create"}},
+		{"embeddings", "POST", "/embeddings", `{"model":"` + model + `","input":"synthetic input"}`, embedding, embedding, []string{"embeddings", "create"}},
+		{"model flag", "GET", "/models/" + model, "", object, object, []string{"models", "retrieve", "--model", model}},
+		{"model positional", "GET", "/models/" + model, "", object, object, []string{"models", "retrieve", model}},
+		{"model listing", "GET", "/models", "", `{"object":"list","data":[` + object + `]}`, `[` + object + `]`, []string{"models", "list"}},
+		{"model extraction", "GET", "/models/" + model, "", object, model, []string{"models", "retrieve", model, "--transform", "id", "--raw-output"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Method != test.method || r.URL.Path != test.path {
+					t.Errorf("request = %s %s; want %s %s", r.Method, r.URL.Path, test.method, test.path)
+				}
+				if test.input != "" {
+					var got, want any
+					if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+						t.Error(err)
+					}
+					if err := json.Unmarshal([]byte(test.input), &want); err != nil {
+						t.Error(err)
+					}
+					if !reflect.DeepEqual(got, want) {
+						t.Errorf("request body = %#v; want %#v", got, want)
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				io.WriteString(w, test.response)
+			}))
+			t.Cleanup(server.Close)
+			env := []string{"OPENAI_BASE_URL=" + server.URL, "OPENAI_API_KEY=synthetic-key"}
+			args := append([]string{"openai", "--format", "json"}, test.args...)
+			got := runMainDispatchWithStdin(t, "bash", env, retirementStdin(t, test.input), args...)
+			if got.code != 0 || got.stderr != "" || requests.Load() != 1 {
+				t.Fatalf("opaque model route = %+v; requests = %d", got, requests.Load())
+			}
+			if test.output == model {
+				if strings.TrimSpace(got.stdout) != model {
+					t.Fatalf("model extraction = %q; want %q", got.stdout, model)
+				}
+				return
+			}
+			var actual, expected any
+			if err := json.Unmarshal([]byte(got.stdout), &actual); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(test.output), &expected); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual, expected) {
+				t.Fatalf("model response = %#v; want %#v", actual, expected)
+			}
+		})
 	}
 }
 
