@@ -5,6 +5,7 @@
 
 ### Features
 
+* **updates:** add automatic updates for eligible self-managed macOS and Linux releases. Set `OPENAI_CLI_NO_AUTO_UPDATE=1` to disable automatic installation. Set `OPENAI_CLI_NO_UPDATE_CHECK=1` to disable all update discovery and notices. Exact-version pins use `OPENAI_CLI_VERSION_PIN`. ([#598](https://github.com/openai/openai-cli/pull/598))
 * add request timing and redacted body and SSE diagnostics ([#402](https://github.com/openai/openai-cli/issues/402)) ([b9e2d8b](https://github.com/openai/openai-cli/commit/b9e2d8be01c5fa0599ff078f573153d2b7619397))
 * **projects:** clarify lifecycle results and help ([#423](https://github.com/openai/openai-cli/issues/423)) ([927f1c9](https://github.com/openai/openai-cli/commit/927f1c90a429c55a23e61060202a36aad13db4cf))
 
