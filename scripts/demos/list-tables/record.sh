@@ -45,7 +45,7 @@ SCENE
 
 {
   echo 'feature: compact default terminal list tables'
-  echo 'prerequisite: candidate includes public API activation from normal generated promotion'
+  echo 'activation: handwritten application hooks connect Files, Batches, and Projects to shared list presentation'
   echo "captured resources: ${demo_resources[*]}"
   echo "captured before commit: $demo_before_sha"
   echo "captured after source commit: $demo_after_sha"

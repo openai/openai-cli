@@ -1,18 +1,17 @@
 # Compact list table evidence
 
-Files, batches, and organization projects still require public activation through normal generated promotion.
-This handwritten change does not activate those three command paths.
-Models already activates its separate viewer and does not need those generated adapters.
-This recipe covers only files, batches, and organization projects.
+The candidate activates Files, Batches, and Projects through handwritten command assembly in `internal/app/list_commands.go`.
+It preserves generated declarations. Explicit text, machine formats, and redirected output retain their existing actions.
+Models uses its separate viewer. This recipe covers only Files, Batches, and Projects.
 The recorder and both checkers require an activated candidate for the selected resources.
-Historical active captures validate integration and tooling, not this publication head's three-resource behavior.
+Historical captures remain evidence for their recorded source and binary identities.
 
 The fixture serves synthetic files, batches, and projects on loopback only.
 The recorder uses the shared `scripts/demos/capture_and_render.sh` lifecycle.
 Each recording runs before and after binaries with identical responses and terminal settings.
 
-After generated promotion, use separate binaries from the baseline and activated candidate checkouts.
-Use the reviewed navigation dependency as the baseline when comparing table activation.
+Use separate binaries from the current baseline and activated candidate checkouts.
+Use the candidate's exact base commit for the Before comparison.
 Do not replace the installed `openai` executable.
 Use full source commit IDs in the recording command.
 If a binary includes uncommitted changes, record that limitation beside its binary hash.

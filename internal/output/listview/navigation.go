@@ -162,31 +162,33 @@ func Run(opts Options, fetch func() (Page, error), cancel context.CancelFunc) er
 	}, stop: stop}
 	program := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(out),
 		tea.WithContext(programContext), tea.WithWindowSize(width, height), tea.WithoutSignalHandler())
-	// Models can cancel the program context while the same signal reaches Tea.
-	// Forward through Send, which stops when the program exits. Tea's built-in
-	// signal handler can block sending after its event loop has already stopped.
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	listenerDone := make(chan struct{})
-	stopSignals := func() {
-		signal.Stop(signals)
-		stop()
-		<-listenerDone
+	stopSignals := func() {}
+	if !opts.CallerHandlesSignals {
+		// Forward through Send, which stops when the program exits. Tea's built-in
+		// signal handler can block sending after its event loop has already stopped.
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+		listenerDone := make(chan struct{})
+		stopSignals = func() {
+			signal.Stop(signals)
+			stop()
+			<-listenerDone
+		}
+		go func() {
+			defer close(listenerDone)
+			defer signal.Stop(signals)
+			select {
+			case <-programContext.Done():
+			case received := <-signals:
+				if received == os.Interrupt {
+					program.Send(tea.InterruptMsg{})
+				} else {
+					program.Send(tea.QuitMsg{})
+				}
+			}
+		}()
 	}
 	defer stopSignals()
-	go func() {
-		defer close(listenerDone)
-		defer signal.Stop(signals)
-		select {
-		case <-programContext.Done():
-		case received := <-signals:
-			if received == os.Interrupt {
-				program.Send(tea.InterruptMsg{})
-			} else {
-				program.Send(tea.QuitMsg{})
-			}
-		}
-	}()
 	_, runErr := program.Run()
 	// Final printing has no Tea event loop. Restore signal ownership first.
 	stopSignals()
@@ -510,6 +512,8 @@ type Options struct {
 	RenderPrint func([]gjson.Result) (string, error)
 	PrintHint   func(count, width int) string
 	Interrupt   func(error) error
+	// The caller cancels Context on process signals and retains their exit status.
+	CallerHandlesSignals bool
 }
 
 // New constructs the loaded-page event model without taking terminal ownership.

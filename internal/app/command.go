@@ -52,6 +52,7 @@ func ConfigureCommand(root *cli.Command) {
 	registerAdminSetup(root)
 	admin.ConfigureCredentials(root)
 	admin.ConfigureProjectLifecycle(root)
+	configureListCommands(root)
 	webhooks.Configure(root, webhookCommandOptions())
 	describeAgentsCommands(root)
 	configureAgentsSessionCreation(root)

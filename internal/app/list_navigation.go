@@ -25,9 +25,18 @@ func InteractiveListOutput(opts ShowJSONOpts) bool {
 	}
 	opts.setDefaults()
 	format := strings.ToLower(opts.Format)
-	return (format == "" || format == "auto") && opts.OutputKind == OutputPageItem &&
+	eligible := (format == "" || format == "auto") && opts.OutputKind == OutputPageItem &&
 		opts.Transform == "" && !opts.RawOutput && os.Getenv("CI") == "" &&
 		os.Getenv("TERM") != "dumb" && isTerminal(opts.Stdout) && term.IsTerminal(os.Stdin.Fd())
+	if !eligible {
+		return false
+	}
+	stdout, ok := opts.Stdout.(*os.File)
+	if !ok {
+		return false
+	}
+	width, height, err := term.GetSize(stdout.Fd())
+	return err == nil && width > 0 && height > 0
 }
 
 // JSONListPage is implemented by SDK explicit API page types.
@@ -42,6 +51,7 @@ func ShowJSONPages[P JSONListPage[P]](first func(context.Context) (P, error), ma
 func listViewerOptions(opts ShowJSONOpts) listview.Options {
 	result := listview.Options{
 		Context: opts.Context, Stdout: opts.Stdout,
+		CallerHandlesSignals: opts.CallerHandlesSignals,
 		RenderPage: func(items []gjson.Result, width int) (string, error) {
 			return renderListNavigationPage(opts, items, width)
 		},
@@ -52,6 +62,9 @@ func listViewerOptions(opts ShowJSONOpts) listview.Options {
 			}
 			return renderListNavigationLabels(printOpts, items)
 		},
+	}
+	if opts.CallerHandlesSignals {
+		result.Interrupt = func(err error) error { return &listCommandInterrupt{cause: err, code: 130} }
 	}
 	if opts.Operation == "(resource) models > (method) list" {
 		result.Interrupt = models.Interrupt
