@@ -3,7 +3,7 @@
 These commands manage projects in your organization through the Admin API.
 Use an admin API key with permission for the operation.
 Configure `OPENAI_ADMIN_KEY` through your existing secure environment or credential setup.
-Use `openai help setup` for credential guidance without sending an API request.
+Use `openai help setup admin` for credential guidance without sending an API request.
 
 ## Create and inspect a project
 
@@ -158,7 +158,7 @@ openai admin projects retrieve --project-id proj_example --format-error json
 ```
 
 Do not repeat an uncertain mutation merely to obtain structured error details.
-For authentication or permission failures, inspect `openai help setup` and the selected credential's access.
+For authentication or permission failures, inspect `openai help setup admin` and the selected credential's access.
 Preserve the original error details when escalating an unresolved failure.
 
 ## Other project settings
