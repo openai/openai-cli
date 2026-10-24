@@ -67,6 +67,8 @@ Checks include raw output alone, mixed-case formats, and explicit automatic form
 Additional pipe comparisons cover empty pages, controls, unfamiliar fields, errors, and item limits across all resources.
 Paginated resources also cover two-page output, exact cursors, and partial failures.
 Explicit-mode PTY checks use the same width as the recording.
+The validator invokes both binaries as `openai` through isolated symlink directories.
+This keeps executable names identical in recovery guidance without normalizing diagnostic text.
 The validator retains exact stdout, stderr, and exit statuses under `machine/`.
 
 The public page checker also exercises automatic empty results, controls, unfamiliar fields, and API errors.

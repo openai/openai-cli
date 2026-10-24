@@ -52,20 +52,20 @@ MODES = {
 
 def run(binary, args, endpoint, tty, width=110):
     env = {
-        "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8", "TERM": "xterm-256color",
+        "PATH": f"{Path(binary).parent}:/usr/bin:/bin", "LANG": "en_US.UTF-8", "TERM": "xterm-256color",
         "OPENAI_API_KEY": "synthetic-demo-key", "OPENAI_ADMIN_KEY": "synthetic-demo-admin-key",
         "OPENAI_BASE_URL": endpoint, "NO_COLOR": "1", "FORCE_COLOR": "0",
         "GOMAXPROCS": "2",
     }
     if not tty:
-        result = subprocess.run([binary, *args], env=env, stdin=subprocess.DEVNULL,
+        result = subprocess.run([Path(binary).name, *args], env=env, stdin=subprocess.DEVNULL,
                                 capture_output=True, timeout=15, check=False)
         return result.returncode, result.stdout, result.stderr
     master, slave = pty.openpty()
     process = None
     try:
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 48, width, 0, 0))
-        process = subprocess.Popen([binary, *args], env=env, stdin=slave,
+        process = subprocess.Popen([Path(binary).name, *args], env=env, stdin=slave,
                                    stdout=slave, stderr=subprocess.PIPE)
         os.close(slave)
         slave = -1
@@ -123,6 +123,15 @@ def main():
     print(f"PASS {len(resources) * 2} exact terminal relay digests and child exit statuses")
     machine = output / "machine"
     machine.mkdir()
+    # Preserve exact diagnostics while invoking both candidates under the same name.
+    binaries = []
+    for version, binary in (("before", before), ("after", after)):
+        command_dir = machine / f"{version}-bin"
+        command_dir.mkdir()
+        command = command_dir / "openai"
+        command.symlink_to(Path(binary).resolve())
+        binaries.append(str(command))
+    before, after = binaries
     requests = output / "requests.jsonl"
     checks = 0
 
