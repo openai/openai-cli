@@ -8,8 +8,15 @@ import sys
 
 
 output = pathlib.Path(sys.argv[1])
+metadata = (output / "metadata.txt").read_text()
 before = (output / "before.txt").read_text()
 after = (output / "after.txt").read_text()
+for scene, transcript in (("before", before), ("after", after)):
+    source = re.search(rf"(?m)^{scene} source commit: ([0-9a-f]{{40}})$", metadata).group(1)
+    assert f"Source commit: {source}" in transcript, scene
+    version = re.search(r"(?m)^openai version (\S+)\s*$", transcript).group(1)
+    assert "$ openai --version" in transcript, scene
+    assert f"User-Agent: OpenAI/CLI {version}" in transcript, scene
 assert "HTTP attempt" not in before, "baseline already reported HTTP attempt timing"
 for transcript in (before, after):
     assert "$ openai --debug models retrieve model_synthetic" in transcript

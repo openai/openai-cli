@@ -8,9 +8,16 @@ import sys
 
 
 output = pathlib.Path(sys.argv[1])
+metadata = (output / "metadata.txt").read_text()
 scenes = ("before-body", "after-body", "before-stream", "after-stream", "after-limits")
 transcripts = {scene: (output / f"{scene}.txt").read_text() for scene in scenes}
 for scene, transcript in transcripts.items():
+    kind = scene.split("-")[0]
+    source = re.search(rf"(?m)^{kind} source commit: ([0-9a-f]{{40}})$", metadata).group(1)
+    assert f"Source commit: {source}" in transcript, scene
+    version = re.search(r"(?m)^openai version (\S+)\s*$", transcript).group(1)
+    assert "$ openai --version" in transcript, scene
+    assert f"User-Agent: OpenAI/CLI {version}" in transcript, scene
     assert "Terminal replay | synthetic loopback API | fake credentials" in transcript, scene
     assert "Authorization: Bearer <REDACTED>" in transcript, scene
     if scene.startswith("after-"):

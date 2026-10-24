@@ -29,7 +29,10 @@ It also checks redaction, actual timing records, escaped line endings, and limit
 Use installed Bash, Python 3, asciinema, agg, FFmpeg, FFprobe, and Menlo.
 Use immutable before and after binaries with verified source commits and binary hashes.
 Use current main before this feature as the baseline. The baseline must not report HTTP attempt timing.
-The October 23 refresh uses main `f58bdc9a` as its baseline.
+The latest October 23 refresh uses main `c53b5891` as its baseline.
+Each scene runs `openai --version` and identifies the binary's source commit.
+Current builds retain the SDK's `X-Stainless-*` headers and the release version, `1.40.6`.
+These identifiers do not establish the recording date. Use its source commit and capture metadata.
 Do not install tools during the recording reservation.
 Keep both output directories empty and outside the repository.
 
@@ -48,12 +51,12 @@ Reserve the required local resources before running either command.
   /ABSOLUTE/EMPTY_OUTPUT/narrow narrow
 ```
 
-The normal replay uses 112 columns and 64 rows.
-The narrow replay uses 72 columns and 80 rows.
+The normal replay uses 112 columns and 68 rows.
+The narrow replay uses 72 columns and 84 rows.
 Both use Menlo at 18 pixels, line height 1.4, and monochrome output in isolated Bash PTYs.
 The dark background is `#171717`; the foreground is `#eeeeee`.
 Each scene isolates configuration and cache files. Update checks are disabled.
-Each replay makes five API requests through five CLI processes.
+Each replay makes five API requests. Five additional CLI processes display the version.
 
 ## Evidence
 

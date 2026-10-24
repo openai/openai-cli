@@ -9,8 +9,8 @@ demo_root="$(cd "$1" && pwd)"
 demo_python="${DEMO_PYTHON:-$(command -v python3)}"
 demo_viewport="$7"
 case "$demo_viewport" in
-  normal) demo_window_size=112x64;;
-  narrow) demo_window_size=72x80;;
+  normal) demo_window_size=112x68;;
+  narrow) demo_window_size=72x84;;
   *) echo 'viewport must be normal or narrow' >&2; exit 2;;
 esac
 source "$demo_root/scripts/demos/capture_and_render.sh"
@@ -45,9 +45,12 @@ for demo_scene in "${demo_scenes[@]}"; do
     after-stream) demo_kind=after; demo_label='After: redacted SSE frames and measured event timing';;
     after-limits) demo_kind=after; demo_label='After: bounded diagnostics; complete stream output';;
   esac
+  demo_source_sha="$demo_before_sha"
+  if [ "$demo_kind" = after ]; then demo_source_sha="$demo_after_sha"; fi
   demo_capture_scene "$demo_scene" 0 "$demo_runtime/$demo_kind" "$demo_api_url" "$demo_label" \
     "HOME=$demo_runtime/$demo_scene-home" "XDG_CONFIG_HOME=$demo_runtime/$demo_scene-home" \
     "XDG_CACHE_HOME=$demo_runtime/$demo_scene-home/cache" "DEMO_CAPTURE_KIND=$demo_scene" \
+    "DEMO_SOURCE_SHA=$demo_source_sha" \
     OPENAI_CLI_NO_UPDATE_CHECK=1 NO_COLOR=1 FORCE_COLOR=0 GOMAXPROCS=2
 done
 demo_stop_api

@@ -12,7 +12,10 @@ bash scripts/demos/request-timing/record.sh \
 ```
 
 Both commits must use full 40-character hashes.
-The October 23 refresh uses main `f58bdc9a` as its baseline.
+The latest October 23 refresh uses main `c53b5891` as its baseline.
+Each scene runs `openai --version` and identifies the binary's source commit.
+Current builds retain the SDK's `X-Stainless-*` headers and the release version, `1.40.6`.
+These identifiers do not establish the recording date. Use its source commit and capture metadata.
 The fixture serves one synthetic model on loopback with a fake API key.
 It delays headers by 180 ms, then sends body halves after separate 240 ms delays.
 The CLI measures actual durations; the recorder never inserts timing diagnostics.
@@ -22,7 +25,7 @@ It checks command status, credential redaction, two requests, and three distinct
 The comparison includes both command runs, transcripts, screenshots, GIFs, source identities, and binary hashes.
 Inspect the screenshots and comparison GIF before sharing them.
 
-The replay uses 112 columns, 43 rows, Menlo at 18 pixels, and line height 1.4.
+The replay uses 112 columns, 47 rows, Menlo at 18 pixels, and line height 1.4.
 Its dark background is `#171717`; its foreground is `#eeeeee`. CLI diagnostics remain monochrome.
 Each scene isolates configuration and cache files. Update checks are disabled.
 
