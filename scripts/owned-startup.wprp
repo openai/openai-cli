@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WindowsPerformanceRecorder Version="1.0" Author="CLI startup investigation">
+  <Profiles>
+    <SystemCollector Id="OwnedStartupCollector" Name="NT Kernel Logger">
+      <BufferSize Value="1024"/>
+      <Buffers Value="128"/>
+    </SystemCollector>
+    <SystemProvider Id="OwnedStartupProvider">
+      <Keywords>
+        <Keyword Value="ProcessThread" Strict="true"/>
+        <Keyword Value="Loader" Strict="true"/>
+        <Keyword Value="SampledProfile" Strict="true"/>
+        <Keyword Value="CSwitch" Strict="true"/>
+        <Keyword Value="ReadyThread" Strict="true"/>
+      </Keywords>
+      <Stacks>
+        <Stack Value="CSwitch"/>
+      </Stacks>
+    </SystemProvider>
+    <Profile Id="OwnedStartup.Verbose.Memory" Name="OwnedStartup"
+             Description="Bounded startup CPU and wait evidence"
+             LoggingMode="Memory" DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="OwnedStartupCollector">
+          <SystemProviderId Value="OwnedStartupProvider"/>
+        </SystemCollectorId>
+      </Collectors>
+    </Profile>
+    <Profile Id="OwnedStartup.Verbose.File" Name="OwnedStartup"
+             Description="Schema companion; the experiment uses memory mode"
+             LoggingMode="File" DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="OwnedStartupCollector">
+          <SystemProviderId Value="OwnedStartupProvider"/>
+        </SystemCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>

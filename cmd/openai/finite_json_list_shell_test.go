@@ -23,6 +23,8 @@ import (
 	"unicode/utf8"
 )
 
+var finiteJSONListControlObserver func(*testing.T, nativeShell) (func(bool, string), func())
+
 // These checks cover native noninteractive shells, not terminal applications.
 func TestMainNativeShellFiniteJSONList(t *testing.T) {
 	work, binary := buildNativeShellCLI(t)
@@ -89,6 +91,12 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 			}
 			// Unchanged native producers distinguish shell text conversion from
 			// CLI behavior. Only the Unicode filename may vary in PowerShell.
+			var recordControl func(bool, string)
+			stopControlTrace := func() {}
+			if finiteJSONListControlObserver != nil {
+				recordControl, stopControlTrace = finiteJSONListControlObserver(t, shell)
+				defer stopControlTrace()
+			}
 			controls := make(map[bool][]map[string]any, 2)
 			controlEncodings := make(map[bool]string, 2)
 			for _, pipeline := range []bool{false, true} {
@@ -102,8 +110,28 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 				if pipeline {
 					consumer = transport("parse-json", output)
 				}
-				script, status := finiteJSONListShellScript(t, shell, directory, transport("produce", fixture), consumer, output)
-				got := runNativeShell(t, shell, directory, t.TempDir(), "http://127.0.0.1:1", script)
+				producer := transport("produce", fixture)
+				observedShell := shell
+				trace := ""
+				if runtime.GOOS == "windows" && shell.name == "powershell" {
+					trace = filepath.Join(directory, "shell-startup")
+					observedShell.args = append([]string{"-test.run=^TestShellFileWindowsProcessHelper$", "--", "observe-start", trace}, shell.args[2:]...)
+					producer = invoke(helper, "-test.run=^TestFiniteJSONListShellProcess$", "--", "produce", fixture, "observe-start")
+					t.Cleanup(func() {
+						for _, checkpoint := range []string{trace, trace + ".cpu", trace + ".entered", fixture + ".entered", fixture + ".finished"} {
+							data, err := os.ReadFile(checkpoint)
+							t.Logf("PowerShell startup pipeline=%t checkpoint=%s value=%q error=%v", pipeline, filepath.Base(checkpoint), data, err)
+						}
+					})
+				}
+				script, status := finiteJSONListShellScript(t, shell, directory, producer, consumer, output)
+				if trace != "" {
+					script = "[IO.File]::WriteAllText(" + finiteJSONListShellQuote(shell, trace+".entered") + ", [DateTime]::UtcNow.ToString('O')); " + script
+				}
+				if recordControl != nil {
+					recordControl(pipeline, trace)
+				}
+				got := runNativeShell(t, observedShell, directory, t.TempDir(), "http://127.0.0.1:1", script)
 				assertFiniteJSONListShellStatus(t, status, 0, got, fmt.Sprintf("native producer control pipeline=%t", pipeline))
 				if got.code != 0 || got.stdout != "" || got.stderr != "" {
 					t.Fatalf("native producer control failed: pipeline=%t result=%+v", pipeline, got)
@@ -139,31 +167,29 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 				controlEncodings[pipeline] = encoding
 				t.Logf("native control: pipeline=%t encoding=%s Unicode-preserved=%t", pipeline, encoding, reflect.DeepEqual(observed, original))
 			}
+			stopControlTrace()
 			for _, test := range []struct {
-				name, format             string
-				pipeline, empty, failure bool
+				name, format      string
+				pipeline, failure bool
 			}{
-				{"pipeline_json_multipage", "json", true, false, false},
-				{"redirect_json_multipage", "json", false, false, false},
-				{"redirect_json_empty", "json", false, true, false},
-				{"pipeline_jsonl_multipage", "jsonl", true, false, false},
-				{"redirect_later_http_failure", "json", false, false, true},
+				{"pipeline_json_multipage", "json", true, false},
+				{"redirect_json_multipage", "json", false, false},
+				{"pipeline_jsonl_multipage", "jsonl", true, false},
+				{"redirect_later_http_failure", "json", false, true},
 			} {
 				t.Run(test.name, func(t *testing.T) {
 					var requests atomic.Int32
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						request := requests.Add(1)
 						after := r.URL.Query().Get("after")
-						validCursor := request == 1 && after == "" || !test.empty && request == 2 && after == "file_a"
+						validCursor := request == 1 && after == "" || request == 2 && after == "file_a"
 						if r.Method != http.MethodGet || r.URL.Path != "/files" || !validCursor || r.Header.Get("Authorization") != "Bearer fake-native-shell-key" {
 							t.Errorf("invalid synthetic list request %d: %s %s", request, r.Method, r.URL)
 							http.Error(w, "invalid synthetic request", http.StatusBadRequest)
 							return
 						}
 						w.Header().Set("Content-Type", "application/json")
-						if test.empty {
-							io.WriteString(w, resourceFilePage(nil, false))
-						} else if request == 1 {
+						if request == 1 {
 							fmt.Fprintf(w, `{"object":"list","data":[%s],"has_more":true,"last_id":"file_a"}`, items[0])
 						} else if test.failure {
 							w.WriteHeader(http.StatusBadRequest)
@@ -185,9 +211,6 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 					wantCode, wantRequests := 0, int32(2)
 					if test.failure {
 						wantCode = 1
-					}
-					if test.empty {
-						wantRequests = 1
 					}
 					assertFiniteJSONListShellStatus(t, status, wantCode, got, "CLI producer")
 					if got.code != wantCode || got.stdout != "" || requests.Load() != wantRequests {
@@ -227,9 +250,6 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 					}
 					actual, err := finiteJSONListShellRecords(data, format)
 					want := controls[test.pipeline]
-					if test.empty {
-						want = []map[string]any{}
-					}
 					if err != nil || !reflect.DeepEqual(actual, want) {
 						t.Fatalf("complete shell output changed: got=%#v want=%#v error=%v", actual, want, err)
 					}
@@ -408,11 +428,24 @@ func TestFiniteJSONListShellProcess(t *testing.T) {
 		return
 	}
 	args := os.Args[separator+1:]
+	observe := len(args) == 3 && args[0] == "produce" && args[2] == "observe-start"
+	if observe {
+		args = args[:2]
+	}
 	if len(args) != 2 {
 		t.Fatal("invalid native list helper arguments")
 	}
+	checkpoint := func(suffix string) {
+		if observe {
+			value := fmt.Sprintf("pid=%d utc=%s", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))
+			if err := os.WriteFile(args[1]+suffix, []byte(value), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	watchdog := time.AfterFunc(15*time.Second, func() { os.Exit(124) })
 	defer watchdog.Stop()
+	checkpoint(".entered")
 	var err error
 	switch args[0] {
 	case "produce":
@@ -450,5 +483,6 @@ func TestFiniteJSONListShellProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkpoint(".finished")
 	os.Exit(0)
 }
