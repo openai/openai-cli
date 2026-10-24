@@ -16,7 +16,30 @@ This example uses two synthetic requests:
 ```
 
 Save these lines as `requests.jsonl`.
-Upload the file with purpose `batch`:
+Upload and create one batch with one command:
+
+```sh
+openai batches submit --file requests.jsonl \
+  --endpoint /v1/responses --completion-window 24h
+```
+
+`submit` requires a regular local file.
+It accepts the same request fields as `create`, except `input_file_id`.
+You can provide those fields through flags or piped JSON/YAML.
+Stdin remains available for request fields; `--file -` is not supported.
+Use `files upload` followed by `batches create` for stdin or custom input-file retention.
+
+The CLI validates local request fields before uploading.
+The API performs content and account validation.
+Upload and creation each run once, without automatic retries.
+If creation fails, the CLI keeps the uploaded file and reports its ID.
+Check `batches list` before creating another batch because the first creation may have succeeded.
+Reuse the same connection and project settings.
+Then use `create --input-file-id` if you confirm that no batch exists.
+Structured submission errors include the original error under `error` and recovery data under `batch_submission`.
+
+You can also upload separately:
+
 
 ```sh
 openai files upload --file requests.jsonl --purpose batch
@@ -118,38 +141,33 @@ For example, extract the exact ID without copying labels:
 openai --transform id --raw-output batches retrieve batch_example
 ```
 
-The following optional view recipes use `jq` or Python 3.
-Neither tool is a CLI dependency.
-In Bash or zsh scripts, use `set -o pipefail` to retain failures from upstream commands.
+Readable output includes UTC lifecycle dates, the completion window, and metadata.
+Completed batches include the duration from creation to completion.
+Explicit formats and extraction retain the original timestamps and API fields.
 
-Refresh all listed batches every ten seconds in Bash or zsh:
-
-```sh
-(
-  while :; do
-    openai batches list --limit 100 --max-items -1 || exit "$?"
-    sleep 10 || exit "$?"
-  done
-)
-```
-
-Each refresh prints another snapshot. API failures stop the loop with a nonzero exit.
-This recipe does not clear terminal history or provide an atomic snapshot across pages.
-
-Show chronological lifecycle events, retaining Unix timestamps:
+Refresh the selected Batch list every ten seconds:
 
 ```sh
-openai --format json batches retrieve batch_example |
-  jq 'to_entries | map(select(.key != "expires_at" and (.key | endswith("_at")) and (.value | type == "number"))) | sort_by(.value)'
+openai batches list --watch --limit 100 --max-items -1
 ```
 
-This includes returned lifecycle timestamps and excludes the expiration deadline.
-Show elapsed completion time in seconds, or null before completion:
+Each refresh prints another snapshot without clearing terminal history.
+Pagination runs serially within each refresh.
+The API does not provide an atomic snapshot across pages.
+API failures stop watching with a nonzero exit.
+A partial snapshot is marked as incomplete.
+Ctrl+C stops local watching without changing remote batches.
+
+Use JSONL for machine consumption:
 
 ```sh
-openai --format json batches retrieve batch_example |
-  jq 'if (.completed_at | type) == "number" then .completed_at - .created_at else null end'
+openai --format jsonl batches list --watch --poll-interval 5s --watch-count 3
 ```
+
+Each line contains `object`, `sequence`, `observed_at`, `complete`, and the `data` array.
+`--watch-count 0` watches until interrupted.
+Watch supports readable output and JSONL.
+Omit `--watch` for other formats, extraction, or raw output.
 
 Add `--wait` to poll until the batch reaches a terminal status:
 
@@ -281,30 +299,53 @@ openai --format json files get file_example
 ```
 
 The response includes filename, byte size, purpose, creation time, expiration, and any returned status details.
-Browse existing files before selecting an input ID:
+Find existing Batch input files by filename or ID:
 
 ```sh
-openai --format json files list --order desc --max-items -1
+openai batches inputs --search requests --max-items -1
 ```
 
-Add `--purpose batch` to select uploaded batch inputs.
-`--format json` returns one array. Use `--format jsonl` for independent records.
-Search filenames with a case-insensitive literal substring:
+Search uses a case-insensitive literal substring.
+The command searches subsequent pages until it finds the requested number of matches or reaches the end.
+The default limit is 100 matching files; `-1` searches all pages.
+Files retain their newest-first order and complete metadata.
+
+Select one file interactively:
 
 ```sh
-openai --format jsonl files list --order desc --max-items -1 |
-  python3 -c '
-import json, sys
-needle = sys.argv[1].strip().lower()
-for line in sys.stdin:
-    item = json.loads(line)
-    if needle in (item.get("filename") or "").lower():
-        print(json.dumps(item, ensure_ascii=False))
-' 'requests'
+openai batches inputs --select
 ```
 
-This streams local filtering across all returned pages, including Unicode filenames.
-It preserves the server's newest-first ordering.
+Selection requires terminal stdin and stderr.
+The picker returns the selected File metadata without creating a batch.
+Use its ID with `batches create --input-file-id`.
+For structured stdout, explicitly keep picker errors readable:
+
+```sh
+openai --format json --format-error text batches inputs --select
+```
+
+Browse a batch's JSONL records without a separate download:
+
+```sh
+openai batches results batch_example --file input
+openai batches results batch_example --custom-id example-1 --match-input
+openai --format explore batches results batch_example --match-input
+```
+
+`--file` defaults to `output`; it also accepts `input` and `error`.
+`--custom-id` filters by an exact, case-sensitive ID.
+`--match-input` groups inputs and selected results by `custom_id`, never by row position.
+Each group includes `inputs`, `results`, a `match` status, and any `issues`.
+Duplicate IDs remain grouped and visibly ambiguous.
+Missing IDs and unmatched records remain visible.
+Without matching, records retain their original order.
+
+The response contains a `data` array and supports normal output formats and extraction.
+The explorer supports interactive inspection when a terminal is available.
+The command reports unavailable files and malformed JSONL without submitting requests again.
+Use `batches download` when you need exact file bytes.
+Browsing and matching retain selected records in memory.
 
 Files also provides explicit deletion:
 

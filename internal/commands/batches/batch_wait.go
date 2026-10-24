@@ -22,9 +22,10 @@ import (
 
 // WorkflowError contains only local guidance, never API prose or paths.
 type WorkflowError struct {
-	message string
-	code    int
-	cause   error
+	message    string
+	code       int
+	cause      error
+	submission *submissionRecovery
 }
 
 func (e *WorkflowError) Error() string { return e.message }
@@ -69,9 +70,13 @@ func (w workflow) configureBatchCommands(root *cli.Command) {
 		if resource.Name != "batches" {
 			continue
 		}
+		var submit *cli.Command
 		for _, command := range resource.Commands {
 			switch command.Name {
+			case "list":
+				w.configureBatchListWatch(command)
 			case "create":
+				submit = w.newBatchSubmitCommand(command)
 				previous := command.Action
 				command.Action = func(ctx context.Context, cmd *cli.Command) error {
 					return previous(context.WithValue(ctx, batchCreateContextKey{}, cmd), cmd)
@@ -94,7 +99,10 @@ func (w workflow) configureBatchCommands(root *cli.Command) {
 				}
 			}
 		}
-		resource.Commands = append(resource.Commands, w.newBatchWaitCommand(), w.newBatchDownloadCommand())
+		resource.Commands = append(resource.Commands, w.newBatchWaitCommand(), w.newBatchDownloadCommand(), w.newBatchResultsCommand(), w.newBatchInputsCommand())
+		if submit != nil {
+			resource.Commands = append(resource.Commands, submit)
+		}
 		return
 	}
 }

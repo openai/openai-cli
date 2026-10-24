@@ -46,3 +46,49 @@ OPENAI_API_KEY=synthetic-demo-key OPENAI_BASE_URL="$(cat /tmp/f13-demo-session/a
 Use a new session directory for each run. Stop the synthetic API with Ctrl+C after the trial.
 The local fixture finishes 1,000 requests and returns one output file with no error file.
 The CLI preserves completed files if you repeat the command.
+
+## Try the dashboard convenience workflows
+
+Run the trial with an explicit candidate executable. No installation is required.
+
+```sh
+python3 scripts/demos/batches/try_workflows.py /absolute/path/to/openai
+```
+
+The trial uses synthetic responses and fake credentials. It makes no real API calls or charges.
+It starts a loopback server and runs these actual CLI commands:
+
+```sh
+openai batches submit --file requests.jsonl --endpoint /v1/responses --completion-window 24h
+openai batches list --watch --watch-count 2 --poll-interval 1s
+openai batches inputs --search requests.jsonl --format json
+openai batches results batch_demo --custom-id sentiment-positive --match-input --format json
+openai batches wait batch_demo --output-dir results --poll-interval 1s
+```
+
+The trial isolates CLI configuration and ignores personal API keys.
+It checks three labels, reordered result IDs, exact downloaded bytes, and one upload plus one Batch creation.
+It stops the CLI processes and server before returning.
+It retains command logs, request evidence, results, and cleanup status in the printed temporary directory.
+Use `--output-dir /absolute/new/directory` to choose that directory. Keep artifacts outside the repository.
+
+This trial does not establish live API or native terminal compatibility.
+
+## Record the convenience comparison
+
+Use the baseline and candidate binaries from the reviewed source commits.
+
+```sh
+bash scripts/demos/batches/record-workflows.sh \
+  /absolute/path/to/openai-before /absolute/path/to/openai-after \
+  BEFORE_FULL_SHA AFTER_FULL_SHA /absolute/new/recording-directory
+```
+
+The recorder requires Python 3, asciinema, agg, ffmpeg, and ffprobe.
+It reuses the shared capture lifecycle and a separate Python fixture.
+The original Go fixture remains unchanged.
+Before shows separate upload and creation commands.
+After shows submission, readable lifecycle details, input discovery, and matched results.
+The recorder checks one upload and one Batch creation for each comparison.
+It retains replay files, screenshots, transcripts, hashes, and request evidence outside the repository.
+Do not commit binary media.
