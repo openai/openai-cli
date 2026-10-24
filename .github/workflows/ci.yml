@@ -1205,9 +1205,6 @@ jobs:
         # Run outside the launcher so it cannot hide a regression in its own exit status.
         run: go test ./scripts -run '^TestTestRunner$' -count=1
 
-      - name: Check Linux picker metadata and profile identity
-        run: go test ./internal/autocomplete -run '^TestPicker(InstallRetainsLinuxSELinuxLabel|SecurityLabel.*|InstallPreservesLinuxFileMetadata|LinuxMetadataAddedAfterSnapshotIsKept|UnixProfileIdentityKeepsDistinctCaseNames)$' -count=1 -v
-
       - name: Check native Bash executable suggestions
         run: go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsBash' -count=1 -timeout=5m -v
         env:
@@ -1217,7 +1214,7 @@ jobs:
       - name: Run tests
         # Large-payload and subprocess suites share this runner. Avoid running
         # packages concurrently; retain every test, payload and deadline.
-        run: ./scripts/test -p 1
+        run: ./scripts/test -p 1 -skip '^TestShellSuggestionsBash'
         env:
           SKIP_WINDOWS_TEST_COMPILE: '1'
 

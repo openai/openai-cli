@@ -89,9 +89,10 @@ func TestMainHelpCommandRoutes(t *testing.T) {
 						t.Errorf("misleading value label %q", text)
 					}
 				}
+				flagNames := fullHelpFlagNames(want.stdout)
 				for _, flag := range commands.Command.Command("images").Command("generate").VisibleFlags() {
 					name := flag.Names()[0]
-					if !strings.Contains(want.stdout, "-"+name) {
+					if !flagNames["--"+name] && !flagNames["-"+name] {
 						t.Errorf("full reference lost option %q", name)
 					}
 				}
@@ -143,19 +144,27 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 				}
 				return
 			}
+			flagNames := fullHelpFlagNames(got.stdout)
 			for _, flag := range flags {
 				for _, name := range flag.Names() {
 					prefix := "--"
 					if len(name) == 1 {
 						prefix = "-"
 					}
-					if !strings.Contains(got.stdout, prefix+name) {
+					if !flagNames[prefix+name] {
 						t.Errorf("full help lost flag %s%s", prefix, name)
 					}
 				}
 			}
+			sections := map[string]bool{"ACTIONS": true, "COMMAND GROUPS": true}
 			for _, child := range command.VisibleCommands() {
-				if !strings.Contains(got.stdout, child.Name) {
+				if section, ok := child.Metadata["help-command-section"].(string); ok {
+					sections[strings.ToUpper(section)] = true
+				}
+			}
+			commandNames := fullHelpCommandNames(got.stdout, sections)
+			for _, child := range command.VisibleCommands() {
+				if !slices.Contains(commandNames, child.Name) {
 					t.Errorf("full help lost command %q", child.Name)
 				}
 			}
@@ -183,6 +192,41 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 	if visited < 100 {
 		t.Fatalf("complete-help coverage visited only %d commands", visited)
 	}
+}
+
+// Read flag headings and inherited-flag indexes, never examples or descriptions.
+func fullHelpFlagNames(text string) map[string]bool {
+	names := map[string]bool{}
+	inFlags := false
+	for _, line := range strings.Split(text, "\n") {
+		if line != "" && line[0] != ' ' && line[0] != '\t' {
+			inFlags = line == "FLAGS" || line == "GLOBAL FLAGS"
+			continue
+		}
+		if !inFlags || (!strings.HasPrefix(line, "    -") && !strings.HasPrefix(line, "  -")) {
+			continue
+		}
+		for _, label := range strings.Split(strings.TrimSpace(line), ",") {
+			name, _, _ := strings.Cut(strings.TrimSpace(label), "=")
+			names[name] = true
+		}
+	}
+	return names
+}
+
+func fullHelpCommandNames(text string, sections map[string]bool) []string {
+	var names []string
+	inCommands := false
+	for _, line := range strings.Split(text, "\n") {
+		if line != "" && line[0] != ' ' && line[0] != '\t' {
+			inCommands = sections[strings.TrimSuffix(line, ":")]
+			continue
+		}
+		if inCommands && strings.HasPrefix(line, "  ") && len(line) > 2 && line[2] != ' ' && line[2] != '\t' {
+			names = append(names, strings.Fields(line)[0])
+		}
+	}
+	return names
 }
 
 func TestMainHelpKeepsAPIProjectInCommandOptions(t *testing.T) {

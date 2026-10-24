@@ -306,12 +306,12 @@ jobs:
           exit $LASTEXITCODE
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
-      - name: Test Windows tokenizer console reader
+      - name: Test Windows tokenizer console reader and preview worker
         if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./internal/commands/tokenize -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes)' |
+          go test -p 2 ./internal/commands/tokenize -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes|Preview(MatchesExactEncodings|CancellationDuringChildWork|PreservesDeadline|LegacyCancellationDuringNumericWork))' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'tokenizer-reader-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test image command ordering
@@ -991,12 +991,30 @@ jobs:
               suites["tokenizer-reader-tests.jsonl"] = {
                   "TestTokenizerConsoleInputPreservesUnicode",
                   "TestTokenizerConsoleInputRecordSemantics",
+                  "TestTokenizerConsoleInputRecordSemantics/repeats",
+                  "TestTokenizerConsoleInputRecordSemantics/nontext",
+                  "TestTokenizerConsoleInputRecordSemantics/translated_NUL",
+                  "TestTokenizerConsoleInputRecordSemantics/Alt_composition",
+                  "TestTokenizerConsoleInputRecordSemantics/Alt_surrogate_pair",
+                  "TestTokenizerConsoleInputRecordSemantics/ordinary_surrogate_releases",
                   "TestTokenizerConsoleInputRejectsMalformedUTF16",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/isolated_low",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/following_text",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/repeated_high",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/repeat_mismatch",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/channel_mismatch",
                   "TestTokenizerConsoleInputBoundedRepeatsAndCancellation",
                   "TestTokenizerConsoleInputClosePreservesBorrowedHandle",
                   "TestTokenizerConsoleInputReadFailure",
                   "TestTokenizerInputSourcePreservesNonConsoleBytes",
+                  "TestTokenizerPreviewMatchesExactEncodings",
+                  "TestTokenizerPreviewCancellationDuringChildWork",
+                  "TestTokenizerPreviewPreservesDeadline",
+                  "TestTokenizerPreviewLegacyCancellationDuringNumericWork",
+                  "TestTokenizerPreviewLegacyCancellationDuringNumericWork/r50k_base",
+                  "TestTokenizerPreviewLegacyCancellationDuringNumericWork/p50k_base",
               }
+              strict_packages["tokenizer-reader-tests.jsonl"] = "github.com/openai/openai-cli/internal/commands/tokenize"
               files_cases = {
                   "UploadPaths": ["spaces", "options_first", "apostrophe", "literal_at", "literal_dash",
                                   "literal_double_dash", "empty", "binary", "upload_flag", "create_flag",
@@ -1806,9 +1824,90 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  # Compile each package once, alongside image preparation. Consumers receive
+  # source-bound, immutable bundles containing only their existing payloads.
+  wsl-binaries:
+    if: github.event_name != 'push'
+    needs: source
+    permissions: {}
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 20
+    outputs:
+      wsl-pager: ${{ steps.pager.outputs.artifact-id }}
+      wsl-command-contracts: ${{ steps.commands.outputs.artifact-id }}
+      wsl-local-state: ${{ steps.local.outputs.artifact-id }}
+      wsl-shell-contracts: ${{ steps.shell.outputs.artifact-id }}
+      attempt: ${{ steps.build.outputs.attempt }}
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-compatibility-go
+        timeout-minutes: 2
+        with:
+          cache-compilation: 'true'
+      - uses: ./.github/actions/link-go-sdk
+      - name: Check WSL payload controls
+        shell: pwsh
+        timeout-minutes: 1
+        run: python -I -B .github/scripts/test_wsl_payloads.py
+      - name: Build and bind the Linux compatibility executables
+        id: build
+        shell: pwsh
+        timeout-minutes: 6
+        env:
+          WSL_SOURCE_ARTIFACT_ID: ${{ needs.source.outputs.artifact-id }}
+        run: python -I -B .github/scripts/wsl_payloads.py build (Join-Path $env:RUNNER_TEMP 'wsl-payloads')
+      - name: Upload pager payloads
+        id: pager
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: wsl-pager-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wsl-payloads/wsl-pager/*
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload command payloads
+        id: commands
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: wsl-command-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wsl-payloads/wsl-command-contracts/*
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload local-state payloads
+        id: local
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: wsl-local-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wsl-payloads/wsl-local-state/*
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload shell payloads
+        id: shell
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: wsl-shell-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wsl-payloads/wsl-shell-contracts/*
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
   wsl1-pager:
     if: github.event_name != 'push'
-    needs: [source, wsl-image]
+    needs: [source, wsl-image, wsl-binaries]
     permissions: {}
     name: ${{ matrix.name }}
     runs-on: windows-2025-vs2026
@@ -1819,16 +1918,13 @@ jobs:
         include:
           - name: Pager descriptor ownership on Ubuntu WSL 1
             arguments: ''
-            package: ./internal/output
             artifact: wsl-pager
           - name: Command contracts on Ubuntu WSL 1
             arguments: --command-contracts
-            package: ./internal/app
             artifact: wsl-command-contracts
           - name: Local state and offline commands on Ubuntu WSL 1
             arguments: --profile local-state --setup-contract refused
             profile: local-state
-            package: ./internal/commands/images
             artifact: wsl-local-state
           - name: Bash startup, first use and executable contracts on Ubuntu WSL 1
             arguments: --profile shell-contracts --setup-contract refused
@@ -1850,12 +1946,6 @@ jobs:
       - name: Restore candidate checkout
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        timeout-minutes: 2
-        with:
-          go-version-file: .go-version
-          check-latest: true
-      - uses: ./.github/actions/link-go-sdk
       - name: Check the WSL pilot controls
         shell: pwsh
         timeout-minutes: 1
@@ -1864,44 +1954,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -I -B scripts/test_wsl_profiles.py
           exit $LASTEXITCODE
-      - name: Build the Linux compatibility test executables
+      - name: Download source-bound Linux payloads
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: 3
+        with:
+          artifact-ids: ${{ needs.wsl-binaries.outputs[matrix.artifact] }}
+          path: ${{ runner.temp }}/wsl-payloads
+          merge-multiple: true
+      - name: Verify payload source and hashes
         shell: pwsh
-        timeout-minutes: 6
+        timeout-minutes: 1
         env:
-          GOOS: linux
-          GOARCH: amd64
-          CGO_ENABLED: '0'
-          GOMAXPROCS: '2'
-          GOFLAGS: '-p=2 -mod=readonly'
-          GOTOOLCHAIN: local
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ('${{ matrix.profile }}' -ne 'shell-contracts') {
-            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') '${{ matrix.package }}'
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ./cmd/openai
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ('${{ matrix.arguments }}' -eq '--command-contracts') {
-            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-images.test') ./internal/commands/images
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          if ('${{ matrix.profile }}' -eq 'local-state') {
-            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-imageprefs.test') ./internal/imageprefs
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-clihelp.test') ./internal/clihelp
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-autocomplete.test') ./internal/autocomplete
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          if ('${{ matrix.profile }}' -eq 'shell-contracts') {
-            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-autocomplete.test') ./internal/autocomplete
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            go build -o (Join-Path $env:RUNNER_TEMP 'wsl-openai') ./cmd/openai
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          go mod verify
-          exit $LASTEXITCODE
+          WSL_SOURCE_ARTIFACT_ID: ${{ needs.source.outputs.artifact-id }}
+          WSL_PAYLOAD_ATTEMPT: ${{ needs.wsl-binaries.outputs.attempt }}
+        run: python -I -B .github/scripts/wsl_payloads.py verify (Join-Path $env:RUNNER_TEMP 'wsl-payloads') --bundle '${{ matrix.artifact }}'
       - name: Download verified Ubuntu image
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         timeout-minutes: 3
@@ -1915,22 +1981,23 @@ jobs:
         shell: pwsh
         timeout-minutes: 16
         run: |
-          $payloads = @('--process-binary', (Join-Path $env:RUNNER_TEMP 'wsl-process.test'))
+          $payloadRoot = Join-Path $env:RUNNER_TEMP 'wsl-payloads'
+          $payloads = @('--process-binary', (Join-Path $payloadRoot 'wsl-process.test'))
           if ('${{ matrix.arguments }}' -eq '--command-contracts') {
-            $payloads += @('--app-binary', (Join-Path $env:RUNNER_TEMP 'wsl-pager.test'))
-            $payloads += @('--images-binary', (Join-Path $env:RUNNER_TEMP 'wsl-images.test'))
+            $payloads += @('--app-binary', (Join-Path $payloadRoot 'wsl-pager.test'))
+            $payloads += @('--images-binary', (Join-Path $payloadRoot 'wsl-images.test'))
           }
           if ('${{ matrix.profile }}' -ne 'shell-contracts') {
-            $payloads += @('--binary', (Join-Path $env:RUNNER_TEMP 'wsl-pager.test'))
+            $payloads += @('--binary', (Join-Path $payloadRoot 'wsl-pager.test'))
           }
           if ('${{ matrix.profile }}' -eq 'local-state') {
-            $payloads += @('--imageprefs-binary', (Join-Path $env:RUNNER_TEMP 'wsl-imageprefs.test'))
-            $payloads += @('--clihelp-binary', (Join-Path $env:RUNNER_TEMP 'wsl-clihelp.test'))
-            $payloads += @('--autocomplete-binary', (Join-Path $env:RUNNER_TEMP 'wsl-autocomplete.test'))
+            $payloads += @('--imageprefs-binary', (Join-Path $payloadRoot 'wsl-imageprefs.test'))
+            $payloads += @('--clihelp-binary', (Join-Path $payloadRoot 'wsl-clihelp.test'))
+            $payloads += @('--autocomplete-binary', (Join-Path $payloadRoot 'wsl-autocomplete.test'))
           }
           if ('${{ matrix.profile }}' -eq 'shell-contracts') {
-            $payloads += @('--autocomplete-binary', (Join-Path $env:RUNNER_TEMP 'wsl-autocomplete.test'))
-            $payloads += @('--cli-binary', (Join-Path $env:RUNNER_TEMP 'wsl-openai'))
+            $payloads += @('--autocomplete-binary', (Join-Path $payloadRoot 'wsl-autocomplete.test'))
+            $payloads += @('--cli-binary', (Join-Path $payloadRoot 'wsl-openai'))
           }
           python -I -B scripts/check-wsl-pager.py @payloads ${{ matrix.arguments }}
           exit $LASTEXITCODE

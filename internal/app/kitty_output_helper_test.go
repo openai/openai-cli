@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
+	"github.com/openai/openai-cli/internal/mocktest"
 	"github.com/openai/openai-cli/internal/terminalimage"
 )
 
@@ -28,5 +29,5 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	os.Exit(mocktest.RunTests(m))
 }

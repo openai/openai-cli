@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -18,18 +19,42 @@ import (
 
 const syntheticCommit = "1111111111111111111111111111111111111111"
 
+// Keep build inputs stable while tests vary update policy and verifier credentials.
+var updateFixtureEnvironment = os.Environ()
+
+var updateFixtureBuilds = struct {
+	sync.Mutex
+	data map[updateFixtureBuildKey][]byte
+}{data: make(map[updateFixtureBuildKey][]byte)}
+
+type updateFixtureBuildKey struct {
+	toolchain, source, flags, environment string
+}
+
 func syntheticSelection() releaseSelection {
 	return releaseSelection{Version: "1.0.1", Commit: syntheticCommit, ReleaseID: 1, AssetID: 2, Digest: strings.Repeat("a", 64), Size: 10, Updated: "2026-10-22T00:00:00Z"}
 }
 
 func buildUpdateFixture(t *testing.T, directory, version string) []byte {
 	t.Helper()
+	const program = "package main\nfunc main() {}\n"
 	source := filepath.Join(directory, "main.go")
-	if err := os.WriteFile(source, []byte("package main\nfunc main() {}\n"), 0600); err != nil {
+	if err := os.WriteFile(source, []byte(program), 0600); err != nil {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(directory, "fixture-"+version)
-	command := exec.Command("go", "build", "-ldflags", "-X "+stampPrefix+"releaseVersion="+version+" -X "+stampPrefix+"releaseCommit="+syntheticCommit, "-o", destination, source)
+	flags := []string{"build", "-ldflags", "-X " + stampPrefix + "releaseVersion=" + version + " -X " + stampPrefix + "releaseCommit=" + syntheticCommit}
+	command := exec.CommandContext(t.Context(), "go", append(flags, "-o", destination, source)...)
+	command.Env = updateFixtureEnvironment
+	key := updateFixtureBuildKey{command.Path, program, strings.Join(flags, "\x00"), strings.Join(command.Env, "\x00")}
+	updateFixtureBuilds.Lock()
+	defer updateFixtureBuilds.Unlock()
+	if data, exists := updateFixtureBuilds.data[key]; exists {
+		if err := os.WriteFile(destination, data, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return bytes.Clone(data)
+	}
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v: %s", err, output)
 	}
@@ -37,7 +62,32 @@ func buildUpdateFixture(t *testing.T, directory, version string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return data
+	updateFixtureBuilds.data[key] = data
+	return bytes.Clone(data)
+}
+
+func TestUpdateFixtureBuildIdentityAndIsolation(t *testing.T) {
+	first := buildUpdateFixture(t, t.TempDir(), "1.0.1")
+	for _, version := range []string{"1.0.1", "9.9.9"} {
+		directory := t.TempDir()
+		data := buildUpdateFixture(t, directory, version)
+		if bytes.Equal(first, data) != (version == "1.0.1") {
+			t.Fatalf("fixture bytes did not preserve version %s", version)
+		}
+		file, err := os.Open(filepath.Join(directory, "fixture-"+version))
+		if err != nil {
+			t.Fatal(err)
+		}
+		matches := binaryIdentity(file, version, syntheticCommit)
+		closeErr := file.Close()
+		if !matches || closeErr != nil {
+			t.Fatalf("fixture stamp mismatch: version=%s close=%v", version, closeErr)
+		}
+	}
+	first[0] ^= 0xff
+	if data := buildUpdateFixture(t, t.TempDir(), "1.0.1"); data[0] == first[0] {
+		t.Fatal("mutating returned bytes changed the cached fixture")
+	}
 }
 
 type syntheticDelivery struct {

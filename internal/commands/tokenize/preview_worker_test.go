@@ -50,7 +50,18 @@ func init() {
 		_, _ = io.WriteString(os.Stdout, "invalid helper output")
 		os.Exit(0)
 	}
-	err := serveTokenizerPreview(context.Background(), os.Stdin, os.Stdout)
+	var output io.Writer = os.Stdout
+	stopObserver := func() {}
+	if mode == "observe-work" {
+		ready := os.Getenv("OPENAI_TEST_TOKENIZER_PREVIEW_READY")
+		output = &tokenizerObservedOutput{Writer: os.Stdout, marker: ready + ".output"}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { defer close(done); observeTokenizerMerge(ctx, ready) }()
+		stopObserver = func() { cancel(); <-done }
+	}
+	err := serveTokenizerPreview(context.Background(), os.Stdin, output)
+	stopObserver()
 	if completed := os.Getenv("OPENAI_TEST_TOKENIZER_PREVIEW_COMPLETED"); completed != "" {
 		_ = os.WriteFile(completed, []byte("stopped"), 0600)
 	}
@@ -70,6 +81,16 @@ func TestTokenizerPreviewMatchesExactEncodings(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s, %d bytes: %v", encoding, len(input), err)
 			}
+			if len(input) == tokenizer.MaxInputBytes {
+				// The official tiktoken vocabularies assign a=64 and newline=198
+				// in all four encodings. Their reference patterns split a\n into
+				// separate pieces, so this oracle needs no second large encode.
+				// Reference: github.com/openai/tiktoken/blob/0.14.0/tiktoken_ext/openai_public.py.
+				if err := validateRepeatedNewlinePreview(got, len(input)); err != nil {
+					t.Fatalf("%s large preview: %v", encoding, err)
+				}
+				continue
+			}
 			want, err := tokenizer.Encode(input, encoding, true)
 			if err != nil || len(got) != want.TokenCount {
 				t.Fatalf("unexpected token count: %d versus %d, %v", len(got), want.TokenCount, err)
@@ -83,6 +104,22 @@ func TestTokenizerPreviewMatchesExactEncodings(t *testing.T) {
 			}
 		}
 	}
+}
+
+func validateRepeatedNewlinePreview(tokens []tokenizerPreviewToken, size int) error {
+	if len(tokens) != size {
+		return fmt.Errorf("token count %d, want %d", len(tokens), size)
+	}
+	for i, token := range tokens {
+		wantID := uint32(64)
+		if i%2 == 1 {
+			wantID = 198
+		}
+		if token.ID != wantID || token.EndByte != uint32(i+1) {
+			return fmt.Errorf("token %d: got %+v, want ID %d ending at byte %d", i, token, wantID, i+1)
+		}
+	}
+	return nil
 }
 
 func TestTokenizerPreviewCancelAndReplace(t *testing.T) {
@@ -110,29 +147,141 @@ func TestTokenizerPreviewCancelAndReplace(t *testing.T) {
 }
 
 func TestTokenizerPreviewCancellationDuringChildWork(t *testing.T) {
+	assertTokenizerCancellationDuringMerge(t, strings.Repeat("a", tokenizer.MaxInputBytes), "o200k_base")
+}
+
+func TestTokenizerPreviewPreservesDeadline(t *testing.T) {
 	t.Setenv("OPENAI_TEST_TOKENIZER_PREVIEW", "worker")
-	for range 5 {
-		ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
-		started := time.Now()
-		_, err := runTokenizerPreview(ctx, os.Args[0], strings.Repeat("a", tokenizer.MaxInputBytes), "o200k_base")
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	tokens, err := runTokenizerPreview(ctx, os.Args[0], strings.Repeat("a", tokenizer.MaxInputBytes), "o200k_base")
+	// This case preserves deadline identity. The observed-work cases separately
+	// establish that cancellation interrupts real BPE computation.
+	if !errors.Is(err, context.DeadlineExceeded) || tokens != nil || time.Since(started) > 3*time.Second {
+		t.Fatalf("deadline was lost or delayed: %v", err)
+	}
+}
+
+func assertTokenizerCancellationDuringMerge(t *testing.T, text, encoding string) {
+	t.Helper()
+	t.Setenv("OPENAI_TEST_TOKENIZER_PREVIEW", "observe-work")
+	ready := filepath.Join(t.TempDir(), "merging")
+	t.Setenv("OPENAI_TEST_TOKENIZER_PREVIEW_READY", ready)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	type result struct {
+		tokens []tokenizerPreviewToken
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		tokens, err := runTokenizerPreview(ctx, os.Args[0], text, encoding)
+		done <- result{tokens, err}
+	}()
+	waited := false
+	defer func() {
 		cancel()
-		if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 3*time.Second {
-			t.Fatalf("cancellation was lost or delayed: %v", err)
+		if !waited {
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				t.Error("preview child did not finish cleanup")
+			}
+		}
+	}()
+	// Startup and vocabulary loading cannot satisfy this prerequisite. The
+	// test-only observer must witness the real BPE merger on the encoder stack.
+	readiness, stopReadiness := context.WithTimeout(t.Context(), 20*time.Second)
+	defer stopReadiness()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		data, err := os.ReadFile(ready)
+		if err == nil && string(data) == "merging" {
+			break
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		select {
+		case got := <-done:
+			waited = true
+			t.Fatalf("preview exited before observed computation: %v", got.err)
+		case <-readiness.Done():
+			t.Fatalf("BPE computation was not observed: %v; observer=%q", readiness.Err(), data)
+		case <-ticker.C:
+		}
+	}
+	started := time.Now()
+	cancel()
+	select {
+	case got := <-done:
+		waited = true
+		if !errors.Is(got.err, context.Canceled) || got.tokens != nil || time.Since(started) > 3*time.Second {
+			t.Fatalf("cancellation was lost or delayed: %v", got.err)
+		}
+		if _, err := os.Stat(ready + ".output"); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("encoding reached publication before cancellation: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancellation did not reap the computing child")
+	}
+}
+
+// Observe actual merge work without adding test hooks to the production encoder.
+// Both frames must belong to one goroutine; startup and regex preparation do not qualify.
+func observeTokenizerMerge(ctx context.Context, ready string) {
+	stack := make([]byte, 64*1024)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		n := runtime.Stack(stack, true)
+		if n == len(stack) {
+			if len(stack) == 1024*1024 {
+				_ = os.WriteFile(ready, []byte("truncated stack"), 0600)
+				return
+			}
+			stack = make([]byte, len(stack)*2)
+			continue
+		}
+		for _, goroutine := range strings.Split(string(stack[:n]), "\n\n") {
+			if strings.Contains(goroutine, "github.com/pkoukk/tiktoken-go.bytePairMerge[") &&
+				strings.Contains(goroutine, "github.com/openai/openai-cli/internal/tokenizer.(*textEncoding).encodePiece(") {
+				if err := os.WriteFile(ready, []byte("merging"), 0600); err != nil {
+					os.Exit(2)
+				}
+				return
+			}
 		}
 	}
 }
 
+type tokenizerObservedOutput struct {
+	io.Writer
+	marker  string
+	started bool
+}
+
+func (w *tokenizerObservedOutput) Write(data []byte) (int, error) {
+	if !w.started {
+		if err := os.WriteFile(w.marker, []byte("output started"), 0600); err != nil {
+			return 0, err
+		}
+		w.started = true
+	}
+	return w.Writer.Write(data)
+}
+
 func TestTokenizerPreviewLegacyCancellationDuringNumericWork(t *testing.T) {
-	t.Setenv("OPENAI_TEST_TOKENIZER_PREVIEW", "worker")
 	for _, encoding := range []string{"r50k_base", "p50k_base"} {
 		t.Run(encoding, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
-			defer cancel()
-			started := time.Now()
-			_, err := runTokenizerPreview(ctx, os.Args[0], strings.Repeat("1234567890", tokenizer.MaxInputBytes/10), encoding)
-			if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 3*time.Second {
-				t.Fatalf("legacy cancellation was lost or delayed: %v", err)
-			}
+			assertTokenizerCancellationDuringMerge(t, strings.Repeat("1234567890", tokenizer.MaxInputBytes/10), encoding)
 		})
 	}
 }
