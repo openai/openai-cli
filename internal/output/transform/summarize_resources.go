@@ -46,9 +46,6 @@ func SummarizeResource(ctx context.Context, value gjson.Result, route Route) (gj
 	case object == "vector_store.files_batch" && resource == "vector_stores.file_batches" && method == "retrieve":
 		fields = "id vector_store_id status file_counts"
 		omitted = "object created_at"
-	case object == "fine_tuning.job" && resource == "fine_tuning.jobs":
-		fields = "id status model fine_tuned_model training_file validation_file result_files trained_tokens error estimated_finish"
-		omitted = "object created_at finished_at hyperparameters organization_id seed integrations metadata method"
 	case object == "assistant" && resource == "beta.assistants":
 		fields = "id name model description"
 		omitted = "object created_at instructions metadata tools response_format temperature tool_resources top_p"

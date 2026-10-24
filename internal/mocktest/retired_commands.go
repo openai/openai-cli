@@ -1,0 +1,60 @@
+package mocktest
+
+import (
+	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+// Generated API fixtures outlive CLI resource retirement. Exercise their actual
+// invocations as rejection tests until generation removes those fixtures.
+func testRetiredCommand(t *testing.T, input []byte, args []string) bool {
+	t.Helper()
+	retired := false
+	for _, argument := range args {
+		if strings.HasPrefix(argument, "fine-tuning:") {
+			retired = true
+			break
+		}
+	}
+	if !retired {
+		return false
+	}
+	if suiteCLI == nil {
+		t.Fatal("mock CLI tests must call mocktest.RunTests from TestMain")
+	}
+	binary, err := suiteCLI(t.Context())
+	require.NoError(t, err)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, binary, append([]string{"--base-url", server.URL}, args...)...)
+	command.Env = []string{"HOME=" + t.TempDir(), "SystemRoot=" + os.Getenv("SystemRoot"),
+		"OPENAI_CLI_NO_UPDATE_CHECK=1", "OPENAI_CLI_NO_AUTO_UPDATE=1"}
+	command.Stdin = bytes.NewReader(input)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err = command.Run()
+	var exit *exec.ExitError
+	require.ErrorAs(t, err, &exit)
+	require.NoError(t, ctx.Err())
+	require.Equal(t, 3, exit.ExitCode(), "stderr: %s", stderr.String())
+	require.Empty(t, stdout.String())
+	require.Contains(t, stderr.String(), "Unknown command.")
+	require.Zero(t, requests.Load(), "retired command sent an API request")
+	return true
+}

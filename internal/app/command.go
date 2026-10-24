@@ -61,6 +61,7 @@ func ConfigureCommand(root *cli.Command) {
 	filecommands.Configure(root)
 	tokenize.Register(root)
 	codex.Register(root)
+	localcommands.RemoveFineTuningCommands(root)
 	localcommands.ConfigurePresentation(root)
 	manpages.Configure(root, func(command *cli.Command, message string) error {
 		return ReportSaveReceipt(command, os.Stderr, message, nil)

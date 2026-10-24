@@ -34,8 +34,7 @@ For key creation and manual setup instructions, run:
 // checks credentials after positional and required-input validation.
 func ConfigureCredentials(root *cli.Command) {
 	for _, resource := range root.Commands {
-		if resource.Category != "API RESOURCE" ||
-			(!strings.HasPrefix(resource.Name, "admin:") && resource.Name != "fine-tuning:checkpoints:permissions") {
+		if resource.Category != "API RESOURCE" || !strings.HasPrefix(resource.Name, "admin:") {
 			continue
 		}
 		for _, operation := range resource.Commands {

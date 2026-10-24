@@ -64,6 +64,9 @@ func TestRunMockTestWithFlags(t *testing.T, args ...string) {
 // data piped over stdin and CLI args and ensures it succeeds
 func TestRunMockTestWithPipeAndFlags(t *testing.T, pipeData []byte, args ...string) {
 	t.Helper()
+	if testRetiredCommand(t, pipeData, args) {
+		return
+	}
 	origClient, origDefault := blockNetworkExceptMockServer()
 	defer restoreNetwork(origClient, origDefault)
 
