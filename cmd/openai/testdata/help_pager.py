@@ -68,9 +68,7 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
                 read_until(b"q: quit")
                 assert b"\x1b[?1049h" in data, (name, "no alternate screen")
                 assert b"What are we making today?" in data, (name, "banner not visible at startup")
-                assert b"We're so glad you're here :)" in data, (name, "missing greeting below banner")
-                if width >= 80:
-                    assert b"We're so glad you're here :) Use the OpenAI API from your terminal." in data, (name, "intro split across lines")
+                assert b"Use the OpenAI API" in data, (name, "missing purpose below banner")
                 assert b"Help needs no API key" not in data, (name, "started at bottom")
                 if name == "navigation":
                     start = len(data)

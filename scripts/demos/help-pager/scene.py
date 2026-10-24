@@ -47,8 +47,8 @@ try:
             raise OSError("short terminal relay write")
         sys.stdout.buffer.flush()
         if quit_at is None and b"q: quit" in received:
-            if b"We're so glad you're here :)" not in received:
-                raise AssertionError("greeting is missing from the first page")
+            if b"What are we making today?" not in received:
+                raise AssertionError("banner is missing from the first page")
             quit_at = time.monotonic() + 3
     _, status = os.waitpid(pid, 0)
     waited = True

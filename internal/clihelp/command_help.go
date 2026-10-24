@@ -72,14 +72,12 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 		summary = commandSummary(plainUsage)
 	}
 	if path == "" {
-		intro := usage
 		banner := ""
 		if command.Metadata["help-welcome"] == true {
 			banner = welcomeHeader(command)
 		}
 		if banner != "" {
 			out.WriteString(banner)
-			intro = "We're so glad you're here :) " + usage
 		} else {
 			out.WriteString(heading(welcomeTitle))
 			if version := welcomeVersion(command.Version); version != "" {
@@ -91,7 +89,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 			}
 			out.WriteByte('\n')
 		}
-		out.WriteString(style.render(style.note, wrapDescription(intro, "", width)))
+		out.WriteString(style.render(style.note, wrapDescription(usage, "", width)))
 		out.WriteString("\n" + heading("USAGE") + "\n")
 		out.WriteString(style.synopsis(name, []string{"[GLOBAL FLAGS]", "COMMAND"}, width))
 	} else {
