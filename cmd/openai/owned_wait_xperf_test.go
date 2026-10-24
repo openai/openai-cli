@@ -7,7 +7,6 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,6 +40,8 @@ type xperfSchema struct {
 	UnknownColumns int      `json:"unknown_columns"`
 	Rows           int      `json:"rows"`
 	Matches        int      `json:"candidate_matches"`
+	Retained       int      `json:"retained_unique_rows"`
+	Omitted        int      `json:"omitted_unique_rows"`
 	Invalid        int      `json:"invalid_rows"`
 	Supported      bool     `json:"observation_schema_supported"`
 	Failure        string   `json:"failure,omitempty"`
@@ -47,15 +49,40 @@ type xperfSchema struct {
 }
 
 type xperfImage struct {
-	PID    uint32 `json:"candidate_pid"`
-	Module string `json:"module"`
-	Size   uint64 `json:"size"`
-	Start  string `json:"start_decimal"`
-	End    string `json:"end_decimal,omitempty"`
-	base   uint64
+	Kind       string `json:"event_kind"`
+	RangeBasis string `json:"range_basis"`
+	Endpoint   string `json:"endpoint_semantics"`
+	Span       uint64 `json:"end_minus_base_span,omitempty"`
+	PID        uint32 `json:"candidate_pid"`
+	Module     string `json:"module"`
+	Size       uint64 `json:"size,omitempty"`
+	Start      string `json:"start_decimal,omitempty"`
+	End        string `json:"end_decimal,omitempty"`
+	Observed   string `json:"observed_decimal"`
+	base       uint64
+	endAddress uint64
+	endToken   string
+}
+
+type xperfCSVRejection struct {
+	Ordinal    int    `json:"record_ordinal"`
+	Offset     int64  `json:"input_offset"`
+	ColumnName string `json:"declared_column,omitempty"`
+	Category   string `json:"category"`
+	Pass       string `json:"pass"`
+	StartLine  int    `json:"start_line"`
+	Line       int    `json:"line"`
+	Column     int    `json:"column"`
+	Fields     int    `json:"partial_field_count"`
+	Kind       string `json:"allowlisted_event_kind,omitempty"`
 }
 
 type xperfEvidence struct {
+	CSVRejection *xperfCSVRejection `json:"csv_rejection,omitempty"`
+
+	Version          int                 `json:"format_version"`
+	Reservations     []xperfReservation  `json:"reservations"`
+	TailSources      []int               `json:"tail_source_rows"`
 	ImageTruncated   bool                `json:"image_mapping_truncated"`
 	PointerTruncated bool                `json:"pointer_tokens_truncated"`
 	ExportState      string              `json:"export_state"`
@@ -78,7 +105,7 @@ type xperfEvidence struct {
 	Complete         bool                `json:"input_complete"`
 	Schemas          []xperfSchema       `json:"schemas"`
 	Rows             [][]any             `json:"rows"`
-	Tail             [][]any             `json:"tail_rows"`
+	Tail             [][]any             `json:"-"`
 	Matched          int                 `json:"matched_rows"`
 	Omitted          int                 `json:"omitted_rows"`
 	UnknownKinds     int                 `json:"unknown_kind_rows"`
@@ -88,15 +115,15 @@ type xperfEvidence struct {
 }
 
 type xperfReader struct {
-	taintedTIDs map[uint32]bool
-	ctx         context.Context
-	result      xperfEvidence
-	index       map[string]int
-	pids        map[uint32]bool
-	tids        map[uint32]map[uint32]bool
-	tokens      map[string]int
-	rowBytes    int
-	rowCount    int
+	taintedTIDs      map[uint32]bool
+	ctx              context.Context
+	result           xperfEvidence
+	index            map[string]int
+	pids             map[uint32]bool
+	tids             map[uint32]map[uint32]bool
+	tokens           map[string]int
+	reservations     []*xperfReservation
+	reservationIndex map[xperfReservationKey]*xperfReservation
 }
 
 func TestOwnedWaitXperfEvidenceProcess(t *testing.T) {
@@ -129,14 +156,17 @@ func TestOwnedWaitXperfEvidenceProcess(t *testing.T) {
 
 func readXperfEvidence(ctx context.Context, directory string) xperfEvidence {
 	r := xperfReader{ctx: ctx, index: map[string]int{}, pids: map[uint32]bool{}, tids: map[uint32]map[uint32]bool{}, tokens: map[string]int{}, taintedTIDs: map[uint32]bool{}}
-	r.result = xperfEvidence{State: "partial_observations", Clock: "unverified_exact_decimal_only", Lifetime: "unverified", Limits: []string{
+	r.result = xperfEvidence{Version: 3, State: "partial_observations", Clock: "unverified_exact_decimal_only", Lifetime: "unverified", Limits: []string{
 		"Rows match manifest identifiers; matching identifiers do not establish owned lifetimes.",
 		"Timestamp decimals have no accepted unit or UTC mapping.",
 		"Pointer tokens use candidate PID scope and lifetime_unverified.",
 		"ReadyThread numeric columns retain their declared labels; actor and target roles remain unverified.",
 		"No stack association, wait duration, or historical cause is accepted.",
+		"Scope-zero reservations preserve provisional matches without claiming process or thread ownership.",
+		"Reservation omissions count memberships; global omissions count unique source rows.",
+		"CPU and sleep windows are not separated before clock validation.",
 	}}
-	reject := func(code string) xperfEvidence { r.result.Failure = code; return r.result }
+	reject := func(code string) xperfEvidence { r.finishRetention(); r.result.Failure = code; return r.result }
 	var exported struct {
 		State      string `json:"state"`
 		Completion string `json:"completion"`
@@ -166,6 +196,7 @@ func readXperfEvidence(ctx context.Context, directory string) xperfEvidence {
 		return reject("input_identity")
 	}
 	r.pids[ready.PID] = true
+	r.addReservations(ready.PID, "recorder", false)
 	for _, c := range ready.Controls {
 		if c.PID != ready.PID || c.Thread == 0 {
 			return reject("control_identity")
@@ -177,6 +208,11 @@ func readXperfEvidence(ctx context.Context, directory string) xperfEvidence {
 			return reject("target_identity")
 		}
 		r.pids[p.PID] = true
+		role := "target"
+		if p.Role == "powershell_direct" || p.Role == "powershell_pipeline" {
+			role = p.Role
+		}
+		r.addReservations(p.PID, role, true)
 	}
 	file, err := os.Open(filepath.Join(directory, "private-events.csv"))
 	if err != nil {
@@ -205,7 +241,7 @@ func readXperfEvidence(ctx context.Context, directory string) xperfEvidence {
 	if first != second || second != exported.Hash {
 		return reject("csv_changed")
 	}
-	r.result.Omitted = max(0, r.result.Matched-len(r.result.Rows)-len(r.result.Tail))
+	r.finishRetention()
 	r.result.CSVHash = second
 	r.result.Complete = true
 	r.result.Capabilities = r.capabilities()
@@ -224,7 +260,7 @@ func (r *xperfReader) addThread(tid, pid uint32) {
 }
 
 func xperfKind(kind string) bool {
-	return slices.Contains([]string{"P-Start", "P-End", "P-DCStart", "P-DCEnd", "T-Start", "T-End", "T-DCStart", "T-DCEnd", "CSwitch", "ReadyThread", "SampledProfile", "Stack", "ImageLoad", "ImageUnload", "ImageDCStart", "ImageDCEnd"}, kind)
+	return slices.Contains([]string{"P-Start", "P-End", "P-DCStart", "P-DCEnd", "T-Start", "T-End", "T-DCStart", "T-DCEnd", "CSwitch", "ReadyThread", "SampledProfile", "Stack", "ImageLoad", "ImageUnload", "ImageDCStart", "ImageDCEnd", "I-Start", "I-End", "I-DCStart", "I-DCEnd"}, kind)
 }
 
 // These types permit safe observations, not an unverified semantic conversion.
@@ -248,7 +284,7 @@ func xperfColumn(name string) string {
 		return "decimal"
 	case "OldState", "Old Thread State", "Wait Reason", "OldThreadWaitReason", "Swapable":
 		return "enum"
-	case "Address", "PrgrmCtr", "InstructionPointer", "ImageBase", "BaseAddr":
+	case "Address", "PrgrmCtr", "InstructionPointer", "ImageBase", "BaseAddr", "EndAddr":
 		return "pointer"
 	default:
 		return ""
@@ -303,6 +339,45 @@ func (r *xperfReader) header(kind string, fields []string) error {
 	return nil
 }
 
+func (r *xperfReader) csvRejection(err error, cells []string, discovery bool, ordinal int, offset int64) {
+	rejection := &xperfCSVRejection{Category: "other_reader_error", Pass: "observation", Fields: len(cells), Ordinal: ordinal, Offset: offset}
+	if discovery {
+		rejection.Pass = "discovery"
+	}
+	switch {
+	case errors.Is(err, csv.ErrBareQuote):
+		rejection.Category = "bare_quote"
+	case errors.Is(err, csv.ErrQuote):
+		rejection.Category = "quote"
+	case errors.Is(err, csv.ErrFieldCount):
+		rejection.Category = "field_count"
+	case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || err.Error() == "reduction_deadline":
+		rejection.Category = "reader_deadline"
+	case err.Error() == "xml_event_bound":
+		rejection.Category = "reader_budget"
+	}
+	var parse *csv.ParseError
+	if errors.As(err, &parse) {
+		rejection.StartLine = max(0, parse.StartLine)
+		rejection.Line = max(0, parse.Line)
+		rejection.Column = max(0, parse.Column)
+	}
+	if len(cells) > 0 {
+		kind := strings.TrimSpace(strings.TrimPrefix(cells[0], "\ufeff"))
+		if xperfKind(kind) {
+			rejection.Kind = kind
+			if index, exists := r.index[kind]; exists {
+				schema := r.result.Schemas[index]
+				column := len(cells) - 1
+				if column >= 0 && column < len(schema.Declared) {
+					rejection.ColumnName = schema.Declared[column]
+				}
+			}
+		}
+	}
+	r.result.CSVRejection = rejection
+}
+
 func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
 	hash := sha256.New()
 	limited := io.LimitReader(file, xperfCSVLimit+1)
@@ -315,6 +390,7 @@ func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
 	headerEnded := false
 	for {
 		if err := r.ctx.Err(); err != nil {
+			r.csvRejection(err, nil, discovery, row+1, parser.InputOffset())
 			return "", errors.New("csv_deadline")
 		}
 		budget.remaining = 128 << 10
@@ -326,6 +402,7 @@ func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
 			break
 		}
 		if err != nil {
+			r.csvRejection(err, cells, discovery, row+1, parser.InputOffset())
 			return "", errors.New("csv_syntax")
 		}
 		row++
@@ -383,7 +460,7 @@ func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
 		}
 		s := &r.result.Schemas[index]
 		if discovery {
-			if s.Supported && len(cells) == len(s.fields)+1 && strings.HasPrefix(kind, "Image") {
+			if s.Supported && len(cells) == len(s.fields)+1 && (strings.HasPrefix(kind, "Image") || strings.HasPrefix(kind, "I-")) {
 				r.discoverImage(s, cells[1:])
 			}
 			if s.Supported && len(cells) == len(s.fields)+1 && strings.HasPrefix(kind, "T-") {
@@ -414,18 +491,7 @@ func (r *xperfReader) scan(file io.Reader, discovery bool) (string, error) {
 		r.result.Matched++
 		record := []any{index, row, scope, match}
 		record = append(record, values...)
-		encoded, _ := json.Marshal(record)
-		if r.rowBytes+len(encoded)+1 <= xperfRowBudget && len(r.result.Rows) < 100000 {
-			r.result.Rows = append(r.result.Rows, record)
-			r.rowBytes += len(encoded) + 1
-		} else {
-			r.result.Truncated = true
-			r.result.Omitted++
-			if len(r.result.Tail) >= 64 {
-				r.result.Tail = r.result.Tail[1:]
-			}
-			r.result.Tail = append(r.result.Tail, record)
-		}
+		r.retain(s, cells[1:], record, scope == 0)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
@@ -593,53 +659,81 @@ func xperfCompare(a, b string) (int, bool) {
 }
 func (r *xperfReader) discoverImage(s *xperfSchema, cells []string) {
 	var pid uint32
-	pidSeen, pidValid := false, true
-	var base, size uint64
-	stamp, module := "", ""
-	baseOK, sizeOK := false, false
+	pidSeen, valid := false, true
+	var base, endAddress, size uint64
+	stamp, module, endToken := "", "", ""
+	baseSeen, endSeen, sizeSeen, moduleSeen := false, false, false, false
 	for i, name := range s.fields {
 		switch name {
 		case "Process Name (PID)", "Process Name ( PID)", "PID", "ProcessID", "ProcessId":
-			value, valid := xperfID(cells[i], xperfColumn(name))
-			if pidSeen && pid != value {
-				pidValid = false
-			}
-			pidValid = pidValid && valid
-			pidSeen = true
-			pid = value
+			value, ok := xperfID(cells[i], xperfColumn(name))
+			valid = valid && ok && (!pidSeen || pid == value)
+			pidSeen, pid = true, value
 		case "ImageBase", "BaseAddr":
-			base, baseOK = xperfPointer(cells[i])
+			value, ok := xperfPointer(cells[i])
+			valid = valid && ok && (!baseSeen || base == value)
+			baseSeen, base = true, value
+		case "EndAddr":
+			endToken = cells[i]
+			value, ok := xperfPointer(cells[i])
+			valid = valid && ok && (!endSeen || endAddress == value)
+			endSeen, endAddress = true, value
 		case "ImageSize", "Size":
-			size, sizeOK = waitNumber(cells[i])
+			value, ok := waitNumber(cells[i])
+			valid = valid && ok && (!sizeSeen || size == value)
+			sizeSeen, size = true, value
 		case "FileName", "File Name", "Image", "ImageName":
-			module = xperfModule(cells[i])
+			value := xperfModule(cells[i])
+			valid = valid && (!moduleSeen || module == value)
+			moduleSeen, module = true, value
 		case "TimeStamp":
 			stamp = cells[i]
 		}
 	}
-	if !pidSeen || !pidValid || !baseOK || !sizeOK || size == 0 || base > math.MaxUint64-size || module == "" || module == "unresolved" || !xperfDecimal.MatchString(stamp) {
+	if !valid || !pidSeen || !baseSeen || !moduleSeen || module == "unresolved" || !xperfDecimal.MatchString(stamp) {
+		return
+	}
+	legacyRange := !strings.HasPrefix(s.Kind, "I-")
+	if legacyRange {
+		if !sizeSeen || size == 0 || base > math.MaxUint64-size {
+			return
+		}
+	} else if !endSeen || endAddress <= base || sizeSeen {
 		return
 	}
 	if !r.pids[pid] && !(pid == 0 && slices.Contains([]string{"ntoskrnl.exe", "ntkrnlmp.exe", "hal.dll"}, module)) {
 		return
 	}
-	if s.Kind == "ImageUnload" {
+	if s.Kind == "ImageUnload" || s.Kind == "I-End" {
 		for i := range r.result.CandidateImages {
 			im := &r.result.CandidateImages[i]
-			if im.PID == pid && im.base == base && im.Module == module && im.End == "" {
+			if im.PID == pid && im.base == base && im.Module == module && im.Start != "" && im.End == "" {
 				im.End = stamp
 			}
 		}
-		return
-	}
-	if s.Kind == "ImageDCEnd" {
-		return
 	}
 	if len(r.result.CandidateImages) >= 2048 {
 		r.result.ImageTruncated = true
 		return
 	}
-	r.result.CandidateImages = append(r.result.CandidateImages, xperfImage{PID: pid, Module: module, Size: size, Start: stamp, base: base})
+	im := xperfImage{Kind: s.Kind, PID: pid, Module: module, Observed: stamp, base: base, endAddress: endAddress, endToken: endToken}
+	if legacyRange {
+		im.Size = size
+		im.RangeBasis = "base_size"
+		im.Endpoint = "size_bound"
+	} else {
+		im.Span = endAddress - base
+		im.RangeBasis = "base_endaddr"
+		im.Endpoint = "unknown_strict_interior_only"
+	}
+	switch s.Kind {
+	case "ImageUnload", "I-End":
+		im.End = stamp
+	case "ImageDCEnd", "I-DCEnd":
+	default:
+		im.Start = stamp
+	}
+	r.result.CandidateImages = append(r.result.CandidateImages, im)
 }
 func (r *xperfReader) imageAt(pid uint32, address uint64, stamp string) (int, bool) {
 	found := -1
@@ -650,7 +744,14 @@ func (r *xperfReader) imageAt(pid uint32, address uint64, stamp string) (int, bo
 		if im.PID != pid && im.PID != 0 {
 			continue
 		}
-		if address < im.base || address-im.base >= im.Size {
+		if im.Start == "" {
+			continue
+		}
+		if im.RangeBasis == "base_endaddr" {
+			if address <= im.base || address >= im.endAddress {
+				continue
+			}
+		} else if address < im.base || address-im.base >= im.Size {
 			continue
 		}
 		if cmp, ok := xperfCompare(stamp, im.Start); !ok || cmp < 0 {
@@ -675,11 +776,13 @@ func (r *xperfReader) capabilities() map[string]any {
 		"ReadyThread":    {{"TimeStamp"}, {"TThreadId", "Ready TID", "Rdy TID", "Target TID", "ReadiedThreadId"}, {"ReadyingThreadId"}},
 		"P-Start":        {{"TimeStamp"}, {"PID", "ProcessID", "ProcessId", "Process Name (PID)", "Process Name ( PID)"}},
 		"T-Start":        {{"TimeStamp"}, {"PID", "ProcessID", "ProcessId", "Process Name (PID)", "Process Name ( PID)"}, {"ThreadID", "ThreadId", "TThreadId", "TID"}},
+		"I-Start":        {{"TimeStamp"}, {"PID", "ProcessID", "ProcessId", "Process Name (PID)", "Process Name ( PID)"}, {"BaseAddr"}, {"EndAddr"}, {"FileName"}},
+		"I-DCStart":      {{"TimeStamp"}, {"PID", "ProcessID", "ProcessId", "Process Name (PID)", "Process Name ( PID)"}, {"BaseAddr"}, {"EndAddr"}, {"FileName"}},
 		"ImageLoad":      {{"TimeStamp"}, {"PID", "ProcessID", "ProcessId", "Process Name (PID)", "Process Name ( PID)"}, {"ImageBase", "BaseAddr"}, {"ImageSize", "Size"}, {"FileName", "File Name", "Image", "ImageName"}},
 		"Stack":          {{"TimeStamp"}, {"ThreadID", "ThreadId", "TThreadId", "TID"}, {"No."}, {"Address"}},
 		"SampledProfile": {{"TimeStamp"}, {"ThreadID", "ThreadId", "TThreadId", "TID"}, {"Process Name (PID)", "Process Name ( PID)", "PID", "ProcessID", "ProcessId"}, {"PrgrmCtr", "InstructionPointer"}},
 	}
-	for group, kinds := range map[string][]string{"scheduling": {"CSwitch", "ReadyThread"}, "lifetimes": {"P-Start", "P-End", "P-DCStart", "T-Start", "T-End", "T-DCStart"}, "images": {"ImageLoad", "ImageDCStart"}, "stacks": {"Stack", "SampledProfile"}} {
+	for group, kinds := range map[string][]string{"scheduling": {"CSwitch", "ReadyThread"}, "lifetimes": {"P-Start", "P-End", "P-DCStart", "T-Start", "T-End", "T-DCStart"}, "images": {"ImageLoad", "ImageDCStart", "I-Start", "I-End", "I-DCStart", "I-DCEnd"}, "stacks": {"Stack", "SampledProfile"}} {
 		observed, missing, fields := []string{}, []string{}, []string{}
 		for _, kind := range kinds {
 			i, ok := r.index[kind]
@@ -703,73 +806,6 @@ func (r *xperfReader) capabilities() map[string]any {
 	result["images"].(map[string]any)["candidate_ranges"] = len(r.result.CandidateImages)
 	result["stacks"].(map[string]any)["accepted_joins"] = 0
 	return result
-}
-
-// Preserve independent decoded process anchors without weakening the XML reducer.
-func (r *xperfReader) xmlAnchors(directory string) {
-	r.result.AnchorState = "unavailable"
-	decoder, budget, closeFile, err := waitXMLDecoder(r.ctx, filepath.Join(directory, "private-wait.xml"))
-	if err != nil {
-		return
-	}
-	defer closeFile()
-	count := 0
-	for {
-		budget.remaining = 128 << 10
-		token, err := decoder.Token()
-		if err == io.EOF {
-			r.result.AnchorState = "observed_unverified"
-			return
-		}
-		if err != nil {
-			r.result.AnchorState = "partial_xml_schema"
-			return
-		}
-		start, ok := token.(xml.StartElement)
-		if !ok || start.Name.Local != "Event" {
-			continue
-		}
-		count++
-		if count > 2000000 {
-			r.result.AnchorState = "event_bound"
-			return
-		}
-		var event waitXMLEvent
-		budget.remaining = 128 << 10
-		if decoder.DecodeElement(&event, &start) != nil {
-			r.result.AnchorState = "partial_xml_schema"
-			return
-		}
-		guid := event.Extended.GUID
-		if guid == "" {
-			guid = event.System.Provider.GUID
-		}
-		if strings.ToLower(strings.Trim(guid, "{} \r\n\t")) != waitProcessGUID || !slices.Contains([]uint32{1, 2, 3, 4}, event.System.Opcode) {
-			continue
-		}
-		var pid uint64
-		seen := false
-		valid := true
-		for _, field := range event.Data {
-			if strings.EqualFold(field.Name, "ProcessId") {
-				if seen {
-					valid = false
-				}
-				pid, ok = waitNumber(field.Value)
-				valid = valid && ok
-				seen = true
-			}
-		}
-		raw, ok := waitNumber(event.System.Clock.Raw)
-		if !valid || !seen || !ok || pid > math.MaxUint32 || !r.pids[uint32(pid)] {
-			continue
-		}
-		if len(r.result.Anchors) >= 64 {
-			r.result.AnchorState = "anchor_bound"
-			return
-		}
-		r.result.Anchors = append(r.result.Anchors, map[string]uint64{"pid": pid, "opcode": uint64(event.System.Opcode), "raw_qpc": raw})
-	}
 }
 
 func (r *xperfReader) discoverThread(s *xperfSchema, cells []string) {
@@ -802,4 +838,157 @@ func (r *xperfReader) discoverThread(s *xperfSchema, cells []string) {
 			r.addThread(tid, pid)
 		}
 	}
+}
+
+type xperfReservationKey struct {
+	pid       uint32
+	class     string
+	ambiguous bool
+}
+type xperfReservationCount struct {
+	Matched  int `json:"matched_memberships"`
+	Retained int `json:"retained_memberships"`
+	Omitted  int `json:"omitted_memberships"`
+}
+type xperfSavedRow struct {
+	value []any
+	bytes int
+}
+type xperfReservation struct {
+	PID          uint32                            `json:"candidate_pid"`
+	Role         string                            `json:"role"`
+	Class        string                            `json:"class"`
+	ScopeZero    bool                              `json:"scope_zero"`
+	Limit        int                               `json:"primary_limit_bytes"`
+	TailLimit    int                               `json:"tail_limit_bytes"`
+	Matched      int                               `json:"matched_memberships"`
+	Retained     int                               `json:"retained_memberships"`
+	Omitted      int                               `json:"omitted_memberships"`
+	Truncated    bool                              `json:"truncated"`
+	Kinds        map[string]*xperfReservationCount `json:"kind_counts"`
+	primary      []xperfSavedRow
+	tail         []xperfSavedRow
+	primaryBytes int
+	tailBytes    int
+}
+
+func (r *xperfReader) addReservations(pid uint32, role string, target bool) {
+	if r.reservationIndex == nil {
+		r.reservationIndex = map[xperfReservationKey]*xperfReservation{}
+	}
+	for _, class := range []string{"interval", "sample"} {
+		for _, ambiguous := range []bool{false, true} {
+			limit := 128 << 10
+			if target && class == "interval" {
+				limit = 256 << 10
+			}
+			reservation := &xperfReservation{PID: pid, Role: role, Class: class, ScopeZero: ambiguous, Limit: limit, TailLimit: 16 << 10, Kinds: map[string]*xperfReservationCount{}}
+			r.reservations = append(r.reservations, reservation)
+			r.reservationIndex[xperfReservationKey{pid, class, ambiguous}] = reservation
+		}
+	}
+}
+func (r *xperfReader) retain(s *xperfSchema, cells []string, row []any, ambiguous bool) {
+	pids := map[uint32]bool{}
+	for i, name := range s.fields {
+		typeName := xperfColumn(name)
+		if typeName != "tid" && typeName != "pid" && typeName != "pidcell" {
+			continue
+		}
+		id, ok := xperfID(cells[i], typeName)
+		if !ok {
+			continue
+		}
+		if typeName == "tid" {
+			for pid := range r.tids[id] {
+				if r.pids[pid] {
+					pids[pid] = true
+				}
+			}
+		} else if !strings.HasPrefix(name, "Parent") && r.pids[id] {
+			pids[id] = true
+		}
+	}
+	class := "interval"
+	if s.Kind == "Stack" || s.Kind == "SampledProfile" {
+		class = "sample"
+	}
+	encoded, _ := json.Marshal(row)
+	saved := xperfSavedRow{value: row, bytes: len(encoded) + 1}
+	for pid := range pids {
+		reservation := r.reservationIndex[xperfReservationKey{pid, class, ambiguous}]
+		if reservation == nil {
+			continue
+		}
+		reservation.Matched++
+		if reservation.Kinds[s.Kind] == nil {
+			reservation.Kinds[s.Kind] = &xperfReservationCount{}
+		}
+		reservation.Kinds[s.Kind].Matched++
+		if reservation.primaryBytes+saved.bytes <= reservation.Limit && len(reservation.primary) < 100000*reservation.Limit/xperfRowBudget {
+			reservation.primary = append(reservation.primary, saved)
+			reservation.primaryBytes += saved.bytes
+			continue
+		}
+		if saved.bytes > reservation.TailLimit {
+			continue
+		}
+		for len(reservation.tail) > 0 && (len(reservation.tail) >= 64 || reservation.tailBytes+saved.bytes > reservation.TailLimit) {
+			reservation.tailBytes -= reservation.tail[0].bytes
+			reservation.tail = reservation.tail[1:]
+		}
+		reservation.tail = append(reservation.tail, saved)
+		reservation.tailBytes += saved.bytes
+	}
+}
+func (r *xperfReader) finishRetention() {
+	r.result.Rows, r.result.Tail, r.result.TailSources, r.result.Reservations = nil, nil, nil, nil
+	unique := map[int][]any{}
+	primary := map[int]bool{}
+	for _, reservation := range r.reservations {
+		reservation.Retained = len(reservation.primary) + len(reservation.tail)
+		reservation.Omitted = max(0, reservation.Matched-reservation.Retained)
+		reservation.Truncated = reservation.Omitted > 0
+		for _, count := range reservation.Kinds {
+			count.Retained = 0
+			count.Omitted = 0
+		}
+		for _, saved := range reservation.primary {
+			ordinal := saved.value[1].(int)
+			unique[ordinal] = saved.value
+			primary[ordinal] = true
+			reservation.Kinds[r.result.Schemas[saved.value[0].(int)].Kind].Retained++
+		}
+		for _, saved := range reservation.tail {
+			ordinal := saved.value[1].(int)
+			unique[ordinal] = saved.value
+			reservation.Kinds[r.result.Schemas[saved.value[0].(int)].Kind].Retained++
+		}
+		for _, count := range reservation.Kinds {
+			count.Omitted = max(0, count.Matched-count.Retained)
+		}
+		r.result.Reservations = append(r.result.Reservations, *reservation)
+	}
+	ordinals := make([]int, 0, len(unique))
+	for ordinal := range unique {
+		ordinals = append(ordinals, ordinal)
+	}
+	sort.Ints(ordinals)
+	for i := range r.result.Schemas {
+		r.result.Schemas[i].Retained = 0
+	}
+	for _, ordinal := range ordinals {
+		row := unique[ordinal]
+		r.result.Rows = append(r.result.Rows, row)
+		r.result.Schemas[row[0].(int)].Retained++
+		if !primary[ordinal] {
+			r.result.Tail = append(r.result.Tail, row)
+			r.result.TailSources = append(r.result.TailSources, ordinal)
+		}
+	}
+	for i := range r.result.Schemas {
+		r.result.Schemas[i].Omitted = max(0, r.result.Schemas[i].Matches-r.result.Schemas[i].Retained)
+	}
+	r.result.Omitted = max(0, r.result.Matched-len(r.result.Rows))
+	r.result.Truncated = r.result.Omitted > 0
 }

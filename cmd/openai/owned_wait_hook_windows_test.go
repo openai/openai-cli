@@ -107,21 +107,22 @@ func beginOwnedWaitTrace(t *testing.T, shell nativeShell) (func(bool, string), f
 			}
 			t.Logf("owned-wait recorder error_type=%T context=%v stdout_bytes=%d stderr_bytes=%d", recorderError, ctx.Err(), len(stdout.checkedText(t)), len(stderr.checkedText(t)))
 			cleanupOK := runOwnedWaitTool(t, helper, "Cleanup", script, directory, profile, 60*time.Second)
-			exportOK := false
-			xperfOK := false
+			exportOK, reductionOK, preparationOK, xperfOK := false, false, false, false
 			if recorderError == nil && cleanupOK {
 				exportOK = runOwnedWaitTool(t, helper, "Export", script, directory, profile, 150*time.Second)
-				xperfOK = runOwnedWaitTool(t, helper, "ExportXperf", script, directory, profile, 120*time.Second)
 			}
-			reductionOK := false
 			if exportOK {
 				reductionOK = runOwnedWaitAnalysis(t, helper, directory, "TestOwnedWaitReductionProcess")
+				preparationOK = runOwnedWaitAnalysis(t, helper, directory, "TestOwnedWaitXMLPreparationProcess")
+			}
+			if recorderError == nil && cleanupOK {
+				xperfOK = runOwnedWaitTool(t, helper, "ExportXperf", script, directory, profile, 120*time.Second)
 			}
 			xperfEvidenceOK := runOwnedWaitAnalysis(t, helper, directory, "TestOwnedWaitXperfEvidenceProcess")
-			for _, name := range []string{"wait-trace-ready.json", "wait-trace-request.json", "wait-trace-owner.json", "wait-trace-status.json", "wait-trace-input.json", "wait-cleanup-status.json", "wait-export-status.json", "wait-reduction.json", "wait-xperf-export-status.json", "wait-xperf-evidence.json"} {
+			for _, name := range []string{"wait-trace-ready.json", "wait-trace-request.json", "wait-trace-owner.json", "wait-trace-status.json", "wait-trace-input.json", "wait-cleanup-status.json", "wait-export-status.json", "wait-reduction.json", "wait-xml-preparation.json", "wait-xperf-export-status.json", "wait-xperf-evidence.json"} {
 				emitOwnedWaitArtifact(t, directory, name)
 			}
-			if recorderError != nil || !cleanupOK || !exportOK || !reductionOK || !xperfOK || !xperfEvidenceOK {
+			if recorderError != nil || !cleanupOK || !exportOK || !reductionOK || !preparationOK || !xperfOK || !xperfEvidenceOK {
 				t.Error("owned-wait collection did not complete; inspect safe status artifacts")
 			}
 			// A fatal metadata startup failure must not discard the completed trace.

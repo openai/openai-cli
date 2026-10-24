@@ -118,7 +118,7 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 					observedShell.args = append([]string{"-test.run=^TestShellFileWindowsProcessHelper$", "--", "observe-start", trace}, shell.args[2:]...)
 					producer = invoke(helper, "-test.run=^TestFiniteJSONListShellProcess$", "--", "produce", fixture, "observe-start")
 					t.Cleanup(func() {
-						for _, checkpoint := range []string{trace, trace + ".entered", fixture + ".entered", fixture + ".finished"} {
+						for _, checkpoint := range []string{trace, trace + ".cpu", trace + ".entered", fixture + ".entered", fixture + ".finished"} {
 							data, err := os.ReadFile(checkpoint)
 							t.Logf("PowerShell startup pipeline=%t checkpoint=%s value=%q error=%v", pipeline, filepath.Base(checkpoint), data, err)
 						}
