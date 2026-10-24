@@ -461,17 +461,6 @@ func TestShellFileWindowsProcessHelper(t *testing.T) {
 	checkpoint(fmt.Sprintf("after-shell-start shell_pid=%d process_start_ns=%d", child.Process.Pid, startup.Nanoseconds()))
 	err := child.Wait()
 	checkpoint("after-shell-exit")
-	if trace != nil {
-		data := []byte("{\"available\":false}\n")
-		if state := child.ProcessState; state != nil {
-			data = []byte(fmt.Sprintf("{\"available\":true,\"pid\":%d,\"user_cpu_ns\":%d,\"system_cpu_ns\":%d,\"exit_code\":%d,\"supervisor_elapsed_ns\":%d,\"process_start_ns\":%d}\n",
-				child.Process.Pid, state.UserTime().Nanoseconds(), state.SystemTime().Nanoseconds(),
-				state.ExitCode(), time.Since(started).Nanoseconds(), startup.Nanoseconds()))
-		}
-		if err := os.WriteFile(trace.Name()+".cpu", data, 0600); err != nil {
-			fmt.Fprintf(os.Stderr, "native shell CPU accounting unavailable: error_type=%T\n", err)
-		}
-	}
 	closeTrace()
 	if ctx.Err() != nil {
 		pid, exit, userCPU, systemCPU := "unavailable", "unavailable", "unavailable", "unavailable"
