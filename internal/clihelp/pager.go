@@ -21,7 +21,7 @@ import (
 
 // RunWithPager keeps bare interactive help at its first line. Explicit help,
 // nonterminal streams, and CI retain the framework's ordinary output path.
-func RunWithPager(ctx context.Context, root *cli.Command, argv []string, run func() error) error {
+func RunWithPager(ctx context.Context, root *cli.Command, argv []string, run func() error) (returnErr error) {
 	input, output := root.Reader, root.Writer
 	if input == nil {
 		input = os.Stdin
@@ -69,6 +69,21 @@ func RunWithPager(ctx context.Context, root *cli.Command, argv []string, run fun
 	tracked := &helpPagerOutput{BorrowedWriter: terminal.BorrowedWriter{
 		Writer: clioutput.Writer{Context: context.Background(), Sink: out}, File: out,
 	}, cancel: cancel}
+	// Tea can return during startup after changing terminal modes but before
+	// installing its cleanup. Preserve both borrowed terminals independently.
+	inputState, err := term.GetState(in.Fd())
+	if err != nil {
+		return &PagerError{Cause: err}
+	}
+	outputState, err := term.GetState(out.Fd())
+	if err != nil {
+		return &PagerError{Cause: err}
+	}
+	defer func() {
+		if restoreErr := errors.Join(term.Restore(in.Fd(), inputState), term.Restore(out.Fd(), outputState)); restoreErr != nil {
+			returnErr = errors.Join(returnErr, &PagerError{Cause: restoreErr})
+		}
+	}()
 	_, err = tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(tracked), tea.WithContext(programContext),
 		tea.WithWindowSize(width, height), tea.WithColorProfile(commandHelpStyle(root).profile)).Run()
 	if writeErr := tracked.failure(); writeErr != nil {

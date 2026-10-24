@@ -4,6 +4,7 @@ import errno
 import fcntl
 import os
 import pty
+import resource
 import select
 import signal
 import struct
@@ -14,7 +15,7 @@ import termios
 import time
 
 
-def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width=100, cancel_context=False):
+def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width=100, cancel_context=False, startup_failure=False):
     with tempfile.TemporaryDirectory(prefix="help-pager-") as home:
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, width, 0, 0))
@@ -41,8 +42,12 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
         if cancel_context:
             env["OPENAI_CLI_HELP_PAGER_CONTEXT_FD"] = str(control[0])
             process_test = "TestMainHelpPagerContextProcess"
+        if startup_failure:
+            env["OPENAI_CLI_HELP_PAGER_EXHAUST_FDS"] = "1"
+            process_test = "TestMainHelpPagerStartupFailureProcess"
         command = [sys.argv[1], f"-test.run=^{process_test}$", "--", "openai", *args]
-        child = subprocess.Popen(command, env=env, cwd=home, pass_fds=control[:1], **streams)
+        limit = (lambda: resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))) if startup_failure else None
+        child = subprocess.Popen(command, env=env, cwd=home, pass_fds=control[:1], preexec_fn=limit, **streams)
         data = bytearray()
         deadline = time.monotonic() + 10
 
@@ -107,7 +112,10 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
                 assert b"\x1b[?1049l" in data, (name, "alternate screen was not restored")
             else:
                 assert b"\x1b[?1049h" not in data, (name, "unexpected pager")
-                if redirected != "stdout":
+                if startup_failure:
+                    assert b"Could not display help" in data, (name, "missing safe startup failure", bytes(data))
+                    assert b"openai --help" in data, (name, "missing plain-help recovery")
+                elif redirected != "stdout":
                     assert b"GLOBAL FLAGS" in data, (name, "missing complete help")
             if extra and "NO_COLOR" in extra:
                 assert b"38;" not in data and b"38:" not in data, (name, "color opt-out ignored")
@@ -129,6 +137,7 @@ check("escape", action=b"\x1b")
 check("ctrl-c", action=b"\x03", code=130)
 check("interrupt", action="signal", code=130)
 check("context-cancel", cancel_context=True, code=1)
+check("startup-failure", startup_failure=True, action=None, code=1)
 for name, args in (("explicit-help", ("--help",)), ("help-command", ("help",)),
                    ("nested-help", ("models", "--help")), ("explicit-format", ("--format=json",))):
     check(name, args, action=None)
