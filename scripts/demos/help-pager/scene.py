@@ -60,6 +60,7 @@ finally:
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
+            # The child may have exited already; waitpid below still reaps it.
             pass
         os.waitpid(pid, 0)
     termios.tcsetattr(1, termios.TCSADRAIN, original)
