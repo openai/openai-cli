@@ -276,9 +276,9 @@ func observeTokenizerRestoration(t *testing.T, binary string, input, output *os.
 		t.Fatalf("fresh screen prerequisite failed: %v", err)
 	}
 	tokenizerRestorationCheckpoint(t, "before_start", evidence)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, binary, "tokenizer")
+	lifetime, stopProcess := context.WithCancel(t.Context())
+	defer stopProcess()
+	command := exec.CommandContext(lifetime, binary, "tokenizer")
 	command.Stdin, command.Stdout, command.Stderr = input, output, output
 	command.WaitDelay = 3 * time.Second
 	starting := time.Now()
@@ -286,6 +286,11 @@ func observeTokenizerRestoration(t *testing.T, binary string, input, output *os.
 		t.Fatal(err)
 	}
 	evidence.StartElapsed = time.Since(starting)
+	// Launch has the owner watchdog; interaction retains its five-second budget.
+	ctx, cancel := context.WithTimeout(lifetime, 5*time.Second)
+	defer cancel()
+	stopDeadline := context.AfterFunc(ctx, stopProcess)
+	defer stopDeadline()
 	readinessStarted := time.Now()
 	evidence.PID = command.Process.Pid
 	done := make(chan error, 1)
