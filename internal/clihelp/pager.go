@@ -14,7 +14,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
-	"github.com/openai/openai-cli/internal/commands"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
@@ -76,13 +75,22 @@ func RunWithPager(ctx context.Context, root *cli.Command, argv []string, run fun
 		return writeErr
 	}
 	if m.interrupted || errors.Is(err, tea.ErrInterrupted) {
-		return &commands.LocalError{Message: "Help canceled.", Cause: cli.Exit(errors.Join(context.Canceled, err), 130)}
+		return cli.Exit(errors.Join(context.Canceled, err), 130)
 	}
 	if err != nil {
-		return &commands.LocalError{Message: "Could not display help. Run openai --help for plain output.", Cause: err}
+		return &PagerError{Cause: err}
 	}
 	return nil
 }
+
+// PagerError preserves the cause while exposing only safe recovery guidance.
+type PagerError struct{ Cause error }
+
+func (e *PagerError) Error() string {
+	return "Could not display help. Run openai --help for plain output."
+}
+
+func (e *PagerError) Unwrap() error { return e.Cause }
 
 type helpPager struct {
 	viewport    viewport.Model
