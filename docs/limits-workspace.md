@@ -163,20 +163,6 @@ Inspect the resource before reopening the workspace or repeating the action.
 A refresh alone cannot prove that an uncertain alert creation failed.
 Cancellation does not prove that the server canceled a dispatched write.
 
-## Fine-tuning model limits
-
-The new `openai fine-tuning model-limits` command reads the documented fine-tuning model limits.
-Use an ordinary `OPENAI_API_KEY`; this command does not use admin-key fallback.
-Root organization, project, connection, and output options remain available.
-The command reads one endpoint and preserves all response fields, including unknown fields.
-It adds no pagination or mutation flags.
-
-```sh
-openai fine-tuning model-limits --format json
-```
-
-See the [fine-tuning rate-limits documentation](https://developers.openai.com/api/docs/guides/rate-limits#fine-tuning-rate-limits).
-
 ## Platform controls without matching contracts
 
 The [Platform limits page](https://platform.openai.com/settings/organization/limits) includes controls beyond these public operations.
