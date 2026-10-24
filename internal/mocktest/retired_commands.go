@@ -52,9 +52,21 @@ func testRetiredCommand(t *testing.T, input []byte, args []string) bool {
 	var exit *exec.ExitError
 	require.ErrorAs(t, err, &exit)
 	require.NoError(t, ctx.Err())
-	require.Equal(t, 3, exit.ExitCode(), "stderr: %s", stderr.String())
 	require.Empty(t, stdout.String())
-	require.Contains(t, stderr.String(), "Unknown command.")
+	message := stderr.String()
+	if strings.HasPrefix(message, "Unknown command.") {
+		require.Equal(t, 3, exit.ExitCode())
+	} else {
+		// Root flag validation precedes unknown-command dispatch. Removed
+		// operation flags therefore retain the ordinary local option error.
+		firstLine, _, _ := strings.Cut(message, "\n")
+		unknownOption := firstLine == "An option is not recognized." ||
+			(strings.HasPrefix(firstLine, "The --") && strings.HasSuffix(firstLine, " option is not available for this command."))
+		require.True(t, unknownOption, "unexpected rejection: %s", message)
+		require.Equal(t, 1, exit.ExitCode())
+		require.Contains(t, message, "Options and examples:")
+		require.True(t, strings.HasSuffix(message, " --help\n"), "expected root help recovery: %s", message)
+	}
 	require.Zero(t, requests.Load(), "retired command sent an API request")
 	return true
 }

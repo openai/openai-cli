@@ -16,51 +16,68 @@ func TestMainFineTuningCommandsAreUnavailable(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	env := []string{"OPENAI_BASE_URL=" + server.URL, "OPENAI_API_KEY=synthetic-project-key", "OPENAI_ADMIN_KEY=synthetic-admin-key"}
+	const unknownCommand = "Unknown command. Run openai help to see commands."
+	const rootHelp = "\nOptions and examples: openai --help"
 	for _, test := range []struct {
 		resource string
 		args     []string
+		code     int
+		message  string
 	}{
-		{"jobs", []string{"create", "--model", "model_synthetic", "--training-file", "file_synthetic"}},
-		{"jobs", []string{"retrieve", "ftjob_synthetic"}},
-		{"jobs", []string{"list"}},
-		{"jobs", []string{"cancel", "ftjob_synthetic"}},
-		{"jobs", []string{"list-events", "ftjob_synthetic"}},
-		{"jobs", []string{"pause", "ftjob_synthetic"}},
-		{"jobs", []string{"resume", "ftjob_synthetic"}},
-		{"jobs checkpoints", []string{"list", "ftjob_synthetic"}},
-		{"checkpoints permissions", []string{"create", "ft_synthetic", "--project-id", "proj_synthetic"}},
-		{"checkpoints permissions", []string{"retrieve", "ft_synthetic"}},
-		{"checkpoints permissions", []string{"list", "ft_synthetic"}},
-		{"checkpoints permissions", []string{"delete", "ft_synthetic", "perm_synthetic"}},
-		{"alpha graders", []string{"run", "--grader", `{"type":"string_check","name":"Synthetic","input":"{{sample.output_text}}","reference":"synthetic","operation":"eq"}`, "--model-sample", "synthetic-private-sample"}},
-		{"alpha graders", []string{"validate", "--grader", `{"type":"string_check","name":"Synthetic","input":"{{sample.output_text}}","reference":"synthetic","operation":"eq"}`}},
+		{"jobs", []string{"create", "--model", "model_synthetic", "--training-file", "file_synthetic"}, 1, "The --model option is not available for this command." + rootHelp},
+		{"jobs", []string{"retrieve", "ftjob_synthetic"}, 3, unknownCommand},
+		{"jobs", []string{"list"}, 3, unknownCommand},
+		{"jobs", []string{"cancel", "ftjob_synthetic"}, 3, unknownCommand},
+		{"jobs", []string{"list-events", "ftjob_synthetic"}, 3, unknownCommand},
+		{"jobs", []string{"pause", "ftjob_synthetic"}, 3, unknownCommand},
+		{"jobs", []string{"resume", "ftjob_synthetic"}, 3, unknownCommand},
+		{"jobs checkpoints", []string{"list", "ftjob_synthetic"}, 3, unknownCommand},
+		{"checkpoints permissions", []string{"create", "ft_synthetic", "--project-id", "proj_synthetic"}, 1, "The --project-id option is not available for this command." + rootHelp},
+		{"checkpoints permissions", []string{"retrieve", "ft_synthetic"}, 3, unknownCommand},
+		{"checkpoints permissions", []string{"list", "ft_synthetic"}, 3, unknownCommand},
+		{"checkpoints permissions", []string{"delete", "ft_synthetic", "perm_synthetic"}, 3, unknownCommand},
+		{"alpha graders", []string{"run", "--grader", `{"type":"string_check","name":"Synthetic","input":"{{sample.output_text}}","reference":"synthetic","operation":"eq"}`, "--model-sample", "synthetic-private-sample"}, 1, "An option is not recognized." + rootHelp},
+		{"alpha graders", []string{"validate", "--grader", `{"type":"string_check","name":"Synthetic","input":"{{sample.output_text}}","reference":"synthetic","operation":"eq"}`}, 1, "An option is not recognized." + rootHelp},
 	} {
 		nested := strings.Fields("fine-tuning " + test.resource)
 		for _, route := range [][]string{nested, {strings.Join(nested, ":")}} {
-			for _, format := range []string{"text", "json"} {
-				t.Run(strings.Join(route, "/")+"/"+test.args[0]+"/"+format, func(t *testing.T) {
-					args := append([]string{"openai", "--format-error", format}, route...)
-					args = append(args, test.args...)
-					got := runMainDispatchWithEnv(t, "bash", env, args...)
-					if got.code != 3 || got.stdout != "" {
-						t.Fatalf("removed command = %+v; want exit 3 and empty stdout", got)
-					}
-					message := strings.TrimSpace(got.stderr)
-					if format == "json" {
-						payload := decodeMainStructuredError(t, format, got.stderr)
-						message, _ = payload["message"].(string)
-						if _, exists := payload["status_code"]; exists {
-							t.Error("removed command invented an HTTP status")
+			// Unsupported options fail during parsing before unknown-command routing.
+			// Probe every operation without options to verify the route itself is absent.
+			for _, probe := range []struct {
+				name, message string
+				args          []string
+				code          int
+			}{
+				{"without options", unknownCommand, test.args[:1], 3},
+				{"with inputs", test.message, test.args, test.code},
+			} {
+				for _, format := range []string{"text", "json"} {
+					t.Run(strings.Join(route, "/")+"/"+test.args[0]+"/"+probe.name+"/"+format, func(t *testing.T) {
+						args := append([]string{"openai", "--format-error", format}, route...)
+						args = append(args, probe.args...)
+						got := runMainDispatchWithEnv(t, "bash", env, args...)
+						if got.code != probe.code || got.stdout != "" {
+							t.Fatalf("removed command = %+v; want exit %d and empty stdout", got, probe.code)
 						}
-					}
-					if !strings.HasPrefix(message, "Unknown command.") || !strings.Contains(message, "openai help") ||
-						strings.Contains(message, "fine-tuning") || strings.Contains(message, "synthetic-") {
-						t.Errorf("removed command diagnostic = %q", message)
-					}
-					if count := requests.Load(); count != 0 {
-						t.Fatalf("removed commands sent %d requests; want 0", count)
-					}
-				})
+						message := strings.TrimSpace(got.stderr)
+						if format == "json" {
+							payload := decodeMainStructuredError(t, format, got.stderr)
+							message, _ = payload["message"].(string)
+							if _, exists := payload["status_code"]; exists {
+								t.Error("removed command invented an HTTP status")
+							}
+						}
+						if message != probe.message {
+							t.Errorf("removed command diagnostic = %q; want %q", message, probe.message)
+						}
+						if strings.Contains(got.stdout+got.stderr, "synthetic-") {
+							t.Error("removed command exposed a synthetic operand or credential")
+						}
+						if count := requests.Load(); count != 0 {
+							t.Fatalf("removed commands sent %d requests; want 0", count)
+						}
+					})
+				}
 			}
 		}
 	}
