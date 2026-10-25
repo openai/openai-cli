@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/urfave/cli/v3"
 )
@@ -32,6 +33,11 @@ func TestLocalErrorMessageDoesNotExposeDiagnostics(t *testing.T) {
 		want string
 	}{
 		{"unknown", errors.New(secret), "The command could not be completed."},
+		{"help pager", &clihelp.PagerError{Cause: errors.New(secret)}, "Could not display help. Run openai --help for plain output."},
+		{"wrapped help pager", fmt.Errorf("%s: %w", secret, &clihelp.PagerError{Cause: errors.New(secret)}), "Could not display help. Run openai --help for plain output."},
+		{"joined help pager", errors.Join(errors.New(secret), &clihelp.PagerError{Cause: errors.New(secret)}), "Could not display help. Run openai --help for plain output."},
+		{"canceled help pager", &clihelp.PagerError{Cause: context.Canceled}, "Request canceled."},
+		{"timed out help pager", &clihelp.PagerError{Cause: context.DeadlineExceeded}, "Could not display help. Run openai --help for plain output."},
 		{"wrapped unknown", fmt.Errorf("https://%s@example.invalid: %w", secret, errors.New(secret)), "The command could not be completed."},
 		{"canceled", fmt.Errorf("%s: %w", secret, context.Canceled), "Request canceled."},
 		{"deadline", fmt.Errorf("%s: %w", secret, context.DeadlineExceeded), "The request timed out."},

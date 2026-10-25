@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.0](https://github.com/openai/openai-cli/compare/v1.41.1...v1.42.0) (2026-10-24)
+
+
+### Features
+
+* open bare CLI help at the top ([#612](https://github.com/openai/openai-cli/issues/612)) ([610b982](https://github.com/openai/openai-cli/commit/610b982258d9fac5267cbb0af3c23595850aef51))
+
 ## [1.41.1](https://github.com/openai/openai-cli/compare/v1.41.0...v1.41.1) (2026-10-24)
 
 
