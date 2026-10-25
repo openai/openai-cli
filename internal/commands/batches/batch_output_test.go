@@ -1,14 +1,176 @@
 package batches
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"strconv"
 	"testing"
 	"testing/synctest"
+	"time"
 )
+
+const batchOutputLifecycleFixtureArgument = "__test-batch-output-lifecycle"
+
+// The fixture observes the real helper before its process exits. Normal return
+// must not close the handle still used by its parent-death watcher.
+func runBatchOutputLifecycleFixture(args []string) (bool, int) {
+	if len(args) < 2 || args[1] != batchOutputLifecycleFixtureArgument {
+		return false, 0
+	}
+	if len(args) != 4 {
+		return true, 2
+	}
+	descriptor, err := strconv.ParseUint(args[3], 10, strconv.IntSize)
+	if err != nil {
+		return true, 2
+	}
+	wantError, wantOpen := false, true
+	switch args[2] {
+	case "drain":
+	case "write-error", "ready-error":
+		wantError = true
+	case "invalid-lifeline":
+		wantError, wantOpen = true, false
+	default:
+		return true, 2
+	}
+	handled, err := RunBatchOutputHelper([]string{args[0], batchOutputHelperArgument, args[3]})
+	if !handled || (err != nil) != wantError {
+		return true, 3
+	}
+	if batchOutputFixtureHandleOpen(uintptr(descriptor)) != wantOpen {
+		return true, 4
+	}
+	marker := os.Stderr
+	if args[2] == "ready-error" {
+		marker = os.Stdout
+	}
+	if _, err := io.WriteString(marker, "returned\n"); err != nil {
+		return true, 5
+	}
+	if wantError {
+		return true, 1
+	}
+	return true, 0
+}
+
+func TestBatchOutputHelperLifelineOwnership(t *testing.T) {
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range []string{"drain", "write-error", "ready-error", "invalid-lifeline"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			life, parent, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer life.Close()
+			defer parent.Close()
+			if scenario == "invalid-lifeline" {
+				life, err = os.CreateTemp(t.TempDir(), "invalid-lifeline-")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer life.Close()
+			}
+			command := exec.CommandContext(ctx, binary, batchOutputLifecycleFixtureArgument, scenario)
+			command.Env = []string{"GOMAXPROCS=2"}
+			command.WaitDelay = 2 * time.Second
+			if err := inheritBatchOutputLifeline(command, life); err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			command.Stdout, command.Stderr = &stdout, &stderr
+			var input []byte
+			wantCode, wantReady := 1, "Rreturned\n"
+			switch scenario {
+			case "drain":
+				// Exceed pipe capacity so success requires complete output draining.
+				input = bytes.Repeat([]byte("synthetic output 資料\n"), 8192)
+				wantCode = 0
+			case "write-error", "ready-error":
+				readOnly, err := os.Open(os.DevNull)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer readOnly.Close()
+				if scenario == "write-error" {
+					input = []byte("synthetic output\n")
+					command.Stdout = readOnly
+				} else {
+					command.Stderr = readOnly
+					wantReady = ""
+				}
+			case "invalid-lifeline":
+				wantReady = "returned\n"
+			}
+			command.Stdin = bytes.NewReader(input)
+			if err := command.Start(); err != nil {
+				t.Fatal(err)
+			}
+			_ = life.Close()
+			err = command.Wait()
+			if ctx.Err() != nil {
+				t.Fatalf("helper did not return with its parent alive: %v; stderr=%q", ctx.Err(), stderr.String())
+			}
+			code := 0
+			if err != nil {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) {
+					t.Fatal(err)
+				}
+				code = exit.ExitCode()
+			}
+			if code != wantCode || stderr.String() != wantReady {
+				t.Fatalf("helper code=%d stderr=%q; want code=%d stderr=%q", code, stderr.String(), wantCode, wantReady)
+			}
+			if scenario == "drain" && !bytes.Equal(stdout.Bytes(), input) {
+				t.Fatalf("helper did not drain output: got %d bytes, want %d", stdout.Len(), len(input))
+			}
+			if scenario == "ready-error" && stdout.String() != "returned\n" {
+				t.Fatalf("readiness failure did not return: stdout=%q", stdout.String())
+			}
+		})
+	}
+}
+
+func TestBatchOutputSmallWriteFailure(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	// A small write fits in the owned data pipe before the helper rejects its
+	// read-only destination. The parent's final result must retain that failure.
+	const payload = "synthetic output\n"
+	entered, written := false, 0
+	var callbackError error
+	err = writeBatchStdout(ctx, reader, func(out io.Writer) error {
+		entered = true
+		written, callbackError = io.WriteString(out, payload)
+		return callbackError
+	})
+	if ctx.Err() != nil {
+		t.Fatalf("output failure did not finish: %v", ctx.Err())
+	}
+	if !entered || written != len(payload) || callbackError != nil {
+		t.Fatalf("callback did not complete its write: entered=%v bytes=%d error=%v", entered, written, callbackError)
+	}
+	if err == nil {
+		t.Fatal("output failure became success")
+	}
+}
 
 func TestBatchInterruptedDiagnosticsFindNestedStderr(t *testing.T) {
 	other, err := os.CreateTemp(t.TempDir(), "output-")

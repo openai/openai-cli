@@ -57,6 +57,9 @@ func testOptions() Options {
 }
 
 func TestMain(m *testing.M) {
+	if handled, code := runBatchOutputLifecycleFixture(os.Args); handled {
+		os.Exit(code)
+	}
 	if handled, err := RunBatchOutputHelper(os.Args); handled {
 		if err != nil {
 			os.Exit(1)

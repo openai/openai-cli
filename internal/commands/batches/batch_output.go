@@ -122,14 +122,17 @@ func RunBatchOutputHelper(args []string) (bool, error) {
 	if life == nil {
 		return true, errors.New("missing batch output lifeline")
 	}
-	defer life.Close()
 	info, err := life.Stat()
 	if err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+		_ = life.Close()
 		return true, errors.New("batch output lifeline must be a pipe")
 	}
 	// Foreground Ctrl+C also reaches children. Let the parent's context and
 	// lifeline decide shutdown, so an early child exit cannot race exit 130.
 	signal.Ignore(batchOperationSignals...)
+	// Process exit owns this handle after the watcher starts. Concurrent Close
+	// can strand a Windows pipe read or make an output failure exit zero.
+	// Keep the parent lifeline open until io.Copy drains or reports its error.
 	go func() {
 		var value [1]byte
 		_, _ = life.Read(value[:])
