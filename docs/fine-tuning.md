@@ -4,7 +4,8 @@ The CLI no longer exposes fine-tuning commands, including their colon aliases.
 This removes jobs, events, checkpoints, checkpoint permissions, alpha graders, and `models delete`.
 Existing scripts must call the Platform API directly or use an OpenAI SDK.
 
-File uploads and file filters reject `fine-tune`, `fine-tune-results`, and `vision` purposes.
+File uploads and file filters reject `fine-tune` and `fine-tune-results` purposes.
+The shared `vision` purpose remains available for image inputs.
 Webhook creation, subscription updates, and tests reject `fine_tuning.*` events.
 Guided choices, help, completions, and command suggestions omit these features.
 The `store` option remains available for stored Chat Completions and evals.

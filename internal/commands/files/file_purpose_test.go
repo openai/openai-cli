@@ -40,7 +40,7 @@ func purposeValidationContents(route [2]string, fields map[string]any) requestfl
 func TestFilePurposeValidationPreservesAllowedScalars(t *testing.T) {
 	for _, route := range purposeValidationRoutes {
 		t.Run(strings.Join(route[:], "/"), func(t *testing.T) {
-			for _, value := range []any{"batch", "user_data", "assistants", "evals", "future-purpose", "", nil, false, 0} {
+			for _, value := range []any{"batch", "user_data", "assistants", "vision", "evals", "future-purpose", "", nil, false, 0} {
 				fields := map[string]any{"purpose": value, "filename": "private filename.jsonl", "bytes": int64(9007199254740993)}
 				contents := purposeValidationContents(route, fields)
 				calls := 0
@@ -62,7 +62,7 @@ func TestFilePurposeValidationPreservesAllowedScalars(t *testing.T) {
 
 func TestFilePurposeValidationRejectsRetiredPurposes(t *testing.T) {
 	for _, route := range purposeValidationRoutes {
-		for _, purpose := range []string{"fine-tune", "vision", "fine-tune-results"} {
+		for _, purpose := range []string{"fine-tune", "fine-tune-results"} {
 			t.Run(strings.Join(route[:], "/")+"/"+purpose, func(t *testing.T) {
 				for _, fromReader := range []bool{false, true} {
 					var value any = purpose
@@ -98,7 +98,7 @@ func TestFilePurposeValidationReplaysScalarReaders(t *testing.T) {
 	for _, route := range purposeValidationRoutes {
 		for _, owned := range []bool{false, true} {
 			t.Run(strings.Join(route[:], "/")+map[bool]string{false: "/borrowed", true: "/owned"}[owned], func(t *testing.T) {
-				const body = "user_data"
+				const body = "vision"
 				source := &purposeOwnedReader{reader: strings.NewReader(body)}
 				var value any = source
 				if owned {

@@ -30,10 +30,7 @@ func removeTrainingHelp(command *cli.Command, path string) {
 			switch typed := flag.(type) {
 			case *requestflag.Flag[string]:
 				if typed.Name == "purpose" && (childPath == "files:create" || childPath == "files:upload" || childPath == "uploads:create") {
-					typed.Usage = "The intended purpose of the uploaded file: assistants, batch, user_data, or evals."
-				}
-				if typed.Name == "mime-type" && childPath == "uploads:create" {
-					typed.Usage = "The MIME type of the file. Use a MIME type supported by the selected file purpose."
+					typed.Usage = "The intended purpose of the uploaded file: assistants, batch, vision, user_data, or evals. Use vision for image inputs."
 				}
 			case *requestflag.Flag[*bool]:
 				if typed.Name == "store" && childPath == "chat:completions:create" {

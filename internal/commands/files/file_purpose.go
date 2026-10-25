@@ -88,7 +88,7 @@ func ValidatePurpose(command *cli.Command, contents requestflag.RequestContents)
 	}
 	if purpose, ok := inspected.(string); ok {
 		switch purpose {
-		case "fine-tune", "fine-tune-results", "vision":
+		case "fine-tune", "fine-tune-results":
 			return &localcommands.LocalError{Message: "This file purpose is unavailable in the CLI. Use the Platform API directly."}
 		}
 	}
