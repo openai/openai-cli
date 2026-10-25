@@ -1,26 +1,24 @@
 package batches
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
+	"os"
+
+	"github.com/openai/openai-cli/internal/terminal"
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
 func (w workflow) newBatchResultsCommand() *cli.Command {
 	command := &cli.Command{
 		Name: "results", Usage: "Inspect batch input, output, or error records",
-		Description:     "Reads JSONL records without changing the batch. Use --format explore for the JSON browser. Matching uses custom_id, never file order. Missing results can be pending or in the other result file. Duplicate IDs remain grouped without inventing pairs. Use batches download for exact file bytes.",
+		Description:     "Reads JSONL records without changing the batch. Records use private temporary storage. JSON and text output stream from that storage; transforms and explore/pretty/YAML output load the selected document into memory. Use --custom-id to select fewer records. Use --format explore for the JSON browser. Matching uses custom_id, never file order. Missing results can be pending or in the other result file. Duplicate IDs remain grouped without inventing pairs. Use batches download for exact file bytes.",
 		HideHelpCommand: true, Suggest: true,
 		Flags: []cli.Flag{
 			&requestflag.Flag[string]{Name: "batch-id", PathParam: "batch_id", Required: true},
@@ -35,19 +33,6 @@ func (w workflow) newBatchResultsCommand() *cli.Command {
 		Examples:    []clihelp.Example{{Description: "Inspect one result with its input:", Command: "batches results batch_example --custom-id request-1 --match-input --format explore"}},
 	}}
 	return command
-}
-
-type batchRecord struct {
-	id  string
-	raw json.RawMessage
-}
-
-type batchRecordMatch struct {
-	CustomID string            `json:"custom_id,omitempty"`
-	Match    string            `json:"match"`
-	Issues   []string          `json:"issues,omitempty"`
-	Inputs   []json.RawMessage `json:"inputs"`
-	Results  []json.RawMessage `json:"results"`
 }
 
 func (w workflow) handleBatchResults(ctx context.Context, command *cli.Command) (err error) {
@@ -97,116 +82,42 @@ func (w workflow) handleBatchResults(ctx context.Context, command *cli.Command) 
 	if command.Bool("match-input") && batch.InputFileID == "" {
 		return batchError("The batch has no input file available for matching. Omit --match-input to inspect results alone.")
 	}
+	store, err := newBatchRecordStore(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, store.close()) }()
 	filter := command.String("custom-id")
-	records, err := readBatchRecordsFile(ctx, client, options, fileID, selection, filter)
-	if err != nil {
+	match := command.Bool("match-input")
+	if err := readBatchRecordsFile(ctx, client, options, fileID, selection, filter, false, match, store); err != nil {
 		return err
 	}
-	var data any
-	if command.Bool("match-input") {
-		inputs, err := readBatchRecordsFile(ctx, client, options, batch.InputFileID, "input", filter)
-		if err != nil {
+	if match {
+		if err := readBatchRecordsFile(ctx, client, options, batch.InputFileID, "input", filter, true, true, store); err != nil {
 			return err
 		}
-		data, err = matchBatchRecords(ctx, inputs, records, filter)
-		if err != nil {
-			return err
-		}
-	} else {
-		selected := make([]json.RawMessage, 0, len(records))
-		for _, record := range records {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if filter == "" || record.id == filter {
-				selected = append(selected, record.raw)
-			}
-		}
-		data = selected
 	}
-	result, err := json.Marshal(struct {
-		BatchID string `json:"batch_id"`
-		File    string `json:"file"`
-		FileID  string `json:"file_id"`
-		Data    any    `json:"data"`
-	}{batch.ID, selection, fileID, data})
-	if err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return w.batchShowJSON(ctx, command, gjson.ParseBytes(result), "results")
+	diagnostics := terminal.BorrowedWriter{Writer: batchDiagnosticWriter{ctx: ctx, file: os.Stderr}, File: os.Stderr}
+	return writeBatchStdoutWithCleanup(ctx, command.Root().Writer, batchOutputCleanupGrace, func(out io.Writer) error {
+		return w.options.ShowRecords(ctx, command, RecordOutput{
+			WriteJSON:     func(writer io.Writer) error { return store.writeJSON(writer, batch.ID, selection, fileID, match) },
+			TemporaryFile: store.temporaryFile,
+		}, out, diagnostics)
+	})
 }
 
-func readBatchRecordsFile(ctx context.Context, client openai.Client, options []option.RequestOption, fileID, selection, filter string) (records []batchRecord, err error) {
+func readBatchRecordsFile(ctx context.Context, client openai.Client, options []option.RequestOption, fileID, selection, filter string, input, match bool, store *batchRecordStore) (err error) {
 	response, err := client.Files.Content(ctx, fileID, options...)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer func() { err = errors.Join(err, response.Body.Close()) }()
-	return readBatchRecords(ctx, response.Body, selection, filter)
-}
-
-// ReadSlice avoids Scanner's line limit. Check cancellation between chunks and
-// while validating large JSON values; file downloads remain byte-preserving.
-func readBatchRecords(ctx context.Context, source io.Reader, selection, filter string) ([]batchRecord, error) {
-	reader := bufio.NewReader(source)
-	records := make([]batchRecord, 0)
-	for lineNumber := 1; ; lineNumber++ {
-		var line []byte
-		var readErr error
-		for {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			var chunk []byte
-			chunk, readErr = reader.ReadSlice('\n')
-			line = append(line, chunk...)
-			if !errors.Is(readErr, bufio.ErrBufferFull) {
-				break
-			}
-		}
-		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return nil, &WorkflowError{message: "Could not read the batch file completely. Retry results or download the selected file.", cause: readErr}
-		}
-		line = bytes.TrimSpace(line)
-		if len(line) > 0 {
-			var object struct{}
-			decoder := json.NewDecoder(batchRecordContextReader{ctx, bytes.NewReader(line)})
-			parseErr := decoder.Decode(&object)
-			var extra any
-			if parseErr == nil && decoder.Decode(&extra) != io.EOF {
-				parseErr = errors.New("extra JSON value")
-			}
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			if parseErr != nil || line[0] != '{' {
-				return nil, batchError(fmt.Sprintf("The %s file contains invalid JSONL on line %d. Each nonempty line must contain one JSON object. Download the file to inspect it.", selection, lineNumber))
-			}
-			idFields := 0
-			var id string
-			gjson.ParseBytes(line).ForEach(func(key, value gjson.Result) bool {
-				if key.String() == "custom_id" {
-					idFields++
-					if value.Type == gjson.String {
-						id = value.Str
-					}
-				}
-				return ctx.Err() == nil
-			})
-			if idFields > 1 {
-				return nil, batchError(fmt.Sprintf("The %s file repeats custom_id on line %d. Download the file to inspect the ambiguous record.", selection, lineNumber))
-			}
-			if filter == "" || id == filter {
-				records = append(records, batchRecord{id: id, raw: line})
-			}
-		}
-		if errors.Is(readErr, io.EOF) {
-			return records, ctx.Err()
-		}
+	err = store.readJSONL(response.Body, selection, filter, input, match)
+	var workflowErr *WorkflowError
+	if err != nil && !errors.As(err, &workflowErr) && ctx.Err() == nil {
+		return &WorkflowError{message: "Could not read the batch file completely. Retry results or download the selected file.", cause: err}
 	}
+	return err
 }
 
 type batchRecordContextReader struct {
@@ -222,86 +133,9 @@ func (r batchRecordContextReader) Read(data []byte) (int, error) {
 	if len(data) > 32*1024 {
 		data = data[:32*1024]
 	}
-	return r.source.Read(data)
-}
-
-func matchBatchRecords(ctx context.Context, inputs, results []batchRecord, filter string) ([]batchRecordMatch, error) {
-	byInputID := make(map[string][]json.RawMessage)
-	byResultID := make(map[string][]json.RawMessage)
-	for _, group := range []struct {
-		records []batchRecord
-		index   map[string][]json.RawMessage
-	}{{inputs, byInputID}, {results, byResultID}} {
-		for _, record := range group.records {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			if record.id != "" {
-				group.index[record.id] = append(group.index[record.id], record.raw)
-			}
-		}
+	n, err := r.source.Read(data)
+	if err != nil && !errors.Is(err, io.EOF) {
+		err = batchRecordStorageError(err)
 	}
-	matched := make([]batchRecordMatch, 0, len(results))
-	seen := make(map[string]bool)
-	for _, result := range results {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if (filter != "" && result.id != filter) || (result.id != "" && seen[result.id]) {
-			continue
-		}
-		if result.id == "" {
-			matched = append(matched, describeBatchRecordMatch("", nil, []json.RawMessage{result.raw}))
-		} else {
-			matched = append(matched, describeBatchRecordMatch(result.id, byInputID[result.id], byResultID[result.id]))
-			seen[result.id] = true
-		}
-	}
-	for _, input := range inputs {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if (filter != "" && input.id != filter) || (input.id != "" && seen[input.id]) {
-			continue
-		}
-		if input.id == "" {
-			matched = append(matched, describeBatchRecordMatch("", []json.RawMessage{input.raw}, nil))
-		} else {
-			matched = append(matched, describeBatchRecordMatch(input.id, byInputID[input.id], nil))
-			seen[input.id] = true
-		}
-	}
-	return matched, nil
-}
-
-func describeBatchRecordMatch(id string, inputs, results []json.RawMessage) batchRecordMatch {
-	if inputs == nil {
-		inputs = []json.RawMessage{}
-	}
-	if results == nil {
-		results = []json.RawMessage{}
-	}
-	row := batchRecordMatch{CustomID: id, Match: "matched", Inputs: inputs, Results: results}
-	switch {
-	case id == "":
-		row.Match = "missing_custom_id"
-		if len(inputs) > 0 {
-			row.Issues = []string{"missing_input_custom_id"}
-		} else {
-			row.Issues = []string{"missing_result_custom_id"}
-		}
-	case len(inputs) == 0:
-		row.Match, row.Issues = "missing_input", []string{"missing_input"}
-	case len(results) == 0:
-		row.Match, row.Issues = "missing_result", []string{"missing_result"}
-	}
-	if id != "" && len(inputs) > 1 {
-		row.Match = "ambiguous"
-		row.Issues = append(row.Issues, "duplicate_input_custom_id")
-	}
-	if id != "" && len(results) > 1 {
-		row.Match = "ambiguous"
-		row.Issues = append(row.Issues, "duplicate_result_custom_id")
-	}
-	return row
+	return n, err
 }

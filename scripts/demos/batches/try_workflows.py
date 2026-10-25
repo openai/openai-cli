@@ -28,6 +28,7 @@ def stop_process(process):
         else:
             process.terminate()
     except ProcessLookupError:
+        # The process can exit between poll() and the signal.
         pass
     try:
         process.wait(timeout=2)
@@ -38,6 +39,7 @@ def stop_process(process):
             else:
                 process.kill()
         except ProcessLookupError:
+            # The process can exit while the timeout handler prepares SIGKILL.
             pass
         process.wait(timeout=3)
 
@@ -50,10 +52,9 @@ def run_command(binary, args, environment, directory, sequence, commands):
     record = {"arguments": args, "exit": None, "process_stopped": False}
     commands.append(record)
     failure = None
-    stdout, stderr = b"", b""
     try:
         stdout, stderr = process.communicate(timeout=30)
-    except BaseException as error:
+    except (Exception, KeyboardInterrupt) as error:
         failure = error
         stop_process(process)
         stdout, stderr = process.communicate(timeout=3)
@@ -80,7 +81,10 @@ def main():
     parser.add_argument("binary", type=Path, help="Reviewed candidate executable; no installation occurs")
     parser.add_argument("--output-dir", type=Path, help="New evidence directory outside the repository")
     args = parser.parse_args()
-    binary = args.binary.expanduser().resolve(strict=True)
+    try:
+        binary = args.binary.expanduser().resolve(strict=True)
+    except OSError:
+        parser.error("cannot open the candidate executable; check its path and read permission")
     if not binary.is_file() or not os.access(binary, os.X_OK):
         parser.error("binary must identify an executable file")
     repository = Path(__file__).resolve().parents[3]
@@ -150,7 +154,7 @@ def main():
                 raise AssertionError("fixture detected repeated mutations or an unexpected request")
             outcome.update(passed=True, fixture_state=state, expected_labels=LABELS,
                            saved_output_sha256=hashlib.sha256(saved).hexdigest())
-        except BaseException as failure:
+        except (Exception, KeyboardInterrupt) as failure:
             error = failure
             outcome["failure"] = {"type": type(failure).__name__, "message": str(failure)}
         finally:
@@ -165,9 +169,19 @@ def main():
                 error = RuntimeError("fixture server did not stop")
     write_new(directory / "result.json", (json.dumps(outcome, indent=2) + "\n").encode())
     if error is not None:
-        print(f"Trial failed. Evidence remains in {directory}", file=sys.stderr)
         if isinstance(error, KeyboardInterrupt):
+            print("Trial interrupted.", file=sys.stderr)
+            if outcome["cleanup"]["processes_stopped"]:
+                print("Child processes stopped.", file=sys.stderr)
+            else:
+                print("Child process cleanup is incomplete; inspect the retained logs.", file=sys.stderr)
+            print(f"Evidence remains in {directory}", file=sys.stderr)
             return 130
+        if isinstance(error, subprocess.TimeoutExpired):
+            print("Trial command timed out. The child process stopped; inspect its retained logs before retrying.", file=sys.stderr)
+        else:
+            print(f"Trial failed: {error}", file=sys.stderr)
+        print(f"Evidence remains in {directory}", file=sys.stderr)
         return 1
     print("\nPASS: three expected labels; one upload, one batch creation, two list snapshots.")
     print(f"Saved results: {directory / 'results' / 'output.jsonl'}")

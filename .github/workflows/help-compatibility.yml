@@ -498,8 +498,16 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainResourceSummariesRetainActionFields|TestMainResourceSummaryListFilesInVectorBatch|TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits|TestMainResourceSummaryListNoticeForMixedRecords|TestMainResourceSummaryEmptyList|TestMainResourceSummaryUnknownFieldsAndShapesFallBack|TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData|TestMainResourceSummaryListFormatsAndExtractionKeepFullItems|TestMainResourceSummaryLeavesOtherOperationsUnchanged|TestMainResourceSummaryPreservesLargeActionArguments|TestMainResourceSummaryPreservesPartialPageOnFailure|TestMainResourceSummaryWritesBeforeNextPageArrives|TestMainListNavigationNoninteractive)$' |
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainResourceSummariesRetainActionFields|TestMainResourceSummaryListFilesInVectorBatch|TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits|TestMainResourceSummaryListNoticeForMixedRecords|TestMainResourceSummaryEmptyList|TestMainResourceSummaryUnknownFieldsAndShapesFallBack|TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData|TestMainResourceSummaryListFormatsAndExtractionKeepFullItems|TestMainResourceSummaryLeavesOtherOperationsUnchanged|TestMainDispatchBatchesPresentation|TestMainDispatchBatchResultsMatchByExactIDAndPreserveModes|TestMainBatchSubmitTransportRecovery|TestMainBatchSubmitMissingReceiptRecovery|TestMainDispatchBatchInputsPartialFailureRecovery|TestMainResourceSummaryPreservesLargeActionArguments|TestMainResourceSummaryPreservesPartialPageOnFailure|TestMainResourceSummaryWritesBeforeNextPageArrives|TestMainListNavigationNoninteractive)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'resource-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows Batch temporary storage permissions
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./internal/commands/batches -count=1 -timeout=2m -v -json -run '^TestWindowsBatchResultsPrivateScratchStorage$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'batch-storage-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows streaming text output
         if: runner.os == 'Windows' && matrix.shard != 'dispatch'
@@ -1159,7 +1167,13 @@ jobs:
                   "TestMainResourceSummaryListFormatsAndExtractionKeepFullItems": ["json", "jsonl", "raw", "yaml",
                       "pretty", "explore", "--transform_created_at", "--transform_filename_--raw-output",
                       "--format_text_--transform_@this"],
-                  "TestMainResourceSummaryLeavesOtherOperationsUnchanged": ["create", "delete", "cancel"],
+                  "TestMainResourceSummaryLeavesOtherOperationsUnchanged": ["create", "delete"],
+                  "TestMainDispatchBatchesPresentation": ["create", "retrieve", "cancel", "retrieve_wait", "wait", "list"],
+                  "TestMainDispatchBatchResultsMatchByExactIDAndPreserveModes": ["JsOn", "JsOnL", "RaW", "YaMl", "text", "pretty", "explore"],
+                  "TestMainBatchSubmitTransportRecovery": [f"{stage}/{mode}"
+                      for stage in ["upload", "create"] for mode in ["text", "json"]],
+                  "TestMainBatchSubmitMissingReceiptRecovery": ["upload", "create"],
+                  "TestMainDispatchBatchInputsPartialFailureRecovery": ["text", "json"],
                   "TestMainResourceSummaryPreservesLargeActionArguments": [],
                   "TestMainResourceSummaryPreservesPartialPageOnFailure": ["text", "json"],
                   "TestMainResourceSummaryWritesBeforeNextPageArrives": [],
@@ -1171,6 +1185,9 @@ jobs:
               suites["resource-tests.jsonl"] = set().union(*(
                   required_cases(root, children) for root, children in resource_cases.items()
               ))
+              suites["batch-storage-tests.jsonl"] = {"TestWindowsBatchResultsPrivateScratchStorage"}
+              strict_packages["resource-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+              strict_packages["batch-storage-tests.jsonl"] = "github.com/openai/openai-cli/internal/commands/batches"
               streaming_text_cases = {
                   "TestMainStreamingTextArrivesBeforeCompletion": [f"{command}/{format}"
                       for command in ["responses", "chat:completions", "completions"] for format in ["", "text"]],

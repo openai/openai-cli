@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -96,6 +95,11 @@ func (w workflow) submitBatch(ctx context.Context, cmd *cli.Command) (err error)
 		var apierr *openai.Error
 		if errors.As(err, &apierr) && !errors.Is(err, context.Canceled) {
 			message += "\n" + w.options.APIErrorMessage(cmd.Root(), err, apierr)
+		} else if !errors.Is(err, context.Canceled) {
+			var local *WorkflowError
+			if errors.As(err, &local) && local.Error() != "" {
+				message += "\n" + local.Error()
+			}
 		}
 		code := 1
 		var interruption *WorkflowError
@@ -161,7 +165,7 @@ func (w workflow) submitBatch(ctx context.Context, cmd *cli.Command) (err error)
 		return err
 	}
 	if batch == nil || batch.ID == "" {
-		return fmt.Errorf("batch creation response did not contain a batch ID")
+		return batchError("The batch creation response did not contain a batch ID.")
 	}
 	batchID = batch.ID
 	stage = "receipt"

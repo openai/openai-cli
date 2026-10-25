@@ -23,6 +23,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/webhooks"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/listview"
+	"github.com/openai/openai-cli/internal/readable"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -64,6 +65,7 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	var finiteListFailure *clioutput.FiniteJSONListError
 	var webhookFailure *webhooks.WorkflowError
 	var webhookCanceled *webhooks.CreateCanceledError
+	var jsonStorageFailure *readable.JSONStreamStorageError
 	switch {
 	case errors.As(failure, &batchFailure):
 		return batchFailure.Error()
@@ -92,6 +94,8 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 		return modelsListFailure.Error()
 	case errors.As(failure, &finiteListFailure):
 		return finiteListFailure.Error()
+	case errors.As(failure, &jsonStorageFailure):
+		return jsonStorageFailure.Error()
 	case errors.As(failure, &imageFailure):
 		return imageFailure.ReadableMessage(root, output...)
 	case errors.As(failure, &scalarFailure):

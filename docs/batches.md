@@ -345,7 +345,14 @@ The response contains a `data` array and supports normal output formats and extr
 The explorer supports interactive inspection when a terminal is available.
 The command reports unavailable files and malformed JSONL without submitting requests again.
 Use `batches download` when you need exact file bytes.
-Browsing and matching retain selected records in memory.
+Browsing and matching use private temporary storage for records and their index.
+The command removes this storage after success, failure, or handled interruption.
+Temporary storage must have enough space for the selected records and their index.
+Unselected records can temporarily require space while the command validates them.
+JSON, JSONL, raw, and readable text output stream without retaining complete payloads in memory.
+Large IDs and object keys also use this storage without imposing size limits.
+Extraction, terminal exploration, pretty output, and YAML retain the selected document in memory.
+Use `--custom-id` to reduce that document before these operations.
 
 Files also provides explicit deletion:
 
@@ -372,4 +379,12 @@ Batches and Files are not eligible for Zero Data Retention.
 Availability, model access, retention, and residency remain server-side policies.
 
 Authentication, permission, validation, conflict, and transport errors retain the CLI's normal error presentation.
+Readable Batch errors state the outcome, the supported cause, and the next safe action.
+Unknown submission outcomes remain explicit because a disconnected request can still reach the API.
+Missing receipt IDs identify which response was incomplete.
+Check existing files or batches before repeating a submission.
+Connection failures suggest checking the connection, proxy, and `--base-url` setting.
+Partial input lists retain received records and identify the incomplete result.
+Retry that read-only search with the same connection and project settings.
+Explicit machine errors preserve API fields; submission errors add the documented recovery envelope.
 Local synthetic tests verify client behavior; they do not establish account entitlements or live server policy.

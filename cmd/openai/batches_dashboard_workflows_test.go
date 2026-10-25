@@ -190,3 +190,49 @@ func TestMainDispatchBatchWatchPartialFailure(t *testing.T) {
 		t.Fatalf("partial snapshot or failure lost: %+v", got)
 	}
 }
+
+func TestMainDispatchBatchInputsPartialFailureRecovery(t *testing.T) {
+	var repaired atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/files" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("after") == "" {
+			fmt.Fprint(w, `{"data":[{"id":"file_kept","filename":"input.jsonl","purpose":"batch"}],"has_more":true}`)
+			return
+		}
+		if repaired.Load() {
+			fmt.Fprint(w, `{"data":[{"id":"file_second","filename":"input-next.jsonl","purpose":"batch"}],"has_more":false}`)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"error":{"message":"synthetic private details","type":"invalid_request_error","code":"synthetic_denied"}}`)
+	}))
+	defer server.Close()
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			got := runReadableCommand(t, server, "--format", "json", "--format-error", format, "batches", "inputs", "--search", "input", "--max-items", "-1")
+			if got.code != 1 || !gjson.Valid(got.stdout) || gjson.Get(got.stdout, "0.id").Str != "file_kept" {
+				t.Fatalf("partial file list or failure lost: %+v", got)
+			}
+			if format == "text" {
+				for _, expected := range []string{"Displayed files may be incomplete", "Retry batches inputs", "permissions"} {
+					if !strings.Contains(got.stderr, expected) {
+						t.Errorf("missing recovery %q: %s", expected, got.stderr)
+					}
+				}
+				if strings.Contains(got.stderr, "synthetic private details") {
+					t.Error("human guidance exposed API prose")
+				}
+			} else if !gjson.Valid(got.stderr) || gjson.Get(got.stderr, "code").Str != "synthetic_denied" {
+				t.Fatalf("machine API error changed: %s", got.stderr)
+			}
+		})
+	}
+	repaired.Store(true)
+	got := runReadableCommand(t, server, "--format", "json", "batches", "inputs", "--search", "input", "--max-items", "-1")
+	if got.code != 0 || got.stderr != "" || gjson.Get(got.stdout, "#").Int() != 2 || gjson.Get(got.stdout, "1.id").Str != "file_second" {
+		t.Fatalf("retry did not recover the same search: %+v", got)
+	}
+}

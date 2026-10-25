@@ -20,8 +20,16 @@ type Options struct {
 	RequestOptions        func(*cli.Command, io.Reader) ([]option.RequestOption, error)
 	CreateRequestOptions  func(*cli.Command, io.Reader) ([]option.RequestOption, gjson.Result, error)
 	ShowResult            func(context.Context, *cli.Command, gjson.Result, string, io.Writer, io.Writer) error
+	ShowRecords           func(context.Context, *cli.Command, RecordOutput, io.Writer, io.Writer) error
 	HumanTerminal         func(context.Context, *cli.Command) bool
 	APIErrorMessage       func(*cli.Command, error, *openai.Error) string
+}
+
+// RecordOutput lets presentation stream validated records and borrow private
+// scratch storage for unusually large labels. The workflow owns all cleanup.
+type RecordOutput struct {
+	WriteJSON     func(io.Writer) error
+	TemporaryFile func() (*os.File, func() error, error)
 }
 
 type workflow struct{ options Options }

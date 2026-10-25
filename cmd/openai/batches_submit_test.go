@@ -241,3 +241,103 @@ func TestMainBatchSubmitPermissionGuidance(t *testing.T) {
 		}
 	}
 }
+
+func TestMainBatchSubmitTransportRecovery(t *testing.T) {
+	for _, stage := range []string{"upload", "create"} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(stage+"/"+format, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "synthetic.jsonl")
+				if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				var mu sync.Mutex
+				var requests []string
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					mu.Lock()
+					defer mu.Unlock()
+					requests = append(requests, r.URL.Path)
+					io.Copy(io.Discard, r.Body)
+					if stage == "create" && r.URL.Path == "/files" {
+						w.Header().Set("Content-Type", "application/json")
+						io.WriteString(w, `{"id":"file_synthetic_retained"}`)
+						return
+					}
+					connection, _, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					connection.Close()
+				}))
+				defer server.Close()
+				got := runReadableCommand(t, server, "--format-error", format, "batches", "submit", "--file", path, "--endpoint", "/v1/responses", "--completion-window", "24h")
+				if got.code != 1 || got.stdout != "" || strings.Contains(got.stderr, server.URL) || strings.Contains(got.stderr, path) {
+					t.Fatalf("transport failure status or privacy changed: %+v", got)
+				}
+				if format == "text" {
+					if !strings.Contains(got.stderr, "Check your connection, proxy, and --base-url setting") {
+						t.Fatalf("missing transport recovery: %s", got.stderr)
+					}
+				} else if !json.Valid([]byte(got.stderr)) || gjson.Get(got.stderr, "batch_submission.stage").String() != stage {
+					t.Fatalf("machine recovery contract changed: %s", got.stderr)
+				}
+				if stage == "create" && !strings.Contains(got.stderr, "file_synthetic_retained") {
+					t.Fatalf("lost uploaded file ID: %s", got.stderr)
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				want := []string{"/files"}
+				if stage == "create" {
+					want = append(want, "/batches")
+				}
+				if !reflect.DeepEqual(requests, want) {
+					t.Fatalf("mutations retried: %v", requests)
+				}
+			})
+		}
+	}
+}
+
+func TestMainBatchSubmitMissingReceiptRecovery(t *testing.T) {
+	for _, stage := range []string{"upload", "create"} {
+		t.Run(stage, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "synthetic.jsonl")
+			if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var mu sync.Mutex
+			var requests []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				requests = append(requests, r.URL.Path)
+				io.Copy(io.Discard, r.Body)
+				w.Header().Set("Content-Type", "application/json")
+				if stage == "create" && r.URL.Path == "/files" {
+					io.WriteString(w, `{"id":"file_synthetic_retained"}`)
+					return
+				}
+				io.WriteString(w, `{"object":"synthetic_missing_receipt"}`)
+			}))
+			defer server.Close()
+			got := runReadableCommand(t, server, "batches", "submit", "--file", path, "--endpoint", "/v1/responses", "--completion-window", "24h")
+			if got.code != 1 || got.stdout != "" {
+				t.Fatalf("missing receipt failure lost: %+v", got)
+			}
+			cause, recovery := "did not contain a file ID", "Check files list"
+			want := []string{"/files"}
+			if stage == "create" {
+				cause, recovery = "did not contain a batch ID", "Check batches list"
+				want = append(want, "/batches")
+			}
+			if !strings.Contains(got.stderr, cause) || !strings.Contains(got.stderr, recovery) {
+				t.Fatalf("known cause or recovery omitted: %s", got.stderr)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !reflect.DeepEqual(requests, want) {
+				t.Fatalf("mutations retried: %v", requests)
+			}
+		})
+	}
+}

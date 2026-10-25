@@ -96,6 +96,18 @@ func (w workflow) listBatchInputs(ctx context.Context, cmd *cli.Command) (err er
 	if err != nil {
 		return errors.Join(fetchErr, err)
 	}
+	if fetchErr != nil {
+		message := "Input file listing stopped. Displayed files may be incomplete."
+		var apierr *openai.Error
+		var workflowErr *WorkflowError
+		if errors.As(fetchErr, &apierr) && w.options.APIErrorMessage != nil {
+			message += "\n" + w.options.APIErrorMessage(cmd.Root(), fetchErr, apierr)
+		} else if errors.As(fetchErr, &workflowErr) {
+			message += "\n" + workflowErr.Error()
+		}
+		message += "\nRetry batches inputs with the same search, connection, and project settings."
+		fetchErr = &WorkflowError{message: message, cause: fetchErr}
+	}
 	return errors.Join(fetchErr, w.batchShowJSON(ctx, cmd, value, "inputs"))
 }
 
@@ -127,7 +139,7 @@ func batchFetchPages(ctx context.Context, after string, maximum int64, fetch fun
 		page := gjson.ParseBytes(raw)
 		data, more := page.Get("data"), page.Get("has_more")
 		if !page.IsObject() || !data.IsArray() || more.Type != gjson.True && more.Type != gjson.False {
-			return items, batchError("The API returned an unfamiliar list response. Results may be incomplete; inspect the API response.")
+			return items, batchError("The API returned an unfamiliar list response. Results may be incomplete; retry the list operation.")
 		}
 		var last string
 		var invalid bool
@@ -156,7 +168,7 @@ func batchFetchPages(ctx context.Context, after string, maximum int64, fetch fun
 			return items, nil
 		}
 		if last == "" || seen[last] {
-			return items, batchError("List pagination stopped because the API returned a missing or repeated cursor. Results may be incomplete.")
+			return items, batchError("List pagination stopped because the API returned a missing or repeated cursor. Results may be incomplete.\nRetry from the first page with the same search, connection, and project settings.")
 		}
 		seen[last] = true
 		after = last
