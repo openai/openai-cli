@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.1](https://github.com/openai/openai-cli/compare/v1.42.0...v1.42.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* restore normal startup help ([#618](https://github.com/openai/openai-cli/issues/618)) ([ec12506](https://github.com/openai/openai-cli/commit/ec125068741894c2ab164207494dd1d381abe2ca))
+
 ## [1.42.0](https://github.com/openai/openai-cli/compare/v1.41.1...v1.42.0) (2026-10-24)
 
 
