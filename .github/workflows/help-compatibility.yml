@@ -498,7 +498,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainResourceSummariesRetainActionFields|TestMainResourceSummaryListFilesInVectorBatch|TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits|TestMainResourceSummaryListNoticeForMixedRecords|TestMainResourceSummaryEmptyList|TestMainResourceSummaryUnknownFieldsAndShapesFallBack|TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData|TestMainResourceSummaryListFormatsAndExtractionKeepFullItems|TestMainResourceSummaryLeavesOtherOperationsUnchanged|TestMainDispatchBatchesPresentation|TestMainDispatchBatchResultsMatchByExactIDAndPreserveModes|TestMainBatchSubmitTransportRecovery|TestMainBatchSubmitMissingReceiptRecovery|TestMainDispatchBatchInputsPartialFailureRecovery|TestMainBatchWatchCombinedOutputAndAPIFailure|TestMainResourceSummaryPreservesLargeActionArguments|TestMainResourceSummaryPreservesPartialPageOnFailure|TestMainResourceSummaryWritesBeforeNextPageArrives|TestMainListNavigationNoninteractive)$' |
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainResourceSummariesRetainActionFields|TestMainResourceSummaryListFilesInVectorBatch|TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits|TestMainResourceSummaryListNoticeForMixedRecords|TestMainResourceSummaryEmptyList|TestMainResourceSummaryUnknownFieldsAndShapesFallBack|TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData|TestMainResourceSummaryListFormatsAndExtractionKeepFullItems|TestMainResourceSummaryLeavesOtherOperationsUnchanged|TestMainDispatchBatchesPresentation|TestMainDispatchBatchResultsMatchByExactIDAndPreserveModes|TestMainBatchSubmitTransportRecovery|TestMainBatchSubmitMissingReceiptRecovery|TestMainDispatchBatchInputsPartialFailureRecovery|TestMainBatchWatchCombinedOutputAndAPIFailure|TestMainBatchSubmitFailureRecovery|TestMainResourceSummaryPreservesLargeActionArguments|TestMainResourceSummaryPreservesPartialPageOnFailure|TestMainResourceSummaryWritesBeforeNextPageArrives|TestMainListNavigationNoninteractive)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'resource-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows Batch storage, snapshots, and helper lifecycle
@@ -506,7 +506,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./internal/commands/batches -count=1 -timeout=2m -v -json -run '^(TestWindowsBatchResultsPrivateScratchStorage|TestBatchOutputHelperLifelineOwnership|TestBatchOutputSmallWriteFailure|TestBatchOutputPipeFailureGuidance|TestBatchResultsTruncatedStorageHasRecovery|TestBatchRecordCopyPreservesOutputFailure|TestBatchWatchSnapshotsPreserveQueriesAndRawRecords|TestBatchWatchPartialFailureRetainsSnapshot|TestBatchWatchSpoolPreservesRecordsAndCursorHistory|TestBatchWatchSpoolCompaction|TestBatchWatchSpoolFailuresAndCleanup)$' |
+          go test -p 2 ./internal/commands/batches -count=1 -timeout=2m -v -json -run '^(TestWindowsBatchResultsPrivateScratchStorage|TestBatchOutputHelperLifelineOwnership|TestBatchOutputSmallWriteFailure|TestBatchOutputPipeFailureGuidance|TestBatchResultsTruncatedStorageHasRecovery|TestBatchRecordCopyPreservesOutputFailure|TestBatchWatchSnapshotsPreserveQueriesAndRawRecords|TestBatchWatchPartialFailureRetainsSnapshot|TestBatchWatchSpoolPreservesRecordsAndCursorHistory|TestBatchWatchSpoolCompaction|TestBatchWatchSpoolFailuresAndCleanup|TestBatchWatchReadableReusesSnapshotWriter|TestBatchWatchReadableSnapshotFailures|TestBatchWatchReadableDrainsBeforeFailure)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'batch-storage-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows streaming text output
@@ -1175,6 +1175,7 @@ jobs:
                   "TestMainBatchSubmitMissingReceiptRecovery": ["upload", "create"],
                   "TestMainDispatchBatchInputsPartialFailureRecovery": ["text", "json"],
                   "TestMainBatchWatchCombinedOutputAndAPIFailure": ["text", "json"],
+                  "TestMainBatchSubmitFailureRecovery": ["upload/text", "upload/json", "create/text", "create/json"],
                   "TestMainResourceSummaryPreservesLargeActionArguments": [],
                   "TestMainResourceSummaryPreservesPartialPageOnFailure": ["text", "json"],
                   "TestMainResourceSummaryWritesBeforeNextPageArrives": [],
@@ -1198,6 +1199,9 @@ jobs:
                   "TestBatchWatchSpoolPreservesRecordsAndCursorHistory": ["duplicate-order", "repeated-cursor", "seed-cursor", "zero-still-fetches", "limit-before-invalid-item", "valid-prefix-before-invalid-item", "cursor-index-growth"],
                   "TestBatchWatchSpoolCompaction": ["pretty", "lexemes", "invalid-utf8", "chunk-boundary"],
                   "TestBatchWatchSpoolFailuresAndCleanup": ["creation", "record-write", "read-and-output", "truncated-record", "snapshot-boundary", "cancel-fetch"],
+                  "TestBatchWatchReadableReusesSnapshotWriter": ["pipe", "custom", "partial"],
+                  "TestBatchWatchReadableSnapshotFailures": ["empty", "render-error", "cancel", "write-error"],
+                  "TestBatchWatchReadableDrainsBeforeFailure": ["storage", "renderer", "cancel"],
               }
               suites["batch-storage-tests.jsonl"] = set().union(*(
                   required_cases(root, children) for root, children in batch_storage_cases.items()

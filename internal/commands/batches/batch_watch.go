@@ -12,6 +12,7 @@ import (
 
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
@@ -141,29 +142,41 @@ func (w workflow) showBatchSnapshot(ctx context.Context, cmd *cli.Command, snaps
 	if !complete {
 		label = " (partial)"
 	}
-	if err := writeBatchStdout(ctx, cmd.Root().Writer, func(out io.Writer) error {
-		return readable.WriteText(out, fmt.Sprintf("Batch snapshot %d at %s%s", sequence, observed, label))
-	}); err != nil {
+	var renderErr error
+	outputErr := writeBatchStdoutWithCleanup(ctx, cmd.Root().Writer, batchOutputCleanupGrace, func(out io.Writer) error {
+		heading := fmt.Sprintf("Batch snapshot %d at %s%s", sequence, observed, label)
+		renderErr = w.writeReadableBatchSnapshot(ctx, cmd, snapshot, heading, out)
+		// Drain previously rendered bytes before reporting a later failure.
+		// The caller's context still stops an undrained output pipe.
+		return nil
+	})
+	if err := errors.Join(renderErr, outputErr); err != nil {
 		return err
-	}
-	if snapshot.store.recordCount == 0 {
-		if err := writeBatchStdout(ctx, cmd.Root().Writer, func(out io.Writer) error { return readable.WriteText(out, "No results.") }); err != nil {
-			return err
-		}
-	}
-	for id := int64(1); id <= snapshot.store.recordCount; id++ {
-		item, err := snapshot.item(id)
-		if err != nil {
-			return err
-		}
-		if err := w.batchShowJSON(ctx, cmd, item, "watch"); err != nil {
-			return err
-		}
 	}
 	if sequence == 1 && w.options.HumanTerminal(ctx, cmd.Root()) {
 		return writeBatchStdout(ctx, os.Stderr, func(out io.Writer) error {
 			return readable.WriteText(out, "Full snapshot data: --format jsonl.")
 		})
+	}
+	return nil
+}
+
+func (w workflow) writeReadableBatchSnapshot(ctx context.Context, cmd *cli.Command, snapshot *batchWatchSnapshot, heading string, out io.Writer) error {
+	if err := readable.WriteText(out, heading); err != nil {
+		return err
+	}
+	if snapshot.store.recordCount == 0 {
+		return readable.WriteText(out, "No results.")
+	}
+	diagnostics := terminal.BorrowedWriter{Writer: batchDiagnosticWriter{ctx: ctx, file: os.Stderr}, File: os.Stderr}
+	for id := int64(1); id <= snapshot.store.recordCount; id++ {
+		item, err := snapshot.item(id)
+		if err != nil {
+			return err
+		}
+		if err := w.options.ShowResult(ctx, cmd, item, "watch", out, diagnostics); err != nil {
+			return err
+		}
 	}
 	return nil
 }

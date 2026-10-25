@@ -123,7 +123,12 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 				message += "\n" + storage.Error()
 			}
 			if isAPI && !errors.Is(failure, context.Canceled) {
-				message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, presenter)
+				// Workflow wrappers can already include guidance from this cause,
+				// before the outer command adds presentation context.
+				included := readableAPIErrorMessage(root, batchFailure.Unwrap(), apierr)
+				if !strings.Contains(message, included) {
+					message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, presenter)
+				}
 			}
 			// Workflow outcomes must not hide safe, known transport guidance.
 			// Keep API details and explicit machine error contracts unchanged.

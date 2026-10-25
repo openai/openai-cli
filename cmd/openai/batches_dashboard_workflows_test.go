@@ -251,6 +251,9 @@ func TestMainBatchWatchCombinedOutputAndAPIFailure(t *testing.T) {
 				if strings.Contains(stderr.String(), "synthetic private details") {
 					t.Fatal("readable error exposed raw API details")
 				}
+				if strings.Count(stderr.String(), "HTTP 400") != 1 || strings.Count(stderr.String(), "API error details: --format-error json.") != 1 {
+					t.Fatalf("API guidance repeated: %s", stderr.String())
+				}
 			} else if !gjson.ValidBytes(stderr.Bytes()) || gjson.GetBytes(stderr.Bytes(), "message").Str != "synthetic private details" || !gjson.GetBytes(stderr.Bytes(), "future.retained").Bool() {
 				t.Fatalf("explicit API error changed: %s", stderr.String())
 			}
@@ -291,6 +294,9 @@ func TestMainDispatchBatchInputsPartialFailureRecovery(t *testing.T) {
 				}
 				if strings.Contains(got.stderr, "synthetic private details") {
 					t.Error("human guidance exposed API prose")
+				}
+				if strings.Count(got.stderr, "HTTP 403") != 1 || strings.Count(got.stderr, "API error details: --format-error json.") != 1 {
+					t.Fatalf("API guidance repeated: %s", got.stderr)
 				}
 			} else if !gjson.Valid(got.stderr) || gjson.Get(got.stderr, "code").Str != "synthetic_denied" {
 				t.Fatalf("machine API error changed: %s", got.stderr)

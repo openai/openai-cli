@@ -151,8 +151,15 @@ func TestMainBatchSubmitFailureRecovery(t *testing.T) {
 					if stage == "create" && gjson.Get(got.stderr, "batch_submission.input_file_id").String() != "file_synthetic_saved" {
 						t.Fatal("uploaded file ID lost")
 					}
-				} else if !strings.Contains(got.stderr, "before") || strings.Contains(got.stderr, "private synthetic body") {
-					t.Fatalf("unsafe recovery: %s", got.stderr)
+				} else {
+					if !strings.Contains(got.stderr, "before") || strings.Contains(got.stderr, "private synthetic body") {
+						t.Fatalf("unsafe recovery: %s", got.stderr)
+					}
+					for _, guidance := range []string{"HTTP 500", "API error details: --format-error json."} {
+						if strings.Count(got.stderr, guidance) != 1 {
+							t.Errorf("expected one %q guidance block: %s", guidance, got.stderr)
+						}
+					}
 				}
 			})
 		}
