@@ -9,12 +9,58 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 )
 
 const batchOutputLifecycleFixtureArgument = "__test-batch-output-lifecycle"
+
+func TestBatchOutputPipeFailureGuidance(t *testing.T) {
+	for _, stopped := range []bool{false, true} {
+		name := "destination-failure"
+		if stopped {
+			name = "owned-cancellation"
+		}
+		t.Run(name, func(t *testing.T) {
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			defer writer.Close()
+			var state atomic.Bool
+			state.Store(stopped)
+			if stopped {
+				err = writer.Close()
+			} else {
+				err = reader.Close()
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = (batchPipeWriter{file: writer, stopped: &state}).Write([]byte("synthetic output"))
+			if err == nil {
+				t.Fatal("closed pipe write became success")
+			}
+			var pathError *os.PathError
+			if !errors.As(err, &pathError) {
+				t.Fatalf("write cause was lost: %v", err)
+			}
+			message := WorkflowErrorMessage(err)
+			var owned *batchOwnedPipeClosed
+			if stopped {
+				if !errors.As(err, &owned) || message != "" {
+					t.Fatalf("owned cancellation became an output failure: %v", err)
+				}
+			} else if !strings.Contains(message, "receiving command or output destination") || strings.Contains(message, "permissions") {
+				t.Fatalf("incorrect output recovery guidance: %q", message)
+			}
+		})
+	}
+}
 
 // The fixture observes the real helper before its process exits. Normal return
 // must not close the handle still used by its parent-death watcher.

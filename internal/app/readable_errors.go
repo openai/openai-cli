@@ -122,6 +122,9 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 			if errors.As(failure, &storage) && !strings.Contains(message, storage.Error()) {
 				message += "\n" + storage.Error()
 			}
+			if isAPI && !errors.Is(failure, context.Canceled) {
+				message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, presenter)
+			}
 			// Workflow outcomes must not hide safe, known transport guidance.
 			// Keep API details and explicit machine error contracts unchanged.
 			if !isAPI && !errors.Is(failure, context.Canceled) && message != "" {

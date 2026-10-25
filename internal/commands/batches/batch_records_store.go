@@ -71,7 +71,11 @@ func batchRecordStorageError(err error) error {
 	if err == nil {
 		return nil
 	}
-	return &WorkflowError{message: "Could not prepare batch records in temporary storage. Check temporary storage space and permissions, then retry batches results.", cause: err}
+	return &WorkflowError{message: "Could not prepare batch records in temporary storage. Check temporary storage space and permissions, then retry the same command.", cause: err}
+}
+
+func batchRecordIncompleteError() error {
+	return &WorkflowError{message: "Temporary batch data is incomplete. Output may be incomplete. Retry the same read-only command.", cause: io.ErrUnexpectedEOF}
 }
 
 func (s *batchRecordStore) temporaryFile() (*os.File, func() error, error) {
@@ -471,7 +475,10 @@ func (s *batchRecordStore) writeRecord(out io.Writer, id int64) error {
 		return err
 	}
 	var buffer [32 * 1024]byte
-	_, err = io.CopyBuffer(out, batchRecordContextReader{s.ctx, io.NewSectionReader(s.data, record.start, record.length)}, buffer[:])
+	written, err := io.CopyBuffer(out, batchRecordContextReader{s.ctx, io.NewSectionReader(s.data, record.start, record.length)}, buffer[:])
+	if err == nil && written != record.length {
+		return batchRecordIncompleteError()
+	}
 	return err
 }
 

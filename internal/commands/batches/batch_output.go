@@ -19,6 +19,8 @@ const batchOutputHelperArgument = "__batch-output"
 
 const batchOutputCleanupGrace = 200 * time.Millisecond
 
+const batchOutputFailureMessage = "Could not write the batch output. Output may be incomplete.\nCheck the receiving command or output destination before retrying."
+
 type batchOwnedPipeClosed struct{ error }
 
 func (e *batchOwnedPipeClosed) Unwrap() error { return e.error }
@@ -32,6 +34,8 @@ func (w batchPipeWriter) Write(data []byte) (int, error) {
 	n, err := w.file.Write(data)
 	if errors.Is(err, os.ErrClosed) && w.stopped.Load() {
 		err = &batchOwnedPipeClosed{error: err}
+	} else if err != nil {
+		err = batchDownloadFailure(batchOutputFailureMessage, err)
 	}
 	return n, err
 }
@@ -311,7 +315,7 @@ func streamBatchOutput(ctx context.Context, out *os.File, cleanupGrace time.Dura
 		return &batchOutputResultError{primary: writeErr, cause: errors.Join(writeErr, waitErr)}
 	}
 	if err := errors.Join(closeErr, waitErr); err != nil {
-		return batchDownloadFailure("Could not write the batch output. Output may be incomplete.", err)
+		return batchDownloadFailure(batchOutputFailureMessage, err)
 	}
 	return nil
 }

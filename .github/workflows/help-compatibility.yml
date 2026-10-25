@@ -498,15 +498,15 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainResourceSummariesRetainActionFields|TestMainResourceSummaryListFilesInVectorBatch|TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits|TestMainResourceSummaryListNoticeForMixedRecords|TestMainResourceSummaryEmptyList|TestMainResourceSummaryUnknownFieldsAndShapesFallBack|TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData|TestMainResourceSummaryListFormatsAndExtractionKeepFullItems|TestMainResourceSummaryLeavesOtherOperationsUnchanged|TestMainDispatchBatchesPresentation|TestMainDispatchBatchResultsMatchByExactIDAndPreserveModes|TestMainBatchSubmitTransportRecovery|TestMainBatchSubmitMissingReceiptRecovery|TestMainDispatchBatchInputsPartialFailureRecovery|TestMainResourceSummaryPreservesLargeActionArguments|TestMainResourceSummaryPreservesPartialPageOnFailure|TestMainResourceSummaryWritesBeforeNextPageArrives|TestMainListNavigationNoninteractive)$' |
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainResourceSummariesRetainActionFields|TestMainResourceSummaryListFilesInVectorBatch|TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits|TestMainResourceSummaryListNoticeForMixedRecords|TestMainResourceSummaryEmptyList|TestMainResourceSummaryUnknownFieldsAndShapesFallBack|TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData|TestMainResourceSummaryListFormatsAndExtractionKeepFullItems|TestMainResourceSummaryLeavesOtherOperationsUnchanged|TestMainDispatchBatchesPresentation|TestMainDispatchBatchResultsMatchByExactIDAndPreserveModes|TestMainBatchSubmitTransportRecovery|TestMainBatchSubmitMissingReceiptRecovery|TestMainDispatchBatchInputsPartialFailureRecovery|TestMainBatchWatchCombinedOutputAndAPIFailure|TestMainResourceSummaryPreservesLargeActionArguments|TestMainResourceSummaryPreservesPartialPageOnFailure|TestMainResourceSummaryWritesBeforeNextPageArrives|TestMainListNavigationNoninteractive)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'resource-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
-      - name: Test Windows Batch storage and helper lifecycle
+      - name: Test Windows Batch storage, snapshots, and helper lifecycle
         if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./internal/commands/batches -count=1 -timeout=2m -v -json -run '^(TestWindowsBatchResultsPrivateScratchStorage|TestBatchOutputHelperLifelineOwnership|TestBatchOutputSmallWriteFailure)$' |
+          go test -p 2 ./internal/commands/batches -count=1 -timeout=2m -v -json -run '^(TestWindowsBatchResultsPrivateScratchStorage|TestBatchOutputHelperLifelineOwnership|TestBatchOutputSmallWriteFailure|TestBatchOutputPipeFailureGuidance|TestBatchResultsTruncatedStorageHasRecovery|TestBatchRecordCopyPreservesOutputFailure|TestBatchWatchSnapshotsPreserveQueriesAndRawRecords|TestBatchWatchPartialFailureRetainsSnapshot|TestBatchWatchSpoolPreservesRecordsAndCursorHistory|TestBatchWatchSpoolCompaction|TestBatchWatchSpoolFailuresAndCleanup)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'batch-storage-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows streaming text output
@@ -1174,6 +1174,7 @@ jobs:
                       for stage in ["upload", "create"] for mode in ["text", "json"]],
                   "TestMainBatchSubmitMissingReceiptRecovery": ["upload", "create"],
                   "TestMainDispatchBatchInputsPartialFailureRecovery": ["text", "json"],
+                  "TestMainBatchWatchCombinedOutputAndAPIFailure": ["text", "json"],
                   "TestMainResourceSummaryPreservesLargeActionArguments": [],
                   "TestMainResourceSummaryPreservesPartialPageOnFailure": ["text", "json"],
                   "TestMainResourceSummaryWritesBeforeNextPageArrives": [],
@@ -1185,9 +1186,22 @@ jobs:
               suites["resource-tests.jsonl"] = set().union(*(
                   required_cases(root, children) for root, children in resource_cases.items()
               ))
-              suites["batch-storage-tests.jsonl"] = required_cases("TestBatchOutputHelperLifelineOwnership",
-                  ["drain", "write-error", "ready-error", "invalid-lifeline"]) | {
-                  "TestWindowsBatchResultsPrivateScratchStorage", "TestBatchOutputSmallWriteFailure"}
+              batch_storage_cases = {
+                  "TestWindowsBatchResultsPrivateScratchStorage": [],
+                  "TestBatchOutputHelperLifelineOwnership": ["drain", "write-error", "ready-error", "invalid-lifeline"],
+                  "TestBatchOutputSmallWriteFailure": [],
+                  "TestBatchOutputPipeFailureGuidance": ["destination-failure", "owned-cancellation"],
+                  "TestBatchResultsTruncatedStorageHasRecovery": ["length-0", "length-10"],
+                  "TestBatchRecordCopyPreservesOutputFailure": [],
+                  "TestBatchWatchSnapshotsPreserveQueriesAndRawRecords": [],
+                  "TestBatchWatchPartialFailureRetainsSnapshot": [],
+                  "TestBatchWatchSpoolPreservesRecordsAndCursorHistory": ["duplicate-order", "repeated-cursor", "seed-cursor", "zero-still-fetches", "limit-before-invalid-item", "valid-prefix-before-invalid-item", "cursor-index-growth"],
+                  "TestBatchWatchSpoolCompaction": ["pretty", "lexemes", "invalid-utf8", "chunk-boundary"],
+                  "TestBatchWatchSpoolFailuresAndCleanup": ["creation", "record-write", "read-and-output", "truncated-record", "snapshot-boundary", "cancel-fetch"],
+              }
+              suites["batch-storage-tests.jsonl"] = set().union(*(
+                  required_cases(root, children) for root, children in batch_storage_cases.items()
+              ))
               strict_packages["resource-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
               strict_packages["batch-storage-tests.jsonl"] = "github.com/openai/openai-cli/internal/commands/batches"
               streaming_text_cases = {

@@ -153,6 +153,10 @@ openai batches list --watch --limit 100 --max-items -1
 
 Each refresh prints another snapshot without clearing terminal history.
 Pagination runs serially within each refresh.
+Each refresh uses private temporary storage for its records and pagination cursors.
+Memory use depends on one API page and one rendered record, instead of the complete Batch history.
+Temporary storage must hold the current snapshot and its index.
+The command removes this storage before the next refresh, including after failure or handled interruption.
 The API does not provide an atomic snapshot across pages.
 API failures stop watching with a nonzero exit.
 A partial snapshot is marked as incomplete.

@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"github.com/urfave/cli/v3"
 )
 
 func batchRecordsPrivateTemp(t *testing.T) string {
@@ -225,13 +226,77 @@ func TestBatchRecordScratchReadFailureHasRecovery(t *testing.T) {
 	require.Contains(t, WorkflowErrorMessage(err), "temporary storage space and permissions")
 }
 
+func truncateBatchRecordPayload(t *testing.T, directory, record string, length int64) {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		path := filepath.Join(directory, entry.Name())
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		if bytes.HasPrefix(data, []byte(record)) {
+			require.NoError(t, os.Truncate(path, length))
+			return
+		}
+	}
+	t.Fatal("the synthetic record payload was not found")
+}
+
+func TestBatchResultsTruncatedStorageHasRecovery(t *testing.T) {
+	const record = `{"custom_id":"request_a","response":{"body":"synthetic"}}`
+	for _, length := range []int64{0, 10} {
+		t.Run(fmt.Sprintf("length-%d", length), func(t *testing.T) {
+			directory := batchRecordsPrivateTemp(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/batches/batch_example" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"id":"batch_example","output_file_id":"file_output"}`)
+					return
+				}
+				_, _ = io.WriteString(w, record)
+			}))
+			defer server.Close()
+			options := testOptions()
+			previous := options.ShowRecords
+			options.ShowRecords = func(ctx context.Context, command *cli.Command, records RecordOutput, out, stderr io.Writer) error {
+				truncateBatchRecordPayload(t, directory, record, length)
+				return previous(ctx, command, records, out, stderr)
+			}
+			root := batchRecordsTestCommand(t, server.URL, io.Discard)
+			root.Commands[0].Commands[0] = (workflow{options: options}).newBatchResultsCommand()
+			err := root.Run(t.Context(), []string{"openai", "batches", "results", "batch_example"})
+			require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+			message := WorkflowErrorMessage(err)
+			require.Contains(t, message, "Temporary batch data is incomplete")
+			require.Contains(t, message, "Output may be incomplete")
+			require.Contains(t, message, "Retry the same read-only command")
+			require.NotContains(t, message, directory)
+			entries, err := os.ReadDir(directory)
+			require.NoError(t, err)
+			require.Empty(t, entries)
+		})
+	}
+}
+
+func TestBatchRecordCopyPreservesOutputFailure(t *testing.T) {
+	store, err := newBatchRecordStore(t.Context())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.close()) }()
+	require.NoError(t, store.readJSONL(strings.NewReader(`{"custom_id":"request_a"}`), "output", "", false, false))
+	want := errors.New("synthetic output failure")
+	err = store.writeRecord(failedBatchRecordWriter{want}, 1)
+	require.ErrorIs(t, err, want)
+	require.NotContains(t, err.Error(), "temporary")
+	require.NotErrorIs(t, err, io.ErrUnexpectedEOF)
+}
+
 func TestBatchRecordMidRecordStorageFailureHasRecovery(t *testing.T) {
 	want := errors.New("synthetic temporary storage full")
 	scanner := batchJSONScanner{ctx: t.Context(), in: bufio.NewReader(strings.NewReader(`{"body":"` + strings.Repeat("x", 10000) + `"}`)), out: bufio.NewWriterSize(failedBatchRecordWriter{want}, 16)}
 	err := scanner.value(0)
 	require.ErrorIs(t, err, want)
 	require.Contains(t, err.Error(), "temporary storage space and permissions")
-	require.Contains(t, err.Error(), "retry batches results")
+	require.Contains(t, err.Error(), "retry the same command")
 }
 
 func TestBatchResultsLargeRecordUsesTemporaryStorage(t *testing.T) {
@@ -333,7 +398,7 @@ func TestBatchResultsTemporaryStorageFailureHasRecovery(t *testing.T) {
 	err := root.Run(t.Context(), []string{"openai", "batches", "results", "batch_example"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "temporary storage space and permissions")
-	require.Contains(t, err.Error(), "retry batches results")
+	require.Contains(t, err.Error(), "retry the same command")
 	require.NotContains(t, err.Error(), directory)
 	require.Empty(t, out.String())
 }

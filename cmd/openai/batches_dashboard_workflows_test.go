@@ -1,15 +1,20 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/tidwall/gjson"
 )
@@ -188,6 +193,68 @@ func TestMainDispatchBatchWatchPartialFailure(t *testing.T) {
 	got := runReadableCommand(t, server, "--format", "jsonl", "batches", "list", "--watch", "--watch-count", "2", "--max-items", "-1")
 	if got.code == 0 || !gjson.Valid(got.stdout) || gjson.Get(got.stdout, "complete").Bool() || gjson.Get(got.stdout, "data.0.id").Str != "batch_kept" || strings.Count(got.stdout, "\n") != 1 {
 		t.Fatalf("partial snapshot or failure lost: %+v", got)
+	}
+}
+
+func TestMainBatchWatchCombinedOutputAndAPIFailure(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Query().Get("after") == "" {
+					fmt.Fprintf(w, `{"data":[{"id":"batch_kept","metadata":{"payload":%q}}],"has_more":true}`, strings.Repeat("x", 2<<20))
+					return
+				}
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprint(w, `{"error":{"message":"synthetic private details","type":"invalid_request_error","future":{"retained":true}}}`)
+			}))
+			defer server.Close()
+			child := batchesWorkflowProcess(t, ctx, server, "--format", "jsonl", "--format-error", format,
+				"batches", "list", "--watch", "--watch-count", "1")
+			child.WaitDelay = 2 * time.Second
+			stdout, err := child.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stdout.Close()
+			var stderr bytes.Buffer
+			child.Stderr = &stderr
+			if err := child.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if child.ProcessState == nil {
+					_ = child.Process.Kill()
+					_ = child.Wait()
+				}
+			}()
+			var first [1]byte
+			if _, err := io.ReadFull(stdout, first[:]); err != nil {
+				t.Fatal(err)
+			}
+			if err := stdout.Close(); err != nil {
+				t.Fatal(err)
+			}
+			err = child.Wait()
+			var exit *exec.ExitError
+			if ctx.Err() != nil || !errors.As(err, &exit) || exit.ExitCode() != 1 {
+				t.Fatalf("combined failure lost: error=%v context=%v stderr=%q", err, ctx.Err(), stderr.String())
+			}
+			if format == "text" {
+				for _, expected := range []string{"Output may be incomplete", "receiving command or output destination", "HTTP 400", "API rejected"} {
+					if !strings.Contains(stderr.String(), expected) {
+						t.Errorf("missing failure %q: %s", expected, stderr.String())
+					}
+				}
+				if strings.Contains(stderr.String(), "synthetic private details") {
+					t.Fatal("readable error exposed raw API details")
+				}
+			} else if !gjson.ValidBytes(stderr.Bytes()) || gjson.GetBytes(stderr.Bytes(), "message").Str != "synthetic private details" || !gjson.GetBytes(stderr.Bytes(), "future.retained").Bool() {
+				t.Fatalf("explicit API error changed: %s", stderr.String())
+			}
+		})
 	}
 }
 

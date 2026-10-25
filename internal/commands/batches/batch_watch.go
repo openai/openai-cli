@@ -1,9 +1,7 @@
 package batches
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,7 +14,6 @@ import (
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -72,7 +69,7 @@ func (w workflow) watchBatchList(ctx context.Context, cmd *cli.Command) (err err
 	client := openai.NewClient(w.options.DefaultRequestOptions(cmd)...)
 	for sequence := int64(1); count == 0 || sequence <= count; sequence++ {
 		first := true
-		items, fetchErr := batchFetchPages(ctx, cmd.String("after"), maximum, func(after string) ([]byte, error) {
+		err := w.collectBatchSnapshot(ctx, cmd, sequence, maximum, format == "jsonl", func(after string) ([]byte, error) {
 			var raw []byte
 			opts := append(options[:len(options):len(options)], option.WithResponseBodyInto(&raw))
 			if !first {
@@ -81,12 +78,8 @@ func (w workflow) watchBatchList(ctx context.Context, cmd *cli.Command) (err err
 			first = false
 			_, err := client.Batches.List(ctx, openai.BatchListParams{}, opts...)
 			return raw, err
-		}, nil)
-		if fetchErr != nil && len(items) == 0 {
-			return fetchErr
-		}
-		outputErr := w.showBatchSnapshot(ctx, cmd, items, sequence, fetchErr == nil, format == "jsonl")
-		if err := errors.Join(fetchErr, outputErr); err != nil {
+		})
+		if err != nil {
 			return err
 		}
 		if count != 0 && sequence == count {
@@ -103,7 +96,22 @@ func (w workflow) watchBatchList(ctx context.Context, cmd *cli.Command) (err err
 	return nil
 }
 
-func (w workflow) showBatchSnapshot(ctx context.Context, cmd *cli.Command, items []gjson.Result, sequence int64, complete, jsonl bool) error {
+func (w workflow) collectBatchSnapshot(ctx context.Context, cmd *cli.Command, sequence, maximum int64, jsonl bool, fetch func(string) ([]byte, error)) (err error) {
+	store, err := newBatchRecordStore(ctx)
+	if err != nil {
+		return batchWatchStorageError(err)
+	}
+	// Release every snapshot before the poll delay or the next request.
+	defer func() { err = errors.Join(err, batchWatchStorageError(store.close())) }()
+	snapshot := batchWatchSnapshot{store: store}
+	fetchErr := snapshot.fetch(cmd.String("after"), maximum, fetch)
+	if fetchErr != nil && store.recordCount == 0 {
+		return fetchErr
+	}
+	return errors.Join(fetchErr, w.showBatchSnapshot(ctx, cmd, &snapshot, sequence, fetchErr == nil, jsonl))
+}
+
+func (w workflow) showBatchSnapshot(ctx context.Context, cmd *cli.Command, snapshot *batchWatchSnapshot, sequence int64, complete, jsonl bool) error {
 	observed := time.Now().UTC().Format(time.RFC3339)
 	if jsonl {
 		prefix := `{"object":"batch.list_snapshot","sequence":` + strconv.FormatInt(sequence, 10) + `,"observed_at":` + strconv.Quote(observed) + `,"complete":` + strconv.FormatBool(complete) + `,"data":[`
@@ -112,21 +120,16 @@ func (w workflow) showBatchSnapshot(ctx context.Context, cmd *cli.Command, items
 			if _, err := writer.WriteString(prefix); err != nil {
 				return err
 			}
-			var compact bytes.Buffer
-			for i, item := range items {
+			for id := int64(1); id <= snapshot.store.recordCount; id++ {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				compact.Reset()
-				if err := json.Compact(&compact, []byte(item.Raw)); err != nil {
-					return err
-				}
-				if i != 0 {
+				if id > 1 {
 					if _, err := writer.WriteString(","); err != nil {
 						return err
 					}
 				}
-				if _, err := writer.Write(compact.Bytes()); err != nil {
+				if err := snapshot.writeRecord(writer, id); err != nil {
 					return err
 				}
 			}
@@ -143,12 +146,16 @@ func (w workflow) showBatchSnapshot(ctx context.Context, cmd *cli.Command, items
 	}); err != nil {
 		return err
 	}
-	if len(items) == 0 {
+	if snapshot.store.recordCount == 0 {
 		if err := writeBatchStdout(ctx, cmd.Root().Writer, func(out io.Writer) error { return readable.WriteText(out, "No results.") }); err != nil {
 			return err
 		}
 	}
-	for _, item := range items {
+	for id := int64(1); id <= snapshot.store.recordCount; id++ {
+		item, err := snapshot.item(id)
+		if err != nil {
+			return err
+		}
 		if err := w.batchShowJSON(ctx, cmd, item, "watch"); err != nil {
 			return err
 		}
