@@ -40,7 +40,7 @@ func TestMainTrainingInputsAreUnavailable(t *testing.T) {
 		{"scalar purpose file", "", fileError, []string{"files", "upload", file, "--purpose", "@" + purpose}},
 		{"file JSON", `{"purpose":"fine-tune"}`, fileError, []string{"files", "create", "--file", file}},
 		{"file YAML", "purpose: fine-tune\n", fileError, []string{"files", "upload", file}},
-		{"trusted piped scalar", `{"purpose":"@` + purpose + `"}`, fileError, []string{"files", "create", "--file", file}},
+		{"trusted piped scalar", retirementPurposeFileInput(t, purpose), fileError, []string{"files", "create", "--file", file}},
 		{"upload JSON", `{"purpose":"fine-tune"}`, fileError, uploadArgs},
 		{"upload YAML", "purpose: fine-tune\n", fileError, uploadArgs},
 		{"upload scalar", "", fileError, append(append([]string{}, uploadArgs...), "--purpose", "@"+purpose)},
@@ -290,7 +290,7 @@ func TestMainRetirementPreservesVisionInputs(t *testing.T) {
 		{"create JSON", `{"purpose":"vision"}`, "POST", "/files", []string{"files", "create", "--file", file}},
 		{"upload YAML", "purpose: vision\n", "POST", "/files", []string{"files", "upload", file}},
 		{"scalar file", "", "POST", "/files", []string{"files", "create", "--file", file, "--purpose", "@" + purpose}},
-		{"piped scalar file", `{"purpose":"@` + purpose + `"}`, "POST", "/files", []string{"files", "create", "--file", file}},
+		{"piped scalar file", retirementPurposeFileInput(t, purpose), "POST", "/files", []string{"files", "create", "--file", file}},
 		{"flag overrides input", `{"purpose":"fine-tune"}`, "POST", "/files", []string{"files", "create", "--file", file, "--purpose", "vision"}},
 		{"list flag", "", "GET", "/files", []string{"files", "list", "--purpose", "vision"}},
 		{"list scalar file", "", "GET", "/files", []string{"files", "list", "--purpose", "@" + purpose}},
@@ -388,6 +388,15 @@ func TestMainRetirementPreservesVisionInputs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func retirementPurposeFileInput(t *testing.T, path string) string {
+	t.Helper()
+	data, err := json.Marshal(map[string]string{"purpose": "@" + path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func retirementStdin(t *testing.T, contents string) *os.File {
