@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -203,7 +204,7 @@ func TestWebhookCreatePickerInputAndControlSafety(t *testing.T) {
 }
 
 func TestWebhookCreatePickerResizeKeepsAllChoicesAccessible(t *testing.T) {
-	events := []string{"agent.session.created", "batch.completed", "response.completed", "eval.run.succeeded", "fine_tuning.job.succeeded", "realtime.call.incoming", "video.completed", "safety.alert.created", "future.event"}
+	events := []string{"agent.session.created", "batch.completed", "response.completed", "eval.run.succeeded", "realtime.call.incoming", "video.completed", "safety.alert.created", "future.event"}
 	m := newWebhookCreatePicker(events)
 	m.stage = 2
 	m.eventFocus = webhookCreateChoices
@@ -224,6 +225,20 @@ func TestWebhookCreatePickerResizeKeepsAllChoicesAccessible(t *testing.T) {
 		m.reviewFocused = false
 		m.selected = map[string]bool{}
 	}
+}
+
+func TestWebhookCreatePickerExcludesRetiredEventsFromOther(t *testing.T) {
+	m := newWebhookCreatePicker([]string{"fine_tuning.job.succeeded", "fine_tuning.future.event", "future.event", "response.completed"})
+	m.stage = 2
+	require.ElementsMatch(t, []string{"future.event", "response.completed"}, m.events)
+	require.NotContains(t, m.categories(), "Fine-tuning")
+	m.chooseCategory(slices.Index(m.categories(), "Other"))
+	require.Equal(t, []string{"future.event"}, m.filteredEvents())
+	require.NotContains(t, m.View().Content, "fine_tuning")
+	for _, event := range []string{"fine_tuning.job.succeeded", "fine_tuning.future.event", "future.event", "response.completed"} {
+		m.selected[event] = true
+	}
+	require.ElementsMatch(t, []string{"future.event", "response.completed"}, m.settings().events)
 }
 
 func TestWebhookCreatePickerReviewCanScrollCompleteURLAndSelections(t *testing.T) {

@@ -165,8 +165,6 @@ func (m *audioWorkbench) View() tea.View {
 	}
 	switch m.modal {
 	case "recovery":
-		return m.recoveryView()
-	case "error":
 		return m.failureView()
 	case "info":
 		return m.informationView()

@@ -68,7 +68,7 @@ func TestSuggestedHelpLinksPreserveVisibleText(t *testing.T) {
 
 func TestSuggestedCommandsRegisterOnlyRenderedHelp(t *testing.T) {
 	var out bytes.Buffer
-	leaf := &cli.Command{Name: "create", Usage: "Do not register this prose: openai models delete --model unrelated."}
+	leaf := &cli.Command{Name: "create", Usage: "Do not register this prose: openai files delete --file-id unrelated."}
 	root := &cli.Command{Name: "openai", Writer: &out, Commands: []*cli.Command{
 		{Name: "responses", Commands: []*cli.Command{leaf}},
 		{Name: "files", Commands: []*cli.Command{{Name: "create"}}},

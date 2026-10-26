@@ -154,6 +154,76 @@ func TestWebhookCommandValueIsOnlyAnOptionalHintFilter(t *testing.T) {
 	}
 }
 
+func TestWebhookCreatedAdviceDoesNotSuggestRetiredEvents(t *testing.T) {
+	for _, events := range []string{`["fine_tuning.job.succeeded"]`, `["fine_tuning.job.succeeded","response.completed"]`} {
+		var stdout, stderr bytes.Buffer
+		opts := webhookResultOptions("create")
+		opts.Stdout, opts.Stderr = &stdout, &stderr
+		body := `{"object":"webhook_endpoint","id":"whe_example","event_types":` + events + `}`
+		handled, err := ShowResult(gjson.Parse(body), opts)
+		if !handled || err != nil || !strings.Contains(stdout.String(), "fine_tuning.job.succeeded") ||
+			strings.Contains(stderr.String(), "fine_tuning") {
+			t.Fatalf("subscription data or advice changed incorrectly: handled=%t err=%v stdout=%q stderr=%q", handled, err, stdout.String(), stderr.String())
+		}
+		if strings.Contains(events, "response.completed") != strings.Contains(stderr.String(), "--event-type=response.completed") {
+			t.Fatalf("supported follow-up was lost: %q", stderr.String())
+		}
+	}
+}
+
+func TestWebhookRetiredEventHasNoRetryCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	opts := webhookResultOptions("test")
+	state, _ := opts.Context.Value(webhookCommandKey{}).(webhookCommandContext)
+	state.request.Store(&webhookTestRequest{endpoint: "whe_example", event: "fine_tuning.job.succeeded"})
+	opts.Stdout, opts.Stderr = &stdout, &stderr
+	handled, err := ShowResult(gjson.Parse(webhookResultFixture), opts)
+	if !handled || err != nil || strings.Contains(stderr.String(), "--event-type=fine_tuning") {
+		t.Fatalf("retired retry command returned: %t %v %q", handled, err, stderr.String())
+	}
+}
+
+func TestWebhookEventCatalogMachineModesRemainUntouched(t *testing.T) {
+	for _, mode := range []string{"json", "jsonl", "yaml", "pretty", "raw", "extract", "raw-output"} {
+		var out bytes.Buffer
+		opts := webhookResultOptions("event-types")
+		opts.Stdout, opts.Stderr, opts.Format = &out, &out, mode
+		if mode == "extract" {
+			opts.Format, opts.Transform = "text", "data"
+		} else if mode == "raw-output" {
+			opts.Format, opts.RawOutput = "text", true
+		}
+		opts.Route.Operation = "(resource) webhooks.event_types > (method) list"
+		value := gjson.Parse(`{"object":"list","data":["fine_tuning.job.succeeded","response.completed"]}`)
+		if handled, err := ShowResult(value, opts); handled || err != nil || out.Len() != 0 {
+			t.Fatalf("machine catalog was intercepted: mode=%s handled=%t error=%v output=%q", mode, handled, err, out.String())
+		}
+	}
+}
+
+func TestWebhookReadableEventCatalogExcludesRetiredEvents(t *testing.T) {
+	for _, events := range []string{`["fine_tuning.job.succeeded","response.completed"]`, `["fine_tuning.future.event"]`} {
+		var stdout, stderr bytes.Buffer
+		opts := webhookResultOptions("event-types")
+		opts.Stdout, opts.Stderr = &stdout, &stderr
+		opts.Route.Operation = "(resource) webhooks.event_types > (method) list"
+		value := gjson.Parse(`{"object":"list","data":` + events + `}`)
+		handled, err := ShowResult(value, opts)
+		if !handled || err != nil || strings.Contains(stdout.String(), "fine_tuning") {
+			t.Fatalf("readable catalog retained retired choices: %t %v %q", handled, err, stdout.String())
+		}
+		if strings.Contains(events, "response.completed") {
+			if !strings.Contains(stdout.String(), "response.completed") {
+				t.Fatalf("supported event disappeared: %q", stdout.String())
+			}
+		} else if !strings.Contains(stdout.String(), "The available webhook events are not supported by the CLI.") ||
+			!strings.Contains(stderr.String(), "Use the Platform API directly for these events.") ||
+			strings.Contains(stderr.String(), "Choose events interactively") || strings.Contains(stderr.String(), "access") {
+			t.Fatalf("retired-only catalog suggests unavailable choices: stdout=%q stderr=%q", stdout.String(), stderr.String())
+		}
+	}
+}
+
 func TestWebhookResultUnexpectedStringAndEmptyCatalog(t *testing.T) {
 	for _, tc := range []struct{ operation, body, advice string }{
 		{"test", `"unfamiliar result"`, "No delivery outcome was inferred"},

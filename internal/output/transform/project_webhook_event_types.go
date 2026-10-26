@@ -8,7 +8,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// ProjectWebhookEventTypes groups the complete known catalog for discovery.
+// ProjectWebhookEventTypes groups the supported catalog for CLI discovery.
 // Unknown response fields or item types retain their full generic representation.
 func ProjectWebhookEventTypes(ctx context.Context, value gjson.Result) (gjson.Result, error) {
 	if err := ctx.Err(); err != nil {
@@ -33,10 +33,13 @@ func ProjectWebhookEventTypes(ctx context.Context, value gjson.Result) (gjson.Re
 			valid = false
 			return false
 		}
+		if strings.HasPrefix(item.Str, "fine_tuning.") {
+			return true
+		}
 		group := "other"
 		for _, candidate := range []struct{ prefix, group string }{
 			{"response.", "background_responses"}, {"batch.", "batches"}, {"eval.", "evaluations"},
-			{"fine_tuning.", "fine_tuning"}, {"realtime.", "realtime"}, {"video.", "videos"},
+			{"realtime.", "realtime"}, {"video.", "videos"},
 			{"agent.session.", "agent_sessions"}, {"agent.environment.", "agent_environments"}, {"safety.", "safety"},
 		} {
 			if strings.HasPrefix(item.Str, candidate.prefix) {
@@ -54,6 +57,9 @@ func ProjectWebhookEventTypes(ctx context.Context, value gjson.Result) (gjson.Re
 		return value, nil
 	}
 	if len(groups) == 0 {
+		if value.Get("data.#").Int() > 0 {
+			return gjson.Parse(`"The available webhook events are not supported by the CLI."`), nil
+		}
 		return gjson.Parse(`"No webhook events are available for this project."`), nil
 	}
 	encoded, err := json.Marshal(groups)

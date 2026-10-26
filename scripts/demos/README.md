@@ -64,7 +64,7 @@ retains ID, filename, purpose, bytes and status, followed by
 one `Full data: --format json.` notice after the list.
 
 Two more scenes retrieve the first file before and after the change. The last
-scene uses `openai --format json files retrieve file_training`, demonstrating
+scene uses `openai --format json files retrieve file_batch`, demonstrating
 that the original `object` and `created_at` fields are still available. All five
 scenes use the same fixture server and expect exit 0. The recorder checks both
 file IDs in the list scenes, exactly one summary hint in each after scene, and the

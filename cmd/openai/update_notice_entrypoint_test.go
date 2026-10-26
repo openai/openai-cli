@@ -47,7 +47,6 @@ try:
         source = getattr(process, stream) if redirect == stream else pairs[index][0]
         selector.register(source, selectors.EVENT_READ, index)
     channels = [bytearray(), bytearray()]
-    quit_sent = False
     deadline = time.monotonic() + 10
     while selector.get_map():
         if time.monotonic() >= deadline:
@@ -61,10 +60,6 @@ try:
                 data = b""
             if data:
                 channels[key.data].extend(data)
-                # Bare interactive help now waits for the user to close its viewer.
-                if not quit_sent and key.data == 0 and b"Space: page   q: quit" in channels[0]:
-                    os.write(pairs[0][0], b"q")
-                    quit_sent = True
             else:
                 selector.unregister(key.fileobj)
     code = process.wait(timeout=max(.1, deadline - time.monotonic()))

@@ -18,7 +18,7 @@ def failure_case(ctx):
     result = ctx.result
     public = ctx.public
     env = ctx.env
-    summary = "The API did not accept this key."
+    summary = "Authentication failed for this API endpoint."
     protocol_summary = "HTTP 401: Unauthorized."
 
     def safe_screen(target=terminal):
@@ -43,19 +43,6 @@ def failure_case(ctx):
                                absent=(summary, protocol_summary, "HTTP status:", "Request ID:",
                                        "Setup: openai", "Command preview", "F1 details"), target=target)
 
-    def home_snapshot():
-        home = Path(env["HOME"])
-        snapshot = {}
-        for path in home.rglob("*"):
-            relative = str(path.relative_to(home))
-            if path.is_file():
-                snapshot[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-            elif path.is_dir():
-                snapshot[relative] = "directory"
-            else:
-                raise AssertionError("Unexpected synthetic HOME entry during recovery help check")
-        return snapshot
-
     terminal.send(b"\t")
     ctx.wait(terminal, ("╭ Instructions ", "› Instructions"))
     visible_failure((ctx.fixture.DEFAULT_INSTRUCTIONS,))
@@ -66,57 +53,20 @@ def failure_case(ctx):
     ctx.mark(terminal, "failure-ready", result)
     assert not server.records, "Editing submitted speech before explicit generation"
     terminal.send(b"\x07")
-    visible_failure((summary, "› API setup", "Error details", "Back to form"),
-                    absent=(protocol_summary, "HTTP status:", ctx.fixture.FAILURE_REQUEST_ID))
-    ctx.mark(terminal, "failure-recovery", result)
+    visible_failure((summary, "Error details", "1. Check the credential required by this API endpoint.", "Esc back"),
+                    absent=("API setup", "Back to form", protocol_summary, "HTTP status:", ctx.fixture.FAILURE_REQUEST_ID))
+    ctx.mark(terminal, "failure-details", result)
     assert len(server.records) == 1 and server.records[0].get("response_status") == 401
     failed_request = server.records[0]["body"]
     assert failed_request["input"] == ctx.fixture.TEXT
     assert failed_request["instructions"] == ctx.fixture.DEFAULT_INSTRUCTIONS, "New draft omitted its actual Instructions example"
     assert json.loads(public(["--format", "json", "audio", "history"])) == [], "Failed speech entered History"
 
-    # Inspect the actual in-form canonical guide. This action must neither
-    # run setup steps nor mutate HOME, credentials, or request state.
-    before_help = home_snapshot()
-    terminal.send(b"\r")
-    visible_failure(("API setup", "Close this form before following these steps.", "Then reopen audio speak in that shell."))
-    ctx.mark(terminal, "failure-api-setup", result)
-    guide_frames = [safe_screen()]
-    for _ in range(32):
-        terminal.send(b"\x1b[6~")
-        ctx.drain(terminal, .08)
-        current = safe_screen()
-        guide_frames.append(current)
-        if current == guide_frames[-2]:
-            break
-    else:
-        raise AssertionError("API setup guide did not reach a bounded scroll endpoint")
-    guide = " ".join(guide_frames)
-    help_output = public(["help", "setup"])
-    help_text = ctx.picker.ANSI.sub("", help_output.decode("utf-8", errors="strict"))
-    for phrase in ("Set up your API key", "OPENAI_API_KEY", "This is a guide only."):
-        assert phrase in guide and phrase in help_text, "API setup panel omitted canonical setup guidance"
-    assert b"synthetic-demo-key" not in help_output
-    assert all(canary.encode() not in help_output for canary in ctx.fixture.FAILURE_CANARIES)
-    assert home_snapshot() == before_help, "Reading API setup changed synthetic HOME"
-    assert len(server.records) == 1, "Reading API setup reached the speech API"
-    (ctx.args.output / "failure-setup-help.txt").write_bytes(help_output)
-    (ctx.args.output / "failure-setup-panel.json").write_text(json.dumps(guide_frames, ensure_ascii=False, indent=2) + "\n")
-    result["setup_recovery"] = {"panel_title": "API setup", "canonical_panel_visible": True,
-                                "close_and_reopen_guidance_visible": True,
-                                "verification_arguments": [str(ctx.args.binary), "help", "setup"],
-                                "exit_status": 0, "requests_added": 0, "synthetic_home_unchanged": True}
+    # Details are immediate. Removed menu controls must not start an action.
+    terminal.send(b"\r\tsd\x07")
+    visible_failure((summary, "Error details", "Esc back"), absent=("API setup", "Back to form"))
+    assert len(server.records) == 1, "Viewing error details retried speech"
     terminal.send(b"\x1b")
-    visible_failure((summary, "› API setup"))
-    terminal.send(ctx.picker.DOWN + b"\r")
-    visible_failure(("Error details",))
-    terminal.send(ctx.picker.END)
-    visible_failure(("Error details", "HTTP status: 401", "Request ID: " + ctx.fixture.FAILURE_REQUEST_ID, "Esc back"))
-    ctx.mark(terminal, "failure-details", result)
-    assert len(server.records) == 1, "Viewing recovery details retried speech"
-    terminal.send(b"\x1b")
-    visible_failure((summary, "› Error details"))
-    terminal.send(ctx.picker.END + b"\r")
     main_form()
     visible_failure(("› More actions…",))
     assert terminal.child.poll() is None, "Back to form quit the application"
@@ -128,7 +78,7 @@ def failure_case(ctx):
     terminal.send(ctx.picker.DOWN + ctx.picker.UP + b"\r")
     main_form()
     terminal.send(ctx.picker.END + b"\r" + ctx.picker.END + b"\r")
-    visible_failure((summary, "› API setup"))  # More -> Last error.
+    visible_failure((summary, "Error details", "Esc back"))  # More -> Last error.
     terminal.send(b"\x1b")
     visible_failure(("More actions", "› Last error"))
     terminal.send(b"\x1b")
@@ -169,7 +119,7 @@ def failure_case(ctx):
     visible_failure(("00:00.000 / 00:02.000", "› Play audio"))
     result["failure_checks"] = {
         "http_status": 401, "request_id": ctx.fixture.FAILURE_REQUEST_ID,
-        "safe_details_visible": True, "untrusted_message_canaries_absent": True,
+        "safe_details_visible": True, "single_error_screen": True, "untrusted_message_canaries_absent": True,
         "escape_returned_without_retry": True, "navigation_did_not_retry": True,
         "default_instructions_sent": True, "draft_preserved": True,
         "explicit_retry_succeeded": True, "obsolete_feedback_cleared": True,
@@ -214,7 +164,7 @@ def failure_case(ctx):
         assert len(server.records) == 2, "Legacy model selection submitted speech"
         ctx.mark(failed_terminal, "failure-legacy-ready", result)
         failed_terminal.send(b"\x07")
-        visible_failure((summary, "API setup", "Back to form"), target=failed_terminal)
+        visible_failure((summary, "Error details", "Esc back"), absent=("API setup", "Back to form"), target=failed_terminal)
         ctx.mark(failed_terminal, "failure-error-exit-recovery", result)
         assert len(server.records) == 3 and server.records[2].get("response_status") == 401
         legacy = server.records[2]["body"]
@@ -235,7 +185,8 @@ def failure_case(ctx):
         diagnostic = ctx.picker.ANSI.sub("", restored[1].decode("utf-8", errors="strict"))
         assert protocol_summary in diagnostic, "Error exit omitted its HTTP status after terminal restoration"
         assert "Request ID: " + ctx.fixture.FAILURE_REQUEST_ID in diagnostic
-        assert "Check API key, organization and project." in diagnostic
+        assert "Authentication failed for the custom API address." in diagnostic
+        assert "Next: set the credential required by this API endpoint." in diagnostic
         assert "Key setup:" in diagnostic and "help setup" in diagnostic
         ctx.mark(failed_terminal, "failure-error-exit-summary", result)
         observer = failed_terminal.navigation_observer

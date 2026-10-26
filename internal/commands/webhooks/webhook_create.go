@@ -171,12 +171,16 @@ func parseWebhookCreateEvents(raw []byte) ([]string, error) {
 			return nil, &WorkflowError{"The webhook event list contains an invalid entry. " + webhookCreateCatalogRetry, nil}
 		}
 		event := entry.String()
-		if !seen[event] {
+		if !unavailableWebhookEvent(event) && !seen[event] {
 			seen[event] = true
 			events = append(events, event)
 		}
 	}
 	if len(events) == 0 {
+		if value.Get("data.#").Int() > 0 {
+			return nil, &WorkflowError{"The available webhook events are not supported by the CLI. " +
+				"No endpoint was created. Use the Platform API directly for these events.", nil}
+		}
 		return nil, &WorkflowError{"No webhook event types are available for this project. " + webhookCreateCatalogRetry, nil}
 	}
 	return events, nil

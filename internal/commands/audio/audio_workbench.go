@@ -77,46 +77,46 @@ func (w *audioWorkers) close(cancel context.CancelFunc) {
 }
 
 type audioWorkbench struct {
-	ctx                        context.Context
-	command                    *cli.Command
-	next                       cli.ActionFunc
-	store                      audiohistory.Store
-	workers                    *audioWorkers
-	settings                   audiohistory.Settings
-	input, instructions, path  textarea.Model
-	speedInput, saveFolder     textarea.Model
-	focus, setting, choice     int
-	modal                      string
-	choices                    []string
-	entries                    []audiohistory.Entry
-	result                     *audioWorkResult
-	priorResult                *audioWorkResult
-	invocation                 string
-	width, height              int
-	color, dark                bool
-	busy, quit, playing        bool
-	note                       string
-	failure                    audioFeedback
-	failureNote, failureParent string
-	failureOffset              int
-	moreChoice, recoveryChoice int
-	resultAction               int
-	waveformFocused            bool
-	recoveryParent             string
-	infoTitle, infoText        string
-	commandToPrint             string
-	infoParent                 string
-	infoOffset                 int
-	recoveryInfo               *audioInformationState
-	lastErr                    error
-	exitCode                   int
-	lastFinished               time.Time
-	started                    time.Time
-	playID                     uint64
-	playCancel                 context.CancelFunc
-	playDone                   <-chan struct{}
-	playProgress               *audioPlaybackProgress
-	saveFocus                  int
+	ctx                       context.Context
+	command                   *cli.Command
+	next                      cli.ActionFunc
+	store                     audiohistory.Store
+	workers                   *audioWorkers
+	settings                  audiohistory.Settings
+	input, instructions, path textarea.Model
+	speedInput, saveFolder    textarea.Model
+	focus, setting, choice    int
+	modal                     string
+	choices                   []string
+	entries                   []audiohistory.Entry
+	result                    *audioWorkResult
+	priorResult               *audioWorkResult
+	invocation                string
+	width, height             int
+	color, dark               bool
+	busy, quit, playing       bool
+	note                      string
+	failure                   audioFeedback
+	failureNote               string
+	failureOffset             int
+	moreChoice                int
+	resultAction              int
+	waveformFocused           bool
+	recoveryParent            string
+	recoveryRestoreFocus      bool
+	infoTitle, infoText       string
+	commandToPrint            string
+	infoParent                string
+	infoOffset                int
+	lastErr                   error
+	exitCode                  int
+	lastFinished              time.Time
+	started                   time.Time
+	playID                    uint64
+	playCancel                context.CancelFunc
+	playDone                  <-chan struct{}
+	playProgress              *audioPlaybackProgress
+	saveFocus                 int
 }
 
 func newAudioWorkbench(ctx context.Context, command *cli.Command, next cli.ActionFunc, store audiohistory.Store) *audioWorkbench {
@@ -342,12 +342,6 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 				m.lastFinished = time.Now()
 				return m, m.restoreEditorFocus()
 			}
-			if m.modal == "error" {
-				m.modal, m.failureParent = m.failureParent, ""
-				m.failureOffset = 0
-				m.lastFinished = time.Now()
-				return m, m.restoreEditorFocus()
-			}
 			if m.modal != "" {
 				m.modal = ""
 				m.path.Blur()
@@ -375,8 +369,9 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 		if m.busy {
 			return m, nil
 		}
-		if key == "f1" && m.activeFailure() && m.modal != "error" {
-			m.failureParent, m.modal, m.failureOffset = m.modal, "error", 0
+		if key == "f1" && m.activeFailure() && m.modal != "recovery" {
+			m.openRecovery()
+			m.recoveryRestoreFocus = true
 			return m, nil
 		}
 		if m.modal != "" {
@@ -500,7 +495,8 @@ func (m *audioWorkbench) updateModal(message tea.Msg, key string) tea.Cmd {
 		return m.updateMore(key)
 	}
 	if m.modal == "recovery" {
-		return m.updateRecovery(key)
+		m.failureOffset = audioScrollOffset(m.failureOffset, len(m.failureDetailRows()), m.failureDetailHeight(), key)
+		return nil
 	}
 	if m.modal == "info" {
 		if m.infoTitle == audioCommandTitle && key == "ctrl+p" {
@@ -513,25 +509,6 @@ func (m *audioWorkbench) updateModal(message tea.Msg, key string) tea.Cmd {
 			return tea.Quit
 		}
 		m.infoOffset = audioScrollOffset(m.infoOffset, len(m.infoRows()), m.informationHeight(), key)
-		return nil
-	}
-	if m.modal == "error" {
-		limit := max(0, len(m.failureDetailRows())-m.failureDetailHeight())
-		m.failureOffset = min(m.failureOffset, limit)
-		switch key {
-		case "up":
-			m.failureOffset = max(0, m.failureOffset-1)
-		case "down":
-			m.failureOffset = min(limit, m.failureOffset+1)
-		case "pgup":
-			m.failureOffset = max(0, m.failureOffset-m.failureDetailHeight())
-		case "pgdown":
-			m.failureOffset = min(limit, m.failureOffset+m.failureDetailHeight())
-		case "home":
-			m.failureOffset = 0
-		case "end":
-			m.failureOffset = limit
-		}
 		return nil
 	}
 	if m.modal == "speed" {
