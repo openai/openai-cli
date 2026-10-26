@@ -99,16 +99,16 @@ def main():
                             terminal.resize(20, height)
                             navigation.drain(terminal)
                             terminal.resize(args.width, height)
-                            frame = wait_view(expected_ids[0])
+                            wait_view(expected_ids[0])
                             assert len(requests.read_text().splitlines()) - start == 1, "resize fetched another page"
                         elif mode in {"advance", "error-next"}:
                             send_key(terminal, " ", keys)
                             if mode == "advance":
-                                frame = wait_view(expected_ids[-1])
+                                wait_view(expected_ids[-1])
                                 send_key(terminal, "b", keys)
-                                frame = wait_view(expected_ids[0])
+                                wait_view(expected_ids[0])
                                 send_key(terminal, " ", keys)
-                                frame = wait_view(expected_ids[-1])
+                                wait_view(expected_ids[-1])
                         elif mode == "chunks":
                             for _ in range(100):
                                 if "Space: more" not in frame:

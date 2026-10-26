@@ -31,7 +31,7 @@ def reconstruct_text(events, width, height):
         recording = pathlib.Path(temporary)/'screen.cast'
         header = {'version': 2, 'width': width, 'height': height}
         recording.write_text('\n'.join(json.dumps(value) for value in [header, *events])+'\n')
-        result = subprocess.run([ASCIINEMA, 'convert', '-f', 'txt', str(recording), str(pathlib.Path(temporary)/'screen.txt')],
+        subprocess.run([ASCIINEMA, 'convert', '-f', 'txt', str(recording), str(pathlib.Path(temporary)/'screen.txt')],
                                 capture_output=True, text=True, check=True, timeout=5,
                                 env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
                                      'HOME': temporary, 'ASCIINEMA_STATE_HOME': temporary+'/state',

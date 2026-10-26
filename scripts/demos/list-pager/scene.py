@@ -108,6 +108,7 @@ def main():
                 try:
                     os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
+                    # The child can exit before SIGKILL during teardown.
                     pass
                 os.waitpid(pid, 0)
         finally:

@@ -73,7 +73,9 @@ class Session:
 
     def send(self, key):
         value = key.encode()
-        assert os.write(self.terminal.master, value) == len(value), 'short input write'
+        written = os.write(self.terminal.master, value)
+        if written != len(value):
+            raise AssertionError('short input write')
         self.terminal._event('i', key)
         self.keys.append(key)
 
