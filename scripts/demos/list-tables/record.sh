@@ -9,6 +9,12 @@ demo_source="$(cd "$(dirname "$0")" && pwd)"
 demo_root="$(cd "$demo_source/../../.." && pwd)"
 demo_columns="${6:-110}"
 case "$demo_columns" in 110|40) ;; *) echo 'Use width 110 or 40.' >&2; exit 2;; esac
+demo_color="${DEMO_COLOR:-0}"
+case "$demo_color" in
+  0) demo_scene_color_env=(NO_COLOR=1 FORCE_COLOR=0) ;;
+  1) demo_scene_color_env=(COLORTERM=truecolor 'COLORFGBG=15;0' TERM_PROGRAM=Apple_Terminal) ;;
+  *) echo 'Use DEMO_COLOR=0 or DEMO_COLOR=1.' >&2; exit 2;;
+esac
 demo_resources=(files batches projects)
 demo_validation_args=()
 if [ "$#" -eq 8 ]; then
@@ -53,6 +59,7 @@ SCENE
   echo "after binary: $demo_after"
   echo 'data: fixed synthetic list pages; fake API/admin keys; loopback only'
   echo 'capture: real PTYs, stdin/stdout/stderr verified; isolated bash --noprofile --norc'
+  echo "scene color mode: DEMO_COLOR=$demo_color; ${demo_scene_color_env[*]}"
   echo 'navigation: pager remains open; q restores the original screen; screenshots show the loaded page'
   echo 'relay: outer PTY output translation disabled; recorded CLI bytes match their SHA256 digest'
   echo "render: asciinema + agg swash; Menlo 18px; Dracula; $demo_columns columns x $demo_rows rows"
@@ -79,7 +86,7 @@ for demo_resource in "${demo_resources[@]}"; do
       "DEMO_RESOURCE=$demo_resource" "DEMO_COLUMNS=$demo_columns" \
       "DEMO_PYTHON=$demo_python" "DEMO_SCENE_DRIVER=$demo_source/scene.py" \
       "DEMO_RELAY_EVIDENCE=$demo_output/$demo_scene.relay.json" \
-      OPENAI_ADMIN_KEY=synthetic-demo-admin-key NO_COLOR=1 FORCE_COLOR=0 GOMAXPROCS=2
+      OPENAI_ADMIN_KEY=synthetic-demo-admin-key GOMAXPROCS=2 "${demo_scene_color_env[@]}"
     demo_requests_after="$(wc -l < "$demo_output/requests.jsonl")"
     demo_request_count=$((demo_requests_after - demo_requests_before))
     echo "$demo_scene API requests: $demo_request_count (expected 1)" >> "$demo_output/metadata.txt"

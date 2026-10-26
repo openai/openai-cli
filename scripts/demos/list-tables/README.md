@@ -28,6 +28,13 @@ DEMO_API_BINARY=/tmp/list-table-demo-api \
 
 Use width `40` for a narrow comparison.
 Append `--resource files` to limit the comparison to one resource.
+Scenes use plain output by default: `DEMO_COLOR=0` sets `NO_COLOR=1` and `FORCE_COLOR=0`.
+Add `DEMO_COLOR=1` before `bash` to enable the normal terminal colors.
+Color scenes set `COLORTERM=truecolor`, `COLORFGBG=15;0`, and `TERM_PROGRAM=Apple_Terminal`.
+Color scenes leave `NO_COLOR` and `FORCE_COLOR` unset in the isolated environment.
+Both modes use `TERM=xterm-256color` and the Dracula replay theme.
+The metadata records these scene settings.
+This option does not change the validator or page checker environments.
 Each output directory must be empty and outside the repository.
 The recipe requires Go, Python 3, asciinema, agg, ffmpeg, and ffprobe.
 Do not replace the installed CLI.
