@@ -10,7 +10,6 @@ import (
 	"github.com/openai/openai-cli/internal/commands/models"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
-	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -54,10 +53,6 @@ func stopModelsListLoading(opts ShowJSONOpts) {
 	if opts.Operation == "(resource) models > (method) list" {
 		models.StopLoading(opts.Context)
 	}
-}
-
-func renderModelsListTable(opts ShowJSONOpts, items []gjson.Result, width int) (string, bool, error) {
-	return models.RenderTable(opts.Context, items, width, outputDiagnosticsAllowed(opts.Context))
 }
 
 // Models use the SDK's single-response Page, whose GetNextPage always returns

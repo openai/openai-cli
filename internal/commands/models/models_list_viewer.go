@@ -10,7 +10,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// WriteList renders the already loaded response or opens navigation when it overflows.
+// WriteList opens the pager for loaded terminal records, including short and empty results.
 func WriteList[T any](iter *clioutput.Iterator[T], opts listview.Options, width, height int) error {
 	var items []gjson.Result
 	for iter.Next() {
@@ -22,11 +22,7 @@ func WriteList[T any](iter *clioutput.Iterator[T], opts listview.Options, width,
 	if err := opts.Context.Err(); err != nil {
 		return errors.Join(err, iter.Err())
 	}
-	content, err := opts.RenderPage(items, width)
-	if err != nil {
-		return errors.Join(err, iter.Err())
-	}
-	if height > 0 && iter.Err() == nil && NeedsViewport(content, width, height) {
+	if height > 0 && iter.Err() == nil {
 		// This callback serves only the response already loaded by the SDK.
 		// Browsing and resizing cannot fetch another API page.
 		ctx, cancel := context.WithCancel(opts.Context)
@@ -40,17 +36,11 @@ func WriteList[T any](iter *clioutput.Iterator[T], opts listview.Options, width,
 			return listview.Page{Items: items, More: false}, nil
 		}, cancel)
 	}
+	content, err := opts.RenderPage(items, width)
+	if err != nil {
+		return errors.Join(err, iter.Err())
+	}
 	out := clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}
 	_, err = io.WriteString(out, content)
 	return errors.Join(err, iter.Err())
-}
-
-// NeedsViewport preserves display-cell widths and space for the shell prompt.
-func NeedsViewport(content string, width, height int) bool {
-	if content == "" {
-		return false
-	}
-	// Use the same tab stops, display-cell widths, and prompt-row reservation
-	// as the cursor-page lists, including malformed-record labeled fallback.
-	return !listview.ContentFits(content, width, height)
 }

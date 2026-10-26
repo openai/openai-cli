@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/output/listview"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -16,7 +17,7 @@ func TestModelsListTableFallbackPreservesAndEscapesBothFields(t *testing.T) {
 		{Type: gjson.JSON, Raw: `{"object":"model","id":"` + name + `","owned_by":"long synthetic owner","unrelated":"not displayed"}`},
 		gjson.Parse(`{"object":"model","id":"model-\u001b[31m\n\t\u202e","owned_by":"owner-\u001b[31m\n\t\u202e"}`),
 	}
-	content, supported, err := RenderTable(ctx, items, 20, true)
+	content, supported, err := RenderTable(ctx, items, 20, true, listview.Style{})
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.Contains(t, content, "ID: "+name+"\nOwned by: long synthetic owner\n")
@@ -29,12 +30,12 @@ func TestModelsListTableFallbackPreservesAndEscapesBothFields(t *testing.T) {
 
 func TestModelsListTableEmptyAndCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	content, supported, err := RenderTable(ctx, nil, 80, true)
+	content, supported, err := RenderTable(ctx, nil, 80, true, listview.Style{})
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.Equal(t, "No results.\n", content)
 	cancel()
-	_, _, err = RenderTable(ctx, nil, 80, true)
+	_, _, err = RenderTable(ctx, nil, 80, true, listview.Style{})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -48,7 +49,7 @@ func TestModelsListTableKeepsOwnerAssociationAndDescendingOrder(t *testing.T) {
 		gjson.Parse(`{"object":"model","id":"model-a","owned_by":"second-a-owner"}`),
 	}
 	for _, width := range []int{80, 20, 110} {
-		content, supported, err := RenderTable(ctx, items, width, true)
+		content, supported, err := RenderTable(ctx, items, width, true, listview.Style{})
 		require.NoError(t, err)
 		require.True(t, supported)
 		if width == 20 {
@@ -68,7 +69,7 @@ func TestModelsListTableUnknownOwnersRemainCompact(t *testing.T) {
 	} {
 		items := []gjson.Result{gjson.Parse(`{"object":"model","id":"model-a","metadata":"omit this"` + fields + `}`)}
 		for _, width := range []int{80, 16} {
-			content, supported, err := RenderTable(ctx, items, width, true)
+			content, supported, err := RenderTable(ctx, items, width, true, listview.Style{})
 			require.NoError(t, err)
 			require.True(t, supported)
 			if width == 80 {
@@ -89,7 +90,7 @@ func TestModelsListTableUsesLabelsBeforeShorteningOwners(t *testing.T) {
 	owner := "synthetic-owner-" + strings.Repeat("x", 50)
 	items := []gjson.Result{gjson.Parse(`{"object":"model","id":"model-a","owned_by":"` + owner + `","unrelated":true}`)}
 	for _, width := range []int{10, 80, 160} {
-		content, supported, err := RenderTable(ctx, items, width, true)
+		content, supported, err := RenderTable(ctx, items, width, true, listview.Style{})
 		require.NoError(t, err)
 		require.True(t, supported)
 		require.Contains(t, content, "ID: model-a\nOwned by: "+owner+"\n")
@@ -101,7 +102,7 @@ func TestModelsListTableUsesLabelsBeforeShorteningOwners(t *testing.T) {
 func TestModelsListTableEscapesBothCells(t *testing.T) {
 	ctx := t.Context()
 	items := []gjson.Result{gjson.Parse(`{"object":"model","id":"model\t1","owned_by":"owner\n2\u202e"}`)}
-	content, supported, err := RenderTable(ctx, items, 80, true)
+	content, supported, err := RenderTable(ctx, items, 80, true, listview.Style{})
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.Contains(t, content, `model\t1  owner\n2\u202e`)
