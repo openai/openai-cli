@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Relay one command through a PTY and exit only after its loaded page appears."""
+"""Relay exact CLI bytes and advance only after loaded results and controls appear."""
 
 import errno
 import fcntl
@@ -21,9 +21,6 @@ def main():
         raise SystemExit("usage: scene.py COMMAND [ARG ...]")
     if not all(os.isatty(fd) for fd in (0, 1, 2)):
         raise SystemExit("scene driver requires terminal stdin, stdout, and stderr")
-    exit_key = os.environ.get("DEMO_EXIT_KEY", "q")
-    if exit_key not in {"q", "p"}:
-        raise SystemExit("DEMO_EXIT_KEY must be q or p")
     ready_marker = os.environ.get("DEMO_READY_MARKER", "").encode()
     size = os.get_terminal_size(1)
     outer_initial = termios.tcgetattr(1)
@@ -41,17 +38,22 @@ def main():
         relay_mode[1] &= ~termios.OPOST
         termios.tcsetattr(1, termios.TCSADRAIN, relay_mode)
         relay_digest = hashlib.sha256()
-        pending_quit = None
-        deadline = time.monotonic() + 15
+        pending_key = None
+        inputs = []
+        started = time.monotonic()
+        deadline = started + 15
         recent = b""
         while True:
             now = time.monotonic()
             if now > deadline:
                 raise TimeoutError("CLI scene did not exit within 15 seconds")
-            if pending_quit is not None and now >= pending_quit:
-                if os.write(master, exit_key.encode()) != 1:
+            if pending_key is not None and now >= pending_key[0]:
+                key = pending_key[1]
+                if os.write(master, key.encode()) != 1:
                     raise OSError("short keyboard write")
-                pending_quit = float("inf")
+                inputs.append({"time": now - started, "key": key})
+                pending_key = None
+                recent = b""
             if not select.select([master], [], [], 0.05)[0]:
                 continue
             try:
@@ -68,21 +70,18 @@ def main():
             sys.stdout.buffer.flush()
             recent = (recent + chunk)[-65536:]
             plain = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", recent)
-            footer = b"End of results" in plain if exit_key == "q" else b"p: print page, quit" in plain
             ready = ready_marker in plain if ready_marker else any(
                 marker in plain for marker in (b"20261007", b"No results."))
-            if pending_quit is None and footer and b"q: quit" in plain:
-                if ready:
-                    pending_quit = time.monotonic() + 1.5
+            if pending_key is None and ready and b"q: quit" in plain:
+                pending_key = (time.monotonic() + 1.5, "q")
         _, status = os.waitpid(pid, 0)
         waited = True
-        if exit_key == "p" and pending_quit != float("inf"):
-            raise AssertionError("print-page probe exited without sending p")
         exit_status = os.waitstatus_to_exitcode(status)
         evidence_path = os.environ.get("DEMO_RELAY_EVIDENCE")
         if evidence_path:
             with open(evidence_path, "x", encoding="utf-8") as evidence:
-                json.dump({"sha256": relay_digest.hexdigest(), "exit_status": exit_status}, evidence)
+                json.dump({"sha256": relay_digest.hexdigest(), "exit_status": exit_status,
+                           "navigation": "pager", "inputs": inputs}, evidence)
                 evidence.write("\n")
         return exit_status
     finally:

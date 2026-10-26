@@ -36,7 +36,7 @@ func TestMainResourceListActivationTerminal(t *testing.T) {
 		cases = append(cases, terminalCase{name: route.name, mode: "normal", action: "paging", route: route, calls: 2})
 	}
 	files := resourceListRoutes[0]
-	cases = append(cases, terminalCase{name: "files-back-print", mode: "normal", action: "paging-back", route: files, calls: 2})
+	cases = append(cases, terminalCase{name: "files-ignored-legacy-keys", mode: "normal", action: "paging-legacy-keys", route: files, calls: 2})
 	for _, mode := range []string{"complete", "empty", "unfamiliar"} {
 		cases = append(cases, terminalCase{name: mode, mode: mode, action: "finish", route: files, calls: 1})
 	}

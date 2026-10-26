@@ -23,7 +23,7 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     env = {
         "PATH": "/usr/bin:/bin", "HOME": config["home"], "XDG_CONFIG_HOME": config["home"],
-        "TERM": "xterm-256color", "LANG": "en_US.UTF-8", "NO_COLOR": "1", "PAGER": "cat",
+        "TERM": "xterm-256color", "TERM_PROGRAM": "Apple_Terminal", "LANG": "en_US.UTF-8", "NO_COLOR": "1", "PAGER": "cat",
         "GOMAXPROCS": "2", "OPENAI_CLI_MAIN_DISPATCH_PROCESS": "1",
         "OPENAI_API_KEY": "sk-fake-resource-list", "OPENAI_ADMIN_KEY": "sk-fake-resource-list-admin",
         "OPENAI_BASE_URL": config["endpoint"] + "/v1",
@@ -52,6 +52,11 @@ def main():
                                                        stderr_file=diagnostic)
         action, mode = config["action"], config["mode"]
         if action in ("finish", "one", "error"):
+            if action != "error":
+                terminal.wait("q: quit", timeout=5)
+                navigation.drain(terminal, 0.1)
+                assert terminal.child.poll() is None, "complete results did not remain open"
+                terminal.send(b"q")
             navigation.finish(terminal, config["expected"])
             text = terminal.text()
             if mode == "empty":
@@ -65,7 +70,6 @@ def main():
                 check_table()
                 assert bytes(terminal.raw).count(b"item_001") == 1, "short results were printed twice"
                 assert ("item_002" in text) == (action != "one"), text
-            assert "q: quit" not in text, "complete first results waited for input"
         else:
             terminal.wait("q: quit", timeout=5)
             wait_state("requests", 1)
@@ -73,23 +77,31 @@ def main():
                 terminal.wait("item_001", timeout=5)
                 check_table()
                 navigation.drain(terminal, 0.2)
-                assert state()["requests"] == 1, "idle viewer fetched another page"
+                assert state()["requests"] == 1, "idle command fetched another page"
+                if action == "paging-legacy-keys":
+                    before = bytes(terminal.raw)
+                    terminal.send(b"pi")
+                    navigation.drain(terminal, 0.1)
+                    assert terminal.child.poll() is None, "removed keys quit the command"
+                    assert state()["requests"] == 1, "removed keys fetched another page"
+                    assert bytes(terminal.raw) == before, "removed keys redrew output"
                 terminal.resize(100, 24)
                 navigation.drain(terminal, 0.08)
                 assert state()["requests"] == 1, "resize fetched another page"
                 terminal.resize(110, 24)
                 navigation.drain(terminal, 0.08)
+                assert state()["requests"] == 1, "resize fetched another page"
                 terminal.send(b" ")
                 wait_state("requests", 2)
-            if action in ("paging", "paging-back"):
-                terminal.wait("End of results", timeout=5)
+            if action in ("paging", "paging-legacy-keys"):
+                navigation.drain(terminal, 0.15)
+                assert terminal.child.poll() is None, "final page did not remain open"
                 terminal.send(b"b")
-                navigation.drain(terminal, 0.08)
-                if action == "paging":
-                    terminal.send(b" ")
-                    navigation.drain(terminal, 0.08)
-                assert state()["requests"] == 2, "cached navigation fetched another page"
-                terminal.send(b"p")
+                navigation.drain(terminal, 0.1)
+                terminal.send(b" ")
+                navigation.drain(terminal, 0.1)
+                assert state()["requests"] == 2, "cached navigation requested another page"
+                terminal.send(b"q")
             elif action == "error-next":
                 pass
             else:
@@ -102,13 +114,8 @@ def main():
                 else:
                     terminal.send({"q": b"q", "ctrl-c": b"\x03"}[action])
             navigation.finish(terminal, config["expected"])
-            if action in ("paging", "paging-back"):
-                printed = bytes(terminal.raw).rsplit(b"\x1b[?2004l", 1)[-1]
-                expected, absent = ((1, 2), (3, 4)) if action == "paging-back" else ((3, 4), (1, 2))
-                for number in expected:
-                    assert printed.count(f"ID: item_{number:03d}\r\n".encode()) == 1, printed
-                for number in absent:
-                    assert f"item_{number:03d}".encode() not in printed, printed
+            if action in ("paging", "paging-legacy-keys"):
+                assert state()["requests"] == 2, "final completion fetched another page"
             if mode.startswith("blocked-"):
                 wait_state("disconnected", 1)
             if action == "error-next":

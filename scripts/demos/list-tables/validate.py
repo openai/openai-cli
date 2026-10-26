@@ -176,12 +176,12 @@ def main():
     for resource in resources:
         ids = IDS[resource]
         for version in ["before", "after"]:
-            transcript = (output / f"{resource}-{version}.txt").read_text()
+            transcript = (output / f"{resource}-{version}-visible.txt").read_text()
             for resource_id in ids:
                 assert resource_id in transcript, (resource, version, "missing full ID", resource_id)
         cast = output / f"{resource}-after.cast"
         assert json.loads(cast.read_text().splitlines()[0])["width"] == width, "resource capture widths differ"
-        transcript = (output / f"{resource}-after.txt").read_text()
+        transcript = (output / f"{resource}-after-visible.txt").read_text()
         if width == 110 or resource == "batches":
             header = r"\s+".join(HEADERS[resource])
             assert re.search(header, transcript), (resource, "missing table headers", width)

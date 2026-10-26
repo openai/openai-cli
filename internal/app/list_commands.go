@@ -46,10 +46,11 @@ func configureListCommand[P JSONListPage[P]](root *cli.Command, resourceName, op
 	}
 	command.Description = strings.TrimSpace(command.Description + "\n\n" +
 		"Automatic terminal output shows a compact table, with labeled output when a page needs more detail.\n" +
-		"Space advances through loaded results, then requests the next API page. b goes back; q quits.\n" +
-		"Press p to print the current page after leaving the viewer. Short complete results finish automatically.\n" +
+		"Automatic terminal output uses a pager. Space moves forward, b moves back, and q quits.\n" +
+		"Space shows more loaded results before requesting the next API page.\n" +
+		"The final page stays open until you quit.\n" +
 		"--limit controls API page size; --max-items limits total results and defaults to unlimited.\n" +
-		"Explicit text or machine formats, field extraction, and redirected input or output retain noninteractive behavior.")
+		"Explicit text or machine formats, field extraction, and redirected input or output retain their existing output behavior.")
 	for _, flag := range command.Flags {
 		if limit, ok := flag.(*requestflag.Flag[int64]); ok && limit.Name == "max-items" {
 			limit.DefaultText = "unlimited"

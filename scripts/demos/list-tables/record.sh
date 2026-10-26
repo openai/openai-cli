@@ -53,7 +53,7 @@ SCENE
   echo "after binary: $demo_after"
   echo 'data: fixed synthetic list pages; fake API/admin keys; loopback only'
   echo 'capture: real PTYs, stdin/stdout/stderr verified; isolated bash --noprofile --norc'
-  echo 'navigation: scene driver sends q only after loaded IDs and a final-page footer appear'
+  echo 'navigation: pager remains open; q restores the original screen; screenshots show the loaded page'
   echo 'relay: outer PTY output translation disabled; recorded CLI bytes match their SHA256 digest'
   echo "render: asciinema + agg swash; Menlo 18px; Dracula; $demo_columns columns x $demo_rows rows"
   echo 'scope: terminal replay; no native Apple Terminal, PowerShell, or cmd.exe appearance claim'
@@ -84,6 +84,25 @@ for demo_resource in "${demo_resources[@]}"; do
     demo_request_count=$((demo_requests_after - demo_requests_before))
     echo "$demo_scene API requests: $demo_request_count (expected 1)" >> "$demo_output/metadata.txt"
     test "$demo_request_count" -eq 1
+    demo_visible_time="$("$demo_python" -I -B - "$demo_output" "$demo_scene" <<'VISIBLE'
+import json
+from pathlib import Path
+import sys
+output, scene = Path(sys.argv[1]), sys.argv[2]
+cast = [json.loads(line) for line in (output/f'{scene}.cast').read_text().splitlines()]
+relay = json.loads((output/f'{scene}.relay.json').read_text())
+command_time = next(event[0] for event in cast[1:] if event[1] == 'o' and '$ openai' in event[2])
+cutoff = command_time + relay['inputs'][0]['time'] if relay['inputs'] else cast[-1][0]
+prefix = [cast[0], *[event for event in cast[1:] if event[0] <= cutoff]]
+(output/f'{scene}-visible.cast').write_text('\n'.join(json.dumps(item) for item in prefix)+'\n')
+print(cutoff)
+VISIBLE
+)"
+    "$demo_asciinema" convert -f txt "$demo_output/$demo_scene-visible.cast" "$demo_output/$demo_scene-visible.txt"
+    "$demo_agg" --quiet "${demo_render_options[@]}" --select "$demo_visible_time" \
+      "$demo_output/$demo_scene.cast" "$demo_output/$demo_scene-visible.gif"
+    "$demo_ffmpeg" -hide_banner -loglevel error -y -i "$demo_output/$demo_scene-visible.gif" \
+      -frames:v 1 "$demo_output/$demo_scene-visible.png"
   done
 done
 "$demo_python" "$demo_source/validate.py" "$demo_before" "$demo_after" "$demo_api_url" \
