@@ -156,6 +156,46 @@ func TestViewerLargeLineAndResizePreserveOriginal(t *testing.T) {
 	}
 }
 
+func TestViewerTabsPreserveValuesAndFooter(t *testing.T) {
+	for _, width := range []int{12, 20} {
+		for _, content := range []string{"Filename: A\tB\tC\tD\tE\tF\tG\tH", "Filename: A\t界\tB\t🚀\tC\tD\tE\tF\tG\tH"} {
+			t.Run(fmt.Sprintf("width%d/%s", width, content), func(t *testing.T) {
+				var out bytes.Buffer
+				m := New(viewerOptions(t, &out), nil, func() {}, width, 2)
+				m.Update(listPageMessage{page: viewerPage(content)})
+				var shown strings.Builder
+				for step := 0; ; step++ {
+					view := ansi.Strip(m.View().Content)
+					lines := strings.Split(view, "\n")
+					if len(lines) != 2 || !strings.Contains(lines[1], "q") {
+						t.Fatalf("pager lost its footer: %q", view)
+					}
+					for _, line := range lines {
+						if ansi.StringWidth(line) > width {
+							t.Fatalf("line exceeds terminal width: %q", line)
+						}
+					}
+					shown.WriteString(strings.Join(strings.Fields(lines[0]), ""))
+					if m.viewer.viewport.AtBottom() {
+						break
+					}
+					if step > len(content) || viewerKey(m, ' ') != nil {
+						t.Fatal("loaded content did not finish without fetching")
+					}
+				}
+				if want := strings.Join(strings.Fields(content), ""); shown.String() != want {
+					t.Fatalf("pager lost characters: got %q, want %q", shown.String(), want)
+				}
+				failure := errors.New("synthetic next-page error")
+				m.Update(listPageMessage{err: failure})
+				if err := m.Finish(nil, nil); !errors.Is(err, failure) || out.String() != content+"\n" {
+					t.Fatal("partial-error output changed the original tabs", err, out.String())
+				}
+			})
+		}
+	}
+}
+
 func TestViewerErrorRetainsPreviouslyLoadedResults(t *testing.T) {
 	var out bytes.Buffer
 	failure := errors.New("synthetic API failure")

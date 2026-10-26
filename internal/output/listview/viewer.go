@@ -55,6 +55,9 @@ func (v *listViewer) wrap(ctx context.Context, width int) error {
 			return err
 		}
 		v.lineStarts = append(v.lineStarts, len(lines))
+		// Match the viewport's four-space tab expansion before counting rows.
+		// Keep the original page intact for reflow and partial-error output.
+		line = strings.ReplaceAll(line, "\t", "    ")
 		lines = append(lines, strings.Split(ansi.Hardwrap(line, width, true), "\n")...)
 	}
 	if err := ctx.Err(); err != nil {
