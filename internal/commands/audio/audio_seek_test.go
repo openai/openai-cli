@@ -131,10 +131,6 @@ func TestAudioSeekRespectsFocusModalBusyAndSizeGuards(t *testing.T) {
 		{"more modal", func(m *audioWorkbench) { m.modal = "more" }},
 		{"information modal", func(m *audioWorkbench) { m.openInformation("Help", "Synthetic help", "") }},
 		{"recovery modal", func(m *audioWorkbench) { m.rememberFailure("play", errors.New("synthetic player failure")) }},
-		{"error modal", func(m *audioWorkbench) {
-			m.rememberFailure("play", errors.New("synthetic player failure"))
-			m.modal = "error"
-		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			m := audioSeekModel(t)

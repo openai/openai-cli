@@ -320,8 +320,6 @@ func TestAudioWorkbenchFailureGuidanceFollowsEscapeTransitions(t *testing.T) {
 				require.Contains(t, view, "Error details")
 				require.Equal(t, result.entry, m.result.entry)
 				require.Nil(t, audioReviewKey(m, tea.KeyF1))
-				require.Equal(t, "error", m.modal)
-				require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 				require.Equal(t, "recovery", m.modal)
 				require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 				require.Empty(t, m.modal)

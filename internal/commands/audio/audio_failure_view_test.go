@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,11 +11,119 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v3"
 )
+
+func TestAudioFailureDetailsUseAuthenticationPolicy(t *testing.T) {
+	for _, status := range []int{401, 403, 400, 429} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			m := audioReviewModel(t)
+			calls := 0
+			m.ctx = context.WithValue(m.ctx, speechOutputKey{}, SpeechPresentation{
+				AuthenticationGuidance: func(command *cli.Command, apierr *openai.Error) AuthenticationGuidance {
+					calls++
+					require.Same(t, m.command, command)
+					require.Equal(t, status, apierr.StatusCode)
+					return AuthenticationGuidance{Action: "Set OPENAI_API_KEY in this terminal.\nReopen this form."}
+				},
+			})
+			failure := audioUnauthorizedFailure()
+			failure.StatusCode = status
+			m.Update(audioWorkMessage{kind: "generate", err: failure})
+			audioReviewKey(m, tea.KeyF1)
+			view := audioFeedbackView(t, m)
+			if status == 401 || status == 403 {
+				require.Equal(t, 1, calls)
+				require.NotContains(t, view, "Credential source: OPENAI_API_KEY.")
+				require.Contains(t, view, "1. Set OPENAI_API_KEY in this terminal.")
+				require.Contains(t, view, "2. Reopen this form.")
+			} else {
+				require.Zero(t, calls)
+				require.NotContains(t, view, "Credential source:")
+			}
+			require.NotContains(t, view, "HTTP status:")
+			require.NotContains(t, view, "Request ID:")
+			require.NotContains(t, view, "req_synthetic_auth_failure")
+			require.NotContains(t, view, "FAKE_PRIVATE_ERROR_MESSAGE")
+			require.ErrorIs(t, m.lastErr, failure)
+		})
+	}
+}
 
 func audioUnauthorizedFailure() *openai.Error {
 	return &openai.Error{StatusCode: http.StatusUnauthorized, Message: "FAKE_PRIVATE_ERROR_MESSAGE",
 		Response: &http.Response{Header: http.Header{"X-Request-Id": {"req_synthetic_auth_failure"}}}}
+}
+
+func TestAudioFailureDetailsIgnoreRemovedShortcuts(t *testing.T) {
+	m := audioReviewModel(t)
+	m.input.SetValue("Keep this draft")
+	m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+	audioReviewKey(m, tea.KeyF1)
+	view := audioFeedbackView(t, m)
+	require.NotContains(t, view, "S API setup")
+	require.NotContains(t, view, "technical details")
+	for _, key := range []rune{'s', 'd'} {
+		require.Nil(t, audioReviewKey(m, key))
+		require.Equal(t, "recovery", m.modal)
+		require.Equal(t, view, audioFeedbackView(t, m))
+	}
+	audioReviewKey(m, tea.KeyEscape)
+	require.Empty(t, m.modal)
+	require.Equal(t, "Keep this draft", m.input.Value())
+	require.False(t, m.busy)
+}
+
+func TestAudioFailureInspectionRestoresCurrentSection(t *testing.T) {
+	for _, focus := range []int{0, 1, 2, 4} {
+		t.Run(fmt.Sprint(focus), func(t *testing.T) {
+			m := audioReviewModel(t)
+			m.input.SetValue("Keep this edited draft")
+			m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+			audioReviewKey(m, tea.KeyEscape)
+			result := audioReviewResult("retained", false)
+			m.result = &result
+			m.focusSection(focus)
+			m.setting, m.resultAction = 1, 1
+			require.Nil(t, audioReviewKey(m, tea.KeyF1))
+			require.Equal(t, "recovery", m.modal)
+			require.Contains(t, audioFeedbackView(t, m), "Error details")
+			audioReviewKey(m, tea.KeyEscape)
+			require.Empty(t, m.modal)
+			require.Equal(t, focus, m.focus)
+			require.Equal(t, 1, m.setting)
+			require.Equal(t, 1, m.resultAction)
+			require.Equal(t, focus == 0, m.input.Focused())
+			require.Equal(t, focus == 1, m.instructions.Focused())
+			require.Equal(t, "Keep this edited draft", m.input.Value())
+			require.False(t, m.busy)
+		})
+	}
+}
+
+func TestAudioFailureInspectionYieldsToNewOutcome(t *testing.T) {
+	for _, succeeded := range []bool{false, true} {
+		t.Run(fmt.Sprint(succeeded), func(t *testing.T) {
+			m := audioReviewModel(t)
+			m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+			audioReviewKey(m, tea.KeyEscape)
+			m.focusSection(0)
+			audioReviewKey(m, tea.KeyF1)
+			if succeeded {
+				m.Update(audioWorkMessage{kind: "generate", result: audioReviewResult("new-result", false)})
+				require.Empty(t, m.modal)
+				require.Equal(t, 4, m.focus)
+				require.Contains(t, audioFeedbackView(t, m), "Play audio")
+			} else {
+				m.Update(audioWorkMessage{kind: "play", playID: m.playID, err: errors.New("synthetic player failure")})
+				require.Equal(t, "recovery", m.modal)
+				require.Nil(t, audioReviewKey(m, tea.KeyEscape))
+				require.Empty(t, m.modal)
+				require.Equal(t, 2, m.focus)
+				require.Equal(t, audioSettingMore, m.setting)
+			}
+		})
+	}
 }
 
 func TestAudioFailureShows401BeforeEscape(t *testing.T) {
@@ -27,9 +136,9 @@ func TestAudioFailureShows401BeforeEscape(t *testing.T) {
 	view := audioFeedbackView(t, m)
 	require.Contains(t, view, "The API could not verify your access.", "failure cause must be visible before Escape")
 	require.Contains(t, view, "Check your API key and project access.")
-	require.Contains(t, view, "› API setup")
+	require.NotContains(t, view, "API setup")
 	require.Contains(t, view, "Error details")
-	require.Contains(t, view, "Back to form")
+	require.NotContains(t, view, "Back to form")
 	require.NotContains(t, view, "HTTP")
 	require.NotContains(t, view, "FAKE_PRIVATE_ERROR_MESSAGE")
 	require.NotContains(t, view, "Audio action failed.")
@@ -37,14 +146,16 @@ func TestAudioFailureShows401BeforeEscape(t *testing.T) {
 	require.False(t, m.busy)
 	require.ErrorIs(t, m.lastErr, failure)
 	require.Nil(t, audioReviewKey(m, tea.KeyF1))
-	require.Equal(t, "error", m.modal)
+	require.Equal(t, "recovery", m.modal)
 	view = audioFeedbackView(t, m)
 	require.Contains(t, view, "Error details")
-	require.Contains(t, view, "HTTP status: 401")
-	require.Contains(t, view, "Request ID: req_synthetic_auth_failure")
+	require.NotContains(t, view, "HTTP status:")
+	require.NotContains(t, view, "Request ID:")
+	require.Contains(t, view, "1. Check your API key and project access.")
+	require.NotContains(t, view, "req_synthetic_auth_failure")
+	require.NotContains(t, view, "No API request was sent.")
+	require.NotContains(t, view, "This attempt did not check your API key.")
 	require.NotContains(t, view, "FAKE_PRIVATE_ERROR_MESSAGE")
-	require.Nil(t, audioReviewKey(m, tea.KeyEscape))
-	require.Equal(t, "recovery", m.modal)
 	require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 	require.Empty(t, m.modal)
 	require.False(t, m.quit)
@@ -68,7 +179,7 @@ func TestAudioFailureCompactPreservesCauseRecoveryAndFocus(t *testing.T) {
 			}
 			m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
 			view := audioFeedbackView(t, m)
-			for _, text := range []string{"The API could not verify your access.", "Check your API key and project access.", "› API setup", "Error details", "Back to form"} {
+			for _, text := range []string{"The API could not verify your access.", "1. Check your API key and project access.", "Error details", "Esc back"} {
 				require.Contains(t, view, text)
 			}
 			require.Equal(t, focus, m.focus, "opening recovery changed the underlying section")
@@ -111,14 +222,14 @@ func TestAudioFailureDetailsRestoreParentWithoutActions(t *testing.T) {
 			require.Equal(t, "recovery", m.modal)
 			require.Equal(t, tc.parent, m.recoveryParent)
 			require.Nil(t, audioReviewKey(m, tea.KeyF1))
-			require.Equal(t, "error", m.modal)
+			require.Equal(t, "recovery", m.modal)
 			for _, key := range []rune{tea.KeyDown, tea.KeyUp, tea.KeyEnter, tea.KeyTab} {
 				require.Nil(t, audioReviewKey(m, key))
 			}
 			_, generate := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 			require.Nil(t, generate, "Error details must consume the generation shortcut")
 			require.Nil(t, audioReviewKey(m, tea.KeyF1))
-			require.Equal(t, "recovery", m.failureParent)
+			require.Equal(t, tc.parent, m.recoveryParent)
 			m.Update(tea.PasteMsg{Content: "Do not insert"})
 			require.False(t, m.busy)
 			require.False(t, m.playing)
@@ -126,8 +237,6 @@ func TestAudioFailureDetailsRestoreParentWithoutActions(t *testing.T) {
 			require.Equal(t, "Keep the draft", m.input.Value())
 			require.Equal(t, "preserved-output.wav", m.path.Value())
 			require.Equal(t, "1.25", m.speedInput.Value())
-			require.Nil(t, audioReviewKey(m, tea.KeyEscape))
-			require.Equal(t, "recovery", m.modal)
 			restore := audioReviewKey(m, tea.KeyEscape)
 			if tc.parent == "choice" || tc.parent == "" {
 				require.Nil(t, restore)
@@ -154,15 +263,18 @@ func TestAudioFailureDetailsScrollAndResizeRemainBounded(t *testing.T) {
 	failure := audioUnauthorizedFailure()
 	failure.Response.Header.Set("X-Request-Id", "req_"+strings.Repeat("a", 210)+"_tail")
 	m.Update(audioWorkMessage{kind: "generate", err: failure})
+	m.failure.Action = strings.Repeat("Check the selected project.\n", 14) + "Reopen this form."
 	audioReviewKey(m, tea.KeyF1)
 	require.Contains(t, audioFeedbackView(t, m), "The API could not verify your access.")
-	require.Contains(t, audioFeedbackView(t, m), "HTTP status: 401")
+	require.NotContains(t, audioFeedbackView(t, m), "HTTP status:")
+	require.Contains(t, audioFeedbackView(t, m), "↑↓ scroll")
 	for range 100 {
 		audioReviewKey(m, tea.KeyDown)
 	}
-	// Reconstruct the wrapped identifier before checking that every cell remains visible.
-	visible := strings.Join(strings.Fields(audioFeedbackView(t, m)), "")
-	require.Contains(t, visible, failure.Response.Header.Get("X-Request-Id"))
+	visible := audioFeedbackView(t, m)
+	require.Contains(t, visible, "15. Reopen this form.")
+	require.NotContains(t, visible, "req_")
+	require.ErrorIs(t, m.lastErr, failure)
 	require.LessOrEqual(t, m.failureOffset, len(m.failureDetailRows())-m.failureDetailHeight())
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 32})
 	audioReviewKey(m, tea.KeyUp)

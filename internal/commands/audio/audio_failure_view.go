@@ -10,7 +10,7 @@ import (
 )
 
 func (m *audioWorkbench) rememberFailure(operation string, failure error) {
-	m.failure = audioFailureFeedback(m.command, operation, failure)
+	m.failure = m.failureFeedback(operation, failure)
 	m.failureNote = m.note
 	m.failureOffset = 0
 	m.openRecovery()
@@ -36,12 +36,17 @@ func (m *audioWorkbench) failureSummaryRows() []string {
 }
 
 func (m *audioWorkbench) failureDetailRows() []string {
-	values := []string{m.failure.Summary, "", m.failure.Action}
-	if m.failure.StatusCode != 0 {
-		values = append(values, "", fmt.Sprintf("HTTP status: %d", m.failure.StatusCode))
-	}
-	if m.failure.RequestID != "" {
-		values = append(values, "", "Request ID: "+m.failure.RequestID)
+	values := []string{m.failure.Summary}
+	step := 0
+	for _, action := range strings.Split(m.failure.Action, "\n") {
+		if action == "" {
+			continue
+		}
+		if step == 0 {
+			values = append(values, "")
+		}
+		step++
+		values = append(values, fmt.Sprintf("%d. %s", step, action))
 	}
 	var rows []string
 	for _, value := range values {
@@ -64,38 +69,29 @@ func (m *audioWorkbench) failureIndent() string {
 	return "  "
 }
 
-func (m *audioWorkbench) failureDetailHeight() int { return max(1, m.height-5) }
+func (m *audioWorkbench) failureFooter() []string {
+	hints := [][2]string{{"Esc", "back"}}
+	if len(m.failureDetailRows()) > m.failureDetailHeight() {
+		hints = append(hints, [2]string{"↑↓", "scroll"})
+	}
+	return []string{m.hintLine(hints...)}
+}
+
+func (m *audioWorkbench) failureDetailHeight() int {
+	return max(1, m.height-5)
+}
 
 func (m *audioWorkbench) failureView() tea.View {
 	rows := m.failureDetailRows()
 	height := m.failureDetailHeight()
 	start := min(m.failureOffset, max(0, len(rows)-height))
-	lines := []string{m.strong().Render("  Error details"), ""}
+	lines := []string{m.failureIndent() + m.strong().Render("Error details"), ""}
 	for _, row := range rows[start:min(len(rows), start+height)] {
 		lines = append(lines, m.failureIndent()+row)
 	}
-	lines = append(lines, "", "  "+m.hintLine([2]string{"↑↓", "scroll"}, [2]string{"Esc", "back"}))
-	return tea.NewView(m.fitAudio(lines))
-}
-
-func (m *audioWorkbench) recoveryView() tea.View {
-	items := m.recoveryItems()
-	lines := []string{}
-	for _, row := range strings.Split(ansi.Wrap(readable.Text(m.failure.Summary), m.failureTextWidth(), ""), "\n") {
-		lines = append(lines, m.failureIndent()+m.strong().Render(row))
-	}
-	for _, row := range strings.Split(ansi.Wrap(readable.Text(m.failure.Action), m.failureTextWidth(), ""), "\n") {
-		lines = append(lines, m.failureIndent()+m.muted().Render(row))
-	}
-	// Keep every action reachable when long guidance consumes a small terminal.
-	budget := m.height - 2 - len(items)
-	if len(lines) > budget {
-		lines = lines[:max(1, budget)]
-		lines[len(lines)-1] = ansi.Truncate(lines[len(lines)-1], max(1, m.audioWidth()-1), "") + "…"
-	}
 	lines = append(lines, "")
-	for index, item := range items {
-		lines = append(lines, m.label(item, m.recoveryChoice == index))
+	for _, row := range m.failureFooter() {
+		lines = append(lines, m.failureIndent()+row)
 	}
 	return tea.NewView(m.fitAudio(lines))
 }
