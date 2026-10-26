@@ -156,7 +156,7 @@ func TestSDKSourcePreparationIsIsolatedFromPRCode(t *testing.T) {
 		t.Fatalf("SDK preparation must check out trusted target code without persisting credentials: %#v", checkout)
 	}
 	tokenIndex, token := requireStep(t, job, "Create read-only Go repository token")
-	if token.Uses != "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1" || !reflect.DeepEqual(token.With, map[string]any{
+	if token.Uses != "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510" || !reflect.DeepEqual(token.With, map[string]any{
 		"client-id": "${{ vars.OPENAI_SDKS_APP_CLIENT_ID }}", "private-key": "${{ secrets.OPENAI_SDKS_APP_PRIVATE_KEY }}",
 		"owner": "openai", "repositories": "openai-go-internal", "permission-contents": "read",
 	}) {
