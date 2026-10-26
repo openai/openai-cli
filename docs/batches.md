@@ -33,7 +33,11 @@ The CLI validates local request fields before uploading.
 The API performs content and account validation.
 Upload and creation each run once, without automatic retries.
 If creation fails, the CLI keeps the uploaded file and reports its ID.
-Check `batches list` before creating another batch because the first creation may have succeeded.
+Direct HTTP 401/403 responses report an access rejection.
+Correct access before retrying the failed operation.
+If upload succeeded, reuse its file ID with `create` instead of repeating `submit`.
+Transport failures, server failures, and redirected access failures can leave the mutation outcome uncertain.
+Check `files list` after an uncertain upload, or `batches list` after uncertain creation.
 Reuse the same connection and project settings.
 Then use `create --input-file-id` if you confirm that no batch exists.
 Structured submission errors include the original error under `error` and recovery data under `batch_submission`.
@@ -345,6 +349,26 @@ Duplicate IDs remain grouped and visibly ambiguous.
 Missing IDs and unmatched records remain visible.
 Without matching, records retain their original order.
 
+Default readable results show the request outcome and its meaningful content.
+The CLI reports refusals and incomplete answers separately from HTTP success.
+Multiple answers, tool calls, annotations, and unfamiliar content remain visible.
+`--match-input` also shows the original input instructions and content.
+Duplicate IDs do not create artificial input/result pairs.
+Missing results refer only to the selected file, not the complete batch.
+Inspecting a failed record successfully exits zero; this does not mean the request succeeded.
+The default output remains readable when piped.
+
+Use explicit JSON when you need every API field:
+
+```sh
+openai --format json batches results batch_example --custom-id example-1 --match-input
+```
+
+Readable results omit reviewed configuration fields that repeat request settings.
+JSON, JSONL, raw output, and extraction retain the complete selected data.
+Large records and unfamiliar structures use a labeled detailed view.
+The detailed view preserves complete content without imposing a new size limit.
+
 The response contains a `data` array and supports normal output formats and extraction.
 The explorer supports interactive inspection when a terminal is available.
 The command reports unavailable files and malformed JSONL without submitting requests again.
@@ -354,6 +378,8 @@ The command removes this storage after success, failure, or handled interruption
 Temporary storage must have enough space for the selected records and their index.
 Unselected records can temporarily require space while the command validates them.
 JSON, JSONL, raw, and readable text output stream without retaining complete payloads in memory.
+Readable projections buffer at most 256 KiB per record before switching to streaming detail.
+Matching keeps groups on disk and renders their records separately.
 Large IDs and object keys also use this storage without imposing size limits.
 Extraction, terminal exploration, pretty output, and YAML retain the selected document in memory.
 Use `--custom-id` to reduce that document before these operations.

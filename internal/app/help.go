@@ -236,6 +236,7 @@ func configureLocalHelpContent(root *cli.Command) {
 }
 
 func configureHelpGroups(root *cli.Command) {
+	batchCommands := root.Command("batches")
 	groups := []clihelp.FlagGroup{
 		{Title: "Authentication", Names: []string{"api-key", "admin-api-key", "webhook-secret", "mtls-client-cert-file", "mtls-client-key-file"}, Owner: root},
 		{Title: "Output", Names: []string{"format", "format-error", "transform", "transform-error", "raw-output", "quiet", "verbose"}, Owner: root},
@@ -268,6 +269,19 @@ func configureHelpGroups(root *cli.Command) {
 		}
 		command.Metadata["help-flag-groups"] = sections
 		commandLabels := append([]clihelp.FlagLabel(nil), labels...)
+		if batchCommands != nil && (command == batchCommands.Command("create") || command == batchCommands.Command("submit")) {
+			commandLabels = append(commandLabels, clihelp.FlagLabel{
+				Owner: command, Names: []string{"metadata", "output-expires-after"}, Label: "JSON",
+			})
+			for _, flag := range command.Flags {
+				if metadata, ok := flag.(*requestflag.Flag[map[string]any]); ok && metadata.Name == "metadata" {
+					const example = "Use a JSON object, for example: --metadata '{\"scenario\":\"example\"}'.\n\n"
+					if !strings.HasPrefix(metadata.Usage, example) {
+						metadata.Usage = example + metadata.Usage
+					}
+				}
+			}
+		}
 		if positional, ok := command.Metadata["help-positional-flags"].([]string); ok {
 			for _, name := range positional {
 				commandLabels = append(commandLabels, clihelp.FlagLabel{

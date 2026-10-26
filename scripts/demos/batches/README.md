@@ -56,15 +56,18 @@ python3 scripts/demos/batches/try_workflows.py /absolute/path/to/openai
 ```
 
 The trial uses synthetic responses and fake credentials. It makes no real API calls or charges.
-It starts a loopback server and runs these actual CLI commands:
+It starts a loopback server and shows these actual CLI commands:
 
 ```sh
 openai batches submit --file requests.jsonl --endpoint /v1/responses --completion-window 24h
-openai batches list --watch --watch-count 2 --poll-interval 1s
-openai batches inputs --search requests.jsonl --format json
-openai batches results batch_demo --custom-id sentiment-positive --match-input --format json
 openai batches wait batch_demo --output-dir results --poll-interval 1s
+openai batches results batch_demo --custom-id sentiment-positive --match-input
 ```
+
+The result view places the answer beside its original input.
+The trial also checks list watching, input search, and complete JSON output.
+It saves these additional command outputs without printing them by default.
+Add `--show-checks` to display them.
 
 The trial isolates CLI configuration and ignores personal API keys.
 It checks three labels, reordered result IDs, exact downloaded bytes, and one upload plus one Batch creation.

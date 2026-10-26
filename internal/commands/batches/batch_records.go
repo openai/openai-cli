@@ -102,6 +102,8 @@ func (w workflow) handleBatchResults(ctx context.Context, command *cli.Command) 
 		return w.options.ShowRecords(ctx, command, RecordOutput{
 			WriteJSON:     func(writer io.Writer) error { return store.writeJSON(writer, batch.ID, selection, fileID, match) },
 			TemporaryFile: store.temporaryFile,
+			BatchID:       batch.ID, File: selection, FileID: fileID,
+			Visit: func(visit func(RecordItem) error) error { return store.visitRecords(selection, match, visit) },
 		}, out, diagnostics)
 	})
 }

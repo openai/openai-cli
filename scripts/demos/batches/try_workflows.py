@@ -44,8 +44,9 @@ def stop_process(process):
         process.wait(timeout=3)
 
 
-def run_command(binary, args, environment, directory, sequence, commands):
-    print("\n$ openai " + shlex.join(args), flush=True)
+def run_command(binary, args, environment, directory, sequence, commands, display=True):
+    if display:
+        print("\n$ openai " + shlex.join(args), flush=True)
     process = subprocess.Popen([str(binary), *args], cwd=directory, env=environment,
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                start_new_session=(os.name == "posix"))
@@ -65,10 +66,11 @@ def run_command(binary, args, environment, directory, sequence, commands):
             record.update(exit=process.poll(), process_stopped=process.poll() is not None)
     write_new(directory / f"{sequence:02d}.stdout", stdout)
     write_new(directory / f"{sequence:02d}.stderr", stderr)
-    sys.stdout.buffer.write(stdout)
-    sys.stdout.buffer.flush()
-    sys.stderr.buffer.write(stderr)
-    sys.stderr.buffer.flush()
+    if display or failure is not None or process.returncode != 0:
+        sys.stdout.buffer.write(stdout)
+        sys.stdout.buffer.flush()
+        sys.stderr.buffer.write(stderr)
+        sys.stderr.buffer.flush()
     if failure is not None:
         raise failure
     if process.returncode != 0:
@@ -80,6 +82,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path, help="Reviewed candidate executable; no installation occurs")
     parser.add_argument("--output-dir", type=Path, help="New evidence directory outside the repository")
+    parser.add_argument("--show-checks", action="store_true", help="Also display list, input search, and JSON verification output")
     args = parser.parse_args()
     try:
         binary = args.binary.expanduser().resolve(strict=True)
@@ -100,6 +103,7 @@ def main():
     write_new(directory / "requests.jsonl", INPUT_BYTES)
     print("SYNTHETIC LOCAL TRIAL: three fake requests. No real API calls, API keys, or charges.", flush=True)
     print(f"Candidate: {binary}\nEvidence: {directory}", flush=True)
+    print("Scenario: classify three messages, then inspect one answer.", flush=True)
     environment = {
         "PATH": os.defpath, "HOME": str(home), "USERPROFILE": str(home), "APPDATA": str(home),
         "LOCALAPPDATA": str(home), "XDG_CONFIG_HOME": str(home), "XDG_CACHE_HOME": str(home),
@@ -126,23 +130,29 @@ def main():
         thread.start()
         environment["OPENAI_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
         try:
-            run = lambda command: run_command(binary, command, environment, directory, len(commands) + 1, commands)
+            run = lambda command, display=True: run_command(binary, command, environment, directory, len(commands) + 1, commands, display)
+            print("\nSubmit uploads the input file and creates one batch.", flush=True)
             submitted = run(["batches", "submit", "--file", "requests.jsonl", "--endpoint", "/v1/responses", "--completion-window", "24h"])
             if b"batch_demo" not in submitted:
                 raise AssertionError("submission receipt did not identify the created batch")
-            watched = run(["batches", "list", "--watch", "--watch-count", "2", "--poll-interval", "1s"])
+            watched = run(["batches", "list", "--watch", "--watch-count", "2", "--poll-interval", "1s"], args.show_checks)
             if b"Batch snapshot 1" not in watched or b"Batch snapshot 2" not in watched:
                 raise AssertionError("list did not display both snapshots")
-            inputs = json.loads(run(["batches", "inputs", "--search", "requests.jsonl", "--format", "json"]))
+            inputs = json.loads(run(["batches", "inputs", "--search", "requests.jsonl", "--format", "json"], args.show_checks))
             if len(inputs) != 1 or inputs[0]["id"] != "file_input_demo":
                 raise AssertionError("input search did not identify the uploaded file")
-            matched = json.loads(run(["batches", "results", "batch_demo", "--custom-id", "sentiment-positive", "--match-input", "--format", "json"]))
+            print("\nWait saves the complete result file when the batch finishes.", flush=True)
+            run(["batches", "wait", "batch_demo", "--output-dir", "results", "--poll-interval", "1s"])
+            print("\nResults shows one answer beside its original input.", flush=True)
+            readable = run(["batches", "results", "batch_demo", "--custom-id", "sentiment-positive", "--match-input"])
+            if b"positive" not in readable or b"I love this." not in readable or b"Return only the label." not in readable:
+                raise AssertionError("readable results lost the answer, input, or instructions")
+            matched = json.loads(run(["batches", "results", "batch_demo", "--custom-id", "sentiment-positive", "--match-input", "--format", "json"], args.show_checks))
             row = matched["data"][0]
             if len(matched["data"]) != 1 or row["match"] != "matched" or row["inputs"][0]["custom_id"] != "sentiment-positive":
                 raise AssertionError("result matching did not select the requested input")
             if output_label(row["results"][0]) != "positive":
                 raise AssertionError("result matching used file order instead of custom_id")
-            run(["batches", "wait", "batch_demo", "--output-dir", "results", "--poll-interval", "1s"])
             saved = (directory / "results" / "output.jsonl").read_bytes()
             if saved != OUTPUT_BYTES:
                 raise AssertionError("download changed the synthetic output bytes")
@@ -183,9 +193,13 @@ def main():
             print(f"Trial failed: {error}", file=sys.stderr)
         print(f"Evidence remains in {directory}", file=sys.stderr)
         return 1
-    print("\nPASS: three expected labels; one upload, one batch creation, two list snapshots.")
+    print("\nVerified: all three saved labels match the synthetic fixture.")
+    print("Verified: the CLI uploaded once and created one batch.")
+    print("Verified: input matching used custom_id, despite reordered results.")
+    print("These checks do not test your API key or account permissions.")
     print(f"Saved results: {directory / 'results' / 'output.jsonl'}")
     print(f"Evidence: {directory / 'result.json'}")
+    print("Use --show-checks to display the additional checks. Their output is already saved with the evidence.")
     return 0
 
 

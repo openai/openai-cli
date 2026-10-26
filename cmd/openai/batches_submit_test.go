@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -246,6 +248,146 @@ func TestMainBatchSubmitPermissionGuidance(t *testing.T) {
 		if !strings.Contains(got.stderr, want) {
 			t.Fatalf("missing %q: %s", want, got.stderr)
 		}
+	}
+}
+
+func TestMainBatchSubmitAuthenticationRejectionRecovery(t *testing.T) {
+	const apiFailure = `{"message":"synthetic-private-authentication-details","type":"invalid_request_error","code":"synthetic_rejection","extra":{"exact":9007199254740993}}`
+	for _, stage := range []string{"upload", "create"} {
+		for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+			for _, format := range []string{"text", "json", "jsonl", "raw"} {
+				t.Run(stage+"/"+strconv.Itoa(status)+"/"+format, func(t *testing.T) {
+					path := filepath.Join(t.TempDir(), "synthetic.jsonl")
+					if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					var mu sync.Mutex
+					var requests []string
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						mu.Lock()
+						defer mu.Unlock()
+						requests = append(requests, r.Method+" "+r.URL.Path)
+						io.Copy(io.Discard, r.Body)
+						w.Header().Set("Content-Type", "application/json")
+						if stage == "create" && r.URL.Path == "/files" {
+							io.WriteString(w, `{"id":"file_synthetic_retained"}`)
+							return
+						}
+						w.WriteHeader(status)
+						io.WriteString(w, `{"error":`+apiFailure+`}`)
+					}))
+					defer server.Close()
+					args := []string{"--format-error", format, "batches", "submit", "--file", path,
+						"--endpoint", "/v1/responses", "--completion-window", "24h"}
+					var got mainDispatchResult
+					if stage == "upload" && status == http.StatusUnauthorized && format == "text" {
+						got = runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=" + server.URL, "FORCE_COLOR=0"}, append([]string{"openai"}, args...)...)
+						if !strings.Contains(got.stderr, "No API key is configured.") || !strings.Contains(got.stderr, "Credential settings: --api-key / OPENAI_API_KEY.") {
+							t.Fatalf("missing-key cause or configuration guidance lost: %s", got.stderr)
+						}
+					} else {
+						got = runReadableCommand(t, server, args...)
+					}
+					if got.code != 1 || got.stdout != "" {
+						t.Fatalf("authentication rejection changed process outcome: %+v", got)
+					}
+					message := got.stderr
+					if format != "text" {
+						if !json.Valid([]byte(got.stderr)) || gjson.Get(got.stderr, "batch_submission.stage").String() != stage {
+							t.Fatalf("machine recovery envelope changed: %s", got.stderr)
+						}
+						// Formatting may change whitespace, but all values must remain exact.
+						var compact bytes.Buffer
+						if err := json.Compact(&compact, []byte(gjson.Get(got.stderr, "error").Raw)); err != nil || compact.String() != apiFailure {
+							t.Fatalf("original API error changed: %s", got.stderr)
+						}
+						message = gjson.Get(got.stderr, "batch_submission.message").String()
+					} else {
+						for _, guidance := range []string{"HTTP " + strconv.Itoa(status), "API error details: --format-error json."} {
+							if strings.Count(got.stderr, guidance) != 1 {
+								t.Errorf("expected one %q guidance block: %s", guidance, got.stderr)
+							}
+						}
+						if strings.Contains(got.stderr, "synthetic-private") || strings.Contains(got.stderr, path) {
+							t.Fatalf("human guidance exposed private details: %s", got.stderr)
+						}
+					}
+					if strings.Contains(message, "may exist") || strings.Contains(message, "may already exist") || strings.Contains(message, "unconfirmed") {
+						t.Fatalf("explicit rejection was described as uncertain: %s", message)
+					}
+					want := []string{"POST /files"}
+					guidance := []string{"File upload was rejected.", "No batch creation was attempted."}
+					if stage == "create" {
+						want = append(want, "POST /batches")
+						guidance = []string{"file_synthetic_retained", "Batch creation was rejected.", "batches create --input-file-id", "Reuse the same connection and project settings.", "Do not repeat submit."}
+						if format != "text" && gjson.Get(got.stderr, "batch_submission.input_file_id").String() != "file_synthetic_retained" {
+							t.Fatal("recovery envelope lost the uploaded file ID")
+						}
+					}
+					for _, text := range guidance {
+						if !strings.Contains(message, text) {
+							t.Errorf("missing %q: %s", text, message)
+						}
+					}
+					mu.Lock()
+					defer mu.Unlock()
+					if !reflect.DeepEqual(requests, want) {
+						t.Fatalf("rejected mutations were retried: %v", requests)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestMainBatchSubmitRedirectedRejectionRemainsUncertain(t *testing.T) {
+	for _, stage := range []string{"upload", "create"} {
+		t.Run(stage, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "synthetic.jsonl")
+			if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var mu sync.Mutex
+			var requests []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				requests = append(requests, r.Method+" "+r.URL.Path)
+				io.Copy(io.Discard, r.Body)
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case stage == "create" && r.URL.Path == "/files":
+					io.WriteString(w, `{"id":"file_synthetic_retained"}`)
+				case r.URL.Path == "/denied":
+					w.WriteHeader(http.StatusUnauthorized)
+					io.WriteString(w, `{"error":{"message":"synthetic rejected redirect","type":"invalid_request_error"}}`)
+				default:
+					// A mutation may precede a redirect. Rejection at the redirect
+					// destination does not prove the original mutation was refused.
+					w.Header().Set("Location", "/denied")
+					w.WriteHeader(http.StatusSeeOther)
+				}
+			}))
+			defer server.Close()
+			got := runReadableCommand(t, server, "batches", "submit", "--file", path,
+				"--endpoint", "/v1/responses", "--completion-window", "24h")
+			if got.code != 1 || got.stdout != "" || !strings.Contains(got.stderr, "HTTP 401") {
+				t.Fatalf("redirected failure changed process outcome: %+v", got)
+			}
+			want, recovery := []string{"POST /files", "GET /denied"}, "The file may exist. Check files list before repeating submit."
+			if stage == "create" {
+				want = []string{"POST /files", "POST /batches", "GET /denied"}
+				recovery = "Batch creation is unconfirmed. The batch may already exist."
+			}
+			if !strings.Contains(got.stderr, recovery) {
+				t.Fatalf("redirect discarded uncertain-outcome recovery: %s", got.stderr)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !reflect.DeepEqual(requests, want) {
+				t.Fatalf("redirected mutation was retried: %v", requests)
+			}
+		})
 	}
 }
 

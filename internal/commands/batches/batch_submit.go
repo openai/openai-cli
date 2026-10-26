@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"syscall"
@@ -85,15 +86,26 @@ func (w workflow) submitBatch(ctx context.Context, cmd *cli.Command) (err error)
 			err = batchContextError(err)
 			return
 		}
+		var apierr *openai.Error
+		isAPI := errors.As(err, &apierr)
+		// Only a direct access rejection confirms that this mutation was refused.
+		// A redirect can follow a completed mutation, so its rejection is uncertain.
+		accessRejected := isAPI && (apierr.StatusCode == http.StatusUnauthorized || apierr.StatusCode == http.StatusForbidden) &&
+			apierr.Response != nil && apierr.Response.Request != nil && apierr.Response.Request.Response == nil
 		message := "File upload did not finish cleanly. No batch creation was attempted.\nThe file may exist. Check files list before repeating submit."
+		if accessRejected {
+			message = "File upload was rejected. No batch creation was attempted."
+		}
 		if inputID != "" {
 			message = "Uploaded input file: " + strconv.Quote(inputID) + ".\nBatch creation is unconfirmed. The batch may already exist.\nCheck batches list with the same connection and project settings before creating another batch.\nIf no batch exists, reuse this input file with batches create --input-file-id."
+			if accessRejected {
+				message = "Uploaded input file: " + strconv.Quote(inputID) + ".\nBatch creation was rejected.\nAfter correcting access, reuse this input file with batches create --input-file-id.\nReuse the same connection and project settings.\nDo not repeat submit."
+			}
 		}
 		if batchID != "" {
 			message = "Batch created: " + strconv.Quote(batchID) + ".\nCould not display its receipt. Retrieve this batch with the same connection and project settings.\nDo not repeat submit."
 		}
-		var apierr *openai.Error
-		if errors.As(err, &apierr) && !errors.Is(err, context.Canceled) {
+		if isAPI && !errors.Is(err, context.Canceled) {
 			message += "\n" + w.options.APIErrorMessage(cmd.Root(), err, apierr)
 		} else if !errors.Is(err, context.Canceled) {
 			var local *WorkflowError

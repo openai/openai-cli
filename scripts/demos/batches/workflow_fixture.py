@@ -23,6 +23,7 @@ INPUT_RECORDS = [
         "url": "/v1/responses",
         "body": {
             "model": "synthetic-demo-model",
+            "instructions": "Classify the message as positive, negative, or neutral. Return only the label.",
             "input": text,
             "max_output_tokens": 32,
         },
@@ -41,9 +42,14 @@ OUTPUT_RECORDS = [
             "body": {
                 "id": "resp_synthetic_" + str(index),
                 "object": "response",
+                "status": "completed",
+                "temperature": 1,
+                "top_p": 1,
+                "store": False,
                 "output": [{"type": "message", "role": "assistant", "content": [
                     {"type": "output_text", "text": LABELS[custom_id]}
                 ]}],
+                "usage": {"input_tokens": 31, "output_tokens": 5, "total_tokens": 36},
             },
         },
         "error": None,
