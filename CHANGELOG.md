@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.43.0](https://github.com/openai/openai-cli/compare/v1.42.4...v1.43.0) (2026-10-26)
+
+
+### Features
+
+* **api:** add gpt-6.1-terra model identifier ([#628](https://github.com/openai/openai-cli/issues/628)) ([ad1d946](https://github.com/openai/openai-cli/commit/ad1d94697d0545ff9c23d0b094d00307199cf478))
+
 ## [1.42.4](https://github.com/openai/openai-cli/compare/v1.42.3...v1.42.4) (2026-10-26)
 
 
