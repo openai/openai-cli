@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.42.2](https://github.com/openai/openai-cli/compare/v1.42.1...v1.42.2) (2026-10-26)
+
+
+### Chores
+
+* **deps:** bump actions/cache/save from 4.3.0 to 6.1.0 ([#622](https://github.com/openai/openai-cli/issues/622)) ([46a4983](https://github.com/openai/openai-cli/commit/46a4983dd1dd7bab9918d3a97e3ded5cf50c1d79))
+* **deps:** bump actions/create-github-app-token from 3.2.0 to 3.3.0 ([#621](https://github.com/openai/openai-cli/issues/621)) ([8245940](https://github.com/openai/openai-cli/commit/8245940f42f6ea13ca1659a44d7173589ae0d70c))
+* **deps:** bump the codeql group across 1 directory with 2 updates ([#620](https://github.com/openai/openai-cli/issues/620)) ([bf521c1](https://github.com/openai/openai-cli/commit/bf521c1a1217fb16c95e6e8f0e133a1bb96200b8))
+
 ## [1.42.1](https://github.com/openai/openai-cli/compare/v1.42.0...v1.42.1) (2026-10-25)
 
 
