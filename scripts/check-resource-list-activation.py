@@ -47,14 +47,35 @@ def main():
         assert all(header in text for header in config["headers"]), text
         assert "ID:" not in text and "Filename:" not in text, text
 
+    def wait_loaded_result():
+        markers = ["q: quit"]
+        if mode == "empty":
+            markers.append("No results.")
+        elif mode == "unfamiliar":
+            markers.extend(["retain-synthetic-detail", "ID:", "item_001", "item_002"])
+        else:
+            markers.extend([*config["headers"], "item_001"])
+            if action != "one":
+                markers.append("item_002")
+        deadline = time.monotonic() + 5
+        while True:
+            text = terminal.text()
+            if all(marker in text for marker in markers):
+                return
+            if terminal.child.poll() is not None:
+                raise AssertionError(("command exited before loaded results", text[-1200:]))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AssertionError(("loaded results timed out", markers, text[-1200:]))
+            terminal.read(min(0.05, remaining))
+
     try:
         terminal = navigation.terminal_module.Terminal(config["binary"], args, env, width=110, height=24,
                                                        stderr_file=diagnostic)
         action, mode = config["action"], config["mode"]
         if action in ("finish", "one", "error"):
             if action != "error":
-                terminal.wait("q: quit", timeout=5)
-                navigation.drain(terminal, 0.1)
+                wait_loaded_result()
                 assert terminal.child.poll() is None, "complete results did not remain open"
                 terminal.send(b"q")
             navigation.finish(terminal, config["expected"])

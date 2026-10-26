@@ -147,7 +147,7 @@ func TestViewerLargeLineAndResizePreserveOriginal(t *testing.T) {
 	if strings.Count(view, "\n") > 6 || len(view) > 31*7+7 {
 		t.Fatal("large line escaped the bounded viewer")
 	}
-	if m.viewer.pages[0] != id+"\nnext-record\n" {
+	if m.viewer.pages[0].content != id+"\nnext-record\n" {
 		t.Fatal("resize truncated or hardwrapped the original ID")
 	}
 	viewerKey(m, 'q')

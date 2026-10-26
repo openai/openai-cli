@@ -319,8 +319,9 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		// Reflow only the loaded page. Resizing never requests data.
 		m.window = msg
-		if err := m.viewer.resize(m.opts.Context, msg.Width, msg.Height); err != nil {
+		if err := m.viewer.resize(m.opts.Context, m.opts.RenderPage, msg.Width, msg.Height); err != nil {
 			m.err = errors.Join(m.err, err)
+			m.pending = m.viewer.takePages()
 			return m, m.quit()
 		}
 	case listPageMessage:
@@ -332,7 +333,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.loaded = true
 		m.more = msg.page.More
 		m.err = errors.Join(m.err, msg.err)
-		return m, m.receiveViewerPage(content)
+		return m, m.receiveViewerPage(msg.page.Items, content)
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":

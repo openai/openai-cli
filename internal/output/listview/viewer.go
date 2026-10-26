@@ -9,16 +9,23 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/tidwall/gjson"
 )
 
-// listViewer retains rendered pages separately from the forward-only fetcher.
-// Only the selected page needs a wrapped display copy. Original lines remain
-// intact for reflow and partial-error output.
+// listViewer retains loaded records separately from the forward-only fetcher.
+// Only the selected page needs rendering at the current width and a wrapped
+// display copy. Cached content remains available for partial-error output.
 type listViewer struct {
-	pages      []string
+	pages      []listViewerPage
 	index      int
 	viewport   viewport.Model
 	lineStarts []int
+}
+
+type listViewerPage struct {
+	items   []gjson.Result
+	content string
+	width   int
 }
 
 func newListViewer() *listViewer {
@@ -27,7 +34,7 @@ func newListViewer() *listViewer {
 	return v
 }
 
-func (v *listViewer) resize(ctx context.Context, width, height int) error {
+func (v *listViewer) resize(ctx context.Context, render func([]gjson.Result, int) (string, error), width, height int) error {
 	width = max(1, width)
 	offset := v.viewport.YOffset()
 	anchor := 0
@@ -35,10 +42,10 @@ func (v *listViewer) resize(ctx context.Context, width, height int) error {
 		anchor = sort.SearchInts(v.lineStarts, v.viewport.YOffset()+1) - 1
 	}
 	if len(v.pages) != 0 && v.viewport.Width() != width {
-		if err := v.wrap(ctx, width); err != nil {
+		if err := v.wrap(ctx, render, width); err != nil {
 			return err
 		}
-		// Reflow keeps the current logical line visible without fetching data.
+		// Keep the current line visible when the renderer retains its layout.
 		offset = v.lineStarts[min(anchor, len(v.lineStarts)-1)]
 	}
 	v.viewport.SetWidth(width)
@@ -47,10 +54,18 @@ func (v *listViewer) resize(ctx context.Context, width, height int) error {
 	return nil
 }
 
-func (v *listViewer) wrap(ctx context.Context, width int) error {
+func (v *listViewer) wrap(ctx context.Context, render func([]gjson.Result, int) (string, error), width int) error {
+	page := &v.pages[v.index]
+	if page.width != width {
+		content, err := render(page.items, width)
+		if err != nil {
+			return err
+		}
+		page.content, page.width = content, width
+	}
 	v.lineStarts = nil
 	var lines []string
-	for _, line := range strings.Split(strings.TrimSuffix(v.pages[v.index], "\n"), "\n") {
+	for _, line := range strings.Split(strings.TrimSuffix(page.content, "\n"), "\n") {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -70,8 +85,9 @@ func (v *listViewer) wrap(ctx context.Context, width int) error {
 func (m *Model) selectViewerPage(index int, bottom bool) tea.Cmd {
 	v := m.viewer
 	v.index = index
-	if err := v.wrap(m.opts.Context, max(1, m.window.Width)); err != nil {
+	if err := v.wrap(m.opts.Context, m.opts.RenderPage, max(1, m.window.Width)); err != nil {
 		m.err = errors.Join(m.err, err)
+		m.pending = v.takePages()
 		return m.quit()
 	}
 	v.viewport.SetWidth(max(1, m.window.Width))
@@ -84,20 +100,30 @@ func (m *Model) selectViewerPage(index int, bottom bool) tea.Cmd {
 	return nil
 }
 
-func (m *Model) receiveViewerPage(content string) tea.Cmd {
+func (m *Model) receiveViewerPage(items []gjson.Result, content string) tea.Cmd {
 	v := m.viewer
 	if content != "" {
-		v.pages = append(v.pages, content)
+		v.pages = append(v.pages, listViewerPage{
+			items: append([]gjson.Result(nil), items...), content: content, width: max(1, m.window.Width),
+		})
 	}
 	if m.err != nil {
-		m.pending = v.pages
-		v.pages = nil
+		m.pending = v.takePages()
 		return m.quit()
 	}
 	if content != "" {
 		return m.selectViewerPage(len(v.pages)-1, false)
 	}
 	return nil
+}
+
+func (v *listViewer) takePages() []string {
+	pages := make([]string, len(v.pages))
+	for i, page := range v.pages {
+		pages[i] = page.content
+	}
+	v.pages = nil
+	return pages
 }
 
 func (m *Model) viewerKey(key string) tea.Cmd {
