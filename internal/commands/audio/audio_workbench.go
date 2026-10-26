@@ -103,6 +103,7 @@ type audioWorkbench struct {
 	resultAction              int
 	waveformFocused           bool
 	recoveryParent            string
+	recoveryRestoreFocus      bool
 	infoTitle, infoText       string
 	commandToPrint            string
 	infoParent                string
@@ -370,6 +371,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 		}
 		if key == "f1" && m.activeFailure() && m.modal != "recovery" {
 			m.openRecovery()
+			m.recoveryRestoreFocus = true
 			return m, nil
 		}
 		if m.modal != "" {

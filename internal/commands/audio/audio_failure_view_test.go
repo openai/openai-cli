@@ -74,6 +74,58 @@ func TestAudioFailureDetailsIgnoreRemovedShortcuts(t *testing.T) {
 	require.False(t, m.busy)
 }
 
+func TestAudioFailureInspectionRestoresCurrentSection(t *testing.T) {
+	for _, focus := range []int{0, 1, 2, 4} {
+		t.Run(fmt.Sprint(focus), func(t *testing.T) {
+			m := audioReviewModel(t)
+			m.input.SetValue("Keep this edited draft")
+			m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+			audioReviewKey(m, tea.KeyEscape)
+			result := audioReviewResult("retained", false)
+			m.result = &result
+			m.focusSection(focus)
+			m.setting, m.resultAction = 1, 1
+			require.Nil(t, audioReviewKey(m, tea.KeyF1))
+			require.Equal(t, "recovery", m.modal)
+			require.Contains(t, audioFeedbackView(t, m), "Error details")
+			audioReviewKey(m, tea.KeyEscape)
+			require.Empty(t, m.modal)
+			require.Equal(t, focus, m.focus)
+			require.Equal(t, 1, m.setting)
+			require.Equal(t, 1, m.resultAction)
+			require.Equal(t, focus == 0, m.input.Focused())
+			require.Equal(t, focus == 1, m.instructions.Focused())
+			require.Equal(t, "Keep this edited draft", m.input.Value())
+			require.False(t, m.busy)
+		})
+	}
+}
+
+func TestAudioFailureInspectionYieldsToNewOutcome(t *testing.T) {
+	for _, succeeded := range []bool{false, true} {
+		t.Run(fmt.Sprint(succeeded), func(t *testing.T) {
+			m := audioReviewModel(t)
+			m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+			audioReviewKey(m, tea.KeyEscape)
+			m.focusSection(0)
+			audioReviewKey(m, tea.KeyF1)
+			if succeeded {
+				m.Update(audioWorkMessage{kind: "generate", result: audioReviewResult("new-result", false)})
+				require.Empty(t, m.modal)
+				require.Equal(t, 4, m.focus)
+				require.Contains(t, audioFeedbackView(t, m), "Play audio")
+			} else {
+				m.Update(audioWorkMessage{kind: "play", playID: m.playID, err: errors.New("synthetic player failure")})
+				require.Equal(t, "recovery", m.modal)
+				require.Nil(t, audioReviewKey(m, tea.KeyEscape))
+				require.Empty(t, m.modal)
+				require.Equal(t, 2, m.focus)
+				require.Equal(t, audioSettingMore, m.setting)
+			}
+		})
+	}
+}
+
 func TestAudioFailureShows401BeforeEscape(t *testing.T) {
 	m := audioReviewModel(t)
 	m.input.SetValue("A synthetic draft remains editable.")

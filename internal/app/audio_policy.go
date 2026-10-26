@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
@@ -85,6 +86,7 @@ func speechAuthenticationGuidance(command *cli.Command, apierr *openai.Error) au
 		return audio.AuthenticationGuidance{}
 	}
 	root := command.Root()
+	custom := apiAuthenticationCustomBase(root)
 	failure := withCommandError(command, apierr)
 	_, override := apiAuthenticationCredentialSource(root, "api-key", "OPENAI_API_KEY", "API key")
 	guidance := audio.AuthenticationGuidance{}
@@ -95,29 +97,38 @@ func speechAuthenticationGuidance(command *cli.Command, apierr *openai.Error) au
 	}
 	if readableAPIAccessPermissionMessage(root, failure, apierr) != "" {
 		guidance.Summary = "Required permissions are missing."
-		guidance.Action = "Check your organization and project roles, and the key's permissions."
+		switch {
+		case custom:
+			guidance.Action = "Check this credential's permissions for this API endpoint."
+		case override:
+			guidance.Action = "Check the permissions of the Authorization credential."
+		default:
+			guidance.Action = "Check your organization and project roles, and the key's permissions."
+		}
 		return guidance
 	}
-	if apierr.StatusCode == http.StatusForbidden {
-		guidance.Action = "Check your key's permissions and selected project."
-		return guidance
-	}
+	setupStep := "In your main terminal, run: " + clihelp.DisplayInvocation(root) + " help setup"
 	switch {
 	case override:
 		guidance.Action = "Correct or remove the Authorization override."
 	case root.IsSet("api-key") && root.Count("api-key") > 0 && root.String("api-key") == "":
 		guidance.Summary = "The API key override is empty."
 		guidance.Action = "Close this form."
-		if os.Getenv("OPENAI_API_KEY") == "" {
-			guidance.Action += "\nIn your main terminal, run: openai help setup"
+		if !custom && os.Getenv("OPENAI_API_KEY") == "" {
+			guidance.Action += "\n" + setupStep
 		}
 		guidance.Action += "\nReopen without the empty --api-key option."
-	case apiAuthenticationCustomBase(root):
+	case custom:
 		guidance.Summary = "Authentication failed for this API endpoint."
+		if apierr.StatusCode == http.StatusForbidden {
+			guidance.Summary = "This API endpoint denied access."
+		}
 		guidance.Action = "Check the credential required by this API endpoint."
+	case apierr.StatusCode == http.StatusForbidden:
+		guidance.Action = "Check your key's permissions and selected project."
 	case !apiAuthenticationKeyPresent(root, "api-key", "OPENAI_API_KEY"):
 		guidance.Summary = "No API key is configured."
-		guidance.Action = "In your main terminal, run: openai help setup\nReopen this form."
+		guidance.Action = setupStep + "\nReopen this form in that terminal."
 	case apierr.Code == "invalid_api_key":
 		guidance.Action = "Replace the rejected API key.\nReopen this form."
 	default:

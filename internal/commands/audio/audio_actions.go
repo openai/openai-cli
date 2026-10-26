@@ -233,12 +233,16 @@ func (m *audioWorkbench) openRecovery() {
 		m.recoveryParent = m.modal
 	}
 	m.modal, m.failureOffset = "recovery", 0
+	m.recoveryRestoreFocus = false
 }
 
 func (m *audioWorkbench) leaveRecovery() tea.Cmd {
 	m.modal, m.recoveryParent = m.recoveryParent, ""
+	restoreFocus := m.recoveryRestoreFocus
+	m.recoveryRestoreFocus = false
 	m.lastFinished = time.Now()
-	if m.modal == "" {
+	// Inspecting a previous failure restores the section the user was editing.
+	if m.modal == "" && !restoreFocus {
 		m.setting = audioSettingMore
 		return m.focusSection(2)
 	}
@@ -251,6 +255,7 @@ func (m *audioWorkbench) reconcileRecovery() tea.Cmd {
 	if m.quit || m.activeFailure() {
 		return nil
 	}
+	m.recoveryRestoreFocus = false
 	if m.modal == "recovery" {
 		m.modal, m.recoveryParent = m.recoveryParent, ""
 		return m.restoreEditorFocus()

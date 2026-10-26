@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/openai/openai-go/v3"
@@ -26,10 +27,18 @@ func TestSpeechAuthenticationGuidanceConfigurationSources(t *testing.T) {
 		{name: "empty override without key", status: 401, flags: []string{"--api-key="}, want: []string{"Close this form", "In your main terminal, run: openai help setup", "Reopen without the empty --api-key option"}},
 		{name: "header override", status: 401, flags: []string{"--header", "Authorization: Bearer synthetic-header"}, want: []string{"Correct or remove the Authorization override"}, omit: []string{apiAuthenticationKeyURL}},
 		{name: "environment header", status: 401, env: map[string]string{"OPENAI_CUSTOM_HEADERS": "Authorization: Bearer synthetic-header"}, want: []string{"Correct or remove the Authorization override"}},
+		{name: "forbidden header override", status: 403, flags: []string{"--header", "Authorization: Bearer synthetic-header"}, want: []string{"Correct or remove the Authorization override"}, omit: []string{"selected project"}},
+		{name: "forbidden environment header", status: 403, env: map[string]string{"OPENAI_CUSTOM_HEADERS": "Authorization: Bearer synthetic-header"}, want: []string{"Correct or remove the Authorization override"}, omit: []string{"selected project"}},
+		{name: "forbidden custom endpoint", status: 403, flags: []string{"--base-url", "https://synthetic-private.invalid/v1"}, want: []string{"credential required by this API endpoint"}, omit: []string{"selected project", "help setup"}},
+		{name: "forbidden custom environment endpoint", status: 403, env: map[string]string{"OPENAI_BASE_URL": "https://synthetic-private.invalid/v1"}, want: []string{"credential required by this API endpoint"}, omit: []string{"selected project", "help setup"}},
+		{name: "forbidden empty override", status: 403, flags: []string{"--api-key="}, env: map[string]string{"OPENAI_API_KEY": "synthetic-env"}, want: []string{"override is empty", "Reopen without the empty --api-key option"}},
 		{name: "permission", status: 403, message: "You have insufficient permissions for this operation.", want: []string{"Required permissions are missing", "organization and project roles"}},
+		{name: "custom endpoint permission", status: 403, message: "You have insufficient permissions for this operation.", flags: []string{"--base-url", "https://synthetic-private.invalid/v1"}, want: []string{"Required permissions are missing", "permissions for this API endpoint"}, omit: []string{"organization", "project roles", "help setup"}},
+		{name: "header permission", status: 403, message: "You have insufficient permissions for this operation.", flags: []string{"--header", "Authorization: Bearer synthetic-header"}, want: []string{"Required permissions are missing", "Authorization credential"}},
 		{name: "generic access denied", status: 403, flags: []string{"--api-key", "synthetic-flag"}, want: []string{"Check your key's permissions and selected project"}, omit: []string{"required permissions are missing", "Replace"}},
 		{name: "IP restriction", status: 401, code: "ip_not_authorized", want: []string{"outbound IP in the allowlist"}, omit: []string{apiAuthenticationKeyURL}},
 		{name: "custom endpoint", status: 401, flags: []string{"--base-url", "https://synthetic-private.invalid/v1"}, want: []string{"Authentication failed for this API endpoint", "credential required by this API endpoint"}, omit: []string{apiAuthenticationKeyURL}},
+		{name: "custom endpoint empty override", status: 401, flags: []string{"--base-url", "https://synthetic-private.invalid/v1", "--api-key="}, want: []string{"override is empty", "Reopen without the empty --api-key option"}, omit: []string{"help setup"}},
 		{name: "unrelated status", status: 429},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,8 +67,28 @@ func TestSpeechAuthenticationGuidanceConfigurationSources(t *testing.T) {
 				return nil
 			})
 			args := append([]string{"openai"}, tc.flags...)
+			root.Metadata["help-invocation"] = "openai"
 			require.NoError(t, root.Run(t.Context(), append(args, "models", "list")))
 			require.True(t, called)
 		})
+	}
+}
+
+func TestSpeechAuthenticationGuidancePreservesInvocation(t *testing.T) {
+	for _, invocation := range []string{"'./preview app/openai-current'", "go run ./cmd/openai"} {
+		for _, flags := range [][]string{nil, {"--api-key="}} {
+			t.Run(invocation+"/"+strings.Join(flags, "/"), func(t *testing.T) {
+				cleanAPIAuthGuidanceEnvironment(t)
+				root := apiAuthGuidanceTestCommand(func(_ context.Context, command *cli.Command) error {
+					guidance := speechAuthenticationGuidance(command, &openai.Error{StatusCode: 401})
+					require.Contains(t, guidance.Action, "In your main terminal, run: "+invocation+" help setup")
+					require.NotContains(t, guidance.Action, "run: openai help setup")
+					return nil
+				})
+				root.Metadata["help-invocation"] = invocation
+				args := append([]string{"openai"}, flags...)
+				require.NoError(t, root.Run(t.Context(), append(args, "models", "list")))
+			})
+		}
 	}
 }
