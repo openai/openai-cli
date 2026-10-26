@@ -158,8 +158,12 @@ func TestViewerLargeLineAndResizePreserveOriginal(t *testing.T) {
 
 func TestViewerTabsPreserveValuesAndFooter(t *testing.T) {
 	for _, width := range []int{12, 20} {
-		for _, content := range []string{"Filename: A\tB\tC\tD\tE\tF\tG\tH", "Filename: A\t界\tB\t🚀\tC\tD\tE\tF\tG\tH"} {
-			t.Run(fmt.Sprintf("width%d/%s", width, content), func(t *testing.T) {
+		for _, test := range []struct{ name, content string }{
+			{"ascii", "Filename: A\tB\tC\tD\tE\tF\tG\tH"},
+			{"unicode", "Filename: A\t界\tB\t🚀\tC\tD\tE\tF\tG\tH"},
+		} {
+			t.Run(fmt.Sprintf("width%d/%s", width, test.name), func(t *testing.T) {
+				content := test.content
 				var out bytes.Buffer
 				m := New(viewerOptions(t, &out), nil, func() {}, width, 2)
 				m.Update(listPageMessage{page: viewerPage(content)})
