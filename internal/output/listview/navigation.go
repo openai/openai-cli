@@ -343,7 +343,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.quit()
 		}
-		return m, m.viewerKey(msg.String())
+		return m, m.viewerKey(msg)
 	}
 	return m, nil
 }

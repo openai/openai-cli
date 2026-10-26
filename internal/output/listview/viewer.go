@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -126,28 +127,24 @@ func (v *listViewer) takePages() []string {
 	return pages
 }
 
-func (m *Model) viewerKey(key string) tea.Cmd {
+func (m *Model) viewerKey(msg tea.KeyPressMsg) tea.Cmd {
 	v := m.viewer
 	if m.loading || len(v.pages) == 0 {
 		return nil
 	}
-	switch key {
-	case "space":
-		if !v.viewport.AtBottom() {
-			v.viewport.PageDown()
-		} else if v.index+1 < len(v.pages) {
+	switch {
+	case key.Matches(msg, v.viewport.KeyMap.PageDown) && v.viewport.AtBottom():
+		if v.index+1 < len(v.pages) {
 			return m.selectViewerPage(v.index+1, false)
 		} else if m.more {
 			return m.load()
 		}
-	case "b":
-		if !v.viewport.AtTop() {
-			v.viewport.PageUp()
-		} else if v.index > 0 {
-			return m.selectViewerPage(v.index-1, true)
-		}
+	case key.Matches(msg, v.viewport.KeyMap.PageUp) && v.viewport.AtTop() && v.index > 0:
+		return m.selectViewerPage(v.index-1, true)
 	}
-	return nil
+	var cmd tea.Cmd
+	v.viewport, cmd = v.viewport.Update(msg)
+	return cmd
 }
 
 func (m *Model) viewerView() string {
