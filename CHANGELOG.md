@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.4](https://github.com/openai/openai-cli/compare/v1.42.3...v1.42.4) (2026-10-26)
+
+
+### Bug Fixes
+
+* **audio:** simplify error recovery and setup guidance ([#626](https://github.com/openai/openai-cli/issues/626)) ([21a602e](https://github.com/openai/openai-cli/commit/21a602e1c9548bc24c637c08b26afe68de102c12))
+
 ## [1.42.3](https://github.com/openai/openai-cli/compare/v1.42.2...v1.42.3) (2026-10-26)
 
 
