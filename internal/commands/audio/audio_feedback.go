@@ -54,6 +54,24 @@ func classifiedAudioFailure(kind audioFailureKind, message string, cause error) 
 	return &audioClassifiedFailure{kind: kind, failure: &localcommands.LocalError{Message: message, Cause: cause}}
 }
 
+func (m *audioWorkbench) failureFeedback(operation string, failure error) audioFeedback {
+	feedback := audioFailureFeedback(m.command, operation, failure)
+	policy, _ := m.ctx.Value(speechOutputKey{}).(SpeechPresentation)
+	if policy.AuthenticationGuidance != nil && (feedback.StatusCode == http.StatusUnauthorized || feedback.StatusCode == http.StatusForbidden) {
+		var apierr *openai.Error
+		if errors.As(failure, &apierr) && apierr != nil {
+			guidance := policy.AuthenticationGuidance(m.command, apierr)
+			if guidance.Summary != "" {
+				feedback.Summary = guidance.Summary
+			}
+			if guidance.Action != "" {
+				feedback.Action = guidance.Action
+			}
+		}
+	}
+	return feedback
+}
+
 func audioFailureFeedback(command *cli.Command, operation string, failure error) audioFeedback {
 	if failure == nil {
 		return audioFeedback{}
