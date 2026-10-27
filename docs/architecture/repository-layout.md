@@ -10,7 +10,7 @@ details, not a supported library API.
 | --- | --- |
 | `cmd/openai/` | Handwritten startup, invocation, process exit, and executable tests. |
 | `generated/commands/` | Castiron API commands, runtime bindings, and generated tests. |
-| `generated/castiron/` | Castiron checker tooling, documentation, tests, and ownership inventory. |
+| `scripts/castiron/generated-files.json` | Castiron-generated ownership inventory. |
 | `generated/tokenizer/` | Unicode tables produced by `scripts/generate-tokenizer-unicode.go`. |
 | `internal/app/` | Handwritten assembly, global request/output policy, invocation lifecycle, and ordered feature registration. |
 | `internal/commands/` | Command-tree routing, aliases, shortcuts, help groups, and shared feature contracts. |
@@ -23,14 +23,13 @@ details, not a supported library API.
 | `internal/tokenizer/` | Handwritten tokenization engine. |
 | `internal/testutil/` | Shared synthetic test fixtures. |
 | `tests/cli/`, `tests/terminal/` | Handwritten contracts spanning commands and terminal behavior. |
-| `scripts/` | Handwritten developer, build, and CI entrypoints. |
+| `scripts/` | Handwritten developer, build, and CI entrypoints, apart from the generated inventory above. |
 | `docs/`, `api_reference/` | Documentation and the separate API-reference module. |
 
-GitHub requires workflows under `.github/workflows/`. The two Castiron custom-code
-workflows remain there with generated headers and ownership-manifest coverage.
-Generation provenance remains in `.castiron.stats.yml`; the transformed API input
-remains in `api_reference/openapi.transformed.yml`. These fixed-location artifacts are exceptions to using `generated/` for
-generated output.
+Generation provenance remains in `.castiron.stats.yml`, the ownership inventory in
+`scripts/castiron/generated-files.json`, and the transformed API input in
+`api_reference/openapi.transformed.yml`. These fixed-location artifacts are
+exceptions to using `generated/` for generated output.
 
 Fix Castiron-owned files through the authoritative schema or compiler and
 regenerate. Do not hand-edit generated files or their manifest. The compiler-owned
@@ -66,4 +65,4 @@ working. The separate `api_reference/go.mod` module remains separate.
 For moves, compile all packages and run affected unit/entrypoint tests and platform
 checks. For generator changes, verify ownership and repeat generation without
 unexplained drift. Keep signing, CODEOWNER, merge-queue, and trusted-main controls
-intact; budget changes require their own human-approved PR.
+intact.
