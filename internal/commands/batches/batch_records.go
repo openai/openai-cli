@@ -63,7 +63,12 @@ func (w workflow) handleBatchResults(ctx context.Context, command *cli.Command) 
 		return err
 	}
 	client := openai.NewClient(w.options.DefaultRequestOptions(command)...)
-	batch, err := client.Batches.Get(ctx, command.String("batch-id"), options...)
+	return w.showBatchRecords(ctx, command, client, options, command.String("batch-id"), selection, command.String("custom-id"), command.Bool("match-input"))
+}
+
+// showBatchRecords shares the stored-record workflow with the interactive browser.
+func (w workflow) showBatchRecords(ctx context.Context, command *cli.Command, client openai.Client, options []option.RequestOption, batchID, selection, filter string, match bool) (err error) {
+	batch, err := client.Batches.Get(ctx, batchID, options...)
 	if err != nil {
 		return err
 	}
@@ -79,7 +84,7 @@ func (w workflow) handleBatchResults(ctx context.Context, command *cli.Command) 
 	if fileID == "" {
 		return batchError("The batch has no selected file available. Retrieve the batch to check its status and file IDs.")
 	}
-	if command.Bool("match-input") && batch.InputFileID == "" {
+	if match && batch.InputFileID == "" {
 		return batchError("The batch has no input file available for matching. Omit --match-input to inspect results alone.")
 	}
 	store, err := newBatchRecordStore(ctx)
@@ -87,8 +92,6 @@ func (w workflow) handleBatchResults(ctx context.Context, command *cli.Command) 
 		return err
 	}
 	defer func() { err = errors.Join(err, store.close()) }()
-	filter := command.String("custom-id")
-	match := command.Bool("match-input")
 	if err := readBatchRecordsFile(ctx, client, options, fileID, selection, filter, false, match, store); err != nil {
 		return err
 	}

@@ -3,6 +3,36 @@
 Prepare requests locally, upload the file, then create a batch.
 Waiting and downloading use existing Batches and Files APIs.
 
+## Find your way around
+
+Use the command guide without contacting the API:
+
+```sh
+openai batches
+openai explore batches
+```
+
+`batches` explains the workflow and lists available actions.
+`explore batches` searches the CLI's commands and examples locally.
+Add `--help` to any command for its options.
+
+Open the interactive browser to choose an existing batch without copying its ID:
+
+```sh
+openai batches browse
+```
+
+Choose a batch, then select Status, Results, Errors, Inputs, or Download.
+Search applies to the loaded page. Use Next page to reach older batches.
+Use Refresh to reload the first page.
+Escape returns to the previous menu; Ctrl+C exits the browser.
+Downloads ask for a destination and never overwrite an existing file.
+The browser uses your configured connection, API key, and project.
+It does not create or cancel batches.
+
+For scripts, use `list`, `retrieve`, `results`, and `--format json`.
+The browser requires an interactive terminal and readable output.
+
 ## Prepare and submit
 
 Each JSONL line contains one request with a unique `custom_id`.

@@ -77,6 +77,22 @@ Use `--output-dir /absolute/new/directory` to choose that directory. Keep artifa
 
 This trial does not establish live API or native terminal compatibility.
 
+## Try the interactive batch browser
+
+Run this trial in a terminal without pipes or redirection:
+
+```sh
+python3 scripts/demos/batches/try_browser.py /absolute/path/to/openai
+```
+
+The browser shows three synthetic batches: successful, partially failed, and still processing.
+Choose a batch, then inspect its status, results, errors, inputs, or downloads.
+The fixture keeps these statuses fixed. It accepts only read operations and fake credentials.
+Relative download paths use the printed temporary directory.
+Escape returns to the previous menu; Ctrl+C exits.
+The trial stops its child process and loopback server before returning.
+It does not use personal API keys, install the CLI, or make live API calls.
+
 ## Record the convenience comparison
 
 Use the baseline and candidate binaries from the reviewed source commits.

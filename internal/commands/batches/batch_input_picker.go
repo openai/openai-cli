@@ -71,6 +71,8 @@ func (m *batchInputPicker) filter() {
 	m.index = 0
 }
 
+func (m *batchInputPicker) setPickerContext(ctx context.Context) { m.ctx = ctx }
+
 func (m *batchInputPicker) Init() tea.Cmd { return textinput.Blink }
 func (m *batchInputPicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
@@ -132,26 +134,41 @@ func (m *batchInputPicker) View() tea.View {
 	return tea.NewView(view.String())
 }
 
-func runBatchInputPicker(ctx context.Context, items []gjson.Result) (selected gjson.Result, err error) {
+func runBatchInputPicker(ctx context.Context, items []gjson.Result) (gjson.Result, error) {
+	m := newBatchInputPicker(ctx, items, 80, 24)
+	err := runBatchPickerModel(ctx, m, batchFilePickerInputPolicy())
+	if err = errors.Join(m.err, err); err != nil {
+		return gjson.Result{}, err
+	}
+	if !m.selected.Exists() {
+		return gjson.Result{}, batchError("No input file selected. No batch was created.")
+	}
+	return m.selected, nil
+}
+
+// runBatchPickerModel retains one terminal lifecycle for file and Batch selection.
+func runBatchPickerModel(ctx context.Context, model tea.Model, policy batchPickerInputPolicy) (err error) {
 	width, height, err := term.GetSize(os.Stderr.Fd())
 	if err != nil {
-		return gjson.Result{}, batchError("Could not inspect the terminal. Omit --select to list input files.")
+		return batchError("Could not inspect the terminal. Use the noninteractive Batch commands instead.")
 	}
 	inputState, err := term.GetState(os.Stdin.Fd())
 	if err != nil {
-		return gjson.Result{}, err
+		return err
 	}
 	outputState, err := term.GetState(os.Stderr.Fd())
 	if err != nil {
-		return gjson.Result{}, err
+		return err
 	}
-	// The independent input reader owns raw mode. Restore after its reader closes.
 	defer func() {
 		err = errors.Join(err, term.Restore(os.Stdin.Fd(), inputState), term.Restore(os.Stderr.Fd(), outputState))
 	}()
 	outputContext, stopOutput := context.WithCancelCause(ctx)
 	defer stopOutput(nil)
-	m := newBatchInputPicker(outputContext, items, width, height)
+	if aware, ok := model.(interface{ setPickerContext(context.Context) }); ok {
+		aware.setPickerContext(outputContext)
+	}
+	model, _ = model.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	programContext, cancel := context.WithCancel(outputContext)
 	defer cancel()
 	err = writeBatchStdoutWithCleanup(outputContext, os.Stderr, batchOutputCleanupGrace, func(out io.Writer) error {
@@ -161,10 +178,10 @@ func runBatchInputPicker(ctx context.Context, items []gjson.Result) (selected gj
 		writer := &batchPickerOutput{TerminalWriter: clioutput.TerminalWriter{
 			Writer: clioutput.Writer{Context: context.Background(), Sink: out}, File: os.Stderr,
 		}, cancel: cancel}
-		program := tea.NewProgram(m, tea.WithInput(nil), tea.WithOutput(writer), tea.WithContext(programContext),
+		program := tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(writer), tea.WithContext(programContext),
 			tea.WithoutSignalHandler(), tea.WithWindowSize(width, height),
 			tea.WithColorProfile(terminal.ColorProfile(os.Stderr, os.Environ(), true)))
-		closeInput, err := startBatchPickerInput(outputContext, os.Stdin, program, stopOutput)
+		closeInput, err := startBatchPickerInputWithPolicy(outputContext, os.Stdin, program, stopOutput, policy)
 		if err != nil {
 			return err
 		}
@@ -176,29 +193,41 @@ func runBatchInputPicker(ctx context.Context, items []gjson.Result) (selected gj
 		if outputErr != nil && ctx.Err() == nil && errors.Is(runErr, tea.ErrProgramKilled) {
 			runErr = nil
 		}
-		return errors.Join(m.err, inputErr, outputErr, runErr)
+		return errors.Join(inputErr, outputErr, runErr)
 	})
 	if ctx.Err() != nil {
-		return gjson.Result{}, batchContextError(errors.Join(ctx.Err(), context.Cause(ctx), err))
+		return batchContextError(errors.Join(ctx.Err(), context.Cause(ctx), err))
 	}
 	if cause := context.Cause(outputContext); cause != nil {
 		var failure *WorkflowError
 		if errors.As(cause, &failure) {
-			return gjson.Result{}, &WorkflowError{message: failure.message, code: failure.code, cause: errors.Join(cause, err)}
+			return &WorkflowError{message: failure.message, code: failure.code, cause: errors.Join(cause, err)}
 		}
 	}
-	if err != nil {
-		return gjson.Result{}, err
-	}
-	if !m.selected.Exists() {
-		return gjson.Result{}, batchError("No input file selected. No batch was created.")
-	}
-	return m.selected, nil
+	return err
 }
 
 // Read and queue decoded keys separately from Tea's renderer. A blocked frame
 // must not prevent Ctrl+C from cancelling the owned output worker.
+type batchPickerInputPolicy struct {
+	escapeCancels              bool
+	cancelled, ended, overflow string
+}
+
+func batchFilePickerInputPolicy() batchPickerInputPolicy {
+	return batchPickerInputPolicy{
+		escapeCancels: true,
+		cancelled:     "No input file selected. No batch was created.",
+		ended:         "Terminal input ended. No file was selected. Retry with --select or list files without it.",
+		overflow:      "Too much pending keyboard input. The picker accepts 64 queued events and 1 MiB of queued text. Retry with less input or omit --select.",
+	}
+}
+
 func startBatchPickerInput(ctx context.Context, input *os.File, program *tea.Program, stop context.CancelCauseFunc) (func() error, error) {
+	return startBatchPickerInputWithPolicy(ctx, input, program, stop, batchFilePickerInputPolicy())
+}
+
+func startBatchPickerInputWithPolicy(ctx context.Context, input *os.File, program *tea.Program, stop context.CancelCauseFunc, policy batchPickerInputPolicy) (func() error, error) {
 	source, err := uv.NewCancelReader(input)
 	if err != nil {
 		return nil, err
@@ -221,7 +250,7 @@ func startBatchPickerInput(ctx context.Context, input *os.File, program *tea.Pro
 	go func() {
 		defer close(routeDone)
 		defer close(deliveries)
-		routeBatchPickerInput(private, events, deliveries, stop)
+		routeBatchPickerInputWithPolicy(private, events, deliveries, stop, policy)
 	}()
 	return func() error {
 		cancel()
@@ -237,6 +266,10 @@ func startBatchPickerInput(ctx context.Context, input *os.File, program *tea.Pro
 }
 
 func routeBatchPickerInput(ctx context.Context, events <-chan uv.Event, deliveries chan<- uv.Event, stop context.CancelCauseFunc) {
+	routeBatchPickerInputWithPolicy(ctx, events, deliveries, stop, batchFilePickerInputPolicy())
+}
+
+func routeBatchPickerInputWithPolicy(ctx context.Context, events <-chan uv.Event, deliveries chan<- uv.Event, stop context.CancelCauseFunc, policy batchPickerInputPolicy) {
 	const pendingKeys = 64
 	const pendingBytes = 1 << 20
 	type queuedKey struct {
@@ -262,15 +295,15 @@ func routeBatchPickerInput(ctx context.Context, events <-chan uv.Event, deliveri
 		case event, ok := <-events:
 			if !ok {
 				if ctx.Err() == nil {
-					stop(&WorkflowError{message: "Terminal input ended. No file was selected. Retry with --select or list files without it.", code: 1})
+					stop(&WorkflowError{message: policy.ended, code: 1})
 				}
 				return
 			}
 			size := 0
 			switch key := event.(type) {
 			case uv.KeyPressEvent:
-				if key.String() == "ctrl+c" || key.String() == "esc" {
-					stop(&WorkflowError{message: "No input file selected. No batch was created.", code: 130, cause: context.Canceled})
+				if key.String() == "ctrl+c" || policy.escapeCancels && key.String() == "esc" {
+					stop(&WorkflowError{message: policy.cancelled, code: 130, cause: context.Canceled})
 					continue
 				}
 				size = len(key.Text)
@@ -280,7 +313,7 @@ func routeBatchPickerInput(ctx context.Context, events <-chan uv.Event, deliveri
 				size = len(key.Content)
 			}
 			if len(queue) >= pendingKeys || size > pendingBytes-bytes {
-				stop(&WorkflowError{message: "Too much pending keyboard input. The picker accepts 64 queued events and 1 MiB of queued text. Retry with less input or omit --select.", code: 1})
+				stop(&WorkflowError{message: policy.overflow, code: 1})
 				continue
 			}
 			queue = append(queue, queuedKey{event, size})

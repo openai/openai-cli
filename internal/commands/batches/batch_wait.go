@@ -99,7 +99,7 @@ func (w workflow) configureBatchCommands(root *cli.Command) {
 				}
 			}
 		}
-		resource.Commands = append(resource.Commands, w.newBatchWaitCommand(), w.newBatchDownloadCommand(), w.newBatchResultsCommand(), w.newBatchInputsCommand())
+		resource.Commands = append(resource.Commands, w.newBatchWaitCommand(), w.newBatchDownloadCommand(), w.newBatchResultsCommand(), w.newBatchInputsCommand(), w.newBatchBrowseCommand())
 		if submit != nil {
 			resource.Commands = append(resource.Commands, submit)
 		}
