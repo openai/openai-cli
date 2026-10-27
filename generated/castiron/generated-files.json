@@ -351,11 +351,11 @@
     },
     "generated/commands/audiovoice.go": {
       "mode": "100644",
-      "sha256": "f7451d6bb157d23aa24ae54da793a95490720751a4cd234699656b9b0f87d911"
+      "sha256": "2c6553a8f7659a56e2a7853b9540605d30ffdc6c388ca3bfeebf01731b671535"
     },
     "generated/commands/audiovoice_test.go": {
       "mode": "100644",
-      "sha256": "1ff06e79177074f4a3c9b62ebd5529b9203a8452d77393c09fda981829253538"
+      "sha256": "11cde998e8e16adbea48da638c79d7371adaa2783810a029ca6b21af052c381a"
     },
     "generated/commands/audiovoiceconsent.go": {
       "mode": "100644",
@@ -487,7 +487,7 @@
     },
     "generated/commands/cmd.go": {
       "mode": "100644",
-      "sha256": "cd3c6d9101a12f93b7ceefffc6a7e1447b5200589335b22946cfea3d3ac0e25a"
+      "sha256": "45b6a324ea9e72246016dafcb4479c63e139d0d970fcd6cb0cd9471d6696aa60"
     },
     "generated/commands/completion.go": {
       "mode": "100644",
