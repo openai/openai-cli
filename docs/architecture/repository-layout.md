@@ -34,8 +34,9 @@ generated output.
 
 Fix Castiron-owned files through the authoritative schema or compiler and
 regenerate. Do not hand-edit generated files or their manifest. The compiler-owned
-verifier checks the checkpoint and retired paths; trusted-main CI enforces the
-zero custom-code budget. See [the budget guidance](../../generated/castiron/CUSTOM_CODE.md).
+generator replaces owned output and removes retired paths. Handwritten edits to
+generated files are overwritten. Follow [the contributor guidance](../../CONTRIBUTING.md#generated-file-ownership)
+and enforce ownership through code review and the ordinary SDK checks.
 
 ## Dependency direction
 
