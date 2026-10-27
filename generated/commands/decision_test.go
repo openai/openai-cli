@@ -18,7 +18,7 @@ func TestDecisionsCreate(t *testing.T) {
 			"decisions", "create",
 			"--input", "string",
 			"--model", "model",
-			"--question", "{instructions: instructions, type: predicate, name: name}",
+			"--question", "{instructions: string, type: predicate, name: name}",
 			"--prompt-cache-key", "prompt_cache_key",
 			"--prompt-cache-options", "{mode: implicit, ttl: 30m}",
 			"--safety-identifier", "safety_identifier",
@@ -37,7 +37,7 @@ func TestDecisionsCreate(t *testing.T) {
 			"decisions", "create",
 			"--input", "string",
 			"--model", "model",
-			"--question", "{instructions: instructions, type: predicate, name: name}",
+			"--question", "{instructions: string, type: predicate, name: name}",
 			"--prompt-cache-key", "prompt_cache_key",
 			"--prompt-cache-options.mode", "implicit",
 			"--prompt-cache-options.ttl", "30m",
@@ -51,7 +51,7 @@ func TestDecisionsCreate(t *testing.T) {
 			"input: string\n" +
 			"model: model\n" +
 			"questions:\n" +
-			"  - instructions: instructions\n" +
+			"  - instructions: string\n" +
 			"    type: predicate\n" +
 			"    name: name\n" +
 			"prompt_cache_key: prompt_cache_key\n" +
