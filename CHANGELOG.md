@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.44.1](https://github.com/openai/openai-cli/compare/v1.44.0...v1.44.1) (2026-10-27)
+
+
+### Chores
+
+* **api:** update image-model documentation ([#649](https://github.com/openai/openai-cli/issues/649)) ([eed8bd0](https://github.com/openai/openai-cli/commit/eed8bd066c0ccceb91f6e55cafab102f7d359ed8))
+
 ## [1.44.0](https://github.com/openai/openai-cli/compare/v1.43.2...v1.44.0) (2026-10-27)
 
 
