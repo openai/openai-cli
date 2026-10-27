@@ -107,4 +107,4 @@ An offline activation cannot validate withdrawal and therefore leaves the instal
 Withdrawal does not automatically downgrade installations that already activated the release. Use an exact supported pin or a manual reinstall.
 
 The updater replaces only the executable. Existing completion files and manual pages remain user-managed.
-Keep release publishing, protected environments, signing, CODEOWNER review, and generated-file inventory checks under their existing controls.
+Keep release publishing, protected environments, signing, CODEOWNER review, and generation provenance under their existing controls. Generated-file ownership relies on `AGENTS.md` and ordinary code review.
