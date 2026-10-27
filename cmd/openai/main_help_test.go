@@ -333,7 +333,7 @@ func TestMainHelpIgnoresBrokenRequestConfiguration(t *testing.T) {
 	env := []string{"OPENAI_BASE_URL=not-a-request-url", "OPENAI_MTLS_CLIENT_CERT_FILE=/nonexistent/cert.pem", "OPENAI_MTLS_CLIENT_KEY_FILE=/nonexistent/key.pem"}
 	for _, args := range [][]string{
 		{"openai"}, {"openai", "help"}, {"openai", "--help"}, {"openai", "-h"},
-		{"openai", "help", "setup"}, {"openai", "help"},
+		{"openai", "help", "setup"},
 		{"openai", "images", "generate", "--help"},
 		{"openai", "images", "generate", "--prompt", "help", "--help"},
 		{"openai", "--debug", "help", "images", "generate"},
@@ -449,7 +449,7 @@ func TestMainHelpDoesNotBypassRequestValidation(t *testing.T) {
 func TestMainHelpRejectsUnknownTopics(t *testing.T) {
 	for _, args := range [][]string{
 		{"openai", "help", "imaginary"}, {"openai", "help", "images", "imaginary"},
-		{"openai", "images", "help", "imaginary"}, {"openai", "help", "images", "imaginary"},
+		{"openai", "images", "help", "imaginary"},
 		{"openai", "help", "setup", "unexpected"},
 		{"openai", "images", "help", "--", "--help"},
 		{"openai", "images", "help", "--", "--all"},
