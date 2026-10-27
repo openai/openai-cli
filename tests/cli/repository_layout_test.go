@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"encoding/json"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -24,13 +25,23 @@ func TestRepositoryLayout(t *testing.T) {
 			t.Errorf("retired path %s must not exist (stat: %v)", retired, err)
 		}
 	}
+	data, err := os.ReadFile(filepath.Join(root, "scripts/castiron/generated-files.json"))
+	if err != nil {
+		t.Fatalf("read generated inventory: %v", err)
+	}
+	var inventory struct {
+		Files map[string]json.RawMessage `json:"files"`
+	}
+	if err := json.Unmarshal(data, &inventory); err != nil {
+		t.Fatalf("decode generated inventory: %v", err)
+	}
 	const module = "github.com/openai/openai-cli/"
 	for _, dir := range []string{"internal", "generated/commands"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			if entry.IsDir() {
 				return nil
 			}
 			rel, err := filepath.Rel(root, path)
@@ -38,6 +49,14 @@ func TestRepositoryLayout(t *testing.T) {
 				return err
 			}
 			rel = filepath.ToSlash(rel)
+			if strings.HasPrefix(rel, "generated/commands/") {
+				if _, ok := inventory.Files[rel]; !ok {
+					t.Errorf("generated command file %s is absent from the compiler inventory", rel)
+				}
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
 			parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
 			if err != nil {
 				return err

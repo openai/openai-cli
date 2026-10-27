@@ -14,7 +14,7 @@ approve changes, or establish that a check is redundant. No CI saving is claimed
 | [`cmd/`](../../cmd), [`pkg/`](../../pkg), [`internal/`](../../internal) | No direct transformed-spec reader found in the inventory at `ba6cb091387803581722e99443d8f3bfc59f9326`. Generated command behavior is committed Go code. | This is static evidence, not proof that all transitive dependencies are absent. |
 | [GoReleaser](../../.goreleaser.yml) and [CI artifact builds](../../.github/workflows/ci.yml) | Build the CLI; generate completion/manpage assets by running it. The archive configuration does not list the reference spec. | Packaging is a candidate for later investigation, not a check this change skips. |
 | [Native help compatibility](../../.github/workflows/help-compatibility.yml) | Exercises Go helpers and CLI behavior across Linux, macOS and Windows. | All platforms remain covered. |
-| Castiron metadata/custom-code checks | Generation metadata records provenance and generated/custom-code accounting. | Metadata-only does not mean harmless; keep existing checks. |
+| Castiron metadata and [generated-file check](../../scripts/check_generated_files.py) | Generation metadata records provenance; SDK lint verifies compiler-inventoried file hashes and modes. | Metadata-only does not mean harmless; preserve provenance validation and the generated-file check. |
 
 Inventory method: search direct `api_reference`, `openapi.transformed` and
 `go:embed` consumers, inspect test/mock entrypoints, nested module boundaries,
