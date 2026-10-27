@@ -11,7 +11,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -152,9 +154,100 @@ func assertTokenizerCancellationAtEncoderEntry(t *testing.T, text, encoding stri
 	case <-time.After(3 * time.Second):
 		t.Fatal("cancellation did not reap the computing child")
 	}
-	// Include decoder read-ahead. Any encoder publication emits a control byte.
-	trailing, err := io.ReadAll(io.LimitReader(io.MultiReader(decoder.Buffered(), connection), 1024))
-	if err != nil || strings.TrimSpace(string(trailing)) != "" {
-		t.Fatal(fmt.Sprintf("encoding published output or retained its control connection: bytes=%d error=%v", len(trailing), err))
+	// Check only after Wait confirms the observed child was reaped. Windows can
+	// reset its socket after termination instead of sending a graceful EOF.
+	if err := tokenizerControlCompletion(io.MultiReader(decoder.Buffered(), connection)); err != nil {
+		t.Fatal(err)
 	}
 }
+
+func tokenizerControlCompletion(input io.Reader) error {
+	// Include decoder read-ahead, including Encode's trailing newline. Reject
+	// truncation so whitespace cannot hide a later publication marker.
+	trailing, err := io.ReadAll(io.LimitReader(input, 1025))
+	if len(trailing) > 1024 || strings.TrimSpace(string(trailing)) != "" {
+		return fmt.Errorf("encoding published output or exceeded its control bound: bytes=%d", len(trailing))
+	}
+	if err != nil && !tokenizerControlReset(err) {
+		return fmt.Errorf("control connection after child reaping: %w", err)
+	}
+	return nil
+}
+
+func tokenizerControlReset(err error) bool {
+	reset := syscall.ECONNRESET
+	if runtime.GOOS == "windows" {
+		// WSAECONNRESET from Go's syscall/types_windows.go. Windows ECONNRESET
+		// belongs to a different, synthetic errno range and cannot match it.
+		reset = syscall.Errno(10054)
+	}
+	return errors.Is(err, reset)
+}
+
+func TestTokenizerPreviewControlCompletion(t *testing.T) {
+	var reset error
+	t.Run("forced_reset", func(t *testing.T) {
+		listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close()
+		deadline := time.Now().Add(5 * time.Second)
+		if err := listener.SetDeadline(deadline); err != nil {
+			t.Fatal(err)
+		}
+		client, err := net.DialTimeout("tcp4", listener.Addr().String(), 5*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		server, err := listener.AcceptTCP()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer server.Close()
+		if err := server.SetDeadline(deadline); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.(*net.TCPConn).SetLinger(0); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.Close(); err != nil {
+			t.Fatal(err)
+		}
+		var data [1]byte
+		count, err := server.Read(data[:])
+		if count != 0 || !tokenizerControlReset(err) {
+			t.Fatalf("forced close did not produce a TCP reset: bytes=%d error=%v", count, err)
+		}
+		reset = err
+	})
+	if reset == nil {
+		t.Fatal("reset regression requires the observed socket error")
+	}
+	for _, test := range []struct {
+		name string
+		data string
+		err  error
+		want bool
+	}{
+		{"eof", "\n", io.EOF, true},
+		{"wrapped_reset", "\n", fmt.Errorf("control: %w", reset), true},
+		{"unexpected_bytes", "\nunexpected output\n", reset, false},
+		{"timeout", "\n", os.ErrDeadlineExceeded, false},
+		{"other_error", "\n", io.ErrClosedPipe, false},
+		{"oversize", strings.Repeat(" ", 1025) + "unexpected output", reset, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := io.MultiReader(strings.NewReader(test.data), tokenizerControlReadError{test.err})
+			err := tokenizerControlCompletion(input)
+			if (err == nil) != test.want {
+				t.Fatalf("control completion success=%t, want %t: %v", err == nil, test.want, err)
+			}
+		})
+	}
+}
+
+type tokenizerControlReadError struct{ err error }
+
+func (input tokenizerControlReadError) Read([]byte) (int, error) { return 0, input.err }
