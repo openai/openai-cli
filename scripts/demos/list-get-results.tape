@@ -45,9 +45,9 @@ Sleep 300ms
 Show
 Type "# Before: pager cleanup parent | retrieve the first file"
 Enter
-Type "openai files retrieve file_training"
+Type "openai files retrieve file_batch"
 Enter
-Wait+Screen /file_training/
+Wait+Screen /file_batch/
 Sleep 500ms
 Screenshot before-retrieve.png
 Sleep 3s
@@ -58,7 +58,7 @@ Sleep 300ms
 Show
 Type "# After: list/get summaries | same file"
 Enter
-Type "openai files retrieve file_training"
+Type "openai files retrieve file_batch"
 Enter
 Wait+Screen /Full data: --format json\./
 Sleep 500ms
@@ -71,7 +71,7 @@ Sleep 300ms
 Show
 Type "# Explicit JSON | full data for the same file"
 Enter
-Type "openai --format json files retrieve file_training"
+Type "openai --format json files retrieve file_batch"
 Enter
 Wait+Screen /created_at/
 Sleep 500ms

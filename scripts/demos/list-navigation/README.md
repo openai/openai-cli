@@ -1,67 +1,39 @@
-# List navigation recording
+# List navigation evidence
 
-Generated files, batches, and projects commands do not yet call the navigation helpers on this branch.
-Public activation requires the normal generator-source and SDK-promotion sequence.
-The two-page recipe below requires a separately activated candidate and does not establish activation here.
-Identify that candidate and its generated-source provenance when recording future integration evidence.
+Use the current [list pager recipes](../list-pager/README.md) for navigation recordings and public-command checks.
+Use the [list table recipe](../list-tables/README.md) for Files, Batches, and Projects width comparisons.
+Both reuse the shared capture lifecycle and synthetic loopback fixtures.
 
-The shared runtime now includes both completion follow-ups:
+Handwritten command assembly activates Files, Batches, and Projects without changing generated declarations.
+Models also uses the shared pager for eligible automatic terminal lists.
+Short, empty, and final results remain open until `q` restores the original screen.
+Space advances through loaded chunks before requesting another API page.
+`b` returns to cached chunks without another request.
+The pager ignores `i` and `p`; it does not print successful results when quitting.
+API errors preserve received records after restoring the terminal.
+Explicit formats, extraction, redirected output, CI, and dumb terminals retain their existing paths.
 
-- Complete first results that fit print once and exit without q, preserving the shell prompt row.
-- Tab-aware display fitting retains navigation when the original output would overflow.
-
-Models uses the shared fit policy through its existing single-response viewer.
-Run its public boundary checks without generated cursor adapters:
-
-```sh
-python3 -I -B scripts/check-list-navigation.py BINARY OUTPUT_DIR \
-  --case models-single-response \
-  --case short-models-tab-expands-overflow \
-  --case short-models-tab-cancels-wrap
-```
-
-The full checker and its cursor-resource short-result suite require generated activation.
-Recheck files, batches, and projects after normal generated promotion before declaring SDK-1178 or SDK-1179 complete.
-Historical activated recordings retain their original candidate identities.
-
-Record identical commands against two synthetic API pages.
-The recorder checks request counts before input and after Space.
-It uses the shared asciinema and agg workflow.
-
-Build the fixture:
+The current navigation checker dispatches the list pager observer.
+Run it from the repository root with a candidate binary and its comparison baseline:
 
 ```sh
-go build -o /tmp/list-navigation-demo-api ./scripts/demos/list-navigation
+python3 -I -B scripts/check-list-navigation.py \
+  /absolute/path/to/openai-after /absolute/path/to/new-checks \
+  --baseline /absolute/path/to/openai-before \
+  --asciinema /absolute/path/to/asciinema
 ```
 
-Put asciinema, agg, ffmpeg, and ffprobe on `PATH`.
-Provide pinned before and after binaries with their full commit hashes.
-Run from the repository root:
+The output directory must not exist.
+For focused Models checks, append `--case models-short-final --case models-loaded-chunks`.
+Omit `--case` to run all current observer cases.
+The observer preserves binary hashes, raw output, casts, keys, requests, statuses, and terminal-restoration evidence.
 
-```sh
-DEMO_API_BINARY=/tmp/list-navigation-demo-api \
-  bash scripts/demos/record-list-navigation.sh \
-  BEFORE_BINARY AFTER_BINARY BEFORE_SHA AFTER_SHA OUTPUT_DIR
-```
+The older fixture, driver, validator, and `scripts/demos/record-list-navigation.sh` remain historical recording tools.
+Their eager-output baseline and former navigation contract do not match the current pager-only behavior.
+Do not use that recorder to establish current candidate behavior.
+Historical recordings retain their original source and binary identities.
 
-Use a new, empty output directory outside the repository.
-The recorder writes GIFs, screenshots, transcripts, request logs, and timing evidence there.
-Inspect both screenshots and the comparison GIF before sharing them.
-
-Both scenes run `openai files list --limit 2 --max-items -1`.
-The after scene waits 1.5 seconds, sends Space, then sends q after another 1.5 seconds.
-The before scene must fetch both pages without input.
-The after scene must fetch only one page before Space.
-
-The viewer also supports `p` to print the current page and quit.
-This action restores the terminal before printing complete labeled values.
-It preserves long IDs without requesting another page.
-The viewport wraps long IDs; use `p` for unbroken logical ID lines.
-The PTY checker covers this action separately from the comparison recording.
-
-The recording uses private PTYs and temporary homes.
-The driver disables outer PTY output translation while it relays CLI bytes.
-It restores the outer PTY before printing recorder annotations.
-The validator compares the recorded CLI bytes with the driver's SHA256 digest.
-The recorder uses agg's swash backend for consistent glyph placement across incremental redraws.
-It demonstrates synthetic process behavior, not native graphical terminal appearance.
+Keep recordings outside the repository.
+Use pinned binaries, fake credentials, isolated configuration, and private PTYs.
+Inspect screenshots and GIFs before sharing them.
+These recordings establish terminal replay, not native graphical terminal appearance or clipboard behavior.

@@ -8,8 +8,11 @@ import (
 	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-cli/internal/commands/audio"
+	"github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/images"
+	"github.com/openai/openai-cli/internal/commands/webhooks"
 	requestconfig "github.com/openai/openai-cli/internal/request"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
 )
@@ -50,6 +53,7 @@ func flagOptionsWithStdin(
 	stdin io.Reader,
 	observeJSON ...func([]byte),
 ) (options []option.RequestOption, err error) {
+	stdin = files.RequestInput(cmd, stdin)
 	captureOptions, err := debugCaptureOptions(cmd)
 	if err != nil {
 		return nil, err
@@ -61,12 +65,20 @@ func flagOptionsWithStdin(
 		DebugCapture:        captureOptions,
 		PreflightMultipart:  func(body map[string]any) error { return audio.PreflightVoiceBody(cmd, body) },
 		ValidateCredentials: func() error { return admin.CheckCredentials(cmd) },
+		ValidateResolvedInputs: func(contents requestflag.RequestContents) error {
+			return files.ValidatePurpose(cmd, contents)
+		},
 		ResolvedJSONOptions: func(parameters map[string]any, headers http.Header, body []byte) []option.RequestOption {
 			return agentsResolvedRequestOptions(cmd, parameters, headers, body)
 		},
 		Encoding: requestconfig.EncodingHooks{
 			PrepareMultipart: func(body map[string]any) error { return images.PrepareMultipartBody(cmd, body) },
-			ValidateJSON:     func(body []byte) error { return validateProjectAPIKeyUpdate(cmd, body) },
+			ValidateJSON: func(body []byte) error {
+				if err := webhooks.ValidateRequestEvents(cmd, body); err != nil {
+					return err
+				}
+				return validateProjectAPIKeyUpdate(cmd, body)
+			},
 			ObserveJSON:      observeJSON,
 			ObserveMultipart: func(body io.Closer) { images.ObserveMultipart(cmd, body) },
 		},

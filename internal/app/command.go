@@ -52,6 +52,7 @@ func ConfigureCommand(root *cli.Command) {
 	registerAdminSetup(root)
 	admin.ConfigureCredentials(root)
 	admin.ConfigureProjectLifecycle(root)
+	configureListCommands(root)
 	webhooks.Configure(root, webhookCommandOptions())
 	describeAgentsCommands(root)
 	configureAgentsSessionCreation(root)
@@ -61,6 +62,7 @@ func ConfigureCommand(root *cli.Command) {
 	filecommands.Configure(root)
 	tokenize.Register(root)
 	codex.Register(root)
+	localcommands.RemoveFineTuningCommands(root)
 	localcommands.ConfigurePresentation(root)
 	manpages.Configure(root, func(command *cli.Command, message string) error {
 		return ReportSaveReceipt(command, os.Stderr, message, nil)

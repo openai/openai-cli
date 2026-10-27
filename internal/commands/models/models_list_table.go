@@ -7,14 +7,15 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/jsonview"
+	"github.com/openai/openai-cli/internal/output/listview"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/tidwall/gjson"
 )
 
-// RenderTable lists IDs and owners. Explicit formats and printing
-// retain the complete records through their existing presentation paths.
-func RenderTable(ctx context.Context, items []gjson.Result, width int, diagnostics bool) (string, bool, error) {
+// RenderTable lists IDs and owners. Explicit machine formats retain complete
+// records through their existing presentation paths.
+func RenderTable(ctx context.Context, items []gjson.Result, width int, diagnostics bool, style listview.Style) (string, bool, error) {
 	options, _ := ctx.Value(modelsListOptionsKey{}).(modelsListOptions)
 	models, supported, err := transformers.ProjectModelsList(ctx, items, options.selection.Descending)
 	if err != nil || !supported {
@@ -48,7 +49,7 @@ func RenderTable(ctx context.Context, items []gjson.Result, width int, diagnosti
 		table, fits = readable.ListTable([]string{"ID", "OWNER"}, rows, width)
 	}
 	if fits {
-		content.WriteString(table)
+		content.WriteString(style.Table(table))
 	} else {
 		for index, row := range rows {
 			if err := ctx.Err(); err != nil {
@@ -68,29 +69,10 @@ func RenderTable(ctx context.Context, items []gjson.Result, width int, diagnosti
 	if len(models) == 1 {
 		noun = "model"
 	}
-	fmt.Fprintf(&content, "\nListed %d %s.\n", len(models), noun)
+	content.WriteString(style.Note(fmt.Sprintf("\nListed %d %s.\n", len(models), noun)))
 	if diagnostics {
-		content.WriteString(ansi.Wrap("Details: --format json", max(1, width), ""))
+		content.WriteString(style.Note(ansi.Wrap("Details: --format json", max(1, width), "")))
 		content.WriteByte('\n')
 	}
 	return content.String(), true, ctx.Err()
-}
-
-// PrintHint describes printing every selected record from the single response.
-// Keep counts whole when the terminal cannot fit the complete hint.
-func PrintHint(count, width int) string {
-	full := fmt.Sprintf("p: print all %d records, quit", count)
-	if count == 1 {
-		full = "p: print 1 record, quit"
-	}
-	for _, hint := range []string{
-		full,
-		fmt.Sprintf("p: all %d, quit", count),
-		fmt.Sprintf("p: all %d", count),
-	} {
-		if len(hint) <= width {
-			return hint
-		}
-	}
-	return "p: all"
 }

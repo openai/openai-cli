@@ -1,7 +1,6 @@
 package audio
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,20 +11,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
-	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/readable"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
-	"github.com/urfave/cli/v3"
 )
 
 const audioInstructionsExample = "Speak warmly and clearly."
 const audioCommandTitle = "Command · Bash/zsh"
-
-type audioInformationState struct {
-	title, text, parent string
-	offset              int
-}
 
 func (m *audioWorkbench) instructionsSupported() bool {
 	return !strings.HasPrefix(m.settings.Model, "tts-1")
@@ -237,34 +229,20 @@ func audioMenuIndex(index, count int, key string) int {
 }
 
 func (m *audioWorkbench) openRecovery() {
-	if m.modal != "recovery" && m.modal != "error" {
+	if m.modal != "recovery" {
 		m.recoveryParent = m.modal
-	} else if m.modal == "error" && m.failureParent != "recovery" {
-		m.recoveryParent = m.failureParent
 	}
-	if m.recoveryParent == "info" && m.recoveryInfo == nil {
-		m.recoveryInfo = &audioInformationState{m.infoTitle, m.infoText, m.infoParent, m.infoOffset}
-	}
-	m.modal, m.recoveryChoice = "recovery", 0
-}
-
-func (m *audioWorkbench) recoveryItems() []string {
-	items := []string{}
-	if m.failure.StatusCode == 401 || m.failure.StatusCode == 403 {
-		items = append(items, "API setup")
-	}
-	return append(items, "Error details", "Back to form")
+	m.modal, m.failureOffset = "recovery", 0
+	m.recoveryRestoreFocus = false
 }
 
 func (m *audioWorkbench) leaveRecovery() tea.Cmd {
 	m.modal, m.recoveryParent = m.recoveryParent, ""
+	restoreFocus := m.recoveryRestoreFocus
+	m.recoveryRestoreFocus = false
 	m.lastFinished = time.Now()
-	if m.modal == "info" && m.recoveryInfo != nil {
-		m.infoTitle, m.infoText, m.infoParent = m.recoveryInfo.title, m.recoveryInfo.text, m.recoveryInfo.parent
-		m.infoOffset = m.recoveryInfo.offset
-	}
-	m.recoveryInfo = nil
-	if m.modal == "" {
+	// Inspecting a previous failure restores the section the user was editing.
+	if m.modal == "" && !restoreFocus {
 		m.setting = audioSettingMore
 		return m.focusSection(2)
 	}
@@ -277,72 +255,18 @@ func (m *audioWorkbench) reconcileRecovery() tea.Cmd {
 	if m.quit || m.activeFailure() {
 		return nil
 	}
-	parent := ""
-	switch m.modal {
-	case "recovery":
-		parent = m.recoveryParent
-	case "error":
-		parent = m.failureParent
-	case "info":
-		if m.infoParent != "recovery" {
-			return nil
-		}
-		parent = m.recoveryParent
-	default:
-		m.recoveryParent, m.failureParent = "", ""
-		m.recoveryInfo = nil
-		return nil
+	m.recoveryRestoreFocus = false
+	if m.modal == "recovery" {
+		m.modal, m.recoveryParent = m.recoveryParent, ""
+		return m.restoreEditorFocus()
 	}
-	if parent == "recovery" || parent == "error" {
-		parent = m.recoveryParent
-	}
-	if parent == "info" && m.infoParent == "recovery" {
-		parent = m.recoveryParent
-	}
-	m.modal = parent
-	if parent == "info" && m.recoveryInfo != nil {
-		m.infoTitle, m.infoText, m.infoParent = m.recoveryInfo.title, m.recoveryInfo.text, m.recoveryInfo.parent
-		m.infoOffset = m.recoveryInfo.offset
-	}
-	m.recoveryParent, m.failureParent = "", ""
-	m.recoveryInfo = nil
-	return m.restoreEditorFocus()
-}
-
-func (m *audioWorkbench) updateRecovery(key string) tea.Cmd {
-	items := m.recoveryItems()
-	m.recoveryChoice = audioMenuIndex(m.recoveryChoice, len(items), key)
-	if key != "enter" {
-		return nil
-	}
-	switch items[m.recoveryChoice] {
-	case "API setup":
-		m.openInformation("API setup", m.setupHelpText(), "recovery")
-	case "Error details":
-		m.failureParent, m.modal, m.failureOffset = "recovery", "error", 0
-	case "Back to form":
-		return m.leaveRecovery()
-	}
+	m.recoveryParent = ""
 	return nil
 }
 
 func (m *audioWorkbench) openInformation(title, text, parent string) {
 	m.infoTitle, m.infoText, m.infoParent = title, text, parent
 	m.infoOffset, m.modal = 0, "info"
-}
-
-func (m *audioWorkbench) setupHelpText() string {
-	// Render the registered local guide into an owned buffer. Do not run the
-	// command or replace shared writers while a playback worker can be active.
-	root := m.command.Root()
-	if help := root.Command("help"); help != nil {
-		if setup := help.Command("setup"); setup != nil && setup.CustomHelpTemplate != "" {
-			var buffer bytes.Buffer
-			cli.HelpPrinter(&buffer, setup.CustomHelpTemplate, setup)
-			return "Close this form before following these steps.\nThen reopen audio speak in that shell.\n\n" + buffer.String()
-		}
-	}
-	return "Close this form and run:\n\n" + clihelp.DisplayInvocation(root) + " help setup\n\nThen reopen audio speak in the same shell."
 }
 
 func (m *audioWorkbench) infoRows() []string {

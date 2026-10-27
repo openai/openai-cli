@@ -44,7 +44,9 @@ func ShowResult(value gjson.Result, opts ResultOptions) (bool, error) {
 						advice += "\nInspect the receiver URL: " + inspect
 					}
 				}
-				if webhookCommandValue(id) && webhookCommandValue(event) {
+				if unavailableWebhookEvent(event) {
+					advice += "\nChoose an available event with webhooks event-types list before another test."
+				} else if webhookCommandValue(id) && webhookCommandValue(event) {
 					if retry := webhookFollowupCommand(opts.Context, "webhooks", "test", "--webhook-endpoint-id="+id, "--event-type="+event); retry != "" {
 						advice += "\nAfter fixing the receiver, retry: " + retry
 					} else {
@@ -69,6 +71,8 @@ func ShowResult(value gjson.Result, opts ResultOptions) (bool, error) {
 		switch {
 		case projected.Raw == value.Raw:
 			advice = "The API returned an unexpected event catalog.\nNext: inspect the returned fields and check your project access before creating an endpoint."
+		case projected.Type == gjson.String && value.Get("data.#").Int() > 0:
+			advice = "Use the Platform API directly for these events."
 		case projected.Type == gjson.String:
 			advice = "Next: check your project and access settings. Load event types again before creating an endpoint."
 		default:
@@ -136,7 +140,7 @@ func webhookCreatedAdvice(ctx context.Context, value gjson.Result) string {
 		advice = "No signing secret was returned. Keep this response and check your saved secret before testing.\nReceiver guide: " + webhookReceiverGuide
 	}
 	for _, event := range value.Get("event_types").Array() {
-		if event.Type == gjson.String && webhookCommandValue(event.Str) {
+		if event.Type == gjson.String && webhookCommandValue(event.Str) && !unavailableWebhookEvent(event.Str) {
 			if command := webhookFollowupCommand(ctx, "webhooks", "test", "--webhook-endpoint-id="+value.Get("id").Str, "--event-type="+event.Str); command != "" {
 				advice += "\nWhen your receiver is ready, send a sample: " + command
 			}

@@ -56,7 +56,10 @@ func TestAudioEditorNarrowValidationRemainsVisible(t *testing.T) {
 	m := newAudioWorkbench(t.Context(), &cli.Command{Name: "openai"}, nil, audiohistory.Store{})
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 	m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
-	require.Contains(t, m.View().Content, "Enter text before generating speech.")
+	view := audioFeedbackView(t, m)
+	require.Contains(t, view, "Text is empty.")
+	require.Contains(t, view, "1. Enter text before generating speech.")
+	require.Contains(t, view, "Esc back")
 	require.False(t, m.busy)
 }
 

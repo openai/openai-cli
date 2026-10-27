@@ -22,7 +22,7 @@ import (
 )
 
 // External SIGINT and raw-mode Ctrl+C use different paths. Exercise both through
-// main, after observable viewer output, and retain the normal exit controls.
+// main, after observable paging output, and retain the normal exit controls.
 func TestMainModelsListSignals(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -38,6 +38,7 @@ func TestMainModelsListSignals(t *testing.T) {
 		flags               []string
 		delay               time.Duration
 		code                int
+		large               bool
 	}
 	var cases []signalCase
 	for _, stage := range []string{"startup", "loaded"} {
@@ -68,7 +69,7 @@ func TestMainModelsListSignals(t *testing.T) {
 		action string
 		code   int
 	}{
-		{"ctrl-c", 130}, {"q", 0}, {"escape", 0}, {"p", 0},
+		{"ctrl-c", 130}, {"q", 0}, {"escape", 0},
 		// Bubble Tea treats SIGTERM as a clean quit. Preserve that contract.
 		{"SIGTERM", 0},
 	} {
@@ -77,12 +78,12 @@ func TestMainModelsListSignals(t *testing.T) {
 		})
 	}
 	for _, interrupted := range []struct {
-		name   string
-		signal syscall.Signal
-	}{{"SIGINT", syscall.SIGINT}, {"SIGTERM", syscall.SIGTERM}} {
+		name string
+		code int
+	}{{"SIGINT", 130}, {"SIGTERM", 0}} {
 		cases = append(cases, signalCase{
-			name: interrupted.name + " while printing after viewer exit", stage: "printing", action: interrupted.name,
-			flags: []string{"--format-error", "json"}, code: -int(interrupted.signal),
+			name: interrupted.name + " with a large loaded model", stage: "loaded", action: interrupted.name,
+			flags: []string{"--format-error", "json"}, code: interrupted.code, large: true,
 		})
 	}
 
@@ -95,22 +96,24 @@ func TestMainModelsListSignals(t *testing.T) {
 	}
 	body, err := json.Marshal(map[string]any{"object": "list", "data": models})
 	require.NoError(t, err)
+	const largeOwnerMarker = "synthetic-large-owner-start-"
+	const largeOwnerEnd = "-synthetic-large-owner-end"
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			responseBody, printBytes := body, 0
-			if tc.stage == "printing" {
-				// The viewport omits this metadata. Printing retains it and cannot
-				// finish while the observer leaves the PTY output undrained.
-				printingModels := make([]map[string]any, len(models))
+			responseBody := body
+			if tc.large {
+				// Preserve the original 40 × 64 KiB padding in a visible owner.
+				// The pager must retain the full response before handling a signal.
+				largeModels := make([]map[string]any, len(models))
 				for index, model := range models {
-					printingModels[index] = make(map[string]any, len(model)+1)
+					largeModels[index] = make(map[string]any, len(model))
 					for key, value := range model {
-						printingModels[index][key] = value
+						largeModels[index][key] = value
 					}
-					printingModels[index]["metadata_padding"] = strings.Repeat("x", 64<<10)
 				}
-				printBytes = len(models) * (64 << 10)
-				responseBody, err = json.Marshal(map[string]any{"object": "list", "data": printingModels})
+				payloadBytes := len(models) * (64 << 10)
+				largeModels[len(largeModels)-1]["owned_by"] = largeOwnerMarker + strings.Repeat("x", payloadBytes) + largeOwnerEnd
+				responseBody, err = json.Marshal(map[string]any{"object": "list", "data": largeModels})
 				require.NoError(t, err)
 			}
 			var requests atomic.Int32
@@ -127,7 +130,6 @@ func TestMainModelsListSignals(t *testing.T) {
 				"binary": binary, "endpoint": server.URL + "/v1", "home": t.TempDir(),
 				"stage": tc.stage, "action": tc.action, "flags": tc.flags,
 				"delay": tc.delay.Seconds(), "expected": tc.code,
-				"print_bytes": printBytes,
 			})
 			require.NoError(t, err)
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Second)
