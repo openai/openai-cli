@@ -531,7 +531,7 @@
     },
     "generated/commands/image.go": {
       "mode": "100644",
-      "sha256": "d0d64d5a19dd851149410b7eb7c63e9729a2c094f5fcf6bef55da7e726a32e2f"
+      "sha256": "23cfb3746f37b5051220d33154d0d62565695da120a0173901c3d917fd3fa1ed"
     },
     "generated/commands/image_test.go": {
       "mode": "100644",
