@@ -12,6 +12,7 @@ from functools import partial
 import importlib.util
 from collections import Counter
 from datetime import datetime, timezone
+import errno
 import hashlib
 import json
 import os
@@ -20,6 +21,7 @@ import platform
 import re
 import shutil
 import signal
+import ssl
 import struct
 import subprocess
 import sys
@@ -400,69 +402,118 @@ class HTTPSOnly(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(request, fp, code, message, headers, newurl)
 
 
+def retryable_image_transport(error):
+    if isinstance(error, urllib.error.HTTPError):
+        return False
+    reason = error.reason if isinstance(error, urllib.error.URLError) else error
+    unreachable = (errno.ENETUNREACH, getattr(errno, "WSAENETUNREACH", 10051))
+    return (not isinstance(reason, ssl.SSLError) and
+            (isinstance(reason, TimeoutError) or
+             isinstance(reason, OSError) and reason.errno in unreachable))
+
+
 def open_image(opener, deadline, attempts):
-    # Retry only startup timeouts. No response or output file exists yet.
-    for index in range(2):
-        started = time.monotonic()
-        remaining = deadline - started
-        if STOP or remaining <= 0:
-            raise RuntimeError("Ubuntu download stopped or timed out")
-        attempt = {"number": index + 1, "outcome": "opening"}
-        attempts.append(attempt)
-        try:
-            response = opener.open(IMAGE_URL, timeout=min(10, remaining))
-        except Exception as error:
-            reason = error.reason if isinstance(error, urllib.error.URLError) else error
-            attempt.update(outcome="failed", error_type=type(error).__name__,
-                           reason_type=type(reason).__name__,
-                           elapsed_seconds=round(time.monotonic() - started, 3))
-            if index or isinstance(error, urllib.error.HTTPError) or not isinstance(reason, TimeoutError):
-                raise
-            if STOP or deadline - time.monotonic() < 11:
-                raise
-            time.sleep(1)
-            if STOP or deadline - time.monotonic() < 10:
-                raise
-            continue
-        attempt.update(outcome="opened", elapsed_seconds=round(time.monotonic() - started, 3))
-        if STOP or time.monotonic() >= deadline:
-            attempt["outcome"] = "rejected_late_or_stopped"
-            response.close()
-            raise RuntimeError("Ubuntu download stopped or timed out")
-        return response
-    raise RuntimeError("Ubuntu download failed to open within retry policy")
+    started = time.monotonic()
+    remaining = deadline - started
+    if STOP or remaining <= 0:
+        raise RuntimeError("Ubuntu download stopped or timed out")
+    attempt = {"number": len(attempts) + 1, "outcome": "opening"}
+    attempts.append(attempt)
+    try:
+        response = opener.open(IMAGE_URL, timeout=min(10, remaining))
+    except Exception as error:
+        reason = error.reason if isinstance(error, urllib.error.URLError) else error
+        attempt.update(outcome="failed", error_type=type(error).__name__,
+                       reason_type=type(reason).__name__,
+                       elapsed_seconds=round(time.monotonic() - started, 3))
+        if isinstance(reason, OSError) and isinstance(reason.errno, int):
+            attempt["reason_errno"] = reason.errno
+        raise
+    attempt.update(outcome="opened", elapsed_seconds=round(time.monotonic() - started, 3))
+    if STOP or time.monotonic() >= deadline:
+        attempt["outcome"] = "rejected_late_or_stopped"
+        response.close()
+        raise RuntimeError("Ubuntu download stopped or timed out")
+    return response
+
+
+def require_owned_image(path, output):
+    if not os.path.samestat(os.fstat(output.fileno()), path.lstat()):
+        raise RuntimeError("Owned Ubuntu image was replaced")
 
 
 def download_image(path, deadline, attempts=None, *, staged_image=None):
+    # One fresh retry covers opening and body reads together. Never renew end.
     # A socket read can take ten seconds. Reserve that time inside the 480-second cap.
     end = min(deadline, time.monotonic() + 470)
-    hasher, size = hashlib.sha256(), 0
-    if staged_image is None:
-        opener = urllib.request.build_opener(HTTPSOnly())
-        source = open_image(opener, end, attempts if attempts is not None else [])
-    else:
-        # Artifacts are transport only: verify the bytes again before WSL import.
-        if staged_image.is_symlink() or not staged_image.is_file():
-            raise RuntimeError("Staged Ubuntu image must be a regular file")
-        source = staged_image.open("rb")
-    with source as response, path.open("xb") as output:
-        declared_size = (int(response.headers.get("Content-Length", "0")) if staged_image is None
-                         else os.fstat(response.fileno()).st_size)
-        if declared_size > IMAGE_LIMIT:
-            raise RuntimeError("Ubuntu image exceeds its download limit")
-        while True:
-            if STOP or time.monotonic() >= end:
-                raise RuntimeError("Ubuntu download stopped or timed out")
-            chunk = response.read1(65536)
-            if STOP or time.monotonic() >= end:
-                raise RuntimeError("Ubuntu download stopped or timed out")
-            if not chunk:
-                break
-            size += len(chunk)
-            if size > IMAGE_LIMIT:
-                raise RuntimeError("Ubuntu image exceeds its download limit")
-            output.write(chunk)
-            hasher.update(chunk)
+    attempts = attempts if attempts is not None else []
+    opener = urllib.request.build_opener(HTTPSOnly()) if staged_image is None else None
+    output = None
+    try:
+        for index in range(2 if staged_image is None else 1):
+            hasher, size = hashlib.sha256(), 0
+            retry_error = None
+            try:
+                if staged_image is None:
+                    try:
+                        source = open_image(opener, end, attempts)
+                    except Exception as error:
+                        if retryable_image_transport(error):
+                            retry_error = error
+                        raise
+                else:
+                    # Artifacts are transport only: verify bytes again before WSL import.
+                    if staged_image.is_symlink() or not staged_image.is_file():
+                        raise RuntimeError("Staged Ubuntu image must be a regular file")
+                    source = staged_image.open("rb")
+                with source as response:
+                    if output is None:
+                        output = path.open("xb")
+                    declared_size = (int(response.headers.get("Content-Length", "0")) if staged_image is None
+                                     else os.fstat(response.fileno()).st_size)
+                    if declared_size > IMAGE_LIMIT:
+                        raise RuntimeError("Ubuntu image exceeds its download limit")
+                    while True:
+                        if STOP or time.monotonic() >= end:
+                            raise RuntimeError("Ubuntu download stopped or timed out")
+                        try:
+                            chunk = response.read1(65536)
+                        except Exception as error:
+                            if staged_image is None:
+                                reason = error.reason if isinstance(error, urllib.error.URLError) else error
+                                attempts[-1].update(outcome="body_failed", error_type=type(error).__name__,
+                                                    reason_type=type(reason).__name__)
+                                if isinstance(reason, OSError) and isinstance(reason.errno, int):
+                                    attempts[-1]["reason_errno"] = reason.errno
+                                if retryable_image_transport(error):
+                                    retry_error = error
+                            raise
+                        if STOP or time.monotonic() >= end:
+                            raise RuntimeError("Ubuntu download stopped or timed out")
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if size > IMAGE_LIMIT:
+                            raise RuntimeError("Ubuntu image exceeds its download limit")
+                        output.write(chunk)
+                        hasher.update(chunk)
+            except Exception as error:
+                # A close/write failure can replace a network exception. It stays terminal.
+                if error is not retry_error or index or STOP or end - time.monotonic() < 11:
+                    raise
+                if output is not None:
+                    require_owned_image(path, output)
+                    output.seek(0)
+                    output.truncate()
+                time.sleep(1)
+                if STOP or end - time.monotonic() < 10:
+                    raise
+                continue
+            require_owned_image(path, output)
+            break
+    finally:
+        if output is not None:
+            output.close()
     if STOP or time.monotonic() >= end:
         raise RuntimeError("Ubuntu download stopped or timed out")
     if hasher.hexdigest() != IMAGE_SHA256:
