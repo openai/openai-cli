@@ -757,7 +757,9 @@ class DownloadRetryTests(unittest.TestCase):
         data = b"synthetic image"
         for failure in (TimeoutError("synthetic timeout"), pilot.urllib.error.URLError(TimeoutError("synthetic timeout")),
                         OSError(errno.ENETUNREACH, "synthetic route failure"),
-                        pilot.urllib.error.URLError(OSError(errno.ENETUNREACH, "synthetic route failure"))):
+                        pilot.urllib.error.URLError(OSError(errno.ENETUNREACH, "synthetic route failure")),
+                        OSError(10051, "synthetic Winsock route failure"),
+                        pilot.urllib.error.URLError(OSError(10051, "synthetic Winsock route failure"))):
             with self.subTest(type=type(failure).__name__):
                 response = self.Response(data)
                 opener = Mock()
@@ -800,6 +802,8 @@ class DownloadRetryTests(unittest.TestCase):
                     pilot.urllib.error.URLError(ssl.SSLCertVerificationError(1, "synthetic certificate failure")),
                     ssl.SSLError(1, "synthetic TLS failure"),
                     pilot.urllib.error.URLError(ssl.SSLError(errno.ENETUNREACH, "synthetic TLS route failure")),
+                    ssl.SSLError(10051, "synthetic TLS Winsock failure"),
+                    pilot.urllib.error.URLError(ssl.SSLError(10051, "synthetic TLS Winsock failure")),
                     pilot.urllib.error.HTTPError(pilot.IMAGE_URL, 503, "timeout-looking text", None, None),
                     pilot.urllib.error.HTTPError(pilot.IMAGE_URL, 503, TimeoutError("synthetic HTTP reason"), None, None),
                     pilot.urllib.error.URLError(socket.gaierror(-2, "synthetic DNS failure")),
@@ -820,30 +824,35 @@ class DownloadRetryTests(unittest.TestCase):
                 self.assertEqual(len(attempts), 1)
                 self.assertFalse(self.path.exists())
 
-    def test_body_timeout_restarts_owned_file_and_hash(self):
+    def test_body_transport_restarts_owned_file_and_hash(self):
         data = b"good"
-        first = self.Partial(TimeoutError("synthetic body timeout"))
-        second = self.Response(data)
-        opener = Mock()
+        for failure in (TimeoutError("synthetic body timeout"),
+                        OSError(10051, "synthetic Winsock route failure"),
+                        pilot.urllib.error.URLError(OSError(10051, "synthetic Winsock route failure"))):
+            with self.subTest(type=type(failure).__name__):
+                self.path.unlink(missing_ok=True)
+                first = self.Partial(failure)
+                second = self.Response(data)
+                opener = Mock()
 
-        def opened(*_args, **_kwargs):
-            if opener.open.call_count == 1:
-                return first
-            self.assertTrue(first.closed)
-            self.assertEqual(self.path.read_bytes(), b"")
-            return second
+                def opened(*_args, **_kwargs):
+                    if opener.open.call_count == 1:
+                        return first
+                    self.assertTrue(first.closed)
+                    self.assertEqual(self.path.read_bytes(), b"")
+                    return second
 
-        opener.open.side_effect = opened
-        attempts = []
-        with patch.object(pilot.urllib.request, "build_opener", return_value=opener), \
-                patch.object(pilot.time, "sleep") as sleep, \
-                patch.object(pilot, "IMAGE_SHA256", pilot.hashlib.sha256(data).hexdigest()):
-            self.assertEqual(pilot.download_image(self.path, time.monotonic() + 100, attempts), len(data))
-        self.assertEqual(self.path.read_bytes(), data)
-        self.assertTrue(second.closed)
-        self.assertEqual(opener.open.call_count, 2)
-        self.assertEqual([a["outcome"] for a in attempts], ["body_failed", "opened"])
-        sleep.assert_called_once_with(1)
+                opener.open.side_effect = opened
+                attempts = []
+                with patch.object(pilot.urllib.request, "build_opener", return_value=opener), \
+                        patch.object(pilot.time, "sleep") as sleep, \
+                        patch.object(pilot, "IMAGE_SHA256", pilot.hashlib.sha256(data).hexdigest()):
+                    self.assertEqual(pilot.download_image(self.path, time.monotonic() + 100, attempts), len(data))
+                self.assertEqual(self.path.read_bytes(), data)
+                self.assertTrue(second.closed)
+                self.assertEqual(opener.open.call_count, 2)
+                self.assertEqual([a["outcome"] for a in attempts], ["body_failed", "opened"])
+                sleep.assert_called_once_with(1)
 
     def test_startup_and_body_share_one_retry(self):
         for phases in (("open", "body"), ("body", "body"), ("body", "open")):
@@ -891,10 +900,12 @@ class DownloadRetryTests(unittest.TestCase):
                 sleep.assert_not_called()
                 self.path.unlink()
 
-    def test_local_timeout_never_retries(self):
-        for operation in ("write", "seek", "truncate", "close", "response close"):
-            with self.subTest(operation=operation):
-                failure = TimeoutError("synthetic local " + operation)
+    def test_local_errors_never_retry(self):
+        failures = [(operation, TimeoutError("synthetic local " + operation))
+                    for operation in ("write", "seek", "truncate", "close", "response close")]
+        failures.append(("write", OSError(10051, "synthetic local Winsock error")))
+        for operation, failure in failures:
+            with self.subTest(operation=operation, type=type(failure).__name__):
                 response = (self.Partial(TimeoutError("synthetic body timeout"))
                             if operation in ("seek", "truncate", "response close") else self.Response(b"synthetic"))
                 opener = Mock()
@@ -912,7 +923,7 @@ class DownloadRetryTests(unittest.TestCase):
                     with fault, patch.object(Path, "open", return_value=output), \
                             patch.object(pilot.urllib.request, "build_opener", return_value=opener), \
                             patch.object(pilot.time, "sleep") as sleep:
-                        with self.assertRaises(TimeoutError) as caught:
+                        with self.assertRaises(type(failure)) as caught:
                             pilot.download_image(self.path, time.monotonic() + 100)
                     self.assertIs(caught.exception, failure)
                     self.assertTrue(response.closed)

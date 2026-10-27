@@ -406,9 +406,10 @@ def retryable_image_transport(error):
     if isinstance(error, urllib.error.HTTPError):
         return False
     reason = error.reason if isinstance(error, urllib.error.URLError) else error
+    unreachable = (errno.ENETUNREACH, getattr(errno, "WSAENETUNREACH", 10051))
     return (not isinstance(reason, ssl.SSLError) and
             (isinstance(reason, TimeoutError) or
-             isinstance(reason, OSError) and reason.errno == errno.ENETUNREACH))
+             isinstance(reason, OSError) and reason.errno in unreachable))
 
 
 def open_image(opener, deadline, attempts):
