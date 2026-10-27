@@ -16,6 +16,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/tokenize"
 	"github.com/openai/openai-cli/internal/commands/webhooks"
 	requestconfig "github.com/openai/openai-cli/internal/request"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
 
@@ -68,6 +69,7 @@ func ConfigureCommand(root *cli.Command) {
 		return ReportSaveReceipt(command, os.Stderr, message, nil)
 	})
 	configureOutputPolicy(root)
+	requestflag.AddStructuredFlags(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
 	previousBefore := root.Before

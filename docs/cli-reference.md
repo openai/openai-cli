@@ -104,6 +104,24 @@ mTLS endpoint, so configure `OPENAI_BASE_URL` or `--base-url` explicitly. HTTP
 and SOCKS proxies remain supported, but HTTPS proxies are rejected to prevent
 presenting the client certificate during the proxy's own TLS handshake.
 
+## Text and structured request values
+
+Some request flags accept both text and structured values. These flags preserve
+text exactly as supplied, including `null`, numbers, brackets, and newlines.
+Use the matching `-structured` flag to parse a JSON or YAML value:
+
+```sh
+openai responses create --model MODEL --input 'Translate: hello'
+openai responses create --model MODEL --input-structured '[{"role":"user","content":"hello"}]'
+```
+
+**Existing scripts that pass JSON or YAML directly to these flags must use the
+matching `-structured` flag.** For example, replace `--input '[...]'` with
+`--input-structured '[...]'`. Use `--input-structured null` for JSON null.
+Do not combine a flag with its `-structured` alternative in one command.
+Typed object and array flags keep their existing syntax. Whole-request JSON and
+YAML on stdin also keep their existing behavior.
+
 ## Passing files as arguments
 
 For JSON input values, `@myfile.ext` reads local file contents:
@@ -119,7 +137,7 @@ openai <command> --arg @abe.jpg
 Files can also be passed inside JSON or YAML blobs:
 
 ```bash
-openai <command> --arg '{image: "@abe.jpg"}'
+openai <command> --arg-structured '{image: "@abe.jpg"}'
 # Equivalent:
 openai <command> <<YAML
 arg:

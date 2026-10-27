@@ -23,37 +23,37 @@ func TestInnerFlagAfterUntypedArrayLiteral(t *testing.T) {
 	}{
 		{
 			"merge into the trailing element",
-			[]string{"--entry", `[{"name":"earlier"}]`, "--entry.description", "details"},
+			[]string{"--entry-structured", `[{"name":"earlier"}]`, "--entry.description", "details"},
 			`{"entries":[{"name":"earlier","description":"details"}]}`,
 		},
 		{
 			"repeated field starts another element",
-			[]string{"--entry", `[{"name":"earlier"}]`, "--entry.name", "demo"},
+			[]string{"--entry-structured", `[{"name":"earlier"}]`, "--entry.name", "demo"},
 			`{"entries":[{"name":"earlier"},{"name":"demo"}]}`,
 		},
 		{
 			"two inner fields fill an empty element",
-			[]string{"--entry", "[{}]", "--entry.name", "demo", "--entry.description", "details"},
+			[]string{"--entry-structured", "[{}]", "--entry.name", "demo", "--entry.description", "details"},
 			`{"entries":[{"name":"demo","description":"details"}]}`,
 		},
 		{
 			"yaml flow array",
-			[]string{"--entry", "- {name: earlier}", "--entry.description", "details"},
+			[]string{"--entry-structured", "- {name: earlier}", "--entry.description", "details"},
 			`{"entries":[{"name":"earlier","description":"details"}]}`,
 		},
 		{
 			"non-object element starts a new one",
-			[]string{"--entry", `["plain"]`, "--entry.name", "demo"},
+			[]string{"--entry-structured", `["plain"]`, "--entry.name", "demo"},
 			`{"entries":["plain",{"name":"demo"}]}`,
 		},
 		{
 			"null element starts a new one",
-			[]string{"--entry", `[null]`, "--entry.name", "demo"},
+			[]string{"--entry-structured", `[null]`, "--entry.name", "demo"},
 			`{"entries":[null,{"name":"demo"}]}`,
 		},
 		{
 			"empty array",
-			[]string{"--entry", "[]", "--entry.name", "demo"},
+			[]string{"--entry-structured", "[]", "--entry.name", "demo"},
 			`{"entries":[{"name":"demo"}]}`,
 		},
 	} {
@@ -77,6 +77,7 @@ func TestInnerFlagAfterUntypedArrayLiteral(t *testing.T) {
 				},
 			})
 
+			AddStructuredFlags(&command)
 			require.NoError(t, command.Run(context.Background(), append([]string{"test"}, tt.args...)))
 			assert.JSONEq(t, tt.want, string(body))
 		})
@@ -89,7 +90,7 @@ func TestInnerFlagAfterUntypedArrayLiteralDirect(t *testing.T) {
 
 	outer := &Flag[any]{Name: "entry"}
 	require.NoError(t, outer.PreParse())
-	require.NoError(t, outer.Set(outer.Name, `[{"name":"earlier"}]`))
+	require.NoError(t, (&structuredFlag{Flag: &Flag[string]{Name: "entry-structured"}, target: outer}).Set("entry-structured", `[{"name":"earlier"}]`))
 
 	name := &InnerFlag[string]{
 		Name: "entry.name", InnerField: "name", OuterFlag: outer, OuterIsArrayOfObjects: true,

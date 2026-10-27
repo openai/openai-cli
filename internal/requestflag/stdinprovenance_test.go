@@ -142,7 +142,11 @@ func TestApplyStdinDataToFlagsWithProvenancePreservesExplicitEmptyCollections(t 
 			t.Parallel()
 
 			require.NoError(t, test.outer.PreParse())
-			require.NoError(t, test.outer.Set("nested", test.rawValue))
+			if f, ok := test.outer.(*Flag[any]); ok {
+				require.NoError(t, (&structuredFlag{Flag: &Flag[string]{Name: "nested-structured"}, target: f}).Set("nested-structured", test.rawValue))
+			} else {
+				require.NoError(t, test.outer.Set("nested", test.rawValue))
+			}
 			command := &cli.Command{Flags: []cli.Flag{test.outer, test.inner}}
 			observed := false
 

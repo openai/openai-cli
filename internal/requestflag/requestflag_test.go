@@ -513,13 +513,13 @@ func TestYamlHandling(t *testing.T) {
 	t.Run("Parse YAML to any", func(t *testing.T) {
 		t.Parallel()
 
-		cv := &cliValue[any]{}
-		err := cv.Set("name: test\nvalue: 42\n")
+		flag := &Flag[any]{Name: "value"}
+		err := (&structuredFlag{Flag: &Flag[string]{Name: "value-structured"}, target: flag}).Set("value-structured", "name: test\nvalue: 42\n")
 		assert.NoError(t, err)
 
 		// The value should be a map
-		val, ok := cv.Get().(map[string]any)
-		assert.True(t, ok, "Expected map[string]any, got %T", cv.Get())
+		val, ok := flag.Get().(map[string]any)
+		assert.True(t, ok, "Expected map[string]any, got %T", flag.Get())
 
 		if ok {
 			assert.Equal(t, "test", val["name"])
@@ -527,7 +527,7 @@ func TestYamlHandling(t *testing.T) {
 		}
 
 		// The string representation should be valid YAML
-		strVal := cv.String()
+		strVal := flag.value.(*cliValue[any]).String()
 		var parsed map[string]any
 		err = yaml.Unmarshal([]byte(strVal), &parsed)
 		assert.NoError(t, err)
@@ -539,13 +539,13 @@ func TestYamlHandling(t *testing.T) {
 	t.Run("Parse YAML array", func(t *testing.T) {
 		t.Parallel()
 
-		cv := &cliValue[any]{}
-		err := cv.Set("- item1\n- item2\n- item3\n")
+		flag := &Flag[any]{Name: "value"}
+		err := (&structuredFlag{Flag: &Flag[string]{Name: "value-structured"}, target: flag}).Set("value-structured", "- item1\n- item2\n- item3\n")
 		assert.NoError(t, err)
 
 		// The value should be a slice
-		val, ok := cv.Get().([]any)
-		assert.True(t, ok, "Expected []any, got %T", cv.Get())
+		val, ok := flag.Get().([]any)
+		assert.True(t, ok, "Expected []any, got %T", flag.Get())
 
 		if ok {
 			assert.Len(t, val, 3)
@@ -625,8 +625,8 @@ func TestYamlHandling(t *testing.T) {
 		t.Parallel()
 
 		invalidYaml := `[not closed`
-		cv := &cliValue[any]{}
-		err := cv.Set(invalidYaml)
+		flag := &Flag[any]{Name: "value"}
+		err := (&structuredFlag{Flag: &Flag[string]{Name: "value-structured"}, target: flag}).Set("value-structured", invalidYaml)
 		assert.Error(t, err)
 	})
 }
@@ -646,11 +646,11 @@ func TestNullLiteralHandling(t *testing.T) {
 		assert.JSONEq(t, expected, string(body))
 	}
 
-	t.Run("Flag[any] null sends JSON null", func(t *testing.T) {
+	t.Run("Flag[any] null is literal text", func(t *testing.T) {
 		t.Parallel()
 		cv := &cliValue[any]{}
 		assert.NoError(t, cv.Set("null"))
-		assertJSONBody(t, cv.Get(), `{"foo":null}`)
+		assertJSONBody(t, cv.Get(), `{"foo":"null"}`)
 	})
 
 	t.Run("Flag[string] null is the raw string \"null\"", func(t *testing.T) {
