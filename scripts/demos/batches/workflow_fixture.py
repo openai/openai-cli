@@ -100,7 +100,8 @@ class WorkflowFixture:
         finished = 3 if status == "completed" else 1 if status == "in_progress" else 0
         return {"id": "batch_demo", "object": "batch", "endpoint": "/v1/responses",
                 "input_file_id": "file_input_demo", "completion_window": "24h", "status": status,
-                "created_at": 1792800000, "in_progress_at": 1792800002,
+                "created_at": 1792800000,
+                "in_progress_at": 1792800002 if status in ("in_progress", "completed") else None,
                 "completed_at": 1792800005 if status == "completed" else None,
                 "output_file_id": "file_result" if status == "completed" else None,
                 "error_file_id": None, "request_counts": {"total": 3, "completed": finished, "failed": 0},
