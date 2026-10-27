@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.44.0](https://github.com/openai/openai-cli/compare/v1.43.2...v1.44.0) (2026-10-27)
+
+
+### Features
+
+* **api:** add custom voice deletion ([#637](https://github.com/openai/openai-cli/issues/637)) ([32f26e5](https://github.com/openai/openai-cli/commit/32f26e5ac6383fd36a4c24356dcd50fe82380feb))
+
+
+### Chores
+
+* **api:** document delegation acknowledgement timing ([#639](https://github.com/openai/openai-cli/issues/639)) ([24a8811](https://github.com/openai/openai-cli/commit/24a88114fcfa74a0774f0f6393542cfd180657b0))
+* **api:** update decision input documentation ([#640](https://github.com/openai/openai-cli/issues/640)) ([d7e4cbe](https://github.com/openai/openai-cli/commit/d7e4cbefcc9869df5f5c13bc58bb79e462266b61))
+* enforce generated-file ownership ([#642](https://github.com/openai/openai-cli/issues/642)) ([92f0ca6](https://github.com/openai/openai-cli/commit/92f0ca624c52b59ee34d2e6a28ee6ea0155f5f30))
+
 ## [1.43.2](https://github.com/openai/openai-cli/compare/v1.43.1...v1.43.2) (2026-10-27)
 
 
