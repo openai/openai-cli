@@ -89,7 +89,8 @@ The browser shows three synthetic batches: successful, partially failed, and sti
 Choose a batch, then inspect its status, results, errors, inputs, or downloads.
 The fixture keeps these statuses fixed. It accepts only read operations and fake credentials.
 Relative download paths use the printed temporary directory.
-Escape returns to the previous menu; Ctrl+C exits.
+Escape returns to batch actions or the batch list.
+At the batch list, Escape exits. Ctrl+C exits from any screen.
 The trial stops its child process and loopback server before returning.
 It does not use personal API keys, install the CLI, or make live API calls.
 
@@ -111,3 +112,18 @@ After shows submission, readable lifecycle details, input discovery, and matched
 The recorder checks one upload and one Batch creation for each comparison.
 It retains replay files, screenshots, transcripts, hashes, and request evidence outside the repository.
 Do not commit binary media.
+
+## Record the browser comparison
+
+Use two built CLI executables and their complete commit IDs:
+
+```sh
+bash scripts/demos/batches/record-browser.sh \
+  /absolute/path/to/before /absolute/path/to/after \
+  BEFORE_COMMIT AFTER_COMMIT /tmp/batch-browser-recording
+```
+
+The recipe requires existing `asciinema`, `agg`, `ffmpeg`, and Python installations.
+It reuses the shared capture lifecycle and the synthetic browser fixture.
+It checks aligned menu lines, readable results, errors, successful exits, and GET-only requests.
+Captures show terminal replay. They do not establish physical terminal appearance or live API behavior.

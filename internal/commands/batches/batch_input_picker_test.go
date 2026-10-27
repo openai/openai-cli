@@ -1,6 +1,7 @@
 package batches
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -154,4 +155,38 @@ func TestBatchInputPickerFilteringObservesCancellation(t *testing.T) {
 	model := newBatchInputPicker(ctx, []gjson.Result{gjson.Parse(`{"id":"file_one"}`)}, 80, 24)
 	require.ErrorIs(t, model.err, context.Canceled)
 	require.Empty(t, model.visible)
+}
+
+func TestBatchInputPickerFramesUseExplicitCarriageReturns(t *testing.T) {
+	var output bytes.Buffer
+	writer := &batchPickerOutput{TerminalWriter: clioutput.TerminalWriter{
+		Writer: clioutput.Writer{Context: t.Context(), Sink: &output},
+	}, cancel: func() { t.Error("successful frame canceled the picker") }}
+	for _, chunk := range []string{"first\nsecond\r", "\nthird\n"} {
+		n, err := writer.WriteString(chunk)
+		require.NoError(t, err)
+		require.Equal(t, len(chunk), n)
+	}
+	require.Equal(t, "first\r\nsecond\r\nthird\r\n", output.String())
+}
+
+type batchPickerPartialWriter struct{ remaining int }
+
+func (w *batchPickerPartialWriter) Write(data []byte) (int, error) {
+	n := min(len(data), w.remaining)
+	w.remaining -= n
+	return n, io.ErrClosedPipe
+}
+
+func TestBatchInputPickerFrameFailureCountsOriginalBytes(t *testing.T) {
+	for _, tc := range []struct{ written, consumed int }{{0, 0}, {1, 1}, {2, 1}, {3, 2}, {4, 3}} {
+		ctx, cancel := context.WithCancel(t.Context())
+		writer := &batchPickerOutput{TerminalWriter: clioutput.TerminalWriter{
+			Writer: clioutput.Writer{Context: t.Context(), Sink: &batchPickerPartialWriter{remaining: tc.written}},
+		}, cancel: cancel}
+		n, err := writer.WriteString("a\nb")
+		require.ErrorIs(t, err, io.ErrClosedPipe)
+		require.Equal(t, tc.consumed, n)
+		require.ErrorIs(t, ctx.Err(), context.Canceled)
+	}
 }

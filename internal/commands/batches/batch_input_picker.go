@@ -186,14 +186,19 @@ func runBatchPickerModel(ctx context.Context, model tea.Model, policy batchPicke
 			return err
 		}
 		_, runErr := program.Run()
-		inputErr := closeInput()
 		writer.mu.Lock()
 		outputErr := writer.err
 		writer.mu.Unlock()
 		if outputErr != nil && ctx.Err() == nil && errors.Is(runErr, tea.ErrProgramKilled) {
 			runErr = nil
 		}
-		return errors.Join(inputErr, outputErr, runErr)
+		var lineErr error
+		if outputErr == nil && runErr == nil {
+			// Leave the next command or result at column zero below the final menu.
+			_, lineErr = writer.WriteString("\n")
+		}
+		inputErr := closeInput()
+		return errors.Join(inputErr, outputErr, runErr, lineErr)
 	})
 	if ctx.Err() != nil {
 		return batchContextError(errors.Join(ctx.Err(), context.Cause(ctx), err))
@@ -333,16 +338,45 @@ type batchPickerOutput struct {
 	cancel context.CancelFunc
 	mu     sync.Mutex
 	err    error
+	lastCR bool
 }
 
 func (w *batchPickerOutput) Write(data []byte) (int, error) {
-	n, err := w.TerminalWriter.Write(data)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	// Raw input can disable the same terminal's output newline processing.
+	// Explicit CRLF works with shared or separate input and output terminals.
+	frame := make([]byte, 0, len(data))
+	previousCR := w.lastCR
+	for _, value := range data {
+		if value == '\n' && !previousCR {
+			frame = append(frame, '\r')
+		}
+		frame = append(frame, value)
+		previousCR = value == '\r'
+	}
+	written, err := w.TerminalWriter.Write(frame)
+	consumed, offset := 0, 0
+	previousCR = w.lastCR
+	for _, value := range data {
+		size := 1
+		if value == '\n' && !previousCR {
+			size++
+		}
+		if offset+size > written {
+			break
+		}
+		offset += size
+		consumed++
+		previousCR = value == '\r'
+	}
+	if written > 0 {
+		w.lastCR = frame[written-1] == '\r'
+	}
 	if err != nil {
-		w.mu.Lock()
 		w.err = errors.Join(w.err, err)
-		w.mu.Unlock()
 		w.cancel()
 	}
-	return n, err
+	return consumed, err
 }
 func (w *batchPickerOutput) WriteString(data string) (int, error) { return w.Write([]byte(data)) }
