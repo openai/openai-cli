@@ -543,11 +543,11 @@
     },
     "generated/commands/decision.go": {
       "mode": "100644",
-      "sha256": "d228db5dabe2e14988fafd460b6c1f9c67546627d61585cb18c4fed132b0e911"
+      "sha256": "7b09eaca6f4f8a1f8279629cce793f33c79598d9d8c58f8ff68e3756abbc866c"
     },
     "generated/commands/decision_test.go": {
       "mode": "100644",
-      "sha256": "52da248ee20b131024d0895d6809bde3ce6797e09497509fdd54d6d7878e1a40"
+      "sha256": "cc68795e1b93089d3bb50db1c9a8984553ac51a63fed57adf4baabb46130bb7e"
     },
     "generated/commands/embedding.go": {
       "mode": "100644",
@@ -687,7 +687,7 @@
     },
     "generated/commands/session_test.go": {
       "mode": "100644",
-      "sha256": "5d65868a822e2bb2cba1cc82b882a330ef735a1e224a20cae34e005b20d02880"
+      "sha256": "f8ef68768131b17778303d7d7fa559b99059a6b7562fd10fc0ebf3f063da95e4"
     },
     "generated/commands/skill.go": {
       "mode": "100644",

@@ -17,7 +17,7 @@ func TestLiveSessionsAccept(t *testing.T) {
 			"--admin-api-key", "string",
 			"live:sessions", "accept",
 			"--session-id", "session_id",
-			"--session", "{model: gpt-live-1, type: live, audio: {output: {voice: alloy}}, delegation: {type: client, acknowledgement_delay_ms: 0}, input: [{content: [{text: text, type: input_text}], role: developer, id: id, status: incomplete, type: message}], instructions: instructions, store: true, triggers: [{decisions: {questions: [{instructions: instructions, type: predicate, name: name}]}, event_type: session.input_transcript.delta, type: decisions}]}",
+			"--session", "{model: gpt-live-1, type: live, audio: {output: {voice: alloy}}, delegation: {type: client, acknowledgement_delay_ms: 0}, input: [{content: [{text: text, type: input_text}], role: developer, id: id, status: incomplete, type: message}], instructions: instructions, store: true, triggers: [{decisions: {questions: [{instructions: string, type: predicate, name: name}]}, event_type: session.input_transcript.delta, type: decisions}]}",
 		)
 	})
 
@@ -39,7 +39,7 @@ func TestLiveSessionsAccept(t *testing.T) {
 			"--session.input", "[{content: [{text: text, type: input_text}], role: developer, id: id, status: incomplete, type: message}]",
 			"--session.instructions", "instructions",
 			"--session.store=true",
-			"--session.triggers", "[{decisions: {questions: [{instructions: instructions, type: predicate, name: name}]}, event_type: session.input_transcript.delta, type: decisions}]",
+			"--session.triggers", "[{decisions: {questions: [{instructions: string, type: predicate, name: name}]}, event_type: session.input_transcript.delta, type: decisions}]",
 		)
 	})
 
@@ -68,7 +68,7 @@ func TestLiveSessionsAccept(t *testing.T) {
 			"  triggers:\n" +
 			"    - decisions:\n" +
 			"        questions:\n" +
-			"          - instructions: instructions\n" +
+			"          - instructions: string\n" +
 			"            type: predicate\n" +
 			"            name: name\n" +
 			"      event_type: session.input_transcript.delta\n" +
