@@ -73703,11 +73703,18 @@ components:
           description: The breakpoint mode. Always `explicit`.
           default: explicit
           x-stainless-const: true
+        ttl:
+          type: string
+          enum:
+          - 30m
+          - 12h
+          description: The minimum lifetime of this cache breakpoint. Defaults to the request TTL.
       type: object
       required:
       - mode
       title: Prompt cache breakpoint
-      description: Marks the exact end of a reusable prompt prefix. The breakpoint inherits its TTL from the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      description: Marks the exact end of a reusable prompt prefix. When `ttl` is omitted, the breakpoint inherits the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      x-stainless-go-constant-constructor: true
     ModerationMode:
       type: string
       enum:
@@ -73927,11 +73934,18 @@ components:
           description: The breakpoint mode. Always `explicit`.
           default: explicit
           x-stainless-const: true
+        ttl:
+          type: string
+          enum:
+          - 30m
+          - 12h
+          description: The minimum lifetime of this cache breakpoint. Defaults to the request TTL.
       type: object
       required:
       - mode
       title: Prompt cache breakpoint
-      description: Marks the exact end of a reusable prompt prefix. The breakpoint inherits its TTL from the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      description: Marks the exact end of a reusable prompt prefix. When `ttl` is omitted, the breakpoint inherits the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      x-stainless-go-constant-constructor: true
     InputTextContent:
       properties:
         type:
@@ -73946,6 +73960,7 @@ components:
           description: The text input to the model.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/PromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -74221,6 +74236,7 @@ components:
           description: The detail level of the image to be sent to the model. One of `high`, `low`, `auto`, or `original`. Defaults to `auto`.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/PromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -74252,6 +74268,7 @@ components:
           description: The detail level of the screenshot image to be sent to the model. One of `high`, `low`, `auto`, or `original`. Defaults to `auto`.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/PromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -74289,6 +74306,7 @@ components:
             The content of the file to be sent to the model.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/PromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
         file_url:
           type: string
           format: uri
@@ -76235,6 +76253,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/PromptCacheBreakpointParam'
           - type: 'null'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -76272,6 +76291,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/PromptCacheBreakpointParam'
           - type: 'null'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -76322,6 +76342,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/PromptCacheBreakpointParam'
           - type: 'null'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -82085,12 +82106,12 @@ components:
         input:
           $ref: '#/components/schemas/DecisionInput'
         questions:
-          description: Ask 1–200 questions about the input. Each question can be a predicate, choice, or score. Answers come back in the same order.
+          description: Ask 1–400 questions about the input. Each question can be a predicate, choice, or score. Answers come back in the same order.
           type: array
           items:
             $ref: '#/components/schemas/QuestionParam'
           minItems: 1
-          maxItems: 200
+          maxItems: 400
         safety_identifier:
           type:
           - string
@@ -95931,6 +95952,7 @@ components:
             The content of the file to be sent to the model.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/BetaPromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
         file_url:
           type: string
           format: uri
@@ -95958,11 +95980,18 @@ components:
           description: The breakpoint mode. Always `explicit`.
           default: explicit
           x-stainless-const: true
+        ttl:
+          type: string
+          enum:
+          - 30m
+          - 12h
+          description: The minimum lifetime of this cache breakpoint. Defaults to the request TTL.
       type: object
       required:
       - mode
       title: Prompt cache breakpoint
-      description: Marks the exact end of a reusable prompt prefix. The breakpoint inherits its TTL from the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      description: Marks the exact end of a reusable prompt prefix. When `ttl` is omitted, the breakpoint inherits the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      x-stainless-go-constant-constructor: true
     BetaInputImageContent:
       properties:
         type:
@@ -95988,6 +96017,7 @@ components:
           description: The detail level of the image to be sent to the model. One of `high`, `low`, `auto`, or `original`. Defaults to `auto`.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/BetaPromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -96015,6 +96045,7 @@ components:
           description: The text input to the model.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/BetaPromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -97749,6 +97780,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/BetaPromptCacheBreakpointParam'
           - type: 'null'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -97763,11 +97795,18 @@ components:
           description: The breakpoint mode. Always `explicit`.
           default: explicit
           x-stainless-const: true
+        ttl:
+          type: string
+          enum:
+          - 30m
+          - 12h
+          description: The minimum lifetime of this cache breakpoint. Defaults to the request TTL.
       type: object
       required:
       - mode
       title: Prompt cache breakpoint
-      description: Marks the exact end of a reusable prompt prefix. The breakpoint inherits its TTL from the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      description: Marks the exact end of a reusable prompt prefix. When `ttl` is omitted, the breakpoint inherits the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      x-stainless-go-constant-constructor: true
     BetaDetailEnum:
       type: string
       enum:
@@ -97792,6 +97831,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/BetaPromptCacheBreakpointParam'
           - type: 'null'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -97911,6 +97951,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/BetaPromptCacheBreakpointParam'
           - type: 'null'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -100233,6 +100274,7 @@ components:
           description: The detail level of the screenshot image to be sent to the model. One of `high`, `low`, `auto`, or `original`. Defaults to `auto`.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/BetaPromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type

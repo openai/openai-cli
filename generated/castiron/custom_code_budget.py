@@ -20,59 +20,27 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-# Explicitly load the reporter beside this trusted script, including under python -I.
-# The inspected repository is only a Git object store, not a Python import path.
+# Load only the policy helpers beside this immutable checker, including under -I.
 _spec = importlib.util.spec_from_file_location(
-    "castiron_budget_reporter", Path(__file__).with_name("custom_code_report.py")
+    "castiron_budget_policy", Path(__file__).with_name("custom_code_policy.py")
 )
 assert _spec is not None and _spec.loader is not None
-report = importlib.util.module_from_spec(_spec)
-sys.modules[_spec.name] = report
-_spec.loader.exec_module(report)
+policy = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = policy
+_spec.loader.exec_module(policy)
+report = policy.report
+unique_keys = policy.unique_keys
+read_policy = policy.read_policy
+changed_paths = policy.changed_paths
+queued_entries = policy.queued_entries
+is_main_snapshot_bootstrap = policy.is_main_snapshot_bootstrap
 
 POLICY = ".castiron-ratchet.json"
+NEXT_POLICY_VERSION = 1
 ISOLATION_MESSAGE = (
     "Budget changes require a separate, budget-only PR. "
     "Put the justification in the PR description."
 )
-
-
-def unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError(f"duplicate policy key: {key}")
-        value[key] = item
-    return value
-
-
-def read_policy(repo: Path, revision: str) -> dict[str, Any]:
-    revision = report.require_sha(revision)
-    entry = report.git(repo, "ls-tree", revision, "--", POLICY).split()
-    if len(entry) != 4 or entry[:2] != [b"100644", b"blob"]:
-        raise ValueError(f"{POLICY} must exist as a regular, non-executable file at {revision}")
-    if int(report.git(repo, "cat-file", "-s", entry[2].decode())) > 4096:
-        raise ValueError("budget file exceeds 4096 bytes")
-    value = json.loads(
-        report.git(repo, "show", f"{revision}:{POLICY}"), object_pairs_hook=unique_keys
-    )
-    if not isinstance(value, dict):
-        raise ValueError("budget file must be an object")  # noqa: TRY004 - malformed policy is a value error
-    value = cast(dict[str, Any], value)
-    version = value.get("schema_version")
-    if type(version) is not int or version not in (1, 2):
-        raise ValueError("unsupported budget schema_version")
-    keys = {"schema_version", "max_custom_patch_lines"}
-    if version == 2:
-        keys.add("generated_files")
-    if set(value) != keys:
-        raise ValueError("budget file contains missing or unsupported fields")
-    limit = value["max_custom_patch_lines"]
-    if type(limit) is not int or limit < 0:
-        raise ValueError("max_custom_patch_lines must be a nonnegative integer")
-    if version == 2 and (value["generated_files"] != "strict" or limit != 0):
-        raise ValueError("schema v2 requires generated_files=strict and a zero budget")
-    return value
 
 
 def read_budget(repo: Path, revision: str) -> int:
@@ -81,6 +49,10 @@ def read_budget(repo: Path, revision: str) -> int:
 
 def strict_policy(repo: Path, revision: str) -> bool:
     return cast(int, read_policy(repo, revision)["schema_version"]) == 2
+
+
+def go_ratchet(repo: Path, revision: str) -> bool:
+    return cast(bool, read_policy(repo, revision).get("ratchet") == "go")
 
 
 MANIFEST = b"scripts/castiron/generated-files.json"
@@ -95,7 +67,6 @@ GENERATED_GITHUB_PATHS = frozenset(
         b".github/workflows/castiron-custom-code-comment.yml",
     }
 )
-
 
 
 # Audited inventory of the authenticated pre-inventory checker format. These
@@ -168,7 +139,10 @@ def generated_manifest(repo: Path, generated: str) -> dict[bytes, dict[str, str]
         raise ValueError("checkpoint is missing its generated GitHub inventory")
     github_paths = checkpoint_github_inventory(blobs[inventory_entry.oid])
     value = json.loads(blobs[entry.oid], object_pairs_hook=unique_keys)
-    if not isinstance(value, dict) or set(cast(dict[str, Any], value)) != {"schema_version", "files"}:
+    if not isinstance(value, dict) or set(cast(dict[str, Any], value)) != {
+        "schema_version",
+        "files",
+    }:
         raise ValueError("invalid generated ownership manifest")
     value = cast(dict[str, Any], value)
     if (
@@ -196,7 +170,10 @@ def generated_manifest(repo: Path, generated: str) -> dict[bytes, dict[str, str]
         # Public checkpoints may omit the private workflow/action blobs.
         if not report.included(path) and path not in github_paths:
             raise ValueError(f"generated manifest claims SDK-owned GitHub path: {name}")
-        if not isinstance(identity, dict) or set(cast(dict[str, Any], identity)) != {"mode", "sha256"}:
+        if not isinstance(identity, dict) or set(cast(dict[str, Any], identity)) != {
+            "mode",
+            "sha256",
+        }:
             raise ValueError(f"invalid generated identity: {name}")
         identity = cast(dict[str, Any], identity)
         if (
@@ -218,8 +195,7 @@ def generated_manifest(repo: Path, generated: str) -> dict[bytes, dict[str, str]
     # Public snapshots retain generated identities without the private blobs.
     snapshot_paths = set(entries) - {manifest_path}
     if any(
-        report.included(path) or path in github_paths
-        for path in snapshot_paths - files.keys()
+        report.included(path) or path in github_paths for path in snapshot_paths - files.keys()
     ) or any(report.included(path) for path in files.keys() - snapshot_paths):
         raise ValueError("generated manifest does not cover the verified snapshot exactly")
     for path, identity in files.items():
@@ -231,7 +207,10 @@ def generated_manifest(repo: Path, generated: str) -> dict[bytes, dict[str, str]
             ):
                 raise ValueError(f"manifest disagrees with generated snapshot: {path.decode()}")
     # The manifest is itself immutable, bound by the existing snapshot hash.
-    files[manifest_path] = {"mode": "100644", "sha256": hashlib.sha256(blobs[entry.oid]).hexdigest()}
+    files[manifest_path] = {
+        "mode": "100644",
+        "sha256": hashlib.sha256(blobs[entry.oid]).hexdigest(),
+    }
     return files
 
 
@@ -284,29 +263,6 @@ def verify_generated(
     return failures
 
 
-def changed_paths(repo: Path, base: str, head: str) -> set[bytes]:
-    """Use the entire PR diff, not its last commit or a truncated API file list."""
-    start = (
-        report.git(repo, "merge-base", report.require_sha(base), report.require_sha(head))
-        .decode()
-        .strip()
-    )
-    return set(
-        report.git(
-            repo,
-            "diff",
-            "--name-only",
-            "-z",
-            "--no-renames",
-            "--no-ext-diff",
-            "--no-textconv",
-            start,
-            head,
-            "--",
-        ).split(b"\0")
-    ) - {b""}
-
-
 def check_isolation(repo: Path, base: str, head: str) -> int | None:
     # Validate even if the policy was removed by an earlier commit in this PR.
     proposed = read_budget(repo, head)
@@ -315,6 +271,8 @@ def check_isolation(repo: Path, base: str, head: str) -> int | None:
         return None
     if strict_policy(repo, base) and not strict_policy(repo, head):
         raise ValueError("strict generated-file ownership cannot be downgraded")
+    if go_ratchet(repo, base) and not go_ratchet(repo, head):
+        raise ValueError("Go customization ratchet cannot be disabled")
     if paths != {POLICY.encode()}:
         raise ValueError(ISOLATION_MESSAGE)
     return proposed
@@ -339,6 +297,40 @@ def outcome(state: str, description: str) -> dict[str, str]:
     return {"state": state, "description": description}
 
 
+def go_customization(repo: Path, revision: str, measured: dict[str, Any]) -> dict[str, Any]:
+    """Count patches plus physical handwritten Go, using only verified Git objects."""
+    added, removed = count_custom_lines(measured)
+    # Use the reporter's ownership view. Private snapshots also retain SDK-owned
+    # CI files excluded from that view; those Go files are still handwritten.
+    generated = report.tree_entries(repo, measured["after"]["commit"])
+    handwritten = {
+        path: entry
+        for path, entry in report.tree_entries(repo, revision, include_workflows=True).items()
+        if path.endswith(b".go") and path not in generated
+    }
+    for path, entry in handwritten.items():
+        if entry.mode not in {b"100644", b"100755"}:
+            raise ValueError(f"nonregular handwritten Go: {path!r}")
+    blobs = report.read_blobs(repo, handwritten)
+    files: list[dict[str, Any]] = []
+    for path, entry in sorted(handwritten.items()):
+        content = blobs[entry.oid]
+        content.decode("utf-8")
+        if b"\0" in content:
+            raise ValueError(f"non-text handwritten Go: {path!r}")
+        lines = content.count(b"\n") + int(bool(content) and not content.endswith(b"\n"))
+        files.append({"path": path.decode("utf-8"), "lines": lines})
+    handwritten_lines = sum(file["lines"] for file in files)
+    return {
+        "revision": revision,
+        "generated": measured["after"],
+        "patch_lines": added + removed,
+        "handwritten_lines": handwritten_lines,
+        "handwritten_files": files,
+        "total": added + removed + handwritten_lines,
+    }
+
+
 def evaluate(
     repo: Path,
     base: str,
@@ -350,6 +342,8 @@ def evaluate(
     measurement: tuple[dict[str, Any], bytes] | None = None,
     policy_sha: str | None = None,
     target_branch: str = "main",
+    main_snapshot: str | None = None,
+    repository: str | None = None,
 ) -> tuple[dict[str, Any], bytes]:
     """In a queue, isolate each PR but budget the complete merged candidate."""
     base, head = report.require_sha(base), report.require_sha(head)
@@ -369,12 +363,36 @@ def evaluate(
         read_budget(repo, head)
         if pull_heads is not None and not pull_heads:
             raise ValueError("merge group has no verified constituent PRs")
+        if main_snapshot is not None and (
+            target_branch != "next"
+            or main_snapshot != policy
+            or repository is None
+            or (pull_heads is not None and len(pull_heads) != 1)
+            or not is_main_snapshot_bootstrap(
+                repo,
+                repository,
+                base,
+                head,
+                policy,
+                constituent=pull_heads[0]
+                if pull_heads is not None and len(pull_heads) == 1
+                else None,
+            )
+            or any(
+                not is_main_snapshot_bootstrap(repo, repository, base, candidate, policy)
+                for candidate in (pull_heads if pull_heads is not None else [head])
+            )
+        ):
+            raise ValueError("invalid authenticated main snapshot bootstrap")
         for pr_head in pull_heads if pull_heads is not None else [head]:
-            proposed = check_isolation(repo, base, pr_head)
+            proposed = 0 if main_snapshot is not None else check_isolation(repo, base, pr_head)
             if proposed is not None:
                 proposed_limits.append(proposed)
         checks["isolation"] = outcome(
-            "success", "Budget changes are isolated; human review is required for increases."
+            "success",
+            "Exact authenticated strict-zero main snapshot adoption."
+            if main_snapshot is not None
+            else "Budget changes are isolated; human review is required for increases.",
         )
     except (report.ReportError, ValueError, UnicodeError) as exc:
         checks["isolation"] = outcome("failure", str(exc))
@@ -411,15 +429,38 @@ def evaluate(
         result["checked_limit"] = checked_limit
         state = "success" if total <= checked_limit else "failure"
         description = f"+{added} / -{removed} = {total} custom lines; limit {checked_limit}."
+        if any(go_ratchet(repo, revision) for revision in (policy, base, head)):
+            # The report's historical merge base is for presentation only. Measure
+            # the captured live target against its own hash-verified snapshot.
+            baseline, _ = report.build_report(
+                repo,
+                base,
+                base,
+                public=public,
+                fetch=fetch,
+                require_head_hash=True,
+                target_branch=target_branch,
+            )
+            before = go_customization(repo, base, baseline)
+            after = go_customization(repo, head, measured)
+            delta = after["total"] - before["total"]
+            result["ratchet"] = {"kind": "go", "before": before, "after": after, "delta": delta}
+            description += (
+                f" Go customization {before['total']} -> {after['total']} (delta {delta:+d})."
+            )
+            if delta > 0:
+                state = "failure"
+            if go_ratchet(repo, base) and not go_ratchet(repo, head):
+                state = "failure"
+                description += " Go customization ratchet cannot be disabled."
         # Main's strict policy applies even if the candidate tries to remove it.
         # A proposed activation must itself satisfy the stricter contract.
-        if (
-            strict_policy(repo, policy)
-            or strict_policy(repo, base)
-            or strict_policy(repo, head)
-        ):
+        if strict_policy(repo, policy) or strict_policy(repo, base) or strict_policy(repo, head):
             violations = verify_generated(
-                repo, measured["after"]["commit"], head, previous=measured["before"]["commit"]
+                repo,
+                measured["after"]["commit"],
+                head,
+                previous=(measured["before"] or measured["adoption_baseline"])["commit"],
             )
             result["strict_violations"] = violations
             if violations:
@@ -474,52 +515,13 @@ def write_result(out: Path, result: dict[str, Any], patch: bytes = b"") -> None:
     print(summary)
 
 
-def queued_entries(repository: str, branch: str) -> list[tuple[str, str]]:
-    """Query the actual queue; never infer PR membership from commit messages."""
-    owner, name = repository.split("/")
-    query = """query($owner:String!,$name:String!,$branch:String!,$cursor:String) {
-      repository(owner:$owner,name:$name) { mergeQueue(branch:$branch) {
-        entries(first:100,after:$cursor) {
-          nodes { pullRequest { headRefOid } headCommit { oid } }
-          pageInfo { hasNextPage endCursor }
-        }
-      } }
-    }"""
-    cursor = None
-    heads: list[tuple[str, str]] = []
-    while True:
-        response = report.api(
-            "POST",
-            "graphql",
-            {
-                "query": query,
-                "variables": {"owner": owner, "name": name, "branch": branch, "cursor": cursor},
-            },
-        )
-        entries = response["data"]["repository"]["mergeQueue"]["entries"]
-        for node in entries["nodes"]:
-            # Entries still awaiting preparation have no synthetic queue commit.
-            if node["headCommit"] is not None:
-                heads.append(
-                    (
-                        report.require_sha(node["pullRequest"]["headRefOid"]),
-                        report.require_sha(node["headCommit"]["oid"]),
-                    )
-                )
-        page = entries["pageInfo"]
-        if not page["hasNextPage"]:
-            return heads
-        if not page["endCursor"] or page["endCursor"] == cursor:
-            raise ValueError("invalid merge-queue pagination")
-        cursor = page["endCursor"]
-
-
 def github_evaluate(
     repo: Path,
     repository: str,
     event: dict[str, Any],
     trusted_sha: str,
     trusted_report_dir: Path | None = None,
+    selection: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], bytes]:
     """Fetch data into a fresh bare repo; the executable checkout remains trusted."""
     if not report.REPOSITORY.fullmatch(repository):
@@ -581,7 +583,7 @@ def github_evaluate(
         current_main = report.require_sha(
             report.api("GET", f"{root}/git/ref/heads/main")["object"]["sha"]
         )
-        if main != current_main:
+        if branch == "main" and main != current_main:
             raise ValueError("trusted checkout is stale; rerun against current main")
         base = (
             main
@@ -604,6 +606,23 @@ def github_evaluate(
                 f"{branch} must require a merge queue before activating the budget gate"
             )
         page += 1
+    # This receipt is created locally by the trusted-main selector before the
+    # pinned checkout. It must never come from candidate workflow artifacts.
+    if (
+        selection is None
+        or type(selection.get("schema_version")) is not int
+        or any(
+            selection.get(key) != value
+            for key, value in {
+                "schema_version": 1,
+                "target_branch": branch,
+                "base_sha": base,
+                "head_sha": head,
+                "policy_sha": main,
+            }.items()
+        )
+    ):
+        raise ValueError("trusted policy selection does not match evaluation")
     measurement = None
     if trusted_report_dir is not None:
         # Only the preceding main-branch step may supply this directory. Never
@@ -646,6 +665,55 @@ def github_evaluate(
                 pull_heads.append(candidate)
         if not pull_heads:
             raise ValueError("cannot verify merge-group PR membership; retry the current group")
+    main_snapshot = selection.get("main_snapshot") or None
+    if main_snapshot is not None:
+        if (
+            branch != "next"
+            or main_snapshot != main
+            or report.api("GET", f"{root}/git/ref/heads/main")["object"]["sha"] != main
+        ):
+            raise ValueError("authenticated main snapshot changed; retry bootstrap")
+        # This evaluator has its own bare object store, including when reusing
+        # the PR report. SHA fetches do not create the selector's named main ref.
+        report.git(
+            repo,
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "origin",
+            "+refs/heads/main:refs/remotes/origin/main",
+        )
+        if report.git(repo, "rev-parse", "refs/remotes/origin/main").decode().strip() != main:
+            raise ValueError("authenticated main changed during snapshot fetch; retry")
+        if not is_main_snapshot_bootstrap(
+            repo,
+            repository,
+            base,
+            head,
+            main,
+            constituent=pull_heads[0] if pull_heads is not None and len(pull_heads) == 1 else None,
+        ):
+            raise ValueError("authenticated main snapshot changed; retry bootstrap")
+    if branch == "next":
+        assert selection is not None
+        base_pin = read_policy(repo, base).get("next_policy")
+        if base_pin is None:
+            # evaluate() checks each verified queue constituent for policy isolation.
+            if (
+                selection.get("bootstrap") is not True
+                or "next_policy" not in read_policy(repo, head)
+                or (
+                    main_snapshot is None
+                    and pull_heads is None
+                    and changed_paths(repo, base, head) != {POLICY.encode()}
+                )
+            ):
+                raise ValueError("unreviewed next policy initialization")
+        elif selection.get("bootstrap") is not False or base_pin != {
+            "repository": repository,
+            "main_sha": main,
+        }:
+            raise ValueError("trusted next base pin changed; rerun policy selection")
     result, patch = evaluate(
         repo,
         base,
@@ -656,14 +724,154 @@ def github_evaluate(
         measurement=measurement,
         policy_sha=main,
         target_branch=branch,
+        main_snapshot=main_snapshot,
+        repository=repository,
     )
     result["target_branch"] = branch
     return result, patch
 
 
+def prepare_main_snapshot(
+    repo: Path, repository: str, base: str, authenticated_main: str, *, fetch: bool = False
+) -> str:
+    """Create and verify an adoption commit without altering a ref, index or metadata."""
+    base, authenticated_main = map(report.require_sha, (base, authenticated_main))
+    strict = {"schema_version": 2, "max_custom_patch_lines": 0, "generated_files": "strict"}
+    main_policy = read_policy(repo, authenticated_main)
+    if {
+        key: value for key, value in main_policy.items() if key != "ratchet"
+    } != strict or "next_policy" in read_policy(repo, base):
+        raise ValueError("main snapshot preparation requires strict-zero main and unpinned next")
+    if policy.merge_base(repo, base, authenticated_main) != base:
+        raise ValueError("protected next must be an ancestor of authenticated main")
+    value = {
+        **main_policy,
+        "next_policy": {"repository": repository, "main_sha": authenticated_main},
+    }
+    blob = report.git(
+        repo,
+        "hash-object",
+        "-w",
+        "--stdin",
+        input_bytes=(json.dumps(value, indent=2) + "\n").encode(),
+    ).strip()
+    entries = report.git(repo, "ls-tree", "-z", authenticated_main).split(b"\0")
+    # Replace only the root policy blob, preserving every other entry and mode.
+    replacement = b"100644 blob " + blob + b"\t" + POLICY.encode()
+    tree = (
+        report.git(
+            repo,
+            "mktree",
+            "-z",
+            input_bytes=b"\0".join(
+                replacement if entry.partition(b"\t")[2] == POLICY.encode() else entry
+                for entry in entries
+            ),
+        )
+        .decode()
+        .strip()
+    )
+    head = (
+        report.git(
+            repo,
+            "commit-tree",
+            tree,
+            "-p",
+            base,
+            "-p",
+            authenticated_main,
+            "-m",
+            "Adopt verified strict-zero main baseline on next",
+        )
+        .decode()
+        .strip()
+    )
+    if not is_main_snapshot_bootstrap(repo, repository, base, head, authenticated_main):
+        raise ValueError("prepared snapshot does not match authenticated main")
+    result, _ = evaluate(
+        repo,
+        base,
+        head,
+        public=True,
+        fetch=fetch,
+        target_branch="next",
+        policy_sha=authenticated_main,
+        main_snapshot=authenticated_main,
+        repository=repository,
+    )
+    if not all(check["state"] == "success" for check in result["checks"].values()):
+        raise ValueError("main snapshot verification failed: " + json.dumps(result["checks"]))
+    return cast(str, head)
+
+
+def read_public_api(path: str) -> Any:
+    # Reuse the local gh login without reading or printing its credential.
+    output = subprocess.run(
+        ["gh", "api", "--hostname", "github.com", "--method", "GET", path],
+        capture_output=True,
+        check=True,
+        timeout=60,
+    )
+    return json.loads(output.stdout)
+
+
+def prepare_next_baseline(repo: Path, repository: str, branch: str) -> dict[str, str]:
+    """Authenticate public refs and create one new local review branch; never push."""
+    if not report.REPOSITORY.fullmatch(repository) or not branch.startswith("codex/"):
+        raise ValueError("expected a repository and a new codex/ review branch")
+    report.git(repo, "check-ref-format", "--branch", branch)
+    origin = report.git(repo, "remote", "get-url", "origin").decode().strip()
+    if origin not in report.github_origin_urls(repository):
+        raise ValueError("preparation requires the public repository as origin")
+    root = f"repos/{repository}"
+    metadata = read_public_api(root)
+    if (
+        metadata["private"]
+        or metadata["default_branch"] != "main"
+        or metadata["full_name"] != repository
+    ):
+        raise ValueError("preparation requires a public repository with default main")
+
+    def ref(name: str) -> str:
+        return cast(
+            str,
+            report.require_sha(read_public_api(f"{root}/git/ref/heads/{name}")["object"]["sha"]),
+        )
+
+    main, base = ref("main"), ref("next")
+    report.git(
+        repo,
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "origin",
+        "+refs/heads/main:refs/remotes/origin/main",
+        "+refs/heads/next:refs/remotes/origin/next",
+    )
+    for name, expected in (("main", main), ("next", base)):
+        if (
+            report.git(repo, "rev-parse", f"refs/remotes/origin/{name}").decode().strip()
+            != expected
+        ):
+            raise ValueError("public refs changed during preparation; retry")
+    head = prepare_main_snapshot(repo, repository, base, main, fetch=True)
+    if ref("main") != main or ref("next") != base:
+        raise ValueError("public refs changed during verification; retry")
+    # Compare-and-create only. Existing review branches and working trees are preserved.
+    report.git(repo, "update-ref", f"refs/heads/{branch}", head, "0" * 40)
+    return {"head_sha": head, "base_sha": base, "main_sha": main, "branch": branch}
+
+
 def main() -> int:
+    if sys.argv[1:2] == ["select-policy"]:
+        return cast(int, policy.main(sys.argv[1:]))
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("review-rules")
+    prepare = commands.add_parser("prepare-next-baseline")
+    prepare.add_argument("--repo", type=Path, required=True)
+    prepare.add_argument("--repository", required=True)
+    prepare.add_argument("--branch", required=True)
     generated = commands.add_parser("verify-generated")
     generated.add_argument("--repo", type=Path, required=True)
     generated.add_argument("--policy-ref", required=True)
@@ -682,10 +890,22 @@ def main() -> int:
     github.add_argument("--event-path", type=Path, required=True)
     github.add_argument("--trusted-sha", required=True)
     github.add_argument("--trusted-report-dir", type=Path)
+    github.add_argument("--selected-policy-json", type=Path)
     for command in (local, github):
         command.add_argument("--repo", type=Path, required=True)
         command.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    if args.command == "review-rules":
+        print(json.dumps(policy.HUMAN_REVIEW_RULES, separators=(",", ":")))
+        return 0
+    if args.command == "prepare-next-baseline":
+        try:
+            preparation = prepare_next_baseline(args.repo, args.repository, args.branch)
+        except (ValueError, OSError, report.ReportError, subprocess.SubprocessError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(json.dumps(preparation, sort_keys=True))
+        return 0
     if args.command == "verify-generated":
         # Local pipeline integration pins policy and checkpoint before merging.
         # Legacy SDKs without a policy retain their existing behavior.
@@ -725,6 +945,9 @@ def main() -> int:
                 json.loads(args.event_path.read_text()),
                 args.trusted_sha,
                 args.trusted_report_dir,
+                json.loads(args.selected_policy_json.read_text())
+                if args.selected_policy_json
+                else None,
             )
     except (
         report.ReportError,
