@@ -1,5 +1,10 @@
 # OpenAI CLI security model
 
+Generated files are updated through authoritative inputs or the compiler and
+regeneration; handwritten edits to them are forbidden. Code review enforces this
+ownership rule. The customization-budget reporter and publishers are retired
+and are not part of the active CI or security controls.
+
 This document is the single canonical detailed threat model for this
 repository. It is reusable across changes and is the authority for
 trust-boundary decisions during Codex Security scans. [SECURITY.md](../../SECURITY.md)
@@ -220,13 +225,7 @@ cache entries, downloaded dependencies, runtime/API/network data, or
 post-checkout files controlled by a lower-trust actor remain lower-trust input.
 Candidate repository code reaching a protected token, signing key,
 notarization credential, release environment, or publication action is a real
-CI/release boundary. The custom-code workflow illustrates the distinction: the
-candidate workflow has read-only permissions, while its write-capable
-`workflow_run` handler checks out trusted `main` code and recomputes from Git
-objects rather than trusting candidate artifacts
-([.github/workflows/castiron-custom-code.yml:30-80](../../.github/workflows/castiron-custom-code.yml#L30-L80),
-[.github/workflows/castiron-custom-code-comment.yml:16-98](../../.github/workflows/castiron-custom-code-comment.yml#L16-L98),
-[.github/workflows/castiron-custom-code-comment.yml:116-215](../../.github/workflows/castiron-custom-code-comment.yml#L116-L215)).
+CI/release boundary.
 
 ### Assumptions and known unknowns
 
