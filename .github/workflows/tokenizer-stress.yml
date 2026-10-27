@@ -1,0 +1,112 @@
+name: Tokenizer stress
+
+on:
+  schedule:
+    - cron: '37 8 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  source:
+    uses: ./.github/workflows/prepare-ci-source.yml
+    permissions:
+      contents: read
+      actions: read
+
+  windows:
+    needs: source
+    permissions: {}
+    name: Real encoder cancellation on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: amd64
+            runner-arch: X64
+          - os: windows-11-arm
+            arch: arm64
+            runner-arch: ARM64
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=1 -mod=readonly'
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-compatibility-go
+        with:
+          cache-compilation: 'true'
+      - name: Verify native Windows platform
+        shell: bash
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+          EXPECTED_RUNNER_ARCH: ${{ matrix.runner-arch }}
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS" = Windows
+          test "$RUNNER_ARCH" = "$EXPECTED_RUNNER_ARCH"
+          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "windows/$EXPECTED_ARCH"
+          test "$(go env GOOS)/$(go env GOARCH)" = "windows/$EXPECTED_ARCH"
+          go env -json GOOS GOARCH GOHOSTOS GOHOSTARCH GOVERSION > "$RUNNER_TEMP/tokenizer-stress-platform.json"
+      # Deterministic worker lifecycle checks remain in the pre-merge matrix.
+      # These observations additionally depend on the real encoder's work and scheduler.
+      - name: Observe cancellation inside real encoders
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test ./internal/commands/tokenize -count=1 -timeout=5m -json -run '^TestTokenizerPreviewRealBPE(CancellationDuringChildWork|LegacyCancellationDuringNumericWork)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'tokenizer-stress-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Require both stress tests to execute
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import collections, json, os
+          from pathlib import Path
+          expected = {
+              "TestTokenizerPreviewRealBPECancellationDuringChildWork",
+              "TestTokenizerPreviewRealBPELegacyCancellationDuringNumericWork",
+              "TestTokenizerPreviewRealBPELegacyCancellationDuringNumericWork/r50k_base",
+              "TestTokenizerPreviewRealBPELegacyCancellationDuringNumericWork/p50k_base",
+          }
+          package = "github.com/openai/openai-cli/internal/commands/tokenize"
+          observed = collections.Counter()
+          for line in (Path(os.environ["RUNNER_TEMP"]) / "tokenizer-stress-tests.jsonl").read_text(encoding="utf-8").splitlines():
+              event = json.loads(line)
+              action, name = event.get("Action"), event.get("Test", "")
+              if action == "build-output" and not name and isinstance(event.get("Output"), str):
+                  continue
+              if event.get("Package") != package or (name and name not in expected):
+                  raise SystemExit("Unexpected stress package or test")
+              if action not in {"start", "run", "pass", "output"}:
+                  raise SystemExit("Stress coverage failed, skipped, or emitted an unexpected event")
+              if action == "output":
+                  if not isinstance(event.get("Output"), str):
+                      raise SystemExit("Malformed stress output")
+              else:
+                  observed[action, name] += 1
+          wanted = collections.Counter({("start", ""): 1, ("pass", ""): 1})
+          wanted.update({(action, name): 1 for action in ["run", "pass"] for name in expected})
+          if observed != wanted:
+              raise SystemExit("Every stress test must run and pass exactly once")
+          PYTHON
+      - name: Retain stress evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tokenizer-stress-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/tokenizer-stress-platform.json
+            ${{ runner.temp }}/tokenizer-stress-tests.jsonl
+          if-no-files-found: warn
+          retention-days: 7

@@ -204,6 +204,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&audioVoicesCreate,
+					&audioVoicesDelete,
 				},
 			},
 			{

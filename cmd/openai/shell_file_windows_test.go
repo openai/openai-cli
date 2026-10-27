@@ -673,7 +673,9 @@ func TestMainShellWindowsProcessDiagnostics(t *testing.T) {
 				for _, name := range []string{"child", "descendant"} {
 					for {
 						data, readErr := os.ReadFile(filepath.Join(work, name+".ready"))
-						if readErr != nil && !os.IsNotExist(readErr) {
+						// Windows may briefly hold the newly published readiness file open.
+						// Retry sharing violations within the existing readiness deadline.
+						if readErr != nil && !os.IsNotExist(readErr) && !errors.Is(readErr, windows.ERROR_SHARING_VIOLATION) {
 							var errno syscall.Errno
 							hasErrno := errors.As(readErr, &errno)
 							t.Fatalf("read control readiness: error_type=%T errno_available=%t errno=%d", readErr, hasErrno, uintptr(errno))

@@ -25,6 +25,10 @@ func init() {
 	if mode == "" || len(os.Args) != 3 || os.Args[1] != "tokenizer" || os.Args[2] != "__preview" {
 		return
 	}
+	if mode == "controlled-work" {
+		runControlledTokenizerPreview()
+		return
+	}
 	if mode == "supervisor" {
 		command := exec.Command(os.Args[0], "tokenizer", "__preview")
 		command.Env = append(os.Environ(), "OPENAI_TEST_TOKENIZER_PREVIEW=worker")
@@ -146,7 +150,7 @@ func TestTokenizerPreviewCancelAndReplace(t *testing.T) {
 	worker.Replace(13, "ignored after close", "o200k_base")
 }
 
-func TestTokenizerPreviewCancellationDuringChildWork(t *testing.T) {
+func TestTokenizerPreviewRealBPECancellationDuringChildWork(t *testing.T) {
 	assertTokenizerCancellationDuringMerge(t, strings.Repeat("a", tokenizer.MaxInputBytes), "o200k_base")
 }
 
@@ -278,7 +282,7 @@ func (w *tokenizerObservedOutput) Write(data []byte) (int, error) {
 	return w.Writer.Write(data)
 }
 
-func TestTokenizerPreviewLegacyCancellationDuringNumericWork(t *testing.T) {
+func TestTokenizerPreviewRealBPELegacyCancellationDuringNumericWork(t *testing.T) {
 	for _, encoding := range []string{"r50k_base", "p50k_base"} {
 		t.Run(encoding, func(t *testing.T) {
 			assertTokenizerCancellationDuringMerge(t, strings.Repeat("1234567890", tokenizer.MaxInputBytes/10), encoding)
@@ -425,7 +429,11 @@ func TestTokenizerPreviewRejectsMalformedRequests(t *testing.T) {
 		"invalid UTF8": frame("\xff", 0), "missing bytes": frame("a", 0)[:12],
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := serveTokenizerPreview(t.Context(), io.NopCloser(bytes.NewReader(data)), io.Discard); err == nil {
+			encode := func(string, string, bool) (tokenizer.Result, error) {
+				t.Error("malformed request reached the encoder")
+				return tokenizer.Result{}, errors.New("unexpected encoding")
+			}
+			if err := serveTokenizerPreviewWithEncoder(t.Context(), io.NopCloser(bytes.NewReader(data)), io.Discard, encode); err == nil {
 				t.Fatal("malformed worker input succeeded")
 			}
 		})

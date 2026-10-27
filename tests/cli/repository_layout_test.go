@@ -19,7 +19,7 @@ func TestRepositoryLayout(t *testing.T) {
 		t.Fatal("locate repository")
 	}
 	root := filepath.Join(filepath.Dir(file), "../..")
-	for _, retired := range []string{"pkg/custom", "pkg/cmd", "pkg/transformers", "scripts/castiron"} {
+	for _, retired := range []string{"pkg/custom", "pkg/cmd", "pkg/transformers", "generated/castiron"} {
 		if _, err := os.Stat(filepath.Join(root, retired)); !os.IsNotExist(err) {
 			t.Errorf("retired path %s must not exist (stat: %v)", retired, err)
 		}
