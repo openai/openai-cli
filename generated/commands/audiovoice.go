@@ -62,6 +62,21 @@ var audioVoicesCreate = cli.Command{
 	HideHelpCommand: true,
 }
 
+var audioVoicesDelete = cli.Command{
+	Name:    "delete",
+	Usage:   "Deletes a voice created from a text prompt or an audio sample.",
+	Suggest: true,
+	Flags: []cli.Flag{
+		&requestflag.Flag[string]{
+			Name:      "voice-id",
+			Required:  true,
+			PathParam: "voice_id",
+		},
+	},
+	Action:          handleAudioVoicesDelete,
+	HideHelpCommand: true,
+}
+
 func handleAudioVoicesCreate(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
 	unusedArgs := cmd.Args().Slice()
@@ -102,6 +117,51 @@ func handleAudioVoicesCreate(ctx context.Context, cmd *cli.Command) error {
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
 		Title:          "audio:voices create",
+		Transform:      transform,
+	})
+}
+
+func handleAudioVoicesDelete(ctx context.Context, cmd *cli.Command) error {
+	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
+	unusedArgs := cmd.Args().Slice()
+	if !cmd.IsSet("voice-id") && len(unusedArgs) > 0 {
+		cmd.Set("voice-id", unusedArgs[0])
+		unusedArgs = unusedArgs[1:]
+	}
+	if len(unusedArgs) > 0 {
+		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
+	}
+
+	options, err := flagOptions(
+		cmd,
+		apiquery.NestedQueryFormatBrackets,
+		apiquery.ArrayQueryFormatBrackets,
+		EmptyBody,
+		false,
+	)
+	if err != nil {
+		return err
+	}
+
+	var res []byte
+	options = append(options, option.WithResponseBodyInto(&res))
+	_, err = client.Audio.Voices.Delete(ctx, cmd.Value("voice-id").(string), options...)
+	if err != nil {
+		return err
+	}
+
+	obj := gjson.ParseBytes(res)
+	format := cmd.Root().String("format")
+	explicitFormat := cmd.Root().IsSet("format")
+	transform := cmd.Root().String("transform")
+	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) audio.voices > (method) delete",
+		OutputKind:     outputResponse,
+		ExplicitFormat: explicitFormat,
+		Format:         format,
+		RawOutput:      cmd.Root().Bool("raw-output"),
+		Title:          "audio:voices delete",
 		Transform:      transform,
 	})
 }
