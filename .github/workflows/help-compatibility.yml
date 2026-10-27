@@ -311,7 +311,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./internal/commands/tokenize -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes|Preview(MatchesExactEncodings|CancellationDuringChildWork|PreservesDeadline|LegacyCancellationDuringNumericWork))' |
+          go test -p 2 ./internal/commands/tokenize -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes|Preview(MatchesExactEncodings|CancellationDuringChildWork|PreservesDeadline|LegacyCancellationDuringNumericWork|ControlCompletion))' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'tokenizer-reader-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test image command ordering
@@ -998,6 +998,14 @@ jobs:
                   "TestTokenizerPreviewCancellationDuringChildWork/o200k_base",
                   "TestTokenizerPreviewCancellationDuringChildWork/cl100k_base",
                   "TestTokenizerPreviewPreservesDeadline",
+                  "TestTokenizerPreviewControlCompletion",
+                  "TestTokenizerPreviewControlCompletion/forced_reset",
+                  "TestTokenizerPreviewControlCompletion/eof",
+                  "TestTokenizerPreviewControlCompletion/wrapped_reset",
+                  "TestTokenizerPreviewControlCompletion/unexpected_bytes",
+                  "TestTokenizerPreviewControlCompletion/timeout",
+                  "TestTokenizerPreviewControlCompletion/other_error",
+                  "TestTokenizerPreviewControlCompletion/oversize",
                   "TestTokenizerPreviewLegacyCancellationDuringNumericWork",
                   "TestTokenizerPreviewLegacyCancellationDuringNumericWork/r50k_base",
                   "TestTokenizerPreviewLegacyCancellationDuringNumericWork/p50k_base",
