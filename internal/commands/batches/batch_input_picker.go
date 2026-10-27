@@ -171,6 +171,7 @@ func runBatchPickerModel(ctx context.Context, model tea.Model, policy batchPicke
 	model, _ = model.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	programContext, cancel := context.WithCancel(outputContext)
 	defer cancel()
+	var closeInput func() error
 	err = writeBatchStdoutWithCleanup(outputContext, os.Stderr, batchOutputCleanupGrace, func(out io.Writer) error {
 		if _, err := term.MakeRaw(os.Stdin.Fd()); err != nil {
 			return err
@@ -181,9 +182,10 @@ func runBatchPickerModel(ctx context.Context, model tea.Model, policy batchPicke
 		program := tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(writer), tea.WithContext(programContext),
 			tea.WithoutSignalHandler(), tea.WithWindowSize(width, height),
 			tea.WithColorProfile(terminal.ColorProfile(os.Stderr, os.Environ(), true)))
-		closeInput, err := startBatchPickerInputWithPolicy(outputContext, os.Stdin, program, stopOutput, policy)
-		if err != nil {
-			return err
+		var inputErr error
+		closeInput, inputErr = startBatchPickerInputWithPolicy(outputContext, os.Stdin, program, stopOutput, policy)
+		if inputErr != nil {
+			return inputErr
 		}
 		_, runErr := program.Run()
 		writer.mu.Lock()
@@ -197,9 +199,12 @@ func runBatchPickerModel(ctx context.Context, model tea.Model, policy batchPicke
 			// Leave the next command or result at column zero below the final menu.
 			_, lineErr = writer.WriteString("\n")
 		}
-		inputErr := closeInput()
-		return errors.Join(inputErr, outputErr, runErr, lineErr)
+		return errors.Join(outputErr, runErr, lineErr)
 	})
+	if closeInput != nil {
+		// Keep keyboard cancellation active until the output worker drains or stops.
+		err = errors.Join(err, closeInput())
+	}
 	if ctx.Err() != nil {
 		return batchContextError(errors.Join(ctx.Err(), context.Cause(ctx), err))
 	}
