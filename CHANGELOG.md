@@ -3,6 +3,11 @@
 ## [1.43.2](https://github.com/openai/openai-cli/compare/v1.43.1...v1.43.2) (2026-10-27)
 
 
+### Features
+
+* Show compact tables and shared paging for interactive Files, Batches, Projects, and Models lists. Explicit formats and piped output keep their existing behavior. ([#617](https://github.com/openai/openai-cli/issues/617)) ([a396112](https://github.com/openai/openai-cli/commit/a3961126808b166e3529ffa24f86a5879f96a5be))
+
+
 ### Bug Fixes
 
 * **api:** document the 400-question Decisions limit ([#632](https://github.com/openai/openai-cli/issues/632)) ([f508f76](https://github.com/openai/openai-cli/commit/f508f767f90fac247b41b47831847c1efb02fba0))
