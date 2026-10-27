@@ -36,7 +36,6 @@ func configureBatchHelpContent(root *cli.Command) {
 		"browse": {{Description: "Choose a batch without copying its ID:", Command: "batches browse"}},
 		"list": {
 			{Description: "Find batch IDs and their status:", Command: "batches list --max-items 10"},
-			{Description: "Refresh the list five times:", Command: "batches list --max-items 10 --watch --watch-count 5 --poll-interval 5s"},
 		},
 		"submit":   {{Description: "Upload your file and create one batch:", Command: "batches submit --file requests.jsonl --endpoint /v1/responses --completion-window 24h"}},
 		"create":   {{Description: "Reuse an uploaded input file; replace file_example with its ID:", Command: "batches create --input-file-id file_example --endpoint /v1/responses --completion-window 24h"}},
@@ -44,12 +43,9 @@ func configureBatchHelpContent(root *cli.Command) {
 		"wait":     {{Description: "Wait and save results in a new directory:", Command: "batches wait batch_example --output-dir results --wait-timeout 5m"}},
 		"results": {
 			{Description: "Read answers beside their original inputs:", Command: "batches results batch_example --match-input"},
-			{Description: "Inspect failed requests:", Command: "batches results batch_example --file error"},
-			{Description: "Read one request as complete JSON:", Command: "batches results batch_example --custom-id request-1 --match-input --format json"},
 		},
 		"inputs": {
 			{Description: "Find an uploaded input file:", Command: "batches inputs --search requests.jsonl"},
-			{Description: "Choose an input file interactively:", Command: "batches inputs --select"},
 		},
 		"download": {{Description: "Save a batch's output without overwriting a file:", Command: "batches download batch_example --output results.jsonl"}},
 		"cancel":   {{Description: "Request cancellation of an active batch:", Command: "batches cancel batch_example"}},

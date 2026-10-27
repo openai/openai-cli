@@ -25,7 +25,8 @@ openai batches browse
 Choose a batch, then select Status, Results, Errors, Inputs, or Download.
 Search applies to the loaded page. Use Next page to reach older batches.
 Use Refresh to reload the first page.
-Escape returns to the previous menu; Ctrl+C exits the browser.
+Escape returns to batch actions or the batch list.
+At the batch list, Escape exits. Ctrl+C exits from any screen.
 Downloads ask for a destination and never overwrite an existing file.
 The browser uses your configured connection, API key, and project.
 It does not create or cancel batches.
