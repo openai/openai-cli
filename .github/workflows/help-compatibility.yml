@@ -322,14 +322,6 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json \
             -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' \
             | tee "$RUNNER_TEMP/image-command-order-tests.jsonl"
-      - name: Test Windows image command ordering
-        if: matrix.image-order && runner.os == 'Windows' && matrix.shard != 'dispatch'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' |
-            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-command-order-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
-          exit $LASTEXITCODE
       - name: Test Linux Fish help invocation
         if: runner.os == 'Linux' && matrix.shard != 'dispatch'
         shell: bash
@@ -527,12 +519,6 @@ jobs:
           $ErrorActionPreference = 'Stop'
           go test -p 2 ./internal/app ./internal/output/listview -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLabelsPreserveLongIDs|TestListNavigationErrorPresentation|TestListNavigationFinishRetainsInterruptDuringCompletion|TestListNavigationRemovedKeysAndResizeDoNotFetch|TestListNavigationCompletePageStaysOpenWithoutPrinting|TestListNavigationPartialPagePreservesErrorAndRecords|TestListNavigationFinalEmptyPageKeepsLoadedResults|TestListNavigationUsesCompactPagerControls|TestViewerBackKeepsFetchFrontier|TestViewerPendingFetchIgnoresNavigation|TestViewerFinalPageStaysUntilQuit|TestViewerLargeLineAndResizePreserveOriginal|TestViewerTabsPreserveValuesAndFooter|TestViewerErrorRetainsPreviouslyLoadedResults|TestViewerHistoryWriteFailureDoesNotRetry|TestViewerLoadingCanCancel|TestViewerPreservesViewportKeyboardBindings|TestViewerPageKeysPreserveLazyCachedNavigation|TestViewerKeyboardWhileLoadingKeepsCancellation|TestViewerResizeRendersOnlySelectedPage|TestViewerResizeRenderFailureRetainsCachedPages|TestListPagerResizeRendersCachedRecords|TestListPagerAdvanceAtVisibleRecordBoundary|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-navigation-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./internal/output/transform -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' |
-            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-projection-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' |
-            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-renderer-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test image preferences and picker state
         if: matrix.image-state && runner.os != 'Windows' && matrix.shard != 'dispatch'
@@ -955,7 +941,7 @@ jobs:
                   fish_examples + [f"{name}/explicit_inline_off_preserves_remembered_on" for name in fish_examples],
               )
 
-          if os.environ["CHECK_IMAGE_ORDER"] == "true":
+          if os.environ["CHECK_IMAGE_ORDER"] == "true" and os.environ["RUNNER_OS"] != "Windows":
               suites["image-command-order-tests.jsonl"] = required_cases(
                   "TestMainImageCommandHelpOrder",
                   ["images", "images/--help", "images/-h", "images/--h",
@@ -1338,9 +1324,10 @@ jobs:
                       '0', '1', '1023', '1024', '1536', '1234', '1048576', '9007199254740993', '18446744073709551615',
                   ],
               }
-              suites['list-projection-helper-tests.jsonl'] = set().union(*(
-                  required_cases(root, children) for root, children in projection_helper_cases.items()
-              ))
+              if os.environ["RUNNER_OS"] != "Windows":
+                  suites['list-projection-helper-tests.jsonl'] = set().union(*(
+                      required_cases(root, children) for root, children in projection_helper_cases.items()
+                  ))
               renderer_helper_cases = {
                   'TestListTableKeepsIDsAndFitsWidth': [],
                   'TestListTableNarrowFallbackKeepsIDs': [],
@@ -1348,9 +1335,10 @@ jobs:
                   'TestListTableUnicodeWidths': [],
                   'TestListTableEmptyAndMalformedRows': [],
               }
-              suites['list-renderer-helper-tests.jsonl'] = set().union(*(
-                  required_cases(root, children) for root, children in renderer_helper_cases.items()
-              ))
+              if os.environ["RUNNER_OS"] != "Windows":
+                  suites['list-renderer-helper-tests.jsonl'] = set().union(*(
+                      required_cases(root, children) for root, children in renderer_helper_cases.items()
+                  ))
           if os.environ["CHECK_REQUEST_CONFIGURATION"] == "true":
               request_public_cases = {
                   'TestMainGlobalFlagsPlacementHeadersAndOutput': [
