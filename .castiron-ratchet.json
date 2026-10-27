@@ -1,5 +1,9 @@
 {
   "schema_version": 2,
   "generated_files": "strict",
-  "max_custom_patch_lines": 0
+  "max_custom_patch_lines": 0,
+  "next_policy": {
+    "repository": "openai/openai-cli",
+    "main_sha": "92f0ca624c52b59ee34d2e6a28ee6ea0155f5f30"
+  }
 }
