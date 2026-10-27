@@ -11,6 +11,10 @@ trust-boundary decisions during Codex Security scans. [SECURITY.md](../../SECURI
 remains the authority for private vulnerability reporting and coordinated
 disclosure.
 
+SDK lint verifies generated-file contents and Git file modes against the
+checked-in compiler inventory. The checker runs with the existing lint job
+permissions; inventory and checker changes receive ordinary SDK code review.
+
 ## 1. Overview
 
 `openai-cli` is a local Go command-line client for OpenAI APIs. It is
