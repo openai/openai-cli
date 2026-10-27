@@ -865,7 +865,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $env:PATH = $env:SELECTED_POWERSHELL_DIRECTORY + [IO.Path]::PathSeparator + $env:PATH
-          $selector = '^TestMainShellSuggestions'
+          $selector = '^TestMainShellSuggestionsNative$/^pwsh$'
           if ('${{ matrix.powershell }}' -eq 'current') {
             $selector = '^(TestMainShellSuggestions|TestMainShellWindowsProcessDiagnostics$)'
           }
@@ -968,23 +968,23 @@ jobs:
                   "RecheckExecutablePrecedence", "RecheckRemovedExecutable",
               ]
           ))
-          public = (
-              cases("TestMainShellSuggestionsNative", ["pwsh"]) |
-              cases("TestMainShellSuggestionsRequireSeparateConsent", ["bash", "zsh", "fish", "pwsh"]) |
-              cases("TestMainShellSuggestionsConfigurationSnapshot", [
-                  "cache_creation", "cache_rewrite", "sibling_file", "new_profile",
-                  "existing_profile", "profile_mode", "cache_without_exclusion", "cache_directory",
-              ]) |
-              cases("TestMainShellSuggestionsRejectMixedPersistentSetup", [
-                  mode + "/" + flag for mode in ["text", "json"]
-                  for flag in ["--install-picker", "--uninstall-picker", "--automatic"]
-              ])
-          )
+          public = cases("TestMainShellSuggestionsNative", ["pwsh"])
           if os.environ["EXPECTED_POWERSHELL"] == "current":
+              public.update(
+                  cases("TestMainShellSuggestionsRequireSeparateConsent", ["bash", "zsh", "fish", "pwsh"]) |
+                  cases("TestMainShellSuggestionsConfigurationSnapshot", [
+                      "cache_creation", "cache_rewrite", "sibling_file", "new_profile",
+                      "existing_profile", "profile_mode", "cache_without_exclusion", "cache_directory",
+                  ]) |
+                  cases("TestMainShellSuggestionsRejectMixedPersistentSetup", [
+                      mode + "/" + flag for mode in ["text", "json"]
+                      for flag in ["--install-picker", "--uninstall-picker", "--automatic"]
+                  ])
+              )
               public.update(cases(
                   "TestMainShellWindowsProcessDiagnostics", ["success", "nonzero", "timeout"],
               ))
-          expected_public_count = 27 if os.environ["EXPECTED_POWERSHELL"] == "current" else 23
+          expected_public_count = 27 if os.environ["EXPECTED_POWERSHELL"] == "current" else 2
           require((len(powershell), len(adapters), len(public)) == (49, 8, expected_public_count),
                   "Suggestion inventory contains missing or duplicate names")
           suites = {
