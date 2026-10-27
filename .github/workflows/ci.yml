@@ -752,6 +752,8 @@ jobs:
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-go
+        with:
+          restore-only: 'true'
       - name: Select and verify native PowerShell
         id: powershell
         shell: pwsh
