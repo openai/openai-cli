@@ -1009,6 +1009,8 @@ jobs:
                   "TestTokenizerInputSourcePreservesNonConsoleBytes",
                   "TestTokenizerPreviewMatchesExactEncodings",
                   "TestTokenizerPreviewCancellationDuringChildWork",
+                  "TestTokenizerPreviewCancellationDuringChildWork/o200k_base",
+                  "TestTokenizerPreviewCancellationDuringChildWork/cl100k_base",
                   "TestTokenizerPreviewPreservesDeadline",
                   "TestTokenizerPreviewLegacyCancellationDuringNumericWork",
                   "TestTokenizerPreviewLegacyCancellationDuringNumericWork/r50k_base",
