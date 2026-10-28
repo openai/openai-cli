@@ -42,6 +42,27 @@ def drain_shutdown_output(terminal, until):
                 break
 
 
+@contextmanager
+def launcher_handoff():
+    # A signal can arrive after Popen starts the launcher but before the caller owns its Terminal.
+    # Defer in Python so the launcher inherits its normal signal mask across exec.
+    pending = []
+
+    def remember(signum, _frame):
+        if signum not in pending:
+            pending.append(signum)
+
+    try:
+        with ExitStack() as handlers:
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                if signal.getsignal(signum) != signal.SIG_IGN:
+                    handlers.callback(signal.signal, signum, signal.signal(signum, remember))
+            yield
+    finally:
+        for signum in pending:
+            signal.raise_signal(signum)
+
+
 def finish_capture(terminal, output, header, evidence, primary_error):
     failures = [] if primary_error is None else [primary_error]
 
@@ -54,8 +75,8 @@ def finish_capture(terminal, output, header, evidence, primary_error):
 
     if terminal is not None:
         with ExitStack() as shutdown:
-            # Deliver pending Ctrl+C only after the launcher has stopped its detached CLI and the PTY closes.
-            previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+            # Deliver pending signals after the launcher stops its detached CLI and the PTY closes.
+            previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
             shutdown.callback(signal.pthread_sigmask, signal.SIG_SETMASK, previous)
             try:
                 with retain_failure():
@@ -111,6 +132,14 @@ def main():
                 "limits": "PTY replay does not establish physical terminal appearance or native Windows/Linux execution."}
     terminal = None
     with ExitStack() as cleanup:
+        def terminate(signum, _frame):
+            # The first termination request owns the exit status while the stack releases the launcher.
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            raise SystemExit(128 + signum)
+
+        cleanup.callback(signal.signal, signal.SIGINT, signal.getsignal(signal.SIGINT))
+        cleanup.callback(signal.signal, signal.SIGTERM, signal.signal(signal.SIGTERM, terminate))
         cleanup.push(lambda _type, error, _traceback: finish_capture(terminal, args.output, header, evidence, error))
         with tempfile.TemporaryDirectory(prefix="f13-guided-capture-home-") as home:
             environment = {"PATH": os.defpath, "HOME": home, "XDG_CONFIG_HOME": home,
@@ -119,9 +148,10 @@ def main():
             command = [str(args.launcher)]
             if not args.launcher_takes_no_binary:
                 command.append(str(args.binary))
-            terminal = harness.Terminal(sys.executable, command, environment,
-                                        width=args.width, height=args.height, max_output_bytes=2_000_000,
-                                        deadline=time.monotonic() + 100)
+            with launcher_handoff():
+                terminal = harness.Terminal(sys.executable, command, environment,
+                                            width=args.width, height=args.height, max_output_bytes=2_000_000,
+                                            deadline=time.monotonic() + 100)
 
             def save(name):
                 settle(terminal)

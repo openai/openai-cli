@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -6,7 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 if os.name == "posix":
     import browser_guided_capture as capture
@@ -130,6 +131,100 @@ class GuidedCaptureCleanupTest(unittest.TestCase):
 
         self.assertEqual(events, ["SIGINT", "wait finished", "close finished", "SIGINT"])
         self.assertEqual(signal.pthread_sigmask(signal.SIG_BLOCK, set()), initial_mask)
+
+    def test_sigterm_releases_launcher_during_handoff_and_capture(self):
+        original_terminal = capture.harness.Terminal
+        original_drain = capture.drain_shutdown_output
+        for phase in ("handoff", "capture"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory, ExitStack() as cleanup:
+                def unexpected_termination(*_):
+                    self.fail("SIGTERM reached the caller before capture released the launcher")
+
+                cleanup.callback(signal.signal, signal.SIGTERM, signal.signal(signal.SIGTERM, unexpected_termination))
+                old_interrupt = signal.getsignal(signal.SIGINT)
+                cleanup.callback(signal.signal, signal.SIGINT, old_interrupt)
+                stop_signals = {signal.SIGINT, signal.SIGTERM}
+                original_mask = signal.pthread_sigmask(signal.SIG_UNBLOCK, stop_signals)
+                cleanup.callback(signal.pthread_sigmask, signal.SIG_SETMASK, original_mask)
+                launcher = Path(directory) / "launcher.py"
+                launcher.write_text(
+                    "import signal, sys\n"
+                    "blocked = signal.pthread_sigmask(signal.SIG_BLOCK, set()) & {signal.SIGTERM, signal.SIGINT}\n"
+                    "signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n"
+                    "signal.alarm(15)\n"
+                    "print('launcher ready', 'blocked' if blocked else 'unblocked', flush=True)\n"
+                    "signal.pause()\n")
+                output = Path(directory) / "capture"
+                terminal = None
+
+                def launch(*args, **kwargs):
+                    nonlocal terminal
+                    terminal = original_terminal(*args, **kwargs)
+                    cleanup.callback(terminal.close)
+                    terminal.wait("launcher ready")
+                    self.assertIn(b"launcher ready unblocked", terminal.raw)
+                    if phase == "handoff":
+                        signal.raise_signal(signal.SIGTERM)
+                    else:
+                        terminal.wait = lambda _marker: signal.raise_signal(signal.SIGTERM)
+                    return terminal
+
+                def drain(owned_terminal, until):
+                    if phase == "capture":
+                        signal.raise_signal(signal.SIGTERM)
+                        signal.raise_signal(signal.SIGINT)
+                    original_drain(owned_terminal, until)
+
+                argv = ["capture", sys.executable, str(output), "--launcher", str(launcher)]
+                with patch.object(sys, "argv", argv), patch.object(capture.harness, "Terminal", side_effect=launch), \
+                     patch.object(capture, "drain_shutdown_output", side_effect=drain) as shutdown, \
+                     self.assertRaises(SystemExit) as caught:
+                    capture.main()
+                self.assertEqual(caught.exception.code, 128 + signal.SIGTERM)
+                shutdown.assert_called_once()
+                self.assertEqual(terminal.child.returncode, 0)
+                with self.assertRaises(ChildProcessError):
+                    os.waitpid(terminal.child.pid, os.WNOHANG)
+                for descriptor in (terminal.master, terminal.slave):
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
+                self.assertIs(signal.getsignal(signal.SIGTERM), unexpected_termination)
+                self.assertIs(signal.getsignal(signal.SIGINT), old_interrupt)
+                self.assertEqual(signal.pthread_sigmask(signal.SIG_BLOCK, set()), original_mask - stop_signals)
+
+    def test_failed_launch_replays_pending_signals(self):
+        self.addCleanup(signal.signal, signal.SIGTERM, signal.signal(signal.SIGTERM, signal.SIG_IGN))
+        self.addCleanup(signal.signal, signal.SIGINT, signal.getsignal(signal.SIGINT))
+        original_mask = signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
+        self.addCleanup(signal.pthread_sigmask, signal.SIG_SETMASK, original_mask)
+        returning_handler = Mock()
+        for signals, interrupt_handler, expected in (
+            ((signal.SIGTERM,), signal.default_int_handler, SystemExit),
+            ((signal.SIGINT,), signal.default_int_handler, KeyboardInterrupt),
+            ((signal.SIGINT, signal.SIGTERM), signal.SIG_IGN, SystemExit),
+            ((signal.SIGINT, signal.SIGTERM), returning_handler, SystemExit),
+        ):
+            with self.subTest(signals=signals, interrupt_handler=interrupt_handler), \
+                 tempfile.TemporaryDirectory() as directory:
+                signal.signal(signal.SIGINT, interrupt_handler)
+                launch_error = OSError("could not start launcher")
+
+                def fail_launch(*args, **kwargs):
+                    for signum in signals:
+                        signal.raise_signal(signum)
+                    raise launch_error
+
+                argv = ["capture", sys.executable, str(Path(directory) / "capture")]
+                with patch.object(sys, "argv", argv), patch.object(capture.harness, "Terminal", side_effect=fail_launch), \
+                     self.assertRaises(expected) as caught:
+                    capture.main()
+                self.assertIs(caught.exception.__context__, launch_error)
+                if expected is SystemExit:
+                    self.assertEqual(caught.exception.code, 128 + signal.SIGTERM)
+                self.assertIs(signal.getsignal(signal.SIGTERM), signal.SIG_IGN)
+                self.assertIs(signal.getsignal(signal.SIGINT), interrupt_handler)
+                if interrupt_handler is returning_handler:
+                    returning_handler.assert_called_once_with(signal.SIGINT, ANY)
 
 
 if __name__ == "__main__":
