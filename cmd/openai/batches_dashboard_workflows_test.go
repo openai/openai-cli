@@ -34,10 +34,10 @@ func TestMainDispatchBatchInputsSearchAndSelectionGuards(t *testing.T) {
 		if r.URL.Query().Get("after") != "file_other" {
 			t.Errorf("unexpected cursor: %s", r.URL)
 		}
-		io.WriteString(w, `{"data":[{"id":"file_requests","object":"file","filename":"資料-ReQuEsTs[1].jsonl","purpose":"batch","bytes":9007199254740993,"future":null}],"has_more":false}`)
+		io.WriteString(w, `{"data":[{"id":"file_requests","object":"file","filename":"資料-ReQuEsTs[1].jsonl","purpose":"batch","bytes":9007199254740993,"future":null},{}],"has_more":true}`)
 	}))
 	defer server.Close()
-	got := runReadableCommand(t, server, "--format", "JsOn", "batches", "inputs", "--search", "requests[1]", "--max-items", "-1")
+	got := runReadableCommand(t, server, "--format", "JsOn", "batches", "inputs", "--search", "requests[1]", "--max-items", "1")
 	value := gjson.Parse(got.stdout)
 	if got.code != 0 || got.stderr != "" || requests.Load() != 2 || !value.IsArray() || len(value.Array()) != 1 || value.Get("0.id").Str != "file_requests" || value.Get("0.bytes").Raw != "9007199254740993" || !value.Get("0.future").Exists() {
 		t.Fatalf("search lost matching metadata: %+v requests=%d", got, requests.Load())

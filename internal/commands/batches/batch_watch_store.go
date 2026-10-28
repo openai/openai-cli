@@ -21,59 +21,9 @@ func batchWatchStorageError(err error) error {
 }
 
 func (s *batchWatchSnapshot) fetch(after string, maximum int64, fetch func(string) ([]byte, error)) error {
-	if _, err := s.rememberCursor(after); err != nil {
-		return err
-	}
-	for {
-		if err := s.store.ctx.Err(); err != nil {
-			return err
-		}
-		raw, err := fetch(after)
-		if err != nil {
-			return err
-		}
-		if !gjson.ValidBytes(raw) {
-			return batchError("The API returned invalid list JSON. Results may be incomplete; retry the list operation.")
-		}
-		page := gjson.ParseBytes(raw)
-		data, more := page.Get("data"), page.Get("has_more")
-		if !page.IsObject() || !data.IsArray() || more.Type != gjson.True && more.Type != gjson.False {
-			return batchError("The API returned an unfamiliar list response. Results may be incomplete; retry the list operation.")
-		}
-		var last string
-		var itemErr error
-		data.ForEach(func(_, item gjson.Result) bool {
-			if s.store.ctx.Err() != nil || maximum >= 0 && s.store.recordCount >= maximum {
-				return false
-			}
-			id := item.Get("id")
-			if !item.IsObject() || id.Type != gjson.String || id.Str == "" {
-				itemErr = batchError("The API returned a list item without a valid ID. Results may be incomplete; retry the list operation.")
-				return false
-			}
-			last = id.Str
-			itemErr = s.appendRecord(item.Raw)
-			return itemErr == nil
-		})
-		if err := s.store.ctx.Err(); err != nil {
-			return err
-		}
-		if itemErr != nil {
-			return itemErr
-		}
-		if maximum >= 0 && s.store.recordCount >= maximum || !more.Bool() {
-			return nil
-		}
-		seen, err := s.rememberCursor(last)
-		if err != nil {
-			return err
-		}
-		if last == "" || seen {
-			return batchError("List pagination stopped because the API returned a missing or repeated cursor. Results may be incomplete.\nRetry from the first page with the same search, connection, and project settings.")
-		}
-		// gjson strings can reference the whole page. Retain only the next cursor.
-		after = strings.Clone(last)
-	}
+	return s.store.fetchList(s.store.ctx, after, maximum, fetch, func(item gjson.Result) error {
+		return s.appendRecord(item.Raw)
+	}, s.rememberCursor)
 }
 
 func (s *batchWatchSnapshot) appendBytes(data []byte) error {

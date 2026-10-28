@@ -19,58 +19,12 @@ type batchInputCollection struct {
 }
 
 func (s *batchInputCollection) fetch(ctx context.Context, maximum int64, fetch func(string) ([]byte, error), keep func(gjson.Result) bool) error {
-	after := ""
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		raw, err := fetch(after)
-		if err != nil {
-			return err
-		}
-		if !gjson.ValidBytes(raw) {
-			return batchError("The API returned invalid list JSON. Results may be incomplete; retry the list operation.")
-		}
-		page := gjson.ParseBytes(raw)
-		data, more := page.Get("data"), page.Get("has_more")
-		if !page.IsObject() || !data.IsArray() || more.Type != gjson.True && more.Type != gjson.False {
-			return batchError("The API returned an unfamiliar list response. Results may be incomplete; retry the list operation.")
-		}
-		var last string
-		var itemErr error
-		data.ForEach(func(_, item gjson.Result) bool {
-			if ctx.Err() != nil || maximum >= 0 && s.store.recordCount >= maximum {
-				return false
-			}
-			id := item.Get("id")
-			if !item.IsObject() || id.Type != gjson.String || id.Str == "" {
-				itemErr = batchError("The API returned a list item without a valid ID. Results may be incomplete; retry the list operation.")
-				return false
-			}
-			last = id.Str
-			if keep == nil || keep(item) {
-				itemErr = s.store.appendListRecord(item.Raw, false)
-			}
-			return itemErr == nil
-		})
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if itemErr != nil {
-			return itemErr
-		}
-		if maximum >= 0 && s.store.recordCount >= maximum || !more.Bool() {
+	return s.store.fetchList(ctx, "", maximum, fetch, func(item gjson.Result) error {
+		if keep != nil && !keep(item) {
 			return nil
 		}
-		seen, err := s.store.rememberListCursor(last)
-		if err != nil {
-			return err
-		}
-		if last == "" || seen {
-			return batchError("List pagination stopped because the API returned a missing or repeated cursor. Results may be incomplete.\nRetry from the first page with the same search, connection, and project settings.")
-		}
-		after = strings.Clone(last)
-	}
+		return s.store.appendListRecord(item.Raw, false)
+	}, s.store.rememberListCursor)
 }
 
 func (s *batchInputCollection) writeJSON(out io.Writer) error {

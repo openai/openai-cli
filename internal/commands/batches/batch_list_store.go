@@ -1,6 +1,71 @@
 package batches
 
-import "hash/maphash"
+import (
+	"context"
+	"hash/maphash"
+	"strings"
+
+	"github.com/tidwall/gjson"
+)
+
+func (s *batchRecordStore) fetchList(
+	ctx context.Context, after string, maximum int64, fetchPage func(string) ([]byte, error),
+	appendItem func(gjson.Result) error, rememberCursor func(string) (bool, error),
+) error {
+	if _, err := rememberCursor(after); err != nil {
+		return err
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		raw, err := fetchPage(after)
+		if err != nil {
+			return err
+		}
+		if !gjson.ValidBytes(raw) {
+			return batchError("The API returned invalid list JSON. Results may be incomplete; retry the list operation.")
+		}
+		page := gjson.ParseBytes(raw)
+		data, more := page.Get("data"), page.Get("has_more")
+		if !page.IsObject() || !data.IsArray() || more.Type != gjson.True && more.Type != gjson.False {
+			return batchError("The API returned an unfamiliar list response. Results may be incomplete; retry the list operation.")
+		}
+		var last string
+		var itemErr error
+		data.ForEach(func(_, item gjson.Result) bool {
+			if ctx.Err() != nil || maximum >= 0 && s.recordCount >= maximum {
+				return false
+			}
+			id := item.Get("id")
+			if !item.IsObject() || id.Type != gjson.String || id.Str == "" {
+				itemErr = batchError("The API returned a list item without a valid ID. Results may be incomplete; retry the list operation.")
+				return false
+			}
+			last = id.Str
+			itemErr = appendItem(item)
+			return itemErr == nil
+		})
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if itemErr != nil {
+			return itemErr
+		}
+		if maximum >= 0 && s.recordCount >= maximum || !more.Bool() {
+			return nil
+		}
+		seen, err := rememberCursor(last)
+		if err != nil {
+			return err
+		}
+		if last == "" || seen {
+			return batchError("List pagination stopped because the API returned a missing or repeated cursor. Results may be incomplete.\nRetry from the first page with the same search, connection, and project settings.")
+		}
+		// gjson strings can reference the whole page. Retain only the next cursor.
+		after = strings.Clone(last)
+	}
+}
 
 func (s *batchRecordStore) appendListBytes(data []byte) error {
 	if err := s.write(s.data, data, s.position); err != nil {

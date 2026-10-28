@@ -88,7 +88,10 @@ func TestBatchRecordStreamPreservesIDSemantics(t *testing.T) {
 }
 
 func TestBatchRecordStreamValidatesRecordBoundary(t *testing.T) {
-	for _, invalid := range []string{`{"private":true} garbage`, `{"custom_id":"a","\u0063ustom_id":"b"}`, `{"private":`} {
+	for _, invalid := range []string{
+		`{"private":true} garbage`, `{"custom_id":"a","\u0063ustom_id":"b"}`, `{"private":`,
+		`{"private":true}` + "\xc2", `{"private":true}` + "\xe2\x80\n", `{"private":true}☃`,
+	} {
 		stream := newBatchRecordStream(t.Context(), strings.NewReader("{\"custom_id\":\"first\"}\n"+invalid), "output", "")
 		require.NoError(t, stream.next())
 		var output bytes.Buffer

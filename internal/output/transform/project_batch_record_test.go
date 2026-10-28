@@ -2,6 +2,7 @@ package transform
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -124,4 +125,42 @@ func TestProjectBatchRecordCancellation(t *testing.T) {
 	cancel()
 	_, err := ProjectBatchRecord(ctx, gjson.Parse(`{}`), "result")
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestProjectBatchRecordPreservesExtensionFieldNames(t *testing.T) {
+	for _, key := range []string{"future\x1b[31m", "future\x00\a\x1f\x7f", "future\n\t\r", "future\\\"", "future\u0085\u2028\u2029😀"} {
+		for _, object := range []string{"response", "chat.completion"} {
+			t.Run(fmt.Sprintf("%s/%q", object, key), func(t *testing.T) {
+				body := map[string]any{
+					"object": object,
+					"usage":  map[string]any{key: json.Number("9007199254740993"), "input_tokens_details": map[string]any{key: 7}},
+				}
+				if object == "response" {
+					body["status"], body["output"] = "completed", []any{}
+					body["tool_usage"] = map[string]any{key: map[string]any{"num_requests": 9}}
+				} else {
+					body["choices"] = []any{map[string]any{"index": 0, "message": map[string]any{"role": "assistant", "content": "answer"}, "finish_reason": "stop"}}
+				}
+				encoded, err := json.Marshal(body)
+				require.NoError(t, err)
+				for _, kind := range []string{"result", "matched_result"} {
+					result, err := ProjectBatchRecord(t.Context(), gjson.Parse(batchProjectionResult(string(encoded))), kind)
+					require.NoError(t, err)
+					var document map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal([]byte(result.Raw), &document), kind)
+					var usage map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal(document["usage"], &usage))
+					require.Equal(t, "9007199254740993", string(usage[key]))
+					var details map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal(usage["input_tokens_details"], &details))
+					require.Equal(t, "7", string(details[key]))
+					if object == "response" {
+						var tools map[string]map[string]int
+						require.NoError(t, json.Unmarshal(document["tool_usage"], &tools))
+						require.Equal(t, 9, tools[key]["num_requests"])
+					}
+				}
+			})
+		}
+	}
 }

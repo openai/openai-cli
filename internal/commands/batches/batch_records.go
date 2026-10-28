@@ -112,18 +112,29 @@ func (w workflow) showBatchRecords(ctx context.Context, command *cli.Command, cl
 }
 
 func (w workflow) showStreamedBatchRecords(ctx context.Context, command *cli.Command, client openai.Client, options []option.RequestOption, batchID, fileID, selection, filter string) (err error) {
-	response, err := client.Files.Content(ctx, fileID, options...)
+	sourceCtx, stopSource := context.WithCancelCause(ctx)
+	defer stopSource(nil)
+	response, err := client.Files.Content(sourceCtx, fileID, options...)
 	if err != nil {
 		return err
 	}
-	stream := newBatchRecordStream(ctx, response.Body, selection, filter)
+	stream := newBatchRecordStream(sourceCtx, response.Body, selection, filter)
 	defer func() { err = errors.Join(err, response.Body.Close(), stream.close()) }()
 	// Validate the first selected record before metadata or formatter output.
 	if err := stream.next(); err != nil {
 		return err
 	}
 	return w.presentBatchRecords(ctx, command, RecordOutput{
-		WriteJSON:     func(writer io.Writer) error { return stream.writeJSON(writer, batchID, fileID) },
+		WriteJSON: func(writer io.Writer) error {
+			err := stream.writeJSON(writer, batchID, fileID)
+			// Presentation can stop its HTTP producer without canceling the
+			// command. Preserve that output failure, not induced cancellation.
+			if sourceCtx.Err() != nil && errors.Is(err, sourceCtx.Err()) {
+				return context.Cause(sourceCtx)
+			}
+			return err
+		},
+		StopSource:    stopSource,
 		TemporaryFile: stream.temporaryFile,
 		BatchID:       batchID, File: selection, FileID: fileID, Visit: stream.visit,
 	})

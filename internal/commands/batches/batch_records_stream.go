@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/openai/openai-cli/internal/readable"
 )
@@ -27,6 +28,7 @@ type batchRecordStream struct {
 	file              *os.File
 	spilled           bool
 	size              int64
+	scratchMu         sync.Mutex
 	scratch           *batchRecordStore
 }
 
@@ -37,6 +39,9 @@ func newBatchRecordStream(ctx context.Context, source io.Reader, selection, filt
 }
 
 func (s *batchRecordStream) temporaryFile() (*os.File, func() error, error) {
+	// The producer spills records while the renderer creates and releases label files.
+	s.scratchMu.Lock()
+	defer s.scratchMu.Unlock()
 	if s.scratch == nil {
 		var err error
 		s.scratch, err = newBatchScratchStore(s.ctx)
@@ -44,10 +49,20 @@ func (s *batchRecordStream) temporaryFile() (*os.File, func() error, error) {
 			return nil, nil, err
 		}
 	}
-	return s.scratch.temporaryFile()
+	file, remove, err := s.scratch.temporaryFile()
+	if err != nil {
+		return nil, nil, err
+	}
+	return file, func() error {
+		s.scratchMu.Lock()
+		defer s.scratchMu.Unlock()
+		return remove()
+	}, nil
 }
 
 func (s *batchRecordStream) close() error {
+	s.scratchMu.Lock()
+	defer s.scratchMu.Unlock()
 	if s.scratch == nil {
 		return nil
 	}
