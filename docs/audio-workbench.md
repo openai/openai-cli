@@ -76,8 +76,9 @@ The marker follows player-reported progress. Players without progress reports ke
 With the result focused, S opens Save and H opens History.
 Save exports the complete original audio, including when playback starts from a selected position.
 The default destination is `~/Downloads/gpt-audio`, with a filename derived from the retained prompt.
-Enter confirms the suggested destination. Tab edits Filename or Save to without moving values below their labels.
-Enter on Save to finishes editing; it does not save. Default-name collisions receive numbered filenames.
+Save opens with the Save to field focused. Edit the folder or keep the suggested destination.
+Press Enter to focus Save audio. Press Enter again to write the file.
+Tab moves between Filename, Save to, and Save audio. Default-name collisions receive numbered filenames.
 History is available directly in the form and through More actions.
 History shows prompt previews and generation metadata. Opening an entry restores its settings without generation.
 
