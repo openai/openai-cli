@@ -26,8 +26,10 @@ func showReadableBatchRecords(ctx context.Context, records batchcommands.RecordO
 		Source string `json:"source"`
 		FileID string `json:"file_id"`
 	}{records.BatchID, records.File + " file", records.FileID})
-	if err := readable.Write(out, gjson.ParseBytes(metadata)); err != nil {
-		return err
+	if !records.Detail {
+		if err := readable.Write(out, gjson.ParseBytes(metadata)); err != nil {
+			return err
+		}
 	}
 	visited, projected := false, false
 	inputIndex, resultIndex := 0, 0
@@ -35,10 +37,12 @@ func showReadableBatchRecords(ctx context.Context, records batchcommands.RecordO
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		visited = true
-		if _, err := io.WriteString(out, "\n"); err != nil {
-			return err
+		if visited || !records.Detail {
+			if _, err := io.WriteString(out, "\n"); err != nil {
+				return err
+			}
 		}
+		visited = true
 		switch item.Kind {
 		case "group":
 			inputIndex, resultIndex = 0, 0
@@ -90,6 +94,14 @@ func showReadableBatchRecord(ctx context.Context, out io.Writer, item batchcomma
 			return false, projectionErr
 		}
 		if value.Exists() {
+			if records.Detail && records.Decorate != nil {
+				switch item.Kind {
+				case "result":
+					return true, showBatchResultDetail(out, value, records.Decorate)
+				case "input_detail":
+					return true, showBatchInputDetail(out, value, records.Decorate)
+				}
+			}
 			return true, readable.Write(out, value)
 		}
 		if _, err := io.WriteString(out, "Details (unrecognized record format):\n"); err != nil {

@@ -29,7 +29,7 @@ func configureBatchHelpContent(root *cli.Command) {
 	}
 	group.Examples = append(group.Examples, clihelp.Example{
 		Description: "Start a new batch from your request file:",
-		Command:     "batches submit --file requests.jsonl --endpoint /v1/responses --completion-window 24h",
+		Command:     "batches submit requests.jsonl",
 	})
 	setCompleteHelpContent(batches, group)
 	for name, examples := range map[string][]clihelp.Example{
@@ -37,7 +37,10 @@ func configureBatchHelpContent(root *cli.Command) {
 		"list": {
 			{Description: "Find batch IDs and their status:", Command: "batches list --max-items 10"},
 		},
-		"submit":   {{Description: "Upload your file and create one batch:", Command: "batches submit --file requests.jsonl --endpoint /v1/responses --completion-window 24h"}},
+		"submit": {
+			{Description: "Upload your file and create one batch:", Command: "batches submit requests.jsonl"},
+			{Description: "Upload, start, wait, and save results:", Command: "batches submit requests.jsonl --wait --output-dir ./results"},
+		},
 		"create":   {{Description: "Reuse an uploaded input file; replace file_example with its ID:", Command: "batches create --input-file-id file_example --endpoint /v1/responses --completion-window 24h"}},
 		"retrieve": {{Description: "Check a batch; replace batch_example with its ID:", Command: "batches retrieve batch_example"}},
 		"wait":     {{Description: "Wait and save results in a new directory:", Command: "batches wait batch_example --output-dir results --wait-timeout 5m"}},

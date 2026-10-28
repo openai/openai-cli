@@ -35,7 +35,7 @@ for demo_scene in before after; do
     "${demo_api_url%/v1}/$demo_scene/v1" "$demo_scene: Batch navigation" \
     "DEMO_SCENE=$demo_scene" "DEMO_EVIDENCE=$demo_output/$demo_scene-evidence" \
     "HOME=$demo_runtime/$demo_scene-home" "XDG_CONFIG_HOME=$demo_runtime/$demo_scene-home" \
-    "XDG_CACHE_HOME=$demo_runtime/$demo_scene-home" OPENAI_CLI_NO_UPDATE_CHECK=1 NO_COLOR=1 GOMAXPROCS=2
+    "XDG_CACHE_HOME=$demo_runtime/$demo_scene-home" OPENAI_CLI_NO_UPDATE_CHECK=1 "NO_COLOR=${NO_COLOR:-}" GOMAXPROCS=2
 done
 demo_stop_api
 "$demo_python" -I -B - "$demo_output" <<'PY'

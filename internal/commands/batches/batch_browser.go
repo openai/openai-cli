@@ -3,7 +3,6 @@ package batches
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/clihelp"
-	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
@@ -20,8 +18,8 @@ import (
 
 func (w workflow) newBatchBrowseCommand() *cli.Command {
 	command := &cli.Command{
-		Name: "browse", Usage: "Choose a batch, inspect its results, or download a file",
-		Description:     "Opens a read-only Batch browser. Search filters the loaded page only; use Next page for more batches. Actions preserve this session's connection and project. Downloads require a new file path. Requires terminal stdin, stdout, and stderr with readable output. No batch is submitted or canceled. Action failures remain failures when the browser exits.",
+		Name: "browse", Usage: "Create a batch, follow progress, inspect results, or save a file",
+		Description:     "Opens the Batch browser. Ctrl+N opens guided creation; only Ctrl+S on the review screen submits a batch. Processing batches update every 10 seconds while their action screen is open. Leaving the browser does not cancel a remote batch. Search filters the loaded page only; use Next page for more batches. Actions preserve this session's connection and project. Downloads show their folder and never overwrite files. Requires terminal stdin, stdout, and stderr with readable output. Action failures remain failures when the browser exits.",
 		HideHelpCommand: true, Suggest: true,
 		Flags: []cli.Flag{
 			&cli.Int64Flag{Name: "page-size", Value: 20, Usage: "Batches to request per page, from 1 to 100"},
@@ -55,7 +53,16 @@ func (w workflow) browseBatches(ctx context.Context, cmd *cli.Command) (err erro
 	defer stop()
 	defer func() {
 		if ctx.Err() != nil {
-			err = batchContextError(errors.Join(ctx.Err(), context.Cause(ctx), err))
+			joined := errors.Join(ctx.Err(), context.Cause(ctx), err)
+			contextual := batchContextError(joined)
+			var recovery, interrupted *WorkflowError
+			if errors.As(err, &recovery) && recovery.submission != nil && errors.As(contextual, &interrupted) {
+				copy := *recovery
+				copy.code, copy.cause = interrupted.ExitCode(), joined
+				err = &copy
+			} else {
+				err = contextual
+			}
 		}
 	}()
 	options, err := w.options.RequestOptions(cmd, batchRequestInput{ctx: ctx, file: os.Stdin})
@@ -63,7 +70,11 @@ func (w workflow) browseBatches(ctx context.Context, cmd *cli.Command) (err erro
 		return err
 	}
 	client := openai.NewClient(w.options.DefaultRequestOptions(cmd)...)
-	return w.runBatchBrowser(ctx, cmd, client, options, runBatchBrowserScreen)
+	browserContext, cancelBrowser := context.WithCancelCause(ctx)
+	defer cancelBrowser(nil)
+	session := newBatchBrowserSession(browserContext, cancelBrowser)
+	defer func() { err = errors.Join(session.close(), err) }()
+	return w.runBatchBrowser(browserContext, cmd, client, options, session.show, session.beforeOutput)
 }
 
 type batchBrowsePage struct {
@@ -118,41 +129,118 @@ func fetchBatchBrowsePage(ctx context.Context, client openai.Client, options []o
 }
 
 // The controller receives UI decisions without mutating command flags or rerunning the command tree.
-func (w workflow) runBatchBrowser(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, show func(context.Context, *batchBrowserScreen) error) error {
+func (w workflow) runBatchBrowser(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, show func(context.Context, *batchBrowserScreen) error, beforeOutput func(context.Context) error) error {
 	var failure error
-	report := func(err error) error {
+	terminalFailed := false
+	showScreen := show
+	show = func(ctx context.Context, screen *batchBrowserScreen) error {
+		err := showScreen(ctx, screen)
+		if err != nil {
+			terminalFailed = true
+		}
+		return err
+	}
+	prepareOutput := beforeOutput
+	beforeOutput = func(ctx context.Context) error {
+		err := prepareOutput(ctx)
+		if err != nil {
+			terminalFailed = true
+		}
+		return err
+	}
+	report := func(err error, action, id string) error {
 		if ctx.Err() != nil {
 			return errors.Join(ctx.Err(), err)
+		}
+		// Screen failures include local Ctrl+C and terminal EOF. The parent
+		// context can remain active, but another screen cannot recover them.
+		var printFailure *batchBrowserPrintError
+		if terminalFailed || errors.As(err, &printFailure) {
+			return err
 		}
 		if failure == nil {
 			failure = err
 		}
-		message := "The browser action failed. Retry the action with the same batch after checking access and connection settings."
-		var local *WorkflowError
-		var apierr *openai.Error
-		if errors.As(err, &apierr) && w.options.APIErrorMessage != nil {
-			message = w.options.APIErrorMessage(cmd.Root(), err, apierr)
-		} else if errors.As(err, &local) {
-			message = local.Error()
+		var shown *batchBrowserPresentedError
+		if errors.As(err, &shown) {
+			return nil
 		}
-		if writeErr := writeBatchStdout(ctx, os.Stderr, func(out io.Writer) error { return readable.WriteText(out, message) }); writeErr != nil {
-			return errors.Join(err, writeErr)
-		}
-		return show(ctx, newBatchBrowserReturn("Action failed. Review the message above."))
+		return w.showBatchBrowserFailure(ctx, cmd, err, action, id, show, beforeOutput)
 	}
 	page, err := fetchBatchBrowsePage(ctx, client, options, "", cmd.Int64("page-size"))
 	if err != nil {
 		return err
 	}
 	list := newBatchBrowserList(page, false)
+	creation := newBatchBrowserDraft()
+	openBatch := func(batch gjson.Result) error {
+		id := batch.Get("id").Str
+		actions := newBatchBrowserActions(id)
+		actions.setOverview(batch)
+		actions.progress = &batchBrowserProgress{ctx: ctx, fetch: func(ctx context.Context) (gjson.Result, error) {
+			return fetchBatchBrowserDetails(ctx, client, options, id)
+		}}
+		defer actions.stopProgress()
+		drafts := make(map[string]string)
+		for {
+			if err := show(ctx, actions); err != nil {
+				return err
+			}
+			actions.stopProgress()
+			if actions.chosen == "back" {
+				return nil
+			}
+			if actions.chosen == "poll-error" {
+				if err := report(actions.progress.err, "refresh", id); err != nil {
+					return err
+				}
+				continue
+			}
+			if actions.chosen == "refresh" {
+				actions.progress.paused = false
+			}
+			if err := w.runBatchBrowserAction(ctx, cmd, client, options, id, actions, drafts, show, beforeOutput); err != nil {
+				if actions.chosen == "refresh" {
+					actions.progress.paused = true
+				}
+				if err := report(err, actions.chosen, id); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	cursors, position := []string{""}, 0
 	for {
 		if err := show(ctx, list); err != nil {
-			return errors.Join(failure, err)
+			return errors.Join(err, failure)
 		}
 		switch list.chosen {
-		case "quit", "back":
+		case "back":
 			return failure
+		case "create":
+			batch, err := w.createBatchInBrowser(ctx, cmd, client, options, creation, show)
+			if err != nil {
+				if err := report(err, "create", batch.Get("id").Str); err != nil {
+					return errors.Join(err, failure)
+				}
+				continue
+			}
+			if batch.Get("id").Str == "" {
+				continue
+			}
+			if err := openBatch(batch); err != nil {
+				return errors.Join(err, failure)
+			}
+			updated, err := fetchBatchBrowsePage(ctx, client, options, "", cmd.Int64("page-size"))
+			if err != nil {
+				if err := report(err, "list", ""); err != nil {
+					return errors.Join(err, failure)
+				}
+				continue
+			}
+			page, cursors, position = updated, []string{""}, 0
+			list.input.SetValue("")
+			list.setPage(page, false)
 		case "next", "previous", "refresh":
 			next := position
 			after := cursors[position]
@@ -173,8 +261,8 @@ func (w workflow) runBatchBrowser(ctx context.Context, cmd *cli.Command, client 
 			}
 			updated, err := fetchBatchBrowsePage(ctx, client, options, after, cmd.Int64("page-size"))
 			if err != nil {
-				if err := report(err); err != nil {
-					return errors.Join(failure, err)
+				if err := report(err, "list", ""); err != nil {
+					return errors.Join(err, failure)
 				}
 				continue
 			}
@@ -189,90 +277,120 @@ func (w workflow) runBatchBrowser(ctx context.Context, cmd *cli.Command, client 
 			list.setPage(page, position > 0)
 		default:
 			id := strings.TrimPrefix(list.chosen, "batch:")
-			actions := newBatchBrowserActions(id, cmd)
-			drafts := make(map[string]string)
-			for {
-				if err := show(ctx, actions); err != nil {
-					return errors.Join(failure, err)
-				}
-				if actions.chosen == "back" {
-					break
-				}
-				if err := w.runBatchBrowserAction(ctx, cmd, client, options, id, actions.chosen, drafts, show); err != nil {
-					if err := report(err); err != nil {
-						return errors.Join(failure, err)
+			for _, batch := range page.items {
+				if batch.Get("id").Str == id {
+					if err := openBatch(batch); err != nil {
+						return errors.Join(err, failure)
 					}
+					break
 				}
 			}
 		}
 	}
 }
 
-func (w workflow) runBatchBrowserAction(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, id, action string, drafts map[string]string, show func(context.Context, *batchBrowserScreen) error) error {
+func (w workflow) renderBatchBrowserAction(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, id string, actions *batchBrowserScreen, drafts map[string]string, show func(context.Context, *batchBrowserScreen) error, beforeOutput func(context.Context) error, body io.Writer) error {
 	var raw []byte
 	opts := append(options[:len(options):len(options)], option.WithResponseBodyInto(&raw))
 	if _, err := client.Batches.Get(ctx, id, opts...); err != nil {
 		return err
 	}
 	if !gjson.ValidBytes(raw) || !gjson.ParseBytes(raw).IsObject() || gjson.ParseBytes(raw).Get("id").Str != id {
-		return batchError("The API returned invalid Batch details. Return to the action menu and retry Status.")
+		return batchError("The API returned invalid Batch details. Return to the action menu and retry Batch details.")
 	}
 	batch := gjson.ParseBytes(raw)
-	if action == "download" {
-		choice := newBatchBrowserDownload(id)
-		if err := show(ctx, choice); err != nil {
-			return err
-		}
-		if choice.chosen == "back" {
-			return nil
-		}
-		if batch.Get(choice.chosen+"_file_id").Str == "" {
-			if err := writeBatchBrowserMessage(ctx, cmd, batchBrowserMissingFile(batch, choice.chosen)); err != nil {
+	actions.setOverview(batch)
+	action := actions.chosen
+	if action == "refresh" {
+		return nil
+	}
+	if selection, save := strings.CutPrefix(action, "save:"); save {
+		if batch.Get(selection+"_file_id").Str == "" {
+			title, message := batchBrowserMissingFile(batch, selection)
+			if err := writeBatchBrowserSection(ctx, body, title, message); err != nil {
 				return err
 			}
-			return show(ctx, newBatchBrowserReturn("File availability shown above."))
+			return nil
 		}
-		path := newBatchBrowserPath(id, choice.chosen)
-		path.input.SetValue(drafts[choice.chosen])
+		path := newBatchBrowserPath(actions, selection)
+		if draft, exists := drafts[selection]; exists {
+			path.input.SetValue(draft)
+		}
 		if err := show(ctx, path); err != nil {
 			return err
 		}
-		drafts[choice.chosen] = path.input.Value()
+		drafts[selection] = path.input.Value()
 		if path.chosen == "back" {
+			selected := path.choices[path.visible[path.index]].value
+			for i, index := range actions.visible {
+				if actions.choices[index].value == selected {
+					actions.index = i
+					break
+				}
+			}
 			return nil
 		}
-		if err := w.downloadBatchFile(ctx, cmd, client, options, id, choice.chosen, path.input.Value()); err != nil {
+		destination, err := batchBrowserSaveDestination(path.input.Value())
+		if err != nil {
+			return batchError(err.Error())
+		}
+		if err := w.downloadBatchFile(ctx, cmd, client, options, id, selection, destination); err != nil {
 			return err
 		}
-		return show(ctx, newBatchBrowserReturn("Download receipt shown above."))
+		return nil
 	}
 	if action == "status" {
+		if w.options.ShowBrowserDetails != nil {
+			decorate := func(RecordTextStyle) {}
+			if document, ok := body.(*batchBrowserDocument); ok {
+				decorate = document.decorate
+			}
+			return w.options.ShowBrowserDetails(ctx, batch, body, decorate)
+		}
 		if err := w.batchShowJSON(ctx, cmd, batch, "retrieve"); err != nil {
 			return err
 		}
 	} else {
 		selection := action
-		if batch.Get(selection+"_file_id").Str == "" {
-			message := batchBrowserMissingFile(batch, selection)
-			if err := writeBatchBrowserMessage(ctx, cmd, message); err != nil {
+		var diagnostics []gjson.Result
+		if selection == "error" {
+			batch.ForEach(func(key, value gjson.Result) bool {
+				if key.Str == "errors" && !batchBrowserNoValidationErrors(value) {
+					diagnostics = append(diagnostics, value)
+				}
+				return true
+			})
+		}
+		showDiagnostics := len(diagnostics) > 0
+		if showDiagnostics {
+			if err := writeBatchBrowserSection(ctx, body, "Batch validation diagnostics", batchBrowserContext(batch)+"\n"); err != nil {
 				return err
 			}
-		} else if err := w.showBatchRecords(ctx, cmd, client, options, id, selection, "", false); err != nil {
-			return err
+			for _, diagnostic := range diagnostics {
+				if err := w.batchShowJSON(ctx, cmd, diagnostic, "validation"); err != nil {
+					return err
+				}
+			}
+		}
+		if batch.Get(selection+"_file_id").Str == "" && !showDiagnostics {
+			title, message := batchBrowserMissingFile(batch, selection)
+			if err := writeBatchBrowserSection(ctx, body, title, message); err != nil {
+				return err
+			}
+		} else if batch.Get(selection+"_file_id").Str != "" {
+			if err := w.browseBatchRecords(ctx, cmd, client, options, batch, selection, show, beforeOutput); err != nil {
+				return err
+			}
+		}
+		if showDiagnostics {
+			next := "Choose Batch details to inspect file IDs and status."
+			if file := batch.Get("input_file_id"); file.Type == gjson.String && file.Str != "" {
+				next = "Choose View input to inspect the referenced requests."
+			}
+			if err := writeBatchBrowserSection(ctx, body, "", "Next: "+next); err != nil {
+				return err
+			}
 		}
 	}
-	return show(ctx, newBatchBrowserReturn("Output shown above. Scroll your terminal to read it."))
-}
-
-func batchBrowserMissingFile(batch gjson.Result, selection string) string {
-	status := batchInputLabel(batch.Get("status").Str)
-	failed, valid := batchCount(batch.Get("request_counts.failed"))
-	if selection == "error" && batch.Get("status").Str == "completed" && valid && failed == 0 {
-		return "No error file was returned. This completed batch reports zero failed requests. Choose Results to read its answers."
-	}
-	return fmt.Sprintf("No %s file is available. Batch status: %s. Choose Status to inspect progress and validation errors, then retry later if processing continues.", selection, status)
-}
-
-func writeBatchBrowserMessage(ctx context.Context, cmd *cli.Command, message string) error {
-	return writeBatchStdout(ctx, cmd.Root().Writer, func(out io.Writer) error { return readable.WriteText(out, message) })
+	return nil
 }

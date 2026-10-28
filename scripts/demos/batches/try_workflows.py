@@ -83,6 +83,7 @@ def main():
     parser.add_argument("binary", type=Path, help="Reviewed candidate executable; no installation occurs")
     parser.add_argument("--output-dir", type=Path, help="New evidence directory outside the repository")
     parser.add_argument("--show-checks", action="store_true", help="Also display list, input search, and JSON verification output")
+    parser.add_argument("--simple", action="store_true", help="Try positional submit with combined waiting and saving")
     args = parser.parse_args()
     try:
         binary = args.binary.expanduser().resolve(strict=True)
@@ -90,10 +91,11 @@ def main():
         parser.error("cannot open the candidate executable; check its path and read permission")
     if not binary.is_file() or not os.access(binary, os.X_OK):
         parser.error("binary must identify an executable file")
-    repository = Path(__file__).resolve().parents[3]
+    repository = next((parent for parent in Path(__file__).resolve().parents
+                       if (parent / "go.mod").is_file() and (parent / "cmd" / "openai").is_dir()), None)
     if args.output_dir:
         directory = args.output_dir.expanduser().resolve()
-        if directory == repository or repository in directory.parents:
+        if repository is not None and (directory == repository or repository in directory.parents):
             parser.error("keep trial evidence outside the repository")
         directory.mkdir(mode=0o700)
     else:
@@ -131,8 +133,12 @@ def main():
         environment["OPENAI_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
         try:
             run = lambda command, display=True: run_command(binary, command, environment, directory, len(commands) + 1, commands, display)
-            print("\nSubmit uploads the input file and creates one batch.", flush=True)
-            submitted = run(["batches", "submit", "--file", "requests.jsonl", "--endpoint", "/v1/responses", "--completion-window", "24h"])
+            if args.simple:
+                print("\nOne command uploads, starts, waits, and saves results.", flush=True)
+                submitted = run(["batches", "submit", "requests.jsonl", "--wait", "--output-dir", "results"])
+            else:
+                print("\nSubmit uploads the input file and creates one batch.", flush=True)
+                submitted = run(["batches", "submit", "--file", "requests.jsonl", "--endpoint", "/v1/responses", "--completion-window", "24h"])
             if b"batch_demo" not in submitted:
                 raise AssertionError("submission receipt did not identify the created batch")
             watched = run(["batches", "list", "--watch", "--watch-count", "2", "--poll-interval", "1s"], args.show_checks)
@@ -141,8 +147,9 @@ def main():
             inputs = json.loads(run(["batches", "inputs", "--search", "requests.jsonl", "--format", "json"], args.show_checks))
             if len(inputs) != 1 or inputs[0]["id"] != "file_input_demo":
                 raise AssertionError("input search did not identify the uploaded file")
-            print("\nWait saves the complete result file when the batch finishes.", flush=True)
-            run(["batches", "wait", "batch_demo", "--output-dir", "results", "--poll-interval", "1s"])
+            if not args.simple:
+                print("\nWait saves the complete result file when the batch finishes.", flush=True)
+                run(["batches", "wait", "batch_demo", "--output-dir", "results", "--poll-interval", "1s"])
             print("\nResults shows one answer beside its original input.", flush=True)
             readable = run(["batches", "results", "batch_demo", "--custom-id", "sentiment-positive", "--match-input"])
             if b"positive" not in readable or b"I love this." not in readable or b"Return only the label." not in readable:

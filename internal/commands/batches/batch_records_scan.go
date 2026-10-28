@@ -22,10 +22,15 @@ type batchJSONScanner struct {
 	consumed          int64
 	idStart, idLength int64
 	idFields          int
+	urlCapture        int // Opt-in bounded capture for submit endpoint inference.
+	url               string
+	urlFields         int
 }
 
 var errBatchRecordJSON = errors.New("invalid batch JSON record")
 var errBatchRecordID = errors.New("duplicate batch custom_id")
+var errBatchRecordURL = errors.New("invalid batch url")
+var errBatchRecordDuplicateURL = errors.New("duplicate batch url")
 
 func (s *batchJSONScanner) peek() (byte, error) {
 	if s.consumed%4096 == 0 {
@@ -116,8 +121,8 @@ func (s *batchJSONScanner) outerSpace() error {
 	}
 }
 
-// A positive capture value bounds key inspection. Other values skip capture.
-// A longer key cannot be the nine-character custom_id.
+// A positive capture value bounds inspected string bytes. Other values skip
+// capture. Longer strings still stream completely, returning an empty value.
 func (s *batchJSONScanner) stringValue(capture int) (string, error) {
 	var value strings.Builder
 	write := func(b byte) {
@@ -312,7 +317,18 @@ func (s *batchJSONScanner) value(depth int) error {
 					return err
 				}
 			}
-			if depth == 0 && object && key == "custom_id" {
+			if depth == 0 && object && key == "url" && s.urlCapture > 0 {
+				s.urlFields++
+				if s.urlFields > 1 {
+					return errBatchRecordDuplicateURL
+				}
+				if b, err = s.peek(); err != nil {
+					return err
+				} else if b != '"' {
+					return errBatchRecordURL
+				}
+				s.url, err = s.stringValue(s.urlCapture)
+			} else if depth == 0 && object && key == "custom_id" {
 				s.idFields++
 				if s.idFields > 1 {
 					return errBatchRecordID

@@ -4,6 +4,7 @@ from contextlib import ExitStack
 from functools import partial
 import ast
 import base64
+import codecs
 import errno
 import fcntl
 import http.server
@@ -36,27 +37,28 @@ ANSI = re.compile(r'\x1b\][^\x07]*?(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]')
 DOWN, UP, HOME, END = b'\x1b[B', b'\x1b[A', b'\x1b[H', b'\x1b[F'
 PRINT = b'\x10'  # Ctrl+P prints the complete command without making a request.
 
-SCREEN_ANSI = re.compile(rb'\x1b\][^\x07]*?(?:\x07|\x1b\\)|\x1b_[\s\S]*?\x1b\\|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[78]')
+SCREEN_ANSI = re.compile(rb'\x1b\][^\x07]*?(?:\x07|\x1b\\)|\x1b_[\s\S]*?\x1b\\|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[78M]')
 
 
 def screen(raw, width=96, height=28, history=None):
     """Receive inline-panel wrapping, saved cursors, relative moves and erases."""
-    raw += b'\x1b[0m'
+    raw = bytes(raw) + b'\x1b[0m'
     rows = [[' '] * width for _ in range(height)]
     y = x = 0
     saved_position = (0, 0)
+    scroll_top, scroll_bottom = 0, height - 1
     pending = False
     position = 0
 
     def newline():
         nonlocal y
-        y += 1
-        if y >= height:
-            previous=rows.pop(0)
-            if history is not None:
+        if y == scroll_bottom:
+            previous = rows.pop(scroll_top)
+            if history is not None and scroll_top == 0 and scroll_bottom == height - 1:
                 history.append(''.join(previous).rstrip())
-            rows.append([' '] * width)
-            y = height - 1
+            rows.insert(scroll_bottom, [' '] * width)
+        else:
+            y = min(height - 1, y + 1)
 
     for match in SCREEN_ANSI.finditer(raw):
         text = raw[position:match.start()].decode('utf-8', errors='replace')
@@ -81,6 +83,13 @@ def screen(raw, width=96, height=28, history=None):
         elif control == b'\x1b8':
             y, x = saved_position
             pending = False
+        elif control == b'\x1bM':
+            if y == scroll_top:
+                rows.pop(scroll_bottom)
+                rows.insert(scroll_top, [' '] * width)
+            else:
+                y = max(0, y - 1)
+            pending = False
         elif control == b'\x1b[2J':
             rows = [[' '] * width for _ in range(height)]
         elif control.startswith(b'\x1b['):
@@ -94,9 +103,27 @@ def screen(raw, width=96, height=28, history=None):
                     pending = False
                 elif final == b'G':
                     x, pending = min(width - 1, max(0, numbers[0] - 1)), False
+                elif final == b'd':
+                    y, pending = min(height - 1, max(0, numbers[0] - 1)), False
+                elif final == b'S':
+                    for _ in range(min(max(1, numbers[0]), scroll_bottom - scroll_top + 1)):
+                        previous = rows.pop(scroll_top)
+                        if history is not None and scroll_top == 0 and scroll_bottom == height - 1:
+                            history.append(''.join(previous).rstrip())
+                        rows.insert(scroll_bottom, [' '] * width)
+                    pending = False
                 elif final in (b'A', b'B'):
                     y = max(0, min(height - 1, y + numbers[0] * (-1 if final == b'A' else 1)))
                     pending = False
+                elif final in (b'C', b'D'):
+                    x = max(0, min(width - 1, x + max(1, numbers[0]) * (-1 if final == b'D' else 1)))
+                    pending = False
+                elif final == b'r':
+                    top = (numbers[0] or 1) - 1
+                    bottom = ((numbers[1] or height) if len(numbers) > 1 else height) - 1
+                    if 0 <= top < bottom < height:
+                        scroll_top, scroll_bottom = top, bottom
+                        y, x, pending = 0, 0, False
                 elif final == b'K':
                     rows[y][x:] = [' '] * (width - x)
                 elif final == b'J':
@@ -159,6 +186,7 @@ class Terminal:
         self.resize(width, height, notify=False)
         self.started = time.monotonic()
         self.events, self.raw = [], bytearray()
+        self._event_decoder = codecs.getincrementaldecoder('utf-8')('replace')
         try:
             self.child = subprocess.Popen([binary, *args], stdin=self.slave if input_file is None else input_file,
                                           stdout=self.slave if output_file is None else output_file,
@@ -207,15 +235,20 @@ class Terminal:
                 chunk = os.read(self.master, count)
             except OSError as error:
                 if error.errno == errno.EIO:
-                    self.eof = True
-                    return
-                raise
+                    chunk = b''
+                else:
+                    raise
             if not chunk:
                 self.eof = True
+                tail = self._event_decoder.decode(b'', final=True)
+                if tail:
+                    self._event('o', tail)
                 return
             if self.max_output_bytes is not None and len(self.raw) + len(chunk) > self.max_output_bytes:
                 raise RuntimeError('PTY fixture output exceeded its bound')
-            self._event('o', chunk.decode('utf-8', 'replace'))
+            text = self._event_decoder.decode(chunk)
+            if text:
+                self._event('o', text)
             self.raw.extend(chunk)
             # A PTY has no emulator to answer terminal capability queries.
             for query, reply in [(b'\x1b[6n', b'\x1b[1;1R'),
@@ -250,7 +283,7 @@ class Terminal:
     def send(self, value):
         os.write(self.master, value)
 
-    def finish(self, expected, timeout=12, expect_picker=True):
+    def finish(self, expected, timeout=12, expect_picker=True, expect_alternate_screen=False):
         deadline = time.monotonic()+timeout
         while self.child.poll() is None:
             self.read()
@@ -266,8 +299,24 @@ class Terminal:
             restored[3] &= ~termios.PENDIN
             self.initial[3] &= ~termios.PENDIN
         assert restored == self.initial, ('terminal input mode was not restored', self.initial, restored)
-        assert not re.search(rb'\x1b\[\?(?:47|1047|1049)[hl]', self.raw), 'command used an alternate screen'
-        assert not re.search(rb'\x1b\[[23]J', self.raw), 'command cleared the screen or scrollback'
+        if expect_alternate_screen:
+            active, entered = set(), False
+            for match in re.finditer(rb'\x1b\[\?(47|1047|1049)([hl])|\x1b\[([23])J', self.raw):
+                mode, action, erase = match.groups()
+                if mode:
+                    if action == b'h':
+                        active.add(mode)
+                        entered = True
+                    else:
+                        active.discard(mode)
+                else:
+                    assert erase != b'3', 'command cleared scrollback'
+                    assert active, 'command cleared the primary screen'
+            assert entered, 'command did not enter the alternate screen'
+            assert not active, 'command did not leave the alternate screen'
+        else:
+            assert not re.search(rb'\x1b\[\?(?:47|1047|1049)[hl]', self.raw), 'command used an alternate screen'
+            assert not re.search(rb'\x1b\[[23]J', self.raw), 'command cleared the screen or scrollback'
         if expect_picker:
             for mode in (b'2004', b'25'):
                 enabled = self.raw.rfind(b'\x1b[?'+mode+b'h')

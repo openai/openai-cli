@@ -100,8 +100,12 @@ func (w workflow) showBatchRecords(ctx context.Context, command *cli.Command, cl
 			return err
 		}
 	}
-	diagnostics := terminal.BorrowedWriter{Writer: batchDiagnosticWriter{ctx: ctx, file: os.Stderr}, File: os.Stderr}
-	return writeBatchStdoutWithCleanup(ctx, command.Root().Writer, batchOutputCleanupGrace, func(out io.Writer) error {
+	var diagnostics io.Writer = terminal.BorrowedWriter{Writer: batchDiagnosticWriter{ctx: ctx, file: os.Stderr}, File: os.Stderr}
+	out := command.Root().Writer
+	if w.browserOutput != nil {
+		out, diagnostics = w.browserOutput, io.Discard
+	}
+	return writeBatchStdoutWithCleanup(ctx, out, batchOutputCleanupGrace, func(out io.Writer) error {
 		return w.options.ShowRecords(ctx, command, RecordOutput{
 			WriteJSON:     func(writer io.Writer) error { return store.writeJSON(writer, batch.ID, selection, fileID, match) },
 			TemporaryFile: store.temporaryFile,

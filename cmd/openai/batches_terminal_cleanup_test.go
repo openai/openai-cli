@@ -205,6 +205,8 @@ try:
             time.sleep(.01)
         hidden = b"\x1b[?25l" in output
         frame = b"synthetic denial" in output if mode == "error_api_quit" else b"batch_synthetic" in output
+        browser_ready = (mode.startswith("browser_interrupt_") and hidden
+                         and b"\x1b[?2004h" in output)
         if not sent:
             if mode in ["result_quit", "error_api_quit"] and hidden and frame:
                 os.write(master, b"q")
@@ -220,7 +222,7 @@ try:
                 os.kill(pid, signal.SIGINT)
                 phases.append(["signal_sent", int(signal.SIGINT), time.monotonic() - started])
                 sent = True
-            elif (mode == "result_blocked" or mode.startswith("browser_interrupt_")) and hidden and frame:
+            elif ((mode == "result_blocked" and hidden) or browser_ready) and frame:
                 # The menu has initialized before output becomes blocked.
                 if mode.startswith("browser_interrupt_"):
                     termios.tcflow(slave, termios.TCOOFF)
@@ -514,7 +516,11 @@ func TestMainBatchesExplorerTerminalCleanup(t *testing.T) {
 			}
 			switch {
 			case mode == "result_blocked" || strings.HasPrefix(mode, "browser_interrupt_"):
-				if !got.CursorHidden || !got.StopDrain || got.Filled == 0 {
+				cursorReady := got.CursorHidden
+				if strings.HasPrefix(mode, "browser_interrupt_") {
+					cursorReady = got.CursorHidden && strings.Contains(got.Output, "\x1b[?2004h")
+				}
+				if !cursorReady || !got.StopDrain || got.Filled == 0 {
 					t.Fatalf("explorer never reached blocked cleanup: %+v", got)
 				}
 			case strings.HasPrefix(mode, "result_") || mode == "error_api_quit":

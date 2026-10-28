@@ -21,6 +21,7 @@ type Options struct {
 	CreateRequestOptions  func(*cli.Command, io.Reader) ([]option.RequestOption, gjson.Result, error)
 	ShowResult            func(context.Context, *cli.Command, gjson.Result, string, io.Writer, io.Writer) error
 	ShowRecords           func(context.Context, *cli.Command, RecordOutput, io.Writer, io.Writer) error
+	ShowBrowserDetails    func(context.Context, gjson.Result, io.Writer, func(RecordTextStyle)) error
 	HumanTerminal         func(context.Context, *cli.Command) bool
 	APIErrorMessage       func(*cli.Command, error, *openai.Error) string
 }
@@ -32,6 +33,16 @@ type RecordOutput struct {
 	TemporaryFile         func() (*os.File, func() error, error)
 	BatchID, File, FileID string
 	Visit                 func(func(RecordItem) error) error
+	// Detail omits repeated file metadata inside an already labeled browser pane.
+	Detail bool
+	// Decorate marks trusted presentation spans in one bounded browser projection.
+	// Raw, standalone, and complete streaming fallback output do not use it.
+	Decorate func(RecordTextStyle)
+}
+
+type RecordTextStyle struct {
+	Start, End int64
+	Role       string
 }
 
 // RecordItem exposes one stored record, or a group's matching metadata.
@@ -42,7 +53,10 @@ type RecordItem struct {
 	WriteJSON func(io.Writer) error
 }
 
-type workflow struct{ options Options }
+type workflow struct {
+	options       Options
+	browserOutput io.Writer
+}
 
 // Configure registers local batch workflows around the generated commands.
 func Configure(root *cli.Command, options Options) {

@@ -32,13 +32,24 @@ def pause(terminal, seconds=1.1):
         terminal.read(min(0.03, max(0, until-time.monotonic())))
 
 
+def current_screen(terminal, alternate):
+    # Decode the current screen independently. The shared inline decoder does
+    # not keep separate primary and alternate buffers across menu transitions.
+    switch = b"\x1b[?1049h" if alternate else b"\x1b[?1049l"
+    start = terminal.raw.rfind(switch)
+    assert start >= 0, "missing alternate-screen transition"
+    return harness.screen(terminal.raw[start:], width=104, height=42).decode()
+
+
 def main():
     output = Path(os.environ["DEMO_EVIDENCE"])
     mode = os.environ["DEMO_SCENE"]
     environment = {name: os.environ[name] for name in ("PATH", "HOME", "OPENAI_BASE_URL")}
-    environment.update(TERM="xterm-256color", LANG="en_US.UTF-8", NO_COLOR="1", GOMAXPROCS="2",
+    environment.update(TERM="xterm-256color", COLORTERM="truecolor", COLORFGBG="15;0", LANG="en_US.UTF-8", GOMAXPROCS="2",
                        OPENAI_API_KEY="synthetic-demo-key", OPENAI_CLI_NO_UPDATE_CHECK="1",
                        XDG_CONFIG_HOME=environment["HOME"], XDG_CACHE_HOME=environment["HOME"])
+    if os.environ.get("NO_COLOR"):
+        environment["NO_COLOR"] = os.environ["NO_COLOR"]
     evidence = {"synthetic": True, "mode": mode, "terminal": "macOS PTY, 104x42", "commands": [], "checkpoints": {}, "screens": {},
                 "binary_sha256": hashlib.sha256(Path(shutil.which("openai")).read_bytes()).hexdigest()}
     original = termios.tcgetattr(1)
@@ -47,7 +58,7 @@ def main():
     terminal = None
     try:
         print(("Before: copy a batch ID into each command." if mode == "before" else
-               "After: choose a batch, then Results or Errors."), flush=True)
+               "After: choose a batch, find a request, then open its details."), flush=True)
         print("Synthetic local API. No personal API key or model charges.\n", flush=True)
         termios.tcsetattr(1, termios.TCSANOW, relay)
         if mode == "before":
@@ -67,47 +78,88 @@ def main():
             print("$ openai batches browse\r", flush=True)
             terminal = RelayTerminal("openai", ["batches", "browse"], environment, width=104, height=42,
                                      max_output_bytes=1_000_000, deadline=time.monotonic()+45)
-            terminal.wait("Search covers this page only")
+            terminal.wait("Search  ")
             pause(terminal)
             terminal.send(b"\x1b[B")
             pause(terminal, 0.4)
             terminal.send(b"\r")
-            terminal.wait("Batch: batch_partial_demo")
+            terminal.wait("View results")
             pause(terminal)
             evidence["checkpoints"]["menu"] = time.monotonic()-terminal.started
-            evidence["screens"]["menu"] = harness.screen(terminal.raw, width=104, height=42).decode()
-            for line in ("Batch: batch_partial_demo", "> Status", "  Results", "  Errors"):
-                assert line in evidence["screens"]["menu"].splitlines(), "menu alignment failed: " + line
-            terminal.send(b"\x1b[B")
-            pause(terminal, 0.4)
+            evidence["screens"]["menu"] = current_screen(terminal, alternate=True)
+            menu_lines = evidence["screens"]["menu"].splitlines()
+            assert any("batch_partial_demo" in line for line in menu_lines), "missing batch title"
+            columns = []
+            for label in ("View results", "View errors", "Batch details"):
+                matches = [line for line in menu_lines if line.strip(" │>─") == label]
+                assert len(matches) == 1, "menu label missing or duplicated: " + label
+                columns.append(matches[0].index(label))
+            assert len(set(columns)) == 1, "menu labels are misaligned"
+            offset = len(terminal.raw)
             terminal.send(b"\r")
-            terminal.wait("Output: positive")
-            terminal.wait("Enter or Esc: return to actions")
+            terminal.wait("Ctrl+V", after=offset)
+            pause(terminal, 0.4)
+            terminal.send(b"\x1b[200~sentiment-positive\x1b[201~")
+            terminal.wait("1 match", after=offset)
+            pause(terminal)
+            evidence["checkpoints"]["result_requests"] = time.monotonic()-terminal.started
+            evidence["screens"]["result_requests"] = current_screen(terminal, alternate=True)
+            assert "sentiment-positive" in evidence["screens"]["result_requests"], "matching result request missing"
+            offset = len(terminal.raw)
+            terminal.send(b"\r")
+            terminal.wait("PgUp/PgDn page", after=offset)
             pause(terminal, 1.6)
             evidence["checkpoints"]["results"] = time.monotonic()-terminal.started
-            evidence["screens"]["results"] = harness.screen(terminal.raw, width=104, height=42).decode()
-            assert "Batch: batch_partial_demo" in evidence["screens"]["results"].splitlines(), "result did not start on a clean line"
+            evidence["screens"]["results"] = current_screen(terminal, alternate=True)
+            result_lines = evidence["screens"]["results"].splitlines()
+            assert any(line.strip(" │") == "batch_partial_demo / Record 2" for line in result_lines), "result context missing from panel"
+            result_text = [line.strip(" │") for line in result_lines]
+            assert "sentiment-positive  Completed" in result_text, "selected result identity and outcome missing"
+            assert "Output" in result_text and "positive" in result_text, "grouped result output missing"
+            assert result_text.index("Output") < result_text.index("positive"), "result output precedes its heading"
+            assert "Tokens  31 input  5 output  36 total" in result_text, "compact token summary missing"
             offset = len(terminal.raw)
-            terminal.send(b"\r")
-            terminal.wait("Batch: batch_partial_demo", after=offset)
+            terminal.send(b"\x1b")
+            terminal.wait("Ctrl+V", after=offset)
+            pause(terminal, 0.4)
+            returned = current_screen(terminal, alternate=True)
+            assert "sentiment-positive" in returned and "1 match" in returned, "result search was not retained"
+            offset = len(terminal.raw)
+            terminal.send(b"\x1b")
+            terminal.wait("View results", after=offset)
             terminal.send(b"\x1b[B")
             pause(terminal, 0.4)
+            offset = len(terminal.raw)
             terminal.send(b"\r")
-            terminal.wait("Synthetic service error")
-            terminal.wait("Enter or Esc: return to actions", after=offset)
+            terminal.wait("Ctrl+V", after=offset)
+            pause(terminal)
+            evidence["checkpoints"]["error_requests"] = time.monotonic()-terminal.started
+            evidence["screens"]["error_requests"] = current_screen(terminal, alternate=True)
+            assert "sentiment-negative" in evidence["screens"]["error_requests"], "error request missing"
+            offset = len(terminal.raw)
+            terminal.send(b"\r")
+            terminal.wait("Synthetic service error", after=offset)
+            terminal.wait("PgUp/PgDn page", after=offset)
             pause(terminal, 1.8)
             evidence["checkpoints"]["errors"] = time.monotonic()-terminal.started
-            evidence["screens"]["errors"] = harness.screen(terminal.raw, width=104, height=42).decode()
-            assert "Batch: batch_partial_demo" in evidence["screens"]["errors"].splitlines(), "error result did not start on a clean line"
-            offset = len(terminal.raw)
-            terminal.send(b"\r")
-            terminal.wait("Batch: batch_partial_demo", after=offset)
+            evidence["screens"]["errors"] = current_screen(terminal, alternate=True)
+            error_lines = evidence["screens"]["errors"].splitlines()
+            assert any(line.strip(" │") == "Request error" for line in error_lines), "error detail heading missing"
+            assert any(line.strip(" │") == "batch_partial_demo / Record 1" for line in error_lines), "error context missing from panel"
+            assert any(line.strip(" │") == "sentiment-negative  Request failed" for line in error_lines), "selected error identity and outcome missing"
+            assert any(line.strip(" │") == "Error details" for line in error_lines), "grouped error section missing"
             offset = len(terminal.raw)
             terminal.send(b"\x1b")
-            terminal.wait("Search covers this page only", after=offset)
+            terminal.wait("Ctrl+V", after=offset)
+            offset = len(terminal.raw)
+            terminal.send(b"\x1b")
+            terminal.wait("View results", after=offset)
+            offset = len(terminal.raw)
+            terminal.send(b"\x1b")
+            terminal.wait("Search  ", after=offset)
             pause(terminal, 0.4)
             terminal.send(b"\x1b")
-            terminal.finish(0)
+            terminal.finish(0, expect_alternate_screen=True)
             evidence["commands"].append({"arguments": ["batches", "browse"], "exit": terminal.child.returncode})
             header = {"version": 2, "width": 104, "height": 42, "title": "Batch browser; actual CLI, synthetic data"}
             output.with_suffix(".child.cast").write_text("\n".join(json.dumps(item) for item in [header, *terminal.events])+"\n")
