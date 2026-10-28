@@ -2,12 +2,14 @@
 """Capture guided creation, automatic progress, results, and saving through a real PTY."""
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
+import select
 import sys
 import tempfile
 import time
@@ -26,6 +28,17 @@ def settle(terminal, duration=0.25):
     until = time.monotonic() + duration
     while time.monotonic() < until:
         terminal.read(min(0.03, max(0, until - time.monotonic())))
+
+
+def drain_shutdown_output(terminal, until):
+    # Discard shutdown output so the launcher can flush even after recording hit its limit.
+    while terminal.running():
+        remaining = until - time.monotonic()
+        if remaining <= 0:
+            break
+        if select.select([terminal.master], [], [], min(0.05, remaining))[0]:
+            if not os.read(terminal.master, 65536):
+                break
 
 
 def main():
@@ -50,7 +63,16 @@ def main():
                 "source": "Actual CLI frames from a macOS PTY", "screens": {}, "keys": [],
                 "limits": "PTY replay does not establish physical terminal appearance or native Windows/Linux execution."}
     terminal = None
-    try:
+    failures = []
+
+    @contextmanager
+    def retain_failure():
+        try:
+            yield
+        except BaseException as error:
+            failures.append(error)
+
+    with retain_failure():
         with tempfile.TemporaryDirectory(prefix="f13-guided-capture-home-") as home:
             environment = {"PATH": os.defpath, "HOME": home, "XDG_CONFIG_HOME": home,
                            "XDG_CACHE_HOME": home, "TERM": "xterm-256color", "COLORTERM": "truecolor",
@@ -124,10 +146,11 @@ def main():
             advance(b"\r", "Enter: choose output file", "Folder:")
             destination = save("12-save-location")
             filename = "batch_created_demo-output.jsonl"
-            assert filename in destination and "Folder:" in destination
+            compact_destination = "".join(line.strip(" │") for line in destination.splitlines())
+            assert filename in compact_destination and "Folder:" in destination
             advance(b"\r", "Enter: save output", "PgUp/PgDn")
             receipt = save("13-saved")
-            assert filename in receipt
+            assert filename in "".join(line.strip(" │") for line in receipt.splitlines())
             advance(b"\x1b", "Esc: return to batch", "Save a file")
             advance(b"\x1b", "Esc: collapse Save a file", "Save a file")
             advance(b"\x1b", "Esc: return to batches", "Search")
@@ -144,28 +167,39 @@ def main():
             assert session["uploads"] == 1 and session["creates"] == 1
             assert not session["fixture_failures"] and session["server_stopped"] and session["process_stopped"]
             assert (directory / filename).read_bytes() == OUTPUT_BYTES
-            compact_destination = "".join(line.strip(" │") for line in destination.splitlines())
             assert str(directory) in compact_destination, "the save screen did not show the output folder"
             requests = [json.loads(line) for line in (directory / session["request_log"]).read_text().splitlines()]
             assert [(r["method"], r["path"]) for r in requests if r["method"] == "POST"] == [
                 ("POST", "/files"), ("POST", "/batches")]
-            evidence.update(pass_=True, session=session, saved_file=str(directory / filename), requests=requests)
-    except BaseException as error:
-        evidence.update(pass_=False, failure=type(error).__name__, detail=str(error))
-        raise
-    finally:
-        if terminal is not None:
-            if terminal.running():
-                terminal.send(b"\x03")
-                until = time.monotonic() + 5
-                while terminal.running() and time.monotonic() < until:
-                    terminal.read(0.05)
+            evidence.update(session=session, saved_file=str(directory / filename), requests=requests)
+    if terminal is not None:
+        try:
+            with retain_failure():
+                if terminal.running():
+                    # The launcher owns the detached CLI. Its shutdown must outlive the capture deadline.
+                    terminal.child.terminate()
+                    until = time.monotonic() + 8
+                    with retain_failure():
+                        drain_shutdown_output(terminal, until)
+                    terminal.child.wait(timeout=max(0, until - time.monotonic()))
+        finally:
+            with retain_failure():
+                terminal.close()
+        with retain_failure():
             (args.output / "workflow.cast").write_text(
                 "\n".join(json.dumps(row) for row in [header, *terminal.events]) + "\n")
+        with retain_failure():
             (args.output / "terminal.raw").write_bytes(bytes(terminal.raw))
-            terminal.close()
-        evidence["pass"] = evidence.pop("pass_", False)
+    evidence["pass"] = not failures
+    if failures:
+        first = failures[0]
+        evidence.update(failure=type(first).__name__, detail=str(first))
+        if len(failures) > 1:
+            evidence["secondary_failures"] = [f"{type(error).__name__}: {error}" for error in failures[1:]]
+    with retain_failure():
         (args.output / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
+    if failures:
+        raise failures[0]
     print(args.output)
 
 
