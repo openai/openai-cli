@@ -137,7 +137,7 @@ The first explicit Ctrl+G sends synthetic Text with the actual seeded Instructio
 The fixture returns HTTP 401 with valid Request ID `req_audio_demo_401` and malicious synthetic message canaries.
 The fixture supplies the exact error code `invalid_api_key`.
 The fixture uses a custom loopback endpoint, so Error details identifies that endpoint's authentication failure.
-The screen opens immediately with the cause, short numbered recovery steps, and Esc back.
+The screen shows the cause, one recovery instruction, and Esc back. Only multiple instructions receive numbers.
 It shows no API setup menu, nested details page, raw HTTP status, or Request ID.
 The ordinary form keeps those details hidden after dismissal.
 An unknown OpenAI authentication cause retains its generic summary instead of claiming rejection or expiration.
@@ -260,7 +260,7 @@ The case allows 60 seconds for two CLI sessions. Existing ownership cleanup reta
 
 Both sessions use 40×12, fake credentials, loopback, and a private HOME.
 The checker selects the actual binary through an isolated `openai` symlink.
-It enters 60 ASCII `A` characters and opens Show command.
+It enters 60 ASCII `A` characters and opens View command.
 Enter must preserve the form and make no request.
 The first session uses Ctrl+P. The second uses Ctrl+C.
 The checker requires exit 0 and 130 respectively.

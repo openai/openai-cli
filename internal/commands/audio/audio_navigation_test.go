@@ -251,11 +251,10 @@ func TestAudioNavigationTabUsesVisibleSectionOrder(t *testing.T) {
 		t.Run(fmt.Sprintf("result_%t", withResult), func(t *testing.T) {
 			m := audioReviewModel(t)
 			m.input.SetValue("Do not generate while traversing")
-			order := []int{0, 1, 2}
+			order := []int{0, 1, 2, 4}
 			if withResult {
 				result := audioReviewResult("retained", false)
 				m.result = &result
-				order = []int{0, 1, 2, 4}
 			}
 			for range 2 {
 				for step := 1; step <= len(order); step++ {
@@ -296,12 +295,8 @@ func TestAudioNavigationSettingsArrowsDoNotWrapOrActivate(t *testing.T) {
 				require.Equal(t, 2, m.focus)
 			}
 			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-			if withResult {
-				require.Equal(t, 4, m.focus)
-			} else {
-				require.Equal(t, 2, m.focus)
-				require.Equal(t, audioSettingMore, m.setting)
-			}
+			require.Equal(t, 4, m.focus, "visible player controls must remain reachable before generation")
+			require.Empty(t, m.modal)
 			m.focus, m.setting = 2, audioSettingMore
 			for setting := audioSettingMore - 1; setting >= 0; setting-- {
 				audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
@@ -319,47 +314,49 @@ func TestAudioNavigationCommandScrollingStaysBounded(t *testing.T) {
 	m := audioReviewModel(t)
 	m.input.SetValue(strings.Repeat("Preview 世界 ", 200))
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
-	require.Nil(t, audioReviewMore(t, m, "Show command"))
-	require.Equal(t, "info", m.modal)
+	require.Nil(t, audioReviewMore(t, m, "View command"))
+	require.Empty(t, m.modal)
 	limit := func() int {
-		return max(0, len(m.infoRows())-m.informationHeight())
+		return max(0, len(m.commandDisplayRows())-m.commandViewportHeight())
 	}
 	require.Positive(t, limit())
 	for range 100 {
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-		require.LessOrEqual(t, m.infoOffset, limit())
+		require.LessOrEqual(t, m.commandOffset, limit())
 	}
-	require.Equal(t, limit(), m.infoOffset)
+	require.Equal(t, limit(), m.commandOffset)
 	for _, key := range []rune{tea.KeyDown, tea.KeyPgDown, tea.KeyRight, tea.KeyEnd} {
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: key})
-		require.Equal(t, limit(), m.infoOffset)
+		require.Equal(t, limit(), m.commandOffset)
 	}
 	for _, width := range []int{160, 40, 80} {
 		m.Update(tea.WindowSizeMsg{Width: width, Height: 24})
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
-		require.GreaterOrEqual(t, m.infoOffset, 0)
-		require.LessOrEqual(t, m.infoOffset, limit())
+		require.GreaterOrEqual(t, m.commandOffset, 0)
+		require.LessOrEqual(t, m.commandOffset, limit())
 		for _, line := range strings.Split(m.View().Content, "\n") {
 			require.LessOrEqual(t, ansi.StringWidth(line), width)
 		}
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
-		require.Equal(t, limit(), m.infoOffset)
+		require.Equal(t, limit(), m.commandOffset)
 	}
 	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyHome})
 	for _, key := range []rune{tea.KeyHome, tea.KeyPgUp, tea.KeyLeft} {
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: key})
-		require.Zero(t, m.infoOffset)
-		require.Equal(t, "info", m.modal)
+		require.Zero(t, m.commandOffset)
+		require.Empty(t, m.modal)
 	}
 	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-	require.Positive(t, m.infoOffset)
+	require.Positive(t, m.commandOffset)
 	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-	require.Zero(t, m.infoOffset)
-	require.Equal(t, "info", m.modal)
+	require.Zero(t, m.commandOffset)
+	require.Empty(t, m.modal)
 	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-	require.Equal(t, "info", m.modal)
-	require.Nil(t, audioReviewKey(m, tea.KeyEscape))
+	require.Empty(t, m.modal)
+	audioReviewKey(m, tea.KeyEscape)
 	require.Equal(t, "more", m.modal)
+	require.Equal(t, "View command", m.moreItems()[m.moreChoice])
+	audioReviewKey(m, tea.KeyEscape)
 	require.Equal(t, 2, m.focus)
 	require.Equal(t, audioSettingMore, m.setting)
 }

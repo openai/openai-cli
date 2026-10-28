@@ -35,12 +35,14 @@ func TestAudioEditorAcceptsExactSpeedWithoutGeneration(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.focus, m.setting = 2, 3
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	require.Equal(t, "speed", m.modal)
+	require.Empty(t, m.modal)
+	require.True(t, m.speedEditing)
 	for _, value := range []string{"NaN", "+Inf", "0.24", "4.01", "invalid"} {
 		m.speedInput.SetValue(value)
 		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		require.Nil(t, cmd)
-		require.Equal(t, "speed", m.modal)
+		require.Empty(t, m.modal)
+		require.True(t, m.speedEditing)
 		require.Equal(t, float64(1), m.settings.Speed)
 	}
 	m.speedInput.SetValue("1.23")
@@ -49,6 +51,7 @@ func TestAudioEditorAcceptsExactSpeedWithoutGeneration(t *testing.T) {
 	require.Empty(t, m.modal)
 	require.Empty(t, m.note)
 	require.False(t, m.busy)
+	require.False(t, m.speedEditing)
 	require.Equal(t, 1.23, m.settings.Speed)
 }
 
@@ -58,7 +61,7 @@ func TestAudioEditorNarrowValidationRemainsVisible(t *testing.T) {
 	m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	view := audioFeedbackView(t, m)
 	require.Contains(t, view, "Text is empty.")
-	require.Contains(t, view, "1. Enter text before generating speech.")
+	require.Contains(t, view, "Enter text before generating speech.")
 	require.Contains(t, view, "Esc back")
 	require.False(t, m.busy)
 }
@@ -72,6 +75,7 @@ func TestAudioEditorSaveValidationRemainsVisible(t *testing.T) {
 		m.Update(tea.KeyPressMsg{Code: 's'})
 		require.Equal(t, "save", m.modal)
 		require.NotContains(t, m.View().Content, "Previous result status")
+		require.Nil(t, audioReviewKey(m, tea.KeyEnter)) // Finish choosing the folder.
 		for _, value := range []string{"", "-", "/dev/stdout"} {
 			m.path.SetValue(value)
 			_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})

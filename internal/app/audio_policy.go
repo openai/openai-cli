@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/apiquery"
-	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
@@ -107,7 +106,7 @@ func speechAuthenticationGuidance(command *cli.Command, apierr *openai.Error) au
 		}
 		return guidance
 	}
-	setupStep := "In your main terminal, run: " + clihelp.DisplayInvocation(root) + " help setup"
+	const setupStep = "In your main terminal, run: openai help setup"
 	switch {
 	case override:
 		guidance.Action = "Correct or remove the Authorization override."
@@ -128,7 +127,7 @@ func speechAuthenticationGuidance(command *cli.Command, apierr *openai.Error) au
 		guidance.Action = "Check your key's permissions and selected project."
 	case !apiAuthenticationKeyPresent(root, "api-key", "OPENAI_API_KEY"):
 		guidance.Summary = "No API key is configured."
-		guidance.Action = setupStep + "\nReopen this form in that terminal."
+		guidance.Action = setupStep
 	case apierr.Code == "invalid_api_key":
 		guidance.Action = "Replace the rejected API key.\nReopen this form."
 	default:

@@ -69,7 +69,11 @@ func audioFeedbackView(t *testing.T, m *audioWorkbench) string {
 	t.Helper()
 	view := ansi.Strip(m.View().Content)
 	rows := strings.Split(view, "\n")
-	require.LessOrEqual(t, len(rows), m.height-1)
+	height := m.height - 1
+	if m.width >= 60 && m.height >= 24 {
+		height = m.height
+	}
+	require.LessOrEqual(t, len(rows), height)
 	for _, row := range rows {
 		require.LessOrEqual(t, ansi.StringWidth(row), m.width-1)
 	}
@@ -305,6 +309,7 @@ func TestAudioWorkbenchFailureGuidanceFollowsEscapeTransitions(t *testing.T) {
 				if kind == "export" {
 					audioReviewKey(m, 's')
 					m.path.SetValue("synthetic.wav")
+					require.Nil(t, audioReviewKey(m, tea.KeyEnter)) // Finish choosing the folder.
 					require.NotNil(t, audioReviewKey(m, tea.KeyEnter))
 					m.Update(audioWorkMessage{kind: "export", err: failure})
 					require.Same(t, &result, m.result)

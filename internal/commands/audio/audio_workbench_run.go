@@ -72,14 +72,15 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 	if _, err = console.MakeRaw(); err != nil {
 		return err
 	}
-	painter := cliterminal.NewPainter(terminal, cancel)
+	cursorOutput := &audioCursorOutput{output: terminal}
+	painter := cliterminal.NewPainter(cursorOutput, cancel)
 	defer painter.Stop()
 	m := newAudioWorkbench(ctx, command, next, store)
 	m.width, m.height = width, height
 	m.dark = cliterminal.DarkBackground(os.Getenv("COLORFGBG"))
 	profile := cliterminal.ColorProfile(output, os.Environ(), term.IsTerminal(output.Fd()))
 	m.color = profile >= colorprofile.ANSI
-	inline := &audioWorkbenchInline{model: m, painter: painter, output: output, profile: profile, cancel: cancel}
+	inline := &audioWorkbenchInline{model: m, painter: painter, output: output, profile: profile, cancel: cancel, cursorOutput: cursorOutput}
 	program := tea.NewProgram(inline, tea.WithContext(ctx), tea.WithInput(input), tea.WithOutput(io.Discard), tea.WithoutSignalHandler(), tea.WithoutRenderer(), tea.WithWindowSize(width, height), tea.WithColorProfile(profile))
 	listenerDone := make(chan struct{})
 	go func() {
@@ -151,6 +152,9 @@ type audioWorkbenchInline struct {
 	cancel                            context.CancelFunc
 	started, modesActive, restoreWrap bool
 	content                           string
+	cursor                            *tea.Cursor
+	cursorOutput                      *audioCursorOutput
+	anchored, cursorStyled            bool
 	width, height                     int
 	err                               error
 }
@@ -228,27 +232,58 @@ func (p *audioWorkbenchInline) drawFrame(w, h int) {
 	if w != p.model.width || h != p.model.height {
 		p.model.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	}
+	view := p.model.View()
 	var converted strings.Builder
-	_, _ = io.WriteString(&colorprofile.Writer{Forward: &converted, Profile: max(p.profile, colorprofile.ASCII)}, p.model.View().Content)
+	_, _ = io.WriteString(&colorprofile.Writer{Forward: &converted, Profile: max(p.profile, colorprofile.ASCII)}, view.Content)
 	content := converted.String()
-	if content == p.content && w == p.width && h == p.height {
+	sameCursor := p.cursor == nil && view.Cursor == nil || p.cursor != nil && view.Cursor != nil && p.cursor.Position == view.Cursor.Position
+	if content == p.content && w == p.width && h == p.height && sameCursor {
 		return
 	}
-	p.painter.Frame(cliterminal.InlineFrame(content, w))
-	p.content, p.width, p.height = content, w, h
+	// Each replaceable frame is complete. A cursor-only update must not
+	// replace a queued content update with an incomplete repaint.
+	frame := ansi.ResetModeTextCursorEnable
+	if p.anchored {
+		frame += ansi.RestoreCursor
+	}
+	frame += cliterminal.InlineFrame(content, w) + ansi.SaveCursor
+	if view.Cursor != nil {
+		if view.Cursor.Y > 0 {
+			frame += ansi.CursorDown(view.Cursor.Y)
+		}
+		frame += ansi.CursorHorizontalAbsolute(view.Cursor.X+1) + ansi.SetCursorStyle(5) + ansi.SetModeTextCursorEnable
+		p.cursorStyled = true
+	}
+	if p.anchored {
+		p.painter.Frame(frame)
+	} else {
+		// The first saved origin must precede every coalescible frame. Saving
+		// after the first render also accounts for its initial terminal scroll.
+		p.painter.Control(frame)
+		p.anchored = true
+	}
+	p.content, p.width, p.height, p.cursor = content, w, h, view.Cursor
 }
 func (p *audioWorkbenchInline) close() string {
 	if !p.modesActive {
 		return ""
 	}
 	cleanup := "\x18\x1b\\" + ansi.ResetStyle
-	if p.started {
+	originWritten := p.cursorOutput != nil && p.cursorOutput.anchored.Load()
+	if originWritten {
+		cleanup += ansi.RestoreCursor
+	}
+	if p.started && originWritten {
 		cleanup += "\r" + ansi.EraseScreenBelow
+	}
+	if p.cursorStyled {
+		cleanup += ansi.SetCursorStyle(0)
 	}
 	cleanup += ansi.ResetModeBracketedPaste + ansi.SetModeTextCursorEnable
 	if p.restoreWrap {
 		cleanup += ansi.ResetModeAutoWrap
 	}
 	p.started, p.modesActive = false, false
+	p.anchored, p.cursorStyled, p.cursor = false, false, nil
 	return cleanup
 }
