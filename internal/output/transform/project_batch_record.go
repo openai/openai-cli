@@ -2,6 +2,7 @@ package transform
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -385,11 +386,13 @@ type batchRecordProjection struct{ fields []string }
 
 func (p *batchRecordProjection) add(name string, value gjson.Result) {
 	if value.Exists() {
-		p.fields = append(p.fields, strconv.Quote(name)+":"+value.Raw)
+		encodedName, _ := json.Marshal(name)
+		p.fields = append(p.fields, string(encodedName)+":"+value.Raw)
 	}
 }
 func (p *batchRecordProjection) text(name, value string) {
-	p.fields = append(p.fields, strconv.Quote(name)+":"+strconv.Quote(value))
+	encodedValue, _ := json.Marshal(value)
+	p.add(name, gjson.ParseBytes(encodedValue))
 }
 func (p *batchRecordProjection) value() gjson.Result {
 	return gjson.Parse("{" + strings.Join(p.fields, ",") + "}")
