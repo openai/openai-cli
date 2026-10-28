@@ -2,34 +2,50 @@ package audio
 
 import "math"
 
-// Each bar has a gap on either side. The last gap represents the audio endpoint.
+// Sparse bars define the shared seek steps. Their last gap is the audio endpoint.
 func audioWaveformBars(width int) int {
 	if width < 3 {
 		return 0
 	}
-	return (min(width, 72) - 1) / 2
+	return (min(width, 120) - 1) / 2
 }
 
 // audioWaveform draws a relative waveform for the workbench only. One gain
 // applies to the recording's measured peaks; original audio remains unchanged.
 // The marker occupies a gap, so selection never replaces a measured bar.
 func audioWaveform(peaks []float64, width, height, selectedBoundary int) []string {
+	return audioWaveformRows(peaks, width, height, selectedBoundary, false)
+}
+
+// Dense framed waveforms keep the existing endpoints and seek boundaries.
+// Adjacent measured columns remain fixed; the playhead may cover one column.
+func audioDenseWaveform(peaks []float64, width, height, selectedBoundary int) []string {
+	return audioWaveformRows(peaks, width, height, selectedBoundary, true)
+}
+
+func audioWaveformRows(peaks []float64, width, height, selectedBoundary int, dense bool) []string {
 	bars := audioWaveformBars(width)
 	if len(peaks) == 0 || bars == 0 || height < 1 {
 		return nil
 	}
-	height = min(height, 5)
+	columns := bars
+	maximumHeight := 5
+	if dense {
+		columns = 2*bars - 1
+		maximumHeight = 9
+	}
+	height = min(height, maximumHeight)
 	if height%2 == 0 {
 		height--
 	}
 	selectedBoundary = max(0, min(bars, selectedBoundary))
-	amplitudes := make([]float64, bars)
+	amplitudes := make([]float64, columns)
 	maximum := 0.0
 	// Divide before multiplying so interval boundaries cannot overflow.
 	boundary := func(index int) int {
-		return len(peaks)/bars*index + len(peaks)%bars*index/bars
+		return len(peaks)/columns*index + len(peaks)%columns*index/columns
 	}
-	for column := range bars {
+	for column := range columns {
 		start, end := boundary(column), boundary(column+1)
 		end = max(start+1, end)
 		for _, value := range peaks[start:end] {
@@ -44,7 +60,7 @@ func audioWaveform(peaks []float64, width, height, selectedBoundary int) []strin
 	if height == 1 {
 		resolution = 8
 	}
-	levels := make([]int, bars)
+	levels := make([]int, columns)
 	for column, amplitude := range amplitudes {
 		if amplitude > 0 {
 			// Divide directly: a reciprocal gain can overflow for quiet peaks.
@@ -85,7 +101,11 @@ func audioWaveform(peaks []float64, width, height, selectedBoundary int) []strin
 					cell = '╷'
 				}
 			}
-			cells[column*2+1] = cell
+			position := column*2 + 1
+			if dense {
+				position = column + 1
+			}
+			cells[position] = cell
 		}
 		cells[selectedBoundary*2] = '┃'
 		rows[row] = string(cells)

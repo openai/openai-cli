@@ -11,12 +11,12 @@ Each new form fills Instructions with the editable example: “Speak warmly and 
 The example is real text. The form sends it when the selected model supports Instructions.
 Clear form empties both editors. It does not restore the example.
 
-Tab follows the visible order: Text, Instructions, Settings, then Result when present.
+Tab moves through Text, Instructions, Settings, then Audio.
 Shift+Tab reverses that order.
 Up and Down move between sections at their boundaries.
 Inside an editor, arrows move through multiline and wrapped text before leaving the first or last visual row.
 Modified arrows and active selections remain inside the editor.
-Up from Model returns to Instructions. Down from More actions moves to Result when present.
+Up from Model returns to Instructions. Down from More actions moves to Audio.
 Home and End select the first and last settings.
 Enter opens a choice or starts generation from an editor.
 Enter on Speed accepts an exact number from 0.25 to 4. Left and Right adjust speed by 0.25.
@@ -31,11 +31,12 @@ Voice choices follow the form's existing model validator.
 Changing models preserves the selected voice. An unavailable voice needs another explicit choice before generation.
 
 Generate speech is the primary action.
-More actions contains History, Preview voice, Clear form, Show command, and Help.
+More actions contains History, Preview voice, Clear form, View command, and Help.
 The form keeps command text and help inside More actions.
-Show command opens a vertically scrollable Bash/zsh command.
+View command opens a vertically scrollable Bash/zsh command.
 Up/Down and PageUp/PageDown scroll it. Home/End select its start or end.
-Enter inside this view never generates speech.
+Escape returns to More actions with View command selected.
+Tab focuses Audio. Shift+Tab returns to the More actions control.
 Ctrl+P prints the complete command after frame cleanup and mode restoration, then exits without generating speech.
 Copy the printed command from the terminal transcript for Bash or zsh.
 The form's wrapped preview remains available for inspection.
@@ -58,17 +59,13 @@ It stores History under the operating system's user cache directory, within `ope
 History can contain sensitive text.
 Clear form resets the draft and current result. It preserves History and exported files.
 
-Failed actions open recovery choices with a plain-language cause and a safe next action.
-A confirmed key rejection says: “The API did not accept this key.”
-Other authentication failures say: “The API could not verify your access.”
-Authentication and permission failures offer API setup, which opens local setup help without checking credentials or sending requests.
-Error details shows the complete guidance, numeric HTTP status, and validated request ID when available.
-Up/Down scroll the details. Details opened from recovery return there with Escape.
-Back to form returns to the interrupted dialog or the form's More actions setting.
-More actions includes Last error while that failure remains current.
-F1 remains a shortcut to Error details.
-Opening setup help or details never retries the request.
-The form keeps the original error for its existing exit diagnostics and status.
+A failed action opens Error details with the cause and a recovery instruction.
+Multiple instructions appear in order. A missing API key shows one setup command using the same CLI invocation.
+For an installed CLI, the command is `openai help setup`.
+When you launch with `go run ./cmd/openai`, the command is `go run ./cmd/openai help setup`.
+Up and Down scroll long messages. Escape restores the interrupted form or dialog.
+More actions includes Last error while that failure remains current. F1 also reopens Error details.
+Viewing or dismissing an error never retries the request. The command retains its original exit status.
 
 Completed results show their format and byte count.
 When analysis succeeds, they also show a waveform derived from decoded samples and duration.
@@ -81,8 +78,9 @@ The marker follows player-reported progress. Players without progress reports ke
 With the result focused, S opens Save and H opens History.
 Save exports the complete original audio, including when playback starts from a selected position.
 The default destination is `~/Downloads/gpt-audio`, with a filename derived from the retained prompt.
-Enter confirms the suggested destination. Tab edits Filename or Save to without moving values below their labels.
-Enter on Save to finishes editing; it does not save. Default-name collisions receive numbered filenames.
+Save opens with the Save to field focused. Edit the folder or keep the suggested destination.
+Press Enter to focus Save audio. Press Enter again to write the file.
+Tab moves between Filename, Save to, and Save audio. Default-name collisions receive numbered filenames.
 History is available directly in the form and through More actions.
 History shows prompt previews and generation metadata. Opening an entry restores its settings without generation.
 
@@ -191,24 +189,24 @@ openai audio translate --file recording.wav --model whisper-1
 Speech History groups recordings by local date and shows one prompt row per recording.
 Roomy terminals show timestamps and selected-recording metadata.
 Compact terminals preserve prompt space and keep the selected recording visible.
-More actions keeps the draft visible above its list when space permits, as in the image picker.
-Escape returns to the form; the menu omits a duplicate Back action.
-Results show the default export folder below the playback and Save controls.
-Only completed exports show a Saved receipt. Waveform columns use narrow strokes instead of filled blocks.
-Roomy result views leave one blank row between the waveform and playback time.
+More actions lists secondary commands and brief descriptions when space permits.
+Escape returns to the form.
 
 ## Layout
 
-Settings labels and values use normal terminal text. Save labels retain secondary styling.
-More actions reuses the form layout when space permits, keeping the draft and settings visible.
-Compact screens prioritize the selected action and return guidance.
-Roomy playback uses light waveform strokes and a distinct progress marker.
-Play and Save share one row when they fit. The next row shows the suggested export folder.
-After export, that row shows the actual saved path instead.
-Filename and Save to keep their value columns while editing.
+At 60 columns and 24 rows, the draft, settings, and audio share one frame.
+Field labels start at column 4. Instructions and setting values start at column 22.
+Generate speech, History, and More actions share one row. Left and Right select an action.
+The focused action has a selection marker. In color terminals, it also has a selected background.
 
-Wide terminals use a reading column of at most 96 cells.
-Settings follows the composer. Instructions appears first within its aligned rows.
-Generate, History and More actions share a row when they fit.
-Left and Right move between these actions. Up and Down retain their existing behavior.
-Compact terminals retain stacked controls. Keyboard keys use the accent color; descriptions use secondary text styling.
+Before generation, Audio shows “No recording yet” and a zero timer.
+Select Play or Save to see “Generate speech first.”
+Measured audio uses a continuous centerline and a seek rail with exact endpoints.
+The playhead follows playback through silence. Its final rail marker turns green when playback completes.
+Play starts under the first timeline marker. Save and the timer follow in the same row.
+A spare row separates the timeline from these controls when space permits.
+When the timer needs more space, it moves above the actions and aligns with the final marker.
+Save opens the destination picker. A successful export adds its path below the actions.
+
+Smaller terminals use stacked controls. The minimum terminal size is 40 columns and 12 rows.
+Shortcut keys use the accent color. Their descriptions use the secondary text color.

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -48,6 +49,21 @@ func TestAudioFailureDetailsUseAuthenticationPolicy(t *testing.T) {
 			require.ErrorIs(t, m.lastErr, failure)
 		})
 	}
+}
+
+func TestAudioFailureDetailsShowSingleSetupInstruction(t *testing.T) {
+	m := audioReviewModel(t)
+	const action = "In your main terminal, run: openai help setup"
+	m.ctx = context.WithValue(m.ctx, speechOutputKey{}, SpeechPresentation{
+		AuthenticationGuidance: func(*cli.Command, *openai.Error) AuthenticationGuidance {
+			return AuthenticationGuidance{Summary: "No API key is configured.", Action: action}
+		},
+	})
+	m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+	require.Equal(t, []string{"No API key is configured.", "", action}, m.failureDetailRows())
+	view := audioFeedbackView(t, m)
+	require.Contains(t, view, action)
+	require.NotContains(t, view, "1. "+action)
 }
 
 func audioUnauthorizedFailure() *openai.Error {
@@ -151,7 +167,7 @@ func TestAudioFailureShows401BeforeEscape(t *testing.T) {
 	require.Contains(t, view, "Error details")
 	require.NotContains(t, view, "HTTP status:")
 	require.NotContains(t, view, "Request ID:")
-	require.Contains(t, view, "1. Check your API key and project access.")
+	require.Contains(t, view, "Check your API key and project access.")
 	require.NotContains(t, view, "req_synthetic_auth_failure")
 	require.NotContains(t, view, "No API request was sent.")
 	require.NotContains(t, view, "This attempt did not check your API key.")
@@ -179,7 +195,7 @@ func TestAudioFailureCompactPreservesCauseRecoveryAndFocus(t *testing.T) {
 			}
 			m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
 			view := audioFeedbackView(t, m)
-			for _, text := range []string{"The API could not verify your access.", "1. Check your API key and project access.", "Error details", "Esc back"} {
+			for _, text := range []string{"The API could not verify your access.", "Check your API key and project access.", "Error details", "Esc back"} {
 				require.Contains(t, view, text)
 			}
 			require.Equal(t, focus, m.focus, "opening recovery changed the underlying section")
@@ -238,10 +254,22 @@ func TestAudioFailureDetailsRestoreParentWithoutActions(t *testing.T) {
 			require.Equal(t, "preserved-output.wav", m.path.Value())
 			require.Equal(t, "1.25", m.speedInput.Value())
 			restore := audioReviewKey(m, tea.KeyEscape)
-			if tc.parent == "choice" || tc.parent == "" {
-				require.Nil(t, restore)
+			require.Nil(t, restore, "the terminal owns native cursor blinking")
+			view := m.View()
+			if tc.parent == "save" || tc.parent == "speed" {
+				require.NotNil(t, view.Cursor, "restoring an editor must reveal its native caret")
+				require.Equal(t, tea.CursorBar, view.Cursor.Shape)
+				require.True(t, view.Cursor.Blink)
+				value := "preserved-output.wav"
+				if tc.parent == "speed" {
+					value = "1.25"
+				}
+				row := strings.Split(ansi.Strip(view.Content), "\n")[view.Cursor.Y]
+				index := strings.Index(row, value)
+				require.GreaterOrEqual(t, index, 0)
+				require.Equal(t, ansi.StringWidth(row[:index])+ansi.StringWidth(value), view.Cursor.X)
 			} else {
-				require.NotNil(t, restore, "Restoring an editor must restart its caret")
+				require.Nil(t, view.Cursor)
 			}
 			require.Equal(t, tc.parent, m.modal)
 			require.False(t, m.quit)

@@ -8,7 +8,7 @@ import (
 
 // Keep keyboard traversal in the same order as the visible form.
 func (m *audioWorkbench) focusSection(focus int) tea.Cmd {
-	if focus == 4 && m.focus != 4 {
+	if focus == 4 && (m.focus != 4 || m.result == nil) {
 		m.waveformFocused = false
 	}
 	m.input.Blur()
@@ -24,12 +24,15 @@ func (m *audioWorkbench) focusSection(focus int) tea.Cmd {
 }
 
 func (m *audioWorkbench) cycleSection(backward bool) tea.Cmd {
-	order := []int{0, 1, 2}
-	if !m.instructionsSupported() {
-		order = []int{0, 2}
+	if m.focus == audioFocusCommand {
+		if backward {
+			return m.focusSection(2)
+		}
+		return m.focusSection(4)
 	}
-	if m.result != nil {
-		order = append(order, 4)
+	order := []int{0, 1, 2, 4}
+	if !m.instructionsSupported() {
+		order = []int{0, 2, 4}
 	}
 	step := 1
 	if backward {
@@ -100,11 +103,8 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			m.setting--
 		case "down":
 			if m.setting == audioSettingMore {
-				if m.result != nil {
-					m.resultAction = 0
-					return true, m.focusSection(4)
-				}
-				return true, nil
+				m.resultAction = 0
+				return true, m.focusSection(4)
 			}
 			m.setting++
 		case "home":
@@ -127,7 +127,7 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			}
 			m.resultAction = max(0, min(1, m.resultAction+step))
 		case "up":
-			if !m.waveformFocused && m.result.seekDuration() > 0 {
+			if !m.waveformFocused && m.result.hasWaveform() {
 				m.waveformFocused = true
 			} else {
 				m.waveformFocused = false
