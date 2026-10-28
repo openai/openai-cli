@@ -196,6 +196,20 @@ class ReceiptTest(unittest.TestCase):
 
 
 class TerminalReceiverTest(unittest.TestCase):
+    def test_screen_does_not_change_the_live_transcript(self):
+        raw = bytearray(b'first\x1b[')
+        before = bytes(raw)
+        picker.screen(raw, 8, 3)
+        self.assertEqual(bytes(raw), before)
+        raw.extend(b'2;1Hsecond')
+        self.assertEqual(picker.screen(raw, 8, 3), b'first\nsecond\n')
+
+    def test_scroll_up_and_absolute_row_preserve_margins_and_column(self):
+        raw = (paint('TOP', 'one', 'two', 'three', 'BOTTOM')
+               + b'\x1b[2;4r\x1b[S\x1b[3G\x1b[4dX')
+        self.assertEqual(picker.screen(raw, width=8, height=5),
+                         b'TOP\ntwo\nthree\n  X\nBOTTOM')
+
     def test_size_queries_current_dimensions_without_cached_geometry(self):
         terminal = picker.Terminal.__new__(picker.Terminal)
         terminal.master = 73
@@ -215,6 +229,34 @@ class TerminalReceiverTest(unittest.TestCase):
         result = picker.screen(b'abcdef\r\n1234\r\nlast', width=4, height=2, history=history)
         self.assertEqual(result, b'1234\nlast')
         self.assertEqual(history, ['abcd', 'ef'])
+
+    def test_horizontal_cursor_moves_replace_the_expected_cells(self):
+        raw = b'abcde\x1b[2DX\x1b[CY'
+        self.assertEqual(picker.screen(raw, width=5, height=2), b'abXdY\n')
+
+    def test_reverse_index_scrolls_only_the_selected_region(self):
+        raw = (paint('TOP', 'one', 'two', 'three', 'BOTTOM')
+               + b'\x1b[2;4r\x1b[2;1H\x1bM'
+               + b'new\x1b[r\x1b[5;1H')
+        self.assertEqual(picker.screen(raw, width=8, height=5),
+                         b'TOP\nnew\none\ntwo\nBOTTOM')
+
+    def test_linefeed_scrolls_only_the_selected_region(self):
+        history = []
+        raw = (paint('TOP', 'one', 'two', 'three', 'BOTTOM')
+               + b'\x1b[2;4r\x1b[4;1H\nnew')
+        self.assertEqual(picker.screen(raw, width=8, height=5, history=history),
+                         b'TOP\ntwo\nthree\nnew\nBOTTOM')
+        self.assertEqual(history, [])
+
+    def test_reverse_index_above_margin_moves_without_scrolling(self):
+        raw = paint('one', 'two', 'three') + b'\x1b[3;1H\x1bMnew'
+        self.assertEqual(picker.screen(raw, width=8, height=3), b'one\nnew\nthree')
+
+    def test_scroll_margin_reset_restores_the_full_screen(self):
+        raw = (paint('one', 'two', 'three', 'four')
+               + b'\x1b[2;3r\x1b[r\x1b[4;1H\nlast')
+        self.assertEqual(picker.screen(raw, width=8, height=4), b'two\nthree\nfour\nlast')
 
     def test_saved_cursor_replaces_busy_line_without_stale_tail(self):
         raw = (b'Create image\r\n\x1b7Generating image\r\nCtrl+C cancel generation'

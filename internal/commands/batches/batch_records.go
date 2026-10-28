@@ -143,6 +143,9 @@ func (w workflow) showStreamedBatchRecords(ctx context.Context, command *cli.Com
 func (w workflow) presentBatchRecords(ctx context.Context, command *cli.Command, records RecordOutput) error {
 	var diagnostics io.Writer = terminal.BorrowedWriter{Writer: batchDiagnosticWriter{ctx: ctx, file: os.Stderr}, File: os.Stderr}
 	out := command.Root().Writer
+	if w.browserOutput != nil {
+		out, diagnostics = w.browserOutput, io.Discard
+	}
 	return writeBatchStdoutWithCleanup(ctx, out, batchOutputCleanupGrace, func(out io.Writer) error {
 		if err := w.options.ShowRecords(ctx, command, records, out, diagnostics); err != nil {
 			return &batchOutputDrainError{err}
