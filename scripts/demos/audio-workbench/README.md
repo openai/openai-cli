@@ -141,7 +141,7 @@ The screen shows the cause, one recovery instruction, and Esc back. Only multipl
 It shows no API setup menu, nested details page, raw HTTP status, or Request ID.
 The ordinary form keeps those details hidden after dismissal.
 An unknown OpenAI authentication cause retains its generic summary instead of claiming rejection or expiration.
-Missing OpenAI keys point to `openai help setup` in the main terminal.
+Missing OpenAI keys point to `help setup` using the executable that launched the workbench.
 Application tests cover those standard OpenAI credential cases without contacting a live API.
 
 Enter, Tab, S, D, and Ctrl+G on the error screen must not start another action.

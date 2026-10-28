@@ -60,7 +60,9 @@ History can contain sensitive text.
 Clear form resets the draft and current result. It preserves History and exported files.
 
 A failed action opens Error details with the cause and a recovery instruction.
-Multiple instructions appear in order. A missing API key shows `openai help setup` as a single instruction.
+Multiple instructions appear in order. A missing API key shows one setup command using the same CLI invocation.
+For an installed CLI, the command is `openai help setup`.
+When you launch with `go run ./cmd/openai`, the command is `go run ./cmd/openai help setup`.
 Up and Down scroll long messages. Escape restores the interrupted form or dialog.
 More actions includes Last error while that failure remains current. F1 also reopens Error details.
 Viewing or dismissing an error never retries the request. The command retains its original exit status.

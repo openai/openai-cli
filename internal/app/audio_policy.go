@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
@@ -106,7 +107,7 @@ func speechAuthenticationGuidance(command *cli.Command, apierr *openai.Error) au
 		}
 		return guidance
 	}
-	const setupStep = "In your main terminal, run: openai help setup"
+	setupStep := "In your main terminal, run: " + clihelp.DisplayInvocation(root) + " help setup"
 	switch {
 	case override:
 		guidance.Action = "Correct or remove the Authorization override."

@@ -74,15 +74,18 @@ func TestSpeechAuthenticationGuidanceConfigurationSources(t *testing.T) {
 	}
 }
 
-func TestSpeechAuthenticationGuidanceShowsShortSetupCommand(t *testing.T) {
-	for _, invocation := range []string{"'./preview app/openai-current'", "go run ./cmd/openai"} {
+func TestSpeechAuthenticationGuidancePreservesInvocation(t *testing.T) {
+	for _, invocation := range []string{"openai", "'./preview app/openai-current'", "go run ./cmd/openai"} {
 		for _, flags := range [][]string{nil, {"--api-key="}} {
 			t.Run(invocation+"/"+strings.Join(flags, "/"), func(t *testing.T) {
 				cleanAPIAuthGuidanceEnvironment(t)
 				root := apiAuthGuidanceTestCommand(func(_ context.Context, command *cli.Command) error {
 					guidance := speechAuthenticationGuidance(command, &openai.Error{StatusCode: 401})
-					require.Contains(t, guidance.Action, "In your main terminal, run: openai help setup")
-					require.NotContains(t, guidance.Action, invocation)
+					want := "In your main terminal, run: " + invocation + " help setup"
+					if len(flags) != 0 {
+						want = "Close this form.\n" + want + "\nReopen without the empty --api-key option."
+					}
+					require.Equal(t, want, guidance.Action)
 					return nil
 				})
 				root.Metadata["help-invocation"] = invocation
