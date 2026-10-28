@@ -80,7 +80,7 @@ func TestWorkspaceCommandRouting(t *testing.T) {
 		run, old, direct int
 		wantError        bool
 	}{
-		{"bare terminal", []string{"vector-stores"}, true, 1, 0, 0, false},
+		{"bare terminal", []string{"vector-stores"}, true, 0, 1, 0, false},
 		{"explicit terminal", []string{"vector-stores", "manage"}, true, 1, 0, 0, false},
 		{"bare pipe", []string{"vector-stores"}, false, 0, 1, 0, false},
 		{"explicit pipe", []string{"vector-stores", "manage"}, false, 0, 0, 0, true},
@@ -187,11 +187,12 @@ func TestWorkspaceConfigurationPreservesOwners(t *testing.T) {
 		assert.Same(t, existing, group.Command("manage"))
 		assert.Nil(t, group.Action)
 	})
-	t.Run("bare fallback help", func(t *testing.T) {
+	t.Run("bare group keeps framework help", func(t *testing.T) {
 		var output bytes.Buffer
 		root := &cli.Command{Name: "openai", Writer: &output, ErrWriter: &output,
 			Reader: strings.NewReader(""), Commands: []*cli.Command{{Name: "vector-stores"}}}
 		Configure(root, Options{})
+		require.Nil(t, root.Command("vector-stores").Action)
 		require.NoError(t, root.Run(t.Context(), []string{"openai", "vector-stores"}))
 		assert.Contains(t, output.String(), "manage")
 		assert.Contains(t, output.String(), "Create vector stores")

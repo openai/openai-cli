@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -503,8 +504,21 @@ func TestWorkspaceWatchingAnotherFilePreservesRetainedUpload(t *testing.T) {
 }
 
 func TestWorkspaceBrowserUploadsExactSelectedPath(t *testing.T) {
+	t.Run("directional mark", func(t *testing.T) {
+		testBrowserUploadsSelectedPath(t, "kite\u2066blue.txt", `kite\u2066blue.txt`)
+	})
+	t.Run("tab", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows forbids tabs in filenames")
+		}
+		testBrowserUploadsSelectedPath(t, "kite\tblue.txt", `kite\tblue.txt`)
+	})
+}
+
+func testBrowserUploadsSelectedPath(t *testing.T, selectedName, displayName string) {
+	t.Helper()
 	directory := t.TempDir()
-	selectedPath := filepath.Join(directory, "kite\tblue.txt")
+	selectedPath := filepath.Join(directory, selectedName)
 	siblingPath := filepath.Join(directory, "kite blue.txt")
 	require.NoError(t, os.WriteFile(selectedPath, []byte("selected synthetic file"), 0600))
 	require.NoError(t, os.WriteFile(siblingPath, []byte("different synthetic file"), 0600))
@@ -533,6 +547,7 @@ func TestWorkspaceBrowserUploadsExactSelectedPath(t *testing.T) {
 	require.Equal(t, filepath.Base(selectedPath), m.entries[m.selected].name)
 	modelKey(m, tea.KeyEnter)
 	require.Equal(t, "upload", m.page)
+	require.Equal(t, filepath.Join(directory, displayName), m.editor.Value())
 	require.Empty(t, uploadedPath, "selecting a file must not upload it")
 	modelComplete(t, m, modelKey(m, tea.KeyEnter))
 	assert.Equal(t, selectedPath, uploadedPath)

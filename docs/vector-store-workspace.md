@@ -3,10 +3,10 @@
 Open the workspace in a terminal:
 
 ```sh
-openai vector-stores
+openai vector-stores manage
 ```
 
-`openai vector-stores manage` opens the same workspace explicitly.
+`openai vector-stores` displays the available commands and returns to the shell.
 The workspace uses your current API key, project, organization, and endpoint settings.
 
 1. Select a store, or choose **Create store**.
@@ -74,5 +74,4 @@ The workspace reports additional matches when the API indicates more results.
 Refine the question to narrow those results.
 
 Existing direct commands remain available.
-Explicit output options and nonterminal bare invocations retain their help behavior.
 The workspace requires terminal input and output.

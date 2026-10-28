@@ -16,8 +16,6 @@ type Options struct {
 	ErrorMessage func(error) string
 }
 
-const configuredMetadata = "openai-vector-store-workspace"
-
 type workspaceCommand struct {
 	options  Options
 	terminal func(*cli.Command) (*os.File, *os.File, bool)
@@ -31,27 +29,8 @@ func Configure(root *cli.Command, options Options) {
 
 func (w workspaceCommand) configure(root *cli.Command) {
 	group := root.Command("vector-stores")
-	if group == nil || group.Metadata[configuredMetadata] == true || group.Command("manage") != nil {
+	if group == nil || group.Command("manage") != nil {
 		return
-	}
-	if group.Metadata == nil {
-		group.Metadata = map[string]any{}
-	}
-	group.Metadata[configuredMetadata] = true
-	previous := group.Action
-	group.Action = func(ctx context.Context, command *cli.Command) error {
-		input, output, terminal := w.terminal(command)
-		if command.Args().Present() || !terminal || !workspaceFlagsAllowed(command, false) {
-			if previous != nil {
-				return previous(ctx, command)
-			}
-			// Preserve the framework's unknown-child error and typo recovery.
-			if child := command.Args().First(); child != "" {
-				return cli.ShowCommandHelp(ctx, command, child)
-			}
-			return cli.ShowSubcommandHelp(command)
-		}
-		return w.launch(ctx, command, input, output)
 	}
 	group.Commands = append(group.Commands, &cli.Command{
 		Name: "manage", Usage: "Create vector stores, upload files, and search interactively",
@@ -63,7 +42,7 @@ func (w workspaceCommand) configure(root *cli.Command) {
 			if command.Args().Present() {
 				return workspaceFailure("The vector store workspace takes no positional arguments.", nil)
 			}
-			if !workspaceFlagsAllowed(command, true) {
+			if !workspaceFlagsAllowed(command) {
 				return workspaceFailure("The vector store workspace needs ordinary terminal output. Use direct vector-store commands for output formats, extraction, quiet, or debug options.", nil)
 			}
 			input, output, terminal := w.terminal(command)
@@ -98,13 +77,13 @@ func workspaceTerminal(command *cli.Command) (*os.File, *os.File, bool) {
 		!strings.EqualFold(os.Getenv("TERM"), "dumb")
 }
 
-func workspaceFlagsAllowed(command *cli.Command, explicit bool) bool {
+func workspaceFlagsAllowed(command *cli.Command) bool {
 	root := command.Root()
 	for _, name := range []string{"format", "format-error", "transform", "transform-error", "raw-output", "quiet", "debug", "verbose"} {
 		if !root.IsSet(name) {
 			continue
 		}
-		if explicit && (name == "format" || name == "format-error") {
+		if name == "format" || name == "format-error" {
 			value := strings.ToLower(root.String(name))
 			if value == "auto" || value == "text" {
 				continue

@@ -35,7 +35,7 @@ CANARY = "SYNTHETIC_PRIVATE_API_MESSAGE"
 FILE_ID = "file_synthetic"
 EXISTING_ID = "vs_existing"
 CREATED_ID = "vs_created"
-CASES = ("workflow", "upload-failure", "attachment-failure", "tiny",
+CASES = ("group-help", "workflow", "upload-failure", "attachment-failure", "tiny",
          "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
          "management", "management-failure", "search", "search-narrow")
 INTERRUPTED = threading.Event()
@@ -509,6 +509,11 @@ def management_scenario(name, terminal, server, harness):
 
 
 def scenario(name, terminal, server, source, harness):
+    if name == "group-help":
+        terminal.finish(0, expect_picker=False)
+        assert "manage" in terminal.text(), "group help must list the workspace command"
+        assert not server.records, "group help sent an API request"
+        return
     if name.startswith("busy-"):
         harness.wait_for_request(terminal, server.started)
         if name == "busy-ctrl-c":
@@ -680,7 +685,7 @@ def run_case(args, harness, name):
                 env.update({"COLORTERM": "truecolor", "COLORFGBG": "15;0" if args.theme == "dark" else "0;15"})
             commands = ["--project", "proj_synthetic", "--organization", "org_synthetic",
                         "--header", "X-Workspace-Fixture: synthetic", "vector-stores"]
-            if name != "workflow":
+            if name != "group-help":
                 commands.append("manage")
             os.chdir(private)
             # Keep the owned PTY outside the child session's controlling terminal.

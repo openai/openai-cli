@@ -211,8 +211,11 @@ class PreviewState:
     def public(item):
         return copy.deepcopy({key: value for key, value in item.items() if not key.startswith("_")})
 
-    def validate_attach(self, store_id, body):
+    def require_active_store(self, store_id):
         require(self.store(store_id)["status"] != "expired", "This preview store has expired.")
+
+    def validate_attach(self, store_id, body):
+        self.require_active_store(store_id)
         require(set(body) <= {"file_id", "attributes", "chunking_strategy"})
         require(isinstance(body.get("file_id"), str) and body["file_id"] in self.files,
                 "This preview source file does not exist.", 404)
@@ -263,7 +266,7 @@ class PreviewState:
         return self.batch(store_id, batch_id)
 
     def search(self, store_id, body):
-        self.store(store_id)
+        self.require_active_store(store_id)
         require(set(body) <= {"query", "max_num_results", "filters", "ranking_options", "rewrite_query"})
         query = body.get("query")
         require(isinstance(query, str) and bool(query.strip()), "Enter a search query.")

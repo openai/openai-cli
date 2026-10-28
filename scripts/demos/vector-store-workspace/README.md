@@ -29,7 +29,8 @@ Theme captures use synthetic terminal replies, not a graphical terminal applicat
 
 Use `--case NAME` to rerun one affected case:
 
-- `workflow`: bare command, store selection, store creation, file browser, upload, indexing, file list, search, passage, and back.
+- `group-help`: the bare command prints help and exits without keyboard input or API requests.
+- `workflow`: store selection, store creation, file browser, upload, indexing, file list, search, passage, and back.
 - `search` and `search-narrow`: type, search once, select a second passage, edit the query, and retry an empty result at 90×34 and 40×12.
 - `upload-failure`: failed upload, explicit retry, indexing, and search.
 - `attachment-failure`: retained uploaded file, remote-state check, explicit attachment retry, indexing, and search.
@@ -41,7 +42,7 @@ Use `--case NAME` to rerun one affected case:
 - `management`: store filtering, renaming, expiration, metadata, existing files, custom chunking, batches, content, attributes, and confirmed removal.
 - `management-failure`: failed renaming retains store state, sends no automatic retry, and exits with failure.
 
-All cases except `workflow` use `openai vector-stores manage`.
+All workspace scenarios start with `openai vector-stores manage`.
 The fixture checks project, organization, custom headers, upload purpose, exact file bytes, and search input.
 Mutation cases send repeated Enter keys.
 Request counts must show one attempt per user action.

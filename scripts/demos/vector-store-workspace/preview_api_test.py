@@ -227,9 +227,20 @@ class PreviewTests(unittest.TestCase):
 
     def test_expired_store_remains_readable_and_deletable(self):
         self.request("POST", self.base, {"expires_after": {"anchor": "last_active_at", "days": 1}})
-        self.now += 86401
+        self.now += 60
+        status, matches = self.request("POST", self.base + "/search", {"query": "kite"})
+        self.assertEqual(status, 200)
+        self.assertEqual(matches["data"][0]["file_id"], preview.SEED_FILE_ID)
+        _, active = self.request("GET", self.base)
+        self.assertEqual(active["last_active_at"], self.now)
+        self.now = active["expires_at"]
+        status, error = self.request("POST", self.base + "/search", {"query": "kite"})
+        self.assertEqual(status, 400)
+        self.assertEqual(error["error"]["message"], "This preview store has expired.")
         _, result = self.request("GET", self.base)
         self.assertEqual(result["status"], "expired")
+        self.assertEqual(result["last_active_at"], active["last_active_at"])
+        self.assertEqual(result["expires_at"], active["expires_at"])
         _, file = self.upload()
         self.assertEqual(self.request("POST", self.base + "/files", {"file_id": file["id"]})[0], 400)
         self.assertEqual(self.request("DELETE", self.base)[0], 200)

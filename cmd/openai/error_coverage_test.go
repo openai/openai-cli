@@ -192,7 +192,7 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 		}
 		if entry.HasChildren && (command.Action != nil || len(command.Arguments) != 0 || command.ArgValidator != nil) {
 			switch name {
-			case "help", "help setup", "tokenizer", "vector-stores":
+			case "help", "help setup", "tokenizer":
 				entry.Class += "; reviewed positional-error group"
 				entry.ActionContract = name
 			default:
