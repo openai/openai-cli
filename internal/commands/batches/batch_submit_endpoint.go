@@ -6,10 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"syscall"
 
-	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-go/v3"
 )
 
@@ -24,45 +21,20 @@ var batchSubmitEndpoints = [...]openai.BatchNewParamsEndpoint{
 	openai.BatchNewParamsEndpointV1Videos,
 }
 
-// inferBatchSubmitEndpoint inspects local input only when --endpoint is absent.
-// Its snapshot binds the later upload to the inspected file identity and stat.
-func inferBatchSubmitEndpoint(ctx context.Context, path string) (endpoint string, snapshot os.FileInfo, err error) {
-	if err := ctx.Err(); err != nil {
+// inferBatchSubmitEndpoint inspects the private bytes that submission uploads.
+func inferBatchSubmitEndpoint(ctx context.Context, path string) (endpoint string, snapshot *batchSubmissionSnapshot, err error) {
+	snapshot, err = prepareBatchSubmissionSnapshot(ctx, path)
+	if err != nil {
 		return "", nil, err
 	}
-	source := requestconfig.FileInputSource{Option: "--file"}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return "", nil, source.Failure("open", err)
-	}
 	defer func() {
-		if closeErr := file.Close(); closeErr != nil {
-			err = errors.Join(err, source.Failure("close", closeErr))
-		}
 		if err != nil {
+			err = errors.Join(err, snapshot.close())
 			endpoint, snapshot = "", nil
 		}
 	}()
-	snapshot, err = file.Stat()
-	if err != nil {
-		return "", nil, source.Failure("inspect", err)
-	}
-	if !snapshot.Mode().IsRegular() {
-		return "", nil, batchError("Submit requires a regular local JSONL file. Use files upload for other input sources.")
-	}
-	reader := &requestconfig.InputFileReader{Reader: file, Source: source}
-	endpoint, err = inferBatchSubmitJSONL(ctx, reader)
-	if err != nil {
-		return "", nil, err
-	}
-	current, err := file.Stat()
-	if err != nil {
-		return "", nil, source.Failure("inspect", err)
-	}
-	if current.Size() != snapshot.Size() || !current.ModTime().Equal(snapshot.ModTime()) {
-		return "", nil, batchError("The input file changed while determining its endpoint. Check the file, then retry.")
-	}
-	return endpoint, snapshot, ctx.Err()
+	endpoint, err = inferBatchSubmitJSONL(ctx, batchRecordContextReader{ctx, io.NewSectionReader(snapshot.file, 0, snapshot.Size())})
+	return endpoint, snapshot, err
 }
 
 func inferBatchSubmitJSONL(ctx context.Context, reader io.Reader) (string, error) {

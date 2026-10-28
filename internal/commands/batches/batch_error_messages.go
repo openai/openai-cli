@@ -5,17 +5,14 @@ import "strings"
 // WorkflowErrorMessage retains safe outcome and cleanup messages from joined
 // failures. Arbitrary cause text remains available through explicit error modes.
 func WorkflowErrorMessage(failure error) string {
-	var message strings.Builder
+	var messages []string
 	var visit func(error)
 	visit = func(err error) {
 		if err == nil {
 			return
 		}
-		if workflow, ok := err.(*WorkflowError); ok && workflow.message != "" && !strings.Contains(message.String(), workflow.message) {
-			if message.Len() > 0 {
-				message.WriteByte('\n')
-			}
-			message.WriteString(workflow.message)
+		if workflow, ok := err.(*WorkflowError); ok && workflow.message != "" {
+			messages = append(messages, workflow.message)
 		}
 		switch wrapped := err.(type) {
 		case interface{ Unwrap() []error }:
@@ -27,5 +24,20 @@ func WorkflowErrorMessage(failure error) string {
 		}
 	}
 	visit(failure)
-	return message.String()
+	var distinct []string
+	for i, message := range messages {
+		contained := false
+		for j, other := range messages {
+			// Prefer complete guidance regardless of cleanup-join order.
+			// Keep only the first occurrence of identical messages.
+			if i != j && strings.Contains(other, message) && (other != message || j < i) {
+				contained = true
+				break
+			}
+		}
+		if !contained {
+			distinct = append(distinct, message)
+		}
+	}
+	return strings.Join(distinct, "\n")
 }

@@ -44,12 +44,24 @@ type batchRecordTemporaryFile struct {
 	info os.FileInfo
 }
 
-func newBatchRecordStore(ctx context.Context) (_ *batchRecordStore, err error) {
-	s := &batchRecordStore{ctx: ctx, seed: maphash.MakeSeed(), bucketCount: 1024, files: make(map[*os.File]batchRecordTemporaryFile)}
-	s.root, err = os.OpenRoot(os.TempDir())
+// newBatchScratchStore owns private temporary files without allocating indexes.
+func newBatchScratchStore(ctx context.Context) (*batchRecordStore, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(os.TempDir())
 	if err != nil {
 		return nil, batchRecordStorageError(err)
 	}
+	return &batchRecordStore{ctx: ctx, root: root, files: make(map[*os.File]batchRecordTemporaryFile)}, nil
+}
+
+func newBatchRecordStore(ctx context.Context) (_ *batchRecordStore, err error) {
+	s, err := newBatchScratchStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.seed, s.bucketCount = maphash.MakeSeed(), 1024
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, s.close())

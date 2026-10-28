@@ -38,6 +38,7 @@ func TestBatchSubmitEndpointLargeRecords(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte(input), 0600))
 			endpoint, snapshot, err := inferBatchSubmitEndpoint(t.Context(), path)
 			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, snapshot.close()) })
 			require.Equal(t, "/v1/responses", endpoint)
 			require.Equal(t, int64(len(input)), snapshot.Size())
 		})
@@ -88,9 +89,10 @@ func TestBatchSubmitEndpointSnapshotRejectsReplacedPath(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`{"url":"/v1/responses"}`), 0600))
 	_, snapshot, err := inferBatchSubmitEndpoint(t.Context(), path)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, snapshot.close()) })
 	require.NoError(t, os.Rename(path, path+".original"))
 	require.NoError(t, os.WriteFile(path, []byte(`{"url":"/v1/embeddings"}`), 0600))
-	_, err = openBatchSubmissionFile(path, snapshot)
+	_, err = openBatchSubmissionFile(t.Context(), path, snapshot)
 	require.ErrorContains(t, err, "input file changed")
 }
 

@@ -78,6 +78,8 @@ openai batches results batch_demo --custom-id sentiment-positive --match-input
 
 Submit infers an omitted endpoint from the JSONL request URLs and defaults the completion window to 24h.
 Prepare a valid JSONL request file first. Submit uploads that file; it does not write requests.
+Submit prepares a private input copy and uploads those exact bytes.
+Local submission needs writable temporary storage approximately equal to the input size.
 Remove `--wait --output-dir results` to return immediately after creation.
 Explicit endpoint, completion-window, metadata, expiration, JSON/YAML input, and connection options remain supported.
 Use `--file requests.jsonl` instead of the positional path when needed.

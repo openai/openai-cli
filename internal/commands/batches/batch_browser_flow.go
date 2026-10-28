@@ -2,6 +2,7 @@ package batches
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -59,7 +60,7 @@ func batchBrowserWork[T any](ctx context.Context, title string, show func(contex
 	}
 	<-done
 	if err != nil {
-		return result, err
+		return result, errors.Join(err, workErr)
 	}
 	return result, workErr
 }

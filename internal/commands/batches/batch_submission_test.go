@@ -99,13 +99,18 @@ func TestBatchSubmissionRecoveryState(t *testing.T) {
 				option.WithHeader("OpenAI-Project", "proj_synthetic"), option.WithHeader("X-Synthetic", "preserved"),
 			}
 			inputID := ""
-			var reviewed os.FileInfo
+			var reviewed *batchSubmissionSnapshot
 			if tc.name == "local success" {
 				var err error
-				reviewed, err = os.Stat(path)
+				reviewed, err = prepareBatchSubmissionSnapshot(t.Context(), path)
 				if err != nil {
 					t.Fatal(err)
 				}
+				t.Cleanup(func() {
+					if err := reviewed.close(); err != nil {
+						t.Error(err)
+					}
+				})
 			}
 			if tc.source == "existing" {
 				path, inputID = "", "file_existing"
@@ -162,10 +167,15 @@ func TestBatchSubmissionRejectsChangedReviewedFile(t *testing.T) {
 			if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			reviewed, err := os.Stat(path)
+			reviewed, err := prepareBatchSubmissionSnapshot(t.Context(), path)
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() {
+				if err := reviewed.close(); err != nil {
+					t.Error(err)
+				}
+			})
 			switch change {
 			case "replacement":
 				if err := os.Rename(path, path+".original"); err != nil {

@@ -177,40 +177,56 @@ func (w workflow) createBatchInBrowser(ctx context.Context, cmd *cli.Command, cl
 			if err != nil {
 				return gjson.Result{}, err
 			}
-			var snapshot os.FileInfo
-			if draft.path != "" {
-				snapshot, err = os.Stat(draft.path)
-				if err != nil {
-					return gjson.Result{}, batchError("Cannot read the selected file. Choose an accessible local JSONL file.")
-				}
-				if !snapshot.Mode().IsRegular() {
-					return gjson.Result{}, batchError("Choose a regular local JSONL file.")
-				}
-			} else if draft.inputID == "" {
-				return gjson.Result{}, batchError("Choose an input file before reviewing this batch.")
-			}
 			headers, err := requestconfig.Headers(cmd)
 			if err != nil {
 				return gjson.Result{}, err
 			}
-			review := newBatchBrowserFlow("confirm", "Review batch", "Ctrl+S creates one batch. Esc returns to editing.", nil)
-			review.flow.lines = batchBrowserReview(cmd, draft, snapshot)
-			if err := show(ctx, review); err != nil {
-				return gjson.Result{}, err
+			var snapshot *batchSubmissionSnapshot
+			if draft.path != "" {
+				snapshot, err = batchBrowserWork(ctx, "Preparing input file", show, func(workCtx context.Context) (*batchSubmissionSnapshot, error) {
+					return prepareBatchSubmissionSnapshot(workCtx, draft.path)
+				})
+				if err != nil {
+					if snapshot != nil {
+						err = errors.Join(err, snapshot.close())
+					}
+					return gjson.Result{}, err
+				}
+			} else if draft.inputID == "" {
+				return gjson.Result{}, batchError("Choose an input file before reviewing this batch.")
 			}
-			if review.chosen != "confirm" {
+			state, confirmed, err := func() (state batchSubmission, confirmed bool, err error) {
+				var reviewed os.FileInfo
+				if snapshot != nil {
+					defer func() { err = errors.Join(err, snapshot.close()) }()
+					reviewed = snapshot
+				}
+				review := newBatchBrowserFlow("confirm", "Review batch", "Ctrl+S creates one batch. Esc returns to editing.", nil)
+				review.flow.lines = batchBrowserReview(cmd, draft, reviewed)
+				if err := show(ctx, review); err != nil {
+					return state, false, err
+				}
+				if review.chosen != "confirm" {
+					return state, false, nil
+				}
+				opts := append(options[:len(options):len(options)], option.WithRequestBody("application/json", body))
+				for name, values := range headers {
+					for _, value := range values {
+						opts = append(opts, option.WithHeader(name, value))
+					}
+				}
+				path, inputID := draft.path, draft.inputID
+				state, err = batchBrowserWork(ctx, "Creating batch", show, func(workCtx context.Context) (batchSubmission, error) {
+					return submitBatchRequest(workCtx, client, opts, headers, path, inputID, snapshot)
+				})
+				return state, true, err
+			}()
+			if !confirmed {
+				if err != nil {
+					return gjson.Result{}, err
+				}
 				continue
 			}
-			opts := append(options[:len(options):len(options)], option.WithRequestBody("application/json", body))
-			for name, values := range headers {
-				for _, value := range values {
-					opts = append(opts, option.WithHeader(name, value))
-				}
-			}
-			path, inputID := draft.path, draft.inputID
-			state, err := batchBrowserWork(ctx, "Creating batch", show, func(workCtx context.Context) (batchSubmission, error) {
-				return submitBatchRequest(workCtx, client, opts, headers, path, inputID, snapshot)
-			})
 			if state.InputFileID != "" {
 				draft.inputID, draft.path = state.InputFileID, ""
 			}
@@ -363,7 +379,12 @@ func (w workflow) browserSubmissionError(cmd *cli.Command, state batchSubmission
 		message = "The API rejected access. Correct the key or project permissions, then review the draft again."
 	}
 	if state.InputFileID != "" {
-		message += "\nUploaded input file: " + state.InputFileID + ". The draft will reuse this file."
+		message += "\nUploaded input file: " + state.InputFileID + "."
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			message += " Check batches list before manually reusing this file with batches create."
+		} else {
+			message += " The draft will reuse this file."
+		}
 	}
 	if state.batchID() != "" {
 		message = "Batch created: " + state.batchID() + ". Reopen this batch; do not submit it again."

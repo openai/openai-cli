@@ -7,7 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/openai/openai-cli/internal/clihelp"
@@ -180,7 +179,7 @@ func (w workflow) submitBatch(ctx context.Context, cmd *cli.Command) (err error)
 	} else if window := body.Get("completion_window"); window.Type != gjson.String || window.String() != "24h" {
 		return batchError("Use --completion-window 24h. No upload was attempted.")
 	}
-	var snapshot os.FileInfo
+	var snapshot *batchSubmissionSnapshot
 	if !body.Get("endpoint").Exists() {
 		var endpoint string
 		endpoint, snapshot, err = inferBatchSubmitEndpoint(ctx, path)
@@ -191,6 +190,13 @@ func (w workflow) submitBatch(ctx context.Context, cmd *cli.Command) (err error)
 	} else if endpoint := body.Get("endpoint"); endpoint.Type != gjson.String || endpoint.String() == "" {
 		return batchError("Set a nonempty --endpoint, or omit it to infer the endpoint from the JSONL file. No upload was attempted.")
 	}
+	if snapshot == nil {
+		snapshot, err = prepareBatchSubmissionSnapshot(ctx, path)
+		if err != nil {
+			return err
+		}
+	}
+	defer func() { err = errors.Join(err, snapshot.close()) }()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -242,30 +248,4 @@ func (w workflow) submitBatch(ctx context.Context, cmd *cli.Command) (err error)
 	}
 	ctx = context.WithValue(ctx, batchCreateContextKey{}, cmd)
 	return w.batchShowJSON(ctx, cmd, gjson.Parse(submission.Batch.RawJSON()), "create")
-}
-
-func openBatchSubmissionFile(path string, reviewedFile os.FileInfo) (requestconfig.FileUpload, error) {
-	source := requestconfig.FileInputSource{Option: "--file"}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return requestconfig.FileUpload{}, source.Failure("open", err)
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return requestconfig.FileUpload{}, source.Failure("open", errors.Join(err, file.Close()))
-	}
-	if !info.Mode().IsRegular() {
-		_ = file.Close()
-		return requestconfig.FileUpload{}, batchError("Submit requires a regular local JSONL file. Use files upload for other input sources.")
-	}
-	if reviewedFile != nil && (!os.SameFile(reviewedFile, info) || reviewedFile.Size() != info.Size() || !reviewedFile.ModTime().Equal(info.ModTime())) {
-		_ = file.Close()
-		return requestconfig.FileUpload{}, batchError("The input file changed after review. Review the file again before creating the batch.")
-	}
-	upload, err := requestconfig.FileUploadFromFile(file)
-	if err != nil {
-		return requestconfig.FileUpload{}, source.Failure("open", err)
-	}
-	upload.Reader = &requestconfig.InputFileReader{Reader: upload.Reader, Source: source}
-	return upload, nil
 }

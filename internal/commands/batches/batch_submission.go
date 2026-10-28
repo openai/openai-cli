@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 
 	"github.com/openai/openai-cli/internal/apiform"
 	requestconfig "github.com/openai/openai-cli/internal/request"
@@ -32,7 +31,7 @@ func (s batchSubmission) batchID() string {
 // submitBatchRequest performs only the reviewed mutation. The caller prepares
 // request fields and connection options, then presents the returned state.
 // Exactly one input source is required. Neither mutation retries automatically.
-func submitBatchRequest(ctx context.Context, client openai.Client, options []option.RequestOption, literalHeaders http.Header, localPath, inputFileID string, reviewedFile os.FileInfo) (state batchSubmission, err error) {
+func submitBatchRequest(ctx context.Context, client openai.Client, options []option.RequestOption, literalHeaders http.Header, localPath, inputFileID string, reviewedFile *batchSubmissionSnapshot) (state batchSubmission, err error) {
 	state.Stage = "preparation"
 	defer func() {
 		if err != nil && (state.Stage == "upload" || state.Stage == "create") {
@@ -47,7 +46,14 @@ func submitBatchRequest(ctx context.Context, client openai.Client, options []opt
 		return state, err
 	}
 	if localPath != "" {
-		upload, err := openBatchSubmissionFile(localPath, reviewedFile)
+		if reviewedFile == nil {
+			reviewedFile, err = prepareBatchSubmissionSnapshot(ctx, localPath)
+			if err != nil {
+				return state, err
+			}
+		}
+		defer func() { err = errors.Join(err, reviewedFile.close()) }()
+		upload, err := openBatchSubmissionFile(ctx, localPath, reviewedFile)
 		if err != nil {
 			return state, err
 		}
