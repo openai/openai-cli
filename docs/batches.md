@@ -1,7 +1,22 @@
 # Batch requests
 
-Prepare requests locally, upload the file, then create a batch.
+Prepare requests locally, then submit the file with one command.
 Waiting and downloading use existing Batches and Files APIs.
+
+## Find your way around
+
+Use the command guide without contacting the API:
+
+```sh
+openai batches
+openai explore batches
+```
+
+`batches` explains the workflow and lists available actions.
+`explore batches` searches the CLI's commands and examples locally.
+Add `--help` to any command for its options.
+
+For scripts, use `list`, `retrieve`, `results`, and `--format json`.
 
 ## Prepare and submit
 
@@ -16,7 +31,45 @@ This example uses two synthetic requests:
 ```
 
 Save these lines as `requests.jsonl`.
-Upload the file with purpose `batch`:
+Upload and create one batch with one command:
+
+```sh
+openai batches submit requests.jsonl
+```
+
+`submit` requires an existing regular JSONL request file. It does not write requests.
+An omitted endpoint comes from the file's request URLs. An omitted completion window defaults to `24h`.
+Explicit flags override these defaults. `--file requests.jsonl` remains available instead of the positional path.
+Create, wait, and save without copying the batch ID:
+
+```sh
+openai batches submit requests.jsonl --wait --output-dir ./results
+```
+
+It accepts the same request fields as `create`, except `input_file_id`.
+You can provide those fields through flags or piped JSON/YAML.
+Stdin remains available for request fields; `--file -` is not supported.
+Use `files upload` followed by `batches create` for stdin or custom input-file retention.
+
+The CLI validates local request fields before uploading.
+The API performs content and account validation.
+Upload and creation each run once, without automatic retries.
+If creation fails, the CLI keeps the uploaded file and reports its ID.
+Direct HTTP 401/403 responses report an access rejection.
+Correct access before retrying the failed operation.
+If upload succeeded, reuse its file ID with `create` instead of repeating `submit`.
+Transport failures, server failures, and redirected access failures can leave the mutation outcome uncertain.
+Check `files list` after an uncertain upload, or `batches list` after uncertain creation.
+Reuse the same connection and project settings.
+Then use `create --input-file-id` if you confirm that no batch exists.
+Structured submission errors include the original error under `error` and recovery data under `batch_submission`.
+If local waiting stops before completion, resume with `batches wait` and the returned batch ID.
+If the batch has finished, inspect its status, results, and errors instead of waiting again.
+Keep saved files. Download only missing files after a partial download failure.
+Use the same connection and project settings. Do not repeat `submit` to recover results.
+
+You can also upload separately:
+
 
 ```sh
 openai files upload --file requests.jsonl --purpose batch
@@ -118,38 +171,37 @@ For example, extract the exact ID without copying labels:
 openai --transform id --raw-output batches retrieve batch_example
 ```
 
-The following optional view recipes use `jq` or Python 3.
-Neither tool is a CLI dependency.
-In Bash or zsh scripts, use `set -o pipefail` to retain failures from upstream commands.
+Readable output includes UTC lifecycle dates, the completion window, and metadata.
+Completed batches include the duration from creation to completion.
+Explicit formats and extraction retain the original timestamps and API fields.
 
-Refresh all listed batches every ten seconds in Bash or zsh:
-
-```sh
-(
-  while :; do
-    openai batches list --limit 100 --max-items -1 || exit "$?"
-    sleep 10 || exit "$?"
-  done
-)
-```
-
-Each refresh prints another snapshot. API failures stop the loop with a nonzero exit.
-This recipe does not clear terminal history or provide an atomic snapshot across pages.
-
-Show chronological lifecycle events, retaining Unix timestamps:
+Refresh the selected Batch list every ten seconds:
 
 ```sh
-openai --format json batches retrieve batch_example |
-  jq 'to_entries | map(select(.key != "expires_at" and (.key | endswith("_at")) and (.value | type == "number"))) | sort_by(.value)'
+openai batches list --watch --limit 100 --max-items -1
 ```
 
-This includes returned lifecycle timestamps and excludes the expiration deadline.
-Show elapsed completion time in seconds, or null before completion:
+Each refresh prints another snapshot without clearing terminal history.
+Pagination runs serially within each refresh.
+Each refresh uses private temporary storage for its records and pagination cursors.
+Memory use depends on one API page and one rendered record, instead of the complete Batch history.
+Temporary storage must hold the current snapshot and its index.
+The command removes this storage before the next refresh, including after failure or handled interruption.
+The API does not provide an atomic snapshot across pages.
+API failures stop watching with a nonzero exit.
+A partial snapshot is marked as incomplete.
+Ctrl+C stops local watching without changing remote batches.
+
+Use JSONL for machine consumption:
 
 ```sh
-openai --format json batches retrieve batch_example |
-  jq 'if (.completed_at | type) == "number" then .completed_at - .created_at else null end'
+openai --format jsonl batches list --watch --poll-interval 5s --watch-count 3
 ```
+
+Each line contains `object`, `sequence`, `observed_at`, `complete`, and the `data` array.
+`--watch-count 0` watches until interrupted.
+Watch supports readable output and JSONL.
+Omit `--watch` for other formats, extraction, or raw output.
 
 Add `--wait` to poll until the batch reaches a terminal status:
 
@@ -281,41 +333,31 @@ openai --format json files get file_example
 ```
 
 The response includes filename, byte size, purpose, creation time, expiration, and any returned status details.
-Browse existing files before selecting an input ID:
+Find existing Batch input files by filename or ID:
 
 ```sh
-openai --format json files list --order desc --max-items -1
+openai batches inputs --search requests --max-items -1
 ```
 
-Add `--purpose batch` to select uploaded batch inputs.
-`--format json` returns one array. Use `--format jsonl` for independent records.
-Search filenames with a case-insensitive literal substring:
+Search uses a case-insensitive literal substring.
+The command searches subsequent pages until it finds the requested number of matches or reaches the end.
+The default limit is 100 matching files; `-1` searches all pages.
+Files retain their newest-first order and complete metadata.
+
+Select one file interactively:
 
 ```sh
-openai --format jsonl files list --order desc --max-items -1 |
-  python3 -c '
-import json, sys
-needle = sys.argv[1].strip().lower()
-for line in sys.stdin:
-    item = json.loads(line)
-    if needle in (item.get("filename") or "").lower():
-        print(json.dumps(item, ensure_ascii=False))
-' 'requests'
+openai batches inputs --select
 ```
 
-This streams local filtering across all returned pages, including Unicode filenames.
-It preserves the server's newest-first ordering.
-
-Files also provides explicit deletion:
+Selection requires terminal stdin and stderr.
+The picker returns the selected File metadata without creating a batch.
+Use its ID with `batches create --input-file-id`.
+For structured stdout, explicitly keep picker errors readable:
 
 ```sh
-openai files delete file_example
+openai --format json --format-error text batches inputs --select
 ```
-
-Deletion removes the file, including its use in vector stores.
-File deletion and batch cancellation are separate operations.
-
-## Read Batch records
 
 Browse a batch's JSONL records without a separate download:
 
@@ -373,6 +415,15 @@ Large IDs and object keys do not have new size limits.
 Extraction, terminal exploration, pretty output, and YAML retain the selected document in memory.
 Use `--custom-id` to reduce that document before these operations.
 
+Files also provides explicit deletion:
+
+```sh
+openai files delete file_example
+```
+
+Deletion removes the file, including its use in vector stores.
+File deletion and batch cancellation are separate operations.
+
 ## Access and safety
 
 Use a supported API key with the required project access.
@@ -389,4 +440,12 @@ Batches and Files are not eligible for Zero Data Retention.
 Availability, model access, retention, and residency remain server-side policies.
 
 Authentication, permission, validation, conflict, and transport errors retain the CLI's normal error presentation.
+Readable Batch errors state the outcome, the supported cause, and the next safe action.
+Unknown submission outcomes remain explicit because a disconnected request can still reach the API.
+Missing receipt IDs identify which response was incomplete.
+Check existing files or batches before repeating a submission.
+Connection failures suggest checking the connection, proxy, and `--base-url` setting.
+Partial input lists retain received records and identify the incomplete result.
+Retry that read-only search with the same connection and project settings.
+Explicit machine errors preserve API fields; submission errors add the documented recovery envelope.
 Local synthetic tests verify client behavior; they do not establish account entitlements or live server policy.

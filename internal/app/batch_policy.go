@@ -24,8 +24,17 @@ func configureBatchCommands(root *cli.Command) {
 		RequestOptions: func(cmd *cli.Command, stdin io.Reader) ([]option.RequestOption, error) {
 			return flagOptionsWithStdin(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, EmptyBody, false, stdin)
 		},
+		CreateRequestOptions: func(cmd *cli.Command, stdin io.Reader) ([]option.RequestOption, gjson.Result, error) {
+			var body gjson.Result
+			options, err := flagOptionsWithStdin(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, ApplicationJSON, false, stdin, func(data []byte) { body = gjson.ParseBytes(data) })
+			return options, body, err
+		},
 		ShowResult: func(ctx context.Context, cmd *cli.Command, batch gjson.Result, operation string, out, diagnostics io.Writer) error {
 			root := cmd.Root()
+			if operation == "watch" {
+				operation = "retrieve"
+				diagnostics = io.Discard
+			}
 			return ShowJSON(batch, ShowJSONOpts{
 				CallerHandlesSignals: true,
 				Context:              ctx, Operation: "(resource) batches > (method) " + operation, OutputKind: OutputResponse,

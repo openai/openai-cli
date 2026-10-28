@@ -256,3 +256,20 @@ func TestMainBatchReadableLargeRecordRemainsComplete(t *testing.T) {
 		t.Fatalf("large selected record was lost or clipped: exit=%d stdout_bytes=%d stderr=%q", got.code, len(got.stdout), got.stderr)
 	}
 }
+
+func TestMainBatchMetadataHelpMatchesAcceptedSyntax(t *testing.T) {
+	for _, command := range []string{"create", "submit"} {
+		got := runMainDispatch(t, "bash", "openai", "batches", command, "--help")
+		if got.code != 0 {
+			t.Fatalf("%s help failed: %+v", command, got)
+		}
+		for _, want := range []string{"--metadata=JSON", "--output-expires-after=JSON", `--metadata '{"scenario":"example"}'`} {
+			if !strings.Contains(got.stdout, want) {
+				t.Errorf("%s help omitted accepted syntax %q: %s", command, want, got.stdout)
+			}
+		}
+		if strings.Contains(got.stdout, "--metadata=TEXT=VALUE") {
+			t.Errorf("%s help still advertises rejected metadata syntax", command)
+		}
+	}
+}
