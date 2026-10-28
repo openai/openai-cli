@@ -112,14 +112,22 @@ func TestWorkspaceCreateAndUploadReportUnconfirmedWrites(t *testing.T) {
 			uncertain bool
 		}{
 			{"explicit rejection", 403, false}, {"timeout", 408, true}, {"server failure", 502, true},
-			{"missing receipt ID", 200, true}, {"lost response", 0, true},
+			{"missing receipt ID", 200, true}, {"lost response", 0, true}, {"rejected redirect", 303, true},
 		} {
 			t.Run(operation+"/"+tc.name, func(t *testing.T) {
 				requests := 0
 				m := managementModel(t, func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/after-write" {
+						serviceJSON(w, 403, `{"error":{"message":"private response text"}}`)
+						return
+					}
 					requests++
 					_, err := io.Copy(io.Discard, r.Body)
 					require.NoError(t, err)
+					if tc.status == http.StatusSeeOther {
+						http.Redirect(w, r, "/after-write", http.StatusSeeOther)
+						return
+					}
 					if tc.status == 0 {
 						conn, _, err := w.(http.Hijacker).Hijack()
 						require.NoError(t, err)

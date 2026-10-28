@@ -59,7 +59,10 @@ type mutationAttempt struct{ uncertain bool }
 
 func (a *mutationAttempt) observe(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
 	response, err := next(req)
-	a.uncertain = response == nil || response.StatusCode < 400 || response.StatusCode == http.StatusRequestTimeout || response.StatusCode >= 500
+	// A redirect can follow a completed write even if its destination rejects the request.
+	a.uncertain = response == nil || response.StatusCode < http.StatusBadRequest ||
+		response.StatusCode == http.StatusRequestTimeout || response.StatusCode >= http.StatusInternalServerError ||
+		response.Request != nil && response.Request.Response != nil
 	return response, err
 }
 
