@@ -45,6 +45,10 @@ func (w workspaceCommand) configure(root *cli.Command) {
 			if previous != nil {
 				return previous(ctx, command)
 			}
+			// Preserve the framework's unknown-child error and typo recovery.
+			if child := command.Args().First(); child != "" {
+				return cli.ShowCommandHelp(ctx, command, child)
+			}
 			return cli.ShowSubcommandHelp(command)
 		}
 		return w.launch(ctx, command, input, output)
