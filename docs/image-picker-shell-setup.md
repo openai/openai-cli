@@ -1,0 +1,171 @@
+# Save image picker shortcuts
+
+The CLI quietly configures future Bash, zsh, and fish sessions on the first
+eligible interactive `openai` run. Open a new terminal to activate the shortcut;
+the current session keeps its existing bindings. Bash needs version 4.3 or later
+for the Tab shortcut. Pressing Enter opens the picker without shell integration,
+including in PowerShell and Bash 3.2.
+
+For zsh, automatic setup requires an exported, absolute `ZDOTDIR`. A child
+process cannot distinguish an unset variable from an unexported zsh parameter,
+so ambiguous default locations are skipped. Use the explicit commands below
+when `ZDOTDIR` is not exported.
+
+First-use setup requires the running executable to be the `openai` on PATH and
+all three standard streams to be terminals. It skips CI, root/sudo, unsupported
+shells, `TERM=dumb`, completion and manpage requests. It respects an earlier
+opt-out and refreshes intact saved scripts when their generated content changes,
+including in shells with active integration. Open a new terminal to load updated
+scripts. Setup failures leave the ordinary command running. The command waits
+at most 250 milliseconds for optional setup, including slow filesystem calls.
+An I/O operation already in progress, including a profile update,
+may finish in the background. Later changes check cancellation; the worker
+cleans up its uncommitted files when I/O returns. If the process exits first,
+recovery or staging files can remain, as with an interrupted explicit installation.
+At most one setup worker runs in a CLI process.
+
+Homebrew installations use the same first-run setup described above. Installing,
+upgrading, or uninstalling the cask does not edit shell profiles or change picker
+preferences. After an eligible interactive `openai` run, open a new terminal to
+load the shortcut.
+
+To configure or remove persistent shortcuts explicitly:
+
+```sh
+openai @completion zsh --install-picker --profile "${ZDOTDIR-$HOME}/.zshrc"
+openai @completion zsh --uninstall-picker --profile "${ZDOTDIR-$HOME}/.zshrc"
+```
+
+Run those commands in zsh so it expands its own startup location, including an
+unexported `ZDOTDIR`. Bash and fish can use `--install-picker` or
+`--uninstall-picker` without `--profile`. Open a new terminal afterward.
+`--profile PATH` selects a different startup file. Without a shell argument,
+explicit setup uses the immediate parent shell. Installer integrations can use
+`openai @completion --install-picker --automatic` to select the preferred shell
+and preserve an existing opt-out; this mode does not accept shell or profile
+overrides.
+
+On Windows, a Unix shell's nonempty `HOME` must match `USERPROFILE` for default
+setup. Different or MSYS-style home paths require an explicit `--profile PATH`;
+automatic setup skips these cases rather than guessing another startup location.
+
+Default zsh setup uses an absolute exported `ZDOTDIR/.zshrc`; missing, empty or
+relative values require an explicit profile. Other defaults use Bash's `.bashrc` and first existing
+login startup file, or fish's `conf.d/openai-picker.fish`. Fish follows
+`XDG_CONFIG_HOME/fish/conf.d`, falling back to `HOME/.config/fish/conf.d`,
+including on Windows. Windows scripts remain in `APPDATA/openai/shell`.
+New macOS scripts use `HOME/Library/Application Support/openai/shell`. Setup's
+decision lock and per-shell opt-outs use the stable native home directory under
+`.openai/shell`, independently of XDG or AppData configuration-root changes.
+Validated older opt-outs in the current configuration root are migrated there;
+an unknown earlier root must first be selected to migrate its old preference.
+Managed fish scripts also honor that shared opt-out before activating the
+shortcut. Removing setup under another XDG root therefore keeps retained
+current-version hooks inactive; explicit installation enables them again.
+Scripts from older builds that lack this check need one refresh in their
+original root before they can honor an opt-out recorded elsewhere.
+Existing profiles keep their recorded script location for refresh and removal
+after the configuration root changes; new profiles use the current root.
+After an interrupted refresh, later setup retries cleanup of unchanged obsolete
+scripts in that profile's verified namespace. Modified or unproven files remain.
+Scripts use the current
+`openai` on PATH. If the executable is removed, the guarded source block becomes
+inactive. Existing startup content and custom key bindings are preserved.
+Fish installs its wrapper once at the first prompt, after `config.fish` and
+`fish_user_key_bindings`. Later custom bindings and `openai_picker_disable`
+remain in effect; calling disable from `config.fish` also cancels pending setup.
+
+Removal deletes only intact CLI-owned blocks and verified scripts, and records
+an empty per-shell opt-out marker under the native home's `.openai/shell`. Later automatic
+setup keeps that shell disabled. Explicit installation clears the opt-out.
+When setup created the profile itself, removal restores its absence if the
+intact managed block is still its only content. Preexisting empty files and
+profiles containing personal changes remain. Older installations without
+creation metadata conservatively preserve the profile.
+If the startup directory was deleted, removal still cleans verified scripts in
+the selected script directory without recreating the startup directory. Missing
+profile metadata cannot identify an earlier script root or an unprovable alias;
+those files remain untouched.
+Before replacing or removing an existing profile, setup moves the actual old
+file into a private `.openai-picker-recovery-*` directory beside the profile.
+The `original` file remains there after success, including any later writes by
+an editor that kept the old file open. Setup never automatically deletes these
+originals. Publication and rollback refuse to replace a competing editor save.
+There is a brief interval when the startup path is absent; an interrupted process
+can leave it absent until the next setup or removal attempt. That attempt restores
+an unfinished capture only when the startup path is still absent, then applies
+the newly requested operation. A completed removal stays absent. If a newer
+startup file exists, it and the recovery original are both kept.
+While a capture is unfinished, retry with the profile spelling recorded in its
+manifest. An absent path cannot establish whether another spelling is a case or
+Windows short-name alias, so setup defers creating other missing profiles in that
+directory until the pending capture is recovered.
+
+Inspect `original` files before manually archiving or deleting their recovery
+directories. The small `manifest.json` identifies the profile basename; an empty
+`complete` marker records a finished update. Close editors with pending saves
+before discarding originals. A profile can retain 32 recovery directories;
+further changes stop until you free space, while unchanged setup remains a no-op.
+These copies preserve local profile data and may contain private settings. This
+protocol handles process interruption; it does not promise recovery from disk
+failure or sudden power loss. Incomplete or modified recovery metadata may need
+manual inspection; setup preserves files whose ownership it cannot establish.
+Supported native exclusive rename is required;
+filesystems without it refuse the change instead of overwriting a profile.
+
+Some kernels and filesystems, including the tested WSL1 filesystem, lack this
+atomic operation. Explicit setup then fails with a readable error and a nonzero
+exit status. `--format-error json` keeps the error structured. Ordinary commands
+and completion output remain available. Failed optional first-use setup stays quiet.
+Type `openai images generate` and press Enter to use the picker without persistent
+setup. The [current-session shortcut](image-picker-shortcuts.md) also avoids
+profile changes. Persistent setup needs a supported kernel and filesystem.
+WSL2 may provide that environment, but its selected filesystem still needs the
+required operation.
+
+A refused change can follow earlier successful updates to other startup files
+or preferences. Keep recovery directories and inspect their `original` files
+before manual recovery. A refused removal can leave existing Bash shortcuts
+active in new terminals. The opt-out prevents later automatic setup attempts;
+it does not prove removal succeeded. Unchanged installations and cleanup that
+does not require profile replacement can still succeed.
+
+Repeating either command is safe. Modified blocks or scripts stay available for
+inspection. Default Bash removal checks all three login profiles as well as
+`.bashrc`, so a newer, higher-priority login profile cannot hide earlier setup.
+If one profile cannot be safely cleaned, removal continues through the others,
+records the opt-out when possible, and reports failure after the cleanup.
+An explicit `--profile` still limits removal to that file.
+Bash configures its two startup modes separately; if a later write
+fails, the error reports partial setup and rerunning the command is safe.
+
+Setup checks the directory ancestry of configuration and startup paths before
+creating files. It keeps symlinked or hard-linked profiles, special permission
+bits, unsafe permissions, and protected file metadata unchanged. On macOS and
+Linux this includes profiles with ACLs or extended attributes. Linux SELinux
+labels are accepted when the existing profile and replacement have identical
+labels; labels are never rewritten or dropped. Windows junction
+or reparse-point ancestors require manual setup. Equivalent Windows home-directory
+spellings are recognized by filesystem identity. Profile aliases use their
+canonical path for setup locks and new script names, including trusted symlinked
+parent directories on Unix. When an older script records
+an unprovable path spelling, refresh or removal preserves that script and any empty
+profile; that profile no longer sources the old script after refresh or removal.
+Windows replacement also checks alternate streams and file-specific
+permissions. Windows managed directories, scripts and staging files require a current-user
+or local Administrators owner and a DACL that grants mutation only to that user,
+SYSTEM or local Administrators. Lock files also reject access by other readers.
+Profiles must be UTF-8 text and at most 1 MiB including the managed
+block.
+
+Setup treats configured `HOME`, `XDG_CONFIG_HOME`, `ZDOTDIR`, and explicit profile
+locations as trusted. It checks the immediate profile parent and both managed
+`openai` and `openai/shell` directories for ownership and unsafe permissions.
+On macOS, a profile parent may have deny-only ACLs such as the normal home
+directory deny-delete rule; ACLs granting permissions are left for manual setup.
+On macOS and Linux, both managed directories must be free of protected metadata,
+including ACLs.
+
+Use the [current-session shortcut](image-picker-shortcuts.md) when a profile
+cannot be managed automatically. PowerShell retains ordinary completion and
+does not use persistent picker setup.

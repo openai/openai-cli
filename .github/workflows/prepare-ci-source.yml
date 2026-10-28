@@ -1,0 +1,131 @@
+name: Prepare CI source
+
+on:
+  workflow_call:
+    inputs:
+      current-pr-merge:
+        description: Fetch the current PR merge for exact-revision CodeQL publication
+        type: boolean
+        default: false
+    outputs:
+      artifact-id:
+        value: ${{ jobs.prepare.outputs.artifact-id }}
+
+permissions: {}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      # Workflow definitions require review. Never execute a candidate helper or
+      # local action in this job, including before/after the explicit token use.
+      - name: Check out source as data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: candidate
+          persist-credentials: false
+          # Retain both merge-parent trees for unprivileged shadow diff reporting.
+          fetch-depth: 2
+          # An event SHA can describe a previous incarnation of the PR merge.
+          # Opted-in PRs fetch the merge ref; other callers keep checkout's default.
+          ref: ${{ inputs.current-pr-merge && (github.event_name == 'pull_request' && github.ref || github.sha) || '' }}
+
+      - name: Verify selected pull request merge
+        if: inputs.current-pr-merge && github.event_name == 'pull_request'
+        run: |
+          python3 -I - <<'PYTHON'
+          import json, os, re, subprocess
+          from pathlib import Path
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          pr, repository, number = event["pull_request"], event["repository"], event["number"]
+          if (type(number) is not int or number < 1 or pr["number"] != number or
+                  pr["state"] != "open" or
+                  os.environ["GITHUB_REF"] != f"refs/pull/{number}/merge" or
+                  repository["full_name"] != os.environ["GITHUB_REPOSITORY"] or
+                  pr["base"]["repo"]["id"] != repository["id"] or
+                  pr["base"]["repo"]["full_name"] != repository["full_name"]):
+              raise RuntimeError("Unexpected pull request source identity")
+          expected = [pr["base"]["sha"], pr["head"]["sha"]]
+          if not all(isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) for sha in expected):
+              raise RuntimeError("Invalid pull request parent revision")
+          # cat-file retains parents even in checkout's shallow repository.
+          # Read Git objects as data; never execute code from candidate/ here.
+          commit = subprocess.check_output(["git", "-C", "candidate", "cat-file", "commit", "HEAD"], text=True)
+          parents = [line.removeprefix("parent ") for line in commit.split("\n\n", 1)[0].splitlines()
+                     if line.startswith("parent ")]
+          if parents != expected:
+              raise RuntimeError("Pull request head or base changed before source preparation")
+          PYTHON
+
+      - name: Package candidate checkout
+        run: tar -czf "$RUNNER_TEMP/ci-source.tar.gz" -C candidate .
+
+      - name: Check out trusted SDK download tooling
+        if: github.repository == 'openai/openai-cli-internal' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.id == github.event.repository.id && github.event.pull_request.base.ref == 'main'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          path: trusted
+          persist-credentials: false
+
+      - name: Stage SDK snapshot without executing candidate code
+        if: github.repository == 'openai/openai-cli-internal' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.id == github.event.repository.id && github.event.pull_request.base.ref == 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I - <<'PYTHON'
+          import importlib.util, json, os, time
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("sdk", Path("trusted/.github/scripts/sdk_cross_link.py").resolve())
+          sdk = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(sdk)
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          context = sdk.identity(event)
+          api = sdk.GitHub(os.environ["GH_TOKEN"])
+          name = sdk.artifact_name(context)
+          deadline = time.monotonic() + 300
+          while True:
+              artifacts = api.get(f"repos/{sdk.REPOSITORY}/actions/artifacts?name={name}&per_page=100")
+              for artifact in sorted(artifacts["artifacts"], key=lambda a: a["id"]):
+                  if artifact["name"] != name or artifact["expired"]:
+                      continue
+                  run_id = artifact["workflow_run"]["id"]
+                  try:
+                      data = api.get(f"repos/{sdk.REPOSITORY}/actions/artifacts/{artifact['id']}/zip", binary=True)
+                  except sdk.APIError as error:
+                      if error.status == 404:
+                          continue
+                      raise
+                  manifest, _ = sdk.unpack_artifact(data, context, run_id)
+                  attempt = manifest["run_attempt"]
+                  if type(attempt) is not int or attempt < 1:
+                      raise RuntimeError("Invalid producer attempt")
+                  run = api.get(f"repos/{sdk.REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}")
+                  if (run["event"] == "pull_request_target" and run["path"] == ".github/workflows/sdk-cross-link.yml" and
+                          run["repository"]["id"] == sdk.REPOSITORY_ID and
+                          run["head_repository"]["id"] == sdk.REPOSITORY_ID and
+                          run["head_branch"] == context["branch"] and run["head_sha"] == context["head_sha"] and
+                          run["run_attempt"] == attempt and run["status"] == "completed" and run["conclusion"] == "success"):
+                      (Path(os.environ["RUNNER_TEMP"]) / "ci-sdk.zip").write_bytes(data)
+                      raise SystemExit(0)
+              if time.monotonic() >= deadline:
+                  raise RuntimeError("Timed out waiting for Prepare Go SDK")
+              time.sleep(5)
+          PYTHON
+
+      - name: Stage fixed inputs for this workflow run
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ci-source.tar.gz
+            ${{ runner.temp }}/ci-sdk.zip
+          if-no-files-found: error
+          retention-days: 7

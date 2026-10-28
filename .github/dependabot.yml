@@ -1,0 +1,58 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories:
+      - /
+      - /api_reference
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 8
+    open-pull-requests-limit: 5
+    groups:
+      charmbracelet:
+        patterns:
+          - "github.com/charmbracelet/*"
+        update-types:
+          - minor
+          - patch
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+        update-types:
+          - minor
+          - patch
+      go-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    # The hourly update-openai-go workflow owns this dependency, including fixes.
+    ignore:
+      - dependency-name: "github.com/openai/openai-go/v3"
+
+  - package-ecosystem: github-actions
+    # Root scans workflows; setup-go also has its own composite action manifest.
+    directories:
+      - /
+      - /.github/actions/setup-go
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:30"
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 8
+    open-pull-requests-limit: 5
+    groups:
+      setup-go:
+        group-by: dependency-name
+        patterns:
+          - "actions/setup-go"
+      codeql:
+        patterns:
+          - "github/codeql-action/*"

@@ -1,7 +1,6 @@
 ---
 name: Dispatch Publish Release
-permissions:
-  actions: write
+permissions: {}
 
 on:
   push:
@@ -11,6 +10,8 @@ on:
 jobs:
   dispatch:
     if: github.repository == 'openai/openai-cli'
+    permissions:
+      actions: write
     runs-on: ubuntu-latest
     steps:
     - name: Dispatch Publish Release on main

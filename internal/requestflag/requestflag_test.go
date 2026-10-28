@@ -325,30 +325,28 @@ func TestRequestParams(t *testing.T) {
 func TestFlagSet(t *testing.T) {
 	t.Parallel()
 
-	strFlag := &Flag[string]{
-		Name:    "string-flag",
-		Default: "default-string",
-	}
-
-	superstitiousIntFlag := &Flag[int64]{
-		Name:    "int-flag",
-		Default: 42,
-		Validator: func(val int64) error {
-			if val == 13 {
-				return fmt.Errorf("Unlucky number!")
-			}
-			return nil
-		},
-	}
-
-	boolFlag := &Flag[bool]{
-		Name:    "bool-flag",
-		Default: false,
+	// Parallel subtests need fresh flags because parsing and setting mutate them.
+	newSuperstitiousIntFlag := func() *Flag[int64] {
+		return &Flag[int64]{
+			Name:    "int-flag",
+			Default: 42,
+			Validator: func(val int64) error {
+				if val == 13 {
+					return fmt.Errorf("Unlucky number!")
+				}
+				return nil
+			},
+		}
 	}
 
 	// Test initialization and setting
 	t.Run("PreParse initialization", func(t *testing.T) {
 		t.Parallel()
+
+		strFlag := &Flag[string]{
+			Name:    "string-flag",
+			Default: "default-string",
+		}
 
 		assert.NoError(t, strFlag.PreParse())
 		assert.True(t, strFlag.applied)
@@ -358,6 +356,11 @@ func TestFlagSet(t *testing.T) {
 	t.Run("Set string flag", func(t *testing.T) {
 		t.Parallel()
 
+		strFlag := &Flag[string]{
+			Name:    "string-flag",
+			Default: "default-string",
+		}
+
 		assert.NoError(t, strFlag.Set("string-flag", "new-value"))
 		assert.Equal(t, "new-value", strFlag.Get())
 		assert.True(t, strFlag.IsSet())
@@ -365,6 +368,8 @@ func TestFlagSet(t *testing.T) {
 
 	t.Run("Set int flag with valid value", func(t *testing.T) {
 		t.Parallel()
+
+		superstitiousIntFlag := newSuperstitiousIntFlag()
 
 		assert.NoError(t, superstitiousIntFlag.Set("int-flag", "100"))
 		assert.Equal(t, int64(100), superstitiousIntFlag.Get())
@@ -374,17 +379,26 @@ func TestFlagSet(t *testing.T) {
 	t.Run("Set int flag with invalid value", func(t *testing.T) {
 		t.Parallel()
 
+		superstitiousIntFlag := newSuperstitiousIntFlag()
+
 		assert.Error(t, superstitiousIntFlag.Set("int-flag", "not-an-int"))
 	})
 
 	t.Run("Set int flag with validator failing", func(t *testing.T) {
 		t.Parallel()
 
+		superstitiousIntFlag := newSuperstitiousIntFlag()
+
 		assert.Error(t, superstitiousIntFlag.Set("int-flag", "13"))
 	})
 
 	t.Run("Set bool flag", func(t *testing.T) {
 		t.Parallel()
+
+		boolFlag := &Flag[bool]{
+			Name:    "bool-flag",
+			Default: false,
+		}
 
 		assert.NoError(t, boolFlag.Set("bool-flag", "true"))
 		assert.Equal(t, true, boolFlag.Get())
@@ -1224,4 +1238,78 @@ func TestApplyStdinDataToFlags(t *testing.T) {
 
 		assert.False(t, flag.IsSet())
 	})
+}
+
+func TestNonFiniteFloatFlagsRejected(t *testing.T) {
+	t.Parallel()
+
+	// strconv.ParseFloat accepts these spellings of infinity and NaN, but they
+	// have no valid wire representation: JSON encoding fails late with
+	// "json: unsupported value" and multipart encoding would put "+Inf"/"NaN"
+	// on the wire. Flag parsing must reject them up front.
+	inputs := []string{
+		"inf", "-inf", "+inf", "Inf", "-Inf", "+Inf", "INF", "-INFINITY",
+		"infinity", "-infinity", "Infinity", "InFiNiTy",
+		"nan", "-nan", "+nan", "NaN", "NAN", "nAn",
+	}
+
+	for _, input := range inputs {
+		t.Run("Flag[float64] rejects "+input, func(t *testing.T) {
+			t.Parallel()
+			cv := &cliValue[float64]{}
+			assert.ErrorContains(t, cv.Set(input), input)
+		})
+
+		t.Run("Flag[*float64] rejects "+input, func(t *testing.T) {
+			t.Parallel()
+			cv := &cliValue[*float64]{}
+			assert.ErrorContains(t, cv.Set(input), input)
+		})
+
+		t.Run("Flag[[]float64] rejects "+input, func(t *testing.T) {
+			t.Parallel()
+			cv := &cliValue[[]float64]{}
+			assert.ErrorContains(t, cv.Set(input), input)
+		})
+	}
+}
+
+func TestFiniteFloatFlagsStillAccepted(t *testing.T) {
+	t.Parallel()
+
+	assertJSONBody := func(t *testing.T, value any, expected string) {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{"foo": value})
+		assert.NoError(t, err)
+		assert.JSONEq(t, expected, string(body))
+	}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"1.5", `{"foo":1.5}`},
+		{"-2.25", `{"foo":-2.25}`},
+		{"1e3", `{"foo":1000}`},
+		{"1E+2", `{"foo":100}`},
+		{"5e-3", `{"foo":0.005}`},
+		{"-0", `{"foo":0}`},
+		{"1.7976931348623157e308", `{"foo":1.7976931348623157e308}`},
+	}
+
+	for _, tt := range tests {
+		t.Run("Flag[float64] accepts "+tt.input, func(t *testing.T) {
+			t.Parallel()
+			cv := &cliValue[float64]{}
+			assert.NoError(t, cv.Set(tt.input))
+			assertJSONBody(t, cv.Get(), tt.want)
+		})
+
+		t.Run("Flag[*float64] accepts "+tt.input, func(t *testing.T) {
+			t.Parallel()
+			cv := &cliValue[*float64]{}
+			assert.NoError(t, cv.Set(tt.input))
+			assertJSONBody(t, cv.Get(), tt.want)
+		})
+	}
 }

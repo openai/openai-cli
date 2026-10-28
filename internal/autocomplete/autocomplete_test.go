@@ -1,7 +1,9 @@
 package autocomplete
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,6 +19,7 @@ func TestGetCompletions_EmptyArgs(t *testing.T) {
 			{Name: "generate", Usage: "Generate SDK"},
 			{Name: "test", Usage: "Run tests"},
 			{Name: "build", Usage: "Build project"},
+			{Name: "internal", Usage: "Internal command", Hidden: true},
 		},
 	}
 
@@ -192,6 +195,9 @@ if ! type mapfile >/dev/null 2>&1; then
 fi
 
 openai() {
+  for argument in "$@"; do
+    if [[ "$argument" == --input ]]; then return 11; fi
+  done
   return 10
 }
 
@@ -199,7 +205,7 @@ openai() {
 
 printf 'spec:%s\n' "$(complete -p openai)"
 
-COMP_WORDS=(openai files create --file '@$(')
+COMP_WORDS=(openai responses create --input '@$(')
 COMP_CWORD=4
 __openai_bash_autocomplete
 printf 'forced:%s\n' "${COMPREPLY[0]}"
@@ -228,6 +234,199 @@ fi
 	assert.NotContains(t, output, "unexpected completion-output file")
 }
 
+func TestBashCompletionFilePrefixesAreLiteral(t *testing.T) {
+	t.Parallel()
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not available")
+	}
+
+	completionScript, err := shellCompletions[CompletionStyleBash](&cli.Command{}, "openai")
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	tests := []struct {
+		name      string
+		words     []string
+		filenames []string
+		want      []string
+	}{
+		{
+			name:      "GNU sed delimiter and command injection",
+			words:     []string{"openai", "files", "|;e>sed-executed;#@fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"|;e>sed-executed;#@fixture.txt"},
+		},
+		{
+			name:      "sed delimiter",
+			words:     []string{"openai", "files", "delimiter|prefix@fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"delimiter|prefix@fixture.txt"},
+		},
+		{
+			name:      "semicolons",
+			words:     []string{"openai", "files", "before;after@fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"before;after@fixture.txt"},
+		},
+		{
+			name:      "ampersands",
+			words:     []string{"openai", "files", "before&after@fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"before&after@fixture.txt"},
+		},
+		{
+			name:      "backslashes",
+			words:     []string{"openai", "files", `before\after@fix`},
+			filenames: []string{"fixture.txt"},
+			want:      []string{`before\after@fixture.txt`},
+		},
+		{
+			name:      "whitespace",
+			words:     []string{"openai", "files", "before \t after@fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"before \t after@fixture.txt"},
+		},
+		{
+			name:      "at prefix",
+			words:     []string{"openai", "files", "@fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"@fixture.txt"},
+		},
+		{
+			name:      "prefixed file protocol",
+			words:     []string{"openai", "files", "field@file://fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"field@file://fixture.txt"},
+		},
+		{
+			name:      "prefixed data protocol",
+			words:     []string{"openai", "files", "field@data://fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"field@data://fixture.txt"},
+		},
+		{
+			name:      "file protocol",
+			words:     []string{"openai", "files", "@file://fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"//fixture.txt"},
+		},
+		{
+			name:      "data protocol",
+			words:     []string{"openai", "files", "@data://fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"//fixture.txt"},
+		},
+		{
+			name:      "split file protocol",
+			words:     []string{"openai", "files", "@file", ":", "//fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"//fixture.txt"},
+		},
+		{
+			name:      "split data protocol",
+			words:     []string{"openai", "files", "@data", ":", "//fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"//fixture.txt"},
+		},
+		{
+			name:      "filename metacharacters",
+			words:     []string{"openai", "files", "@fix"},
+			filenames: []string{`fixture name & semi; slash\file.txt`},
+			want:      []string{`@fixture name & semi; slash\file.txt`},
+		},
+		{
+			name:      "multiple filenames stay separate",
+			words:     []string{"openai", "files", "@fix"},
+			filenames: []string{"fixture one.txt", "fixture two.txt"},
+			want:      []string{"@fixture one.txt", "@fixture two.txt"},
+		},
+		{
+			name:      "no matching filename",
+			words:     []string{"openai", "files", "@missing"},
+			filenames: []string{"fixture.txt"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			directory := t.TempDir()
+			for _, filename := range tt.filenames {
+				if !assert.NoError(t, os.WriteFile(filepath.Join(directory, filename), nil, 0o600)) {
+					return
+				}
+			}
+
+			probe := `
+cd "$1" || exit 1
+shift
+
+if ! type mapfile >/dev/null 2>&1; then
+  mapfile() {
+    if [[ "$1" == "-t" ]]; then
+      shift
+    fi
+    if [[ "$1" != "COMPREPLY" ]]; then
+      return 2
+    fi
+
+    COMPREPLY=()
+    local line
+    while IFS= read -r line; do
+      COMPREPLY+=("$line")
+    done
+  }
+fi
+
+sed() {
+  # Reproduce GNU sed's e command on platforms that only provide BSD sed.
+  if [[ "$1" == 's|^||;e>sed-executed;#@|' ]]; then
+    : >sed-executed
+    cat
+    return
+  fi
+
+  command sed "$@"
+}
+
+openai() {
+  # Generic JSON references are not literal binary-file values.
+  return 11
+}
+
+` + completionScript + `
+
+COMP_WORDS=("$@")
+COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
+__openai_bash_autocomplete
+
+for completion in "${COMPREPLY[@]}"; do
+  printf '%s\n' "$completion"
+done
+`
+
+			words := append([]string{"openai", "responses", "create", "--input"}, tt.words[2:]...)
+			args := append([]string{"-c", probe, "bash-completion-probe", directory}, words...)
+			out, err := exec.Command(bash, args...).CombinedOutput()
+			if !assert.NoError(t, err, string(out)) {
+				return
+			}
+
+			var got []string
+			if len(out) > 0 {
+				got = strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+			}
+
+			assert.ElementsMatch(t, tt.want, got)
+			assert.NoFileExists(t, filepath.Join(directory, "sed-executed"))
+		})
+	}
+}
+
 func TestBashCompletionScriptDoesNotRegisterPlainCompletion(t *testing.T) {
 	t.Parallel()
 
@@ -238,6 +437,138 @@ func TestBashCompletionScriptDoesNotRegisterPlainCompletion(t *testing.T) {
 
 	assert.Contains(t, completionScript, "complete -o filenames -F __openai_bash_autocomplete openai")
 	assert.False(t, strings.Contains(completionScript, "\ncomplete -F __openai_bash_autocomplete openai"))
+}
+
+func TestFishCompletionScriptDiscardsDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	completionScript, err := shellCompletions[CompletionStyleFish](&cli.Command{}, "openai")
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Contains(t, completionScript, "$current 2>/dev/null)")
+	assert.NotContains(t, completionScript, "/tmp/fish-debug.log")
+	assert.Contains(t, completionScript, "complete -c openai -f -a '(__openai_fish_autocomplete)'")
+}
+
+func TestFishCompletionDoesNotWriteDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	fish, err := exec.LookPath("fish")
+	if err != nil {
+		t.Skip("fish is not available")
+	}
+
+	completionScript, err := shellCompletions[CompletionStyleFish](&cli.Command{}, "openai")
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	tests := []struct {
+		name           string
+		baseURL        string
+		prepareLog     func(t *testing.T, debugLog string) string
+		wantCompletion bool
+	}{
+		{
+			name:           "successful completion does not create a diagnostic file",
+			baseURL:        "https://example.invalid",
+			wantCompletion: true,
+		},
+		{
+			name:    "malformed endpoint does not create a diagnostic file",
+			baseURL: "malformed-user:synthetic-secret@example.invalid",
+		},
+		{
+			name:    "malformed endpoint does not append to an existing diagnostic file",
+			baseURL: "malformed://synthetic-user:synthetic-secret@internal.invalid",
+			prepareLog: func(t *testing.T, debugLog string) string {
+				t.Helper()
+				if !assert.NoError(t, os.WriteFile(debugLog, []byte("unchanged\n"), 0o600)) {
+					return ""
+				}
+				return debugLog
+			},
+		},
+		{
+			name:    "malformed endpoint does not follow a preexisting symlink",
+			baseURL: "malformed://synthetic-user:synthetic-secret@internal.invalid",
+			prepareLog: func(t *testing.T, debugLog string) string {
+				t.Helper()
+				target := filepath.Join(filepath.Dir(debugLog), "protected-target")
+				if !assert.NoError(t, os.WriteFile(target, []byte("unchanged\n"), 0o600)) {
+					return ""
+				}
+				if !assert.NoError(t, os.Symlink(target, debugLog)) {
+					return ""
+				}
+				return target
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			debugLog := filepath.Join(dir, "fish-debug.log")
+			protectedFile := ""
+			if test.prepareLog != nil {
+				protectedFile = test.prepareLog(t, debugLog)
+				if protectedFile == "" {
+					return
+				}
+			}
+
+			mockCLI := `#!/bin/sh
+case "$OPENAI_BASE_URL" in
+  malformed*)
+    printf 'OPENAI_BASE_URL "%s" is missing a scheme (expected http:// or https://)\n' "$OPENAI_BASE_URL" >&2
+    exit 1
+    ;;
+esac
+printf 'models\tList models\n'
+printf 'moderations\tCreate moderations\n'
+`
+			if !assert.NoError(t, os.WriteFile(filepath.Join(dir, "openai"), []byte(mockCLI), 0o755)) {
+				return
+			}
+
+			scriptPath := filepath.Join(dir, "completion.fish")
+			if !assert.NoError(t, os.WriteFile(scriptPath, []byte(completionScript), 0o600)) {
+				return
+			}
+
+			cmd := exec.Command(fish, "--no-config", "-c", `source $argv[1]; complete -C "openai mo"`, scriptPath)
+			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "OPENAI_BASE_URL="+test.baseURL)
+			out, err := cmd.CombinedOutput()
+			output := string(out)
+			if !assert.NoError(t, err, output) {
+				return
+			}
+
+			if test.wantCompletion {
+				assert.Contains(t, output, "models\tList models")
+				assert.Contains(t, output, "moderations\tCreate moderations")
+			} else {
+				assert.Empty(t, output)
+			}
+			assert.NotContains(t, output, "synthetic-secret")
+
+			if protectedFile == "" {
+				_, err := os.Lstat(debugLog)
+				assert.True(t, os.IsNotExist(err), "unexpected diagnostic file %q", debugLog)
+				return
+			}
+
+			contents, err := os.ReadFile(protectedFile)
+			if assert.NoError(t, err) {
+				assert.Equal(t, "unchanged\n", string(contents))
+			}
+		})
+	}
 }
 
 func TestGetCompletions_NonBoolFlagValue(t *testing.T) {
@@ -304,6 +635,45 @@ func TestGetCompletions_ColonCommands_NoColonTyped(t *testing.T) {
 	assert.Len(t, result.Completions, 1)
 	assert.Equal(t, "config", result.Completions[0].Name)
 	assert.Equal(t, "", result.Completions[0].Usage)
+}
+
+func TestGetCompletions_CompatibilityColonPrefix(t *testing.T) {
+	t.Parallel()
+	root := &cli.Command{Commands: []*cli.Command{
+		{Name: "config", Usage: "Browse settings"},
+		{Name: "config:get", Usage: "Read a setting", Hidden: true, Metadata: map[string]any{"command-compatibility-alias": true}},
+		{Name: "config:private", Hidden: true},
+		{Name: "config:disabled", Hidden: true, Metadata: map[string]any{"command-compatibility-alias": false}},
+	}}
+	for _, style := range []CompletionStyle{CompletionStyleBash, CompletionStyleZsh, CompletionStyleFish, CompletionStylePowershell} {
+		t.Run(string(style), func(t *testing.T) {
+			name := "config:get"
+			if style == CompletionStyleBash {
+				name = "get"
+			}
+			group := []ShellCompletion{{Name: "config", Usage: "Browse settings"}}
+			legacy := []ShellCompletion{{Name: name, Usage: "Read a setting"}}
+			for _, tc := range []struct {
+				name string
+				args []string
+				want []ShellCompletion
+			}{
+				{"no arguments", nil, group},
+				{"empty prefix", []string{""}, group},
+				{"plain prefix", []string{"co"}, group},
+				{"explicit colon", []string{"config:"}, legacy},
+				{"legacy prefix", []string{"config:g"}, legacy},
+				{"internal prefix", []string{"config:p"}, nil},
+				{"disabled alias", []string{"config:d"}, nil},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					got := GetCompletions(style, root, tc.args)
+					assert.Equal(t, ShellCompletionBehaviorDefault, got.Behavior)
+					assert.ElementsMatch(t, tc.want, got.Completions)
+				})
+			}
+		})
+	}
 }
 
 func TestGetCompletions_ColonCommands_ColonTyped_Bash(t *testing.T) {

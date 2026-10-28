@@ -43,10 +43,15 @@ func (e *encoder) Encode(key string, value reflect.Value) ([]Pair, error) {
 }
 
 func (e *encoder) encodeMap(key string, value reflect.Value) ([]Pair, error) {
+	if value.Type().Key().Kind() != reflect.String {
+		return nil, fmt.Errorf("apiquery: cannot encode a map with a non-string key")
+	}
+
 	var pairs []Pair
 	iter := value.MapRange()
 	for iter.Next() {
-		subkey := iter.Key().String()
+		mapKey := iter.Key()
+		subkey := mapKey.String()
 		keyPath := subkey
 		if len(key) > 0 {
 			if e.settings.NestedFormat == NestedQueryFormatDots {
@@ -70,13 +75,28 @@ func (e *encoder) encodeArray(key string, value reflect.Value) ([]Pair, error) {
 	case ArrayQueryFormatComma:
 		elements := []string{}
 		for i := 0; i < value.Len(); i++ {
+			item := value.Index(i)
+			for item.Kind() == reflect.Pointer || item.Kind() == reflect.Interface {
+				if item.IsNil() {
+					break
+				}
+				item = item.Elem()
+			}
+			if item.IsValid() {
+				switch item.Kind() {
+				case reflect.Array, reflect.Slice, reflect.Map, reflect.Struct:
+					return nil, fmt.Errorf("apiquery: comma format does not support complex array elements")
+				}
+			}
+
 			innerPairs, err := e.Encode("", value.Index(i))
 			if err != nil {
 				return nil, err
 			}
-			for _, pair := range innerPairs {
-				elements = append(elements, pair.value)
+			if len(innerPairs) != 1 || innerPairs[0].key != "" {
+				return nil, fmt.Errorf("apiquery: comma format does not support complex array elements")
 			}
+			elements = append(elements, innerPairs[0].value)
 		}
 		return []Pair{{key, strings.Join(elements, ",")}}, nil
 
@@ -135,13 +155,16 @@ func (e *encoder) encodePrimitive(key string, value reflect.Value) ([]Pair, erro
 		}
 		return []Pair{{key, "false"}}, nil
 
-	case reflect.Int, reflect.Int16, reflect.Int32, reflect.Int64:
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return []Pair{{key, strconv.FormatInt(value.Int(), 10)}}, nil
 
-	case reflect.Uint, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return []Pair{{key, strconv.FormatUint(value.Uint(), 10)}}, nil
 
-	case reflect.Float32, reflect.Float64:
+	case reflect.Float32:
+		return []Pair{{key, strconv.FormatFloat(value.Float(), 'f', -1, 32)}}, nil
+
+	case reflect.Float64:
 		return []Pair{{key, strconv.FormatFloat(value.Float(), 'f', -1, 64)}}, nil
 
 	default:

@@ -1,0 +1,997 @@
+package releaseworkflow
+
+import (
+	"bytes"
+	"encoding/base64"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/goccy/go-yaml"
+)
+
+const (
+	releaseInputsArtifact  = "openai-release-inputs"
+	checkoutAction         = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+	setupGoAction          = "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+	uploadArtifactAction   = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+	downloadArtifactAction = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
+)
+
+var releaseInputPaths = []string{
+	"completions/openai.bash",
+	"completions/openai.zsh",
+	"completions/openai.fish",
+	"completions/picker/openai.fish",
+	"man/man1/openai.1.gz",
+}
+
+type workflow struct {
+	Env         map[string]string      `yaml:"env"`
+	Permissions map[string]string      `yaml:"permissions"`
+	Jobs        map[string]workflowJob `yaml:"jobs"`
+}
+
+type workflowJob struct {
+	ContinueOnError bool `yaml:"continue-on-error"`
+	Strategy        struct {
+		FailFast *bool `yaml:"fail-fast"`
+		Matrix   struct {
+			Shard []int `yaml:"shard"`
+		} `yaml:"matrix"`
+	} `yaml:"strategy"`
+	Env         map[string]string `yaml:"env"`
+	If          string            `yaml:"if"`
+	Environment string            `yaml:"environment"`
+	Needs       any               `yaml:"needs"`
+	Outputs     map[string]string `yaml:"outputs"`
+	Permissions map[string]string `yaml:"permissions"`
+	Steps       []workflowStep    `yaml:"steps"`
+	Timeout     int               `yaml:"timeout-minutes"`
+}
+
+type workflowStep struct {
+	ContinueOnError bool           `yaml:"continue-on-error"`
+	If              string         `yaml:"if"`
+	Shell           string         `yaml:"shell"`
+	Name            string         `yaml:"name"`
+	Uses            string         `yaml:"uses"`
+	Run             string         `yaml:"run"`
+	ID              string         `yaml:"id"`
+	With            map[string]any `yaml:"with"`
+	Env             map[string]any `yaml:"env"`
+}
+
+func readWorkflow(t *testing.T, name string) workflow {
+	t.Helper()
+
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+
+	var parsed workflow
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("parse %s: %v", name, err)
+	}
+	return parsed
+}
+
+func requireStep(t *testing.T, job workflowJob, name string) (int, workflowStep) {
+	t.Helper()
+	for index, step := range job.Steps {
+		if step.Name == name {
+			return index, step
+		}
+	}
+	t.Fatalf("workflow job has no %q step", name)
+	return -1, workflowStep{}
+}
+
+func TestWorkflowPermissionsRemainLeastPrivileged(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"publish-release.yml", "ci.yml"} {
+		parsed := readWorkflow(t, name)
+		if parsed.Permissions == nil || len(parsed.Permissions) != 0 {
+			t.Errorf("%s must explicitly deny default token permissions: %v", name, parsed.Permissions)
+		}
+	}
+
+	publishJobs := readWorkflow(t, "publish-release.yml").Jobs
+	if !reflect.DeepEqual(publishJobs["attest"].Permissions, map[string]string{
+		"attestations": "write",
+		"contents":     "read",
+		"id-token":     "write",
+	}) {
+		t.Fatalf("attestation permissions changed: %v", publishJobs["attest"].Permissions)
+	}
+
+	ciJobs := readWorkflow(t, "ci.yml").Jobs
+	for _, name := range []string{"lint", "macos-uploads", "build-artifacts", "test", "test-linux", "test-windows-compile", "error-audit"} {
+		if ciJobs[name].Permissions == nil || len(ciJobs[name].Permissions) != 0 {
+			t.Errorf("CI job %s permissions changed: %v", name, ciJobs[name].Permissions)
+		}
+		if ciJobs[name].Environment != "" {
+			t.Errorf("CI job %s must not receive protected environment credentials", name)
+		}
+	}
+	if ciJobs["build"].Permissions == nil || len(ciJobs["build"].Permissions) != 0 {
+		t.Fatalf("aggregate CI build must not receive repository credentials: %v", ciJobs["build"].Permissions)
+	}
+}
+
+func TestSDKSourcePreparationIsIsolatedFromPRCode(t *testing.T) {
+	t.Parallel()
+
+	parsed := readWorkflow(t, "sdk-cross-link.yml")
+	if parsed.Permissions == nil || len(parsed.Permissions) != 0 || len(parsed.Jobs) != 1 {
+		t.Fatal("SDK preparation must deny default permissions and use a single isolated job")
+	}
+	job := parsed.Jobs["prepare"]
+	if job.Environment != "sdk-cross-link" || !reflect.DeepEqual(job.Permissions, map[string]string{
+		"contents": "read", "pull-requests": "read", "actions": "read",
+	}) {
+		t.Fatalf("SDK preparation credential boundary changed: %#v", job)
+	}
+	for _, guard := range []string{
+		"github.repository == 'openai/openai-cli-internal'",
+		"github.repository_id == '1253662577'",
+		"github.event.repository.private",
+		"github.event.pull_request.head.repo.id == github.event.repository.id",
+		"github.event.pull_request.base.ref == 'main'",
+	} {
+		if !strings.Contains(job.If, guard) {
+			t.Errorf("SDK preparation is missing guard %q", guard)
+		}
+	}
+	checkoutIndex, checkout := requireStep(t, job, "Check out trusted fetch tooling")
+	if checkout.Uses != checkoutAction || checkout.With["persist-credentials"] != false || checkout.With["ref"] != "${{ github.sha }}" {
+		t.Fatalf("SDK preparation must check out trusted target code without persisting credentials: %#v", checkout)
+	}
+	tokenIndex, token := requireStep(t, job, "Create read-only Go repository token")
+	if token.Uses != "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510" || !reflect.DeepEqual(token.With, map[string]any{
+		"client-id": "${{ vars.OPENAI_SDKS_APP_CLIENT_ID }}", "private-key": "${{ secrets.OPENAI_SDKS_APP_PRIVATE_KEY }}",
+		"owner": "openai", "repositories": "openai-go-internal", "permission-contents": "read",
+	}) {
+		t.Fatalf("SDK preparation App token must be restricted to reading the Go repository: %#v", token)
+	}
+	sourceIndex, source := requireStep(t, job, "Download matching Go source without executing it")
+	_, upload := requireStep(t, job, "Share source with ordinary PR checks")
+	if upload.With["overwrite"] != true {
+		t.Fatal("producer must be able to replace snapshots from unsuccessful attempts")
+	}
+	if source.Run != "python3 -I .github/scripts/sdk_cross_link.py produce" || !(checkoutIndex < tokenIndex && tokenIndex < sourceIndex) {
+		t.Fatal("SDK preparation must run only the trusted source producer after checkout and token creation")
+	}
+}
+
+func TestReleaseInputsUseAnIsolatedUnprivilegedJob(t *testing.T) {
+	t.Parallel()
+
+	jobs := readWorkflow(t, "publish-release.yml").Jobs
+	job, ok := jobs["release-inputs"]
+	if !ok {
+		t.Fatal("release inputs must be generated in a separate unprivileged job")
+	}
+	if job.Environment != "" {
+		t.Fatalf("unprivileged generation must not use a protected environment: %q", job.Environment)
+	}
+	if !reflect.DeepEqual(job.Permissions, map[string]string{"contents": "read"}) {
+		t.Fatalf("release-input job permissions = %v, want only contents: read", job.Permissions)
+	}
+
+	checkoutIndex, checkout := requireStep(t, job, "Checkout")
+	if checkout.Uses != checkoutAction || checkout.With["persist-credentials"] != false {
+		t.Fatalf("release-input checkout must be pinned and credential-free: %#v", checkout)
+	}
+	if job.Outputs["tag-sha"] != "${{ steps.trusted-tag.outputs.sha }}" {
+		t.Fatal("isolated release inputs must be bound to the independently verified immutable tag SHA")
+	}
+	tagIndex, tag := requireStep(t, job, "Ensure release tag is on main")
+	for _, fragment := range []string{
+		`git check-ref-format "refs/tags/$TAG"`,
+		`git merge-base --is-ancestor "$tag_sha" origin/main`,
+		`git checkout --detach "$tag_sha"`,
+	} {
+		if !strings.Contains(tag.Run, fragment) {
+			t.Errorf("unprivileged tag validation is missing %q", fragment)
+		}
+	}
+	if tag.ID != "trusted-tag" || !strings.Contains(tag.Run, `echo "sha=$tag_sha" >> "$GITHUB_OUTPUT"`) {
+		t.Fatal("the validated release tag SHA must be exported before executable dependencies run")
+	}
+	setupIndex, setup := requireStep(t, job, "Set up Go")
+	if setup.Uses != setupGoAction || setup.With["go-version-file"] != ".go-version" || setup.With["check-latest"] != true || setup.With["cache"] != false {
+		t.Fatalf("unprivileged Go setup must use the reviewed patched toolchain with cache disabled: %#v", setup)
+	}
+	generationIndex, generate := requireStep(t, job, "Generate release inputs")
+	for _, fragment := range []string{
+		"@completion bash > completions/openai.bash",
+		"@completion zsh > completions/openai.zsh",
+		"@completion fish > completions/openai.fish",
+		"go run ./scripts/render-linux-picker > completions/picker/openai.fish",
+		"@manpages -o man",
+	} {
+		if !strings.Contains(generate.Run, fragment) {
+			t.Errorf("release generation does not preserve %q", fragment)
+		}
+	}
+	if len(generate.Env) != 0 {
+		t.Fatalf("executable generator must not receive workflow credentials: %v", generate.Env)
+	}
+	uploadIndex, upload := requireStep(t, job, "Stage isolated release inputs")
+	if upload.Uses != uploadArtifactAction || upload.With["name"] != releaseInputsArtifact {
+		t.Fatalf("release inputs must use the pinned, fixed-name artifact: %#v", upload)
+	}
+	if upload.With["if-no-files-found"] != "error" {
+		t.Fatal("missing generated release inputs must fail closed")
+	}
+	paths, ok := upload.With["path"].(string)
+	if !ok || !reflect.DeepEqual(strings.Fields(paths), releaseInputPaths) {
+		t.Fatalf("uploaded files must be exactly %v; got %q", releaseInputPaths, paths)
+	}
+	if !(checkoutIndex < setupIndex && setupIndex < tagIndex && tagIndex < generationIndex && generationIndex < uploadIndex) {
+		t.Fatal("trusted checkout and patched cache-disabled Go setup must precede tag checkout, generation, and upload")
+	}
+	for _, step := range job.Steps {
+		if strings.Contains(fmt.Sprint(step.With, step.Env, step.Run), "secrets.") {
+			t.Fatalf("unprivileged release-input job references secrets in %q", step.Name)
+		}
+		if strings.HasPrefix(step.Uses, "./") {
+			t.Fatalf("unprivileged asset generator must not run publisher-only local actions: %q", step.Uses)
+		}
+		if strings.HasPrefix(step.Uses, "actions/cache@") {
+			t.Fatal("the unprivileged job must not publish a cache consumed by the privileged job")
+		}
+	}
+}
+
+func TestPublisherVerifiesIsolatedInputsBeforeReceivingSecrets(t *testing.T) {
+	t.Parallel()
+
+	job := readWorkflow(t, "publish-release.yml").Jobs["goreleaser"]
+	if !strings.Contains(fmt.Sprint(job.Needs), "release-inputs") {
+		t.Fatalf("privileged publisher must depend on isolated inputs, got needs=%v", job.Needs)
+	}
+	if job.Environment != "publish" {
+		t.Fatalf("publisher must preserve the protected publish environment, got %q", job.Environment)
+	}
+	if !reflect.DeepEqual(job.Permissions, map[string]string{"contents": "read"}) {
+		t.Fatalf("publisher permissions unexpectedly changed: %v", job.Permissions)
+	}
+	checkoutIndex, _ := requireStep(t, job, "Checkout")
+	verifiedBinaryIndex, verifiedBinary := requireStep(t, job, "Set up verified GoReleaser")
+	if verifiedBinary.Uses != "./.github/actions/setup-goreleaser" || verifiedBinary.ID != "goreleaser" {
+		t.Fatalf("publisher must expose the reviewed digest-verified GoReleaser executable: %#v", verifiedBinary)
+	}
+	setupIndex, setup := requireStep(t, job, "Set up Go")
+	if setup.Uses != setupGoAction || setup.With["go-version-file"] != ".go-version" || setup.With["check-latest"] != true || setup.With["cache"] != false {
+		t.Fatalf("publisher must bootstrap the trusted patched Go toolchain without shared cache: %#v", setup)
+	}
+	preserveScannerIndex, preserveScanner := requireStep(t, job, "Preserve trusted vulnerability scanner")
+	if !strings.Contains(preserveScanner.Run, `install -m 0755 ./scripts/govulncheck "$RUNNER_TEMP/openai-cli-govulncheck"`) {
+		t.Fatal("publisher must preserve the trusted vulnerability scanner before checking out historical source")
+	}
+	tagIndex, tag := requireStep(t, job, "Ensure release tag is on main")
+	if !strings.Contains(tag.Run, `git merge-base --is-ancestor "$tag_sha" origin/main`) {
+		t.Fatal("publisher must independently verify the trusted release tag")
+	}
+	if tag.Env["EXPECTED_TAG_SHA"] != "${{ needs.release-inputs.outputs.tag-sha }}" || !strings.Contains(tag.Run, `test "$tag_sha" = "$EXPECTED_TAG_SHA"`) {
+		t.Fatal("publisher must reject isolated inputs generated from a different trusted tag revision")
+	}
+	scanIndex, scan := requireStep(t, job, "Check shipped CLI for reachable vulnerabilities")
+	if !strings.Contains(scan.Run, `"$RUNNER_TEMP/openai-cli-govulncheck" "$GITHUB_WORKSPACE"`) {
+		t.Fatal("publisher must run the preserved trusted scanner against the validated release source")
+	}
+	downloadIndex, download := requireStep(t, job, "Download isolated release inputs")
+	if download.Uses != downloadArtifactAction || download.With["name"] != releaseInputsArtifact {
+		t.Fatalf("publisher must download the fixed current-run artifact with a pinned action: %#v", download)
+	}
+	if _, suppliedToken := download.With["github-token"]; suppliedToken {
+		t.Fatal("artifact download must remain scoped to this workflow run without extra credentials")
+	}
+	verifyIndex, _ := requireStep(t, job, "Verify isolated release inputs")
+	firstCredentialIndex, _ := requireStep(t, job, "Create release app token for this repo")
+	if !(checkoutIndex < verifiedBinaryIndex && verifiedBinaryIndex < setupIndex && setupIndex < preserveScannerIndex && preserveScannerIndex < tagIndex && tagIndex < scanIndex && scanIndex < downloadIndex && downloadIndex < verifyIndex && verifyIndex < firstCredentialIndex) {
+		t.Fatal("verified tooling, patched Go, preserved scanner, validated tag, vulnerability scan, and isolated artifacts must precede publishing credentials")
+	}
+	for index, step := range job.Steps[:firstCredentialIndex] {
+		if strings.Contains(fmt.Sprint(step.With, step.Env, step.Run), "secrets.") {
+			t.Fatalf("step %d (%q) receives privileged secrets before release-input validation", index, step.Name)
+		}
+	}
+}
+
+func TestTrustedTagAuthenticationNeverLeaksCredentials(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("GitHub release tag guards execute with Bash on Ubuntu")
+	}
+
+	const token = "synthetic-github-token-never-log"
+	const tagSHA = "0123456789abcdef0123456789abcdef01234567"
+	encodedToken := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+	fakeGit := `#!/usr/bin/env bash
+set -euo pipefail
+command="$1"
+case "$command" in
+  check-ref-format) ;;
+  ls-remote|fetch)
+    remote=""
+    for argument in "$@"; do
+      case "$argument" in
+        https://*) remote="$argument" ;;
+      esac
+    done
+    if [[ "$FAKE_GIT_FAILURE" == "1" ]]; then
+      echo "fatal: unable to access '$remote': synthetic transport failure" >&2
+      exit 23
+    fi
+    if [[ "$GIT_CONFIG_COUNT" != "1" ||
+          "$GIT_CONFIG_KEY_0" != "http.https://github.com/.extraheader" ||
+          "$GIT_CONFIG_VALUE_0" != "AUTHORIZATION: basic $EXPECTED_AUTH_HEADER" ]]; then
+      echo "missing step-scoped Git authentication" >&2
+      exit 24
+    fi
+    if [[ "$remote" != "https://github.com/openai/openai-cli.git" ]]; then
+      echo "unexpected Git remote: $remote" >&2
+      exit 25
+    fi
+    if [[ "$command" == "ls-remote" ]]; then
+      printf '%s\trefs/tags/%s\n' "$FAKE_TAG_SHA" "$TAG"
+    fi
+    ;;
+  for-each-ref) printf 'refs/tags/%s\n' "$TAG" ;;
+  rev-parse) printf '%s\n' "$FAKE_TAG_SHA" ;;
+  merge-base|checkout) ;;
+  *) echo "unexpected git command: $command" >&2; exit 26 ;;
+esac
+`
+
+	for _, name := range []string{"release-inputs", "goreleaser"} {
+		_, tag := requireStep(t, readWorkflow(t, "publish-release.yml").Jobs[name], "Ensure release tag is on main")
+		for _, failure := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/fetch_failure=%t", name, failure), func(t *testing.T) {
+				t.Parallel()
+
+				bin := t.TempDir()
+				if err := os.WriteFile(filepath.Join(bin, "git"), []byte(fakeGit), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				failed := "0"
+				if failure {
+					failed = "1"
+				}
+				command := exec.Command("bash", "-e", "-c", tag.Run)
+				// Keep host credentials and shell startup variables out of the fixture.
+				command.Env = []string{
+					"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+					"HOME=" + bin,
+					"TMPDIR=" + bin,
+					"GITHUB_TOKEN=" + token,
+					"GITHUB_REPOSITORY=openai/openai-cli",
+					"GITHUB_OUTPUT=" + filepath.Join(t.TempDir(), "github-output"),
+					"TAG=v1.2.3",
+					"EXPECTED_TAG_SHA=" + tagSHA,
+					"FAKE_TAG_SHA=" + tagSHA,
+					"EXPECTED_AUTH_HEADER=" + encodedToken,
+					"FAKE_GIT_FAILURE=" + failed,
+				}
+				output, err := command.CombinedOutput()
+				// Apply workflow masking before any diagnostic, including unexpected
+				// exits. A mask directive need not end with a newline.
+				lines := strings.Split(string(output), "\n")
+				var masks []string
+				for i, line := range lines {
+					if mask, ok := strings.CutPrefix(strings.TrimSuffix(line, "\r"), "::add-mask::"); ok {
+						lines[i] = ""
+						if mask != "" {
+							masks = append(masks, mask)
+						}
+					}
+				}
+				visible := strings.Join(lines, "\n")
+				for _, mask := range masks {
+					visible = strings.ReplaceAll(visible, mask, "***")
+				}
+				if strings.Contains(visible, token) || strings.Contains(visible, encodedToken) {
+					t.Fatal("Git failure exposed a raw or derived credential in workflow logs (output withheld)")
+				}
+				if failure && err == nil || !failure && err != nil {
+					t.Fatalf("trusted tag command error=%v, failure=%t, sanitized output:\n%s", err, failure, visible)
+				}
+			})
+		}
+	}
+}
+
+func TestReleaseInputVerifierRejectsUnsafeArtifacts(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("GitHub release artifact verification executes with Bash on Ubuntu")
+	}
+
+	_, verify := requireStep(t, readWorkflow(t, "publish-release.yml").Jobs["goreleaser"], "Verify isolated release inputs")
+	releaseConfig, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name       string
+		mutate     func(t *testing.T, root string)
+		valid      bool
+		historical bool
+	}{
+		{name: "exact passive artifacts", valid: true},
+		{name: "historical inputs", historical: true, valid: true},
+		{name: "historical unexpected picker", historical: true, mutate: func(t *testing.T, root string) {
+			writeReleaseTestFile(t, filepath.Join(root, "completions/picker/openai.fish"), []byte("unexpected"))
+		}},
+		{name: "missing fish picker", mutate: func(t *testing.T, root string) {
+			if err := os.Remove(filepath.Join(root, "completions/picker/openai.fish")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "symlinked fish picker", mutate: func(t *testing.T, root string) {
+			path := filepath.Join(root, "completions/picker/openai.fish")
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(root, releaseInputPaths[0]), path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "empty fish picker", mutate: func(t *testing.T, root string) {
+			writeReleaseTestFile(t, filepath.Join(root, "completions/picker/openai.fish"), nil)
+		}},
+		{name: "oversized fish picker", mutate: func(t *testing.T, root string) {
+			writeReleaseTestFile(t, filepath.Join(root, "completions/picker/openai.fish"), bytes.Repeat([]byte("x"), 10*1024*1024+1))
+		}},
+		{name: "unexpected workflow file", mutate: func(t *testing.T, root string) {
+			writeReleaseTestFile(t, filepath.Join(root, ".goreleaser.yml"), []byte("before: compromised"))
+		}},
+		{name: "cache payload", mutate: func(t *testing.T, root string) {
+			writeReleaseTestFile(t, filepath.Join(root, ".cache", "payload"), []byte("compromised"))
+		}},
+		{name: "unexpected nested file", mutate: func(t *testing.T, root string) {
+			writeReleaseTestFile(t, filepath.Join(root, "man", "man1", "unexpected.1.gz"), []byte("x"))
+		}},
+		{name: "symlinked asset", mutate: func(t *testing.T, root string) {
+			path := filepath.Join(root, releaseInputPaths[0])
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(root, releaseInputPaths[1]), path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "symlinked directory", mutate: func(t *testing.T, root string) {
+			man := filepath.Join(root, "man")
+			target := filepath.Join(t.TempDir(), "man")
+			if err := os.Rename(man, target); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, man); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "missing asset", mutate: func(t *testing.T, root string) {
+			if err := os.Remove(filepath.Join(root, releaseInputPaths[0])); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "empty asset", mutate: func(t *testing.T, root string) {
+			writeReleaseTestFile(t, filepath.Join(root, releaseInputPaths[0]), nil)
+		}},
+		{name: "oversized asset", mutate: func(t *testing.T, root string) {
+			writeReleaseTestFile(t, filepath.Join(root, releaseInputPaths[0]), bytes.Repeat([]byte("x"), 10*1024*1024+1))
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := filepath.Join(t.TempDir(), "inputs")
+			inputs := releaseInputPaths
+			config := releaseConfig
+			if test.historical {
+				inputs = []string{"completions/openai.bash", "completions/openai.zsh", "completions/openai.fish", "man/man1/openai.1.gz"}
+				config = []byte("version: 2\n")
+			}
+			for _, path := range inputs {
+				writeReleaseTestFile(t, filepath.Join(root, path), []byte("safe passive release input"))
+			}
+			if test.mutate != nil {
+				test.mutate(t, root)
+			}
+			workspace := t.TempDir()
+			if output, err := exec.Command("git", "init", "--quiet", workspace).CombinedOutput(); err != nil {
+				t.Fatalf("initialize isolated publisher checkout: %v\n%s", err, output)
+			}
+			writeReleaseTestFile(t, filepath.Join(workspace, ".goreleaser.yml"), config)
+			for _, args := range [][]string{
+				{"add", ".goreleaser.yml"},
+				{"-c", "user.name=Release Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "trusted release config"},
+			} {
+				if output, err := exec.Command("git", append([]string{"-C", workspace}, args...)...).CombinedOutput(); err != nil {
+					t.Fatalf("prepare trusted publisher config: %v\n%s", err, output)
+				}
+			}
+			command := exec.Command("bash", "-c", verify.Run)
+			command.Dir = workspace
+			command.Env = append(os.Environ(), "RELEASE_INPUT_DIR="+root)
+			output, err := command.CombinedOutput()
+			if test.valid && err != nil {
+				t.Fatalf("valid release inputs were rejected: %v\n%s", err, output)
+			}
+			if !test.valid && err == nil {
+				t.Fatalf("unsafe release inputs were accepted:\n%s", output)
+			}
+			if !test.valid {
+				for _, path := range releaseInputPaths {
+					if _, err := os.Lstat(filepath.Join(workspace, path)); !os.IsNotExist(err) {
+						t.Errorf("invalid input was copied before verification completed: %s, %v", path, err)
+					}
+				}
+			}
+			if test.valid {
+				for _, path := range inputs {
+					if _, err := os.Stat(filepath.Join(workspace, path)); err != nil {
+						t.Errorf("verified release input %s was not staged: %v", path, err)
+					}
+				}
+				statusCommand := exec.Command("git", "-C", workspace, "status", "--porcelain", "--untracked-files=all")
+				status, err := statusCommand.Output()
+				if err != nil || len(status) != 0 {
+					t.Fatalf("exact verified release inputs make GoReleaser's checkout dirty: status=%q err=%v", status, err)
+				}
+				for _, payload := range []string{".github/workflows/compromised.yml", ".cache/poison"} {
+					writeReleaseTestFile(t, filepath.Join(workspace, payload), []byte("unexpected"))
+				}
+				status, err = exec.Command("git", "-C", workspace, "status", "--porcelain", "--untracked-files=all").Output()
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, payload := range []string{".github/workflows/compromised.yml", ".cache/poison"} {
+					if !strings.Contains(string(status), payload) {
+						t.Errorf("unexpected %s was hidden from GoReleaser's dirty-check: %s", payload, status)
+					}
+				}
+				for _, path := range releaseInputPaths {
+					if strings.Contains(string(status), path) {
+						t.Errorf("verified release input %s must remain excluded without hiding unexpected files", path)
+					}
+				}
+			}
+		})
+	}
+}
+
+func writeReleaseTestFile(t *testing.T, path string, content []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrivilegedGoReleaserDoesNotExecuteGenerationHooks(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Before struct {
+			Hooks []any `yaml:"hooks"`
+		} `yaml:"before"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Before.Hooks) != 0 {
+		t.Fatalf("privileged GoReleaser must not execute release-generation hooks: %v", config.Before.Hooks)
+	}
+}
+
+func TestHistoricalTagCannotRunPrivilegedBeforeHooks(t *testing.T) {
+	t.Parallel()
+
+	legacyReleaseConfig := []byte("before:\n  hooks:\n    - go run ./cmd/openai/main.go @completion bash\n")
+	var legacy struct {
+		Before struct {
+			Hooks []string `yaml:"hooks"`
+		} `yaml:"before"`
+	}
+	if err := yaml.Unmarshal(legacyReleaseConfig, &legacy); err != nil || len(legacy.Before.Hooks) != 1 {
+		t.Fatalf("invalid historical-tag regression fixture: hooks=%v err=%v", legacy.Before.Hooks, err)
+	}
+	_, release := requireStep(t, readWorkflow(t, "publish-release.yml").Jobs["goreleaser"], "Run GoReleaser")
+	if strings.TrimSpace(release.Run) != `"$GORELEASER_EXECUTABLE" release --clean --skip=before` || release.Uses != "" || release.Env["GORELEASER_EXECUTABLE"] != "${{ steps.goreleaser.outputs.executable }}" {
+		t.Fatalf("publisher must run only the verified immutable executable with legacy hooks disabled: %#v", release)
+	}
+}
+
+func TestCISnapshotGeneratesInputsBeforeGoReleaser(t *testing.T) {
+	t.Parallel()
+
+	job := readWorkflow(t, "ci.yml").Jobs["build-artifacts"]
+	if job.Timeout != 30 {
+		t.Fatalf("CI artifact build timeout = %d minutes, want 30", job.Timeout)
+	}
+	generateIndex, generate := requireStep(t, job, "Generate release inputs")
+	installerTestIndex, _ := requireStep(t, job, "Test verified GoReleaser installer")
+	verifiedBinaryIndex, verifiedBinary := requireStep(t, job, "Set up verified GoReleaser")
+	releaseIndex, release := requireStep(t, job, "Run GoReleaser")
+	if verifiedBinary.Uses != "./.github/actions/setup-goreleaser" || verifiedBinary.ID != "goreleaser" {
+		t.Fatal("CI must expose the reviewed digest-verified GoReleaser executable")
+	}
+	if strings.TrimSpace(release.Run) != `"$GORELEASER_EXECUTABLE" release --snapshot --clean --skip=publish` || release.Env["GORELEASER_EXECUTABLE"] != "${{ steps.goreleaser.outputs.executable }}" {
+		t.Fatalf("CI must preserve the existing verified immutable snapshot invocation, got %#v", release)
+	}
+	if !(installerTestIndex < verifiedBinaryIndex && verifiedBinaryIndex < generateIndex && generateIndex < releaseIndex) {
+		t.Fatal("CI must test and verify GoReleaser, then generate inputs before packaging")
+	}
+	if len(generate.Env) != 0 || release.Env["GITHUB_TOKEN"] != nil {
+		t.Fatal("CI generation and snapshot packaging must not receive a repository token")
+	}
+	for _, path := range releaseInputPaths[:3] {
+		if !strings.Contains(generate.Run, path) {
+			t.Errorf("CI snapshot is missing generated input %q", path)
+		}
+	}
+	if !strings.Contains(generate.Run, "@manpages -o man") {
+		t.Fatal("CI snapshot no longer generates release manpages")
+	}
+	if !strings.Contains(generate.Run, "go run ./scripts/render-linux-picker > completions/picker/openai.fish") {
+		t.Fatal("CI snapshot does not generate the Linux fish picker")
+	}
+	for _, path := range releaseInputPaths {
+		if !strings.Contains(generate.Run, "'/"+path+"'") {
+			t.Errorf("CI must ignore only exact validated generated input %q in its ephemeral checkout", path)
+		}
+	}
+}
+
+func TestReleaseWorkflowActionsRemainPinned(t *testing.T) {
+	t.Parallel()
+
+	pinnedAction := regexp.MustCompile(`^[^@]+@[0-9a-f]{40}$`)
+	for name, job := range readWorkflow(t, "publish-release.yml").Jobs {
+		for _, step := range job.Steps {
+			if step.Uses == "./.github/actions/setup-goreleaser" {
+				continue
+			}
+			if step.Uses != "" && !pinnedAction.MatchString(step.Uses) {
+				t.Errorf("job %s step %q does not pin its action to a full commit SHA: %q", name, step.Name, step.Uses)
+			}
+		}
+	}
+}
+
+func TestCodeQLPublisherBoundary(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python is required for the Ubuntu CodeQL publisher")
+	}
+	command := exec.Command(python, "-I", "-B", "../../.github/scripts/test_codeql_upload.py")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("CodeQL publisher boundary: %v\n%s", err, output)
+	}
+}
+
+func TestCodeQLAnalysisCannotPublish(t *testing.T) {
+	analysis := readWorkflow(t, "codeql.yml").Jobs["analyze"]
+	if analysis.Permissions == nil || len(analysis.Permissions) != 0 {
+		t.Fatalf("candidate CodeQL analysis must have no repository permissions: %v", analysis.Permissions)
+	}
+	if analysis.Env["CODEQL_ACTION_ANALYSIS_KEY"] != ".github/workflows/codeql.yml:analyze" {
+		t.Fatal("offline CodeQL analysis must not require private workflow metadata to infer its key")
+	}
+	_, analyze := requireStep(t, analysis, "Analyze")
+	if analyze.With["upload"] != "never" || analyze.With["upload-database"] != false {
+		t.Fatal("candidate analysis must not upload results or databases")
+	}
+	publisher := readWorkflow(t, "codeql-upload.yml").Jobs["upload"]
+	if !reflect.DeepEqual(publisher.Permissions, map[string]string{"contents": "read", "actions": "read", "pull-requests": "read", "security-events": "write", "statuses": "write"}) {
+		t.Fatalf("unexpected publisher permissions: %v", publisher.Permissions)
+	}
+	_, checkout := requireStep(t, publisher, "Check out trusted publisher")
+	if checkout.Uses != checkoutAction || checkout.With["ref"] != "${{ github.workflow_sha }}" || checkout.With["persist-credentials"] != false {
+		t.Fatal("publisher must check out only its trusted workflow revision")
+	}
+	if len(publisher.Steps) != 2 {
+		t.Fatal("publisher must only check out trusted tooling and publish passive data")
+	}
+	_, publish := requireStep(t, publisher, "Verify and publish CodeQL results")
+	if publish.Run != "python3 -I .github/scripts/codeql_upload.py publish" {
+		t.Fatal("publisher must invoke only trusted tooling in isolated Python mode")
+	}
+}
+
+func TestSDKSnapshotSurvivesFailedProducerRerun(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python is required for the SDK source consumer")
+	}
+	// Exercise the consumer with a real manifest ZIP and fake GitHub responses.
+	// The latest attempt failed, but the artifact's original attempt succeeded.
+	code := `
+import importlib.util, io, json, zipfile
+spec = importlib.util.spec_from_file_location("link", "../../.github/scripts/sdk_cross_link.py")
+link = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(link)
+context = dict(repository_id=link.REPOSITORY_ID, pr=1, head_sha="a"*40, branch="feature", updated_at="now")
+run = dict(event="pull_request_target", path=link.WORKFLOW, repository={"id":link.REPOSITORY_ID},
+           head_repository={"id":link.REPOSITORY_ID}, head_branch="feature", head_sha="a"*40,
+           status="completed", conclusion="failure", run_attempt=2)
+manifest = dict(schema=1, context=context, run_id=7, run_attempt=1, go_repository=link.GO_REPOSITORY, mode="released")
+buffer = io.BytesIO()
+with zipfile.ZipFile(buffer, "w") as archive:
+    archive.writestr("manifest.json", json.dumps(manifest))
+class API:
+    original_success = True
+    deleted_once = False
+    def get(self, route, binary=False):
+        if "/artifacts?" in route:
+            return {"artifacts":[dict(id=8, name=link.artifact_name(context), expired=False, workflow_run={"id":7})]}
+        if route.endswith("/zip"):
+            if self.deleted_once:
+                self.deleted_once = False
+                raise link.APIError(404)
+            return buffer.getvalue()
+        if route.endswith("/attempts/1"):
+            return dict(run, run_attempt=1, conclusion="success" if self.original_success else "failure")
+        assert route.endswith("/runs/7"), route
+        return run
+api = API()
+assert link.existing_snapshot(api, context, 7) is True
+api.original_success = False
+assert link.existing_snapshot(api, context, 7) is False
+
+`
+	command := exec.Command(python, "-I", "-B", "-c", code)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("snapshot attempt validation: %v\n%s", err, output)
+	}
+}
+
+func TestCandidateJobsUseOnlySameRunSourceArtifacts(t *testing.T) {
+	for filename, names := range map[string][]string{
+		"ci.yml":                 {"lint", "test-linux", "test-windows-compile", "error-audit", "build-artifacts", "macos-uploads"},
+		"help-compatibility.yml": {"help"}, "codeql.yml": {"analyze"},
+	} {
+		jobs := readWorkflow(t, filename).Jobs
+		for _, name := range names {
+			job := jobs[name]
+			if job.Permissions == nil || len(job.Permissions) != 0 || job.Environment != "" || job.Needs != "source" {
+				t.Fatalf("%s/%s must consume prepared source without repository credentials", filename, name)
+			}
+			_, download := requireStep(t, job, "Download prepared source")
+			if download.Uses != downloadArtifactAction || download.With["artifact-ids"] != "${{ needs.source.outputs.artifact-id }}" {
+				t.Fatal("source must be selected by the preparation job's immutable artifact ID")
+			}
+			if _, ok := download.With["github-token"]; ok {
+				t.Fatal("same-run source download must not receive a repository token")
+			}
+			for _, step := range job.Steps {
+				if step.Uses == checkoutAction || strings.Contains(fmt.Sprint(step.With, step.Env), "github.token") || strings.Contains(fmt.Sprint(step.With, step.Env), "secrets.") {
+					t.Fatalf("candidate job %s/%s receives checkout or credential access", filename, name)
+				}
+			}
+		}
+	}
+	job := readWorkflow(t, "prepare-ci-source.yml").Jobs["prepare"]
+	for _, step := range job.Steps {
+		if strings.HasPrefix(step.Uses, "./") {
+			t.Fatal("credential-bearing preparation must never load candidate actions")
+		}
+	}
+	_, checkout := requireStep(t, job, "Check out trusted SDK download tooling")
+	if checkout.With["ref"] != "main" || checkout.With["path"] != "trusted" || checkout.With["persist-credentials"] != false {
+		t.Fatal("SDK staging helper must come from trusted main in a separate directory")
+	}
+}
+
+func TestTrustedSDKStagingValidatesOriginalAttempt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("source preparation runs with Bash on Ubuntu")
+	}
+	_, step := requireStep(t, readWorkflow(t, "prepare-ci-source.yml").Jobs["prepare"], "Stage SDK snapshot without executing candidate code")
+	helper, err := filepath.Abs("../../.github/scripts/sdk_cross_link.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := fmt.Sprintf(`
+import importlib.util, io, json, os, sys, time, zipfile
+from pathlib import Path
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("real_sdk", %q)
+link = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(link)
+for name in ("REPOSITORY", "REPOSITORY_ID", "APIError", "artifact_name", "unpack_artifact"):
+    globals()[name] = getattr(link, name)
+context = dict(repository_id=link.REPOSITORY_ID, pr=1, head_sha="a"*40, branch="feature", updated_at="now")
+identity = lambda event: context
+manifest = dict(schema=1, context=context, run_id=7, run_attempt=1, go_repository=link.GO_REPOSITORY, mode="released")
+buffer = io.BytesIO()
+with zipfile.ZipFile(buffer, "w") as archive:
+    archive.writestr("manifest.json", json.dumps(manifest))
+clock = iter([0, 0, 301])
+time.monotonic = lambda: next(clock)
+time.sleep = lambda _: None
+class GitHub:
+    def __init__(self, token):
+        assert token == "synthetic-staging-token"
+        self.deleted_once = os.environ["CASE"] == "replacement"
+    def get(self, route, binary=False):
+        if "/artifacts?" in route:
+            return {"artifacts":[dict(id=8, name=link.artifact_name(context), expired=False, workflow_run={"id":7})]}
+        if route.endswith("/zip"):
+            if self.deleted_once:
+                self.deleted_once = False
+                raise link.APIError(404)
+            return buffer.getvalue()
+        assert route.endswith("/attempts/1"), "must verify the original attempt"
+        return dict(event="pull_request_target", path=link.WORKFLOW,
+                    repository={"id":link.REPOSITORY_ID}, head_repository={"id":link.REPOSITORY_ID},
+                    head_branch="feature", head_sha="b"*40 if os.environ["CASE"] == "wrong-head" else "a"*40,
+                    run_attempt=1, status="completed", conclusion="failure" if os.environ["CASE"] == "failed-original" else "success")
+`, helper)
+	for _, name := range []string{"successful-original", "replacement", "failed-original", "wrong-head"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, tree := range []string{"trusted", "candidate"} {
+				path := filepath.Join(dir, tree, ".github", "scripts")
+				if err := os.MkdirAll(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				code := fixture
+				if tree == "candidate" {
+					code = "raise RuntimeError('candidate helper executed with credentials')"
+				}
+				if err := os.WriteFile(filepath.Join(path, "sdk_cross_link.py"), []byte(code), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			event := filepath.Join(dir, "event.json")
+			if err := os.WriteFile(event, []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-e", "-c", step.Run)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "RUNNER_TEMP="+dir, "GITHUB_EVENT_PATH="+event, "GH_TOKEN=synthetic-staging-token", "CASE="+name)
+			out, err := cmd.CombinedOutput()
+			wantSuccess := name == "successful-original" || name == "replacement"
+			if (err == nil) != wantSuccess {
+				t.Fatalf("staging result: %v\n%s", err, out)
+			}
+			_, artifactErr := os.Stat(filepath.Join(dir, "ci-sdk.zip"))
+			if (artifactErr == nil) != wantSuccess {
+				t.Fatalf("unexpected staged artifact: %v", artifactErr)
+			}
+		})
+	}
+}
+
+func TestParallelTestGateRequiresAllJobs(t *testing.T) {
+	job := readWorkflow(t, "ci.yml").Jobs["test"]
+	if got := fmt.Sprint(job.Needs); got != "[source test-linux test-windows-compile error-audit]" || job.If != "always()" || job.ContinueOnError {
+		t.Fatalf("test gate needs=%v if=%q continue-on-error=%v, want all dependencies and mandatory always() gate", job.Needs, job.If, job.ContinueOnError)
+	}
+	_, step := requireStep(t, job, "Require successful tests and error audits")
+	for name, dependency := range map[string]string{"SOURCE_RESULT": "source", "LINUX_RESULT": "test-linux", "WINDOWS_RESULT": "test-windows-compile", "AUDIT_RESULT": "error-audit"} {
+		if step.Env[name] != "${{ needs."+dependency+".result }}" {
+			t.Fatalf("test gate %s=%v, want result from %s", name, step.Env[name], dependency)
+		}
+	}
+	if step.ContinueOnError {
+		t.Fatal("test gate must not ignore its result")
+	}
+	results := []string{"success", "failure", "cancelled", "skipped", ""}
+	for _, source := range results {
+		for _, linux := range results {
+			for _, windows := range results {
+				for _, audit := range results {
+					t.Run(fmt.Sprintf("source=%s/linux=%s/windows=%s/audit=%s", source, linux, windows, audit), func(t *testing.T) {
+						command := exec.Command("bash", "-c", step.Run)
+						command.Env = append(os.Environ(), "SOURCE_RESULT="+source, "LINUX_RESULT="+linux, "WINDOWS_RESULT="+windows, "AUDIT_RESULT="+audit)
+						output, err := command.CombinedOutput()
+						wantSuccess := source == "success" && linux == "success" && windows == "success" && audit == "success"
+						if (err == nil) != wantSuccess {
+							t.Errorf("test gate success=%v, want %v: %s", err == nil, wantSuccess, output)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestErrorAuditShardsRemainRequired(t *testing.T) {
+	ci := readWorkflow(t, "ci.yml")
+	jobs := ci.Jobs
+	audit := jobs["error-audit"]
+	if audit.ContinueOnError || audit.Strategy.FailFast == nil || *audit.Strategy.FailFast || !reflect.DeepEqual(audit.Strategy.Matrix.Shard, []int{0, 1, 2, 3}) {
+		t.Fatalf("audit must retain four mandatory shards without fail-fast: %+v", audit)
+	}
+	_, shard := requireStep(t, audit, "Run exhaustive error audit shard")
+	if shard.ContinueOnError || shard.Shell != "bash" || shard.Env["OPENAI_CLI_ERROR_COVERAGE_MODE"] != "exhaustive" || shard.Env["OPENAI_CLI_ERROR_COVERAGE_SHARD_INDEX"] != "${{ matrix.shard }}" || shard.Env["OPENAI_CLI_ERROR_COVERAGE_SHARD_COUNT"] != "4" {
+		t.Fatalf("audit execution contract changed: %+v", shard)
+	}
+	for _, command := range []string{
+		"go test -p 1 ./cmd/openai -run '^Test(MainErrorCoverageAcrossCommandTree|ErrorCoverage)' -count=1 -timeout=10m -json",
+		"python3 scripts/check-error-audit.py --log \"$RUNNER_TEMP/error-audit.jsonl\" --shard-index \"$OPENAI_CLI_ERROR_COVERAGE_SHARD_INDEX\" --shard-count \"$OPENAI_CLI_ERROR_COVERAGE_SHARD_COUNT\"",
+	} {
+		if !strings.Contains(shard.Run, command) {
+			t.Errorf("audit execution is missing %q", command)
+		}
+	}
+	linux := jobs["test-linux"]
+	_, validator := requireStep(t, linux, "Check error audit validator")
+	bashIndex, bash := requireStep(t, linux, "Check native Bash executable suggestions")
+	launcherIndex, launcher := requireStep(t, linux, "Check test launcher failure handling")
+	testsIndex, tests := requireStep(t, linux, "Run tests")
+	if launcherIndex >= testsIndex || launcher.If != "" || launcher.ContinueOnError || launcher.Run != "go test ./scripts -run '^TestTestRunner$' -count=1" {
+		t.Fatal("Linux tests must check launcher failures independently before running the launcher")
+	}
+	if validator.Run != "python3 scripts/test-error-audit.py" || validator.If != "" || validator.ContinueOnError {
+		t.Fatal("Linux tests must retain the mandatory audit validator")
+	}
+	if bashIndex >= testsIndex || bash.If != "" || bash.ContinueOnError || bash.Env["GOMAXPROCS"] != "2" || bash.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"] != "bash" || bash.Run != "go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsBash' -count=1 -timeout=5m -v" {
+		t.Fatal("Linux tests must run mandatory native Bash suggestion checks before the full suite")
+	}
+	_, workflowRequirement := ci.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"]
+	_, jobRequirement := linux.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"]
+	_, suiteRequirement := tests.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"]
+	if workflowRequirement || jobRequirement || suiteRequirement {
+		t.Fatal("required native shells must be scoped to the dedicated Bash step")
+	}
+	_, suiteCPUOverride := tests.Env["GOMAXPROCS"]
+	if linux.If != "" || linux.ContinueOnError || tests.If != "" || tests.ContinueOnError || suiteCPUOverride || tests.Env["SKIP_WINDOWS_TEST_COMPILE"] != "1" || tests.Run != "./scripts/test -p 1 -skip '^TestShellSuggestionsBash'" {
+		t.Fatalf("Linux tests must exclude only the dedicated Bash roots and preserve Windows compile separation: %+v", tests)
+	}
+	windows := jobs["test-windows-compile"]
+	_, compilation := requireStep(t, windows, "Compile all test packages for Windows")
+	if windows.ContinueOnError || compilation.ContinueOnError || !strings.Contains(compilation.Run, "GOARCH=amd64 GOOS=windows go test -exec=true ./... -p 1") {
+		t.Fatalf("Windows test compilation must remain mandatory: %+v", compilation)
+	}
+}
+
+func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
+	job := readWorkflow(t, "ci.yml").Jobs["build-artifacts"]
+	setupIndex, setup := requireStep(t, job, "Set up Go for artifact builds")
+	cacheIndex, cache := requireStep(t, job, "Cache artifact build dependencies and compilation")
+	bootstrapIndex, _ := requireStep(t, job, "Bootstrap")
+	buildIndex, _ := requireStep(t, job, "Run GoReleaser")
+	if setup.Uses != setupGoAction || setup.With["cache"] != false {
+		t.Errorf("artifact Go setup=%v, want pinned setup-go with default cache disabled", setup)
+	}
+	if !(setupIndex < cacheIndex && cacheIndex < bootstrapIndex && bootstrapIndex < buildIndex) {
+		t.Errorf("artifact setup/cache/bootstrap/build order=%v, want setup before restore before bootstrap before build", []int{setupIndex, cacheIndex, bootstrapIndex, buildIndex})
+	}
+	prefix := "artifact-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-"
+	if cache.With["key"] != prefix+"${{ github.sha }}" || strings.TrimSpace(fmt.Sprint(cache.With["restore-keys"])) != prefix {
+		t.Errorf("artifact cache inputs=%v, want revision-specific save and compatible artifact-only restore", cache.With)
+	}
+	if cache.Uses != "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" {
+		t.Errorf("artifact cache action=%q, want reviewed cache action with success-only post-save", cache.Uses)
+	}
+	for _, step := range job.Steps {
+		if step.Uses == "./.github/actions/setup-go" {
+			t.Error("artifact build uses shared setup-go cache, want dedicated artifact cache only")
+		}
+	}
+}

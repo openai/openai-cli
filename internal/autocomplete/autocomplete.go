@@ -4,10 +4,14 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
 
@@ -47,6 +51,32 @@ var (
 )
 
 func OutputCompletionScript(ctx context.Context, cmd *cli.Command) error {
+	if cmd.IsSet("suggestions-adapter") {
+		if cmd.Args().Len() != 0 || cmd.IsSet("picker") || cmd.IsSet("suggestions") ||
+			cmd.IsSet("suggestions-double-tab") || cmd.IsSet("suggestions-click") || cmd.IsSet("suggestions-only") {
+			return cli.Exit("--suggestions-adapter cannot be combined with a shell argument or completion options", 1)
+		}
+		adapter, err := renderSuggestionAdapter(cmd.String("suggestions-adapter"))
+		if err != nil {
+			return cli.Exit(err, 1)
+		}
+		if _, err := io.WriteString(cmd.Writer, adapter); err != nil {
+			return cli.Exit(err, 1)
+		}
+		return nil
+	}
+	if cmd.Bool("suggestions-only") && (!cmd.Bool("suggestions") || cmd.Bool("picker")) {
+		return cli.Exit("--suggestions-only requires --suggestions and cannot include --picker", 1)
+	}
+	if cmd.Bool("suggestions-double-tab") && !cmd.Bool("suggestions") {
+		return cli.Exit("--suggestions-double-tab requires --suggestions", 1)
+	}
+	if cmd.Bool("suggestions-click") && !cmd.Bool("suggestions") {
+		return cli.Exit("--suggestions-click requires --suggestions", 1)
+	}
+	if cmd.Bool("suggestions-click") && (cmd.Args().Len() != 1 || cmd.Args().First() != "zsh") {
+		return cli.Exit("click insertion currently supports zsh with a local Kitty adapter", 1)
+	}
 	shells := make([]CompletionStyle, 0, len(shellCompletions))
 	for k := range shellCompletions {
 		shells = append(shells, k)
@@ -62,9 +92,38 @@ func OutputCompletionScript(ctx context.Context, cmd *cli.Command) error {
 		return cli.Exit(fmt.Sprintf("unknown shell %s, available shells are %+v", s, shells), 1)
 	}
 
-	completionScript, err := renderCompletion(cmd, cmd.Root().Name)
-	if err != nil {
-		return cli.Exit(err, 1)
+	var completionScript string
+	var err error
+	if !cmd.Bool("suggestions-only") {
+		completionScript, err = renderCompletion(cmd, cmd.Root().Name)
+		if err != nil {
+			return cli.Exit(err, 1)
+		}
+	}
+	if cmd.Bool("picker") {
+		picker, err := renderPickerCompletion(s, cmd.Root().Name)
+		if err != nil {
+			return cli.Exit(err, 1)
+		}
+		completionScript += "\n" + picker
+	}
+	if cmd.Bool("suggestions") {
+		suggestions, err := renderSuggestionCompletion(s, cmd.Root().Name, cmd.Bool("suggestions-double-tab"))
+		if err != nil {
+			return cli.Exit(err, 1)
+		}
+		completionScript += "\n" + suggestions
+	}
+	if cmd.Bool("suggestions-click") {
+		clicks, err := renderSuggestionClickCompletion(cmd.Root().Name)
+		if err != nil {
+			return cli.Exit(err, 1)
+		}
+		completionScript += "\n" + clicks
+	}
+	if cmd.Bool("suggestions") {
+		// Persistent loaders accept only complete, compatible generation.
+		completionScript += "\n# openai-cli-suggestions-complete v1\n"
 	}
 
 	_, err = cmd.Writer.Write([]byte(completionScript))
@@ -87,23 +146,28 @@ func NewShellCompletion(name string, usage string) ShellCompletion {
 type ShellCompletionBehavior int
 
 const (
-	ShellCompletionBehaviorDefault ShellCompletionBehavior = iota
-	ShellCompletionBehaviorFile                            = 10
-	ShellCompletionBehaviorNoComplete
+	ShellCompletionBehaviorDefault    ShellCompletionBehavior = iota
+	ShellCompletionBehaviorFile                               = 10
+	ShellCompletionBehaviorNoComplete                         = 11
 )
 
 type CompletionResult struct {
 	Completions []ShellCompletion
 	Behavior    ShellCompletionBehavior
+	// FileValuePrefix is emitted only for an assigned file value. Shells use it
+	// to distinguish --file=path from a separated path that contains an equals.
+	FileValuePrefix string
+	// Older adapters cannot preserve paths for newly enabled file values.
+	requiresFileValueSupport bool
 }
 
 func isFlag(arg string) bool {
 	return strings.HasPrefix(arg, "-")
 }
 
-func findFlag(cmd *cli.Command, arg string) *cli.Flag {
+func findFlag(flags []cli.Flag, arg string) *cli.Flag {
 	name := strings.TrimLeft(arg, "-")
-	for _, flag := range cmd.Flags {
+	for _, flag := range flags {
 		if vf, ok := flag.(cli.VisibleFlag); ok && !vf.IsVisible() {
 			continue
 		}
@@ -115,9 +179,34 @@ func findFlag(cmd *cli.Command, arg string) *cli.Flag {
 	return nil
 }
 
+// Completion walks commands before their parent links are initialized. Keep
+// the lineage explicitly to include persistent flags and respect local aliases.
+func completionFlags(lineage []*cli.Command) []cli.Flag {
+	var flags []cli.Flag
+	seen := make(map[string]bool)
+	for i := len(lineage) - 1; i >= 0; i-- {
+		for _, flag := range lineage[i].Flags {
+			if i != len(lineage)-1 {
+				local, ok := flag.(cli.LocalFlag)
+				if !ok || local.IsLocal() || slices.ContainsFunc(flag.Names(), func(name string) bool { return seen[name] }) {
+					continue
+				}
+			}
+			flags = append(flags, flag)
+			for _, name := range flag.Names() {
+				seen[name] = true
+			}
+		}
+	}
+	return flags
+}
+
 func findChild(cmd *cli.Command, name string) *cli.Command {
 	for _, c := range cmd.Commands {
-		if !c.Hidden && c.Name == name {
+		// Hidden compatibility routes are still valid when explicitly typed.
+		// Prefix completion below requires a colon to expose these names.
+		compatibility, _ := c.Metadata["command-compatibility-alias"].(bool)
+		if (!c.Hidden || compatibility) && slices.Contains(c.Names(), name) {
 			return c
 		}
 	}
@@ -215,7 +304,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	builder := shellCompletionBuilder{completionStyle: completionStyle}
 	completions := make([]ShellCompletion, 0)
 	if len(args) == 0 {
-		for _, child := range root.Commands {
+		for _, child := range completionCommands(root) {
 			completions = builder.createFromCommand("", child, completions)
 		}
 		return CompletionResult{Completions: completions, Behavior: ShellCompletionBehaviorDefault}
@@ -224,53 +313,153 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	current := args[len(args)-1]
 	preceding := args[0 : len(args)-1]
 	cmd := root
+	lineage := []*cli.Command{root}
+	flags := completionFlags(lineage)
+	help := root.Command("help")
+	localHelp := false
+	if help != nil {
+		localHelp, _ = help.Metadata["help-topic-command"].(bool)
+	}
+	helpTopics, literal := false, false
+	positionalCount := 0
+	var usedFlags []cli.Flag
 	i := 0
 	for i < len(preceding) {
 		arg := preceding[i]
 
-		if isFlag(arg) {
-			flag := findFlag(cmd, arg)
+		if arg == "--" && !literal {
+			literal = true
+			i++
+			continue
+		}
+		if isFlag(arg) && !literal {
+			name, value, assigned := strings.Cut(arg, "=")
+			flag := findFlag(flags, name)
+			// Accept the typed legacy help flag without offering it in discovery.
+			if flag == nil && helpTopics && (name == "--all" || name == "-all") {
+				for _, declared := range help.Flags {
+					legacy, ok := declared.(*cli.BoolFlag)
+					if !ok || legacy.Name != "all" || !slices.Contains(flags, declared) {
+						continue
+					}
+					if assigned {
+						if _, err := strconv.ParseBool(value); err != nil {
+							break
+						}
+					}
+					flag = &declared
+					break
+				}
+			}
 			if flag == nil {
-				i++
-			} else if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() {
-				// All flags except for bool flags take values
+				return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+			}
+			usedFlags = append(usedFlags, *flag)
+			if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {
+				if i == len(preceding)-1 {
+					return flagValueCompletion(*flag)
+				}
 				i += 2
 			} else {
 				i++
 			}
 		} else {
+			fileFlag, _ := cmd.Metadata["completion-positional-file"].(string)
+			if fileFlag != "" && !helpTopics && (literal || arg == "") {
+				positionalCount++
+				i++
+				continue
+			}
+			if arg == "" {
+				i++
+				continue
+			}
+			if localHelp && arg == "help" && !helpTopics && len(cmd.Commands) > 0 {
+				helpTopics = true
+				flags = completionFlags([]*cli.Command{root, help})
+				i++
+				continue
+			}
 			child := findChild(cmd, arg)
+			if helpTopics && cmd == root && arg == "setup" {
+				child = findChild(help, arg)
+			}
+			if helpTopics && arg == "help" {
+				child = nil
+			}
 			if child != nil {
 				cmd = child
+				positionalCount = 0
+				lineage = append(lineage, child)
+				if !helpTopics {
+					flags = completionFlags(lineage)
+				}
+			} else if helpTopics || len(cmd.Commands) > 0 {
+				// A failed group traversal must not offer commands from its parent.
+				return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+			} else {
+				positionalCount++
 			}
 			i++
 		}
 	}
 
-	// Check if the previous arg was a flag expecting a value
-	if len(preceding) > 0 {
-		prev := preceding[len(preceding)-1]
-		if isFlag(prev) {
-			flag := findFlag(cmd, prev)
-			if flag != nil {
-				if fb, ok := (*flag).(*cli.StringFlag); ok && fb.TakesFile {
-					return CompletionResult{Completions: completions, Behavior: ShellCompletionBehaviorFile}
-				} else if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() {
-					return CompletionResult{Completions: completions, Behavior: ShellCompletionBehaviorNoComplete}
+	// Complete assigned values before matching flag names.
+	if isFlag(current) && !literal {
+		if name, _, assigned := strings.Cut(current, "="); assigned {
+			result := CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+			if flag := findFlag(flags, name); flag != nil {
+				if doc, ok := (*flag).(cli.DocGenerationFlag); ok && doc.TakesValue() {
+					result = flagValueCompletion(*flag)
+					if result.Behavior == ShellCompletionBehaviorFile {
+						result.FileValuePrefix = name + "="
+						result.requiresFileValueSupport = true
+					}
 				}
 			}
+			return result
 		}
 	}
 
 	// Completing a flag name
-	if isFlag(current) {
-		for _, flag := range cmd.Flags {
+	if isFlag(current) && !literal {
+		for _, flag := range flags {
+			if vf, ok := flag.(cli.VisibleFlag); ok && !vf.IsVisible() {
+				continue
+			}
 			completions = builder.createFromFlag(current, &flag, completions)
 		}
 	}
 
+	// Metadata opts one positional path into its existing alternate file flag.
+	// Keep flag-value completion above and help-topic traversal unchanged.
+	fileFlag, _ := cmd.Metadata["completion-positional-file"].(string)
+	if fileFlag != "" && !helpTopics && (literal || !isFlag(current)) {
+		if positionalCount == 0 {
+			if flag := findFlag(flags, fileFlag); flag != nil && !slices.Contains(usedFlags, *flag) {
+				result := flagValueCompletion(*flag)
+				if result.Behavior == ShellCompletionBehaviorFile {
+					result.requiresFileValueSupport = true
+					return result
+				}
+			}
+		}
+		return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+	}
+
+	// Keep compatibility aliases out of discovery unless a colon requests them.
+	colonPrefix := strings.Contains(current, ":")
+	children := completionCommands(cmd)
+	if helpTopics && cmd == root {
+		children = slices.DeleteFunc(children, func(child *cli.Command) bool { return child == help })
+		children = append(children, clihelp.VisibleCommands(help)...)
+	}
+	for _, child := range children {
+		completions = builder.createFromCommand(current, child, completions)
+	}
 	for _, child := range cmd.Commands {
-		if !child.Hidden {
+		compatibility, _ := child.Metadata["command-compatibility-alias"].(bool)
+		if child.Hidden && compatibility && colonPrefix {
 			completions = builder.createFromCommand(current, child, completions)
 		}
 	}
@@ -281,9 +470,37 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	}
 }
 
+func flagValueCompletion(flag cli.Flag) CompletionResult {
+	if wrapped, ok := flag.(interface{ CLIStringFlag() *cli.StringFlag }); ok {
+		flag = wrapped.CLIStringFlag()
+	}
+	if file, ok := flag.(interface{ IsFileInput() bool }); ok && file.IsFileInput() {
+		return CompletionResult{Behavior: ShellCompletionBehaviorFile, requiresFileValueSupport: true}
+	}
+	if file, ok := flag.(*cli.StringFlag); ok && file.TakesFile {
+		return CompletionResult{Behavior: ShellCompletionBehaviorFile}
+	}
+	return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+}
+
+func completionCommands(command *cli.Command) []*cli.Command {
+	children := clihelp.VisibleCommands(command)
+	// The framework omits help from VisibleCommands. Preserve its completion
+	// aliases without adding framework-specific helpers to the printed index.
+	if help := command.Command("help"); help != nil && !help.Hidden {
+		children = append(children, help)
+	}
+	return children
+}
+
 func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	root := cmd.Root()
-	args := rebuildColonSeparatedArgs(root.Args().Slice()[1:])
+	args := root.Args().Slice()[1:]
+	// Current adapters preserve shell word boundaries. Older loaded adapters
+	// can still send colon fragments, so retain their reconstruction fallback.
+	if os.Getenv("OPENAI_CLI_COMPLETION_PRESERVE_WORDS") != "1" {
+		args = rebuildColonSeparatedArgs(args)
+	}
 
 	var completionStyle CompletionStyle
 	if style, ok := os.LookupEnv("COMPLETION_STYLE"); ok {
@@ -303,28 +520,58 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 		return cli.Exit("COMPLETION_STYLE must be set to 'bash', 'zsh', 'pwsh', 'fish'", 1)
 	}
 
+	// Bash/fish pass a separator. Zsh sends only the user's tokens, so its
+	// leading -- may be a flag prefix or the user's end-of-options marker.
+	// Keep the separator form accepted by direct PowerShell backend callers.
+	if completionStyle != CompletionStyleZsh && len(args) > 0 && args[0] == "--" {
+		args = args[1:]
+	} else if completionStyle == CompletionStylePowershell && len(args) > 1 {
+		name := strings.ReplaceAll(strings.Trim(args[0], `"'`), `\`, "/")
+		name = name[strings.LastIndex(name, "/")+1:]
+		if strings.EqualFold(strings.TrimSuffix(strings.ToLower(name), ".exe"), root.Name) {
+			args = args[1:]
+		}
+	}
+
 	result := GetCompletions(completionStyle, root, args)
+	// Adapters advertise this only for their backend call. Older binaries ignore
+	// the marker; older loaded adapters keep their existing completion behavior.
+	if result.requiresFileValueSupport && os.Getenv("OPENAI_CLI_COMPLETION_FILE_VALUES") != "1" {
+		result = CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+	}
+	if result.FileValuePrefix != "" {
+		if _, err := fmt.Fprintln(cmd.Writer, result.FileValuePrefix); err != nil {
+			return err
+		}
+	}
 
 	for _, completion := range result.Completions {
 		name := completion.Name
 		if completionStyle == CompletionStyleZsh {
 			name = strings.ReplaceAll(name, ":", "\\:")
 		}
-		if completionStyle == CompletionStyleZsh && len(completion.Usage) > 0 {
-			_, _ = fmt.Fprintf(cmd.Writer, "%s:%s\n", name, completion.Usage)
-		} else if completionStyle == CompletionStyleFish && len(completion.Usage) > 0 {
-			_, _ = fmt.Fprintf(cmd.Writer, "%s\t%s\n", name, completion.Usage)
-		} else {
-			_, _ = fmt.Fprintf(cmd.Writer, "%s\n", name)
+		// Shell adapters split on newlines and tabs. Keep API prose within one
+		// record and escape terminal controls before they reach the menu.
+		usage := readable.Text(strings.Join(strings.Fields(completion.Usage), " "))
+		if sentence, _, found := strings.Cut(usage, ". "); found {
+			usage = sentence + "."
+		}
+		if completionStyle == CompletionStyleZsh && usage != "" {
+			name += ":" + usage
+		} else if completionStyle == CompletionStyleFish && usage != "" {
+			name += "\t" + usage
+		}
+		if _, err := fmt.Fprintln(cmd.Writer, name); err != nil {
+			return err
 		}
 	}
 	return cli.Exit("", int(result.Behavior))
 }
 
-// When CLI arguments are passed in, they are separated on word barriers.
-// Most commonly this is whitespace but in some cases that may also be colons.
-// We wish to allow arguments with colons. To handle this, we append/prepend colons to their neighboring
-// arguments.
+// rebuildColonSeparatedArgs supports older adapters that send standalone colon
+// fragments. Current adapters must preserve word boundaries before calling the
+// backend: a literal ":" value cannot be distinguished from a split colon here.
+// A trailing colon alone never joins the next argument; it may end a flag value.
 //
 // Example: `rebuildColonSeparatedArgs(["a", "b", ":", "c", "d"])` => `["a", "b:c", "d"]`
 func rebuildColonSeparatedArgs(args []string) []string {
@@ -338,18 +585,12 @@ func rebuildColonSeparatedArgs(args []string) []string {
 	for i < len(args) {
 		current := args[i]
 
-		// Keep joining while the next element is ":" or the current element ends with ":"
-		for i+1 < len(args) && (args[i+1] == ":" || strings.HasSuffix(current, ":")) {
-			if args[i+1] == ":" {
-				current += ":"
+		for i+1 < len(args) && args[i+1] == ":" {
+			current += ":"
+			i++
+			if i+1 < len(args) && args[i+1] != ":" {
+				current += args[i+1]
 				i++
-				// Check if there's a following element after the ":"
-				if i+1 < len(args) && args[i+1] != ":" {
-					current += args[i+1]
-					i++
-				}
-			} else {
-				break
 			}
 		}
 

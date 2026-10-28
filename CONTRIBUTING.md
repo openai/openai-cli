@@ -1,0 +1,356 @@
+# Contributing to the OpenAI CLI
+
+## Contribution policy
+
+We welcome bug reports, feature requests, minimal reproductions, and root-cause
+analysis through [GitHub issues](https://github.com/openai/openai-cli/issues).
+
+**Pull requests are limited to repository collaborators. We do not accept pull
+requests from non-collaborators**, including documentation or example changes.
+If you are not a collaborator, please open an issue instead of preparing a pull
+request. Include the affected version, expected and actual behavior, and a small,
+sanitized reproduction when applicable.
+
+Report suspected security vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md), rather than in issues or pull requests.
+
+The development and pull request instructions below are for maintainers and
+repository collaborators.
+
+Thank you for helping improve the OpenAI CLI. Read [README.md](README.md),
+[AGENTS.md](AGENTS.md), and [SECURITY.md](SECURITY.md) before making changes.
+
+## Setting up the environment
+
+Use the Go version required by `go.mod`; the CLI currently requires Go 1.26 or
+later. The integration tests also require Node.js 14.18 or later, Git, `curl`, `unzip`, and `lsof`. Review dependency origins and executable setup
+scripts before running:
+
+```sh
+./scripts/bootstrap
+./scripts/lint
+```
+
+`./scripts/bootstrap` checks `go.mod` and `go.sum` with `go mod tidy -diff`.
+If changes are needed, it prints a diff and exits without rewriting the files.
+After a successful check, it downloads Go dependencies with `go mod download`
+and verifies them with `go mod verify`. `./scripts/lint` builds the CLI. The OpenAPI mock
+server's pinned source and runtime are installed automatically when running integration
+tests; they are not required to build the CLI.
+
+## Project structure
+
+The CLI is an executable product; its Go packages are not a supported library API.
+See the [repository layout migration](docs/architecture/repository-layout.md) for
+the target structure, package boundaries, and CLI compatibility checks. The list
+below describes the current layout as the migration proceeds.
+
+- `cmd/openai/` contains startup, minimal wiring, and executable tests.
+- `generated/commands/` contains generated API commands and their integration tests.
+- `generated/tokenizer/` contains Unicode tables emitted by
+  `scripts/generate-tokenizer-unicode.go`; the handwritten tokenizer stays in
+  `internal/tokenizer/`.
+- `tests/cli/` contains handwritten command and request contracts.
+- `internal/commands/codex/` owns the complete Codex guide, presentation, and tests.
+- `internal/commands/tokenize/` owns tokenizer commands, the live editor, preview
+  workers, native input handling, and their tests; `internal/tokenizer/` remains
+  the encoding engine.
+- `internal/commands/manpages/` owns manual rendering, text/gzip file cleanup,
+  and tests. Application assembly supplies the shared save-receipt policy.
+- `internal/commands/images/` owns image model discovery, picker drafts, saving,
+  streaming previews, local preview preferences, and shell setup mechanics.
+  Assembly supplies request/presentation policy and foreground first-run admission.
+- `internal/commands/audio/` owns speech controls, local history/playback commands,
+  voice creation and validation, and transcript/speech response handling.
+  Assembly supplies request and presentation policies.
+- `internal/commands/admin/` owns admin credential requirements, setup help,
+  verification, and secure native key entry.
+- `internal/commands/models/` owns model-list selection, filter parsing, loading
+  lifecycle, tables, and loaded-response presentation. Shared terminal list
+  navigation and loaded-page rendering live in `internal/output/listview/`.
+- `internal/commands/` owns nested API routes, compatibility aliases, task
+  shortcuts, and help-group metadata, alongside shared local-command and safe-error
+  contracts. Assembly preserves the order in which these are configured.
+- `internal/clihelp/` owns help rendering, command typo matching, and recovery
+  guidance and request-input help annotations. It uses declared command/flag
+  names and escaped local invocation
+  metadata without echoing private operands or executing suggested corrections.
+- `internal/app/` owns command assembly, defaults, request/output policy, error
+  handling, and presentation orchestration.
+- Generated runtime adapters call `internal/app/` directly; no `pkg/custom/`
+  compatibility package is retained.
+- `internal/request/` owns root request inheritance, literal header and mTLS
+  flag definitions, value-safe validation, mTLS transport construction, and client
+  metadata setup and scalar-upload inspection/replay. Application assembly retains registration order and the local
+  command bypass.
+- `internal/output/transform/` selects or reshapes API responses before presentation.
+- `internal/` contains shared helpers for flags, request encoding, terminal
+  output, and testing. For example, `internal/readable` renders labeled text
+  and escapes terminal controls for results and errors.
+- `internal/output/` owns cancellation-aware writing, staged downloads, safe error
+  metadata, and receipt failures. It distinguishes output-sink failures from
+  diagnostics and upstream errors.
+- `internal/terminal/` owns browser launching and child-process environment
+  isolation, color profiles, automatic terminal presentation, background themes,
+  cancellable terminal frame output, frame layout, and native Windows input
+  records shared by tokenizer, audio, images, and admin setup.
+- `internal/input/` owns borrowed-file reading shared by Batch and tokenizer,
+  preserving cancellation, descriptor flags, deadlines, and caller ownership.
+- `internal/testutil/console/` contains shared synthetic Windows console records
+  and observer fixtures used only by native feature tests.
+- `internal/app/` owns invocation, request-environment scope, completion setup,
+  output policy, help assembly, and exit-status selection. `cmd/openai` passes in the
+  generated tree; application code does not import generated commands.
+- `api_reference/openapi.transformed.yml` contains the OpenAPI specification
+  used by the mock server.
+- `scripts/` contains the local development, build, and test commands.
+
+## Generated and handwritten code
+
+API commands and tests in `generated/commands/` are generated by Castiron from
+the OpenAPI specification. Generated files contain a `File generated` header;
+`.castiron.stats.yml` and `api_reference/openapi.transformed.yml` identify the
+generation inputs. Establish ownership before editing generated files and fix
+recurring generated problems in the authoritative schema or generator when
+available.
+
+Handwritten features are moving into `internal/commands/<feature>/`; Codex,
+tokenizer, manpages, files, batches, models, admin, audio, and images are there now. Application policy belongs in `internal/app/`,
+`internal/output/transform/`, and focused `internal/` helpers. Keep
+`cmd/openai/` focused on startup and wiring. Generated code calls handwritten
+request/output helpers through a generated runtime bridge.
+Application assembly registers handwritten features; keep their implementations
+and tests outside `generated/`.
+Reuse an existing package unless a new one has a distinct responsibility.
+Preserve existing command flags, output,
+request semantics, supported platforms, generated boundaries, and the separate
+`api_reference/go.mod` module. Keep changes small and add focused tests for
+observable behavior changes.
+
+## Running and building locally
+
+Use the development helper to run the CLI from your working tree:
+
+```sh
+./scripts/run --help
+```
+
+`scripts/run` changes to the repository root and executes `go run ./cmd/openai`
+with your arguments. The CLI inherits your permissions and environment, including
+API credentials. Go may download missing modules or the required toolchain
+before running the CLI. Relative input and output paths resolve from the
+repository root.
+
+Build an `openai` executable in the repository root:
+
+```sh
+./scripts/build
+```
+
+For automation that needs exact CLI exit codes, run the built executable directly.
+[`go run`](https://pkg.go.dev/cmd/go#hdr-Compile_and_run_Go_program) reports its own
+exit status, which can differ from the CLI's exit status.
+
+You can also install the local checkout into your Go binary directory:
+
+```sh
+go install ./cmd/openai
+```
+
+## Generated-file ownership
+
+Do not edit generated SDK files by hand. Fix the API schema, generation
+configuration, or compiler and regenerate instead. Put SDK-specific behavior in
+separately owned handwritten helpers and extension points.
+
+Regeneration replaces generated files and removes retired generated paths.
+Handwritten edits to generated output are overwritten, not carried forward.
+Separately owned handwritten files are preserved. Resolve ownership conflicts
+explicitly before regeneration. Follow the ownership rules in `AGENTS.md`
+and review generated output and inventory changes together. Generated-file
+ownership currently relies on contributor guidance and code review, without a
+dedicated generated-file edit check or required gate. Fix violations in the
+generation inputs/compiler and regenerate; do not edit inventory hashes to
+accept a handwritten patch.
+
+## Security requirements
+
+### Credentials, examples, and diagnostics
+
+- Never commit API keys, admin keys, bearer tokens, webhook secrets, private
+  keys, release credentials, `.env` files, or customer data. Load
+  `OPENAI_API_KEY`, `OPENAI_ADMIN_KEY`, and `OPENAI_WEBHOOK_SECRET` from the
+  environment; use clearly fake values and synthetic content in examples,
+  tests, fixtures, recordings, and snapshots.
+- Store mutual-TLS private keys in permission-restricted files and configure
+  their paths through `OPENAI_MTLS_CLIENT_KEY_FILE`; never include private-key
+  contents in shell arguments, environment variables, examples, or logs.
+- Use `t.Setenv`, `httptest`, or the reviewed local mock server instead of live
+  API requests. Do not place credentials in shell history, process arguments,
+  public issues, test output, or CI artifacts.
+- Redact authorization and API-key headers, cookies, signed URLs, sensitive
+  query parameters, prompts, uploaded files, customer data, and sensitive
+  request or response bodies from logs, errors, recordings, and shared
+  diagnostics. Preserve existing request-header redaction and review response
+  headers separately. Treat `--debug` output as sensitive until sanitized.
+
+### Dependencies and release automation
+
+- Review direct and transitive module changes in `go.mod` and `go.sum`, the
+  separate `api_reference/go.mod`, module provenance, `replace` directives,
+  and checksum verification. Run `go mod verify`; never accept unexplained
+  lockfile changes or bypass Go's module integrity protections.
+- Review `scripts/bootstrap`, `scripts/mock`, and the pinned Steady source and Deno
+  runtime before executing install hooks or downloading tooling.
+  Preserve the existing hourly `github.com/openai/openai-go/v3` updater; do not
+  introduce conflicting dependency update or release automation.
+- Pin third-party GitHub Actions to reviewed full commit SHAs and grant each
+  workflow job only its required permissions. Default to
+  `persist-credentials: false`, while preserving the existing SDK updater's
+  intentionally authenticated, narrowly scoped checkout.
+- Keep GitHub App private keys, release and Homebrew tokens, macOS signing and
+  notarization credentials, and short-lived OIDC credentials inside approved
+  release, publishing, or attestation boundaries. Never expose them to
+  untrusted pull requests, executable dependencies, logs, or artifacts. Run
+  repository code and Go dependencies for release inputs in a separate,
+  credential-free job before creating publishing or signing credentials.
+- Preserve protected `release` and `publish` environments, validated release
+  tags on `main`, GoReleaser artifacts, Homebrew publication, and provenance
+  attestations. Restrict `id-token: write` and `attestations: write` to the
+  job that needs them; never publish artifacts or dispatch a release without
+  explicit maintainer authorization.
+
+### Security-sensitive changes
+
+Obtain SDK CODEOWNER review for changes involving API or admin authentication;
+endpoint/base-URL validation; redirects, proxies, TLS, or mutual TLS; local
+file paths, `@file` arguments, stdin, uploads, or streaming; JSON/YAML parsing;
+debug output; dependency installation; generated code; GitHub Actions;
+signing; or release artifacts. Add targeted security or regression tests when
+observable behavior changes; otherwise use the smallest appropriate structural,
+dependency, workflow, generated-output, or artifact validation. Exercise
+malformed, unexpected, or attacker-controlled input when relevant.
+
+Report suspected vulnerabilities privately through [SECURITY.md](SECURITY.md)
+and `disclosure@openai.com`. Never disclose vulnerabilities in public GitHub
+issues, pull requests, or discussions. This includes issues affecting the CLI
+source, official binaries, installers, packages, or other release artifacts.
+
+## Running tests
+
+The mock server uses [the OpenAI Steady fork](https://github.com/openai-oss-forks/steady).
+`scripts/steady/manifest.json` is the single source of dependency pins: the
+Steady Git commit and source digest, plus the Deno version and runtime checksums. `./scripts/steady/install` fetches that source, verifies the runtime,
+and caches dependencies using the fork's frozen Deno lockfile. It requires
+Git, Node.js, curl, unzip, and sha256sum or shasum. The installation supports
+macOS and Linux on x64/ARM64, and Windows x64 through Git Bash.
+
+`./scripts/run-steady` verifies the local source and runtime, then runs without
+downloading dependencies. Pass a local OpenAPI specification path or a trusted URL.
+Remote specifications may be fetched by Steady at runtime, using its network
+access; inspect remote content and references before using them. To update
+Steady, review the fork commit and run
+`node scripts/steady/update.cjs <full-commit-sha>`. This updates the manifest
+with the commit and its source digest; no launcher or test edits are needed.
+Then run `./scripts/steady/install`. Review the release checksums when changing Deno.
+Run `node scripts/steady/test.cjs` to check the
+installation, integrity checks, and mock-server lifecycle.
+
+
+Run focused, offline checks before considering live or release-sensitive work:
+
+```sh
+go test ./internal/...
+go test ./... -run '^$'
+go mod verify
+./scripts/lint
+```
+
+Run the complete test workflow with:
+
+```sh
+./scripts/test
+```
+
+The script starts an OpenAPI mock server on `127.0.0.1:4010` when one is not
+already running, runs `go test ./...`, and cross-compiles the test packages for
+Windows. Additional arguments are forwarded to `go test`:
+
+```sh
+./scripts/test -run '^TestResponsesCreate$'
+```
+
+Normal tests inspect every command declaration and run representative error-recovery cases.
+CI also runs every generated recovery case across four balanced shards.
+Each shard validates its Go JSON results, including every selected case and the classification guards.
+The required test check requires successful source preparation, ordinary tests, and all four shards.
+
+Run the complete recovery audit locally with:
+
+```sh
+OPENAI_CLI_ERROR_COVERAGE_MODE=exhaustive go test ./cmd/openai -run '^TestMainErrorCoverageAcrossCommandTree$' -count=1 -timeout=30m
+```
+
+Run one balanced shard with:
+
+```sh
+OPENAI_CLI_ERROR_COVERAGE_SHARD_INDEX=0 OPENAI_CLI_ERROR_COVERAGE_SHARD_COUNT=4 go test ./cmd/openai -run '^TestMainErrorCoverageAcrossCommandTree$' -count=1
+```
+
+Shard indices start at zero. The audit calculates ranges from current declarations, including future additions.
+`OPENAI_CLI_ERROR_COVERAGE_START` and `OPENAI_CLI_ERROR_COVERAGE_END` select a half-open range for bounded local checks.
+Do not combine range and shard settings. Partial runs do not establish complete coverage.
+
+To keep the mock server running while iterating on tests, start it in a separate
+terminal:
+
+```sh
+./scripts/mock
+```
+
+The mock server uses the checked-in OpenAPI specification by default. To use a
+different OpenAPI specification, pass its local path or trusted URL explicitly:
+
+```sh
+./scripts/mock path/to/openapi.yml
+```
+
+To run tests against an existing compatible server instead, set
+`TEST_API_BASE_URL`:
+
+```sh
+TEST_API_BASE_URL=http://127.0.0.1:4010 ./scripts/test
+```
+
+Use synthetic data, and do not substitute a live API endpoint or production
+credentials.
+
+## Formatting and releases
+
+Use standard Go formatting for intentionally changed Go files. The repository's
+`./scripts/format` command rewrites Go files; inspect its diff and avoid
+unrelated generated-source churn.
+
+Releases are maintainer-managed through the existing release-please,
+GoReleaser, Homebrew, macOS signing/notarization, and artifact-attestation
+workflows. Do not create tags, publish binaries or packages, dispatch release
+workflows, change signing keys, or modify repository settings without explicit
+authorization.
+
+## Linking a local Go SDK
+
+To develop the CLI against a local checkout of the OpenAI Go SDK, run:
+
+```sh
+./scripts/link ../openai-go
+```
+
+If no path is provided, `./scripts/link` defaults to `../openai-go`. Remove the
+local Go module replacement when you are done:
+
+```sh
+./scripts/unlink
+```
+
+Linking updates `go.mod` and can update `go.sum`. Check those files before
+committing so a local replacement is not included unintentionally.

@@ -1,0 +1,876 @@
+package autocomplete
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"time"
+	"unicode/utf8"
+)
+
+// PickerInstallation contains only caller-selected paths. Shell discovery and
+// consent belong to the command layer. Profile must be the startup file that
+// this shell actually reads.
+type PickerInstallation struct {
+	Shell      CompletionStyle
+	Directory  string
+	Profile    string
+	OptOutPath string // Optional shared marker for managed fish activation.
+	// The zero value preserves the existing picker namespace and script format.
+	integration string
+	executable  string
+	doubleTab   bool
+}
+
+type PickerInstallResult struct {
+	Changed    bool
+	ScriptPath string
+}
+
+const (
+	pickerInstallLimit = 1 << 20 // Local startup files, never API payloads.
+	pickerBlockBegin   = "# >>> openai image picker v1 >>>"
+	pickerBlockEnd     = "# <<< openai image picker v1 <<<"
+	pickerScriptHeader = "# OpenAI CLI image picker integration v1\n"
+)
+
+var errPickerInstallChanged = errors.New("shell integration files changed during setup; existing files were kept")
+
+type pickerInstalledBlock struct {
+	Shell          CompletionStyle `json:"shell"`
+	Script         string          `json:"script"`
+	ProfileCreated bool            `json:"profile_created,omitempty"`
+	Integration    string          `json:"integration,omitempty"`
+	Executable     string          `json:"executable,omitempty"`
+	DoubleTab      bool            `json:"double_tab,omitempty"`
+}
+
+type pickerFileSnapshot struct {
+	info os.FileInfo
+	data []byte
+}
+
+// WithPickerSetupLock serializes a command's complete setup decision, including
+// all startup profiles and its opt-out preference. Its lock is distinct from
+// the per-file transaction locks used by InstallPicker and RemovePicker.
+func WithPickerSetupLock(ctx context.Context, directory string, change func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || strings.ContainsAny(directory, "\x00\r\n") {
+		return errors.New("shell integration requires a clean absolute configuration directory")
+	}
+	root, err := openPickerScriptDirectory(ctx, directory, true)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	lock, err := lockPickerInstallation(ctx, root, ".picker-setup.lock")
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	return change()
+}
+
+// InstallPicker persists normal completion and the optional picker hook. The
+// immutable script is committed before the profile; failed profile updates
+// preserve scripts needed by an interrupted profile transaction. Cooperating
+// writers serialize from validation through recovery. External editors do not
+// share these locks: displaced profiles are retained, and publication never
+// replaces an entry created by an editor during the transaction.
+func InstallPicker(ctx context.Context, options PickerInstallation) (PickerInstallResult, error) {
+	return changePickerInstallation(ctx, options, false)
+}
+
+// RemovePicker removes only an intact managed block and its verified script.
+// Modified blocks or scripts are preserved and reported for manual inspection.
+func RemovePicker(ctx context.Context, options PickerInstallation) (PickerInstallResult, error) {
+	return changePickerInstallation(ctx, options, true)
+}
+
+// IsPickerInstalled verifies an intact profile block and an owned script that
+// matches this CLI's current content, without creating files or locking.
+func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, error) {
+	_, current, err := inspectPickerInstallation(ctx, options)
+	return current, err
+}
+
+func inspectPickerInstallation(ctx context.Context, options PickerInstallation) (*pickerInstalledBlock, bool, error) {
+	if err := validatePickerInstallation(options); err != nil {
+		return nil, false, err
+	}
+	if err := preflightPickerScriptDirectory(ctx, options); err != nil {
+		return nil, false, err
+	}
+	root, err := openPickerProfileDirectory(ctx, filepath.Dir(options.Profile), false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	defer root.Close()
+	callerProfile := options.Profile
+	options.Profile, err = pickerProfileIdentity(ctx, root, options.Profile)
+	if err != nil {
+		return nil, false, err
+	}
+	profile, err := readPickerFile(ctx, root, filepath.Base(options.Profile))
+	if err != nil {
+		return nil, false, err
+	}
+	_, _, installed, err := parsePickerBlock(profile.data, options)
+	if err != nil || installed == nil {
+		return nil, false, err
+	}
+	// Existing profiles keep their verified script location when the user's
+	// configuration root changes. New profiles use the caller-selected root.
+	options.Directory = filepath.Dir(installed.Script)
+	scripts, err := openPickerScriptDirectory(ctx, options.Directory, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	defer scripts.Close()
+	script, err := readPickerFile(ctx, scripts, filepath.Base(installed.Script))
+	if err != nil || script.info == nil {
+		return nil, false, err
+	}
+	if !validInstalledPickerScript(options, *installed, script.data) {
+		return nil, false, errors.New("installed shell integration script was modified")
+	}
+	if options.integration == suggestionsIntegration {
+		options.executable, options.doubleTab = installed.Executable, installed.DoubleTab
+	}
+	current, err := renderInstalledPicker(options)
+	if err != nil {
+		return nil, false, err
+	}
+	if !bytes.Equal(script.data, current) {
+		return installed, false, ctx.Err()
+	}
+	pending, err := reconcilePickerScripts(ctx, scripts, options, callerProfile, script, false)
+	return installed, !pending && err == nil, err
+}
+
+func changePickerInstallation(ctx context.Context, options PickerInstallation, remove bool) (result PickerInstallResult, err error) {
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if err := validatePickerInstallation(options); err != nil {
+		return result, err
+	}
+	if err := preflightPickerScriptDirectory(ctx, options); err != nil {
+		return result, err
+	}
+	profileRoot, err := openPickerProfileDirectory(ctx, filepath.Dir(options.Profile), !remove)
+	if remove && errors.Is(err, os.ErrNotExist) {
+		result.Changed, err = removePickerScriptsWithoutProfile(ctx, options)
+		return result, err
+	}
+	if err != nil {
+		return result, err
+	}
+	defer profileRoot.Close()
+	callerProfile := options.Profile
+	options.Profile, err = pickerProfileIdentity(ctx, profileRoot, options.Profile)
+	if err != nil {
+		return result, err
+	}
+	profileName := filepath.Base(options.Profile)
+	profileLock, err := lockPickerInstallation(ctx, profileRoot, "."+profileName+".openai-picker.lock")
+	if err != nil {
+		return result, err
+	}
+	defer profileLock.Close()
+	if err := recoverPickerProfiles(ctx, profileRoot, profileName); err != nil {
+		return result, err
+	}
+	profile, err := readPickerFile(ctx, profileRoot, profileName)
+	if err != nil {
+		return result, err
+	}
+	before, after, installed, err := parsePickerBlock(profile.data, options)
+	if err != nil {
+		return result, err
+	}
+	ownedPrevious := installed != nil && pickerScriptMatchesProfile(options, callerProfile, *installed)
+	if installed != nil {
+		options.Directory = filepath.Dir(installed.Script)
+		if !ownedPrevious {
+			// Older metadata cannot recover the spelling used for its profile
+			// hash. Preserve unproven scripts and profile creation ownership.
+			installed.ProfileCreated = false
+		}
+	}
+	scriptRoot, err := openPickerScriptDirectory(ctx, options.Directory, !remove)
+	if remove && errors.Is(err, os.ErrNotExist) {
+		if installed == nil {
+			return result, nil
+		}
+		desired := withoutPickerBlock(before, after)
+		if err := removePickerProfileBlock(ctx, profileRoot, profileName, profile, *installed, desired); err != nil {
+			return result, err
+		}
+		result.Changed = true
+		return result, nil
+	}
+	if err != nil {
+		return result, err
+	}
+	defer scriptRoot.Close()
+	scriptLock, err := lockPickerInstallation(ctx, scriptRoot, ".picker-install.lock")
+	if err != nil {
+		return result, err
+	}
+	defer scriptLock.Close()
+	if remove && installed == nil {
+		// A previous removal may have committed the profile before script
+		// cleanup failed. Retry provable ownership in the selected directory.
+		result.Changed, err = reconcilePickerScripts(ctx, scriptRoot, options, callerProfile, pickerFileSnapshot{}, true)
+		return result, err
+	}
+	var previous pickerFileSnapshot
+	if installed != nil {
+		previous, err = readPickerFile(ctx, scriptRoot, filepath.Base(installed.Script))
+		if err != nil {
+			return result, err
+		}
+		if previous.info != nil && !validInstalledPickerScript(options, *installed, previous.data) {
+			return result, errors.New("installed shell integration script was modified; existing files were kept")
+		}
+	}
+	var desired []byte
+	var next pickerInstalledBlock
+	var newSnapshot pickerFileSnapshot
+	created := false
+	defer func() {
+		if err != nil && created {
+			err = errors.Join(err, removePickerSnapshot(context.Background(), scriptRoot, filepath.Base(next.Script), newSnapshot))
+		}
+	}()
+	if remove {
+		desired = withoutPickerBlock(before, after)
+	} else {
+		script, err := renderInstalledPicker(options)
+		if err != nil {
+			return result, err
+		}
+		next = pickerInstalledBlock{
+			Shell: options.Shell, Script: filepath.Join(options.Directory, pickerScriptName(options, script)),
+			ProfileCreated: profile.info == nil || installed != nil && installed.ProfileCreated || siblingCreatedProfile(profile.data, options),
+			Integration:    options.integration, Executable: options.executable, DoubleTab: options.doubleTab,
+		}
+		result.ScriptPath = next.Script
+		newSnapshot, err = readPickerFile(ctx, scriptRoot, filepath.Base(next.Script))
+		if err != nil {
+			return result, err
+		}
+		if newSnapshot.info != nil && !bytes.Equal(newSnapshot.data, script) {
+			return result, errors.New("shell integration script path is already occupied; existing files were kept")
+		}
+		block := renderPickerBlock(next)
+		desired = append(append(append([]byte(nil), before...), block...), after...)
+		if len(desired) > pickerInstallLimit {
+			return result, errors.New("shell startup file exceeds the setup size limit")
+		}
+		if profile.info != nil && !bytes.Equal(profile.data, desired) {
+			if err := checkPickerRecoveryCapacity(ctx, profileRoot, profileName); err != nil {
+				return result, err
+			}
+		}
+		if newSnapshot.info == nil {
+			// Unique content addresses permit an exclusive create. No existing
+			// script is replaced and a profile never names a partial file.
+			newSnapshot, err = writePickerScript(ctx, scriptRoot, filepath.Base(next.Script), script)
+			if err != nil {
+				return result, err
+			}
+			created = true
+		}
+	}
+	if !bytes.Equal(profile.data, desired) {
+		if remove {
+			err = removePickerProfileBlock(ctx, profileRoot, profileName, profile, *installed, desired)
+		} else {
+			err = replacePickerProfile(ctx, profileRoot, profileName, profile, desired)
+		}
+		// A bookkeeping failure after publication must not remove the script
+		// that the live profile now references.
+		if errors.Is(err, errPickerProfilePublished) {
+			created = false
+		}
+		if err != nil {
+			return result, err
+		}
+		result.Changed = true
+	} else if created {
+		result.Changed = true
+	}
+	// After the profile commit the new script belongs to that profile. A
+	// superseded cleanup failure must not remove its active replacement.
+	created = false
+	cleaned, err := reconcilePickerScripts(ctx, scriptRoot, options, callerProfile, newSnapshot, true)
+	result.Changed = result.Changed || cleaned
+	return result, err
+}
+
+// Inspect existing metadata before validating the script location. A changed
+// configuration root is irrelevant when the profile records another directory.
+// This check creates nothing, including for a missing profile; callers re-read
+// the profile and validate the selected directory for the actual operation.
+func preflightPickerScriptDirectory(ctx context.Context, options PickerInstallation) error {
+	profileRoot, err := openPickerProfileDirectory(ctx, filepath.Dir(options.Profile), false)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if profileRoot != nil {
+		defer profileRoot.Close()
+		options.Profile, err = pickerProfileIdentity(ctx, profileRoot, options.Profile)
+		if err != nil {
+			return err
+		}
+		profile, err := readPickerFile(ctx, profileRoot, filepath.Base(options.Profile))
+		if err != nil {
+			return err
+		}
+		if profile.info == nil {
+			pending, err := hasPendingPickerRecovery(ctx, profileRoot, filepath.Base(options.Profile))
+			if err != nil || pending {
+				// Recover under the profile lock before choosing a script root:
+				// the displaced profile may record a different valid root.
+				return err
+			}
+		}
+		_, _, installed, err := parsePickerBlock(profile.data, options)
+		if err != nil {
+			return err
+		}
+		if installed != nil {
+			options.Directory = filepath.Dir(installed.Script)
+		}
+	}
+	scripts, err := openPickerScriptDirectory(ctx, options.Directory, false)
+	if scripts != nil {
+		scripts.Close()
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func validatePickerInstallation(options PickerInstallation) error {
+	if options.integration != "" && options.integration != suggestionsIntegration {
+		return errors.New("unsupported shell integration")
+	}
+	if _, ok := shellCompletions[options.Shell]; !ok {
+		return errors.New("unsupported picker shell")
+	}
+	if options.Shell == CompletionStylePowershell {
+		if options.integration == suggestionsIntegration {
+			return errors.New("command insertion setup supports Bash 4.3+, zsh, and fish")
+		}
+		return errors.New("PowerShell uses normal Tab completion. Type openai images generate and press Enter to open the image picker.")
+	}
+	paths := []string{options.Directory, options.Profile}
+	if options.OptOutPath != "" {
+		paths = append(paths, options.OptOutPath)
+	}
+	for _, path := range paths {
+		if !filepath.IsAbs(path) || filepath.Clean(path) != path || !utf8.ValidString(path) || strings.ContainsAny(path, "\x00\r\n") {
+			return errors.New("shell integration requires clean absolute paths without line breaks")
+		}
+	}
+	if filepath.Dir(options.Profile) == options.Directory || options.Profile == options.Directory {
+		return errors.New("shell integration scripts require a separate directory from the startup file")
+	}
+
+	return nil
+}
+
+func pickerScriptName(options PickerInstallation, data []byte) string {
+	ext := map[CompletionStyle]string{CompletionStyleZsh: "zsh", CompletionStyleBash: "bash", CompletionStyleFish: "fish"}[options.Shell]
+	return fmt.Sprintf("%s%x.%s", pickerScriptProfilePrefix(options), sha256.Sum256(data), ext)
+}
+
+func pickerScriptProfilePrefix(options PickerInstallation) string {
+	profileHash := sha256.Sum256([]byte(options.Profile))
+	return fmt.Sprintf("%s-%s-%x-", pickerIntegrationNamespace(options.integration), options.Shell, profileHash[:8])
+}
+
+func pickerScriptMatchesProfile(options PickerInstallation, callerProfile string, block pickerInstalledBlock) bool {
+	name := filepath.Base(block.Script)
+	if strings.HasPrefix(name, pickerScriptProfilePrefix(options)) {
+		return true
+	}
+	options.Profile = callerProfile
+	return strings.HasPrefix(name, pickerScriptProfilePrefix(options))
+}
+
+func validInstalledPickerScript(options PickerInstallation, block pickerInstalledBlock, data []byte) bool {
+	if validOwnedPickerScript(options, block, data) {
+		return true
+	}
+	// Legacy blocks retain only a hash of the original path spelling.
+	// Verify content independently, but never delete a script whose profile
+	// namespace cannot be proved by pickerScriptMatchesProfile.
+	return validPickerScriptContent(options, block, data)
+}
+
+func validPickerScriptContent(options PickerInstallation, block pickerInstalledBlock, data []byte) bool {
+	if !bytes.HasPrefix(data, []byte(pickerIntegrationHeader(options.integration))) {
+		return false
+	}
+	name, ok := strings.CutPrefix(filepath.Base(block.Script), pickerIntegrationNamespace(options.integration)+"-"+string(options.Shell)+"-")
+	if !ok || len(name) < 17 || name[16] != '-' {
+		return false
+	}
+	if _, err := hex.DecodeString(name[:16]); err != nil || name[:16] != strings.ToLower(name[:16]) {
+		return false
+	}
+	// Replacing only the namespace must produce the expected full hash/name.
+	return pickerScriptProfilePrefix(options)+name[17:] == pickerScriptName(options, data)
+}
+
+func validOwnedPickerScript(options PickerInstallation, block pickerInstalledBlock, data []byte) bool {
+	return bytes.HasPrefix(data, []byte(pickerIntegrationHeader(options.integration))) && filepath.Base(block.Script) == pickerScriptName(options, data)
+}
+
+func parsePickerBlock(data []byte, options PickerInstallation) ([]byte, []byte, *pickerInstalledBlock, error) {
+	if !utf8.Valid(data) || bytes.ContainsRune(data, 0) {
+		return nil, nil, nil, errors.New("shell startup file must contain UTF-8 text")
+	}
+	blockBegin, blockEnd, metadataPrefix, marker := pickerIntegrationMarkers(options.integration)
+	begin, end := bytes.Count(data, []byte("# >>> "+marker)), bytes.Count(data, []byte("# <<< "+marker))
+	if begin == 0 && end == 0 {
+		return data, nil, nil, nil
+	}
+	if begin != 1 || end != 1 {
+		return nil, nil, nil, errors.New("shell startup file has ambiguous integration markers; existing files were kept")
+	}
+	start := bytes.Index(data, []byte("\n"+blockBegin+"\n"))
+	finish := bytes.Index(data, []byte(blockEnd+"\n"))
+	if start < 0 || finish < start {
+		return nil, nil, nil, errors.New("shell integration block was modified; existing files were kept")
+	}
+	finish += len(blockEnd) + 1
+	block := data[start:finish]
+	lines := bytes.Split(block, []byte("\n"))
+	if len(lines) < 4 || !bytes.HasPrefix(lines[2], []byte(metadataPrefix)) {
+		return nil, nil, nil, errors.New("shell integration block was modified; existing files were kept")
+	}
+	metadata, err := base64.RawURLEncoding.DecodeString(string(bytes.TrimPrefix(lines[2], []byte(metadataPrefix))))
+	var installed pickerInstalledBlock
+	if err != nil || json.Unmarshal(metadata, &installed) != nil || installed.Shell != options.Shell || installed.Integration != options.integration ||
+		!filepath.IsAbs(installed.Script) || filepath.Clean(installed.Script) != installed.Script ||
+		!utf8.ValidString(installed.Script) || strings.ContainsAny(installed.Script, "\x00\r\n") || !bytes.Equal(block, renderPickerBlock(installed)) {
+		return nil, nil, nil, errors.New("shell integration block was modified or belongs to another setup; existing files were kept")
+	}
+	if installed.Integration == suggestionsIntegration && !validSuggestionExecutable(installed.Executable) ||
+		installed.Integration == "" && (installed.Executable != "" || installed.DoubleTab) {
+		return nil, nil, nil, errors.New("shell integration block contains invalid startup settings; existing files were kept")
+	}
+	recorded := options
+	recorded.Directory = filepath.Dir(installed.Script)
+	if validatePickerInstallation(recorded) != nil {
+		return nil, nil, nil, errors.New("shell integration block was modified or belongs to another setup; existing files were kept")
+	}
+	return data[:start], data[finish:], &installed, nil
+}
+
+func withoutPickerBlock(before, after []byte) []byte {
+	data := append([]byte(nil), before...)
+	// The block supplied a newline after an unterminated original file. Keep
+	// that boundary when the user subsequently added another startup line.
+	if len(before) != 0 && len(after) != 0 && before[len(before)-1] != '\n' && after[0] != '\n' {
+		data = append(data, '\n')
+	}
+	return append(data, after...)
+}
+
+func renderPickerBlock(block pickerInstalledBlock) []byte {
+	metadata, _ := json.Marshal(block)
+	script := quotePickerPath(block.Shell, block.Script)
+	commandGuard := " && command -v openai >/dev/null 2>&1"
+	fishCommandGuard := " and command -sq openai;"
+	if block.Integration == suggestionsIntegration {
+		// The loader validates its pinned executable and the matching PATH entry.
+		commandGuard, fishCommandGuard = "", ""
+	}
+	var source string
+	switch block.Shell {
+	case CompletionStyleBash:
+		// Bash may read .profile, which is also a POSIX login-shell file.
+		// Keep the entire block parseable there and activate only in Bash.
+		source = "case $- in\n  *i*) if [ -n \"${BASH_VERSION-}\" ] && [ -f " + script + " ] && [ -r " + script + " ]" + commandGuard + "; then\n    . " + script + "\n  fi ;;\nesac"
+	case CompletionStyleFish:
+		source = "if status is-interactive;" + fishCommandGuard + " and test -f " + script + "; and test -r " + script + "\n    source " + script + "\nend"
+	default:
+		source = "if [[ $- == *i* && -f " + script + " && -r " + script + " ]]" + commandGuard + "; then\n  source " + script + "\nfi"
+	}
+	blockBegin, blockEnd, metadataPrefix, _ := pickerIntegrationMarkers(block.Integration)
+	return []byte("\n" + blockBegin + "\n" + metadataPrefix + base64.RawURLEncoding.EncodeToString(metadata) + "\n" + source + "\n" + blockEnd + "\n")
+}
+
+func quotePickerPath(shell CompletionStyle, path string) string {
+	switch shell {
+	case CompletionStyleFish:
+		return "'" + strings.ReplaceAll(strings.ReplaceAll(path, "\\", "\\\\"), "'", "\\'") + "'"
+	default:
+		return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+	}
+}
+
+func renderInstalledPicker(options PickerInstallation) ([]byte, error) {
+	if options.integration == suggestionsIntegration {
+		return renderInstalledSuggestions(options)
+	}
+	completion, err := shellCompletions[options.Shell](nil, "openai")
+	if err != nil {
+		return nil, err
+	}
+	picker, err := renderPickerCompletion(options.Shell, "openai")
+	if err != nil {
+		return nil, err
+	}
+	return renderPickerStartup(options, completion, picker, ""), nil
+}
+
+// Package startup leaves ordinary completion to the user's existing setup.
+// Both personal and package scripts share activation and disable handling.
+func renderPickerStartup(options PickerInstallation, completion, picker, fishPromptGuard string) []byte {
+	preamble, marker := "", ""
+	switch options.Shell {
+	case CompletionStyleZsh:
+		preamble = "if (( ! $+functions[compdef] )); then\n  autoload -Uz compinit\n  compinit -i\nfi\n"
+		marker = "\nif [[ ${__openai_picker_enabled-} == 1 ]]; then export OPENAI_PICKER_INTEGRATION=zsh; fi\n"
+	case CompletionStyleBash:
+		marker = "\nif [[ ${__openai_picker_enabled-} == 1 ]]; then export OPENAI_PICKER_INTEGRATION=bash; fi\n"
+	case CompletionStyleFish:
+		// conf.d runs before config.fish and lazy fish_user_key_bindings.
+		// Install once at the first prompt so the wrapper captures the final
+		// user binding. Later prompts must not reclaim a replacement/disable.
+		declined := ""
+		if options.OptOutPath != "" {
+			// The command layer owns preference validation. Any marker suppresses
+			// activation here, including an invalid or dangling-link marker.
+			path := quotePickerPath(options.Shell, options.OptOutPath)
+			declined = "if test -e " + path + "; or test -L " + path + "\n    return\nend\n"
+		}
+		picker = `if not status is-interactive; or set -q __openai_picker_modes
+    return
+end
+set --erase --global OPENAI_PICKER_INTEGRATION
+function openai_picker_disable
+    functions --erase __openai_picker_install_on_prompt
+end
+` + declined + `function __openai_picker_install_on_prompt --on-event fish_prompt
+    functions --erase __openai_picker_install_on_prompt
+` + declined + fishPromptGuard + picker + `
+    if set -q __openai_picker_modes[1]; set -gx OPENAI_PICKER_INTEGRATION fish; end
+end
+`
+	}
+	return []byte(pickerScriptHeader + preamble + completion + "\n" + picker + marker)
+}
+
+func openPickerDirectory(ctx context.Context, path string, create bool) (*os.Root, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	root, err := openPickerDirectoryTree(ctx, path, create)
+	if err != nil {
+		return nil, err
+	}
+	info, err := root.Stat(".")
+	if err != nil {
+		root.Close()
+		return nil, err
+	}
+	current, err := os.Lstat(path)
+	if err != nil || !current.IsDir() || !os.SameFile(info, current) {
+		root.Close()
+		return nil, errors.Join(errPickerInstallChanged, err)
+	}
+	if !info.IsDir() || !pickerInstallOwned(info) || (runtime.GOOS != "windows" && info.Mode().Perm()&0022 != 0) {
+		root.Close()
+		return nil, errors.New("shell integration requires a directory writable only by its owner")
+	}
+	directory, err := root.Open(".")
+	if err == nil {
+		err = errors.Join(checkPickerDirectoryPermissions(directory), directory.Close())
+	}
+	if err != nil {
+		root.Close()
+		return nil, err
+	}
+	return root, nil
+}
+
+// Full ancestry validation prevents replacement through the script path; both
+// managed directories additionally retain their strict metadata policy.
+func openPickerScriptDirectory(ctx context.Context, path string, create bool) (*os.Root, error) {
+	parent, err := openPickerManagedDirectory(ctx, filepath.Dir(path), create)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	return openPickerManagedDirectory(ctx, path, create)
+}
+
+func openPickerManagedDirectory(ctx context.Context, path string, create bool) (*os.Root, error) {
+	root, err := openPickerDirectory(ctx, path, create)
+	if err != nil {
+		return nil, err
+	}
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		directory, err := root.Open(".")
+		if err == nil {
+			err = errors.Join(checkPickerFileMetadata(directory), directory.Close())
+		}
+		if err != nil {
+			root.Close()
+			return nil, err
+		}
+	}
+	return root, nil
+}
+
+func readPickerFile(ctx context.Context, root *os.Root, name string) (pickerFileSnapshot, error) {
+	var snapshot pickerFileSnapshot
+	if err := ctx.Err(); err != nil {
+		return snapshot, err
+	}
+	info, err := root.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return snapshot, nil
+	}
+	if err != nil {
+		return snapshot, err
+	}
+	if !info.Mode().IsRegular() || !pickerInstallOwned(info) || (runtime.GOOS != "windows" && info.Mode().Perm()&0022 != 0) {
+		return snapshot, errors.New("shell integration requires regular files writable only by their owner")
+	}
+	file, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return snapshot, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return snapshot, errors.Join(errPickerInstallChanged, err)
+	}
+	if err := checkPickerFileMetadata(file); err != nil {
+		return snapshot, err
+	}
+	if opened.Size() > pickerInstallLimit {
+		return snapshot, errors.New("shell integration file exceeds the setup size limit")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, pickerInstallLimit+1))
+	if err != nil {
+		return snapshot, err
+	}
+	current, statErr := root.Lstat(name)
+	if statErr != nil || !current.Mode().IsRegular() || !os.SameFile(opened, current) || current.Size() != int64(len(data)) || !current.ModTime().Equal(opened.ModTime()) {
+		return snapshot, errors.Join(errPickerInstallChanged, statErr)
+	}
+	if len(data) > pickerInstallLimit {
+		return snapshot, errors.New("shell integration file exceeds the setup size limit")
+	}
+	if err := checkPickerFileMetadata(file); err != nil {
+		return snapshot, err
+	}
+	return pickerFileSnapshot{current, data}, ctx.Err()
+}
+
+func checkPickerSnapshot(ctx context.Context, root *os.Root, name string, expected pickerFileSnapshot) error {
+	current, err := readPickerFile(ctx, root, name)
+	if err != nil {
+		return err
+	}
+	if (expected.info == nil) != (current.info == nil) || (expected.info != nil && (!os.SameFile(expected.info, current.info) || expected.info.Mode() != current.info.Mode())) || !bytes.Equal(expected.data, current.data) {
+		return errPickerInstallChanged
+	}
+	return nil
+}
+
+func writePickerScript(ctx context.Context, root *os.Root, name string, data []byte) (pickerFileSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return pickerFileSnapshot{}, err
+	}
+	temporary := ".openai-picker-script-" + rand.Text()
+	file, err := root.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return pickerFileSnapshot{}, err
+	}
+	defer root.Remove(temporary)
+	_, writeErr := file.Write(data)
+	if writeErr == nil {
+		writeErr = file.Sync()
+	}
+	if writeErr == nil {
+		// New files can inherit ACLs or other metadata despite mode 0600.
+		// Check the opened staging file before any profile can source it.
+		writeErr = checkPickerFileMetadata(file)
+	}
+	original, fileStatErr := file.Stat()
+	err = errors.Join(writeErr, fileStatErr, file.Close(), ctx.Err())
+	if err != nil {
+		return pickerFileSnapshot{}, err
+	}
+	// Publish only a complete script, exclusively. A crash during writing
+	// leaves an unreferenced temporary file, never a broken final script.
+	if err := root.Link(temporary, name); err != nil {
+		return pickerFileSnapshot{}, err
+	}
+	return pickerFileSnapshot{original, data}, nil
+}
+
+func replacePickerProfile(ctx context.Context, root *os.Root, name string, previous pickerFileSnapshot, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if previous.info != nil {
+		if err := checkPickerRecoveryCapacity(ctx, root, name); err != nil {
+			return err
+		}
+	}
+	temporary := ".openai-picker-" + rand.Text()
+	mode := os.FileMode(0600)
+	if previous.info != nil {
+		mode = previous.info.Mode().Perm()
+	}
+	file, err := root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(temporary)
+	// Validate the empty staging file before copying private profile contents.
+	// A later refusal cannot revoke a reader's already-open staging handle.
+	if err := checkPickerSnapshot(ctx, root, name, previous); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	if err := checkPickerReplacementMetadata(root, name, temporary, previous); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	_, writeErr := file.Write(data)
+	if writeErr == nil {
+		writeErr = file.Chmod(mode) // Preserve mode even under a restrictive umask.
+	}
+	if writeErr == nil {
+		writeErr = file.Sync()
+	}
+	if err := errors.Join(writeErr, file.Close(), ctx.Err()); err != nil {
+		return err
+	}
+	if err := checkPickerSnapshot(ctx, root, name, previous); err != nil {
+		return err
+	}
+	if err := checkPickerReplacementMetadata(root, name, temporary, previous); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return commitPickerProfile(ctx, root, name, previous, temporary)
+}
+
+func removePickerProfileBlock(ctx context.Context, root *os.Root, name string, previous pickerFileSnapshot, installed pickerInstalledBlock, data []byte) error {
+	// Restore absence only when setup created the file and the owned block is
+	// still its entire contents. Older metadata cannot prove creation ownership.
+	if installed.ProfileCreated && len(data) == 0 {
+		return commitPickerProfile(ctx, root, name, previous, "")
+	}
+	return replacePickerProfile(ctx, root, name, previous, data)
+}
+
+func removePickerSnapshot(ctx context.Context, root *os.Root, name string, previous pickerFileSnapshot) error {
+	if err := checkPickerSnapshot(ctx, root, name, previous); err != nil {
+		return err
+	}
+	return root.Remove(name)
+}
+
+// Lock files intentionally remain: removing a lock can give waiting processes
+// different inodes to lock. Kernel locks are released on close or process exit.
+func lockPickerInstallation(ctx context.Context, root *os.Root, name string) (*os.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	file, err := createPickerInstallLock(root, name)
+	if errors.Is(err, os.ErrExist) {
+		info, statErr := root.Lstat(name)
+		if statErr != nil {
+			return nil, statErr
+		}
+		if !info.Mode().IsRegular() || !pickerInstallOwned(info) || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) {
+			return nil, errors.New("shell integration lock must be a private regular file")
+		}
+		file, err = root.OpenFile(name, os.O_RDWR|syscall.O_NONBLOCK, 0)
+	}
+	if err != nil {
+		return nil, err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			file.Close()
+		}
+	}()
+	identity, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	check := func() error {
+		current, err := root.Lstat(name)
+		if err != nil {
+			return err
+		}
+		if !identity.Mode().IsRegular() || !current.Mode().IsRegular() || !pickerInstallOwned(current) || !os.SameFile(identity, current) || (runtime.GOOS != "windows" && current.Mode().Perm()&0077 != 0) {
+			return errPickerInstallChanged
+		}
+		return nil
+	}
+	if err := check(); err != nil {
+		return nil, err
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		locked, err := tryPickerInstallLock(file)
+		if err != nil {
+			return nil, err
+		}
+		if locked {
+			if err := errors.Join(check(), ctx.Err()); err != nil {
+				return nil, err
+			}
+			ok = true
+			return file, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
