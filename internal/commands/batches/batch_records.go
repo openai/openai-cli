@@ -18,7 +18,7 @@ import (
 func (w workflow) newBatchResultsCommand() *cli.Command {
 	command := &cli.Command{
 		Name: "results", Usage: "Inspect batch input, output, or error records",
-		Description:     "Reads JSONL records without changing the batch. Records use private temporary storage. JSON and text output stream from that storage; transforms and explore/pretty/YAML output load the selected document into memory. Use --custom-id to select fewer records. Use --format explore for the JSON browser. Matching uses custom_id, never file order. Missing results can be pending or in the other result file. Duplicate IDs remain grouped without inventing pairs. Use batches download for exact file bytes.",
+		Description:     "Reads JSONL records without changing the batch. Non-matching results stream text, JSON, JSONL, and raw output after validating each record. Oversized records use one reusable private temporary file. Matching uses indexed temporary storage. Transforms and explore/pretty/YAML output load the selected document into memory. Late failures return a nonzero status and can leave incomplete output. Use --custom-id to select fewer records. Use --format explore for the JSON browser. Matching uses custom_id, never file order. Missing results can be pending or in the other result file. Duplicate IDs remain grouped without inventing pairs. Use batches download for exact file bytes.",
 		HideHelpCommand: true, Suggest: true,
 		Flags: []cli.Flag{
 			&requestflag.Flag[string]{Name: "batch-id", PathParam: "batch_id", Required: true},
@@ -87,6 +87,9 @@ func (w workflow) showBatchRecords(ctx context.Context, command *cli.Command, cl
 	if match && batch.InputFileID == "" {
 		return batchError("The batch has no input file available for matching. Omit --match-input to inspect results alone.")
 	}
+	if !match {
+		return w.showStreamedBatchRecords(ctx, command, client, options, batch.ID, fileID, selection, filter)
+	}
 	store, err := newBatchRecordStore(ctx)
 	if err != nil {
 		return err
@@ -100,18 +103,43 @@ func (w workflow) showBatchRecords(ctx context.Context, command *cli.Command, cl
 			return err
 		}
 	}
+	return w.presentBatchRecords(ctx, command, RecordOutput{
+		WriteJSON:     func(writer io.Writer) error { return store.writeJSON(writer, batch.ID, selection, fileID, match) },
+		TemporaryFile: store.temporaryFile,
+		BatchID:       batch.ID, File: selection, FileID: fileID,
+		Visit: func(visit func(RecordItem) error) error { return store.visitRecords(selection, match, visit) },
+	})
+}
+
+func (w workflow) showStreamedBatchRecords(ctx context.Context, command *cli.Command, client openai.Client, options []option.RequestOption, batchID, fileID, selection, filter string) (err error) {
+	response, err := client.Files.Content(ctx, fileID, options...)
+	if err != nil {
+		return err
+	}
+	stream := newBatchRecordStream(ctx, response.Body, selection, filter)
+	defer func() { err = errors.Join(err, response.Body.Close(), stream.close()) }()
+	// Validate the first selected record before metadata or formatter output.
+	if err := stream.next(); err != nil {
+		return err
+	}
+	return w.presentBatchRecords(ctx, command, RecordOutput{
+		WriteJSON:     func(writer io.Writer) error { return stream.writeJSON(writer, batchID, fileID) },
+		TemporaryFile: stream.temporaryFile,
+		BatchID:       batchID, File: selection, FileID: fileID, Visit: stream.visit,
+	})
+}
+
+func (w workflow) presentBatchRecords(ctx context.Context, command *cli.Command, records RecordOutput) error {
 	var diagnostics io.Writer = terminal.BorrowedWriter{Writer: batchDiagnosticWriter{ctx: ctx, file: os.Stderr}, File: os.Stderr}
 	out := command.Root().Writer
 	if w.browserOutput != nil {
 		out, diagnostics = w.browserOutput, io.Discard
 	}
 	return writeBatchStdoutWithCleanup(ctx, out, batchOutputCleanupGrace, func(out io.Writer) error {
-		return w.options.ShowRecords(ctx, command, RecordOutput{
-			WriteJSON:     func(writer io.Writer) error { return store.writeJSON(writer, batch.ID, selection, fileID, match) },
-			TemporaryFile: store.temporaryFile,
-			BatchID:       batch.ID, File: selection, FileID: fileID,
-			Visit: func(visit func(RecordItem) error) error { return store.visitRecords(selection, match, visit) },
-		}, out, diagnostics)
+		if err := w.options.ShowRecords(ctx, command, records, out, diagnostics); err != nil {
+			return &batchOutputDrainError{err}
+		}
+		return nil
 	})
 }
 
@@ -122,11 +150,7 @@ func readBatchRecordsFile(ctx context.Context, client openai.Client, options []o
 	}
 	defer func() { err = errors.Join(err, response.Body.Close()) }()
 	err = store.readJSONL(response.Body, selection, filter, input, match)
-	var workflowErr *WorkflowError
-	if err != nil && !errors.As(err, &workflowErr) && ctx.Err() == nil {
-		return &WorkflowError{message: "Could not read the batch file completely. Retry results or download the selected file.", cause: err}
-	}
-	return err
+	return batchRecordReadError(ctx, err)
 }
 
 type batchRecordContextReader struct {

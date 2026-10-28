@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"unicode"
@@ -20,6 +21,7 @@ type batchJSONScanner struct {
 	out               *bufio.Writer
 	position          int64
 	consumed          int64
+	line              int
 	idStart, idLength int64
 	idFields          int
 	urlCapture        int // Opt-in bounded capture for submit endpoint inference.
@@ -383,5 +385,66 @@ func (s *batchJSONScanner) value(depth int) error {
 		return nil
 	default:
 		return s.number()
+	}
+}
+
+// nextRecord validates the complete JSONL boundary before exposing a record.
+// Callers choose storage; this scanner never retains payload strings or numbers.
+func (s *batchJSONScanner) nextRecord(selection string) (bool, error) {
+	if s.line == 0 {
+		s.line = 1
+	}
+	for {
+		err := s.outerSpace()
+		if errors.Is(err, io.EOF) {
+			return false, s.ctx.Err()
+		}
+		if err != nil {
+			return false, err
+		}
+		b, err := s.peek()
+		if err != nil {
+			return false, err
+		}
+		if b == '\n' {
+			if _, err := s.take(false); err != nil {
+				return false, err
+			}
+			s.line++
+			continue
+		}
+		s.idStart, s.idLength, s.idFields = 0, 0, 0
+		if b != '{' {
+			err = errBatchRecordJSON
+		} else {
+			err = s.value(0)
+		}
+		if errors.Is(err, errBatchRecordID) {
+			return false, batchError(fmt.Sprintf("The %s file repeats custom_id on line %d. Download the file to inspect the ambiguous record.", selection, s.line))
+		}
+		if errors.Is(err, errBatchRecordJSON) || errors.Is(err, io.EOF) {
+			return false, invalidBatchRecordLine(selection, s.line)
+		}
+		if err != nil {
+			return false, err
+		}
+		err = s.outerSpace()
+		if err != nil && !errors.Is(err, io.EOF) {
+			return false, err
+		}
+		if err == nil {
+			b, err = s.take(false)
+			if err != nil {
+				return false, err
+			}
+			if b != '\n' {
+				return false, invalidBatchRecordLine(selection, s.line)
+			}
+		}
+		if err := s.out.Flush(); err != nil {
+			return false, batchRecordStorageError(err)
+		}
+		s.line++
+		return true, s.ctx.Err()
 	}
 }

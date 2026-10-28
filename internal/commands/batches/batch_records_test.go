@@ -164,7 +164,13 @@ func TestBatchResultsRejectMalformedJSONLWithoutPayloadDiagnostics(t *testing.T)
 			require.Contains(t, err.Error(), "line")
 			require.Contains(t, err.Error(), "Download the file")
 			require.NotContains(t, err.Error(), "private-payload")
-			require.Empty(t, out.String())
+			if name == "malformed" {
+				require.Contains(t, out.String(), `"custom_id":"safe"`)
+				require.NotContains(t, out.String(), "private-payload")
+				require.Contains(t, err.Error(), "Output may be incomplete")
+			} else {
+				require.Empty(t, out.String())
+			}
 		})
 	}
 }
@@ -308,12 +314,14 @@ func TestBatchResultsPreservesAPIErrorsAndIncompleteRead(t *testing.T) {
 			if failure == "incomplete" {
 				require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 				require.Contains(t, err.Error(), "Retry results")
+				require.Contains(t, out.String(), `"custom_id":"first"`)
+				require.Contains(t, err.Error(), "Output may be incomplete")
 			} else {
 				var apiErr *openai.Error
 				require.True(t, errors.As(err, &apiErr))
 				require.Equal(t, http.StatusForbidden, apiErr.StatusCode)
+				require.Empty(t, out.String())
 			}
-			require.Empty(t, out.String())
 		})
 	}
 }

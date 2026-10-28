@@ -118,6 +118,7 @@ type batchJSONOutput struct {
 }
 
 func (w *batchJSONOutput) text(value string) error { _, err := w.out.WriteString(value); return err }
+func (w *batchJSONOutput) Flush() error            { return w.out.Flush() }
 func (w *batchJSONOutput) line(depth int) error {
 	if !w.indent {
 		return nil

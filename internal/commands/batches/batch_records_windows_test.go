@@ -29,7 +29,7 @@ func TestWindowsBatchResultsPrivateScratchStorage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/batches/batch_example" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"id":"batch_example","output_file_id":"file_output"}`)
+			_, _ = io.WriteString(w, `{"id":"batch_example","output_file_id":"file_output","input_file_id":"file_input"}`)
 			return
 		}
 		entries, err := os.ReadDir(directory)
@@ -45,7 +45,7 @@ func TestWindowsBatchResultsPrivateScratchStorage(t *testing.T) {
 	}))
 	defer server.Close()
 	root := batchRecordsTestCommand(t, server.URL, io.Discard)
-	require.NoError(t, root.Run(t.Context(), []string{"openai", "batches", "results", "batch_example"}))
+	require.NoError(t, root.Run(t.Context(), []string{"openai", "batches", "results", "batch_example", "--match-input"}))
 	entries, err := os.ReadDir(directory)
 	require.NoError(t, err)
 	require.Empty(t, entries)

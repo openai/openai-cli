@@ -25,6 +25,12 @@ type batchOwnedPipeClosed struct{ error }
 
 func (e *batchOwnedPipeClosed) Unwrap() error { return e.error }
 
+// A record read can fail after the formatter queued earlier valid output.
+// Permit bounded delivery without hiding that failure or its exit status.
+type batchOutputDrainError struct{ error }
+
+func (e *batchOutputDrainError) Unwrap() error { return e.error }
+
 type batchPipeWriter struct {
 	file    *os.File
 	stopped *atomic.Bool
@@ -299,10 +305,23 @@ func streamBatchOutput(ctx context.Context, out *os.File, cleanupGrace time.Dura
 	}
 	writeErr := write(destination)
 	closeErr := dataWrite.Close()
+	var drain *batchOutputDrainError
+	var drainTimer *time.Timer
+	var drainExpired atomic.Bool
 	if (writeErr != nil || closeErr != nil) && ctx.Err() == nil {
-		stopWorker()
+		if closeErr == nil && errors.As(writeErr, &drain) {
+			drainTimer = time.AfterFunc(batchOutputCleanupGrace, func() {
+				drainExpired.Store(true)
+				stopWorker()
+			})
+		} else {
+			stopWorker()
+		}
 	}
 	waitErr := wait()
+	if drainTimer != nil {
+		drainTimer.Stop()
+	}
 	if waitErr == context.Canceled {
 		// Only the private worker's control context was canceled here. Keep the
 		// operation's own cause authoritative, including a deadline or SIGTERM.
@@ -312,6 +331,13 @@ func streamBatchOutput(ctx context.Context, out *os.File, cleanupGrace time.Dura
 		return errors.Join(ctx.Err(), writeErr, waitErr)
 	}
 	if writeErr != nil {
+		if drain != nil && (drainExpired.Load() || waitErr != nil) {
+			message := batchOutputFailureMessage
+			if drainExpired.Load() {
+				message = "Could not finish writing the batch output after an error. Output may be incomplete.\nCheck the receiving command or output destination before retrying."
+			}
+			waitErr = batchDownloadFailure(message, waitErr)
+		}
 		return &batchOutputResultError{primary: writeErr, cause: errors.Join(writeErr, waitErr)}
 	}
 	if err := errors.Join(closeErr, waitErr); err != nil {

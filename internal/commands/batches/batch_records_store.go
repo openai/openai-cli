@@ -393,42 +393,11 @@ func (s *batchRecordStore) readJSONL(source io.Reader, selection, filter string,
 		return batchRecordStorageError(err)
 	}
 	scanner := batchJSONScanner{ctx: s.ctx, in: bufio.NewReader(source), out: bufio.NewWriterSize(s.data, 32*1024), position: s.position}
-	for line := 1; ; line++ {
-		err := scanner.outerSpace()
-		if errors.Is(err, io.EOF) {
-			return s.ctx.Err()
-		}
-		if err != nil {
-			return err
-		}
-		b, err := scanner.peek()
-		if err != nil {
-			return err
-		}
-		if b == '\n' {
-			if _, err := scanner.take(false); err != nil {
-				return err
-			}
-			continue
-		}
+	for {
 		start := scanner.position
-		scanner.idStart, scanner.idLength, scanner.idFields = 0, 0, 0
-		if b != '{' {
-			err = errBatchRecordJSON
-		} else {
-			err = scanner.value(0)
-		}
-		if errors.Is(err, errBatchRecordID) {
-			return batchError(fmt.Sprintf("The %s file repeats custom_id on line %d. Download the file to inspect the ambiguous record.", selection, line))
-		}
-		if err != nil {
-			if errors.Is(err, errBatchRecordJSON) || errors.Is(err, io.EOF) {
-				return invalidBatchRecordLine(selection, line)
-			}
+		ok, err := scanner.nextRecord(selection)
+		if err != nil || !ok {
 			return err
-		}
-		if err := scanner.out.Flush(); err != nil {
-			return batchRecordStorageError(err)
 		}
 		s.position = scanner.position
 		keyStart, keyLength, hash := int64(0), int64(0), uint64(0)
@@ -460,20 +429,7 @@ func (s *batchRecordStore) readJSONL(source io.Reader, selection, filter string,
 			return batchRecordStorageError(err)
 		}
 		scanner.position = s.position
-		err = scanner.outerSpace()
-		if errors.Is(err, io.EOF) {
-			return s.ctx.Err()
-		}
-		if err != nil {
-			return err
-		}
-		b, err = scanner.take(false)
-		if err != nil {
-			return err
-		}
-		if b != '\n' {
-			return invalidBatchRecordLine(selection, line)
-		}
+
 	}
 }
 

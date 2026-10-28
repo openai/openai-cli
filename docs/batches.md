@@ -425,14 +425,19 @@ The response contains a `data` array and supports normal output formats and extr
 The explorer supports interactive inspection when a terminal is available.
 The command reports unavailable files and malformed JSONL without submitting requests again.
 Use `batches download` when you need exact file bytes.
-Browsing and matching use private temporary storage for records and their index.
-The command removes this storage after success, failure, or handled interruption.
-Temporary storage must have enough space for the selected records and their index.
-Unselected records can temporarily require space while the command validates them.
-JSON, JSONL, raw, and readable text output stream without retaining complete payloads in memory.
+Non-matching results emit each validated record in text, JSON, JSONL, and raw formats.
+Ordinary records use bounded memory without temporary files.
+Oversized records use one reusable private file, with temporary space proportional to the largest record.
+Matching and browser navigation use indexed temporary storage for the selected files.
+Large object labels can also use temporary storage during readable rendering.
+The command removes owned temporary storage after success, failure, or handled interruption.
+JSON, JSONL, and raw output retain one envelope containing the complete selected `data` array.
+A late read or validation failure returns a nonzero exit status and can leave incomplete output.
+After an error, the CLI briefly drains queued output before stopping a blocked destination.
+Always check the exit status before using formatted results.
 Readable projections buffer at most 256 KiB per record before switching to streaming detail.
 Matching keeps groups on disk and renders their records separately.
-Large IDs and object keys also use this storage without imposing size limits.
+Large IDs and object keys do not have new size limits.
 Extraction, terminal exploration, pretty output, and YAML retain the selected document in memory.
 Use `--custom-id` to reduce that document before these operations.
 

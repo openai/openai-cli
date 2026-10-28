@@ -40,7 +40,7 @@ func TestBatchResultsCleanupPreservesReplacedScratchFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/batches/batch_example" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"id":"batch_example","output_file_id":"file_output"}`)
+			_, _ = io.WriteString(w, `{"id":"batch_example","output_file_id":"file_output","input_file_id":"file_input"}`)
 			return
 		}
 		defer cancel()
@@ -58,7 +58,7 @@ func TestBatchResultsCleanupPreservesReplacedScratchFile(t *testing.T) {
 	}))
 	defer server.Close()
 	root := batchRecordsTestCommand(t, server.URL, io.Discard)
-	err := root.Run(ctx, []string{"openai", "batches", "results", "batch_example"})
+	err := root.Run(ctx, []string{"openai", "batches", "results", "batch_example", "--match-input"})
 	require.ErrorIs(t, err, context.Canceled)
 	require.Contains(t, WorkflowErrorMessage(err), "The replacement was left unchanged.")
 	data, err := os.ReadFile(<-replaced)
@@ -250,7 +250,7 @@ func TestBatchResultsTruncatedStorageHasRecovery(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/batches/batch_example" {
 					w.Header().Set("Content-Type", "application/json")
-					_, _ = io.WriteString(w, `{"id":"batch_example","output_file_id":"file_output"}`)
+					_, _ = io.WriteString(w, `{"id":"batch_example","output_file_id":"file_output","input_file_id":"file_input"}`)
 					return
 				}
 				_, _ = io.WriteString(w, record)
@@ -264,7 +264,7 @@ func TestBatchResultsTruncatedStorageHasRecovery(t *testing.T) {
 			}
 			root := batchRecordsTestCommand(t, server.URL, io.Discard)
 			root.Commands[0].Commands[0] = (workflow{options: options}).newBatchResultsCommand()
-			err := root.Run(t.Context(), []string{"openai", "batches", "results", "batch_example"})
+			err := root.Run(t.Context(), []string{"openai", "batches", "results", "batch_example", "--match-input"})
 			require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 			message := WorkflowErrorMessage(err)
 			require.Contains(t, message, "Temporary batch data is incomplete")
@@ -390,12 +390,12 @@ func TestBatchResultsTemporaryStorageFailureHasRecovery(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"batch_example","output_file_id":"file_output"}`)
+		_, _ = io.WriteString(w, `{"id":"batch_example","output_file_id":"file_output","input_file_id":"file_input"}`)
 	}))
 	defer server.Close()
 	var out bytes.Buffer
 	root := batchRecordsTestCommand(t, server.URL, &out)
-	err := root.Run(t.Context(), []string{"openai", "batches", "results", "batch_example"})
+	err := root.Run(t.Context(), []string{"openai", "batches", "results", "batch_example", "--match-input"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "temporary storage space and permissions")
 	require.Contains(t, err.Error(), "retry the same command")
