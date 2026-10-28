@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.44.1](https://github.com/openai/openai-cli/compare/v1.44.0...v1.44.1) (2026-10-27)
+
+
+### Chores
+
+* **api:** update image-model documentation ([#649](https://github.com/openai/openai-cli/issues/649)) ([eed8bd0](https://github.com/openai/openai-cli/commit/eed8bd066c0ccceb91f6e55cafab102f7d359ed8))
+
+## [1.44.0](https://github.com/openai/openai-cli/compare/v1.43.2...v1.44.0) (2026-10-27)
+
+
+### Features
+
+* **api:** add custom voice deletion ([#637](https://github.com/openai/openai-cli/issues/637)) ([32f26e5](https://github.com/openai/openai-cli/commit/32f26e5ac6383fd36a4c24356dcd50fe82380feb))
+
+
+### Chores
+
+* **api:** document delegation acknowledgement timing ([#639](https://github.com/openai/openai-cli/issues/639)) ([24a8811](https://github.com/openai/openai-cli/commit/24a88114fcfa74a0774f0f6393542cfd180657b0))
+* **api:** update decision input documentation ([#640](https://github.com/openai/openai-cli/issues/640)) ([d7e4cbe](https://github.com/openai/openai-cli/commit/d7e4cbefcc9869df5f5c13bc58bb79e462266b61))
+* enforce generated-file ownership ([#642](https://github.com/openai/openai-cli/issues/642)) ([92f0ca6](https://github.com/openai/openai-cli/commit/92f0ca624c52b59ee34d2e6a28ee6ea0155f5f30))
+
+## [1.43.2](https://github.com/openai/openai-cli/compare/v1.43.1...v1.43.2) (2026-10-27)
+
+
+### Features
+
+* Show compact tables and shared paging for interactive Files, Batches, Projects, and Models lists. Explicit formats and piped output keep their existing behavior. ([#617](https://github.com/openai/openai-cli/issues/617)) ([a396112](https://github.com/openai/openai-cli/commit/a3961126808b166e3529ffa24f86a5879f96a5be))
+
+
+### Bug Fixes
+
+* **api:** document the 400-question Decisions limit ([#632](https://github.com/openai/openai-cli/issues/632)) ([f508f76](https://github.com/openai/openai-cli/commit/f508f767f90fac247b41b47831847c1efb02fba0))
+
+
+### Chores
+
+* **api:** correct Realtime API reference spelling ([#634](https://github.com/openai/openai-cli/issues/634)) ([b90dfe9](https://github.com/openai/openai-cli/commit/b90dfe97d67268ad51e818b6317763126902e2cd))
+
 ## [1.43.1](https://github.com/openai/openai-cli/compare/v1.43.0...v1.43.1) (2026-10-26)
 
 

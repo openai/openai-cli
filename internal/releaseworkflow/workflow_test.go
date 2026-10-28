@@ -772,6 +772,7 @@ func TestCandidateJobsUseOnlySameRunSourceArtifacts(t *testing.T) {
 	for filename, names := range map[string][]string{
 		"ci.yml":                 {"lint", "test-linux", "test-windows-compile", "error-audit", "build-artifacts", "macos-uploads"},
 		"help-compatibility.yml": {"help"}, "codeql.yml": {"analyze"},
+		"tokenizer-stress.yml": {"windows"},
 	} {
 		jobs := readWorkflow(t, filename).Jobs
 		for _, name := range names {

@@ -16,19 +16,22 @@ jobs:
       contents: read
       actions: read
 
-  # Required native jobs only restore caches. Warm these platforms on main;
-  # Windows x64 reuses the cache saved by existing CI jobs.
+  # Required native jobs only restore caches. Main publishes each platform cache
+  # independently, without putting compression on required test jobs.
   warm-native-cache:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: source
     permissions: {}
     name: Warm compatibility cache on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    concurrency:
+      group: native-cache-${{ github.workflow }}-${{ matrix.os }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15-intel, windows-11-arm]
+        os: [macos-15-intel, windows-11-arm, windows-latest]
     steps:
       - name: Download prepared source
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -44,6 +47,7 @@ jobs:
         with:
           cache-compilation: 'true'
       - name: Warm native test and CLI compilation
+        if: steps.go-cache.outputs.cache-hit != 'true'
         shell: bash
         env:
           GOMAXPROCS: '2'
@@ -53,7 +57,7 @@ jobs:
           go build -p 1 -o "$RUNNER_TEMP/openai.exe" ./cmd/openai
           go mod verify
       - name: Save native compatibility compilation
-        if: steps.go-cache.outputs.cache-hit != 'true'
+        if: steps.go-cache.outputs.cache-hit != 'true' && !(runner.os == 'Windows' && runner.arch == 'X64')
         continue-on-error: true
         timeout-minutes: 5
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -61,6 +65,17 @@ jobs:
           path: |
             ${{ steps.go-cache.outputs.build-cache }}
             ${{ steps.go-cache.outputs.module-cache }}
+          key: ${{ steps.go-cache.outputs.cache-key }}
+      - name: Save Windows x64 Go cache
+        if: steps.go-cache.outputs.cache-hit != 'true' && runner.os == 'Windows' && runner.arch == 'X64'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          # Keep setup-go's module-first path order in this cache namespace.
+          path: |
+            ${{ steps.go-cache.outputs.module-cache }}
+            ${{ steps.go-cache.outputs.build-cache }}
           key: ${{ steps.go-cache.outputs.cache-key }}
 
   help:
@@ -311,7 +326,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./internal/commands/tokenize -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes|Preview(MatchesExactEncodings|CancellationDuringChildWork|PreservesDeadline|LegacyCancellationDuringNumericWork))' |
+          go test -p 2 ./internal/commands/tokenize -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes|Preview(MatchesExactEncodings|CancellationDuringChildWork|PreservesDeadline|LegacyCancellationDuringNumericWork|ControlCompletion))' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'tokenizer-reader-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test image command ordering
@@ -322,14 +337,6 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json \
             -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' \
             | tee "$RUNNER_TEMP/image-command-order-tests.jsonl"
-      - name: Test Windows image command ordering
-        if: matrix.image-order && runner.os == 'Windows' && matrix.shard != 'dispatch'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' |
-            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-command-order-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
-          exit $LASTEXITCODE
       - name: Test Linux Fish help invocation
         if: runner.os == 'Linux' && matrix.shard != 'dispatch'
         shell: bash
@@ -535,12 +542,6 @@ jobs:
           $ErrorActionPreference = 'Stop'
           go test -p 2 ./internal/app ./internal/output/listview -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLabelsPreserveLongIDs|TestListNavigationErrorPresentation|TestListNavigationFinishRetainsInterruptDuringCompletion|TestListNavigationRemovedKeysAndResizeDoNotFetch|TestListNavigationCompletePageStaysOpenWithoutPrinting|TestListNavigationPartialPagePreservesErrorAndRecords|TestListNavigationFinalEmptyPageKeepsLoadedResults|TestListNavigationUsesCompactPagerControls|TestViewerBackKeepsFetchFrontier|TestViewerPendingFetchIgnoresNavigation|TestViewerFinalPageStaysUntilQuit|TestViewerLargeLineAndResizePreserveOriginal|TestViewerTabsPreserveValuesAndFooter|TestViewerErrorRetainsPreviouslyLoadedResults|TestViewerHistoryWriteFailureDoesNotRetry|TestViewerLoadingCanCancel|TestViewerPreservesViewportKeyboardBindings|TestViewerPageKeysPreserveLazyCachedNavigation|TestViewerKeyboardWhileLoadingKeepsCancellation|TestViewerResizeRendersOnlySelectedPage|TestViewerResizeRenderFailureRetainsCachedPages|TestListPagerResizeRendersCachedRecords|TestListPagerAdvanceAtVisibleRecordBoundary|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-navigation-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./internal/output/transform -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' |
-            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-projection-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' |
-            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-renderer-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test image preferences and picker state
         if: matrix.image-state && runner.os != 'Windows' && matrix.shard != 'dispatch'
@@ -963,7 +964,7 @@ jobs:
                   fish_examples + [f"{name}/explicit_inline_off_preserves_remembered_on" for name in fish_examples],
               )
 
-          if os.environ["CHECK_IMAGE_ORDER"] == "true":
+          if os.environ["CHECK_IMAGE_ORDER"] == "true" and os.environ["RUNNER_OS"] != "Windows":
               suites["image-command-order-tests.jsonl"] = required_cases(
                   "TestMainImageCommandHelpOrder",
                   ["images", "images/--help", "images/-h", "images/--h",
@@ -1017,7 +1018,17 @@ jobs:
                   "TestTokenizerInputSourcePreservesNonConsoleBytes",
                   "TestTokenizerPreviewMatchesExactEncodings",
                   "TestTokenizerPreviewCancellationDuringChildWork",
+                  "TestTokenizerPreviewCancellationDuringChildWork/o200k_base",
+                  "TestTokenizerPreviewCancellationDuringChildWork/cl100k_base",
                   "TestTokenizerPreviewPreservesDeadline",
+                  "TestTokenizerPreviewControlCompletion",
+                  "TestTokenizerPreviewControlCompletion/forced_reset",
+                  "TestTokenizerPreviewControlCompletion/eof",
+                  "TestTokenizerPreviewControlCompletion/wrapped_reset",
+                  "TestTokenizerPreviewControlCompletion/unexpected_bytes",
+                  "TestTokenizerPreviewControlCompletion/timeout",
+                  "TestTokenizerPreviewControlCompletion/other_error",
+                  "TestTokenizerPreviewControlCompletion/oversize",
                   "TestTokenizerPreviewLegacyCancellationDuringNumericWork",
                   "TestTokenizerPreviewLegacyCancellationDuringNumericWork/r50k_base",
                   "TestTokenizerPreviewLegacyCancellationDuringNumericWork/p50k_base",
@@ -1373,9 +1384,10 @@ jobs:
                       '0', '1', '1023', '1024', '1536', '1234', '1048576', '9007199254740993', '18446744073709551615',
                   ],
               }
-              suites['list-projection-helper-tests.jsonl'] = set().union(*(
-                  required_cases(root, children) for root, children in projection_helper_cases.items()
-              ))
+              if os.environ["RUNNER_OS"] != "Windows":
+                  suites['list-projection-helper-tests.jsonl'] = set().union(*(
+                      required_cases(root, children) for root, children in projection_helper_cases.items()
+                  ))
               renderer_helper_cases = {
                   'TestListTableKeepsIDsAndFitsWidth': [],
                   'TestListTableNarrowFallbackKeepsIDs': [],
@@ -1383,9 +1395,10 @@ jobs:
                   'TestListTableUnicodeWidths': [],
                   'TestListTableEmptyAndMalformedRows': [],
               }
-              suites['list-renderer-helper-tests.jsonl'] = set().union(*(
-                  required_cases(root, children) for root, children in renderer_helper_cases.items()
-              ))
+              if os.environ["RUNNER_OS"] != "Windows":
+                  suites['list-renderer-helper-tests.jsonl'] = set().union(*(
+                      required_cases(root, children) for root, children in renderer_helper_cases.items()
+                  ))
           if os.environ["CHECK_REQUEST_CONFIGURATION"] == "true":
               request_public_cases = {
                   'TestMainGlobalFlagsPlacementHeadersAndOutput': [
