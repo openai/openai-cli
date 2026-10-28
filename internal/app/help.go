@@ -19,6 +19,7 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 	configureHelpGroups(root)
 	configureImageHelpContent(root)
 	configureLocalHelpContent(root)
+	configureBatchHelpContent(root)
 	args, handled, err := clihelp.Configure(root, args)
 	admin.ConfigureSetupHelp(root)
 	return args, handled, err

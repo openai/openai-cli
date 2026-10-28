@@ -23,6 +23,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/webhooks"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/listview"
+	"github.com/openai/openai-cli/internal/readable"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -70,6 +71,7 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool, o
 	var finiteListFailure *clioutput.FiniteJSONListError
 	var webhookFailure *webhooks.WorkflowError
 	var webhookCanceled *webhooks.CreateCanceledError
+	var jsonStorageFailure *readable.JSONStreamStorageError
 	var spendResponseFailure *spendMutationResponseError
 	var spendPresentationFailure *spendMutationPresentationError
 	responseRecovery := ""
@@ -110,6 +112,8 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool, o
 		return modelsListFailure.Error()
 	case errors.As(failure, &finiteListFailure):
 		return finiteListFailure.Error()
+	case errors.As(failure, &jsonStorageFailure):
+		return jsonStorageFailure.Error()
 	case errors.As(failure, &imageFailure):
 		return imageFailure.ReadableMessage(root, output...)
 	case errors.As(failure, &scalarFailure):
