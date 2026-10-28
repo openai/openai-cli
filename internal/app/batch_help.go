@@ -12,7 +12,7 @@ func configureBatchHelpContent(root *cli.Command) {
 		return
 	}
 	group := clihelp.Content{
-		Description: "Inspect batches with list or retrieve. Read answers with results.\n" +
+		Description: "Start a new batch with submit. Inspect existing batches with list.\n" +
 			"A batch processes the requests in a JSONL file. Each request needs a unique custom_id.",
 		Notes: "Help does not contact the API. Batch operations use your configured API key and project.\n" +
 			"Use --help after any command for its options and examples.",
@@ -27,6 +27,10 @@ func configureBatchHelpContent(root *cli.Command) {
 			Description: "Find Batch commands and examples without an API request:", Command: "explore batches",
 		})
 	}
+	group.Examples = append(group.Examples, clihelp.Example{
+		Description: "Start a new batch from your request file:",
+		Command:     "batches submit requests.jsonl",
+	})
 	setCompleteHelpContent(batches, group)
 	for name, examples := range map[string][]clihelp.Example{
 		"browse": {{Description: "Choose a batch without copying its ID:", Command: "batches browse"}},
