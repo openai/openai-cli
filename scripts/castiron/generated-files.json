@@ -33,6 +33,14 @@
       "mode": "100644",
       "sha256": "cc01b8a3e21a8e49b323e9f9da3cbda07db54b3aa498aae7e54d6bf094707505"
     },
+    "generated/commands/adminorganizationexternalkey.go": {
+      "mode": "100644",
+      "sha256": "97fb048c350a7963db3b731a5d5e5b47351912596c6840e8a3b9e814b04ba9ab"
+    },
+    "generated/commands/adminorganizationexternalkey_test.go": {
+      "mode": "100644",
+      "sha256": "404710e983e7e93bb55de36daea13247d1605cea99047363a8524f0ef79d5ab9"
+    },
     "generated/commands/adminorganizationexternalstorage.go": {
       "mode": "100644",
       "sha256": "f18526f6cd87147007a3be9b501623fd3e6451b62374296b30248944a14e7097"
@@ -275,7 +283,7 @@
     },
     "generated/commands/audiovoice.go": {
       "mode": "100644",
-      "sha256": "2c6553a8f7659a56e2a7853b9540605d30ffdc6c388ca3bfeebf01731b671535"
+      "sha256": "67ab6cfce7c4c8a3a8a9a434a569f7eb1b1aca19695200fcb2674b502ea8c8b7"
     },
     "generated/commands/audiovoice_test.go": {
       "mode": "100644",
@@ -411,7 +419,7 @@
     },
     "generated/commands/cmd.go": {
       "mode": "100644",
-      "sha256": "45b6a324ea9e72246016dafcb4479c63e139d0d970fcd6cb0cd9471d6696aa60"
+      "sha256": "06580692f202747c49264a82b533951e11683b7548657001f8de838026b0f5f1"
     },
     "generated/commands/completion.go": {
       "mode": "100644",
