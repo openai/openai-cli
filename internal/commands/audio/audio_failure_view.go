@@ -24,7 +24,7 @@ func (m *audioWorkbench) activeFailure() bool {
 
 func (m *audioWorkbench) failureSummaryRows() []string {
 	width := m.failureTextWidth()
-	rows := []string{m.strong().Render("! " + ansi.Truncate(readable.Text(m.failure.Summary), width, "…"))}
+	rows := []string{m.failureStyle().Render("! " + ansi.Truncate(readable.Text(m.failure.Summary), width, "…"))}
 	action := strings.Split(ansi.Wrap(readable.Text(m.failure.Action), width, ""), "\n")
 	for i, line := range action[:min(2, len(action))] {
 		if i == 1 && len(action) > 2 {
@@ -37,16 +37,15 @@ func (m *audioWorkbench) failureSummaryRows() []string {
 
 func (m *audioWorkbench) failureDetailRows() []string {
 	values := []string{m.failure.Summary}
-	step := 0
-	for _, action := range strings.Split(m.failure.Action, "\n") {
-		if action == "" {
-			continue
+	actions := strings.FieldsFunc(m.failure.Action, func(r rune) bool { return r == '\n' })
+	if len(actions) > 0 {
+		values = append(values, "")
+	}
+	for i, action := range actions {
+		if len(actions) > 1 {
+			action = fmt.Sprintf("%d. %s", i+1, action)
 		}
-		if step == 0 {
-			values = append(values, "")
-		}
-		step++
-		values = append(values, fmt.Sprintf("%d. %s", step, action))
+		values = append(values, action)
 	}
 	var rows []string
 	for _, value := range values {
@@ -78,14 +77,14 @@ func (m *audioWorkbench) failureFooter() []string {
 }
 
 func (m *audioWorkbench) failureDetailHeight() int {
-	return max(1, m.height-5)
+	return max(1, m.audioHeight()-4)
 }
 
 func (m *audioWorkbench) failureView() tea.View {
 	rows := m.failureDetailRows()
 	height := m.failureDetailHeight()
 	start := min(m.failureOffset, max(0, len(rows)-height))
-	lines := []string{m.failureIndent() + m.strong().Render("Error details"), ""}
+	lines := []string{m.failureIndent() + m.failureStyle().Render("Error details"), ""}
 	for _, row := range rows[start:min(len(rows), start+height)] {
 		lines = append(lines, m.failureIndent()+row)
 	}
@@ -93,5 +92,5 @@ func (m *audioWorkbench) failureView() tea.View {
 	for _, row := range m.failureFooter() {
 		lines = append(lines, m.failureIndent()+row)
 	}
-	return tea.NewView(m.fitAudio(lines))
+	return tea.NewView(m.fitAudio(lines, 1))
 }

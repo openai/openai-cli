@@ -45,8 +45,10 @@ func TestAudioSaveControllerFocusAndFolderCommit(t *testing.T) {
 	filename := m.path.Value()
 	require.Equal(t, filepath.Base(filename), filename)
 	require.Equal(t, audioDefaultSaveFolder, m.saveFolder.Value())
-	require.Equal(t, 2, m.saveFocus, "Save should open ready to confirm")
-	for _, focus := range []int{0, 1, 2} {
+	require.Equal(t, 1, m.saveFocus, "Save should open with the destination folder editable")
+	require.True(t, m.saveFolder.Focused())
+	require.False(t, m.path.Focused())
+	for _, focus := range []int{2, 0, 1} {
 		audioReviewKey(m, tea.KeyTab)
 		require.Equal(t, focus, m.saveFocus)
 		require.Equal(t, focus == 0, m.path.Focused())
@@ -55,6 +57,8 @@ func TestAudioSaveControllerFocusAndFolderCommit(t *testing.T) {
 		require.False(t, m.busy)
 	}
 	m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	require.Equal(t, 0, m.saveFocus)
+	audioReviewKey(m, tea.KeyTab)
 	require.Equal(t, 1, m.saveFocus)
 	audioReviewKey(m, tea.KeyTab)
 	m.Update(tea.PasteMsg{Content: "ignored by Save action"})
@@ -109,6 +113,7 @@ func TestAudioSaveControllerEditedDefaultNameCapturesFieldsAndOriginal(t *testin
 		m.openSave()
 		require.Equal(t, "original-retained-prompt.wav", m.path.Value())
 		m.path.SetValue("renamed.wav")
+		m.focusSave(2)
 		command := audioReviewKey(m, tea.KeyEnter)
 		require.True(t, m.busy)
 		// Worker input must not follow later UI edits or result replacement.
@@ -166,6 +171,7 @@ func TestAudioSaveControllerValidationAndMissingFolder(t *testing.T) {
 	m := audioReviewModel(t)
 	audioSaveControllerResult(t, m, "Original audio")
 	m.openSave()
+	m.focusSave(2)
 	for _, name := range []string{"", "-", "CON.wav", "bad\n.wav"} {
 		m.path.SetValue(name)
 		require.Nil(t, audioReviewKey(m, tea.KeyEnter))
@@ -223,11 +229,13 @@ func TestAudioSaveControllerLongNameCollisionHasUsefulError(t *testing.T) {
 	name := strings.Repeat("a", 251) + ".wav"
 	m.openSave()
 	m.path.SetValue(name)
+	m.focusSave(2)
 	first := audioSaveControllerRun(t, audioReviewKey(m, tea.KeyEnter))
 	require.NoError(t, first.err)
 	m.Update(first)
 	m.openSave()
 	m.path.SetValue(name)
+	m.focusSave(2)
 	second := audioSaveControllerRun(t, audioReviewKey(m, tea.KeyEnter))
 	require.ErrorIs(t, second.err, syscall.ENAMETOOLONG)
 	m.Update(second)
@@ -244,9 +252,19 @@ func TestAudioSaveControllerConfirmsSuggestedDestination(t *testing.T) {
 	const original = "Complete original audio, including the beginning and end."
 	audioSaveControllerResult(t, m, original)
 	m.openSave()
-	require.Equal(t, 2, m.saveFocus)
+	require.Equal(t, 1, m.saveFocus)
 	require.False(t, m.path.Focused())
+	require.True(t, m.saveFolder.Focused())
+	started := m.started
+	require.Nil(t, audioReviewKey(m, tea.KeyEnter), "first Enter must finish editing without saving")
+	require.Equal(t, 2, m.saveFocus)
 	require.False(t, m.saveFolder.Focused())
+	require.Equal(t, "save", m.modal)
+	require.False(t, m.busy)
+	require.Equal(t, started, m.started)
+	require.Empty(t, m.result.savedPaths)
+	_, err := os.Stat(filepath.Join(home, "Downloads"))
+	require.ErrorIs(t, err, os.ErrNotExist, "folder confirmation must not create an export directory")
 	message := audioSaveControllerRun(t, audioReviewKey(m, tea.KeyEnter))
 	require.NoError(t, message.err)
 	path := filepath.Join(home, "Downloads", "gpt-audio", "original-retained-prompt.wav")

@@ -16,7 +16,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/openai/openai-cli/internal/audiomedia"
-	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
 
@@ -96,6 +95,7 @@ type audioWorkbench struct {
 	color, dark               bool
 	busy, quit, playing       bool
 	note                      string
+	playerNotice              string
 	failure                   audioFeedback
 	failureNote               string
 	failureOffset             int
@@ -108,6 +108,8 @@ type audioWorkbench struct {
 	commandToPrint            string
 	infoParent                string
 	infoOffset                int
+	commandOffset             int
+	commandCache              audioCommandCache
 	lastErr                   error
 	exitCode                  int
 	lastFinished              time.Time
@@ -117,6 +119,8 @@ type audioWorkbench struct {
 	playDone                  <-chan struct{}
 	playProgress              *audioPlaybackProgress
 	saveFocus                 int
+	speedEditing              bool
+	speedError                string
 }
 
 func newAudioWorkbench(ctx context.Context, command *cli.Command, next cli.ActionFunc, store audiohistory.Store) *audioWorkbench {
@@ -127,6 +131,7 @@ func newAudioWorkbench(ctx context.Context, command *cli.Command, next cli.Actio
 		// clipboard subprocesses; the workbench owns all launched helpers.
 		t.KeyMap.Paste.SetEnabled(false)
 		t.KeyMap.CopySelection.SetEnabled(false)
+		t.SetVirtualCursor(false)
 		t.ShowLineNumbers = false
 		t.Prompt = ""
 		t.Placeholder = placeholder
@@ -159,6 +164,9 @@ func (m *audioWorkbench) usable() bool { return m.width >= 40 && m.height >= 12 
 func (m *audioWorkbench) resizeEditors() {
 	for _, editor := range []*textarea.Model{&m.input, &m.instructions, &m.path, &m.saveFolder, &m.speedInput} {
 		width := max(1, m.audioWidth()-4)
+		if editor == &m.speedInput && m.speedEditing {
+			width = 8
+		}
 		if (editor == &m.path || editor == &m.saveFolder) && m.modal == "save" {
 			labelWidth := 14
 			if m.height < 24 || m.width < 60 {
@@ -166,11 +174,15 @@ func (m *audioWorkbench) resizeEditors() {
 			}
 			width = max(1, m.audioWidth()-labelWidth-3)
 		}
-		if editor == &m.instructions && m.height >= 24 && m.width >= 60 {
-			width = max(1, m.audioWidth()-17)
+		if m.framed() && editor == &m.instructions {
+			width = max(1, m.audioWidth()-m.formLabelWidth()-3)
 		}
-		if editor.Width() != width {
+		widthChanged := editor.Width() != width
+		if widthChanged {
 			editor.SetWidth(width)
+			// Bubbles refreshes its shared viewport content in View. Reflow before
+			// repositioning so scrolling uses the new wrapped content length.
+			_ = editor.View()
 		}
 		height := 1
 		if (editor == &m.path || editor == &m.saveFolder) && m.modal == "save" {
@@ -179,16 +191,20 @@ func (m *audioWorkbench) resizeEditors() {
 			if m.height >= 24 && m.width >= 60 {
 				reserved += 2
 			}
-			height = min(4, max(1, editor.LineInfo().Height), max(1, m.height-1-reserved))
+			height = min(4, max(1, editor.LineInfo().Height), max(1, m.audioHeight()-reserved))
 		}
 		if m.height >= 24 && (editor == &m.input || editor == &m.instructions) {
 			height = min(3, editor.LineCount())
 			if m.width >= 60 {
 				height = audioEditorHeight(*editor)
+				if m.result != nil && m.modal == "" && m.focus != audioFocusCommand {
+					height = min(height, max(1, (m.audioHeight()-19)/2))
+				}
 			}
 		}
-		if editor.Height() != height {
+		if widthChanged || editor.Height() != height {
 			// Dynamic sizing clamps the viewport against actual content rows.
+			// Reflow can change those rows even when the editor stays three rows tall.
 			// Keep the temporary display bounds out of input processing; Bubbles
 			// also uses MaxHeight as a legacy input limit.
 			dynamic, minimum, maximum := editor.DynamicHeight, editor.MinHeight, editor.MaxHeight
@@ -251,8 +267,14 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 				return m, nil
 			}
 			m.capturePlaybackProgress()
-			if m.result != nil {
+			if m.result != nil && (m.playProgress == nil || m.playProgress.entryID == m.result.entry.ID) {
 				m.result.finished = msg.err == nil
+				if m.result.finished && m.playing {
+					if duration := m.result.seekDuration(); duration > 0 {
+						// FFplay can finish between clock reports. Completion owns the final boundary.
+						m.result.position = duration
+					}
+				}
 			}
 			m.playProgress = nil
 			if m.playCancel != nil {
@@ -287,6 +309,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 				m.priorResult = nil
 			}
 			m.result = &msg.result
+			m.playerNotice = ""
 			m.resultAction = 0
 			m.waveformFocused = false
 			m.focusSection(4)
@@ -334,6 +357,9 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			return m, nil
 		}
 		if key == "esc" {
+			if m.modal == "" && !m.busy && m.cancelInlineSpeed() {
+				return m, nil
+			}
 			if m.modal == "recovery" {
 				return m, m.leaveRecovery()
 			}
@@ -362,6 +388,10 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 				m.focusSection(0)
 				return m, nil
 			}
+			if m.focus == audioFocusCommand {
+				m.modal = "more"
+				return m, m.focusSection(2)
+			}
 			m.quit = true
 			m.stopPlayback()
 			return m, tea.Quit
@@ -377,25 +407,28 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 		if m.modal != "" {
 			return m, m.updateModal(message, key)
 		}
+		if handled, command := m.updateInlineSetting(message); handled {
+			return m, command
+		}
+		if key == "ctrl+p" && m.focus != 4 {
+			return m, m.printCommand()
+		}
 		if handled, command := m.navigateSection(key); handled {
 			return m, command
 		}
-		if key == "ctrl+o" && m.result != nil {
+		if key == "ctrl+o" {
 			return m, m.focusSection(4)
 		}
 		if key == "ctrl+g" {
 			return m, m.generate(false)
 		}
+		if m.focus == audioFocusCommand {
+			rows := m.commandDisplayRows()
+			m.commandOffset = audioScrollOffset(m.commandOffset, len(rows), m.commandViewportHeight(), key)
+			return m, nil
+		}
 		if m.focus == 2 {
 			switch key {
-			case "left", "right":
-				if m.setting == 3 {
-					step := .25
-					if key == "left" {
-						step = -.25
-					}
-					m.settings.Speed = max(.25, min(4, m.settings.Speed+step))
-				}
 			case "enter":
 				return m, m.activateSetting()
 			case "p":
@@ -412,6 +445,9 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 					m.seekResult(key)
 				}
 			case "space", "enter":
+				if m.result == nil {
+					return m, m.noGenerationNotice()
+				}
 				if time.Since(m.lastFinished) < 750*time.Millisecond {
 					return m, nil
 				}
@@ -443,6 +479,11 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 	if !m.usable() || m.busy {
 		return m, nil
 	}
+	if m.modal == "" {
+		if handled, command := m.updateInlineSetting(message); handled {
+			return m, command
+		}
+	}
 	if m.modal == "save" {
 		return m, m.updateSaveEditor(message)
 	}
@@ -473,9 +514,7 @@ func (m *audioWorkbench) activateSetting() tea.Cmd {
 	case 2:
 		m.choices = audioFormats
 	case 3:
-		m.modal = "speed"
-		m.speedInput.SetValue(strconv.FormatFloat(m.settings.Speed, 'f', -1, 64))
-		return m.speedInput.Focus()
+		return m.beginInlineSpeed()
 	case 4:
 		return m.generate(false)
 	case audioSettingHistory:
@@ -499,15 +538,6 @@ func (m *audioWorkbench) updateModal(message tea.Msg, key string) tea.Cmd {
 		return nil
 	}
 	if m.modal == "info" {
-		if m.infoTitle == audioCommandTitle && key == "ctrl+p" {
-			if _, omit := requestconfig.NextCommandOptions(m.command.Root()); omit {
-				return nil
-			}
-			m.commandToPrint = m.commandPreview()
-			m.quit = true
-			m.stopPlayback()
-			return tea.Quit
-		}
 		m.infoOffset = audioScrollOffset(m.infoOffset, len(m.infoRows()), m.informationHeight(), key)
 		return nil
 	}
@@ -594,6 +624,7 @@ func (m *audioWorkbench) generate(preview bool) tea.Cmd {
 		return nil
 	}
 	m.stopPlayback()
+	m.playerNotice = ""
 	return m.work("generate", func(ctx context.Context) audioWorkMessage {
 		if preview {
 			entries, listErr := m.store.List(ctx)
@@ -662,7 +693,7 @@ func (m *audioWorkbench) stopPlayback() {
 
 func (m *audioWorkbench) togglePlayback() tea.Cmd {
 	if m.result == nil {
-		return nil
+		return m.noGenerationNotice()
 	}
 	if m.playing {
 		m.stopPlayback()

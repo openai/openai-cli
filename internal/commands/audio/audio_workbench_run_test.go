@@ -39,7 +39,7 @@ func TestAudioWorkbenchDrawSynchronizesGeometryAfterNonKeyMessage(t *testing.T) 
 			require.Equal(t, "Keep these instructions.", m.instructions.Value())
 			require.Same(t, &result, m.result)
 			frame := paint.String()
-			require.True(t, strings.HasPrefix(frame, "\r"+ansi.EraseScreenBelow))
+			require.True(t, strings.HasPrefix(frame, ansi.ResetModeTextCursorEnable+"\r"+ansi.EraseScreenBelow))
 			rows := strings.Count(frame, ansi.CursorHorizontalAbsolute(size[0]))
 			require.Positive(t, rows)
 			require.LessOrEqual(t, rows, size[1], "stale roomy rows must not scroll above the compact viewport")
@@ -47,7 +47,7 @@ func TestAudioWorkbenchDrawSynchronizesGeometryAfterNonKeyMessage(t *testing.T) 
 			require.NotContains(t, frame, "\x1b[3J")
 			if size[0] == 40 {
 				require.Contains(t, frame, "Text to speech")
-				require.Contains(t, frame, "Coral · WAV")
+				require.Contains(t, frame, "Coral • WAV")
 				require.Contains(t, frame, "00:00.000 / 00:01.000")
 			} else {
 				require.Contains(t, frame, "Resize to 40 x 12.")
@@ -66,3 +66,24 @@ type audioRecordedFrames struct{ strings.Builder }
 
 func (p *audioRecordedFrames) Control(data string) { _, _ = p.WriteString(data) }
 func (p *audioRecordedFrames) Frame(data string)   { _, _ = p.WriteString(data) }
+
+func TestAudioFramedWorkspaceFillsViewportWithoutClearingHistory(t *testing.T) {
+	for _, size := range [][2]int{{60, 24}, {101, 29}, {186, 40}} {
+		m := audioReviewModel(t)
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		content := m.View().Content
+		require.Len(t, strings.Split(content, "\n"), size[1])
+		require.False(t, strings.HasSuffix(content, "\n"))
+		paint := &audioRecordedFrames{}
+		inline := &audioWorkbenchInline{model: m, painter: paint, profile: colorprofile.ASCII, started: true}
+		inline.drawFrame(size[0], size[1])
+		frame := paint.String()
+		require.Equal(t, size[1], strings.Count(frame, ansi.CursorHorizontalAbsolute(size[0])))
+		require.Contains(t, frame, "\r"+ansi.CursorUp(size[1]-1)+ansi.SaveCursor)
+		require.True(t, strings.HasSuffix(frame, ansi.SetCursorStyle(5)+ansi.SetModeTextCursorEnable))
+		require.NotContains(t, frame, "\x1b[2J")
+		require.NotContains(t, frame, "\x1b[3J")
+		inline.drawFrame(size[0], size[1])
+		require.Equal(t, frame, paint.String(), "unchanged redraw must not scroll the screen")
+	}
+}

@@ -101,7 +101,7 @@ A private synthetic History entry supplies Result navigation without generation.
 Both cases require zero accepted or rejected fixture requests and strict cancellation cleanup.
 Settings End selects More actions. Clear is the third More action.
 Clear empties Text and Instructions without reseeding the constructor example.
-The navigation inventory contains 188 current-viewport checkpoints at each size.
+The navigation inventory contains 192 current-viewport checkpoints at each size.
 The navigation cases test Alt+Enter without submitting editor text.
 They leave Enter generation and the existing repeat-submit guard unchanged.
 
@@ -137,11 +137,11 @@ The first explicit Ctrl+G sends synthetic Text with the actual seeded Instructio
 The fixture returns HTTP 401 with valid Request ID `req_audio_demo_401` and malicious synthetic message canaries.
 The fixture supplies the exact error code `invalid_api_key`.
 The fixture uses a custom loopback endpoint, so Error details identifies that endpoint's authentication failure.
-The screen opens immediately with the cause, short numbered recovery steps, and Esc back.
+The screen shows the cause, one recovery instruction, and Esc back. Only multiple instructions receive numbers.
 It shows no API setup menu, nested details page, raw HTTP status, or Request ID.
 The ordinary form keeps those details hidden after dismissal.
 An unknown OpenAI authentication cause retains its generic summary instead of claiming rejection or expiration.
-Missing OpenAI keys point to `openai help setup` in the main terminal.
+Missing OpenAI keys point to `help setup` using the executable that launched the workbench.
 Application tests cover those standard OpenAI credential cases without contacting a live API.
 
 Enter, Tab, S, D, and Ctrl+G on the error screen must not start another action.
@@ -260,7 +260,7 @@ The case allows 60 seconds for two CLI sessions. Existing ownership cleanup reta
 
 Both sessions use 40×12, fake credentials, loopback, and a private HOME.
 The checker selects the actual binary through an isolated `openai` symlink.
-It enters 60 ASCII `A` characters and opens Show command.
+It enters 60 ASCII `A` characters and opens View command.
 Enter must preserve the form and make no request.
 The first session uses Ctrl+P. The second uses Ctrl+C.
 The checker requires exit 0 and 130 respectively.
@@ -269,7 +269,7 @@ The Bash parent stays alive after the CLI exits.
 The checker compares native terminal modes before releasing that parent.
 It requires final cursor and bracketed-paste cleanup before the printed command.
 It compares complete command bytes against an independent synthetic request specification.
-Only the terminal's original newline translation is accounted for.
+The expected shell command includes each continuation, indentation level, and the terminal’s original newline translation.
 The checker preserves raw output, casts, emitted bytes, process statuses, and owned-process cleanup records.
 Both sessions must make zero accepted or rejected requests and create no audio History.
 A forced harness cleanup fails the case.
@@ -300,4 +300,6 @@ python3 -I -B scripts/demos/audio-workbench/test_observer.py
 These tests cover partial startup, deferred interruption, continued cleanup, source integrity, and scrollback saturation.
 They do not replace the full checker run against the exact candidate binary.
 
-The `wide` case runs at 186×34. It checks the 96-cell reading column, horizontal action navigation, retained More context, zero requests, and exit cleanup. Its fixed geometry supports internal frame rendering.
+The `wide` case runs at 186×34. The frame leaves the last terminal column free to prevent a soft wrap.
+The case moves between actions with Left and Right, opens More actions, and returns to the draft.
+It checks the menu descriptions, retained text, zero speech requests, and terminal cleanup.

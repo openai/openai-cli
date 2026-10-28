@@ -18,7 +18,13 @@ func (r *audioWorkResult) playbackPosition() time.Duration {
 	return max(0, min(r.position, r.seekDuration()))
 }
 
-func (m *audioWorkbench) waveformWidth() int { return min(72, max(3, m.audioWidth()-2)) }
+func (m *audioWorkbench) waveformWidth() int {
+	inset := 4
+	if m.framed() {
+		inset = 8 // Keep the framed timeline on its original time scale after resizing.
+	}
+	return min(120, max(3, m.audioWidth()-inset))
+}
 
 func (m *audioWorkbench) selectedBoundary() int {
 	duration := m.result.seekDuration()
