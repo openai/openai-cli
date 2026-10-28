@@ -316,6 +316,14 @@ func TestLimitsWorkspacePrintOmissionsAndUnavailableStates(t *testing.T) {
 }
 
 func TestLimitsWorkspaceNULArgumentsDisablePrinting(t *testing.T) {
+	ordinary, ordinaryBackend := newLimitsController(t, 40, 12)
+	require.NotNil(t, limitsControllerKey(ordinary, 'q'))
+	var ordinaryOutput bytes.Buffer
+	require.NoError(t, finishLimitsWorkspace(t.Context(), ordinary, nil, ShowJSONOpts{Context: t.Context(), Stdout: &ordinaryOutput, Stderr: io.Discard}))
+	require.Empty(t, ordinary.commandToPrint)
+	require.Zero(t, ordinaryBackend.writes.Load())
+	require.Zero(t, ordinaryBackend.reads.Load())
+
 	for _, shell := range []string{"bash", "zsh", "fish", "pwsh"} {
 		for _, source := range []string{"alert_id", "rate_id", "project_id", "request_option", "executable"} {
 			t.Run(shell+"/"+source, func(t *testing.T) {
@@ -359,7 +367,7 @@ func TestLimitsWorkspaceNULArgumentsDisablePrinting(t *testing.T) {
 				require.NotNil(t, limitsControllerKey(m, 'q'))
 				var out bytes.Buffer
 				require.NoError(t, finishLimitsWorkspace(t.Context(), m, nil, ShowJSONOpts{Context: t.Context(), Stdout: &out, Stderr: io.Discard}))
-				require.Empty(t, out.String())
+				require.Equal(t, ordinaryOutput.String(), out.String())
 				require.Zero(t, backend.writes.Load())
 				require.Zero(t, backend.reads.Load())
 			})

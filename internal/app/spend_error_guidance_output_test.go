@@ -112,6 +112,9 @@ func TestSpendErrorGuidancePresentationModesAndControls(t *testing.T) {
 	require.True(t, clioutput.IsBrokenPipe(err), "preserve the existing closed-consumer policy")
 	var partial bytes.Buffer
 	opts.Stdout = spendPresentationWriter(func(value []byte) (int, error) {
+		if len(value) == 0 {
+			return 0, nil
+		}
 		partial.Write(value[:1])
 		return 1, cause
 	})
