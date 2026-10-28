@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -61,6 +64,62 @@ func TestMainBatchReadableResultsShowRequestedContent(t *testing.T) {
 		if strings.Count(got.stdout, "batch_readable") != 1 || strings.Count(got.stdout+got.stderr, "Full data:") > 1 {
 			t.Errorf("repeated result context: %+v", got)
 		}
+	}
+}
+
+func TestMainBatchRawTextLargeFieldAndRecord(t *testing.T) {
+	// The renderer spills this label while the producer starts spilling the next record.
+	label := strings.Repeat("l", 8192)
+	value := strings.Repeat("v", 300<<10)
+	first := `{"custom_id":"first","` + label + `":"label-value"}`
+	second := `{"custom_id":"second","payload":"` + value + `"}`
+	// A small compressed transfer lets both workers process the records without
+	// waiting on a later network packet.
+	var body bytes.Buffer
+	zipped := gzip.NewWriter(&body)
+	if _, err := io.WriteString(zipped, first+"\n"+second+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := zipped.Close(); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/batches/batch_readable":
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"id":"batch_readable","input_file_id":"file_input","output_file_id":"file_output"}`)
+		case "/files/file_input/content":
+			io.WriteString(w, "{\"custom_id\":\"first\"}\n{\"custom_id\":\"second\"}\n")
+		case "/files/file_output/content":
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Content-Length", fmt.Sprint(body.Len()))
+			w.Write(body.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	for _, mode := range []string{"streamed", "matched"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			args := []string{"batches", "results", "batch_readable", "--format", "text", "--raw-output"}
+			if mode == "matched" {
+				args = append(args, "--match-input")
+			}
+			child := batchesWorkflowProcess(t, t.Context(), server, args...)
+			child.Env = append(child.Env, "TMPDIR="+dir, "TMP="+dir, "TEMP="+dir)
+			var stdout, stderr strings.Builder
+			child.Stdout, child.Stderr = &stdout, &stderr
+			if err := child.Run(); err != nil {
+				t.Fatalf("raw text failed: %v; stderr: %s", err, stderr.String())
+			}
+			if !strings.Contains(stdout.String(), "L"+label[1:]+": label-value") || !strings.Contains(stdout.String(), value) {
+				t.Fatal("raw text lost the complete label or record")
+			}
+			if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+				t.Fatalf("scratch cleanup: %v; files: %v", err, entries)
+			}
+		})
 	}
 }
 
