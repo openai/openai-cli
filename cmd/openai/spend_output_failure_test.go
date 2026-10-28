@@ -234,10 +234,13 @@ func TestMainSpendMutationOutputFailureControls(t *testing.T) {
 		t.Fatal("read output failure acquired mutation guidance", got)
 	}
 	args := spendOutputMutationArgs(false, "spend-alerts", "create")
-	args[len(args)-1] = `{"synthetic-private-input": broken}`
+	args[len(args)-1] = `[synthetic-private-input not closed`
 	got = runSpendOutputFailure(t, env, append(args, "--format-error", "text")...)
 	checkSpendRecoveryFailure(t, got)
-	if got.stderr == "" || requests.Load() != 1 || strings.Contains(got.stderr, "may have been applied") || strings.Contains(got.stderr, "before repeating") {
+	if count := requests.Load(); count != 1 {
+		t.Fatalf("input rejection sent a request: got %d total requests, want only the earlier read", count)
+	}
+	if got.stderr == "" || strings.Contains(got.stderr, "may have been applied") || strings.Contains(got.stderr, "before repeating") {
 		t.Fatal("input rejection acquired response provenance", got)
 	}
 }
