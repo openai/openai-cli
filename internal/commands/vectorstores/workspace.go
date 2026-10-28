@@ -316,7 +316,14 @@ func (m *workspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// editing must remain responsive immediately after a successful request.
 		if key != "enter" {
 			m.lastMutation = time.Time{}
-			m.retryNeedsInput = false
+			if m.retryNeedsInput {
+				page, focus := m.page, m.focus
+				defer func() {
+					if m.page != page || m.focus != focus {
+						m.retryNeedsInput = false
+					}
+				}()
+			}
 		}
 		if key == "ctrl+c" {
 			m.quit, m.exitCode = true, 130
@@ -401,15 +408,17 @@ func (m *workspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if m.editing() && !m.busy {
 		if paste, ok := message.(tea.PasteMsg); ok {
 			m.lastMutation = time.Time{}
-			m.retryNeedsInput = false
 			paste.Content = strings.ReplaceAll(strings.ReplaceAll(paste.Content, "\r", ""), "\n", " ")
 			message = paste
 		}
 		var cmd tea.Cmd
 		previous := m.editor.Value()
 		m.editor, cmd = m.editor.Update(message)
-		if m.page == "upload" && m.editor.Value() != previous {
-			m.selectedUploadPath = ""
+		if m.editor.Value() != previous {
+			m.retryNeedsInput = false
+			if m.page == "upload" {
+				m.selectedUploadPath = ""
+			}
 		}
 		m.saveInput()
 		return m, cmd

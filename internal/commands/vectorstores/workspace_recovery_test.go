@@ -89,7 +89,9 @@ func TestWorkspaceFailedCreateIgnoresImmediateRepeatedEnter(t *testing.T) {
 	require.Error(t, m.lastErr)
 	assert.Contains(t, m.note, "Refresh stores before retrying.")
 	m.lastMutation = time.Now().Add(-time.Second)
-	// A held Enter must not duplicate the write even after the debounce expires.
+	// Neither ignored input nor a held Enter authorizes another POST.
+	m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	m.Update(tea.PasteMsg{Content: ""})
 	repeated := modelKey(m, tea.KeyEnter)
 	assert.Nil(t, repeated, "an immediate repeated Enter must not duplicate an uncertain mutation")
 	if repeated != nil {
