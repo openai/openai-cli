@@ -478,12 +478,28 @@ func (s *batchRecordStore) writeKey(out io.Writer, group batchStoredGroup) error
 	reader := bufio.NewReader(batchRecordContextReader{s.ctx, io.NewSectionReader(s.data, group.keyStart, group.keyLength)})
 	var encodedRune [utf8.UTFMax]byte
 	for {
-		value, _, err := reader.ReadRune()
+		value, size, err := reader.ReadRune()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			return err
+		}
+		if value == utf8.RuneError && size == 1 {
+			// Matching preserves raw invalid UTF-8 bytes. Keep the same identity
+			// when writing the group instead of replacing them with U+FFFD.
+			if err := reader.UnreadRune(); err != nil {
+				return err
+			}
+			value, err := reader.ReadByte()
+			if err != nil {
+				return err
+			}
+			encodedRune[0] = value
+			if _, err := out.Write(encodedRune[:1]); err != nil {
+				return err
+			}
+			continue
 		}
 		if value >= 0x20 && value != '"' && value != '\\' && value != '<' && value != '>' && value != '&' && value != '\u2028' && value != '\u2029' {
 			size := utf8.EncodeRune(encodedRune[:], value)
