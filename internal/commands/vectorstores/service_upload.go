@@ -10,6 +10,7 @@ import (
 	"github.com/openai/openai-cli/internal/apiform"
 	"github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 )
 
 func (s *sdkService) UploadFile(ctx context.Context, path string) (file *openai.FileObject, err error) {
@@ -31,14 +32,16 @@ func (s *sdkService) UploadFile(ctx context.Context, path string) (file *openai.
 		err = errors.Join(err, body.Close())
 	}()
 	// MultipartRequestOptions streams once and disables SDK upload retries.
+	var attempt mutationAttempt
+	options = append(options, option.WithMiddleware(attempt.observe))
 	file, err = s.client.Files.New(ctx, openai.FileNewParams{}, options...)
 	if file != nil && !validResponseID(file.JSON.ID) {
 		file = nil
 	}
 	if err == nil && file == nil {
-		err = workspaceFailure("The API returned no file ID. Check Files before uploading again.", nil)
+		err = workspaceFailure("The API returned no file ID.", nil)
 	}
-	return file, err
+	return file, attempt.failure(err)
 }
 
 func openUpload(ctx context.Context, path string) (request.FileUpload, error) {

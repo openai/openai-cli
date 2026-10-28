@@ -1,6 +1,7 @@
 package vectorstores
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -104,7 +105,7 @@ func TestManagementListsAndContent(t *testing.T) {
 			assert.Equal(t, "file_prior", r.URL.Query().Get("after"))
 			serviceJSON(w, 200, `{"data":[{"id":"file_next","vector_store_id":"vs_demo"}],"has_more":true}`)
 		case "/vector_stores/vs_demo/files/file_demo/content":
-			data, err := json.Marshal(map[string]any{"data": []any{map[string]any{"type": "text", "text": large}}})
+			data, err := json.Marshal(map[string]any{"data": []any{map[string]any{"type": "text", "text": large}}, "has_more": false, "next_page": nil})
 			require.NoError(t, err)
 			serviceJSON(w, 200, string(data))
 		default:
@@ -120,7 +121,22 @@ func TestManagementListsAndContent(t *testing.T) {
 	assert.Equal(t, "file_next", batch.Next)
 	content, err := s.FileContent(t.Context(), "vs_demo", "file_demo")
 	require.NoError(t, err)
-	assert.Equal(t, large, content)
+	assert.Equal(t, IndexedContent{Text: large}, content)
+}
+
+func TestManagementFileContentRequestErrors(t *testing.T) {
+	s := testService(t, func(w http.ResponseWriter, _ *http.Request) {
+		serviceJSON(w, 404, `{"error":{"message":"missing file","type":"not_found"}}`)
+	}).(ManagementService)
+	content, err := s.FileContent(t.Context(), "vs_demo", "file_demo")
+	require.Error(t, err)
+	assert.Empty(t, content)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	content, err = s.FileContent(ctx, "vs_demo", "file_demo")
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, content)
 }
 
 func TestManagementRejectsUnconfirmedResults(t *testing.T) {

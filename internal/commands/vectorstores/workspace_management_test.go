@@ -125,7 +125,7 @@ func TestManagementFileContentAttributesAndRemoval(t *testing.T) {
 		assert.True(t, strings.HasPrefix(r.URL.Path, "/vector_stores/vs_demo/files/file_demo"))
 		switch r.Method {
 		case "GET":
-			serviceJSON(w, 200, `{"data":[{"type":"text","text":"first passage"},{"type":"text","text":"final passage"}]}`)
+			serviceJSON(w, 200, `{"data":[{"type":"text","text":"first passage"},{"type":"text","text":"final passage"}],"has_more":false,"next_page":null}`)
 		case "POST":
 			mutations++
 			var body map[string]any
@@ -162,6 +162,57 @@ func TestManagementFileContentAttributesAndRemoval(t *testing.T) {
 	assert.Equal(t, "file_recovery", m.pendingFile)
 	assert.Equal(t, "files", m.page)
 	assert.Contains(t, m.note, "source file remains")
+}
+
+func TestManagementIndexedContentPagination(t *testing.T) {
+	for _, tc := range []struct {
+		name, metadata string
+		empty, partial bool
+	}{
+		{"complete", `"has_more":false,"next_page":null`, false, false},
+		{"empty complete", `"has_more":false,"next_page":null`, true, false},
+		{"more", `"has_more":true,"next_page":"private-cursor"`, false, true},
+		{"empty first page", `"has_more":true,"next_page":"private-cursor"`, true, true},
+		{"missing cursor", `"has_more":true`, false, true},
+		{"contradictory cursor", `"has_more":false,"next_page":"private-cursor"`, false, true},
+		{"invalid flag", `"has_more":"false","next_page":null`, false, true},
+		{"unknown pagination", `"object":"vector_store.file_content.page"`, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := `[{"type":"text","text":"first passage"},{"type":"text","text":"second passage"}]`
+			if tc.empty {
+				data = `[]`
+			}
+			calls := 0
+			m := managementModel(t, func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, "/vector_stores/vs_demo/files/file_demo/content", r.URL.RequestURI())
+				serviceJSON(w, 200, `{"data":`+data+`,`+tc.metadata+`}`)
+			})
+			m.file = &openai.VectorStoreFile{ID: "file_demo", VectorStoreID: "vs_demo"}
+			m.enter("file")
+			modelKey(m, tea.KeyDown)
+			modelComplete(t, m, modelKey(m, tea.KeyEnter))
+			require.Equal(t, 1, calls)
+			require.Equal(t, "document", m.page)
+			title := "Indexed file content"
+			if tc.partial {
+				title += " (partial)"
+				assert.Contains(t, m.View().Content, "The CLI can display only the first page.")
+			}
+			assert.Equal(t, title, m.documentTitle)
+			switch {
+			case !tc.empty:
+				assert.Equal(t, "first passage\n\nsecond passage", m.passage)
+			case tc.partial:
+				assert.Equal(t, "The first page contains no indexed text.", m.passage)
+			default:
+				assert.Equal(t, "No indexed text was returned.", m.passage)
+			}
+			assert.NotContains(t, m.View().Content, "private-cursor")
+		})
+	}
 }
 
 func TestManagementSelectExistingFilesAndBatchControls(t *testing.T) {

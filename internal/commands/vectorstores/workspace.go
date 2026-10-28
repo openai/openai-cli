@@ -100,6 +100,7 @@ type workspace struct {
 	seq                                           uint64
 	cancel                                        context.CancelFunc
 	lastMutation                                  time.Time
+	retryNeedsInput                               bool
 }
 
 func newWorkspace(ctx context.Context, service Service, errorMessage func(error) string) *workspace {
@@ -315,6 +316,7 @@ func (m *workspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// editing must remain responsive immediately after a successful request.
 		if key != "enter" {
 			m.lastMutation = time.Time{}
+			m.retryNeedsInput = false
 		}
 		if key == "ctrl+c" {
 			m.quit, m.exitCode = true, 130
@@ -353,7 +355,7 @@ func (m *workspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.syncFocus()
 		case "enter":
-			if !m.lastMutation.IsZero() && time.Since(m.lastMutation) < 750*time.Millisecond {
+			if m.retryNeedsInput || !m.lastMutation.IsZero() && time.Since(m.lastMutation) < 750*time.Millisecond {
 				return m, nil
 			}
 			return m, m.activate()
@@ -399,6 +401,7 @@ func (m *workspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if m.editing() && !m.busy {
 		if paste, ok := message.(tea.PasteMsg); ok {
 			m.lastMutation = time.Time{}
+			m.retryNeedsInput = false
 			paste.Content = strings.ReplaceAll(strings.ReplaceAll(paste.Content, "\r", ""), "\n", " ")
 			message = paste
 		}
@@ -750,7 +753,7 @@ func (m *workspace) complete(msg workMessage) tea.Cmd {
 	if msg.err != nil {
 		if cancelled || errors.Is(msg.err, context.Canceled) {
 			m.note = "Stopped local work."
-			if mutation {
+			if mutation && msg.kind != "create" && msg.kind != "upload" {
 				m.note += " The server may have completed the request. Check before retrying."
 			}
 			if msg.kind == "index" || msg.kind == "watch" {
@@ -764,8 +767,17 @@ func (m *workspace) complete(msg workMessage) tea.Cmd {
 			if msg.kind == "attach" {
 				m.note += " Uploaded file retained. Retry attachment below."
 			}
-			if msg.kind == "upload" && m.pendingFile != "" {
-				m.note += " Upload completed; its file ID is retained."
+		}
+		var uncertain *unconfirmedMutation
+		switch {
+		case msg.kind == "upload" && m.pendingFile != "":
+			m.note = "Upload completed; its file ID is retained. " + m.note
+		case errors.As(msg.err, &uncertain):
+			m.retryNeedsInput = true
+			if msg.kind == "create" {
+				m.note = "Refresh stores before retrying. The store may already exist. " + m.note
+			} else {
+				m.note = "Check project Files before retrying. The file may already exist. " + m.note
 			}
 		}
 		return nil

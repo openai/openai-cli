@@ -442,7 +442,8 @@ class PreviewHandler(http.server.BaseHTTPRequestHandler):
             row = state.attached(store_id, file_id)
             if len(parts) == 6 and parts[5] == "content" and method == "GET":
                 require(row["status"] == "completed", "This preview file has not finished indexing.")
-                return {"object": "list", "data": [{"type": "text", "text": state.texts[file_id]}], "has_more": False}
+                return {"object": "vector_store.file_content.page", "has_more": False, "next_page": None,
+                        "data": [{"type": "text", "text": state.texts[file_id]}]}
             if len(parts) == 5:
                 if method == "GET":
                     return state.public(row)
@@ -481,12 +482,14 @@ class PreviewHandler(http.server.BaseHTTPRequestHandler):
         except PreviewError as error:
             self.respond(error.status, {"error": {"message": str(error), "type": "invalid_request_error"}})
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            # The client stopped waiting for the preview response.
             pass
         except Exception:
             # No request-derived exception string escapes into diagnostics.
             try:
                 self.respond(400, {"error": {"message": "The local preview rejected this request.", "type": "invalid_request_error"}})
             except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                # The client can also disconnect while we send the fallback error.
                 pass
 
     do_GET = do_POST = do_DELETE = handle_preview

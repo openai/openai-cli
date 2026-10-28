@@ -21,12 +21,17 @@ type ManagementService interface {
 	ListBatchFiles(context.Context, string, string, string) (FilePage, error)
 	UpdateFile(context.Context, string, string, map[string]any) (*openai.VectorStoreFile, error)
 	RemoveFile(context.Context, string, string) error
-	FileContent(context.Context, string, string) (string, error)
+	FileContent(context.Context, string, string) (IndexedContent, error)
 }
 
 type SourcePage struct {
 	Files []openai.FileObject
 	Next  string
+}
+
+type IndexedContent struct {
+	Text    string
+	Partial bool
 }
 
 type AttachOptions struct {
@@ -153,26 +158,32 @@ func (s *sdkService) RemoveFile(ctx context.Context, store, file string) error {
 	return err
 }
 
-func (s *sdkService) FileContent(ctx context.Context, store, file string) (string, error) {
+func (s *sdkService) FileContent(ctx context.Context, store, file string) (IndexedContent, error) {
 	page, err := s.client.VectorStores.Files.Content(ctx, store, file)
 	if err != nil {
-		return "", err
+		return IndexedContent{}, err
 	}
 	if page == nil || !page.JSON.Data.Valid() {
-		return "", workspaceFailure("The API returned incomplete file content.", nil)
+		return IndexedContent{}, workspaceFailure("The API returned incomplete file content.", nil)
 	}
 	var text strings.Builder
 	for i, part := range page.Data {
 		if err := ctx.Err(); err != nil {
-			return "", err
+			return IndexedContent{}, err
 		}
 		if part.Type != "text" || !strings.HasPrefix(part.JSON.Text.Raw(), `"`) {
-			return "", workspaceFailure(fmt.Sprintf("The API returned unsupported file content at part %d.", i+1), nil)
+			return IndexedContent{}, workspaceFailure(fmt.Sprintf("The API returned unsupported file content at part %d.", i+1), nil)
 		}
 		if i > 0 {
 			text.WriteString("\n\n")
 		}
 		text.WriteString(part.Text)
 	}
-	return text.String(), nil
+	if err := ctx.Err(); err != nil {
+		return IndexedContent{}, err
+	}
+	// The endpoint returns pagination metadata but accepts no continuation parameter.
+	fields := page.JSON.ExtraFields
+	partial := fields["has_more"].Raw() != "false" || fields["next_page"].Raw() != "null"
+	return IndexedContent{Text: text.String(), Partial: partial}, nil
 }

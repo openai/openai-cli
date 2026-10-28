@@ -194,7 +194,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return 200, {"data": [attachment(EXISTING_ID, "completed"),
                                  {**attachment(EXISTING_ID, "in_progress"), "id": "file_second"}], "has_more": False}, None
         if path == base + f"/files/{FILE_ID}/content" and method == "GET":
-            return 200, {"data": [{"type": "text", "text": TEXT.decode().strip()},
+            return 200, {"object": "vector_store.file_content.page", "has_more": False, "next_page": None,
+                         "data": [{"type": "text", "text": TEXT.decode().strip()},
                                   {"type": "text", "text": "Final indexed passage."}]}, None
         if path == base + f"/files/{FILE_ID}":
             if method == "GET":
@@ -641,6 +642,7 @@ def close_terminal(terminal, destination, result):
         try:
             os.killpg(pid, signal.SIGKILL)
         except ProcessLookupError:
+            # The process group can exit between the liveness check and the signal.
             pass
         deadline = time.monotonic() + 2
         while group_exists(pid) and time.monotonic() < deadline:

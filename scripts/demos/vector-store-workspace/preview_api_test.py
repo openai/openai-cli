@@ -78,6 +78,8 @@ class PreviewTests(unittest.TestCase):
         status, content = self.request("GET", self.base + "/files/" + preview.SEED_FILE_ID + "/content")
         self.assertEqual(status, 200)
         self.assertEqual(content["data"][0]["text"], preview.SEED_TEXT)
+        self.assertIs(content["has_more"], False)
+        self.assertIsNone(content["next_page"])
 
     def test_create_update_expiration_metadata(self):
         status, store = self.request("POST", "/v1/vector_stores", {"name": "New preview"})

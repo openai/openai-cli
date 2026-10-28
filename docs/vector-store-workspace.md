@@ -30,6 +30,8 @@ Ctrl+C exits and restores the terminal.
 
 An attachment failure retains the uploaded file ID.
 Retry checks the existing attachment before sending another attachment request.
+If store creation loses its response, refresh the store list before retrying.
+If an upload loses its response, check the project's source files before uploading again.
 Stopping local work does not delete files or stop remote indexing.
 Created stores have no expiry policy by default.
 
@@ -40,6 +42,7 @@ The estimate uses the current size across the active part of the current UTC mon
 It does not calculate billing charges.
 
 Select a completed or failed file in **Files** to inspect details, read indexed text, edit attributes, or remove its attachment.
+If the API reports more indexed text, the workspace labels the displayed page as partial.
 Selecting an indexing file waits for completion.
 Attachment removal preserves the source file.
 Store deletion preserves source files too.

@@ -32,7 +32,7 @@ type managementState struct {
 type managementResult struct {
 	batch   *openai.VectorStoreFileBatch
 	sources SourcePage
-	text    string
+	content IndexedContent
 }
 
 var managementMenus = map[string][]string{
@@ -319,8 +319,8 @@ func (m *workspace) activateManagementMenu(action string) tea.Cmd {
 	case "Read content":
 		file := m.file.ID
 		return m.start("content", "Reading indexed content…", func(ctx context.Context) workMessage {
-			text, err := m.manager().FileContent(ctx, id, file)
-			return workMessage{managementResult: managementResult{text: text}, err: err}
+			content, err := m.manager().FileContent(ctx, id, file)
+			return workMessage{managementResult: managementResult{content: content}, err: err}
 		})
 	case "Edit attributes", "Remove attachment":
 		if !m.mutable() {
@@ -527,11 +527,20 @@ func (m *workspace) completeManagement(msg workMessage) (tea.Cmd, bool) {
 		m.batch = msg.batch
 		return m.enter("batch"), true
 	case "content":
-		text := msg.text
-		if text == "" {
+		title, text := "Indexed file content", msg.content.Text
+		if msg.content.Partial {
+			title += " (partial)"
+			if text == "" {
+				text = "The first page contains no indexed text."
+			}
+		} else if text == "" {
 			text = "No indexed text was returned."
 		}
-		return m.openDocument("Indexed file content", text, "file"), true
+		cmd := m.openDocument(title, text, "file")
+		if msg.content.Partial {
+			m.note = "The CLI can display only the first page."
+		}
+		return cmd, true
 	}
 	return nil, false
 }

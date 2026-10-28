@@ -2,6 +2,7 @@ package vectorstores
 
 import (
 	"context"
+	"net/http"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -52,6 +53,27 @@ func validResponseID(field respjson.Field) bool {
 	return strings.HasPrefix(raw, `"`) && raw != `""`
 }
 
+// An attempted write can succeed remotely even if its response is lost or malformed.
+// Track dispatch separately from local request preparation and explicit HTTP rejection.
+type mutationAttempt struct{ uncertain bool }
+
+func (a *mutationAttempt) observe(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+	response, err := next(req)
+	a.uncertain = response == nil || response.StatusCode < 400 || response.StatusCode == http.StatusRequestTimeout || response.StatusCode >= 500
+	return response, err
+}
+
+type unconfirmedMutation struct{ error }
+
+func (e *unconfirmedMutation) Unwrap() error { return e.error }
+
+func (a mutationAttempt) failure(err error) error {
+	if err != nil && a.uncertain {
+		return &unconfirmedMutation{err}
+	}
+	return err
+}
+
 func (s *sdkService) ListStores(ctx context.Context, after string) (StorePage, error) {
 	params := openai.VectorStoreListParams{Limit: openai.Int(20), Order: openai.VectorStoreListParamsOrderDesc}
 	if after != "" {
@@ -88,12 +110,14 @@ func (s *sdkService) GetStore(ctx context.Context, id string) (*openai.VectorSto
 }
 
 func (s *sdkService) CreateStore(ctx context.Context, name string) (*openai.VectorStore, error) {
-	store, err := s.client.VectorStores.New(ctx, openai.VectorStoreNewParams{Name: openai.String(name)}, option.WithMaxRetries(0))
+	var attempt mutationAttempt
+	store, err := s.client.VectorStores.New(ctx, openai.VectorStoreNewParams{Name: openai.String(name)},
+		option.WithMaxRetries(0), option.WithMiddleware(attempt.observe))
 	if err != nil {
-		return nil, err
+		return nil, attempt.failure(err)
 	}
 	if store == nil || !validResponseID(store.JSON.ID) {
-		return nil, workspaceFailure("The API returned no store ID. Refresh stores before creating another store.", nil)
+		return nil, attempt.failure(workspaceFailure("The API returned no store ID.", nil))
 	}
 	return store, nil
 }
