@@ -89,16 +89,21 @@ def destination(get, repository, repository_id, source):
         if len(candidates) != 1:
             raise StaleRun("No unique current pull request for this run")
         pr = candidates[0]
-        for recorded in run["pull_requests"]:
-            if recorded["number"] == pr["number"] and recorded["base"]["sha"] != pr["base"]["sha"]:
-                raise StaleRun("Pull request base changed")
+        # Both run and PR base.sha snapshots can lag the authenticated branch.
+        # Bind the selected merge to the live target, including on revalidation.
+        base = get(f"{root}/git/ref/heads/{pr['base']['ref']}", missing_ok=True)
+        base_sha = base["object"]["sha"]
+        if (base["ref"] != "refs/heads/" + pr["base"]["ref"] or
+                base["object"].get("type") != "commit" or
+                not isinstance(base_sha, str) or not SHA.fullmatch(base_sha)):
+            raise RuntimeError("Unexpected pull request target reference")
         ref = f"refs/pull/{pr['number']}/merge"
         merge = get(f"{root}/git/ref/pull/{pr['number']}/merge", missing_ok=True)
         sha = merge["object"]["sha"]
         if merge["ref"] != ref or sha != pr["merge_commit_sha"] or not SHA.fullmatch(sha):
             raise StaleRun("Pull request merge changed")
         commit = get(f"{root}/git/commits/{sha}")
-        if [p["sha"] for p in commit["parents"]] != [pr["base"]["sha"], run["head_sha"]]:
+        if [p["sha"] for p in commit["parents"]] != [base_sha, run["head_sha"]]:
             raise StaleRun("Pull request merge parents changed")
     else:
         branch = run["head_branch"]

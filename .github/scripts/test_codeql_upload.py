@@ -30,6 +30,8 @@ class PublisherTest(unittest.TestCase):
         self.responses = {
             "actions/runs/42": self.run,
             "pulls/3": self.pr,
+            "git/ref/heads/main": {"ref": "refs/heads/main", "object": {"type": "commit", "sha": BASE}},
+            "git/ref/heads/next": {"ref": "refs/heads/next", "object": {"type": "commit", "sha": BASE}},
             "git/ref/pull/3/merge": {"ref": "refs/pull/3/merge", "object": {"sha": MERGE}},
             "git/commits/" + MERGE: {"parents": [{"sha": BASE}, {"sha": HEAD}]},
         }
@@ -81,12 +83,26 @@ class PublisherTest(unittest.TestCase):
     def test_rejects_changed_attempt_head_base_and_parents(self):
         for mutate in [lambda: self.run.update(run_attempt=3),
                        lambda: self.pr["head"].update(sha=BASE),
-                       lambda: self.pr["base"].update(sha=HEAD),
+                       lambda: self.responses["git/ref/heads/main"]["object"].update(sha=HEAD),
                        lambda: self.responses["git/commits/" + MERGE].update(parents=[{"sha": HEAD}])]:
             with self.subTest(mutate=mutate):
                 self.setUp()
                 mutate()
                 with self.assertRaises(publisher.StaleRun):
+                    self.destination()
+
+    def test_stale_base_snapshots_use_live_target(self):
+        self.pr["base"]["sha"] = "d" * 40
+        self.run["pull_requests"][0]["base"]["sha"] = "e" * 40
+        self.assertEqual(self.destination(), self.target)
+
+    def test_invalid_live_target_is_rejected(self):
+        for ref in [{"ref": "refs/heads/other", "object": {"type": "commit", "sha": BASE}},
+                    {"ref": "refs/heads/main", "object": {"type": "tag", "sha": BASE}},
+                    {"ref": "refs/heads/main", "object": {"type": "commit", "sha": "invalid"}}]:
+            with self.subTest(ref=ref):
+                self.responses["git/ref/heads/main"] = ref
+                with self.assertRaises(RuntimeError):
                     self.destination()
 
     def test_rejects_other_workflow_repository_event(self):
@@ -252,6 +268,23 @@ class PublisherTest(unittest.TestCase):
                 self.pr["merge_commit_sha"] = replacement
                 self.responses["git/ref/pull/3/merge"]["object"]["sha"] = replacement
                 self.responses["git/commits/" + replacement] = {"parents": [{"sha": BASE}, {"sha": HEAD}]}
+            return result
+
+        with self.assertRaises(publisher.StaleRun):
+            publisher.report(get, "test/cli", 1, dict(id=42, run_attempt=2))
+        self.assertEqual([p["state"] for p in self.writes], ["pending"] * len(publisher.CATEGORIES))
+
+    def test_live_target_moving_during_artifact_download_cannot_publish(self):
+        for index, language in enumerate(publisher.CATEGORIES):
+            self.responses[f"actions/artifacts/{index}/zip"] = self.archive(language)
+        self.responses["actions/runs/42/artifacts?per_page=100&page=1"] = {"artifacts": [
+            dict(id=i, name=f"codeql-sarif-42-2-{lang}", expired=False)
+            for i, lang in enumerate(publisher.CATEGORIES)]}
+
+        def get(route, **kwargs):
+            result = self.get(route, **kwargs)
+            if route.endswith("actions/artifacts/1/zip"):
+                self.responses["git/ref/heads/main"]["object"]["sha"] = "d" * 40
             return result
 
         with self.assertRaises(publisher.StaleRun):
