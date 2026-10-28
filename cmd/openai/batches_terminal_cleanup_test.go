@@ -220,8 +220,8 @@ try:
                 os.kill(pid, signal.SIGINT)
                 phases.append(["signal_sent", int(signal.SIGINT), time.monotonic() - started])
                 sent = True
-            elif mode == "result_blocked" and hidden and frame:
-                # The explorer has initialized before output becomes blocked.
+            elif (mode == "result_blocked" and hidden) and frame:
+                # The menu has initialized before output becomes blocked.
                 stop_drain = True
                 phases.append(["fill_start", time.monotonic() - started])
                 for _ in range(3):

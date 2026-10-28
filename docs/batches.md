@@ -315,6 +315,64 @@ openai files delete file_example
 Deletion removes the file, including its use in vector stores.
 File deletion and batch cancellation are separate operations.
 
+## Read Batch records
+
+Browse a batch's JSONL records without a separate download:
+
+```sh
+openai batches results batch_example --file input
+openai batches results batch_example --custom-id example-1 --match-input
+openai --format explore batches results batch_example --match-input
+```
+
+`--file` defaults to `output`; it also accepts `input` and `error`.
+`--custom-id` filters by an exact, case-sensitive ID.
+`--match-input` groups inputs and selected results by `custom_id`, never by row position.
+Each group includes `inputs`, `results`, a `match` status, and any `issues`.
+Duplicate IDs remain grouped and visibly ambiguous.
+Missing IDs and unmatched records remain visible.
+Without matching, records retain their original order.
+
+Default readable results show the request outcome and its meaningful content.
+The CLI reports refusals and incomplete answers separately from HTTP success.
+Multiple answers, tool calls, annotations, and unfamiliar content remain visible.
+`--match-input` also shows the original input instructions and content.
+Duplicate IDs do not create artificial input/result pairs.
+Missing results refer only to the selected file, not the complete batch.
+Inspecting a failed record successfully exits zero; this does not mean the request succeeded.
+The default output remains readable when piped.
+
+Use explicit JSON when you need every API field:
+
+```sh
+openai --format json batches results batch_example --custom-id example-1 --match-input
+```
+
+Readable results omit reviewed configuration fields that repeat request settings.
+JSON, JSONL, raw output, and extraction retain the complete selected data.
+Large records and unfamiliar structures use a labeled detailed view.
+The detailed view preserves complete content without imposing a new size limit.
+
+The response contains a `data` array and supports normal output formats and extraction.
+The explorer supports interactive inspection when a terminal is available.
+The command reports unavailable files and malformed JSONL without submitting requests again.
+Use `batches download` when you need exact file bytes.
+Non-matching results emit each validated record in text, JSON, JSONL, and raw formats.
+Ordinary records use bounded memory without temporary files.
+Oversized records use one reusable private file, with temporary space proportional to the largest record.
+Matching uses indexed temporary storage for the selected files.
+Large object labels can also use temporary storage during readable rendering.
+The command removes owned temporary storage after success, failure, or handled interruption.
+JSON, JSONL, and raw output retain one envelope containing the complete selected `data` array.
+A late read or validation failure returns a nonzero exit status and can leave incomplete output.
+After an error, the CLI briefly drains queued output before stopping a blocked destination.
+Always check the exit status before using formatted results.
+Readable projections buffer at most 256 KiB per record before switching to streaming detail.
+Matching keeps groups on disk and renders their records separately.
+Large IDs and object keys do not have new size limits.
+Extraction, terminal exploration, pretty output, and YAML retain the selected document in memory.
+Use `--custom-id` to reduce that document before these operations.
+
 ## Access and safety
 
 Use a supported API key with the required project access.

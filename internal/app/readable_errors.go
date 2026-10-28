@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -15,6 +17,7 @@ import (
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	"github.com/openai/openai-cli/internal/commands/webhooks"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/tidwall/gjson"
@@ -114,7 +117,35 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 		message := ""
 		var batchFailure *batchcommands.WorkflowError
 		if errors.As(failure, &batchFailure) {
-			message = batchFailure.Error()
+			message = batchcommands.WorkflowErrorMessage(failure)
+			var storage *readable.JSONStreamStorageError
+			if errors.As(failure, &storage) && !strings.Contains(message, storage.Error()) {
+				message += "\n" + storage.Error()
+			}
+			if isAPI && !errors.Is(failure, context.Canceled) {
+				// Workflow wrappers can already include guidance from this cause,
+				// before the outer command adds presentation context.
+				included := readableAPIErrorMessage(root, batchFailure.Unwrap(), apierr)
+				if !strings.Contains(message, included) {
+					message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, presenter)
+				}
+			}
+			// Workflow outcomes must not hide safe, known transport guidance.
+			// Keep API details and explicit machine error contracts unchanged.
+			if !isAPI && !errors.Is(failure, context.Canceled) && message != "" {
+				var transport *url.Error
+				var network *net.OpError
+				var timeout net.Error
+				cause := batchFailure.Unwrap()
+				switch {
+				case errors.As(cause, &transport):
+					message += "\n" + localErrorMessage(root, transport, presenter)
+				case errors.As(cause, &network):
+					message += "\n" + localErrorMessage(root, network, presenter)
+				case errors.As(cause, &timeout) && timeout.Timeout():
+					message += "\n" + localErrorMessage(root, timeout, presenter)
+				}
+			}
 		} else if isAPI && !errors.Is(failure, context.Canceled) {
 			message = readableAPIErrorMessageTo(root, failure, apierr, presenter)
 		} else if isStream {

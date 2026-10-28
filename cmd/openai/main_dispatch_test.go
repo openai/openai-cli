@@ -78,9 +78,11 @@ func runMainDispatchWithStdin(t *testing.T, style string, env []string, stdin *o
 	}
 	var stdout, stderr bytes.Buffer
 	child.Stdout, child.Stderr = &stdout, &stderr
+	started := time.Now()
 	err = child.Run()
 	if ctx.Err() != nil {
-		t.Fatalf("main timed out: %v; stdout=%q stderr=%q", ctx.Err(), stdout.String(), stderr.String())
+		t.Fatalf("main timed out after %s: %v; process error=%v; process state=%v; stdout=%q stderr=%q",
+			time.Since(started), ctx.Err(), err, child.ProcessState, stdout.String(), stderr.String())
 	}
 	code := 0
 	if exit, ok := err.(*exec.ExitError); ok {
