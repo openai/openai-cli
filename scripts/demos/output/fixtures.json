@@ -1,0 +1,7 @@
+{
+  "model": {"id":"demo-model","object":"model","created":17,"owned_by":"demo-project"},
+  "events": [
+    {"type":"response.output_text.delta","delta":"Hello","sequence_number":0},
+    {"type":"response.completed","response":{"id":"resp_demo","status":"completed","output":[]}}
+  ]
+}

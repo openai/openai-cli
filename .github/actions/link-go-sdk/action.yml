@@ -1,0 +1,14 @@
+name: Link matching internal Go SDK
+description: Consume credential-free Go source prepared by the trusted workflow
+runs:
+  using: composite
+  steps:
+    - name: Link matching Go source
+      if: >-
+        github.repository == 'openai/openai-cli-internal' &&
+        github.repository_id == '1253662577' &&
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.id == github.event.repository.id &&
+        github.event.pull_request.base.ref == 'main'
+      shell: bash
+      run: python3 -I .github/scripts/sdk_cross_link.py consume

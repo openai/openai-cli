@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+test_directory="$(mktemp -d)"
+trap 'rm -rf "$test_directory"' EXIT
+
+export GOVULNCHECK_TEST_SHARED_MODULE_CACHE="$test_directory/shared-modules"
+export GOVULNCHECK_TEST_SHARED_BUILD_CACHE="$test_directory/shared-build"
+export GOVULNCHECK_TEST_SHARED_BIN="$test_directory/shared-bin"
+export GOVULNCHECK_TEST_TRUSTED_SCANNER="$test_directory/trusted-govulncheck"
+export GOVULNCHECK_TEST_POISONED_SCANNER="$test_directory/poisoned-govulncheck"
+export GOMODCACHE="$GOVULNCHECK_TEST_SHARED_MODULE_CACHE"
+export GOCACHE="$GOVULNCHECK_TEST_SHARED_BUILD_CACHE"
+export GOBIN="$GOVULNCHECK_TEST_SHARED_BIN"
+export GOFLAGS=-mod=mod
+export GOSUMDB=off
+export GONOSUMDB='*'
+export GOPRIVATE='*'
+export GITHUB_PATH="$test_directory/github-path"
+
+mkdir -p "$GOMODCACHE" "$GOCACHE" "$GOBIN"
+
+cat > "$test_directory/go" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  'install golang.org/x/vuln/cmd/govulncheck@v1.7.0')
+    if [[ "$GOMODCACHE" == "$GOVULNCHECK_TEST_SHARED_MODULE_CACHE" ||
+          "$GOCACHE" == "$GOVULNCHECK_TEST_SHARED_BUILD_CACHE" ||
+          "$GOBIN" == "$GOVULNCHECK_TEST_SHARED_BIN" ]]; then
+      mkdir -p "$GOBIN"
+      cp "$GOVULNCHECK_TEST_POISONED_SCANNER" "$GOBIN/govulncheck"
+      exit 0
+    fi
+    [[ "$GOFLAGS" == -modcacherw ]]
+    [[ "$GOSUMDB" == sum.golang.org ]]
+    [[ -z "$GONOSUMDB" && -z "$GOPRIVATE" ]]
+    mkdir -p "$GOBIN"
+    cp "$GOVULNCHECK_TEST_TRUSTED_SCANNER" "$GOBIN/govulncheck"
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+
+cat > "$GOVULNCHECK_TEST_TRUSTED_SCANNER" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="$GOOS/$GOARCH"
+if [[ "$GOARCH" == arm ]]; then
+  target="$target/v$GOARM"
+fi
+printf '%s CGO_ENABLED=%s %s\n' \
+  "$target" "${CGO_ENABLED:-default}" "$*" >> "$GOVULNCHECK_TEST_LOG"
+
+if [[ "${GOVULNCHECK_TEST_FAIL_TARGET:-}" == "$target" ]]; then
+  exit 1
+fi
+if [[ -n "${GOVULNCHECK_TEST_EXPECTED_DIRECTORY:-}" ]]; then
+  [[ "$PWD" == "$GOVULNCHECK_TEST_EXPECTED_DIRECTORY" ]]
+fi
+EOF
+
+cat > "$GOVULNCHECK_TEST_POISONED_SCANNER" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' 'rogue-release-executable' >> "$GITHUB_PATH"
+EOF
+
+cat > "$test_directory/govulncheck" <<'EOF'
+#!/usr/bin/env bash
+echo 'govulncheck executed an untrusted binary from PATH' >&2
+exit 97
+EOF
+
+chmod +x "$test_directory/go" "$test_directory/govulncheck" \
+  "$GOVULNCHECK_TEST_TRUSTED_SCANNER" "$GOVULNCHECK_TEST_POISONED_SCANNER"
+
+scan_log="$test_directory/scans"
+PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
+  ./scripts/govulncheck > /dev/null
+
+if [[ -s "$GITHUB_PATH" ]]; then
+  echo 'govulncheck trusted an executable built from a poisoned shared cache' >&2
+  exit 1
+fi
+
+expected_scans="$(cat <<'EOF'
+darwin/amd64 CGO_ENABLED=default ./cmd/openai
+darwin/arm64 CGO_ENABLED=default ./cmd/openai
+linux/386 CGO_ENABLED=0 ./cmd/openai
+linux/arm/v6 CGO_ENABLED=0 ./cmd/openai
+linux/amd64 CGO_ENABLED=0 ./cmd/openai
+linux/arm64 CGO_ENABLED=0 ./cmd/openai
+windows/386 CGO_ENABLED=default ./cmd/openai
+windows/amd64 CGO_ENABLED=default ./cmd/openai
+windows/arm64 CGO_ENABLED=default ./cmd/openai
+EOF
+)"
+if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
+  echo 'govulncheck did not match every shipped release target and CGO setting' >&2
+  exit 1
+fi
+
+: > "$scan_log"
+if PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
+  GOVULNCHECK_TEST_FAIL_TARGET=linux/386 ./scripts/govulncheck > /dev/null 2>&1; then
+  echo 'govulncheck did not fail closed for a vulnerable target' >&2
+  exit 1
+fi
+
+expected_failed_scans="$(cat <<'EOF'
+darwin/amd64 CGO_ENABLED=default ./cmd/openai
+darwin/arm64 CGO_ENABLED=default ./cmd/openai
+linux/386 CGO_ENABLED=0 ./cmd/openai
+EOF
+)"
+if [[ "$(< "$scan_log")" != "$expected_failed_scans" ]]; then
+  echo 'govulncheck did not stop at the first vulnerable target' >&2
+  exit 1
+fi
+
+historical_source="$test_directory/historical-release"
+preserved_scanner="$test_directory/preserved-govulncheck"
+mkdir -p "$historical_source"
+cp ./scripts/govulncheck "$preserved_scanner"
+
+: > "$scan_log"
+PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
+  GOVULNCHECK_TEST_EXPECTED_DIRECTORY="$historical_source" \
+  "$preserved_scanner" "$historical_source" > /dev/null
+
+if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
+  echo 'preserved govulncheck did not scan a historical release checkout' >&2
+  exit 1
+fi
+
+echo 'govulncheck verifies isolated scanner provenance and matches every release target'

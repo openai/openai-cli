@@ -1,0 +1,230 @@
+//go:build darwin
+
+package autocomplete
+
+import (
+	"encoding/binary"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
+)
+
+func TestPickerInstallPreservesDarwinFileMetadata(t *testing.T) {
+	for _, kind := range []string{"extended attribute", "ACL", "BSD flag"} {
+		for _, remove := range []bool{false, true} {
+			t.Run(kind+map[bool]string{false: "/install", true: "/remove"}[remove], func(t *testing.T) {
+				directory := t.TempDir()
+				options := PickerInstallation{Shell: CompletionStyleZsh, Directory: filepath.Join(directory, "scripts"), Profile: filepath.Join(directory, ".zshrc")}
+				require.NoError(t, os.WriteFile(options.Profile, []byte("# personal startup\n"), 0640))
+				if remove {
+					_, err := InstallPicker(t.Context(), options)
+					require.NoError(t, err)
+				}
+				switch kind {
+				case "extended attribute":
+					require.NoError(t, unix.Setxattr(options.Profile, "com.example.openai-picker-test", []byte("keep"), 0))
+				case "ACL":
+					output, err := exec.Command("/bin/chmod", "+a", "everyone deny write", options.Profile).CombinedOutput()
+					require.NoError(t, err, "%s", output)
+				case "BSD flag":
+					require.NoError(t, unix.Chflags(options.Profile, unix.UF_HIDDEN))
+				}
+				before, err := os.ReadFile(options.Profile)
+				require.NoError(t, err)
+				identity, err := os.Stat(options.Profile)
+				require.NoError(t, err)
+				if remove {
+					_, err = RemovePicker(t.Context(), options)
+				} else {
+					_, err = InstallPicker(t.Context(), options)
+				}
+				require.Error(t, err, "setup must not replace protected metadata")
+				after, err := os.ReadFile(options.Profile)
+				require.NoError(t, err)
+				require.Equal(t, before, after)
+				current, err := os.Stat(options.Profile)
+				require.NoError(t, err)
+				require.True(t, os.SameFile(identity, current))
+				require.Equal(t, identity.Mode(), current.Mode())
+				switch kind {
+				case "extended attribute":
+					var data [4]byte
+					count, err := unix.Getxattr(options.Profile, "com.example.openai-picker-test", data[:])
+					require.NoError(t, err)
+					require.Equal(t, "keep", string(data[:count]))
+				case "ACL":
+					output, err := exec.Command("/bin/ls", "-le", options.Profile).CombinedOutput()
+					require.NoError(t, err)
+					require.Contains(t, string(output), "everyone deny write")
+				case "BSD flag":
+					var info unix.Stat_t
+					require.NoError(t, unix.Stat(options.Profile, &info))
+					require.Equal(t, uint32(unix.UF_HIDDEN), info.Flags)
+				}
+			})
+		}
+	}
+}
+
+func TestPickerDarwinMetadataAddedAfterSnapshotIsKept(t *testing.T) {
+	directory := t.TempDir()
+	profile := filepath.Join(directory, ".zshrc")
+	require.NoError(t, os.WriteFile(profile, []byte("# personal startup\n"), 0600))
+	root, err := os.OpenRoot(directory)
+	require.NoError(t, err)
+	defer root.Close()
+	previous, err := readPickerFile(t.Context(), root, ".zshrc")
+	require.NoError(t, err)
+	require.NoError(t, unix.Setxattr(profile, "com.example.openai-picker-test", []byte("keep"), 0))
+	require.Error(t, replacePickerProfile(t.Context(), root, ".zshrc", previous, []byte("replacement\n")))
+	current, err := os.ReadFile(profile)
+	require.NoError(t, err)
+	require.Equal(t, previous.data, current)
+}
+
+func TestPickerInstallRejectsInheritedScriptACL(t *testing.T) {
+	options := pickerInstallFixture(t, CompletionStyleZsh)
+	original := []byte("# personal startup\n")
+	require.NoError(t, os.WriteFile(options.Profile, original, 0600))
+	before, err := os.Stat(options.Profile)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(options.Directory, 0700))
+	output, err := exec.Command("/bin/chmod", "+a", "everyone allow write,append,file_inherit", options.Directory).CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	root, err := os.OpenRoot(options.Directory)
+	require.NoError(t, err)
+	defer root.Close()
+	_, err = writePickerScript(t.Context(), root, "staged-acl-probe", []byte("# unsafe inherited ACL\n"))
+	require.ErrorContains(t, err, "protected or unreadable access permissions")
+	// The directory's POSIX mode remains private, but a newly created script
+	// inherits a writable ACL. It must never become the profile's source.
+	_, err = InstallPicker(t.Context(), options)
+	require.ErrorContains(t, err, "protected or unreadable access permissions")
+	after, err := os.Stat(options.Profile)
+	require.NoError(t, err)
+	require.True(t, os.SameFile(before, after))
+	data, err := os.ReadFile(options.Profile)
+	require.NoError(t, err)
+	require.Equal(t, original, data)
+	files, err := os.ReadDir(options.Directory)
+	require.NoError(t, err)
+	for _, file := range files {
+		require.Equal(t, ".picker-install.lock", file.Name(), "unsafe script or staging file was left behind")
+	}
+}
+
+func TestPickerInstallRejectsWritableScriptDirectoryACL(t *testing.T) {
+	options := pickerInstallFixture(t, CompletionStyleZsh)
+	original := []byte("# personal startup\n")
+	require.NoError(t, os.WriteFile(options.Profile, original, 0600))
+	before, err := os.Stat(options.Profile)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(options.Directory, 0700))
+	output, err := exec.Command("/bin/chmod", "+a", "everyone allow add_file,delete_child,search", options.Directory).CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	// This ACL is not inherited by files. A private-looking script is still
+	// replaceable by others unless the owned script directory is checked too.
+	_, err = InstallPicker(t.Context(), options)
+	require.ErrorContains(t, err, "protected or unreadable access permissions")
+	after, err := os.Stat(options.Profile)
+	require.NoError(t, err)
+	require.True(t, os.SameFile(before, after))
+	data, err := os.ReadFile(options.Profile)
+	require.NoError(t, err)
+	require.Equal(t, original, data)
+	files, err := os.ReadDir(options.Directory)
+	require.NoError(t, err)
+	require.Empty(t, files)
+}
+
+func TestPickerInstallAllowsBenignProfileParentACL(t *testing.T) {
+	options := pickerInstallFixture(t, CompletionStyleZsh)
+	directory := filepath.Dir(options.Profile)
+	output, err := exec.Command("/bin/chmod", "+a", "everyone deny delete", directory).CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	t.Cleanup(func() {
+		output, err := exec.Command("/bin/chmod", "-N", directory).CombinedOutput()
+		require.NoError(t, err, "%s", output)
+	})
+	original := []byte("# personal startup\n")
+	require.NoError(t, os.WriteFile(options.Profile, original, 0600))
+	_, err = InstallPicker(t.Context(), options)
+	require.NoError(t, err, "the standard macOS home deny-delete ACL must not disable setup")
+	_, err = RemovePicker(t.Context(), options)
+	require.NoError(t, err)
+	data, err := os.ReadFile(options.Profile)
+	require.NoError(t, err)
+	require.Equal(t, original, data)
+}
+
+func TestPickerInstallRejectsWritableDirectoryACL(t *testing.T) {
+	for _, target := range []string{"profile parent", "managed parent", "config ancestor", "higher ancestor"} {
+		t.Run(target, func(t *testing.T) {
+			options := pickerInstallFixture(t, CompletionStyleZsh)
+			ancestor := filepath.Join(filepath.Dir(options.Profile), "outer")
+			config := filepath.Join(ancestor, "config")
+			options.Directory = filepath.Join(config, "openai", "shell")
+			original := []byte("# personal startup\n")
+			require.NoError(t, os.WriteFile(options.Profile, original, 0600))
+			before, err := os.Stat(options.Profile)
+			require.NoError(t, err)
+			require.NoError(t, os.MkdirAll(options.Directory, 0700))
+			directory := filepath.Dir(options.Profile)
+			if target == "managed parent" {
+				directory = filepath.Dir(options.Directory)
+			} else if target == "config ancestor" {
+				directory = config
+			} else if target == "higher ancestor" {
+				directory = ancestor
+			}
+			output, err := exec.Command("/bin/chmod", "+a", "everyone allow add_file,delete_child,search", directory).CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			_, err = InstallPicker(t.Context(), options)
+			require.ErrorContains(t, err, "protected or unreadable access permissions")
+			after, err := os.Stat(options.Profile)
+			require.NoError(t, err)
+			require.True(t, os.SameFile(before, after))
+			data, err := os.ReadFile(options.Profile)
+			require.NoError(t, err)
+			require.Equal(t, original, data)
+			files, err := os.ReadDir(options.Directory)
+			require.NoError(t, err)
+			require.Empty(t, files)
+		})
+	}
+}
+
+func TestPickerDarwinDirectoryACLBounds(t *testing.T) {
+	deny := make([]byte, 100)
+	binary.LittleEndian.PutUint32(deny[0:4], 100)
+	binary.LittleEndian.PutUint32(deny[4:8], unix.ATTR_CMN_RETURNED_ATTRS|unix.ATTR_CMN_EXTENDED_SECURITY)
+	binary.LittleEndian.PutUint32(deny[24:28], 8)
+	binary.LittleEndian.PutUint32(deny[28:32], 68)
+	binary.LittleEndian.PutUint32(deny[32:36], 0x012cc16d)
+	binary.LittleEndian.PutUint32(deny[68:72], 1)
+	binary.LittleEndian.PutUint32(deny[92:96], 2)
+	require.NoError(t, checkPickerDarwinDirectoryACL(deny))
+	for _, mutation := range []struct {
+		name   string
+		offset int
+		value  uint32
+	}{
+		{"truncated header", 0, 31}, {"oversized response", 0, 101},
+		{"unknown attribute", 4, 1}, {"unexpected volume attribute", 8, 1},
+		{"backwards reference", 24, 0xfffffff8}, {"oversized reference", 28, 69},
+		{"bad magic", 32, 0}, {"oversized count", 68, 129}, {"short entry", 68, 2},
+		{"deferred inheritance", 72, 1 << 16}, {"unknown ACL flags", 72, 1 << 31},
+		{"write grant", 92, 1}, {"unknown entry", 92, 3}, {"unknown entry flags", 92, 2 | 1<<31},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			data := append([]byte(nil), deny...)
+			binary.LittleEndian.PutUint32(data[mutation.offset:mutation.offset+4], mutation.value)
+			require.Error(t, checkPickerDarwinDirectoryACL(data))
+		})
+	}
+	require.Error(t, checkPickerDarwinDirectoryACL(deny[:31]))
+}

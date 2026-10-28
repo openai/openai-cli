@@ -1,6 +1,7 @@
 package binaryparam
 
 import (
+	"errors"
 	"io"
 	"os"
 )
@@ -26,5 +27,14 @@ func FileOrStdin(stdin io.ReadCloser, path string) (io.ReadCloser, bool, error) 
 		return nil, false, err
 	}
 
-	return readCloser, false, err
+	info, err := readCloser.Stat()
+	if err != nil {
+		// Preserve reads from filesystems that cannot provide metadata.
+		return readCloser, false, nil
+	}
+	reader, err := CancellableFile(readCloser, info)
+	if err != nil {
+		return nil, false, errors.Join(err, readCloser.Close())
+	}
+	return reader, false, nil
 }

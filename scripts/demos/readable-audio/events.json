@@ -1,0 +1,5 @@
+[
+  {"type":"transcript.text.delta","delta":"Hello, "},
+  {"type":"transcript.text.delta","delta":"spoken world."},
+  {"type":"transcript.text.done","text":"Hello, spoken world.","usage":{"type":"tokens","input_tokens":5,"output_tokens":4,"total_tokens":9}}
+]

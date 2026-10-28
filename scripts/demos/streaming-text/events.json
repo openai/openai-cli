@@ -1,0 +1,6 @@
+[
+  {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"Hello, "},
+  {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"streaming world."},
+  {"type":"response.output_text.done","output_index":0,"content_index":0,"text":"Hello, streaming world."},
+  {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello, streaming world."}]}],"usage":{"input_tokens":4,"output_tokens":5,"total_tokens":9}}}
+]

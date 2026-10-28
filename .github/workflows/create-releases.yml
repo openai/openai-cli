@@ -1,4 +1,5 @@
 name: Create releases
+permissions: {}
 on:
   schedule:
     - cron: '0 5 * * *' # every day at 5am UTC
@@ -11,17 +12,18 @@ jobs:
     name: release
     if: github.ref == 'refs/heads/main' && github.repository == 'openai/openai-cli'
     runs-on: ubuntu-latest
-    environment: publish
+    environment: release
     permissions: {}
 
     steps:
       - name: Create release app token
         id: app-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          client-id: ${{ vars.OPENAI_SDKS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OPENAI_SDKS_APP_PRIVATE_KEY }}
           permission-contents: write
+          permission-issues: write
           permission-pull-requests: write
 
       - name: Run release-please

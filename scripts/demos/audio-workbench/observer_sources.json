@@ -1,0 +1,121 @@
+{
+  "packages": {
+    "pyte": {
+      "repo": "selectel/pyte",
+      "tag": "0.8.2",
+      "commit": "b106bb7bd23ab31ec7709c5e6788117dcc07203c",
+      "files": {
+        "pyte/__init__.py": {
+          "url": "https://raw.githubusercontent.com/selectel/pyte/b106bb7bd23ab31ec7709c5e6788117dcc07203c/pyte/__init__.py",
+          "sha256": "5279e4cfba52135248b5ce33c7a915100046c6a679f4aff3d6f873643fb1eb44",
+          "bytes": 1644,
+          "stored_path": "sources/pyte/__init__.py"
+        },
+        "pyte/__main__.py": {
+          "url": "https://raw.githubusercontent.com/selectel/pyte/b106bb7bd23ab31ec7709c5e6788117dcc07203c/pyte/__main__.py",
+          "sha256": "ea4420eac86603698753acf94105d8ac787cbb1f7e60262a1814e1fc89a1f0e7",
+          "bytes": 682,
+          "stored_path": "sources/pyte/__main__.py"
+        },
+        "pyte/charsets.py": {
+          "url": "https://raw.githubusercontent.com/selectel/pyte/b106bb7bd23ab31ec7709c5e6788117dcc07203c/pyte/charsets.py",
+          "sha256": "9b9da43e3b5e8b7bfe4a1917e864063f6f54119f97bc9a9694e065ac7cdfc98b",
+          "bytes": 7464,
+          "stored_path": "sources/pyte/charsets.py"
+        },
+        "pyte/control.py": {
+          "url": "https://raw.githubusercontent.com/selectel/pyte/b106bb7bd23ab31ec7709c5e6788117dcc07203c/pyte/control.py",
+          "sha256": "dc799b2f4311d1d6457b9651be5471abcd081cebcc2db225e2a730fb7d54d2a2",
+          "bytes": 1726,
+          "stored_path": "sources/pyte/control.py"
+        },
+        "pyte/escape.py": {
+          "url": "https://raw.githubusercontent.com/selectel/pyte/b106bb7bd23ab31ec7709c5e6788117dcc07203c/pyte/escape.py",
+          "sha256": "6a150147f0120ca5cb993b9b43e191c1cfadf27a093a6e9a53439cdf1babcb48",
+          "bytes": 4138,
+          "stored_path": "sources/pyte/escape.py"
+        },
+        "pyte/graphics.py": {
+          "url": "https://raw.githubusercontent.com/selectel/pyte/b106bb7bd23ab31ec7709c5e6788117dcc07203c/pyte/graphics.py",
+          "sha256": "6a38c4f4cdcbc8178097ec90ce1d7bce6b3b356d9f2e27d4b7e2d26d35fa898a",
+          "bytes": 3415,
+          "stored_path": "sources/pyte/graphics.py"
+        },
+        "pyte/modes.py": {
+          "url": "https://raw.githubusercontent.com/selectel/pyte/b106bb7bd23ab31ec7709c5e6788117dcc07203c/pyte/modes.py",
+          "sha256": "ffc0ad1a8264ac7e500349d5f3a8084cc634b72cc782b8664d0841d5d24e2650",
+          "bytes": 1886,
+          "stored_path": "sources/pyte/modes.py"
+        },
+        "pyte/screens.py": {
+          "url": "https://raw.githubusercontent.com/selectel/pyte/b106bb7bd23ab31ec7709c5e6788117dcc07203c/pyte/screens.py",
+          "sha256": "aa787bbcd5b59c195ff828a8fb9e876caffa80a49c7c45ffbd6e0c92093f9105",
+          "bytes": 49038,
+          "stored_path": "sources/pyte/screens.py"
+        },
+        "pyte/streams.py": {
+          "url": "https://raw.githubusercontent.com/selectel/pyte/b106bb7bd23ab31ec7709c5e6788117dcc07203c/pyte/streams.py",
+          "sha256": "a8c667e0f288b20064c3d8600aaf792f562cdfa84b4a39bc852ce05acc04c14d",
+          "bytes": 15598,
+          "stored_path": "sources/pyte/streams.py"
+        },
+        "LICENSE": {
+          "url": "https://raw.githubusercontent.com/selectel/pyte/b106bb7bd23ab31ec7709c5e6788117dcc07203c/LICENSE",
+          "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+          "bytes": 7651,
+          "stored_path": "source-review/pyte/LICENSE"
+        }
+      }
+    },
+    "wcwidth": {
+      "repo": "jquast/wcwidth",
+      "tag": "0.2.13",
+      "commit": "36a625179ed2675287fe6b61c2ad319406449e60",
+      "files": {
+        "wcwidth/__init__.py": {
+          "url": "https://raw.githubusercontent.com/jquast/wcwidth/36a625179ed2675287fe6b61c2ad319406449e60/wcwidth/__init__.py",
+          "sha256": "79c671dd456892d66e02f6ad1ba35eb41c9516010d90a97d86d9a4d196ac4e60",
+          "bytes": 1076,
+          "stored_path": "sources/wcwidth/__init__.py"
+        },
+        "wcwidth/table_vs16.py": {
+          "url": "https://raw.githubusercontent.com/jquast/wcwidth/36a625179ed2675287fe6b61c2ad319406449e60/wcwidth/table_vs16.py",
+          "sha256": "84f6eea05c66c6b19fb8169ea2178c4c01a6801d9ae04b9d87162c62890b7faa",
+          "bytes": 6857,
+          "stored_path": "sources/wcwidth/table_vs16.py"
+        },
+        "wcwidth/table_wide.py": {
+          "url": "https://raw.githubusercontent.com/jquast/wcwidth/36a625179ed2675287fe6b61c2ad319406449e60/wcwidth/table_wide.py",
+          "sha256": "bd41e310eb91c35586c94708c362fd1b2999b18bc2d88ddd73ce7c9a56324d83",
+          "bytes": 100896,
+          "stored_path": "sources/wcwidth/table_wide.py"
+        },
+        "wcwidth/table_zero.py": {
+          "url": "https://raw.githubusercontent.com/jquast/wcwidth/36a625179ed2675287fe6b61c2ad319406449e60/wcwidth/table_zero.py",
+          "sha256": "e197a284b6431fca1b82bc00e9cb7ebeeda5c5ce2dfc3b1fca207da7d3afc5ba",
+          "bytes": 359450,
+          "stored_path": "sources/wcwidth/table_zero.py"
+        },
+        "wcwidth/unicode_versions.py": {
+          "url": "https://raw.githubusercontent.com/jquast/wcwidth/36a625179ed2675287fe6b61c2ad319406449e60/wcwidth/unicode_versions.py",
+          "sha256": "ee74a181e458aef645906a5111dafe3e451e5e7b8cf96c5e3a61988fa40d69a1",
+          "bytes": 851,
+          "stored_path": "sources/wcwidth/unicode_versions.py"
+        },
+        "wcwidth/wcwidth.py": {
+          "url": "https://raw.githubusercontent.com/jquast/wcwidth/36a625179ed2675287fe6b61c2ad319406449e60/wcwidth/wcwidth.py",
+          "sha256": "4cbcf21f56a17440c33ce20c72a54ee14d20c8ac12c9977302c4a010fb951466",
+          "bytes": 14512,
+          "stored_path": "sources/wcwidth/wcwidth.py"
+        },
+        "LICENSE": {
+          "url": "https://raw.githubusercontent.com/jquast/wcwidth/36a625179ed2675287fe6b61c2ad319406449e60/LICENSE",
+          "sha256": "70b98a95a2144eb70af8017fa8c6d95ce247e40867436e8bc649e137fe13d21a",
+          "bytes": 1322,
+          "stored_path": "source-review/wcwidth/LICENSE"
+        }
+      }
+    }
+  },
+  "purpose": "Development-only terminal observer sources. Setup copies sources and licenses; it runs no packaging hooks."
+}

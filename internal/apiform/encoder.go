@@ -3,14 +3,27 @@ package apiform
 import (
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/textproto"
 	"path"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 )
+
+// formatFloat renders a float field value for a multipart part body. Non-finite
+// values (NaN, +Inf, -Inf) have no valid multipart representation; reject them
+// the way encoding/json rejects them ("json: unsupported value: +Inf") instead
+// of writing "+Inf"/"NaN" on the wire.
+func formatFloat(f float64, bitSize int) (string, error) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return "", fmt.Errorf("apiform: unsupported value: %s", strconv.FormatFloat(f, 'g', -1, bitSize))
+	}
+	return strconv.FormatFloat(f, 'f', -1, bitSize), nil
+}
 
 // Marshal encodes a value as multipart form data using default settings
 func Marshal(value any, writer *multipart.Writer) error {
@@ -41,7 +54,24 @@ func (e *encoder) marshal(value any, writer *multipart.Writer) error {
 }
 
 func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.Writer) error {
+	if err := validateMIMEHeaderValue(key, "field name"); err != nil {
+		return err
+	}
+
 	if !val.IsValid() {
+		return writer.WriteField(key, "")
+	}
+
+	// Unwrap interfaces before detecting io.Reader. A non-nil interface can
+	// contain a typed nil pointer, which must retain the encoder's empty-field
+	// semantics instead of being passed to io.Copy.
+	for val.Kind() == reflect.Interface {
+		if val.IsNil() {
+			return writer.WriteField(key, "")
+		}
+		val = val.Elem()
+	}
+	if val.Kind() == reflect.Pointer && val.IsNil() {
 		return writer.WriteField(key, "")
 	}
 
@@ -53,9 +83,6 @@ func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.W
 
 	switch t.Kind() {
 	case reflect.Pointer:
-		if val.IsNil() || !val.IsValid() {
-			return writer.WriteField(key, "")
-		}
 		return e.encodeValue(key, val.Elem(), writer)
 
 	case reflect.Slice, reflect.Array:
@@ -63,12 +90,6 @@ func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.W
 
 	case reflect.Map:
 		return e.encodeMap(key, val, writer)
-
-	case reflect.Interface:
-		if val.IsNil() {
-			return writer.WriteField(key, "")
-		}
-		return e.encodeValue(key, val.Elem(), writer)
 
 	case reflect.String:
 		return writer.WriteField(key, val.String())
@@ -86,10 +107,18 @@ func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.W
 		return writer.WriteField(key, strconv.FormatUint(val.Uint(), 10))
 
 	case reflect.Float32:
-		return writer.WriteField(key, strconv.FormatFloat(val.Float(), 'f', -1, 32))
+		strVal, err := formatFloat(val.Float(), 32)
+		if err != nil {
+			return err
+		}
+		return writer.WriteField(key, strVal)
 
 	case reflect.Float64:
-		return writer.WriteField(key, strconv.FormatFloat(val.Float(), 'f', -1, 64))
+		strVal, err := formatFloat(val.Float(), 64)
+		if err != nil {
+			return err
+		}
+		return writer.WriteField(key, strVal)
 
 	default:
 		return fmt.Errorf("unknown type: %s", t.String())
@@ -101,14 +130,17 @@ func (e *encoder) encodeArray(key string, val reflect.Value, writer *multipart.W
 		var values []string
 		for i := 0; i < val.Len(); i++ {
 			item := val.Index(i)
-			if (item.Kind() == reflect.Pointer || item.Kind() == reflect.Interface) && item.IsNil() {
-				// Null values are sent as an empty string
-				values = append(values, "")
-				continue
-			}
-			// If item is an interface, reduce it to the concrete type
-			if item.Kind() == reflect.Interface {
+			for item.Kind() == reflect.Pointer || item.Kind() == reflect.Interface {
+				if item.IsNil() {
+					// Null values are sent as an empty string.
+					values = append(values, "")
+					item = reflect.Value{}
+					break
+				}
 				item = item.Elem()
+			}
+			if !item.IsValid() {
+				continue
 			}
 			var strValue string
 			switch item.Kind() {
@@ -118,8 +150,18 @@ func (e *encoder) encodeArray(key string, val reflect.Value, writer *multipart.W
 				strValue = strconv.FormatInt(item.Int(), 10)
 			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 				strValue = strconv.FormatUint(item.Uint(), 10)
-			case reflect.Float32, reflect.Float64:
-				strValue = strconv.FormatFloat(item.Float(), 'f', -1, 64)
+			case reflect.Float32:
+				s, err := formatFloat(item.Float(), 32)
+				if err != nil {
+					return err
+				}
+				strValue = s
+			case reflect.Float64:
+				s, err := formatFloat(item.Float(), 64)
+				if err != nil {
+					return err
+				}
+				strValue = s
 			case reflect.Bool:
 				strValue = strconv.FormatBool(item.Bool())
 			default:
@@ -166,6 +208,41 @@ func escapeQuotes(s string) string {
 	return quoteEscaper.Replace(s)
 }
 
+func multipartBaseName(name string) string {
+	return multipartBaseNameForOS(name, runtime.GOOS)
+}
+
+func multipartBaseNameForOS(name, goos string) string {
+	windowsPath := isWindowsPath(name)
+	if windowsPath && len(name) >= 2 && name[1] == ':' {
+		name = name[2:]
+	}
+	if goos == "windows" || windowsPath {
+		name = strings.ReplaceAll(name, `\`, "/")
+	}
+	return path.Base(name)
+}
+
+func isWindowsPath(name string) bool {
+	if strings.HasPrefix(name, `\\`) {
+		return true
+	}
+	if len(name) < 2 || name[1] != ':' {
+		return false
+	}
+	drive := name[0]
+	return (drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z')
+}
+
+func validateMIMEHeaderValue(value, component string) error {
+	for i := 0; i < len(value); i++ {
+		if (value[i] < ' ' && value[i] != '\t') || value[i] == '\x7f' {
+			return fmt.Errorf("apiform: invalid control character in multipart %s", component)
+		}
+	}
+	return nil
+}
+
 func (e *encoder) encodeReader(key string, val reflect.Value, writer *multipart.Writer) error {
 	reader, ok := val.Convert(reflect.TypeOf((*io.Reader)(nil)).Elem()).Interface().(io.Reader)
 	if !ok {
@@ -180,12 +257,19 @@ func (e *encoder) encodeReader(key string, val reflect.Value, writer *multipart.
 	if named, ok := reader.(interface{ Filename() string }); ok {
 		filename = named.Filename()
 	} else if named, ok := reader.(interface{ Name() string }); ok {
-		filename = path.Base(named.Name())
+		filename = multipartBaseName(named.Name())
 	}
 
 	// Get content type if available
 	if typed, ok := reader.(interface{ ContentType() string }); ok {
 		contentType = typed.ContentType()
+	}
+
+	if err := validateMIMEHeaderValue(filename, "filename"); err != nil {
+		return err
+	}
+	if err := validateMIMEHeaderValue(contentType, "content type"); err != nil {
+		return err
 	}
 
 	h := make(textproto.MIMEHeader)

@@ -1,11 +1,16 @@
 package debugmiddleware
 
 import (
+	"context"
+	"errors"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
-	"reflect"
+	"slices"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 // For the time being these type definitions are duplicated here so that we can
@@ -17,8 +22,8 @@ type (
 
 const redactedPlaceholder = "<REDACTED>"
 
-// Headers known to contain sensitive information like an API key. Note that this exclude `Authorization`,
-// which is handled specially in `redactRequest` below.
+// Headers known to contain sensitive information like an API key. Note that this excludes
+// `Authorization` and `Proxy-Authorization`, which are handled specially in `redactHeaders` below.
 var sensitiveHeaders = []string{
 	"api-key",
 	"x-api-key",
@@ -30,13 +35,21 @@ var sensitiveHeaders = []string{
 type RequestLogger struct {
 	logger           interface{ Printf(string, ...any) } // field for testability; usually log.Default()
 	sensitiveHeaders []string                            // field for testability; usually sensitiveHeaders
+	attempts         atomic.Uint64
+	capture          CaptureOptions
 }
 
-// NewRequestLogger returns a new RequestLogger instance with default options.
-func NewRequestLogger() *RequestLogger {
+// NewRequestLogger redacts known credential headers and any additional header names.
+func NewRequestLogger(additionalSensitiveHeaders ...string) *RequestLogger {
+	return NewRequestLoggerWithOptions(CaptureOptions{}, additionalSensitiveHeaders...)
+}
+
+// NewRequestLoggerWithOptions adds explicit bounded payload diagnostics.
+func NewRequestLoggerWithOptions(capture CaptureOptions, additionalSensitiveHeaders ...string) *RequestLogger {
 	return &RequestLogger{
 		logger:           log.Default(),
-		sensitiveHeaders: sensitiveHeaders,
+		sensitiveHeaders: slices.Concat(sensitiveHeaders, additionalSensitiveHeaders),
+		capture:          capture.normalized(),
 	}
 }
 
@@ -50,61 +63,141 @@ func (m *RequestLogger) Middleware() Middleware {
 			m.logger.Printf("Request Content:\n%s\n", reqBytes)
 		}
 
+		attempt := m.attempts.Add(1)
+		var requestCapture *captureRequestBody
+		if m.capture.Bodies && req.Body != nil && req.Body != http.NoBody {
+			requestCapture = newCaptureRequestBody(req.Body, req.Header.Get("Content-Type"), m.capture.MaxBytes, req.ContentLength)
+			cloned := new(http.Request)
+			*cloned = *req
+			cloned.Body = requestCapture
+			if getBody := req.GetBody; getBody != nil {
+				cloned.GetBody = func() (io.ReadCloser, error) {
+					body, err := getBody()
+					if err != nil || body == nil || body == http.NoBody {
+						return body, err
+					}
+					return requestCapture.replay(body), nil
+				}
+			}
+			req = cloned
+		}
+		started := time.Now()
 		resp, err := mn(req)
-		if err != nil {
+		elapsed := time.Since(started)
+		if requestCapture != nil {
+			m.logger.Printf("HTTP attempt %d: %s", attempt, requestCapture.finish())
+		}
+		if err != nil || resp == nil {
+			outcome := "transport failed"
+			if req.Context().Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				outcome = "request canceled"
+			} else if err == nil {
+				outcome = "no response received"
+			}
+			m.logTiming(attempt, outcome, elapsed)
 			return resp, err
 		}
+		// Status text comes from the standard library, never an arbitrary reason phrase.
+		m.logger.Printf("HTTP attempt %d: response headers received after %d ms (%d %s)",
+			attempt, elapsed.Round(time.Millisecond).Milliseconds(), resp.StatusCode, http.StatusText(resp.StatusCode))
 
-		if respBytes, err := httputil.DumpResponse(resp, false); err == nil {
+		if respBytes, err := httputil.DumpResponse(m.redactResponse(resp), false); err == nil {
 			m.logger.Printf("Response Content:\n%s\n", respBytes)
+		}
+		// The upgraded protocol owns this connection, including its write and
+		// shutdown interfaces. HTTP body diagnostics must leave it unchanged.
+		if resp.StatusCode == http.StatusSwitchingProtocols {
+			return resp, nil
+		}
+		if resp.Body != nil {
+			timing := &responseTiming{logger: m, attempt: attempt, started: started}
+			if m.capture.Bodies {
+				timing.capture = newBodyCapture(resp.Header.Get("Content-Type"), m.capture.MaxBytes)
+			}
+			if (m.capture.SSEFrames || m.capture.EventTiming) && mediaType(resp.Header.Get("Content-Type")) == "text/event-stream" {
+				timing.sse = newSSECapture(m.capture)
+			}
+			resp.Body = &timedResponseBody{body: resp.Body, context: req.Context(), responseTiming: timing}
+			// Keep the final request's context, including redirects and deadlines.
+			// A clone carries bounded diagnostic state; the transport's request stays intact.
+			finalRequest := resp.Request
+			if finalRequest == nil {
+				finalRequest = req
+			}
+			resp.Request = finalRequest.WithContext(context.WithValue(finalRequest.Context(), responseTimingKey{}, timing))
 		}
 
 		return resp, err
 	}
 }
 
-// redactRequest redacts sensitive information from the request for logging
-// purposes. If redaction is necessary, the request is cloned before mutating
-// the original and that clone is returned. As a small optimization, the
-// original is request is returned unchanged if no redaction is necessary.
+// redactRequest filters headers and omits query data on a logging-only copy.
 func (m *RequestLogger) redactRequest(req *http.Request) (*http.Request, error) {
-	redactedHeaders := req.Header.Clone()
+	redacted := req.Clone(req.Context())
+	redacted.Header = m.redactHeaders(req.Header)
+	// DumpRequest prefers RequestURI, and URL.RequestURI prefers Opaque.
+	// Discard both alternate targets so only the escaped path is logged.
+	redacted.RequestURI = ""
+	if redacted.URL != nil {
+		redacted.URL.Opaque = ""
+		redacted.URL.User = nil
+		// Omit the whole query, including sensitive keys and malformed values.
+		redacted.URL.RawQuery = ""
+		redacted.URL.ForceQuery = false
+	}
+	return redacted, nil
+}
 
-	// Notably, the clauses below are written so they can redact multiple
-	// headers of the same name if necessary.
-	if values := redactedHeaders.Values("Authorization"); len(values) > 0 {
-		redactedHeaders.Del("Authorization")
+// redactResponse clones the response and redacts sensitive headers for logging.
+func (m *RequestLogger) redactResponse(resp *http.Response) *http.Response {
+	redacted := *resp
+	redacted.Header = m.redactResponseHeaders(resp.Header)
+	redacted.Trailer = m.redactResponseHeaders(resp.Trailer)
 
-		for _, value := range values {
-			// In case we're using something like a bearer token (e.g. `Bearer
-			// <my_token>`), keep the `Bearer` part for more debugging
-			// information.
-			if authKind, _, ok := strings.Cut(value, " "); ok {
-				redactedHeaders.Add("Authorization", authKind+" "+redactedPlaceholder)
-			} else {
-				redactedHeaders.Add("Authorization", redactedPlaceholder)
+	return &redacted
+}
+
+func (m *RequestLogger) redactResponseHeaders(headers http.Header) http.Header {
+	redactedHeaders := m.redactHeaders(headers)
+
+	// Keep only operational response metadata. Unknown headers and trailers may
+	// contain credentials even when their names were not supplied in the request.
+	for header, values := range redactedHeaders {
+		switch strings.ToLower(header) {
+		case "content-type", "content-length", "date", "retry-after", "x-request-id":
+			// redactHeaders has already applied explicitly sensitive names.
+			continue
+		}
+		for i := range values {
+			values[i] = redactedPlaceholder
+		}
+	}
+
+	return redactedHeaders
+}
+
+func (m *RequestLogger) redactHeaders(headers http.Header) http.Header {
+	redactedHeaders := headers.Clone()
+
+	for header, values := range redactedHeaders {
+		if slices.ContainsFunc(m.sensitiveHeaders, func(name string) bool { return strings.EqualFold(header, name) }) {
+			for i := range values {
+				values[i] = redactedPlaceholder
+			}
+			continue
+		}
+
+		if strings.EqualFold(header, "Authorization") || strings.EqualFold(header, "Proxy-Authorization") {
+			for i, value := range values {
+				// Keep the authentication scheme for more useful debug logging.
+				if authKind, _, ok := strings.Cut(value, " "); ok {
+					values[i] = authKind + " " + redactedPlaceholder
+				} else {
+					values[i] = redactedPlaceholder
+				}
 			}
 		}
 	}
 
-	for _, header := range m.sensitiveHeaders {
-		values := redactedHeaders.Values(header)
-		if len(values) == 0 {
-			continue
-		}
-
-		redactedHeaders.Del(header)
-
-		for range values {
-			redactedHeaders.Add(header, redactedPlaceholder)
-		}
-	}
-
-	if reflect.DeepEqual(req.Header, redactedHeaders) {
-		return req, nil
-	}
-
-	redacted := req.Clone(req.Context())
-	redacted.Header = redactedHeaders
-	return redacted, nil
+	return redactedHeaders
 }
