@@ -46,3 +46,14 @@ OPENAI_API_KEY=synthetic-demo-key OPENAI_BASE_URL="$(cat /tmp/f13-demo-session/a
 Use a new session directory for each run. Stop the synthetic API with Ctrl+C after the trial.
 The local fixture finishes 1,000 requests and returns one output file with no error file.
 The CLI preserves completed files if you repeat the command.
+
+## Inspect stored results
+
+Use the same synthetic API and loopback settings described above.
+
+```sh
+openai batches results batch_after
+openai --format json batches results batch_after
+```
+
+The API supplies synthetic records. No live API request is needed.

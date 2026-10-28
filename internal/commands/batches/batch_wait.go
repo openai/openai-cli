@@ -94,7 +94,7 @@ func (w workflow) configureBatchCommands(root *cli.Command) {
 				}
 			}
 		}
-		resource.Commands = append(resource.Commands, w.newBatchWaitCommand(), w.newBatchDownloadCommand())
+		resource.Commands = append(resource.Commands, w.newBatchWaitCommand(), w.newBatchDownloadCommand(), w.newBatchResultsCommand())
 		return
 	}
 }
@@ -237,7 +237,7 @@ func batchWaitResult(batch gjson.Result) (bool, error) {
 	case "completed":
 		failed, ok := batchCount(batch.Get("request_counts.failed"))
 		if ok && failed > 0 {
-			return true, batchError("The batch completed with failed requests. Download its error file with batches download --file error.")
+			return true, batchError("The batch completed with failed requests. Inspect them with batches results --file error.")
 		}
 		completed, completedOK := batchCount(batch.Get("request_counts.completed"))
 		total, totalOK := batchCount(batch.Get("request_counts.total"))
@@ -248,9 +248,9 @@ func batchWaitResult(batch gjson.Result) (bool, error) {
 	case "failed":
 		return true, batchError("The batch failed. Inspect its errors before creating another batch.")
 	case "expired":
-		return true, batchError("The batch expired. Download any available output and error files before deciding what to retry.")
+		return true, batchError("The batch expired. Inspect available output and error files before deciding what to retry.")
 	case "cancelled":
-		return true, batchError("The batch was canceled remotely. Download any available output and error files.")
+		return true, batchError("The batch was canceled remotely. Inspect available output and error files.")
 	default:
 		return true, batchError("The API returned an unknown batch status. Inspect the response; local waiting stopped.")
 	}

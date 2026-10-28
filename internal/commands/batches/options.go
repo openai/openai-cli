@@ -19,8 +19,30 @@ type Options struct {
 	DefaultRequestOptions func(*cli.Command) []option.RequestOption
 	RequestOptions        func(*cli.Command, io.Reader) ([]option.RequestOption, error)
 	ShowResult            func(context.Context, *cli.Command, gjson.Result, string, io.Writer, io.Writer) error
+	ShowRecords           func(context.Context, *cli.Command, RecordOutput, io.Writer, io.Writer) error
 	HumanTerminal         func(context.Context, *cli.Command) bool
 	APIErrorMessage       func(*cli.Command, error, *openai.Error) string
+}
+
+// RecordOutput lets presentation stream validated records and borrow private
+// scratch storage for unusually large labels. The workflow owns all cleanup.
+type RecordOutput struct {
+	Operation             string
+	WriteJSON             func(io.Writer) error
+	TemporaryFile         func() (*os.File, func() error, error)
+	BatchID, File, FileID string
+	Visit                 func(func(RecordItem) error) error
+	// StopSource interrupts an active download after presentation fails.
+	// Stored records need no interruption and leave this callback nil.
+	StopSource context.CancelCauseFunc
+}
+
+// RecordItem exposes one stored record, or a group's matching metadata.
+// WriteJSON streams that item without retaining its payload or duplicate group.
+// The visitor must finish reading before its callback returns.
+type RecordItem struct {
+	Kind      string
+	WriteJSON func(io.Writer) error
 }
 
 type workflow struct{ options Options }
