@@ -128,6 +128,41 @@ func TestMainBatchReadableResultsPreserveMachineModes(t *testing.T) {
 	}
 }
 
+func TestMainBatchResultsRawTextPreservesCompleteRecords(t *testing.T) {
+	server := batchReadableServer(t, batchReadableInput, batchReadableResult)
+	for _, test := range []struct {
+		name  string
+		flags []string
+		want  []string
+	}{
+		{"explicit_text", []string{"--format", "text", "--raw-output"}, []string{"Temperature: 1", "Top p: 1", "Store: false", "Error: (null)"}},
+		{"error_file", []string{"--format", "text", "--raw-output", "--file", "error"}, []string{"File: error", "Temperature: 1", "Top p: 1"}},
+		{"input_file", []string{"--format", "text", "--raw-output", "--file", "input"}, []string{"Max output tokens: 32", "Method: POST", "URL: /v1/responses"}},
+		{"matched_input", []string{"--format", "text", "--raw-output", "--match-input"}, []string{"Match: matched", "Max output tokens: 32", "Temperature: 1", "Top p: 1"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := append([]string{"batches", "results", "batch_readable"}, test.flags...)
+			got := runReadableCommand(t, server, args...)
+			if got.code != 0 || got.stderr != "" {
+				t.Fatalf("complete text output failed: %+v", got)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(got.stdout, want) {
+					t.Errorf("complete text output lost %q: %s", want, got.stdout)
+				}
+			}
+		})
+	}
+	got := runReadableCommand(t, server, "batches", "results", "batch_readable", "--raw-output")
+	if got.code != 0 || got.stderr != "" || !gjson.Valid(got.stdout) || gjson.Get(got.stdout, "data.0.response.body.temperature").Raw != "1" {
+		t.Fatalf("automatic raw output changed its complete JSON contract: %+v", got)
+	}
+	got = runReadableCommand(t, server, "batches", "results", "batch_readable", "--format", "text", "--raw-output=false")
+	if got.code != 0 || !strings.Contains(got.stdout, "Output: positive") || strings.Contains(got.stdout, "Temperature:") {
+		t.Fatalf("explicit false bypassed readable output: %+v", got)
+	}
+}
+
 func TestMainBatchReadableFailedRecordKeepsReadExitStatus(t *testing.T) {
 	record := `{"custom_id":"request-1","response":{"status_code":400,"body":{"error":{"code":"invalid_request_error","message":"Unsupported synthetic parameter."}}},"error":null}`
 	server := batchReadableServer(t, batchReadableInput, record)

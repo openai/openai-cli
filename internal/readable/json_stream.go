@@ -18,7 +18,7 @@ import (
 // large keys use caller-owned private scratch storage, never a rejection limit.
 func WriteJSONStream(ctx context.Context, out io.Writer, source io.Reader, temporaryFile func() (*os.File, func() error, error)) error {
 	buffer := bufio.NewWriterSize(out, 32*1024)
-	r := jsonTextReader{ctx: ctx, in: bufio.NewReader(source), p: printer{w: buffer}, temporaryFile: temporaryFile}
+	r := jsonTextReader{ctx: ctx, in: bufio.NewReader(source), p: printer{w: buffer}, flush: buffer.Flush, temporaryFile: temporaryFile}
 	err := r.value(0, "")
 	if r.pendingKey != nil {
 		err = errors.Join(err, r.pendingKey.close())
@@ -30,6 +30,7 @@ type jsonTextReader struct {
 	ctx           context.Context
 	in            *bufio.Reader
 	p             printer
+	flush         func() error
 	read          int
 	temporaryFile func() (*os.File, func() error, error)
 	pendingKey    *jsonStreamKey
@@ -51,6 +52,13 @@ func (r *jsonTextReader) byte() (byte, error) {
 
 func (r *jsonTextReader) peek() (byte, error) {
 	for {
+		// Expose completed output before waiting for the next source chunk.
+		// Keep buffering while input remains, including nested record fields.
+		if r.in.Buffered() == 0 && r.flush != nil {
+			if err := r.flush(); err != nil {
+				return 0, err
+			}
+		}
 		data, err := r.in.Peek(1)
 		if err != nil {
 			return 0, err
