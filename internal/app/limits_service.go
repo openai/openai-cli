@@ -349,6 +349,12 @@ func (backend *limitsAPIBackend) get(ctx context.Context, resource, id string) (
 
 func (backend *limitsAPIBackend) list(ctx context.Context, rates bool) ([]gjson.Result, bool, error) {
 	items := []gjson.Result{}
+	expectedObject := "organization.spend_alert"
+	if rates {
+		expectedObject = "project.rate_limit"
+	} else if backend.projectID != "" {
+		expectedObject = "project.spend_alert"
+	}
 	after := ""
 	seen := map[string]bool{}
 	for {
@@ -405,6 +411,24 @@ func (backend *limitsAPIBackend) list(ctx context.Context, rates bool) ([]gjson.
 			}
 			if !item.IsObject() {
 				recordErr = errors.New("A limits page contains a non-object record.")
+				return false
+			}
+			objects := 0
+			item.ForEach(func(key, _ gjson.Result) bool {
+				if recordErr = ctx.Err(); recordErr != nil {
+					return false
+				}
+				if key.Str == "object" {
+					objects++
+				}
+				return objects <= 1
+			})
+			if recordErr != nil {
+				return false
+			}
+			object := item.Get("object")
+			if objects != 1 || object.Type != gjson.String || object.Str != expectedObject {
+				recordErr = errors.New("A limits page contains an unexpected resource or scope.")
 				return false
 			}
 			items = append(items, item)

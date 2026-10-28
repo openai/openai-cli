@@ -27,6 +27,21 @@ type spendMutationResponseError struct{ cause error }
 func (e *spendMutationResponseError) Error() string { return e.cause.Error() }
 func (e *spendMutationResponseError) Unwrap() error { return e.cause }
 
+// Generated mutation handlers present responses only after the SDK succeeds.
+// This marker preserves that boundary without claiming the change persisted.
+type spendMutationPresentationError struct{ cause error }
+
+func (e *spendMutationPresentationError) Error() string { return e.cause.Error() }
+func (e *spendMutationPresentationError) Unwrap() error { return e.cause }
+
+func spendMutationPresentationFailure(err error, opts ShowJSONOpts) error {
+	var responseFailure *spendMutationResponseError
+	if !isSpendMutationResponse(opts) || errors.As(err, &responseFailure) {
+		return err
+	}
+	return &spendMutationPresentationError{cause: err}
+}
+
 func spendMutationResponseFailure(err error, opts ShowJSONOpts) error {
 	if !isSpendMutationResponse(opts) {
 		return err
@@ -110,6 +125,10 @@ func readableOrganizationSpendLimitMessage(root *cli.Command) string {
 }
 
 func readableSpendMutationFailure(root, command *cli.Command) string {
+	return readableSpendMutationRecovery(root, command, false)
+}
+
+func readableSpendMutationRecovery(root, command *cli.Command, presentationFailed bool) string {
 	path := ""
 	change := "spend change"
 	switch localcommands.ResourceName(command) {
@@ -141,8 +160,13 @@ func readableSpendMutationFailure(root, command *cli.Command) string {
 	if path == "" {
 		return ""
 	}
-	return "The API response did not confirm the " + change + ".\n" +
-		"The API may have received the change.\n" +
+	message := "The API response did not confirm the " + change + ".\n" +
+		"The API may have received the change.\n"
+	if presentationFailed {
+		message = "The API returned a response, but the CLI could not display it.\n" +
+			"The change may have been applied.\n"
+	}
+	return message +
 		"Check its current state before repeating the command.\n" +
 		"Read options: " + clihelp.DisplayInvocation(root) + " help " + path + "\n" +
 		spendRecoveryContext

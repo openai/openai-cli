@@ -67,9 +67,12 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool) s
 	var limitsFailure *limitsWorkflowFailure
 	var finiteListFailure *clioutput.FiniteJSONListError
 	var spendResponseFailure *spendMutationResponseError
+	var spendPresentationFailure *spendMutationPresentationError
 	responseRecovery := ""
 	if human && errors.As(failure, &spendResponseFailure) {
 		responseRecovery = readableSpendMutationFailure(root, command)
+	} else if human && errors.As(failure, &spendPresentationFailure) {
+		responseRecovery = readableSpendMutationRecovery(root, command, true)
 	}
 	switch {
 	case errors.As(failure, &limitsFailure):

@@ -294,7 +294,7 @@ func (o *ShowJSONOpts) setDefaults() {
 // ShowJSON displays a single JSON result to the user.
 func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
 	if err := showJSON(res, opts, transformers.Select); err != nil {
-		return err
+		return spendMutationPresentationFailure(err, opts)
 	}
 	return showBatchNextCommand(res, opts)
 }

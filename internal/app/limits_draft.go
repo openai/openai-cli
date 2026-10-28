@@ -318,6 +318,14 @@ func limitsCommand(c limitsChange, projectID string, requestArgs []string, omit 
 			args = append(args, "--"+strings.ReplaceAll(field.key, "_", "-"), strconv.FormatInt(value, 10))
 		}
 	}
+	for _, arg := range args {
+		if strings.ContainsRune(arg, '\x00') {
+			return "", "Command preview omitted: the shell cannot preserve a NUL byte in an argument."
+		}
+	}
+	if len(executable) > 0 && strings.ContainsRune(executable[0], '\x00') {
+		return "", "Command preview omitted: the shell cannot preserve a NUL byte in the executable path."
+	}
 	command := terminal.FormatCommand(args, shell)
 	if command == "" {
 		return "", "Command printing needs Bash, zsh, fish or PowerShell 7."

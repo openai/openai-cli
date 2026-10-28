@@ -119,6 +119,76 @@ func TestLimitsServicePaginationCapsAndCycle(t *testing.T) {
 	}
 }
 
+func TestLimitsServiceListRequiresMatchingObject(t *testing.T) {
+	for _, scope := range []struct {
+		name, project, object, other string
+		rates                        bool
+	}{
+		{"organization_alerts", "", "organization.spend_alert", "project.spend_alert", false},
+		{"project_alerts", "proj_demo", "project.spend_alert", "organization.spend_alert", false},
+		{"project_rates", "proj_demo", "project.rate_limit", "project.spend_alert", true},
+	} {
+		t.Run(scope.name, func(t *testing.T) {
+			first := fmt.Sprintf(`{"object":%q,"id":"first","future":1,"future":2}`, scope.object)
+			second := fmt.Sprintf(`{"object":%q,"id":"second","future":{"exact":9007199254740993},"optional":null}`, scope.object)
+			for _, tc := range []struct{ name, fields string }{
+				{"wrong_scope", fmt.Sprintf(`"object":%q`, scope.other)},
+				{"missing", `"future":true`},
+				{"null", `"object":null`},
+				{"number", `"object":1`},
+				{"duplicate_same", fmt.Sprintf(`"object":%q,"object":%q`, scope.object, scope.object)},
+				{"duplicate_other", fmt.Sprintf(`"object":%q,"object":%q`, scope.object, scope.other)},
+				{"duplicate_escaped", fmt.Sprintf(`"object":%q,"\u006fbject":%q`, scope.object, scope.object)},
+				{"valid_sparse_future_duplicates", ""},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					var reads, writes atomic.Int32
+					backend := limitsTestBackend(t, scope.project, -1, func(w http.ResponseWriter, r *http.Request) {
+						if r.Method != http.MethodGet {
+							writes.Add(1)
+							t.Error("list sent a mutation")
+						}
+						reads.Add(1)
+						if r.URL.Query().Get("after") == "" {
+							limitsTestWrite(t, w, `{"object":"list","data":[`+first+`],"has_more":true,"last_id":"first"}`)
+							return
+						}
+						if r.URL.Query().Get("after") != "first" {
+							t.Error("list did not preserve its pagination cursor")
+						}
+						data := second
+						if tc.fields != "" {
+							data += `,{"id":"rejected",` + tc.fields + `},` + strings.Replace(second, "second", "after_rejection", 1)
+						}
+						limitsTestWrite(t, w, `{"object":"list","data":[`+data+`],"has_more":false}`)
+					})
+					items, complete, err := backend.list(t.Context(), scope.rates)
+					require.Len(t, items, 2)
+					require.Equal(t, []string{first, second}, []string{items[0].Raw, items[1].Raw})
+					require.Equal(t, tc.fields == "", complete)
+					if tc.fields == "" {
+						require.NoError(t, err)
+					} else {
+						require.EqualError(t, err, "A limits page contains an unexpected resource or scope.")
+					}
+					require.Equal(t, int32(2), reads.Load())
+					require.Zero(t, writes.Load())
+					m, state := newLimitsController(t, 40, 12)
+					m.section, m.snapshot.Alerts = 1, items
+					if scope.rates {
+						m.section, m.snapshot.Rates = 2, items
+					}
+					for _, row := range m.menu() {
+						require.NotContains(t, row.label, "rejected")
+						require.NotContains(t, row.label, "after_rejection")
+					}
+					require.Zero(t, state.writes.Load())
+				})
+			}
+		})
+	}
+}
+
 func TestLimitsServiceRejectsStaleLimitAndDuplicateBaselineWithoutWriting(t *testing.T) {
 	var writes atomic.Int32
 	backend := limitsTestBackend(t, "", 100, func(w http.ResponseWriter, r *http.Request) {

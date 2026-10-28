@@ -315,6 +315,58 @@ func TestLimitsWorkspacePrintOmissionsAndUnavailableStates(t *testing.T) {
 	}
 }
 
+func TestLimitsWorkspaceNULArgumentsDisablePrinting(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish", "pwsh"} {
+		for _, source := range []string{"alert_id", "rate_id", "project_id", "request_option", "executable"} {
+			t.Run(shell+"/"+source, func(t *testing.T) {
+				m, backend := newLimitsController(t, 40, 12)
+				m.shell = shell
+				kind, record, edit := "alert_update", limitsControllerAlert, "100.01"
+				switch source {
+				case "alert_id":
+					record = strings.Replace(record, "alert_synthetic", `alert_safe\u0000suffix`, 1)
+				case "rate_id":
+					kind, edit = "rate_update", "101"
+					record = strings.Replace(limitsControllerRate, "rl_synthetic", `rate_safe\u0000suffix`, 1)
+					m.snapshot.ProjectID = "proj_synthetic"
+				case "project_id":
+					m.snapshot.ProjectID = "proj_safe\x00suffix"
+					record = strings.Replace(record, "organization.spend_alert", "project.spend_alert", 1)
+				case "request_option":
+					m.requestArgs = []string{"--organization=org_safe\x00suffix"}
+				case "executable":
+					m.previewExecutable = "/synthetic/openai\x00suffix"
+				}
+				m.begin(kind, gjson.Parse(record))
+				require.Equal(t, "form", m.page)
+				m.draft.inputs[0].SetValue(edit)
+				m.review()
+				require.Equal(t, "review", m.page, m.formError)
+				require.Empty(t, m.previewCommand)
+				inspection := limitsReview(m.change, m.snapshot.ProjectID, m.requestArgs, m.omitPreview, m.shell, m.previewExecutable)
+				require.Contains(t, inspection, "Command preview omitted: the shell cannot preserve a NUL byte")
+				require.NotContains(t, inspection, "Command preview (inspection only)")
+				require.NotContains(t, inspection, "\x00")
+				_, quit := m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+				require.Nil(t, quit)
+				require.False(t, m.quitting)
+				require.Empty(t, m.commandToPrint)
+				limitsControllerKey(m, tea.KeyEscape)
+				require.Equal(t, "form", m.page)
+				require.Equal(t, edit, m.draft.inputs[0].Value())
+				require.Equal(t, gjson.Get(record, "id").Str, m.draft.change.ID)
+				limitsControllerKey(m, tea.KeyEscape)
+				require.NotNil(t, limitsControllerKey(m, 'q'))
+				var out bytes.Buffer
+				require.NoError(t, finishLimitsWorkspace(t.Context(), m, nil, ShowJSONOpts{Context: t.Context(), Stdout: &out, Stderr: io.Discard}))
+				require.Empty(t, out.String())
+				require.Zero(t, backend.writes.Load())
+				require.Zero(t, backend.reads.Load())
+			})
+		}
+	}
+}
+
 func TestLimitsWorkspacePrintPreservesFinalizationFailures(t *testing.T) {
 	for _, scenario := range []string{"caller cancellation", "interrupt", "program failure", "mutation failure", "terminal failure", "print failure", "short print"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -545,7 +597,7 @@ func TestLimitsWorkspacePrintedCommandNativeShellPreservesArguments(t *testing.T
 		t.Run(shell, func(t *testing.T) {
 			binary, directory := limitsPreviewExecutable(t, strings.Repeat("long ", 20)+"limits'\nrecorder")
 			marker := filepath.Join(t.TempDir(), "MUST_NOT_EXIST")
-			subject := "Owner's \"alert\"; $(touch " + marker + "); `touch " + marker + "` $HOME \\path\nnext line"
+			subject := "Owner's \"alert\"; $(touch " + marker + "); `touch " + marker + "` $HOME \\path\nnext line\x00JSON string"
 			channel, err := json.Marshal(map[string]any{"type": "email", "recipients": []string{"finance@example.test"}, "subject_prefix": subject})
 			if err != nil {
 				t.Fatal(err)
@@ -569,8 +621,8 @@ func TestLimitsWorkspacePrintedCommandNativeShellPreservesArguments(t *testing.T
 					want: []string{"admin", "organization", "spend-alerts", "create", "--currency", "USD", "--interval", "month", "--threshold-amount", "7550", "--notification-channel", string(channel)}},
 				{name: "alert-update", projectID: "proj target's", change: limitsChange{Kind: "alert_update", ID: "alert owner's", Amount: 15025, Recipients: []string{"finance@example.test"}, SubjectPrefixSet: true, SubjectPrefix: &subject},
 					want: []string{"admin", "organization", "projects", "spend-alerts", "update", "--project-id", "proj target's", "--alert-id", "alert owner's", "--currency", "USD", "--interval", "month", "--threshold-amount", "15025", "--notification-channel", string(channel)}},
-				{name: "alert-delete", projectID: "proj target's", change: limitsChange{Kind: "alert_delete", ID: "alert owner's"},
-					want: []string{"admin", "organization", "projects", "spend-alerts", "delete", "--project-id", "proj target's", "--alert-id", "alert owner's"}},
+				{name: "alert-delete", projectID: "proj target's", change: limitsChange{Kind: "alert_delete", ID: "alert owner's\n\tend"},
+					want: []string{"admin", "organization", "projects", "spend-alerts", "delete", "--project-id", "proj target's", "--alert-id", "alert owner's\n\tend"}},
 				{name: "rate-update", projectID: "proj target's", change: limitsChange{Kind: "rate_update", ID: "rl owner's", RateValues: map[string]int64{"max_requests_per_1_minute": -1}},
 					want: []string{"admin", "organization", "projects", "rate-limits", "update-rate-limit", "--project-id", "proj target's", "--rate-limit-id", "rl owner's", "--max-requests-per-1-minute", "-1"}},
 				{name: "tokens-per-day", projectID: "proj target's", change: limitsChange{Kind: "rate_update", ID: "rl owner's", RateValues: map[string]int64{"max_tokens_per_1_day": 9007199254740993}},
