@@ -84,6 +84,32 @@ func TestManagementStoreFormsAndConfirmation(t *testing.T) {
 	assert.Contains(t, m.note, "Source files remain")
 }
 
+func TestWorkspaceRenameDisplaysDirectionalControlsAndPreservesSubmittedName(t *testing.T) {
+	const stored = "café\u202ekite"
+	const pasted = "\u2066new\u2069"
+	var submitted string
+	m := managementModel(t, func(w http.ResponseWriter, r *http.Request) {
+		var changes struct{ Name string }
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&changes))
+		submitted = changes.Name
+		serviceJSON(w, 200, `{"id":"vs_demo","name":"updated"}`)
+	})
+	m.store.Name = stored
+	m.enter("rename")
+	m.Update(tea.PasteMsg{Content: pasted})
+	for _, color := range []bool{false, true} {
+		m.color = color
+		field := strings.Join(m.editorLines("Store name"), "\n")
+		assert.Contains(t, field, `café\u202ekite\u2066new\u2069`)
+		assert.NotContains(t, m.View().Content, "\u202e")
+		assert.NotContains(t, m.View().Content, "\u2066")
+		assert.NotContains(t, m.View().Content, "\u2069")
+	}
+	modelKey(m, tea.KeyEnter)
+	modelComplete(t, m, modelKey(m, tea.KeyEnter))
+	assert.Equal(t, stored+pasted, submitted)
+}
+
 func TestManagementFileContentAttributesAndRemoval(t *testing.T) {
 	mutations := 0
 	m := managementModel(t, func(w http.ResponseWriter, r *http.Request) {

@@ -147,15 +147,18 @@ func (m *workspace) editorLines(label string) []string {
 	styles := textarea.Styles{}
 	styles.Focused.Placeholder, styles.Blurred.Placeholder = m.muted(), m.muted()
 	editor.SetStyles(styles)
+	// The textarea filters terminal controls, but permits directional marks.
+	// Escape them in its rendered output so editing and submission keep the original value.
+	field := readable.EscapeDirectionalControls(editor.View())
 	caption := "  " + label
 	if m.editing() {
 		caption = m.accent().Render("› " + label)
 	}
 	// Short labels share the input row. Long labels retain room for editable text.
 	if m.bodyWidth()-ansi.StringWidth(caption)-2 >= 12 {
-		return []string{caption + "  " + editor.View()}
+		return []string{caption + "  " + field}
 	}
-	return []string{caption, "  " + editor.View()}
+	return []string{caption, "  " + field}
 }
 
 func (m *workspace) layoutEditor() {
