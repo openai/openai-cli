@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -18,6 +19,119 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
+
+func TestAudioActionsEmptyPlayerExplainsGenerationWithoutWork(t *testing.T) {
+	for _, size := range [][2]int{{40, 12}, {60, 24}, {101, 29}} {
+		for _, action := range []int{0, 1} {
+			m := audioReviewModel(t)
+			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			m.input.SetValue("Keep this synthetic draft 世界")
+			m.instructions.SetValue("Keep this delivery")
+			m.path.SetValue("unchanged.wav")
+			m.saveFolder.SetValue("/synthetic/unchanged")
+			m.lastFinished = time.Now() // Empty feedback must not be swallowed by result debounce.
+			m.focusSection(4)
+			m.resultAction = action
+			settings, started, playID := m.settings, m.started, m.playID
+			for _, key := range []rune{' ', tea.KeyEnter, 's', tea.KeyEnter} {
+				require.Nil(t, audioReviewKey(m, key))
+				require.Equal(t, "Generate speech first.", m.playerNotice)
+				require.Equal(t, 4, m.focus)
+				require.Equal(t, action, m.resultAction)
+				require.Nil(t, m.result)
+				require.Empty(t, m.modal)
+				require.False(t, m.busy)
+				require.False(t, m.playing)
+				require.False(t, m.quit)
+				require.Nil(t, m.playCancel)
+				require.Nil(t, m.playDone)
+				require.Equal(t, playID, m.playID)
+				require.Equal(t, started, m.started)
+				require.Equal(t, settings, m.settings)
+				require.Equal(t, "Keep this synthetic draft 世界", m.input.Value())
+				require.Equal(t, "Keep this delivery", m.instructions.Value())
+				require.Equal(t, "unchanged.wav", m.path.Value())
+				require.Equal(t, "/synthetic/unchanged", m.saveFolder.Value())
+				require.NoError(t, m.lastErr)
+			}
+			_, err := os.Stat(m.store.Directory)
+			require.ErrorIs(t, err, os.ErrNotExist, "empty controls created history files")
+		}
+	}
+}
+
+func TestAudioActionsEmptyPlayerRespectsGuards(t *testing.T) {
+	for _, guard := range []string{"busy", "tiny", "info", "recovery", "invalid-speed"} {
+		t.Run(guard, func(t *testing.T) {
+			m := audioReviewModel(t)
+			m.focusSection(4)
+			switch guard {
+			case "busy":
+				m.busy = true
+			case "tiny":
+				m.Update(tea.WindowSizeMsg{Width: 39, Height: 11})
+			case "info":
+				m.openInformation("Help", "Synthetic help", "")
+			case "recovery":
+				m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+			case "invalid-speed":
+				m.focusSection(2)
+				m.setting = 3
+				m.beginInlineSpeed()
+				m.speedInput.SetValue("invalid")
+			}
+			focus, modal, playID := m.focus, m.modal, m.playID
+			for _, key := range []tea.KeyPressMsg{
+				{Code: ' '}, {Code: tea.KeyEnter}, {Code: 's'}, {Code: 'o', Mod: tea.ModCtrl},
+			} {
+				_, command := m.Update(key)
+				require.Nil(t, command)
+				require.Equal(t, focus, m.focus)
+				require.Equal(t, modal, m.modal)
+				require.Empty(t, m.playerNotice)
+				require.Equal(t, playID, m.playID)
+				require.False(t, m.playing)
+				require.Nil(t, m.result)
+				require.False(t, m.quit)
+			}
+			if guard == "invalid-speed" {
+				require.True(t, m.speedEditing)
+				require.Equal(t, audioSpeedError, m.speedError)
+				require.Equal(t, 1.0, m.settings.Speed)
+			}
+		})
+	}
+}
+
+func TestAudioActionsEmptyPlayerNoticeClearsForNewWorkAndClear(t *testing.T) {
+	for _, action := range []string{"generate", "generated-result", "opened-result", "clear"} {
+		t.Run(action, func(t *testing.T) {
+			m := audioReviewModel(t)
+			m.focusSection(4)
+			require.Nil(t, audioReviewKey(m, 's'))
+			require.Equal(t, audioNoGenerationNotice, m.playerNotice)
+			switch action {
+			case "generate":
+				m.input.SetValue("Synthetic generation is scheduled, never executed")
+				_, command := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+				require.NotNil(t, command)
+				require.True(t, m.busy)
+			case "generated-result", "opened-result":
+				kind := "generate"
+				if action == "opened-result" {
+					kind = "open"
+				}
+				_, command := m.Update(audioWorkMessage{kind: kind, result: audioReviewResult("synthetic-recording", false)})
+				require.Nil(t, command)
+				require.NotNil(t, m.result)
+			case "clear":
+				require.Nil(t, audioReviewMore(t, m, "Clear form"))
+				require.Nil(t, m.result)
+			}
+			require.Empty(t, m.playerNotice)
+		})
+	}
+}
 
 func TestAudioActionsInstructionsExampleIsEditableAndSeededOnce(t *testing.T) {
 	m := audioReviewModel(t)
@@ -150,7 +264,8 @@ func TestAudioActionsRecoveryUsesOneScreen(t *testing.T) {
 	m.Update(audioWorkMessage{kind: "generate", err: failure})
 	view := audioFeedbackView(t, m)
 	require.Contains(t, view, "Error details")
-	require.Contains(t, view, "1. Check your API key and project access.")
+	require.Contains(t, view, "Check your API key and project access.")
+	require.NotContains(t, view, "1. Check your API key and project access.")
 	require.Contains(t, view, "Esc back")
 	require.NotContains(t, view, "API setup")
 	require.NotContains(t, view, "Back to form")
@@ -219,16 +334,17 @@ func TestAudioActionsCommandRowsPreserveSpacesAndUnicode(t *testing.T) {
 	m.instructions.SetValue("  Keep   every space and @literal.  ")
 	for _, width := range []int{40, 90} {
 		m.Update(tea.WindowSizeMsg{Width: width, Height: 12})
-		m.openInformation(audioCommandTitle, m.commandPreview(), "more")
-		rows := m.infoRows()
-		require.Equal(t, m.commandPreview(), strings.Join(rows, ""))
+		m.focusCommand()
+		rows := m.commandDisplayRows()
+		require.Equal(t, strings.ReplaceAll(m.commandPreview(), "\n", ""), ansi.Strip(strings.Join(rows, "")))
 		for _, row := range rows {
 			require.LessOrEqual(t, ansi.StringWidth(row), m.audioWidth())
 		}
-		require.Greater(t, len(rows), m.informationHeight())
+		require.Greater(t, len(rows), m.commandViewportHeight())
 		audioReviewKey(m, tea.KeyEnd)
-		require.Equal(t, len(rows)-m.informationHeight(), m.infoOffset)
-		require.Nil(t, audioReviewKey(m, tea.KeyEnter))
+		require.Equal(t, len(rows)-m.commandViewportHeight(), m.commandOffset)
+		require.Nil(t, audioReviewKey(m, tea.KeyEscape))
+		require.Equal(t, "more", m.modal)
 		require.False(t, m.busy)
 	}
 }
@@ -245,7 +361,7 @@ func TestAudioActionsLocalValidationKeepsOriginalExitContract(t *testing.T) {
 	require.Equal(t, "recovery", m.modal)
 	view := audioFeedbackView(t, m)
 	require.Contains(t, view, "Text is empty.")
-	require.Contains(t, view, "1. Enter text before generating speech.")
+	require.Contains(t, view, "Enter text before generating speech.")
 	require.NotContains(t, view, "API key")
 	require.False(t, m.busy)
 	audioReviewKey(m, tea.KeyEscape)

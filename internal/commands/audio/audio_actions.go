@@ -12,12 +12,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/openai/openai-cli/internal/readable"
-	requestconfig "github.com/openai/openai-cli/internal/request"
-	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
 const audioInstructionsExample = "Speak warmly and clearly."
 const audioCommandTitle = "Command · Bash/zsh"
+const audioNoGenerationNotice = "Generate speech first."
 
 func (m *audioWorkbench) instructionsSupported() bool {
 	return !strings.HasPrefix(m.settings.Model, "tts-1")
@@ -34,9 +33,14 @@ func (m *audioWorkbench) effectiveSettings() audiohistory.Settings {
 	return settings
 }
 
+func (m *audioWorkbench) noGenerationNotice() tea.Cmd {
+	m.playerNotice = audioNoGenerationNotice
+	return nil
+}
+
 func (m *audioWorkbench) openSave() tea.Cmd {
 	if m.result == nil {
-		return nil
+		return m.noGenerationNotice()
 	}
 	m.modal, m.note = "save", ""
 	path, err := audioDefaultSavePath(m.result.entry)
@@ -49,7 +53,7 @@ func (m *audioWorkbench) openSave() tea.Cmd {
 	m.path.SetValue(path)
 	m.saveFolder.SetValue(audioDefaultSaveFolder)
 	m.resizeEditors()
-	return m.focusSave(2)
+	return m.focusSave(1)
 }
 
 func (m *audioWorkbench) focusSave(focus int) tea.Cmd {
@@ -164,13 +168,18 @@ func (m *audioWorkbench) restoreEditorFocus() tea.Cmd {
 	case "speed":
 		return m.speedInput.Focus()
 	case "":
+		if m.speedEditing {
+			m.setting = 3
+			m.focusSection(2)
+			return m.speedInput.Focus()
+		}
 		return m.focusSection(m.focus)
 	}
 	return nil
 }
 
 func (m *audioWorkbench) moreItems() []string {
-	items := []string{"History", "Preview voice", "Clear form", "Show command", "Help"}
+	items := []string{"History", "Preview voice", "Clear form", "View command", "Help"}
 	if m.activeFailure() {
 		items = append(items, "Last error")
 	}
@@ -187,8 +196,8 @@ func (m *audioWorkbench) updateMore(key string) tea.Cmd {
 	switch selected {
 	case "Help":
 		m.openInformation("Help", audioFormHelp, "more")
-	case "Show command":
-		m.openInformation(audioCommandTitle, m.commandPreview(), "more")
+	case "View command":
+		return m.focusCommand()
 	case "Last error":
 		m.openRecovery()
 	default:
@@ -206,6 +215,7 @@ func (m *audioWorkbench) updateMore(key string) tea.Cmd {
 			m.instructions.SetValue("")
 			m.settings = audioDefaultSettings()
 			m.result, m.priorResult = nil, nil
+			m.playerNotice = ""
 			m.note = "Draft cleared."
 		}
 		m.lastFinished = time.Now()
@@ -241,8 +251,9 @@ func (m *audioWorkbench) leaveRecovery() tea.Cmd {
 	restoreFocus := m.recoveryRestoreFocus
 	m.recoveryRestoreFocus = false
 	m.lastFinished = time.Now()
-	// Inspecting a previous failure restores the section the user was editing.
-	if m.modal == "" && !restoreFocus {
+	// Recovery must not strand an uncommitted Speed draft on another action.
+	// Inspecting a previous failure also restores the previous section.
+	if m.modal == "" && !restoreFocus && !m.speedEditing {
 		m.setting = audioSettingMore
 		return m.focusSection(2)
 	}
@@ -270,33 +281,12 @@ func (m *audioWorkbench) openInformation(title, text, parent string) {
 }
 
 func (m *audioWorkbench) infoRows() []string {
-	if m.infoTitle == audioCommandTitle {
-		return audioCommandRows(readable.Text(m.infoText), m.audioWidth())
-	}
 	return strings.Split(ansi.Wrap(readable.Text(m.infoText), m.audioWidth(), ""), "\n")
 }
 
-// Prose wrapping can discard spaces. Executable text keeps every sequence,
-// using the existing picker decoder for linear, display-cell-aware wrapping.
-func audioCommandRows(text string, width int) []string {
-	var rows []string
-	var line strings.Builder
-	used := 0
-	for len(text) > 0 {
-		sequence, cells, read := cliterminal.Sequence(text)
-		if used > 0 && used+cells > width {
-			rows = append(rows, line.String())
-			line.Reset()
-			used = 0
-		}
-		line.WriteString(sequence)
-		used += cells
-		text = text[read:]
-	}
-	return append(rows, line.String())
+func (m *audioWorkbench) informationHeight() int {
+	return max(1, m.audioHeight()-4)
 }
-
-func (m *audioWorkbench) informationHeight() int { return max(1, m.height-5) }
 
 func audioScrollOffset(offset, rows, height int, key string) int {
 	limit := max(0, rows-height)
@@ -324,13 +314,8 @@ func (m *audioWorkbench) informationView() tea.View {
 	lines := []string{m.strong().Render(m.infoTitle), ""}
 	lines = append(lines, rows[start:min(len(rows), start+height)]...)
 	footer := m.hintLine([2]string{"↑↓", "scroll"}, [2]string{"Esc", "back"})
-	if m.infoTitle == audioCommandTitle {
-		if _, omit := requestconfig.NextCommandOptions(m.command.Root()); !omit {
-			footer = m.hintLine([2]string{"↑↓", ""}, [2]string{"Ctrl+P", "print/exit"}, [2]string{"Esc", "back"})
-		}
-	}
 	lines = append(lines, "", footer)
-	return tea.NewView(m.fitAudio(lines))
+	return tea.NewView(m.fitAudio(lines, 1))
 }
 
 const audioFormHelp = `Use Tab to move between sections.
@@ -340,6 +325,14 @@ Enter chooses the highlighted action.
 Enter in Text or Instructions creates speech.
 Ctrl+G also creates speech.
 Ctrl+O opens generated audio without starting playback.
+Text, settings, and retained audio share the workspace when the terminal is at least 60 x 24.
+In smaller terminals, Tab changes the visible section. Ctrl+O focuses retained audio.
+More actions → View command opens the full command.
+Up/Down, Page Up/Down, Home, and End scroll the command.
+Esc returns to the menu. Tab opens Audio. Shift+Tab returns to More actions.
+Ctrl+P prints the full command and exits the form.
+Left and Right change Model, Voice, Format, and Speed.
+Type a Speed directly; Enter applies it and Esc cancels the edit.
 Alt+Enter adds a new line.
 
 Instructions start with an editable example.

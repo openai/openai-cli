@@ -125,12 +125,30 @@ func assertAudioPreviewJSON(t *testing.T, model *audioWorkbench, input []byte) {
 	require.Equal(t, want, decoded)
 }
 
+func assertAudioPreviewContinuations(t *testing.T, command string) {
+	t.Helper()
+	lines := strings.Split(command, "\n")
+	require.Greater(t, len(lines), 1, "the command must use structural line continuations")
+	for index, line := range lines {
+		if index < len(lines)-1 {
+			require.True(t, strings.HasSuffix(line, " \\"), "continuation must end line %d without trailing whitespace", index)
+		}
+		if index > 0 {
+			require.True(t, strings.HasPrefix(line, "  "), "continued line %d must retain indentation", index)
+		}
+		for _, char := range line {
+			require.False(t, unicode.IsControl(char) || unicode.Is(unicode.Cf, char), "data control in copyable command")
+		}
+	}
+	require.False(t, strings.HasSuffix(command, "\n"), "the print path owns the final newline")
+}
+
 func TestAudioCommandPreviewNativeShellPreservesInputsAndRequestContext(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh"} {
 		t.Run(shell, func(t *testing.T) {
 			binary, directory := audioPreviewExecutable(t, "openai preview's binary")
 			invocation := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
-			for _, input := range []string{"@synthetic/file.txt", `\@synthetic/file.txt`, "世界 says 'hello'\nsecond line with \\\"quoted\\\" text"} {
+			for _, input := range []string{"@synthetic/file.txt", `\@synthetic/file.txt`, "世界 says 'hello'\nsecond line with \\\"quoted\\\" text", "Literal \\\n$(printf injected); `printf injected` | # and trailing \\"} {
 				for _, instructions := range []string{"", "Speak 'gently'\nPreserve 世界 and @literal \\@literal"} {
 					model := audioPreviewModel(t, invocation, "--project=proj synthetic's", "--organization=org-世界", "--base-url=https://example.invalid/proxy/v1")
 					model.input.SetValue(input)
@@ -138,6 +156,7 @@ func TestAudioCommandPreviewNativeShellPreservesInputsAndRequestContext(t *testi
 					require.Equal(t, input, model.input.Value())
 					require.Equal(t, instructions, model.instructions.Value())
 					preview := model.commandPreview()
+					assertAudioPreviewContinuations(t, preview)
 					require.NotContains(t, preview, "Bash/zsh:", "label must remain outside executable command")
 					capture := executeAudioPreview(t, shell, preview, directory)
 					require.Equal(t, []string{"--project=proj synthetic's", "--organization=org-世界", "--base-url=https://example.invalid/proxy/v1", "audio", "speak", "--output", "speech.wav"}, capture.args)
@@ -154,14 +173,12 @@ func TestAudioCommandPreviewEscapesControlsWithoutChangingArguments(t *testing.T
 		t.Run(shell, func(t *testing.T) {
 			binary, directory := audioPreviewExecutable(t, "openai")
 			invocation := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
-			project := "proj\x1b[2J\r\u202e's"
+			project := "proj\x1b[2J\r\n\t\u202e's"
 			model := audioPreviewModel(t, invocation, "--project="+project)
 			model.settings.Model = "synthetic\x1b]52;c;fake\a"
 			model.input.SetValue("plain\nUnicode 世界")
 			preview := model.commandPreview()
-			for _, char := range preview {
-				require.False(t, unicode.IsControl(char) || unicode.Is(unicode.Cf, char), "literal control in copyable command")
-			}
+			assertAudioPreviewContinuations(t, preview)
 			capture := executeAudioPreview(t, shell, preview, directory)
 			require.Equal(t, []string{"--project=" + project, "audio", "speak", "--output", "speech.wav"}, capture.args)
 			assertAudioPreviewJSON(t, model, capture.stdin)
@@ -230,51 +247,65 @@ func TestAudioCommandPreviewFullTextAndVerticalScroll(t *testing.T) {
 	preview := model.commandPreview()
 	require.Contains(t, preview, "INPUT_TAIL_MARKER")
 	require.Contains(t, preview, "INSTRUCTION_TAIL_MARKER")
-	require.Nil(t, audioReviewMore(t, model, "Show command"))
-	require.Equal(t, "info", model.modal)
-	require.Equal(t, preview, model.infoText, "the command modal changed the executable bytes")
+	require.Nil(t, audioReviewMore(t, model, "View command"))
+	require.Empty(t, model.modal)
+	require.Equal(t, audioFocusCommand, model.focus)
+	require.Equal(t, preview, model.commandPreview(), "focusing the command changed executable bytes")
 	initial := model.View().Content
 	require.Contains(t, ansi.Strip(initial), "printf")
-	require.Contains(t, ansi.Strip(initial), "Bash/zsh", "the copyable command must identify its supported shells")
+	require.Contains(t, ansi.Strip(initial), "Bash/zsh", "the command must identify its supported shells")
 	require.Nil(t, audioReviewKey(model, tea.KeyDown), "scrolling must never generate speech")
-	require.Positive(t, model.infoOffset)
+	require.Positive(t, model.commandOffset)
 	require.NotEqual(t, initial, model.View().Content)
-	for _, marker := range []string{"INPUT_TAIL_MARKER", "INSTRUCTION_TAIL_MARKER"} {
-		require.Nil(t, audioReviewKey(model, tea.KeyHome))
-		found := false
-		for range len(model.infoRows()) {
-			view := audioFeedbackView(t, model)
-			if strings.Contains(view, marker) {
-				found = true
-				break
-			}
+	require.Nil(t, audioReviewKey(model, tea.KeyHome))
+	rows := model.commandDisplayRows()
+	// Inspect each complete display row. Tail markers can span two rows.
+	for row, text := range rows {
+		if row >= model.commandOffset+model.commandViewportHeight() {
 			require.Nil(t, audioReviewKey(model, tea.KeyDown))
-			require.False(t, model.busy)
 		}
-		require.True(t, found, "complete command must remain reachable through vertical scrolling: %s", marker)
+		require.Contains(t, ansi.Strip(model.View().Content), ansi.Strip(text), "command row %d became unreachable", row)
+		require.False(t, model.busy)
 	}
 	require.Nil(t, audioReviewKey(model, tea.KeyHome))
-	require.Zero(t, model.infoOffset)
+	require.Zero(t, model.commandOffset)
 	require.Nil(t, audioReviewKey(model, tea.KeyEnter), "viewing a command must not generate speech")
 	require.False(t, model.busy)
-	require.Equal(t, "info", model.modal)
+	require.False(t, model.quit)
+	require.Empty(t, model.modal)
+	require.Equal(t, audioFocusCommand, model.focus)
 }
 
-func TestAudioCommandPreviewSupportsInformationScrollKeys(t *testing.T) {
+func TestAudioCommandPreviewSupportsInlineScrollKeys(t *testing.T) {
 	model := audioPreviewModel(t, "openai")
-	model.input.SetValue(strings.Repeat("Synthetic speech ", 130))
+	model.input.SetValue(strings.Repeat("Synthetic speech ", 260))
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	require.Nil(t, audioReviewMore(t, model, "Show command"))
+	require.Nil(t, audioReviewMore(t, model, "View command"))
 	first := model.View().Content
-	for _, key := range []rune{tea.KeyDown, tea.KeyUp} {
-		require.Nil(t, audioReviewKey(model, key), "command scrolling generated speech")
+	page := model.commandViewportHeight()
+	limit := len(model.commandDisplayRows()) - page
+	require.Greater(t, limit, page)
+	for _, step := range []struct {
+		key    rune
+		offset int
+	}{
+		{tea.KeyDown, 1}, {tea.KeyUp, 0}, {tea.KeyPgDown, page},
+		{tea.KeyPgUp, 0}, {tea.KeyEnd, limit}, {tea.KeyDown, limit},
+		{tea.KeyHome, 0}, {tea.KeyUp, 0},
+	} {
+		require.Nil(t, audioReviewKey(model, step.key), "command scrolling generated speech")
+		require.Equal(t, step.offset, model.commandOffset)
 		require.False(t, model.busy)
-		if key == tea.KeyDown {
-			require.NotEqual(t, first, model.View().Content)
+		require.False(t, model.quit)
+	}
+	require.Equal(t, first, model.View().Content)
+	for _, focus := range []int{0, 1, 2} {
+		model.focusSection(focus)
+		for _, key := range []rune{tea.KeyPgDown, tea.KeyPgUp, tea.KeyEnd, tea.KeyHome} {
+			model.Update(tea.KeyPressMsg{Code: key})
+			require.Zero(t, model.commandOffset, "another section changed the command scroll offset")
 		}
 	}
-	require.Zero(t, model.infoOffset)
-	require.Equal(t, first, model.View().Content)
 }
 
 func TestAudioCommandPrintNativeShellPreservesPrintedBytes(t *testing.T) {
@@ -288,10 +319,10 @@ func TestAudioCommandPrintNativeShellPreservesPrintedBytes(t *testing.T) {
 				model.input.SetValue(strings.Repeat("A", 60) + "\n世界 says 'hello' @literal \\@literal")
 				model.instructions.SetValue("Preserve   spaces and 'quotes'.")
 				preview := model.commandPreview()
-				model.openInformation(audioCommandTitle, preview, "more")
-				require.Greater(t, len(model.infoRows()), 1)
+				assertAudioPreviewContinuations(t, preview)
+				require.Nil(t, model.focusCommand())
+				require.Greater(t, len(model.commandDisplayRows()), 1)
 				require.Contains(t, ansi.Strip(model.View().Content), "Ctrl+P print/exit")
-				require.Nil(t, audioReviewKey(model, tea.KeyEnter))
 				require.False(t, model.quit)
 				_, quit := model.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
 				require.NotNil(t, quit)
@@ -316,7 +347,7 @@ func TestAudioCommandPrintNativeShellPreservesPrintedBytes(t *testing.T) {
 }
 
 func TestAudioCommandPrintPreservesGuardsAndCancellation(t *testing.T) {
-	for _, mode := range []string{"form", "help", "busy", "tiny", "private", "cancel"} {
+	for _, mode := range []string{"help", "busy", "tiny", "private", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			flags := []string{}
 			if mode == "private" {
@@ -325,12 +356,10 @@ func TestAudioCommandPrintPreservesGuardsAndCancellation(t *testing.T) {
 			model := audioPreviewModel(t, "openai", flags...)
 			model.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 			model.input.SetValue("Synthetic print guard")
-			model.openInformation(audioCommandTitle, model.commandPreview(), "more")
+			require.Nil(t, model.focusCommand())
 			switch mode {
-			case "form":
-				model.modal = ""
 			case "help":
-				model.infoTitle = "Help"
+				model.openInformation("Help", "Synthetic help", "")
 			case "busy":
 				model.busy = true
 			case "tiny":
@@ -358,7 +387,7 @@ func TestAudioCommandPrintPreservesFailedActionAndStopsPlayback(t *testing.T) {
 	playbackCanceled := false
 	model.playing = true
 	model.playCancel = func() { playbackCanceled = true }
-	model.openInformation(audioCommandTitle, model.commandPreview(), "more")
+	require.Nil(t, model.focusCommand())
 	_, quit := model.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
 	require.NotNil(t, quit)
 	require.IsType(t, tea.QuitMsg{}, quit())

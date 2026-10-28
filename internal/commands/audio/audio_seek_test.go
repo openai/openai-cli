@@ -270,6 +270,7 @@ func TestAudioSeekSaveExportsFullOriginal(t *testing.T) {
 	require.Equal(t, "save", m.modal)
 	path := filepath.Join(t.TempDir(), "original.pcm")
 	m.path.SetValue(path)
+	require.Nil(t, audioReviewKey(m, tea.KeyEnter)) // Finish choosing the folder.
 	saved := audioSeekWorker(t, audioReviewKey(m, tea.KeyEnter))
 	require.NoError(t, saved.err)
 	m.Update(saved)
@@ -347,9 +348,11 @@ func TestAudioSeekWorkerCapturesOffsetAndPreservesOriginal(t *testing.T) {
 			m.result.position = 250 * time.Millisecond
 			played := audioSeekWorker(t, command)
 			require.NoError(t, played.err)
+			require.Equal(t, 250*time.Millisecond, m.result.position, "the worker must not mutate the UI selection")
 			m.Update(played)
 			require.False(t, m.playing)
-			require.Equal(t, 250*time.Millisecond, m.result.position)
+			require.Equal(t, m.result.seekDuration(), m.result.position, "successful playback reaches the measured end without clock reports")
+			require.True(t, m.result.finished)
 			input, err := os.ReadFile(captured)
 			require.NoError(t, err)
 			want := pcm[rate/2*channels*2:]

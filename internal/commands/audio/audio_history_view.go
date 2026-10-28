@@ -8,24 +8,44 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/readable"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
-// Date headings replace repeated metadata. Keep each prompt on one selectable row.
+// Keep one selectable row per recording. Date groups and footer details do not
+// consume the selected recording's row, including in the compact layout.
 func (m *audioWorkbench) historyView(now time.Time) tea.View {
-	lines := []string{m.strong().Render("  History")}
-	footer := []string{"  " + m.hintLine([2]string{"Enter", "open"}, [2]string{"Esc", "back"})}
+	count := "recordings"
+	if len(m.entries) == 1 {
+		count = "recording"
+	}
+	lines := []string{m.strong().Render(fmt.Sprintf("  History (%d %s)", len(m.entries), count)), ""}
+	footer := []string{""}
+	if m.store.Directory != "" {
+		footer = append(footer, m.historyPathRow("History", m.store.Directory))
+	}
+	controls := "  " + m.hintLine([2]string{"Enter", "open"}, [2]string{"Esc", "back"})
 	if len(m.entries) == 0 {
-		return tea.NewView(m.fitAudio(append(append(lines, "  No saved audio yet."), footer...)))
+		footer = append(footer, controls)
+		return tea.NewView(m.fitAudio(append(append(lines, "  No saved audio yet."), footer...), len(footer)))
 	}
 	choice := max(0, min(m.choice, len(m.entries)-1))
 	selected := m.entries[choice]
-	if m.height >= 24 && m.width >= 60 {
-		metadata := readable.ChoiceTitle(selected.Settings.Voice) + " · " + strings.ToUpper(selected.Settings.Format)
-		if selected.Bytes > 0 {
-			metadata += " · " + audioFileSize(selected.Bytes)
-		}
-		footer = append([]string{"", "  " + m.muted().Render(readable.Text(metadata))}, footer...)
+	metadata := readable.ChoiceTitle(selected.Settings.Voice) + " · " + strings.ToUpper(selected.Settings.Format)
+	if selected.Bytes > 0 {
+		metadata += " · " + audioFileSize(selected.Bytes)
 	}
+	footer = append([]string{"", "  " + m.muted().Render(ansi.Truncate(audioHistoryCell(metadata), max(1, m.audioWidth()-4), "…"))}, footer[1:]...)
+	// Export locations are session evidence, not persisted History metadata.
+	for _, result := range []*audioWorkResult{m.result, m.priorResult} {
+		if result != nil && selected.ID != "" && result.entry.ID == selected.ID && len(result.savedPaths) > 0 {
+			if path := result.savedPaths[len(result.savedPaths)-1]; path != "" {
+				footer = append(footer, m.historyPathRow("Saved", path))
+				break
+			}
+		}
+	}
+	footer = append(footer, controls)
+	lines = append(lines, "  "+m.muted().Render(audioHistoryTableRow("Clip", "Voice", "Format", "Created time", m.audioWidth()-4)))
 
 	type row struct {
 		entry int
@@ -44,17 +64,21 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 		}
 		rows = append(rows, row{entry: i, date: date})
 	}
-	budget := max(1, m.height-1-len(lines)-len(footer))
+	budget := max(1, m.audioHeight()-len(lines)-len(footer))
 	start := max(0, selectedRow-budget+1)
-	// Scrolling within a group needs a replacement date heading.
-	if start > 0 && rows[start].entry >= 0 && budget > 1 {
-		start++
+	// Reserve a replacement date heading when the viewport starts within a group.
+	if rows[start].entry >= 0 && budget > 1 {
+		start = max(0, selectedRow-budget+2)
 		if rows[start].entry >= 0 {
 			lines = append(lines, "  "+m.muted().Render(rows[start].date))
 			budget--
 		}
 	}
-	for _, r := range rows[start:min(len(rows), start+budget)] {
+	end := min(len(rows), start+budget)
+	if end > start && rows[end-1].entry < 0 {
+		end-- // Never show a group heading without its first recording.
+	}
+	for _, r := range rows[start:end] {
 		if r.entry < 0 {
 			lines = append(lines, "  "+m.muted().Render(r.date))
 			continue
@@ -64,21 +88,55 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 		if prompt == "" {
 			prompt = "Generated speech"
 		}
-		if m.width < 60 {
-			lines = append(lines, m.label(prompt, r.entry == choice))
-			continue
-		}
 		stamp := "--:--"
 		if !entry.CreatedAt.IsZero() {
 			stamp = entry.CreatedAt.In(now.Location()).Format("15:04")
 		}
-		width := max(1, m.audioWidth()-2)
-		promptWidth := max(1, width-7)
-		prompt = ansi.Truncate(prompt, promptWidth, "…")
-		padding := strings.Repeat(" ", max(2, width-ansi.StringWidth(prompt)-len(stamp)))
-		lines = append(lines, m.label(prompt+padding+m.muted().Render(stamp), r.entry == choice))
+		text := audioHistoryTableRow(prompt, readable.ChoiceTitle(entry.Settings.Voice), strings.ToUpper(entry.Settings.Format), stamp, m.audioWidth()-4)
+		lines = append(lines, m.choiceRow(text, r.entry == choice))
 	}
-	return tea.NewView(m.fitAudio(append(lines, footer...)))
+	return tea.NewView(m.fitAudio(append(lines, footer...), len(footer)))
+}
+
+// The caller reserves two cells for selection and two for the right inset.
+func audioHistoryTableRow(clip, voice, format, created string, width int) string {
+	cell := func(value string, cells int, right bool) string {
+		value = ansi.Truncate(audioHistoryCell(value), cells, "…")
+		padding := strings.Repeat(" ", max(0, cells-ansi.StringWidth(value)))
+		if right {
+			return padding + value
+		}
+		return value + padding
+	}
+	if width < 52 {
+		return cell(clip, max(1, width), false)
+	}
+	return cell(clip, width-32, false) + "  " + cell(voice, 8, false) + "  " + cell(format, 6, false) + "  " + cell(created, 12, true)
+}
+
+func audioHistoryCell(value string) string {
+	return strings.NewReplacer("\n", `\n`, "\t", `\t`).Replace(readable.Text(value))
+}
+
+func (m *audioWorkbench) historyPathRow(label, path string) string {
+	label += ": "
+	path = audioHistoryCell(path)
+	available := max(1, m.audioWidth()-4-ansi.StringWidth(label))
+	width := 0
+	for remaining := path; len(remaining) > 0; {
+		_, cells, consumed := cliterminal.Sequence(remaining)
+		width += cells
+		remaining = remaining[consumed:]
+	}
+	if width > available {
+		for len(path) > 0 && width > available-1 {
+			_, cells, consumed := cliterminal.Sequence(path)
+			path = path[consumed:]
+			width -= cells
+		}
+		path = "…" + path
+	}
+	return "  " + m.muted().Render(label+path)
 }
 
 func audioHistoryDate(created, now time.Time) string {

@@ -3,6 +3,14 @@
 ## [1.44.2](https://github.com/openai/openai-cli/compare/v1.44.1...v1.44.2) (2026-10-28)
 
 
+### Features
+
+* Stream readable Batch results and match each result to its input by `custom_id`. ([#652](https://github.com/openai/openai-cli/issues/652)) ([06f3af0](https://github.com/openai/openai-cli/commit/06f3af0bc39df2a8c0ececd68116e2b801e33862))
+* Submit a Batch from a JSONL file, find uploaded inputs, and watch progress with `batches list --watch`. ([#653](https://github.com/openai/openai-cli/issues/653)) ([b73b322](https://github.com/openai/openai-cli/commit/b73b322028cb3906e866147a0dcde57dcdd3fb91))
+* Use `openai batches browse` to search batches, inspect results and errors, and create a batch interactively. ([#654](https://github.com/openai/openai-cli/issues/654)) ([e349674](https://github.com/openai/openai-cli/commit/e3496741a3feb5cb893f86bb40872b039024f71d))
+* Edit speech, play the recording, and save it from the same screen in `openai audio speak`. ([#657](https://github.com/openai/openai-cli/issues/657)) ([672ae01](https://github.com/openai/openai-cli/commit/672ae0102bc46b8bff9f4bb68c70cec9ed035d36))
+
+
 ### Chores
 
 * **deps:** update openai-go to v3.90.0 ([#656](https://github.com/openai/openai-cli/issues/656)) ([1d4ea76](https://github.com/openai/openai-cli/commit/1d4ea76671c46f0e31b7deda646f7f8812bacbec))

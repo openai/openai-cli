@@ -36,6 +36,74 @@ func audioResultNavigationPlayback(t *testing.T, m *audioWorkbench) context.Cont
 	return ctx
 }
 
+func TestAudioResultNavigationEmptyPlayerRemainsReachable(t *testing.T) {
+	for _, size := range [][2]int{{40, 12}, {60, 24}, {101, 29}} {
+		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+			m := audioReviewModel(t)
+			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			m.input.SetValue("Keep this synthetic draft 世界")
+			m.instructions.SetValue("Keep this delivery")
+			for _, focus := range []int{1, 2, 4, 0} {
+				audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+				require.Equal(t, focus, m.focus)
+			}
+			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+			require.Equal(t, 4, m.focus)
+			for _, step := range []struct {
+				key    tea.KeyPressMsg
+				action int
+			}{
+				{tea.KeyPressMsg{Code: tea.KeyRight}, 1},
+				{tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift}, 1},
+				{tea.KeyPressMsg{Code: tea.KeyHome}, 0},
+				{tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}, 0},
+				{tea.KeyPressMsg{Code: tea.KeyEnd}, 1},
+				{tea.KeyPressMsg{Code: tea.KeyLeft}, 0},
+				{tea.KeyPressMsg{Code: tea.KeyDown}, 1},
+			} {
+				audioNavigationKey(t, m, step.key)
+				require.Equal(t, step.action, m.resultAction)
+				require.False(t, m.waveformFocused)
+				require.Equal(t, 4, m.focus)
+			}
+			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
+			require.Equal(t, 2, m.focus, "empty waveform must be skipped")
+			require.Equal(t, audioSettingMore, m.setting)
+			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+			require.Equal(t, 4, m.focus)
+			require.Zero(t, m.resultAction)
+			require.Nil(t, audioReviewKey(m, tea.KeyEscape))
+			require.Equal(t, 0, m.focus)
+			require.False(t, m.quit)
+			m.waveformFocused = true // Reentry cannot retain an obsolete waveform target.
+			audioNavigationKey(t, m, tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+			require.Equal(t, 4, m.focus)
+			require.False(t, m.waveformFocused)
+			require.Nil(t, m.result)
+			require.Empty(t, m.playerNotice, "navigation must not activate an empty control")
+			require.False(t, m.playing)
+		})
+	}
+}
+
+func TestAudioResultNavigationSkipsTimelineWithoutPeaks(t *testing.T) {
+	for _, size := range [][2]int{{40, 12}, {60, 24}} {
+		m := audioResultNavigationModel(t, size[0], size[1])
+		m.result.analysis.Peaks = nil
+		require.Positive(t, m.result.seekDuration())
+		require.NotContains(t, m.View().Content, "↑ waveform")
+		require.Nil(t, audioReviewKey(m, tea.KeyUp))
+		require.False(t, m.waveformFocused)
+		require.Equal(t, audioSettingMore, m.setting)
+		require.Equal(t, 2, m.focus)
+		require.Nil(t, audioReviewKey(m, tea.KeyDown))
+		require.Contains(t, m.View().Content, "› Play audio")
+		require.Nil(t, audioReviewKey(m, tea.KeyRight))
+		m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		require.Equal(t, "save", m.modal)
+	}
+}
+
 func TestAudioResultNavigationActionsPreservePlayback(t *testing.T) {
 	for _, size := range [][2]int{{40, 12}, {90, 34}} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
@@ -244,7 +312,9 @@ func TestAudioResultNavigationSaveEscapePreservesTarget(t *testing.T) {
 			require.Nil(t, audioReviewKey(m, tea.KeyDown))
 			m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			require.Equal(t, "save", m.modal)
-			require.Equal(t, 2, m.saveFocus)
+			require.Equal(t, 1, m.saveFocus)
+			require.True(t, m.saveFolder.Focused())
+			require.False(t, m.path.Focused())
 			require.False(t, m.busy, "opening Save scheduled an export")
 			require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 			require.Empty(t, m.modal)
@@ -303,12 +373,12 @@ func TestAudioResultNavigationNoColorMarksFocusedWaveform(t *testing.T) {
 			require.NotContains(t, view, "› Save audio")
 			var focused []string
 			for _, row := range strings.Split(view, "\n") {
-				if strings.HasPrefix(strings.TrimSpace(row), "› ") {
+				if strings.HasPrefix(strings.TrimLeft(row, " │"), "› ") {
 					focused = append(focused, row)
 				}
 			}
 			require.Len(t, focused, 1, "waveform focus needs one visible marker without color")
-			require.Contains(t, focused[0], "┃", "the focus marker must appear beside the waveform")
+			require.True(t, strings.ContainsAny(focused[0], "┃┠"), "the focus marker must appear beside the waveform")
 			require.Nil(t, audioReviewKey(m, tea.KeyDown))
 			require.Contains(t, m.View().Content, "› Save audio…")
 		})
