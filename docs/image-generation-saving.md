@@ -304,9 +304,9 @@ An observer releases the final response only after both partial previews arrive.
 Build and run them without API credentials:
 
 ```sh
-go test -c -o /tmp/image-progress-custom.test ./pkg/custom
+go test -c -o /tmp/image-progress-images.test ./internal/commands/images
 go test -c -o /tmp/image-progress-main.test ./cmd/openai
-python3 scripts/check-image-progress.py /tmp/image-progress-custom.test /tmp/image-progress-main.test /tmp/image-progress-evidence
+python3 scripts/check-image-progress.py /tmp/image-progress-images.test /tmp/image-progress-main.test /tmp/image-progress-evidence
 ```
 
 `scripts/demos/record-image-progress.sh` records a before/after comparison using

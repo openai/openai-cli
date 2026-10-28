@@ -97,6 +97,11 @@ func TestMainVectorStoreSearchFailuresPrecedeEmptyMessage(t *testing.T) {
 		{"empty object", `{}`, 502},
 		{"malformed error", `{"error":`, 502},
 		{"malformed success", `{"data":[`, 200},
+		{"missing results", `{}`, 200},
+		{"null page", `null`, 200},
+		{"null results", `{"data":null}`, 200},
+		{"wrong results type", `{"data":{}}`, 200},
+		{"error-shaped success", `{"error":{"message":"synthetic private error"}}`, 200},
 	} {
 		for _, flags := range [][]string{nil, {"--format", "json"}, {"--max-items", "0"}} {
 			t.Run(tc.name+"/"+strings.Join(flags, "/"), func(t *testing.T) {
@@ -110,12 +115,68 @@ func TestMainVectorStoreSearchFailuresPrecedeEmptyMessage(t *testing.T) {
 				require.NotContains(t, got.stderr, "Indexing state")
 				require.NotContains(t, got.stderr, "sk-fake-vector-store-test")
 				require.NotContains(t, got.stderr, "synthetic private query")
+				require.NotContains(t, got.stderr, "synthetic private error")
+				if tc.status == 200 && tc.name != "malformed success" {
+					require.Contains(t, got.stderr, "Expected a data array.")
+				}
 				require.EqualValues(t, 1, requests.Load())
 				if len(flags) > 0 && flags[0] == "--format" {
 					require.True(t, json.Valid([]byte(got.stderr)), "structured errors must remain valid JSON: %q", got.stderr)
 				}
 			})
 		}
+	}
+}
+
+func TestMainVectorStoreSearchPositionalID(t *testing.T) {
+	server, requests := vectorStoreSearchServer(t, http.StatusOK, vectorStoreEmptySearch)
+	args := []string{"vector-stores", "search", "--query", "synthetic private query", "vs_synthetic"}
+	got := runVectorStoreCommand(t, server, nil, args...)
+	require.Equal(t, mainDispatchResult{0, vectorStoreNoMatches, ""}, got)
+	got = runVectorStoreCommand(t, server, nil, append(args, "extra private operand")...)
+	require.Equal(t, 1, got.code)
+	require.Empty(t, got.stdout)
+	require.Contains(t, got.stderr, "Unexpected extra arguments.")
+	require.NotContains(t, got.stderr, "private")
+	require.EqualValues(t, 1, requests.Load())
+}
+
+func TestMainVectorStoreSearchIncompleteMatches(t *testing.T) {
+	const valid = `{"file_id":"file_ok","filename":"demo.txt","score":0,"attributes":null,"content":[]}`
+	for _, tc := range []struct{ name, row, message, projection string }{
+		{"empty row", `{}`, "incomplete search result", "{}"},
+		{"missing score", `{"file_id":"file_partial","filename":"demo.txt","content":[]}`, "incomplete search result", "file_partial"},
+		{"missing text", `{"file_id":"file_partial","filename":"demo.txt","score":0,"content":[{"type":"text"}]}`, "incomplete search passage", "file_partial"},
+		{"boolean score", `{"file_id":"file_partial","filename":"demo.txt","score":true,"content":[]}`, "incomplete search result", "file_partial"},
+		{"score out of range", `{"file_id":"file_partial","filename":"demo.txt","score":3,"content":[]}`, "incomplete search result", "file_partial"},
+		{"numeric filename", `{"file_id":"file_partial","filename":123,"score":0,"content":[]}`, "incomplete search result", "file_partial"},
+		{"boolean text", `{"file_id":"file_partial","filename":"demo.txt","score":0,"content":[{"type":"text","text":false}]}`, "incomplete search passage", "file_partial"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := "[" + valid + "," + tc.row + "]"
+			server, requests := vectorStoreSearchServer(t, http.StatusOK, `{"data":`+data+"}")
+			search := func(flags ...string) mainDispatchResult {
+				return runVectorStoreCommand(t, server, nil, append([]string{"vector-stores", "search", "--vector-store-id", "vs_synthetic", "--query", "query"}, flags...)...)
+			}
+			for _, flags := range [][]string{nil, {"--format", "text"}} {
+				got := search(flags...)
+				require.Equal(t, 1, got.code)
+				require.Empty(t, got.stdout)
+				require.Contains(t, got.stderr, tc.message)
+				require.NotContains(t, got.stderr, "file_partial")
+			}
+			limited := search("--max-items", "1")
+			require.Zero(t, limited.code)
+			require.Empty(t, limited.stderr)
+			require.Contains(t, limited.stdout, "Score: 0")
+			require.NotContains(t, limited.stdout, "file_partial")
+			original := search("--format", "json")
+			require.Zero(t, original.code)
+			require.JSONEq(t, data, original.stdout)
+			projection := search("--transform", "file_id", "--raw-output")
+			require.Equal(t, mainDispatchResult{0, "file_ok\n" + tc.projection + "\n", ""}, projection)
+			require.EqualValues(t, 5, requests.Load())
+		})
 	}
 }
 

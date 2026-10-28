@@ -204,6 +204,19 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&audioVoicesCreate,
+					&audioVoicesDelete,
+				},
+			},
+			{
+				Name:     "audio:voice-consents",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&audioVoiceConsentsCreate,
+					&audioVoiceConsentsRetrieve,
+					&audioVoiceConsentsUpdate,
+					&audioVoiceConsentsList,
+					&audioVoiceConsentsDelete,
 				},
 			},
 			{

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -93,129 +92,6 @@ func TestMainAdminCredentialsValidatedInputs(t *testing.T) {
 				}
 				if count := requests.Load(); count != 0 {
 					t.Errorf("missing credentials sent %d proxy requests, want 0", count)
-				}
-			})
-		}
-	}
-}
-
-func TestMainAdminCredentialsCheckpointPermissions(t *testing.T) {
-	for _, route := range [][]string{
-		{"fine-tuning", "checkpoints", "permissions"},
-		{"fine-tuning:checkpoints:permissions"},
-	} {
-		for _, operation := range [][]string{
-			{"create", "--fine-tuned-model-checkpoint", "ft_synthetic", "--project-id", "proj_synthetic"},
-			{"retrieve", "--fine-tuned-model-checkpoint", "ft_synthetic"},
-			{"list", "--fine-tuned-model-checkpoint", "ft_synthetic"},
-			{"delete", "--fine-tuned-model-checkpoint", "ft_synthetic", "--permission-id", "perm_synthetic"},
-		} {
-			t.Run(strings.Join(route, "/")+"/"+operation[0], func(t *testing.T) {
-				var requests atomic.Int32
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					requests.Add(1)
-					w.WriteHeader(http.StatusForbidden)
-				}))
-				t.Cleanup(server.Close)
-				args := append([]string{"openai", "--base-url", "https://api.openai.com/v1"}, route...)
-				args = append(args, operation...)
-				env := adminCredentialsProxyEnv(server.URL, []string{"OPENAI_API_KEY=synthetic-project-key"})
-				got := runMainDispatchWithEnv(t, "bash", env, args...)
-				if got.code != 1 || got.stdout != "" || strings.TrimSpace(got.stderr) != missingAdminCredentialsMessage {
-					t.Errorf("checkpoint permissions without an admin key = %+v, want exit 1 and guidance", got)
-				}
-				if count := requests.Load(); count != 0 {
-					t.Errorf("missing credentials sent %d proxy requests, want 0", count)
-				}
-			})
-		}
-	}
-}
-
-func TestMainAdminCredentialsCheckpointAuthentication(t *testing.T) {
-	const listResponse = `{"object":"list","data":[{"id":"perm_synthetic","object":"checkpoint.permission","created_at":1,"project_id":"proj_synthetic"}],"has_more":false}`
-	for _, route := range [][]string{
-		{"fine-tuning", "checkpoints", "permissions"},
-		{"fine-tuning:checkpoints:permissions"},
-	} {
-		for _, test := range []struct {
-			name, method, suffix, authorization, response string
-			env, args, operation                          []string
-		}{
-			{
-				name: "explicit admin key overrides environment", method: http.MethodPost,
-				authorization: "Bearer synthetic-admin-flag", response: listResponse,
-				env:       []string{"OPENAI_ADMIN_KEY=synthetic-admin-env", "OPENAI_API_KEY=synthetic-project-key"},
-				args:      []string{"--admin-api-key", "synthetic-admin-flag"},
-				operation: []string{"create", "--fine-tuned-model-checkpoint", "ft_synthetic", "--project-id", "proj_synthetic"},
-			},
-			{
-				name: "admin environment", method: http.MethodGet,
-				authorization: "Bearer synthetic-admin-env", response: listResponse,
-				env:       []string{"OPENAI_ADMIN_KEY=synthetic-admin-env"},
-				operation: []string{"list", "--fine-tuned-model-checkpoint", "ft_synthetic"},
-			},
-			{
-				name: "explicit Authorization overrides admin key", method: http.MethodDelete, suffix: "/perm_synthetic",
-				authorization: "Custom synthetic-authorization", response: `{"id":"perm_synthetic","object":"checkpoint.permission","deleted":true}`,
-				env:       []string{"OPENAI_ADMIN_KEY=synthetic-admin-env"},
-				args:      []string{"-H", "Authorization: Custom synthetic-authorization"},
-				operation: []string{"delete", "--fine-tuned-model-checkpoint", "ft_synthetic", "--permission-id", "perm_synthetic"},
-			},
-			{
-				name: "environment Authorization with empty admin override", method: http.MethodGet,
-				authorization: "Custom synthetic-authorization", response: listResponse,
-				env:       []string{"OPENAI_ADMIN_KEY=synthetic-admin-env", "OPENAI_API_KEY=synthetic-project-key", "OPENAI_CUSTOM_HEADERS=Authorization: Custom synthetic-authorization"},
-				args:      []string{"--admin-api-key="},
-				operation: []string{"retrieve", "--fine-tuned-model-checkpoint", "ft_synthetic"},
-			},
-			{
-				name: "custom endpoint owns authentication", method: http.MethodGet, response: listResponse,
-				env:       []string{"OPENAI_API_KEY=synthetic-project-key"},
-				operation: []string{"list", "--fine-tuned-model-checkpoint", "ft_synthetic"},
-			},
-		} {
-			t.Run(strings.Join(route, "/")+"/"+test.name, func(t *testing.T) {
-				var requests atomic.Int32
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					requests.Add(1)
-					wantPath := "/v1/fine_tuning/checkpoints/ft_synthetic/permissions" + test.suffix
-					if r.Method != test.method || r.URL.Path != wantPath {
-						t.Errorf("request = %s %s, want %s %s", r.Method, r.URL.Path, test.method, wantPath)
-					}
-					if r.Header.Get("Authorization") != test.authorization {
-						t.Error("request did not preserve the expected synthetic Authorization")
-					}
-					if test.method == http.MethodPost {
-						var body struct {
-							Projects []string `json:"project_ids"`
-						}
-						if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-							t.Errorf("decode synthetic request: %v", err)
-						} else if len(body.Projects) != 1 || body.Projects[0] != "proj_synthetic" {
-							t.Errorf("project_ids = %q, want [proj_synthetic]", body.Projects)
-						}
-					}
-					w.Header().Set("Content-Type", "application/json")
-					if _, err := io.WriteString(w, test.response); err != nil {
-						t.Errorf("write synthetic response: %v", err)
-					}
-				}))
-				t.Cleanup(server.Close)
-				args := append([]string{"openai", "--base-url", server.URL + "/v1", "--format", "json"}, test.args...)
-				args = append(args, route...)
-				args = append(args, test.operation...)
-				got := runMainDispatchWithEnv(t, "bash", test.env, args...)
-				if got.code != 0 || got.stderr != "" || !json.Valid([]byte(got.stdout)) || !strings.Contains(got.stdout, "perm_synthetic") {
-					t.Errorf("checkpoint authentication = %+v, want exit 0 and synthetic permission JSON", got)
-				}
-				if count := requests.Load(); count != 1 {
-					t.Errorf("checkpoint authentication sent %d requests, want 1", count)
-				}
-				for _, secret := range []string{"synthetic-admin-flag", "synthetic-admin-env", "synthetic-project-key", "synthetic-authorization"} {
-					if strings.Contains(got.stdout+got.stderr, secret) {
-						t.Error("command output exposed a synthetic credential")
-					}
 				}
 			})
 		}

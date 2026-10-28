@@ -56,7 +56,7 @@ The recorder sources `scripts/demos/capture_and_render.sh` without modifying its
 It requires Python 3, asciinema 3.2.1, agg 1.9.0, ffmpeg, and ffprobe.
 The helper files must retain executable permission after placement.
 The renderer uses the exact font chain `Menlo,Apple Symbols` at 22 pixels.
-Menlo supplies the text metrics; Apple Symbols supplies missing glyphs, including Braille waveform cells.
+Menlo supplies the text metrics; Apple Symbols supplies missing glyphs.
 
 The fixture serves only the loopback speech endpoint.
 It validates the fake credential and known synthetic request fields.
@@ -73,8 +73,8 @@ Choices and typing must make no request.
 Ctrl+G starts one explicit synthetic generation.
 The harness checks request fields, measured duration, varying peaks, and exact saved audio bytes.
 It exercises Play and Save controls, History, 40×12, too-small blocking, explicit audition, restoration, and Clear.
-History, voice Preview, and Clear use the More actions menu.
-The ordinary form contains no command-preview row or keyboard footer.
+History opens directly from the form. More actions retains History, Preview voice, and Clear form.
+The ordinary form keeps command inspection in More actions and shows contextual keyboard shortcuts.
 Save coverage rejects `-`, then verifies the corrected destination contains the original audio bytes.
 Audition entries must remain absent from ordinary History.
 Clear must preserve retained results and exported files.
@@ -101,7 +101,7 @@ A private synthetic History entry supplies Result navigation without generation.
 Both cases require zero accepted or rejected fixture requests and strict cancellation cleanup.
 Settings End selects More actions. Clear is the third More action.
 Clear empties Text and Instructions without reseeding the constructor example.
-The navigation inventory contains 185 current-viewport checkpoints at each size.
+The navigation inventory contains 188 current-viewport checkpoints at each size.
 The navigation cases test Alt+Enter without submitting editor text.
 They leave Enter generation and the existing repeat-submit guard unchanged.
 
@@ -136,24 +136,16 @@ These cases do not resize, rewrite cast headers, or alter captured bytes.
 The first explicit Ctrl+G sends synthetic Text with the actual seeded Instructions example.
 The fixture returns HTTP 401 with valid Request ID `req_audio_demo_401` and malicious synthetic message canaries.
 The fixture supplies the exact error code `invalid_api_key`.
-The recovery panel therefore uses `The API did not accept this key.`
-A generic HTTP 401 without that code retains `The API could not verify your access.`
-Its selectable actions are API setup, Error details, and Back to form.
-The message does not identify the credential source or claim expiration.
-Raw HTTP status, Request ID, setup commands, and error shortcuts must not appear on the ordinary form.
+The fixture uses a custom loopback endpoint, so Error details identifies that endpoint's authentication failure.
+The screen opens immediately with the cause, short numbered recovery steps, and Esc back.
+It shows no API setup menu, nested details page, raw HTTP status, or Request ID.
+The ordinary form keeps those details hidden after dismissal.
+An unknown OpenAI authentication cause retains its generic summary instead of claiming rejection or expiration.
+Missing OpenAI keys point to `openai help setup` in the main terminal.
+Application tests cover those standard OpenAI credential cases without contacting a live API.
 
-API setup opens the real scrollable canonical guide inside the form.
-The guide explains that users must close the form before setup and reopen audio speak afterward.
-The checker reads the guide through its final scroll position.
-It verifies useful setup content against the same binary's read-only `help setup` output.
-The guide and verification command must add zero requests and leave synthetic HOME unchanged.
-They must not expose any malicious canary or fake credential value.
-The checker does not execute credential setup steps or change live configuration.
-Escape returns from API setup to recovery.
-
-Error details opens a separate panel with `HTTP status: 401` and the safe Request ID.
-Escape returns from details to recovery.
-Back to form returns to the More actions setting without quitting or sending another request.
+Enter, Tab, S, D, and Ctrl+G on the error screen must not start another action.
+One Escape returns to the More actions setting without quitting or sending another request.
 A model chooser round trip and More actions' Last error entry must not repeat generation.
 The failed response must not enter History.
 
@@ -179,12 +171,11 @@ The session preserves earlier History and sends no implicit retry.
 Both sessions retain strict native-mode, ANSI, exact-byte observer, and process-group cleanup checks.
 
 Each size requires three speech requests across two owned sessions: 401, WAV, then 401.
-The setup verification command is a separate read-only process with zero speech requests.
-Twelve capture checkpoints retain the existing 900-ms settling interval.
-They require 10.8 seconds of deliberate capture settling per case.
+Ten capture checkpoints retain the existing 900-ms settling interval.
+They require 9 seconds of deliberate capture settling per case.
 Existing operation and cleanup deadlines remain unchanged. The outer runner must enforce its total execution bound.
 
-First-session checkpoints are `failure-initial-form`, `failure-ready`, `failure-recovery`, `failure-api-setup`, and `failure-details`.
+First-session checkpoints begin with `failure-initial-form`, `failure-ready`, and `failure-details`.
 They continue with `failure-returned-form`, `failure-settings-no-retry`, and `failure-recovered-result`.
 Second-session checkpoints are `failure-legacy-ready`, `failure-error-exit-recovery`, `failure-error-exit-form`, and `failure-error-exit-summary`.
 Results retain three request records and the original audio hash. They omit the malicious response text.
@@ -308,3 +299,5 @@ python3 -I -B scripts/demos/audio-workbench/test_observer.py
 
 These tests cover partial startup, deferred interruption, continued cleanup, source integrity, and scrollback saturation.
 They do not replace the full checker run against the exact candidate binary.
+
+The `wide` case runs at 186×34. It checks the 96-cell reading column, horizontal action navigation, retained More context, zero requests, and exit cleanup. Its fixed geometry supports internal frame rendering.

@@ -24,7 +24,11 @@ if functions --query openai_suggestions_disable
         return 1
     end
 end
-if functions --query '__APPNAME__'; or builtin --query '__APPNAME__'; or not command --query -- '__APPNAME__'
+# The explicitly enabled insertion wrapper is safe only while its definition
+# matches the one recorded at installation. Never invoke it to check ownership.
+if begin; functions --query '__APPNAME__'; and not begin
+        set -q ____APPNAME___suggestions_enabled; and test "$____APPNAME___suggestions_enabled" = 1; and set -q ____APPNAME___suggestions_wrapper_body; and test (functions '__APPNAME__' | string collect) = "$____APPNAME___suggestions_wrapper_body"
+    end; end; or builtin --query '__APPNAME__'; or not command --query -- '__APPNAME__'
     printf '%s\n' 'Executable suggestions require __APPNAME__ on PATH. Install the CLI before enabling suggestions.' >&2
     return 1
 end
@@ -274,7 +278,9 @@ function fish_command_not_found --inherit-variable active_name --inherit-variabl
         set -l fish_trace ''
     end
     # Fish keeps failed command lookup unsuccessful even when its callback returns 0.
-    if test "$$active_name" = 1; and set -q argv[1]; and test "$argv[1]" != '__APPNAME__'; and string match --quiet --regex -- '\A[A-Za-z0-9_-]{1,65}\z' "$argv[1]"; and string match --quiet --regex -- '__SUGGESTION_REGEX__' "$argv[1]"; and not functions --query '__APPNAME__'; and not builtin --query '__APPNAME__'; and command --query -- '__APPNAME__'
+    if test "$$active_name" = 1; and set -q argv[1]; and test "$argv[1]" != '__APPNAME__'; and string match --quiet --regex -- '\A[A-Za-z0-9_-]{1,65}\z' "$argv[1]"; and string match --quiet --regex -- '__SUGGESTION_REGEX__' "$argv[1]"; and begin; not functions --query '__APPNAME__'; or begin
+        set -q ____APPNAME___suggestions_enabled; and test "$____APPNAME___suggestions_enabled" = 1; and set -q ____APPNAME___suggestions_wrapper_body; and test (functions '__APPNAME__' | string collect) = "$____APPNAME___suggestions_wrapper_body"
+    end; end; and not builtin --query '__APPNAME__'; and command --query -- '__APPNAME__'
         printf '%s\n' 'Command not found. Did you mean: __APPNAME__?' 'Keep the remaining arguments unchanged.' >&2
     end
     return $result

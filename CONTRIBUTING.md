@@ -57,6 +57,14 @@ below describes the current layout as the migration proceeds.
   the encoding engine.
 - `internal/commands/manpages/` owns manual rendering, text/gzip file cleanup,
   and tests. Application assembly supplies the shared save-receipt policy.
+- `internal/commands/images/` owns image model discovery, picker drafts, saving,
+  streaming previews, local preview preferences, and shell setup mechanics.
+  Assembly supplies request/presentation policy and foreground first-run admission.
+- `internal/commands/audio/` owns speech controls, local history/playback commands,
+  voice creation and validation, and transcript/speech response handling.
+  Assembly supplies request and presentation policies.
+- `internal/commands/admin/` owns admin credential requirements, setup help,
+  verification, and secure native key entry.
 - `internal/commands/models/` owns model-list selection, filter parsing, loading
   lifecycle, tables, and loaded-response presentation. Shared terminal list
   navigation and loaded-page rendering live in `internal/output/listview/`.
@@ -67,18 +75,21 @@ below describes the current layout as the migration proceeds.
   guidance and request-input help annotations. It uses declared command/flag
   names and escaped local invocation
   metadata without echoing private operands or executing suggested corrections.
-- `pkg/custom/` contains remaining handwritten CLI commands, defaults, output-format
-  policy, error handling, and presentation orchestration.
+- `internal/app/` owns command assembly, defaults, request/output policy, error
+  handling, and presentation orchestration.
+- Generated runtime adapters call `internal/app/` directly; no `pkg/custom/`
+  compatibility package is retained.
 - `internal/request/` owns root request inheritance, literal header and mTLS
   flag definitions, value-safe validation, mTLS transport construction, and client
-  metadata setup. Application assembly retains registration order and the local
+  metadata setup and scalar-upload inspection/replay. Application assembly retains registration order and the local
   command bypass.
 - `internal/output/transform/` selects or reshapes API responses before presentation.
 - `internal/` contains shared helpers for flags, request encoding, terminal
   output, and testing. For example, `internal/readable` renders labeled text
   and escapes terminal controls for results and errors.
-- `internal/output/` owns cancellation-aware writing and distinguishes output-sink
-  failures from diagnostics and upstream errors.
+- `internal/output/` owns cancellation-aware writing, staged downloads, safe error
+  metadata, and receipt failures. It distinguishes output-sink failures from
+  diagnostics and upstream errors.
 - `internal/terminal/` owns browser launching and child-process environment
   isolation, color profiles, automatic terminal presentation, background themes,
   cancellable terminal frame output, frame layout, and native Windows input
@@ -88,8 +99,8 @@ below describes the current layout as the migration proceeds.
 - `internal/testutil/console/` contains shared synthetic Windows console records
   and observer fixtures used only by native feature tests.
 - `internal/app/` owns invocation, request-environment scope, completion setup,
-  output policy, and exit-status selection. Command assembly still uses the
-  existing generated tree during the layout migration.
+  output policy, help assembly, and exit-status selection. `cmd/openai` passes in the
+  generated tree; application code does not import generated commands.
 - `api_reference/openapi.transformed.yml` contains the OpenAPI specification
   used by the mock server.
 - `scripts/` contains the local development, build, and test commands.
@@ -104,7 +115,7 @@ recurring generated problems in the authoritative schema or generator when
 available.
 
 Handwritten features are moving into `internal/commands/<feature>/`; Codex,
-tokenizer, and manpages are there now. Remaining behavior belongs in `pkg/custom/`,
+tokenizer, manpages, files, batches, models, admin, audio, and images are there now. Application policy belongs in `internal/app/`,
 `internal/output/transform/`, and focused `internal/` helpers. Keep
 `cmd/openai/` focused on startup and wiring. Generated code calls handwritten
 request/output helpers through a generated runtime bridge.
@@ -118,11 +129,17 @@ observable behavior changes.
 
 ## Running and building locally
 
-Run the CLI directly from your working tree:
+Use the development helper to run the CLI from your working tree:
 
 ```sh
 ./scripts/run --help
 ```
+
+`scripts/run` changes to the repository root and executes `go run ./cmd/openai`
+with your arguments. The CLI inherits your permissions and environment, including
+API credentials. Go may download missing modules or the required toolchain
+before running the CLI. Relative input and output paths resolve from the
+repository root.
 
 Build an `openai` executable in the repository root:
 
@@ -130,28 +147,31 @@ Build an `openai` executable in the repository root:
 ./scripts/build
 ```
 
+For automation that needs exact CLI exit codes, run the built executable directly.
+[`go run`](https://pkg.go.dev/cmd/go#hdr-Compile_and_run_Go_program) reports its own
+exit status, which can differ from the CLI's exit status.
+
 You can also install the local checkout into your Go binary directory:
 
 ```sh
 go install ./cmd/openai
 ```
 
-## Custom-code budget
+## Generated-file ownership
 
-The custom-code budget counts additions plus deletions in the remaining patch
-against verified generated output. `.castiron-ratchet.json` defines this repository's
-ceiling. CI uses the checker and budget on main, not the PR's proposed versions.
+Do not edit generated SDK files by hand. Fix the API schema, generation
+configuration, or compiler and regenerate instead. Put SDK-specific behavior in
+separately owned handwritten helpers and extension points.
 
-Budget changes must be in a separate PR modifying **only `.castiron-ratchet.json`**.
-Justify the current usage, proposed ceiling, and why fixing generation is not
-appropriate in the PR description. Increases require a **human approving review**
-and must merge before an SDK change relies on them. Agents may draft proposals,
-but must not approve increases or bypass the gate. Keep default CODEOWNERS.
-Lower the ceiling after cleanup while retaining headroom; decreases must still
-fit the measured usage.
-
-See [custom-code technical details](scripts/castiron/CUSTOM_CODE.md) for accounting,
-local checks, trusted CI, and activation instructions.
+Regeneration replaces generated files and removes retired generated paths.
+Handwritten edits to generated output are overwritten, not carried forward.
+Separately owned handwritten files are preserved. Resolve ownership conflicts
+explicitly before regeneration. Follow the ownership rules in `AGENTS.md`
+and review generated output and inventory changes together. Generated-file
+ownership currently relies on contributor guidance and code review, without a
+dedicated generated-file edit check or required gate. Fix violations in the
+generation inputs/compiler and regenerate; do not edit inventory hashes to
+accept a handwritten patch.
 
 ## Security requirements
 

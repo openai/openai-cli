@@ -30,7 +30,7 @@ Returning to a compatible model restores access to the instruction draft.
 Voice choices follow the form's existing model validator.
 Changing models preserves the selected voice. An unavailable voice needs another explicit choice before generation.
 
-Generate speech is the primary action. Its nearby note states that generation saves audio and inputs locally.
+Generate speech is the primary action.
 More actions contains History, Preview voice, Clear form, Show command, and Help.
 The form keeps command text and help inside More actions.
 Show command opens a vertically scrollable Bash/zsh command.
@@ -55,7 +55,7 @@ Normal generation also requires an explicit action.
 
 The form retains completed audio, request inputs, and settings in private local History.
 It stores History under the operating system's user cache directory, within `openai/audio`.
-History can contain sensitive text. The form states what it stores beside Generate speech.
+History can contain sensitive text.
 Clear form resets the draft and current result. It preserves History and exported files.
 
 Failed actions open recovery choices with a plain-language cause and a safe next action.
@@ -73,11 +73,18 @@ The form keeps the original error for its existing exit diagnostics and status.
 Completed results show their format and byte count.
 When analysis succeeds, they also show a waveform derived from decoded samples and duration.
 Result labels retain the original generation settings when you change the form.
-Result arrows select Play audio or Save audio. Enter performs the selected action.
-With the result focused, Space plays or stops it. Playback always starts from the beginning.
+Left and Right select Play audio or Save audio. Enter performs the selected action.
+Up focuses the waveform. Down returns to the selected action.
+On the waveform, Left and Right move the playback position. Shift moves five waveform bars. Seeking stops playback.
+Space plays from the selected position or stops playback.
+The marker follows player-reported progress. Players without progress reports keep a stationary marker.
 With the result focused, S opens Save and H opens History.
-Save exports the original audio bytes to your chosen path.
-History reopens a retained result and restores its settings without generation.
+Save exports the complete original audio, including when playback starts from a selected position.
+The default destination is `~/Downloads/gpt-audio`, with a filename derived from the retained prompt.
+Enter confirms the suggested destination. Tab edits Filename or Save to without moving values below their labels.
+Enter on Save to finishes editing; it does not save. Default-name collisions receive numbered filenames.
+History is available directly in the form and through More actions.
+History shows prompt previews and generation metadata. Opening an entry restores its settings without generation.
 
 Native WAV analysis supports PCM at 8, 16, 24, or 32 bits and floating-point samples at 32 or 64 bits.
 API PCM also supports waveform analysis without external tools.
@@ -86,7 +93,7 @@ Those WAV variants include compressed encodings, RF64, and streaming headers wit
 Playback requires FFplay. Audio requiring external decoding also needs FFmpeg.
 The CLI does not install either tool.
 Missing tools do not delete retained audio or prevent exporting its original bytes.
-The form supports Play, Stop, and Replay. It does not provide pause or seek controls.
+The form supports Play, Stop, Replay, and seeking. It does not provide a separate Pause control.
 
 The chooser includes the seven models, thirteen voices, and six formats shown in the supplied Playground screenshots.
 The API determines model access and availability.
@@ -145,3 +152,63 @@ The CLI retains completed audio when optional analysis fails.
 The [speech API reference](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create) defines request controls.
 The [text-to-speech guide](https://developers.openai.com/api/docs/guides/text-to-speech) documents formats and model-specific voices.
 See [transcript output](transcript-output.md) for finite transcription and translation presentation.
+
+## Live microphone and browser-tab translation
+
+```sh
+openai audio translate --live
+```
+
+This explicit mode opens a private local browser page. It keeps your API key in the CLI.
+Choose Microphone or Browser tab, select a target language, then start the session.
+For tab capture, choose a browser tab and enable Share tab audio in the browser dialog.
+The CLI sends audio only. It does not send the shared video track.
+Tab-audio support depends on the browser and operating system.
+
+The page exposes the target language, microphone, output device, playback, and noise reduction controls.
+It uses `gpt-realtime-translate` for translation and `gpt-realtime-whisper` for input transcription.
+Device selection depends on browser support. Unsupported output selection stays disabled.
+Stop session flushes captured audio and waits for final translation updates.
+Stop now interrupts that wait and retains received output.
+The page reports interrupted capture instead of claiming successful completion.
+
+Original and translated captions appear beside the measured waveform.
+Play, Pause, Replay, waveform clicks, and arrow keys use the recording's actual position.
+Save audio exports the complete translated WAV. Save transcript exports both caption tracks.
+The browser controls the download destination. Filenames derive from translated text.
+A failed replacement attempt preserves the previous recording until new translated output arrives.
+Clear removes the current browser recording. Browser recordings do not enter speech History.
+Ctrl+C closes the local page's connection and removes its private launch file.
+
+The live page currently supports microphone and browser-tab audio.
+Typed text and file upload remain separate workflows.
+Existing file translation keeps its input, output, and English translation behavior:
+
+```sh
+openai audio translate --file recording.wav --model whisper-1
+```
+
+Speech History groups recordings by local date and shows one prompt row per recording.
+Roomy terminals show timestamps and selected-recording metadata.
+Compact terminals preserve prompt space and keep the selected recording visible.
+More actions keeps the draft visible above its list when space permits, as in the image picker.
+Escape returns to the form; the menu omits a duplicate Back action.
+Results show the default export folder below the playback and Save controls.
+Only completed exports show a Saved receipt. Waveform columns use narrow strokes instead of filled blocks.
+Roomy result views leave one blank row between the waveform and playback time.
+
+## Layout
+
+Settings labels and values use normal terminal text. Save labels retain secondary styling.
+More actions reuses the form layout when space permits, keeping the draft and settings visible.
+Compact screens prioritize the selected action and return guidance.
+Roomy playback uses light waveform strokes and a distinct progress marker.
+Play and Save share one row when they fit. The next row shows the suggested export folder.
+After export, that row shows the actual saved path instead.
+Filename and Save to keep their value columns while editing.
+
+Wide terminals use a reading column of at most 96 cells.
+Settings follows the composer. Instructions appears first within its aligned rows.
+Generate, History and More actions share a row when they fit.
+Left and Right move between these actions. Up and Down retain their existing behavior.
+Compact terminals retain stacked controls. Keyboard keys use the accent color; descriptions use secondary text styling.

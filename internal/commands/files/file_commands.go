@@ -35,6 +35,7 @@ const (
 
 // Configure extends task routes after cloning so compatibility commands keep their output.
 func Configure(root *cli.Command) {
+	configurePurposeValidation(root)
 	files := root.Command("files")
 	if files == nil {
 		return

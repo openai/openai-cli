@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-cli/internal/mocktest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,9 +25,7 @@ func TestStdinQueryCollectionsEndToEnd(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.Command("go", "build", "-o", binary, "../../cmd/openai")
-	output, err := build.CombinedOutput()
-	require.NoError(t, err, "%s", output)
+	mocktest.CopyCLI(t, binary)
 	requests := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests <- r.URL.RawQuery

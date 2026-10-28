@@ -89,7 +89,7 @@ func TestMainHelpImagePagesAreComplete(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("short help failed: %+v", got)
 			}
-			for _, heading := range []string{"SYNOPSIS:", "EXAMPLES:", "OPTIONS:", "GLOBAL OPTIONS:"} {
+			for _, heading := range []string{"SYNOPSIS", "EXAMPLES", "FLAGS", "GLOBAL FLAGS"} {
 				if !strings.Contains(got.stdout, heading) {
 					t.Errorf("complete page lacks %q", heading)
 				}
@@ -108,8 +108,8 @@ func TestMainHelpImagePagesAreComplete(t *testing.T) {
 			if operation == "create-variation" {
 				exampleOperation = "edit"
 			}
-			_, examples, _ := strings.Cut(got.stdout, "EXAMPLES:\n")
-			examples, _, _ = strings.Cut(examples, "\nOPTIONS:")
+			_, examples, _ := strings.Cut(got.stdout, "EXAMPLES\n")
+			examples, _, _ = strings.Cut(examples, "\nFLAGS")
 			if strings.Count(examples, "openai images "+exampleOperation+" ") != 1 {
 				t.Errorf("expected one complete example: %s", got.stdout)
 			}

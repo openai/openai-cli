@@ -8,9 +8,65 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
+
+func TestCommandHelpNavigationColumns(t *testing.T) {
+	root := &cli.Command{Name: "openai", Writer: &bytes.Buffer{}, Commands: []*cli.Command{
+		{Name: "models", Usage: "List and inspect available models.", Metadata: map[string]any{"help-command-section": "Models"}},
+		{Name: "moderations", Usage: "Classify potentially harmful text and image inputs.", Metadata: map[string]any{"help-command-section": "Safety"}},
+		{Name: "content-provenance-checks", Usage: "Check supported OpenAI image and audio provenance signals.", Metadata: map[string]any{"help-command-section": "Safety"}},
+		{Name: "safety", Usage: "Retrieve safety cases and project alerts.", Metadata: map[string]any{"help-command-section": "Safety"}},
+	}}
+	for _, width := range []int{40, 60, 72, 79, 80, 100} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			got := commandList(root, width)
+			for _, line := range strings.Split(got, "\n") {
+				if ansi.StringWidth(line) > width || strings.TrimRight(line, " \t") != line {
+					t.Fatalf("overflow or trailing whitespace: %q", line)
+				}
+			}
+			if width < 72 {
+				if !strings.Contains(got, "\n\n  content-provenance-checks\n    Check") {
+					t.Fatalf("stacked entries need their own separated rows: %s", got)
+				}
+				return
+			}
+			var column = -1
+			for _, child := range root.Commands {
+				first := strings.Fields(child.Usage)[0]
+				for _, line := range strings.Split(got, "\n") {
+					if strings.HasPrefix(line, "  "+child.Name+" ") {
+						position := strings.Index(line, first)
+						if position < 0 || column >= 0 && position != column {
+							t.Fatalf("descriptions must share a column across sections: %q", line)
+						}
+						column = position
+					}
+				}
+			}
+			if !strings.Contains(got, "content-provenance-checks  Check") || strings.Contains(got, "\n"+strings.Repeat(" ", column)+"signals.\n") {
+				t.Fatalf("long labels must keep their description beside them without a lone final word: %s", got)
+			}
+			if width == 100 && !strings.Contains(got, "content-provenance-checks  Check supported OpenAI image and audio provenance signals.\n") {
+				t.Fatalf("wide navigation should use available space: %s", got)
+			}
+		})
+	}
+}
+
+func TestCommandHelpLongLabelStacksWholeList(t *testing.T) {
+	root := &cli.Command{Writer: &bytes.Buffer{}, Commands: []*cli.Command{
+		{Name: "short", Usage: "Short command."},
+		{Name: strings.Repeat("long", 12), Usage: "Long command."},
+	}}
+	got := commandList(root, 80)
+	if !strings.Contains(got, "  short\n    Short command.\n\n  ") || !strings.Contains(got, "\n    Long command.\n") {
+		t.Fatalf("a list must use one consistent layout: %s", got)
+	}
+}
 
 func TestVisibleCommandsKeepsParserOrderAndFutureCommands(t *testing.T) {
 	run := func(context.Context, *cli.Command) error { return nil }
@@ -114,12 +170,12 @@ func TestRootHelpIncludesOrderedCommandSections(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := out.String()
-		for _, want := range []string{"GENERATE", "DATA", "Generate model responses.", "Manage uploaded files."} {
+		for _, want := range []string{"GENERATE", "DATA", "  responses ", "  files ", "Generate model responses.", "Manage uploaded files."} {
 			if !strings.Contains(got, want) {
 				t.Errorf("full=%v: missing %q: %s", all, want, got)
 			}
 		}
-		if strings.Index(got, "GENERATE") > strings.Index(got, "DATA") || strings.Contains(got, "legacy:path") {
+		if strings.Index(got, "  responses ") > strings.Index(got, "  files ") || strings.Contains(got, "legacy:path") {
 			t.Errorf("wrong visible section order: %s", got)
 		}
 	}
@@ -137,8 +193,25 @@ func TestMixedHelpSeparatesActionsAndCommandGroups(t *testing.T) {
 			t.Errorf("mixed help lacks %q: %s", want, got)
 		}
 	}
-	if strings.Index(got, "create") > strings.Index(got, "users") {
-		t.Errorf("actions must precede groups: %s", got)
+	if strings.Index(got, "ACTIONS\n") > strings.Index(got, "COMMAND GROUPS\n") {
+		t.Errorf("actions must precede command groups: %s", got)
+	}
+}
+
+func TestNestedHelpPreservesAuthoredSections(t *testing.T) {
+	group := &cli.Command{Name: "projects", Commands: []*cli.Command{
+		{Name: "create", Usage: "Create a project."},
+		{Name: "users", Category: "API RESOURCE", Metadata: map[string]any{"help-command-section": "Access"}},
+		{Name: "rate-limits", Category: "API RESOURCE", Metadata: map[string]any{"help-command-section": "Limits and permissions"}},
+	}}
+	got := commandHelpAtWidth(group, "openai", "admin projects", 79)
+	previous := -1
+	for _, heading := range []string{"ACTIONS", "ACCESS", "LIMITS AND PERMISSIONS"} {
+		index := strings.Index(got, "\n"+heading+"\n")
+		if index <= previous {
+			t.Fatalf("missing or reordered authored section %q: %s", heading, got)
+		}
+		previous = index
 	}
 }
 

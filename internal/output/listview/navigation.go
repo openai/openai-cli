@@ -7,14 +7,10 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 
-	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/tidwall/gjson"
@@ -125,20 +121,17 @@ type listPageMessage struct {
 
 // Model owns navigation state and the lifetime of its single fetch worker.
 type Model struct {
-	opts          Options
-	fetch         func() (Page, error)
-	cancel        context.CancelFunc
-	viewport      viewport.Model
-	window        tea.WindowSizeMsg
-	content       string
-	contentFits   bool
-	pages         []Page
-	index         int
-	loading       bool
-	quitting      bool
-	printPage     bool
-	printComplete bool
-	err           error
+	opts     Options
+	fetch    func() (Page, error)
+	cancel   context.CancelFunc
+	window   tea.WindowSizeMsg
+	more     bool
+	loaded   bool
+	loading  bool
+	quitting bool
+	pending  []string
+	viewer   *listViewer
+	err      error
 
 	// Fetches start in the event loop. Shutdown cancels and joins the one worker,
 	// including when quitting races with a completed request failure.
@@ -154,6 +147,14 @@ func Run(opts Options, fetch func() (Page, error), cancel context.CancelFunc) er
 		return err
 	}
 	m := New(opts, fetch, cancel, width, height)
+	outputErr, runErr, signaled := runPrompt(m, opts, width, height)
+	if signaled {
+		m.pending = nil
+	}
+	return m.Finish(outputErr, runErr)
+}
+
+func runPrompt(m *Model, opts Options, width, height int) (error, error, bool) {
 	programContext, stop := context.WithCancel(opts.Context)
 	defer stop()
 	out := &listNavigationOutput{TerminalWriter: clioutput.TerminalWriter{
@@ -161,36 +162,51 @@ func Run(opts Options, fetch func() (Page, error), cancel context.CancelFunc) er
 		Writer: clioutput.Writer{Context: context.Background(), Sink: opts.Stdout}, File: opts.Stdout.(*os.File),
 	}, stop: stop}
 	program := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(out),
-		tea.WithContext(programContext), tea.WithWindowSize(width, height), tea.WithoutSignalHandler())
-	// Models can cancel the program context while the same signal reaches Tea.
-	// Forward through Send, which stops when the program exits. Tea's built-in
-	// signal handler can block sending after its event loop has already stopped.
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	listenerDone := make(chan struct{})
-	stopSignals := func() {
-		signal.Stop(signals)
-		stop()
-		<-listenerDone
-	}
-	defer stopSignals()
-	go func() {
-		defer close(listenerDone)
-		defer signal.Stop(signals)
-		select {
-		case <-programContext.Done():
-		case received := <-signals:
-			if received == os.Interrupt {
-				program.Send(tea.InterruptMsg{})
-			} else {
-				program.Send(tea.QuitMsg{})
+		tea.WithContext(programContext), tea.WithWindowSize(width, height),
+		tea.WithColorProfile(opts.Style.profile), tea.WithoutSignalHandler())
+	stopSignals := func() {}
+	var receivedSignal os.Signal
+	if !opts.CallerHandlesSignals {
+		// Forward through Send, which stops when the program exits. Tea's built-in
+		// signal handler can block sending after its event loop has already stopped.
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+		listenerDone := make(chan struct{})
+		stopSignals = func() {
+			signal.Stop(signals)
+			stop()
+			<-listenerDone
+			// Retain a signal that arrives during terminal restoration.
+			if receivedSignal == nil {
+				select {
+				case receivedSignal = <-signals:
+				default:
+				}
 			}
 		}
-	}()
+		go func() {
+			defer close(listenerDone)
+			defer signal.Stop(signals)
+			select {
+			case <-programContext.Done():
+			case received := <-signals:
+				receivedSignal = received
+				if received == os.Interrupt {
+					program.Send(tea.InterruptMsg{})
+				} else {
+					program.Send(tea.QuitMsg{})
+				}
+			}
+		}()
+	}
+	defer stopSignals()
 	_, runErr := program.Run()
-	// Final printing has no Tea event loop. Restore signal ownership first.
 	stopSignals()
-	return m.Finish(out.Err(), runErr)
+	// Retain an interrupt even when terminal shutdown wins the message race.
+	if receivedSignal == os.Interrupt {
+		runErr = errors.Join(runErr, tea.ErrInterrupted)
+	}
+	return out.Err(), runErr, receivedSignal != nil
 }
 
 // Finish cancels and joins the worker, retains failures, and prints after restoration.
@@ -214,26 +230,32 @@ func (m *Model) Finish(outputErr, runErr error) error {
 		fetchErr = nil
 	}
 	if m.quitting && errors.Is(runErr, tea.ErrProgramKilled) {
-		runErr = nil
+		runErr = listWithoutCleanupCancellation(runErr)
 	}
 	if m.opts.Interrupt != nil && errors.Is(runErr, tea.ErrInterrupted) {
 		// An OS interrupt can reach the viewer before the loading context.
 		// Add this explicit cancellation after filtering cleanup-only causes.
 		runErr = errors.Join(runErr, m.opts.Interrupt(context.Canceled))
 	}
-	var printErr error
-	if m.printPage || m.printComplete {
-		// Print only after the worker stops and Tea restores the terminal.
-		// Automatic completion retains the selected table or labeled format.
-		content := m.content
-		if m.printPage {
-			content, printErr = m.opts.RenderPrint(m.pages[m.index].Items)
-		}
-		if printErr == nil {
-			_, printErr = (clioutput.Writer{Context: m.opts.Context, Sink: m.opts.Stdout}).WriteString(content)
+	if outputErr != nil || runErr != nil || m.opts.Context.Err() != nil {
+		m.pending = nil
+	}
+	return errors.Join(m.err, fetchErr, outputErr, runErr, m.printErrorPages())
+}
+
+// Print received records after restoration when a later page fails.
+// Remove pending ownership before writing, so partial output cannot be retried.
+func (m *Model) printErrorPages() error {
+	pages := m.pending
+	m.pending = nil
+	writer := clioutput.Writer{Context: m.opts.Context, Sink: m.opts.Stdout}
+	for i, page := range pages {
+		pages[i] = ""
+		if _, err := writer.WriteString(page); err != nil {
+			return err
 		}
 	}
-	return errors.Join(m.err, fetchErr, outputErr, runErr, printErr)
+	return nil
 }
 
 // Retain real errors beside cleanup cancellation, including inside wrappers.
@@ -258,7 +280,12 @@ func listWithoutCleanupCancellation(err error) error {
 	return err
 }
 
-func (m *Model) Init() tea.Cmd { return m.load() }
+func (m *Model) Init() tea.Cmd {
+	if m.loaded {
+		return nil
+	}
+	return m.load()
+}
 
 func (m *Model) load() tea.Cmd {
 	m.loading = true
@@ -275,58 +302,10 @@ func (m *Model) load() tea.Cmd {
 	return func() tea.Msg { return <-result }
 }
 
-func (m *Model) render() error {
-	if len(m.pages) == 0 {
-		return nil
-	}
-	content, err := m.opts.RenderPage(m.pages[m.index].Items, m.viewport.Width())
-	if err == nil {
-		wrapped := ansi.Hardwrap(content, max(1, m.viewport.Width()), true)
-		m.viewport.SetContent(strings.TrimSuffix(wrapped, "\n"))
-		m.content = ""
-		m.contentFits = ContentFits(content, m.window.Width, m.window.Height)
-		// Long pages only need the viewport copy. Retain the original body
-		// only when it can be printed on automatic completion.
-		if m.contentFits {
-			m.content = content
-		}
-	}
-	return err
-}
-
-// ContentFits counts the original output's terminal rows, leaving
-// one row for the shell prompt. Hardwrap treats tabs as zero-width controls;
-// terminal output instead advances to the next eight-column tab stop.
-func ContentFits(content string, width, height int) bool {
-	if width <= 0 || height <= 1 {
-		return false
-	}
-	rows, column := 1, 0
-	state := ansi.NormalState
-	for content = strings.TrimSuffix(content, "\n"); len(content) > 0; {
-		sequence, cells, n, next := ansi.DecodeSequence(content, state, nil)
-		content, state = content[n:], next
-		switch sequence {
-		case "\n":
-			rows++
-			column = 0
-		case "\t":
-			column = min(width-1, (column/8+1)*8)
-		default:
-			if cells > width {
-				return false
-			}
-			if cells > 0 && column+cells > width {
-				rows++
-				column = 0
-			}
-			column += cells
-		}
-		if rows >= height {
-			return false
-		}
-	}
-	return true
+func (m *Model) quit() tea.Cmd {
+	m.quitting = true
+	m.cancel()
+	return tea.Quit
 }
 
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -338,112 +317,46 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
+		// Reflow only the loaded page. Resizing never requests data.
 		m.window = msg
-		m.viewport.SetWidth(max(1, msg.Width))
-		m.viewport.SetHeight(max(1, msg.Height-2))
-		m.err = m.render()
-		if m.err != nil {
-			return m, tea.Quit
+		if err := m.viewer.resize(m.opts.Context, m.opts.RenderPage, msg.Width, msg.Height); err != nil {
+			m.err = errors.Join(m.err, err)
+			m.pending = m.viewer.takePages()
+			return m, m.quit()
 		}
-		return m, nil
 	case listPageMessage:
 		m.loading = false
-		first := len(m.pages) == 0
-		if len(msg.page.Items) != 0 || len(m.pages) == 0 {
-			m.pages = append(m.pages, msg.page)
-			m.index = len(m.pages) - 1
-			m.err = m.render()
-			m.viewport.GotoTop()
-		} else {
-			m.pages[len(m.pages)-1].More = false
+		var content string
+		if len(msg.page.Items) != 0 || !m.loaded && msg.err == nil {
+			content, m.err = m.opts.RenderPage(msg.page.Items, max(1, m.window.Width))
 		}
+		m.loaded = true
+		m.more = msg.page.More
 		m.err = errors.Join(m.err, msg.err)
-		if m.err != nil {
-			return m, tea.Quit
-		}
-		// Only a complete first response can bypass navigation. Keep later
-		// pages open so users can revisit previously loaded results.
-		// Reserve one terminal row for the returned shell prompt.
-		if first && !msg.page.More && m.contentFits {
-			m.printComplete = true
-			m.quitting = true
-			m.cancel()
-			return m, tea.Quit
-		}
-		return m, nil
+		return m, m.receiveViewerPage(msg.page.Items, content)
 	case tea.KeyPressMsg:
-		printPage := msg.String() == "p" && len(m.pages) != 0
-		if printPage || msg.String() == "q" || msg.String() == "ctrl+c" || msg.String() == "esc" {
+		switch msg.String() {
+		case "q", "ctrl+c", "esc":
+			m.pending = nil
 			if msg.String() == "ctrl+c" && m.opts.Interrupt != nil {
 				m.err = errors.Join(m.err, m.opts.Interrupt(context.Canceled))
 			}
-			m.printPage = printPage
-			m.quitting = true
-			m.cancel()
-			return m, tea.Quit
+			return m, m.quit()
 		}
-		if m.loading {
-			return m, nil
-		}
-		if key.Matches(msg, m.viewport.KeyMap.PageDown) && m.viewport.AtBottom() && len(m.pages) != 0 {
-			if m.index+1 < len(m.pages) {
-				m.index++
-				m.err = m.render()
-				m.viewport.GotoTop()
-			} else if m.pages[m.index].More {
-				return m, m.load()
-			}
-			return m, nil
-		}
-		if key.Matches(msg, m.viewport.KeyMap.PageUp) && m.viewport.AtTop() && m.index > 0 {
-			m.index--
-			m.err = m.render()
-			m.viewport.GotoBottom()
-			return m, nil
-		}
+		return m, m.viewerKey(msg)
 	}
-	var command tea.Cmd
-	m.viewport, command = m.viewport.Update(message)
-	return m, command
+	return m, nil
 }
 
 func (m *Model) View() tea.View {
-	if m.printComplete {
-		// The original rendered content is printed once after restoration.
-		return tea.NewView("")
+	view := tea.NewView("")
+	// Keep screen ownership stable through the final frame. Tea restores the
+	// original terminal before Finish prints any received records after errors.
+	view.AltScreen = true
+	if !m.quitting {
+		view.Content = m.viewerView()
 	}
-	footer := "Space: more   q: quit"
-	if m.viewport.Width() >= len("Space: more   b: back   q: quit") {
-		footer = "Space: more   b: back   q: quit"
-	}
-	printHint := ""
-	if len(m.pages) != 0 {
-		printHint = "p: print page, quit"
-		if m.opts.PrintHint != nil {
-			printHint = m.opts.PrintHint(len(m.pages[m.index].Items), m.viewport.Width())
-		}
-	}
-	if m.loading {
-		footer = "Loading next page…   q: quit"
-		if ansi.StringWidth(footer) > m.viewport.Width() {
-			footer = "Loading… q: quit"
-		}
-	} else if len(m.pages) != 0 && m.index == len(m.pages)-1 && !m.pages[m.index].More && m.viewport.AtBottom() {
-		footer = "End of results   q: quit"
-		if m.viewport.Width() >= len("End of results   b: back   q: quit") {
-			footer = "End of results   b: back   q: quit"
-		}
-		if ansi.StringWidth(footer) > m.viewport.Width() {
-			footer = "End q: quit"
-		}
-	}
-	if m.err != nil {
-		footer = "List request failed."
-	}
-	if m.viewport.Width() < 21 {
-		footer = strings.ReplaceAll(footer, "   ", " ")
-	}
-	return tea.NewView(m.viewport.View() + "\n" + ansi.Truncate(printHint, m.viewport.Width(), "") + "\n" + ansi.Truncate(footer, m.viewport.Width(), ""))
+	return view
 }
 
 // A canceled fetch can wrap context.Canceled. Joined real failures must survive
@@ -504,23 +417,20 @@ func (w *listNavigationOutput) WriteString(data string) (int, error) {
 // Context and render functions must be non-nil. Stdout must be a terminal file
 // when used by Run; New also permits buffered output for an embedded event loop.
 type Options struct {
-	Context     context.Context
-	Stdout      io.Writer
-	RenderPage  func([]gjson.Result, int) (string, error)
-	RenderPrint func([]gjson.Result) (string, error)
-	PrintHint   func(count, width int) string
-	Interrupt   func(error) error
+	Context    context.Context
+	Stdout     io.Writer
+	Style      Style
+	RenderPage func([]gjson.Result, int) (string, error)
+	Interrupt  func(error) error
+	// The caller cancels Context on process signals and retains their exit status.
+	CallerHandlesSignals bool
 }
 
 // New constructs the loaded-page event model without taking terminal ownership.
 // The caller must call Finish after its event loop restores the terminal.
 func New(opts Options, fetch func() (Page, error), cancel context.CancelFunc, width, height int) *Model {
 	m := &Model{opts: opts, fetch: fetch, cancel: cancel,
-		window:   tea.WindowSizeMsg{Width: width, Height: height},
-		viewport: viewport.New(viewport.WithWidth(max(1, width)), viewport.WithHeight(max(1, height-2)))}
-	// Wrap once in linear time. Viewport soft wrapping repeatedly scans long
-	// source lines, which can block keyboard handling on large API fields.
-	m.viewport.SoftWrap = false
-	m.viewport.FillHeight = false
+		window: tea.WindowSizeMsg{Width: width, Height: height}}
+	m.viewer = newListViewer()
 	return m
 }

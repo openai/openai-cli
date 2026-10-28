@@ -8,16 +8,19 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// SummarizeResource projects known list/get records without modifying API data.
+// SummarizeResource projects known resource records without modifying API data.
 // A zero summary asks the presenter to show the full value. Omitted reports
 // whether the projection hides fields; presentation owns any explanatory hint.
 func SummarizeResource(ctx context.Context, value gjson.Result, route Route) (gjson.Result, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return gjson.Result{}, false, err
 	}
+	if summary, hidden, err := summarizeAgentsResource(ctx, value, route); summary.Exists() || err != nil {
+		return summary, hidden, err
+	}
 	operation, ok := strings.CutPrefix(route.Operation, "(resource) ")
 	resource, method, found := strings.Cut(operation, " > (method) ")
-	if !ok || !found || !(route.OutputKind == OutputResponse && method == "retrieve" ||
+	if !ok || !found || !(route.OutputKind == OutputResponse && (method == "retrieve" || resource == "batches" && (method == "create" || method == "cancel")) ||
 		route.OutputKind == OutputPageItem && (method == "list" || resource == "vector_stores.file_batches" && method == "list_files")) ||
 		!value.IsObject() || value.Get("id").Type != gjson.String || value.Get("id").Str == "" || value.Get("object").Type != gjson.String {
 		return gjson.Result{}, false, nil
@@ -32,8 +35,7 @@ func SummarizeResource(ctx context.Context, value gjson.Result, route Route) (gj
 		fields = "id filename purpose bytes status status_details expires_at"
 		omitted = "object created_at"
 	case object == "batch" && resource == "batches":
-		fields = "id status request_counts input_file_id output_file_id error_file_id errors endpoint model expires_at usage"
-		omitted = "object completion_window created_at cancelled_at cancelling_at completed_at expired_at failed_at finalizing_at in_progress_at metadata"
+		return projectBatchMetadata(ctx, value)
 	case object == "vector_store" && resource == "vector_stores":
 		fields = "id name status file_counts usage_bytes expires_at"
 		omitted = "object created_at last_active_at metadata expires_after"
@@ -43,9 +45,6 @@ func SummarizeResource(ctx context.Context, value gjson.Result, route Route) (gj
 	case object == "vector_store.files_batch" && resource == "vector_stores.file_batches" && method == "retrieve":
 		fields = "id vector_store_id status file_counts"
 		omitted = "object created_at"
-	case object == "fine_tuning.job" && resource == "fine_tuning.jobs":
-		fields = "id status model fine_tuned_model training_file validation_file result_files trained_tokens error estimated_finish"
-		omitted = "object created_at finished_at hyperparameters organization_id seed integrations metadata method"
 	case object == "assistant" && resource == "beta.assistants":
 		fields = "id name model description"
 		omitted = "object created_at instructions metadata tools response_format temperature tool_resources top_p"

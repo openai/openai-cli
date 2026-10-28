@@ -16,22 +16,25 @@ jobs:
       contents: read
       actions: read
 
-  # These platforms have no other main-branch CI producer. PR/queue caches
-  # cannot seed the default branch, so warm compilation on trusted main pushes.
+  # Required native jobs only restore caches. Main publishes each platform cache
+  # independently, without putting compression on required test jobs.
   warm-native-cache:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: source
     permissions: {}
     name: Warm compatibility cache on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    concurrency:
+      group: native-cache-${{ github.workflow }}-${{ matrix.os }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15-intel, windows-11-arm]
+        os: [macos-15-intel, windows-11-arm, windows-latest]
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -40,17 +43,40 @@ jobs:
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-compatibility-go
+        id: go-cache
         with:
           cache-compilation: 'true'
       - name: Warm native test and CLI compilation
+        if: steps.go-cache.outputs.cache-hit != 'true'
         shell: bash
         env:
           GOMAXPROCS: '2'
         run: |
           set -euo pipefail
-          go test -p 1 ./cmd/openai ./internal/... ./pkg/custom -run '^$'
+          go test -p 1 ./cmd/openai ./internal/... -run '^$'
           go build -p 1 -o "$RUNNER_TEMP/openai.exe" ./cmd/openai
           go mod verify
+      - name: Save native compatibility compilation
+        if: steps.go-cache.outputs.cache-hit != 'true' && !(runner.os == 'Windows' && runner.arch == 'X64')
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ steps.go-cache.outputs.build-cache }}
+            ${{ steps.go-cache.outputs.module-cache }}
+          key: ${{ steps.go-cache.outputs.cache-key }}
+      - name: Save Windows x64 Go cache
+        if: steps.go-cache.outputs.cache-hit != 'true' && runner.os == 'Windows' && runner.arch == 'X64'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          # Keep setup-go's module-first path order in this cache namespace.
+          path: |
+            ${{ steps.go-cache.outputs.module-cache }}
+            ${{ steps.go-cache.outputs.build-cache }}
+          key: ${{ steps.go-cache.outputs.cache-key }}
 
   help:
     if: github.event_name != 'push'
@@ -147,7 +173,7 @@ jobs:
             shells: cmd,powershell,pwsh
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -157,7 +183,7 @@ jobs:
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-compatibility-go
         with:
-          cache-compilation: ${{ matrix.os == 'macos-15-intel' || matrix.os == 'windows-11-arm' }}
+          cache-compilation: ${{ matrix.os == 'macos-15-intel' || startsWith(matrix.os, 'windows-') }}
       - name: Verify native Go platform
         id: native-go-platform
         shell: bash
@@ -242,7 +268,7 @@ jobs:
           go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAudioVoiceDiscriminatorReferences|TestMainAudioVoiceMergedInputs|TestMainAudioVoicePreflight|TestMainAudioVoiceReferenceOrdering)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-voice-public-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 1 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestAudioVoiceBodyEmbeddingCancellationReleasesOwnedRead|TestAudioVoiceBodyEmbeddingPartialFailureClosesOnce|TestAudioVoiceBodyEmbeddingPreservesReplayAndOwnership|TestAudioVoiceBodyEmbeddingReadFailureRetainsCauses|TestAudioVoiceBodyEmbeddingTypeOpenFailureClosesOwnedInputs|TestAudioVoiceBodyEmbeddingValidationFailureClosesOwnedInputs)$' |
+          go test -p 1 ./internal/commands/audio -count=1 -timeout=2m -v -json -run '^(TestAudioVoiceBodyEmbeddingCancellationReleasesOwnedRead|TestAudioVoiceBodyEmbeddingPartialFailureClosesOnce|TestAudioVoiceBodyEmbeddingPreservesReplayAndOwnership|TestAudioVoiceBodyEmbeddingReadFailureRetainsCauses|TestAudioVoiceBodyEmbeddingTypeOpenFailureClosesOwnedInputs|TestAudioVoiceBodyEmbeddingValidationFailureClosesOwnedInputs)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-voice-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test help
@@ -264,14 +290,14 @@ jobs:
         run: |
           set -euo pipefail
           go test -p 2 ./cmd/openai -count=1 -timeout=2m -v -json \
-            -run '^(TestMainWelcomeRedirectedOutputMatchesHelp|TestMainWelcomeExplicitArgumentsStayPlain|TestMainWelcomeBareInvocationStaysOffline)$' \
+            -run '^(TestMainDispatchEmptyArguments|TestMainWelcomeExplicitArgumentsStayPlain|TestMainWelcomeBareInvocationStaysOffline)$' \
             | tee "$RUNNER_TEMP/welcome-public-tests.jsonl"
       - name: Test Windows public welcome startup
         if: matrix.welcome-public && runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=2m -v -json -run '^(TestMainWelcomeRedirectedOutputMatchesHelp|TestMainWelcomeExplicitArgumentsStayPlain|TestMainWelcomeBareInvocationStaysOffline)$' |
+          go test -p 2 ./cmd/openai -count=1 -timeout=2m -v -json -run '^(TestMainDispatchEmptyArguments|TestMainWelcomeExplicitArgumentsStayPlain|TestMainWelcomeBareInvocationStaysOffline)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'welcome-public-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       # The exhaustive command/flag inventory remains in CI's full Linux
@@ -295,12 +321,12 @@ jobs:
           exit $LASTEXITCODE
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
-      - name: Test Windows tokenizer console reader
+      - name: Test Windows tokenizer console reader and preview worker
         if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./internal/commands/tokenize -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes)' |
+          go test -p 2 ./internal/commands/tokenize -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes|Preview(MatchesExactEncodings|CancellationDuringChildWork|PreservesDeadline|LegacyCancellationDuringNumericWork|ControlCompletion))' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'tokenizer-reader-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test image command ordering
@@ -311,14 +337,6 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json \
             -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' \
             | tee "$RUNNER_TEMP/image-command-order-tests.jsonl"
-      - name: Test Windows image command ordering
-        if: matrix.image-order && runner.os == 'Windows' && matrix.shard != 'dispatch'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' |
-            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-command-order-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
-          exit $LASTEXITCODE
       - name: Test Linux Fish help invocation
         if: runner.os == 'Linux' && matrix.shard != 'dispatch'
         shell: bash
@@ -453,7 +471,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageGenerationFilenamesAndDirectoryValidation|TestMainImageGenerationKeepsReservedProbeDirectory|TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest|TestMainImageUploadClosedStdoutPreservesPartialSave|TestMainImageEditInterruptClosesStreamWithoutSavingPartial|TestImageEditInterruptCompletion|TestImageEditInterruptControllerResult)$' |
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageGenerationFilenamesAndDirectoryValidation|TestMainImageGenerationKeepsReservedProbeDirectory|TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest|TestMainImageUploadClosedStdoutPreservesPartialSave|TestMainImageEditInterruptClosesStreamWithoutSavingPartial|TestMainImageSavingInterruptRemovesIncompleteFile|TestImageEditInterruptCompletion|TestImageEditInterruptControllerResult|TestMainDispatchFiniteJSONListCancellationPreservesPartialOutput|TestFiniteJSONListInterruptControllerResult)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-save-process-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows image filesystem helpers
@@ -487,8 +505,24 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainResourceSummariesRetainActionFields|TestMainResourceSummaryListFilesInVectorBatch|TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits|TestMainResourceSummaryListNoticeForMixedRecords|TestMainResourceSummaryEmptyList|TestMainResourceSummaryUnknownFieldsAndShapesFallBack|TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData|TestMainResourceSummaryListFormatsAndExtractionKeepFullItems|TestMainResourceSummaryLeavesOtherOperationsUnchanged|TestMainResourceSummaryPreservesLargeActionArguments|TestMainResourceSummaryPreservesPartialPageOnFailure|TestMainResourceSummaryWritesBeforeNextPageArrives|TestMainListNavigationNoninteractive)$' |
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainResourceSummariesRetainActionFields|TestMainResourceSummaryListFilesInVectorBatch|TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits|TestMainResourceSummaryListNoticeForMixedRecords|TestMainResourceSummaryEmptyList|TestMainResourceSummaryUnknownFieldsAndShapesFallBack|TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData|TestMainResourceSummaryListFormatsAndExtractionKeepFullItems|TestMainResourceSummaryLeavesOtherOperationsUnchanged|TestMainDispatchBatchesPresentation|TestMainDispatchBatchResultsMatchByExactIDAndPreserveModes|TestMainBatchSubmitTransportRecovery|TestMainBatchSubmitMissingReceiptRecovery|TestMainDispatchBatchInputsPartialFailureRecovery|TestMainBatchWatchCombinedOutputAndAPIFailure|TestMainBatchSubmitFailureRecovery|TestMainResourceSummaryPreservesLargeActionArguments|TestMainResourceSummaryPreservesPartialPageOnFailure|TestMainResourceSummaryWritesBeforeNextPageArrives|TestMainListNavigationNoninteractive)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'resource-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows Batch submission and stored inputs
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainBatchSubmitSimpleDefaults|TestMainBatchSubmitSimpleExplicitInput|TestMainBatchSubmitSimplePreflight|TestMainBatchSubmitSimpleWait|TestMainBatchSubmitSimpleWaitFailure|TestMainBatchSubmitSimplePartialDownload|TestMainBatchSubmitSimpleMissingPrivateFile|TestMainBatchSubmitTerminalRecovery|TestMainBatchSubmitTerminalDownloadRecovery|TestMainBatchSubmitTerminalDownloadTimeoutRetainsEarlierFailure|TestMainBatchInputsStoredOutputModes|TestMainBatchInputsStoredEmptyAndLimit|TestMainBatchInputsStoredCombinedOutputAndAPIFailure|TestMainBatchInputsStoredRawWhitespace)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'batch-workflow-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows Batch storage, snapshots, and helper lifecycle
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./internal/commands/batches -count=1 -timeout=2m -v -json -run '^(TestWindowsBatchResultsPrivateScratchStorage|TestBatchOutputHelperLifelineOwnership|TestBatchOutputSmallWriteFailure|TestBatchOutputPipeFailureGuidance|TestBatchResultsTruncatedStorageHasRecovery|TestBatchRecordCopyPreservesOutputFailure|TestBatchWatchSnapshotsPreserveQueriesAndRawRecords|TestBatchWatchPartialFailureRetainsSnapshot|TestBatchWatchSpoolPreservesRecordsAndCursorHistory|TestBatchWatchSpoolCompaction|TestBatchWatchSpoolFailuresAndCleanup|TestBatchWatchReadableReusesSnapshotWriter|TestBatchWatchReadableSnapshotFailures|TestBatchWatchReadableDrainsBeforeFailure)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'batch-storage-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows streaming text output
         if: runner.os == 'Windows' && matrix.shard != 'dispatch'
@@ -503,7 +537,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test -p 2 ./pkg/custom ./internal/output/listview -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLargeFieldPreservedAndPrewrapped|TestListNavigationPrintPageCancelsWithoutFetching|TestListNavigationLabelsPreserveLongIDs|TestListNavigationNarrowFooterKeepsQuitAndPrintVisible|TestListNavigationErrorPresentation|TestListNavigationCompleteFirstPageFitsScreen|TestListNavigationContentFitsDisplayCells|TestListNavigationShortResultPreservesErrorsAndHistory|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' \
+          go test -p 2 ./internal/app ./internal/output/listview -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLabelsPreserveLongIDs|TestListNavigationErrorPresentation|TestListNavigationFinishRetainsInterruptDuringCompletion|TestListNavigationRemovedKeysAndResizeDoNotFetch|TestListNavigationCompletePageStaysOpenWithoutPrinting|TestListNavigationPartialPagePreservesErrorAndRecords|TestListNavigationFinalEmptyPageKeepsLoadedResults|TestListNavigationUsesCompactPagerControls|TestViewerBackKeepsFetchFrontier|TestViewerPendingFetchIgnoresNavigation|TestViewerFinalPageStaysUntilQuit|TestViewerLargeLineAndResizePreserveOriginal|TestViewerTabsPreserveValuesAndFooter|TestViewerErrorRetainsPreviouslyLoadedResults|TestViewerHistoryWriteFailureDoesNotRetry|TestViewerLoadingCanCancel|TestViewerPreservesViewportKeyboardBindings|TestViewerPageKeysPreserveLazyCachedNavigation|TestViewerKeyboardWhileLoadingKeepsCancellation|TestViewerResizeRendersOnlySelectedPage|TestViewerResizeRenderFailureRetainsCachedPages|TestListPagerResizeRendersCachedRecords|TestListPagerAdvanceAtVisibleRecordBoundary|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' \
             | tee "$RUNNER_TEMP/list-navigation-helper-tests.jsonl"
           go test -p 2 ./internal/output/transform -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' \
             | tee "$RUNNER_TEMP/list-projection-helper-tests.jsonl"
@@ -514,14 +548,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./pkg/custom ./internal/output/listview -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLargeFieldPreservedAndPrewrapped|TestListNavigationPrintPageCancelsWithoutFetching|TestListNavigationLabelsPreserveLongIDs|TestListNavigationNarrowFooterKeepsQuitAndPrintVisible|TestListNavigationErrorPresentation|TestListNavigationCompleteFirstPageFitsScreen|TestListNavigationContentFitsDisplayCells|TestListNavigationShortResultPreservesErrorsAndHistory|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' |
+          go test -p 2 ./internal/app ./internal/output/listview -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLabelsPreserveLongIDs|TestListNavigationErrorPresentation|TestListNavigationFinishRetainsInterruptDuringCompletion|TestListNavigationRemovedKeysAndResizeDoNotFetch|TestListNavigationCompletePageStaysOpenWithoutPrinting|TestListNavigationPartialPagePreservesErrorAndRecords|TestListNavigationFinalEmptyPageKeepsLoadedResults|TestListNavigationUsesCompactPagerControls|TestViewerBackKeepsFetchFrontier|TestViewerPendingFetchIgnoresNavigation|TestViewerFinalPageStaysUntilQuit|TestViewerLargeLineAndResizePreserveOriginal|TestViewerTabsPreserveValuesAndFooter|TestViewerErrorRetainsPreviouslyLoadedResults|TestViewerHistoryWriteFailureDoesNotRetry|TestViewerLoadingCanCancel|TestViewerPreservesViewportKeyboardBindings|TestViewerPageKeysPreserveLazyCachedNavigation|TestViewerKeyboardWhileLoadingKeepsCancellation|TestViewerResizeRendersOnlySelectedPage|TestViewerResizeRenderFailureRetainsCachedPages|TestListPagerResizeRendersCachedRecords|TestListPagerAdvanceAtVisibleRecordBoundary|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-navigation-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./internal/output/transform -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' |
-            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-projection-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' |
-            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-renderer-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test image preferences and picker state
         if: matrix.image-state && runner.os != 'Windows' && matrix.shard != 'dispatch'
@@ -533,7 +561,7 @@ jobs:
           set -euo pipefail
           go test -p 2 ./internal/imageprefs -count=1 -timeout=3m -v -json -run '^(TestImagePreferenceDefaultAndReplacement|TestImagePreferenceInvalidSettingsRemainUntouched|TestImagePreferenceConcurrentWritesAndCancellation|TestImagePreferenceWaitingWriterKeepsNewSchema|TestImagePreferenceWaitingWriterCancellationAndReplacement|TestImagePreferenceRejectsUnsafePaths|TestImagePreferenceRejectsUnsafeWriterLocks|TestImagePreferencePermissionFailuresKeepFile)$' \
             | tee "$RUNNER_TEMP/image-preference-state-tests.jsonl"
-          go test -p 2 ./pkg/custom -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateRejectsExposedPermissions|TestImagePickerStateWriteFailureKeepsPrevious)$' \
+          go test -p 2 ./internal/commands/images -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateRejectsExposedPermissions|TestImagePickerStateWriteFailureKeepsPrevious)$' \
             | tee "$RUNNER_TEMP/image-picker-state-tests.jsonl"
       - name: Test Windows image preferences and picker state
         if: matrix.image-state && runner.os == 'Windows' && matrix.shard != 'dispatch'
@@ -546,7 +574,7 @@ jobs:
           go test -p 2 ./internal/imageprefs -count=1 -timeout=3m -v -json -run '^(TestImagePreferenceDefaultAndReplacement|TestImagePreferenceInvalidSettingsRemainUntouched|TestImagePreferenceConcurrentWritesAndCancellation|TestImagePreferenceWaitingWriterKeepsNewSchema|TestImagePreferenceWaitingWriterCancellationAndReplacement|TestImagePreferenceRejectsUnsafePaths|TestImagePreferenceRejectsUnsafeWriterLocks|TestImagePreferenceWindowsAccessDeniedKeepsFile)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-preference-state-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./pkg/custom -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateWindowsAccessDeniedKeepsPrevious)$' |
+          go test -p 2 ./internal/commands/images -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateWindowsAccessDeniedKeepsPrevious)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-picker-state-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test request configuration
@@ -556,7 +584,7 @@ jobs:
           set -euo pipefail
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainGlobalFlagsPlacementHeadersAndOutput|TestMainGlobalFlagsPrecedence|TestMainGlobalFlagsHeaderAliasesAndAuthorization|TestMainGlobalFlagsKeepEndpointFlagsAndLiterals|TestMainGlobalFlagsProjectBodyKeepsRootHeader|TestMainGlobalFlagsDeepAdminAndCustomCommands|TestMainGlobalFlagsHelpAndCompletionStayLocal|TestMainGlobalFlagsErrorOutputPlacement|TestMainGlobalFlagBaseURLOverridesMalformedEnvironment|TestMainGlobalFlagInvalidPercentBaseURLStillFails|TestMainGlobalFlagBaseURLOverridePreservesEnvironmentHeaders|TestMainGlobalFlagInvalidPercentBaseURLErrorsAreSafe|TestMainGlobalFlagEmptyBaseURLKeepsEnvironmentFallback|TestMainGlobalFlagEmptyMTLSOverridesEnvironment|TestMainGlobalFlagMTLSRejectsExplicitDuplicates|TestMainGlobalFlagCompletionScriptsIgnoreRequestConfiguration|TestMainGlobalFlagCompletionWordsRemainRequestValues|TestMainGlobalFlagRequestConfigurationStillValidates|TestMainGlobalFlagURLConfigurationPreservesOfflineHelp)$' \
             | tee "$RUNNER_TEMP/request-configuration-public-tests.jsonl"
-          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestRootRequestFlagsPreserveOwnershipAndMetadata|TestRootRequestFlagsPreserveMTLSPlacement|TestRootRequestFlagsRetainSourcesAliasesAndValidation|TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue)$' \
+          go test -p 2 ./internal/app -count=1 -timeout=2m -v -json -run '^(TestRootRequestFlagsPreserveOwnershipAndMetadata|TestRootRequestFlagsPreserveMTLSPlacement|TestRootRequestFlagsRetainSourcesAliasesAndValidation|TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue)$' \
             | tee "$RUNNER_TEMP/request-configuration-helper-tests.jsonl"
       - name: Test Windows request configuration
         if: matrix.request-configuration && runner.os == 'Windows' && matrix.shard != 'dispatch'
@@ -566,7 +594,7 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainGlobalFlagsPlacementHeadersAndOutput|TestMainGlobalFlagsPrecedence|TestMainGlobalFlagsHeaderAliasesAndAuthorization|TestMainGlobalFlagsKeepEndpointFlagsAndLiterals|TestMainGlobalFlagsProjectBodyKeepsRootHeader|TestMainGlobalFlagsDeepAdminAndCustomCommands|TestMainGlobalFlagsHelpAndCompletionStayLocal|TestMainGlobalFlagsErrorOutputPlacement|TestMainGlobalFlagBaseURLOverridesMalformedEnvironment|TestMainGlobalFlagInvalidPercentBaseURLStillFails|TestMainGlobalFlagBaseURLOverridePreservesEnvironmentHeaders|TestMainGlobalFlagInvalidPercentBaseURLErrorsAreSafe|TestMainGlobalFlagEmptyBaseURLKeepsEnvironmentFallback|TestMainGlobalFlagEmptyMTLSOverridesEnvironment|TestMainGlobalFlagMTLSRejectsExplicitDuplicates|TestMainGlobalFlagCompletionScriptsIgnoreRequestConfiguration|TestMainGlobalFlagCompletionWordsRemainRequestValues|TestMainGlobalFlagRequestConfigurationStillValidates|TestMainGlobalFlagURLConfigurationPreservesOfflineHelp)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'request-configuration-public-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestRootRequestFlagsPreserveOwnershipAndMetadata|TestRootRequestFlagsPreserveMTLSPlacement|TestRootRequestFlagsRetainSourcesAliasesAndValidation|TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue)$' |
+          go test -p 2 ./internal/app -count=1 -timeout=2m -v -json -run '^(TestRootRequestFlagsPreserveOwnershipAndMetadata|TestRootRequestFlagsPreserveMTLSPlacement|TestRootRequestFlagsRetainSourcesAliasesAndValidation|TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'request-configuration-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows native shell and download contracts
@@ -580,8 +608,11 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainShellWindowsNative$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-native-shell-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^TestWindowsDownload(AutomaticConsole|PrivateCreation|PrivatePublication|PreservesExistingDACL)$' |
+          go test -p 2 ./internal/app -count=1 -timeout=2m -v -json -run '^TestWindowsDownload(AutomaticConsole|PrivateCreation|PreservesExistingDACL)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-download-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 2 ./internal/output -count=1 -timeout=2m -v -json -run '^TestWindowsDownloadPrivatePublication$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-download-publication-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test request environment restoration
         if: matrix.environment && matrix.shard != 'dispatch'
@@ -868,7 +899,7 @@ jobs:
                   picker_cases["TestImagePickerStateWriteFailureKeepsPrevious"] = []
               for filename, package, cases in [
                   ("image-preference-state-tests.jsonl", "internal/imageprefs", preference_cases),
-                  ("image-picker-state-tests.jsonl", "pkg/custom", picker_cases),
+                  ("image-picker-state-tests.jsonl", "internal/commands/images", picker_cases),
               ]:
                   suites[filename] = set().union(*(required_cases(root, children) for root, children in cases.items()))
                   strict_packages[filename] = "github.com/openai/openai-cli/" + package
@@ -941,7 +972,7 @@ jobs:
                   fish_examples + [f"{name}/explicit_inline_off_preserves_remembered_on" for name in fish_examples],
               )
 
-          if os.environ["CHECK_IMAGE_ORDER"] == "true":
+          if os.environ["CHECK_IMAGE_ORDER"] == "true" and os.environ["RUNNER_OS"] != "Windows":
               suites["image-command-order-tests.jsonl"] = required_cases(
                   "TestMainImageCommandHelpOrder",
                   ["images", "images/--help", "images/-h", "images/--h",
@@ -952,7 +983,7 @@ jobs:
 
           if os.environ["CHECK_WELCOME_PUBLIC"] == "true":
               suites["welcome-public-tests.jsonl"] = required_cases(
-                  "TestMainWelcomeRedirectedOutputMatchesHelp", [],
+                  "TestMainDispatchEmptyArguments", [],
               ) | required_cases(
                   "TestMainWelcomeExplicitArgumentsStayPlain",
                   ["--help", "-h", "help", "help/--all", "--", "--version", "--debug/--help",
@@ -977,12 +1008,40 @@ jobs:
               suites["tokenizer-reader-tests.jsonl"] = {
                   "TestTokenizerConsoleInputPreservesUnicode",
                   "TestTokenizerConsoleInputRecordSemantics",
+                  "TestTokenizerConsoleInputRecordSemantics/repeats",
+                  "TestTokenizerConsoleInputRecordSemantics/nontext",
+                  "TestTokenizerConsoleInputRecordSemantics/translated_NUL",
+                  "TestTokenizerConsoleInputRecordSemantics/Alt_composition",
+                  "TestTokenizerConsoleInputRecordSemantics/Alt_surrogate_pair",
+                  "TestTokenizerConsoleInputRecordSemantics/ordinary_surrogate_releases",
                   "TestTokenizerConsoleInputRejectsMalformedUTF16",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/isolated_low",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/following_text",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/repeated_high",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/repeat_mismatch",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16/channel_mismatch",
                   "TestTokenizerConsoleInputBoundedRepeatsAndCancellation",
                   "TestTokenizerConsoleInputClosePreservesBorrowedHandle",
                   "TestTokenizerConsoleInputReadFailure",
                   "TestTokenizerInputSourcePreservesNonConsoleBytes",
+                  "TestTokenizerPreviewMatchesExactEncodings",
+                  "TestTokenizerPreviewCancellationDuringChildWork",
+                  "TestTokenizerPreviewCancellationDuringChildWork/o200k_base",
+                  "TestTokenizerPreviewCancellationDuringChildWork/cl100k_base",
+                  "TestTokenizerPreviewPreservesDeadline",
+                  "TestTokenizerPreviewControlCompletion",
+                  "TestTokenizerPreviewControlCompletion/forced_reset",
+                  "TestTokenizerPreviewControlCompletion/eof",
+                  "TestTokenizerPreviewControlCompletion/wrapped_reset",
+                  "TestTokenizerPreviewControlCompletion/unexpected_bytes",
+                  "TestTokenizerPreviewControlCompletion/timeout",
+                  "TestTokenizerPreviewControlCompletion/other_error",
+                  "TestTokenizerPreviewControlCompletion/oversize",
+                  "TestTokenizerPreviewLegacyCancellationDuringNumericWork",
+                  "TestTokenizerPreviewLegacyCancellationDuringNumericWork/r50k_base",
+                  "TestTokenizerPreviewLegacyCancellationDuringNumericWork/p50k_base",
               }
+              strict_packages["tokenizer-reader-tests.jsonl"] = "github.com/openai/openai-cli/internal/commands/tokenize"
               files_cases = {
                   "UploadPaths": ["spaces", "options_first", "apostrophe", "literal_at", "literal_dash",
                                   "literal_double_dash", "empty", "binary", "upload_flag", "create_flag",
@@ -1047,15 +1106,23 @@ jobs:
               ) | required_cases(
                   "TestMainImageUploadClosedStdoutPreservesPartialSave", ["edit", "create-variation"],
               ) | {"TestMainImageEditInterruptClosesStreamWithoutSavingPartial",
-                   "TestMainImageGenerationKeepsReservedProbeDirectory"} | required_cases(
+                   "TestMainImageGenerationKeepsReservedProbeDirectory",
+                   "TestMainDispatchFiniteJSONListCancellationPreservesPartialOutput"} | required_cases(
                   "TestImageEditInterruptCompletion",
                   ["just_before_absolute_limit", "absolute_limit", "after_absolute_limit", "slow_startup_within_limit",
                    "controller_timeout_after_slow_startup"],
               ) | required_cases(
+                  "TestMainImageSavingInterruptRemovesIncompleteFile",
+                  [f"{operation}/{format}" for operation in ["generate", "edit", "create-variation"]
+                   for format in ["text", "json"]],
+              ) | required_cases(
                   "TestImageEditInterruptControllerResult",
-                  ["CTRL_C_exit", "signed_CTRL_C_exit", "unrelated_exit_1", "unrelated_exit_7",
+                  ["cooperative_CTRL_C_exit", "legacy_CTRL_C_exit", "signed_legacy_CTRL_C_exit", "unrelated_exit_1", "unrelated_exit_7",
                    "missing_startup", "missing_event", "wrong_event", "missing_child_status",
                    "zero_child_status", "mismatched_child_status", "controller_timeout", "forced_kill"],
+              ) | required_cases(
+                  "TestFiniteJSONListInterruptControllerResult",
+                  ["CTRL_C_exit", "signed_CTRL_C_exit", "cooperative_exit_130", "unrelated_exit_1", "zero_exit"],
               )
               suites["image-save-helper-tests.jsonl"] = {
                   "TestResolveDirectory", "TestSaveResponseFormatsAndUniqueNames",
@@ -1092,7 +1159,7 @@ jobs:
               strict_packages["audio-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
               resource_cases = {
                   "TestMainResourceSummariesRetainActionFields": ["model", "file", "batch", "vector_store",
-                      "vector_file", "vector_file_batch", "fine_tuning_job", "assistant", "thread_run"],
+                      "vector_file", "vector_file_batch", "assistant", "thread_run"],
                   "TestMainResourceSummaryListFilesInVectorBatch": [],
                   "TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits": ["-1", "3", "1", "0"],
                   "TestMainResourceSummaryListNoticeForMixedRecords": ["fallback_only", "summary_then_fallback",
@@ -1119,7 +1186,15 @@ jobs:
                   "TestMainResourceSummaryListFormatsAndExtractionKeepFullItems": ["json", "jsonl", "raw", "yaml",
                       "pretty", "explore", "--transform_created_at", "--transform_filename_--raw-output",
                       "--format_text_--transform_@this"],
-                  "TestMainResourceSummaryLeavesOtherOperationsUnchanged": ["create", "delete", "cancel"],
+                  "TestMainResourceSummaryLeavesOtherOperationsUnchanged": ["create", "delete"],
+                  "TestMainDispatchBatchesPresentation": ["create", "retrieve", "cancel", "retrieve_wait", "wait", "list"],
+                  "TestMainDispatchBatchResultsMatchByExactIDAndPreserveModes": ["JsOn", "JsOnL", "RaW", "YaMl", "text", "pretty", "explore"],
+                  "TestMainBatchSubmitTransportRecovery": [f"{stage}/{mode}"
+                      for stage in ["upload", "create"] for mode in ["text", "json"]],
+                  "TestMainBatchSubmitMissingReceiptRecovery": ["upload", "create"],
+                  "TestMainDispatchBatchInputsPartialFailureRecovery": ["text", "json"],
+                  "TestMainBatchWatchCombinedOutputAndAPIFailure": ["text", "json"],
+                  "TestMainBatchSubmitFailureRecovery": ["upload/text", "upload/json", "create/text", "create/json"],
                   "TestMainResourceSummaryPreservesLargeActionArguments": [],
                   "TestMainResourceSummaryPreservesPartialPageOnFailure": ["text", "json"],
                   "TestMainResourceSummaryWritesBeforeNextPageArrives": [],
@@ -1131,6 +1206,47 @@ jobs:
               suites["resource-tests.jsonl"] = set().union(*(
                   required_cases(root, children) for root, children in resource_cases.items()
               ))
+              batch_storage_cases = {
+                  "TestWindowsBatchResultsPrivateScratchStorage": [],
+                  "TestBatchOutputHelperLifelineOwnership": ["drain", "write-error", "ready-error", "invalid-lifeline"],
+                  "TestBatchOutputSmallWriteFailure": [],
+                  "TestBatchOutputPipeFailureGuidance": ["destination-failure", "owned-cancellation"],
+                  "TestBatchResultsTruncatedStorageHasRecovery": ["length-0", "length-10"],
+                  "TestBatchRecordCopyPreservesOutputFailure": [],
+                  "TestBatchWatchSnapshotsPreserveQueriesAndRawRecords": [],
+                  "TestBatchWatchPartialFailureRetainsSnapshot": [],
+                  "TestBatchWatchSpoolPreservesRecordsAndCursorHistory": ["duplicate-order", "repeated-cursor", "seed-cursor", "zero-still-fetches", "limit-before-invalid-item", "valid-prefix-before-invalid-item", "cursor-index-growth"],
+                  "TestBatchWatchSpoolCompaction": ["pretty", "lexemes", "invalid-utf8", "chunk-boundary"],
+                  "TestBatchWatchSpoolFailuresAndCleanup": ["creation", "record-write", "read-and-output", "truncated-record", "snapshot-boundary", "cancel-fetch"],
+                  "TestBatchWatchReadableReusesSnapshotWriter": ["pipe", "custom", "partial"],
+                  "TestBatchWatchReadableSnapshotFailures": ["empty", "render-error", "cancel", "write-error"],
+                  "TestBatchWatchReadableDrainsBeforeFailure": ["storage", "renderer", "cancel"],
+              }
+              suites["batch-storage-tests.jsonl"] = set().union(*(
+                  required_cases(root, children) for root, children in batch_storage_cases.items()
+              ))
+              strict_packages["resource-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+              strict_packages["batch-storage-tests.jsonl"] = "github.com/openai/openai-cli/internal/commands/batches"
+              batch_workflow_cases = {
+                  'TestMainBatchInputsStoredOutputModes': ['json', 'jsonl', 'raw', 'pretty', 'yaml', 'text', 'auto', 'transform-json', 'transform-text', 'transform-yaml'],
+                  'TestMainBatchInputsStoredEmptyAndLimit': ['0', '1'],
+                  'TestMainBatchInputsStoredCombinedOutputAndAPIFailure': ['text', 'json'],
+                  'TestMainBatchInputsStoredRawWhitespace': ['list', 'record', 'nested'],
+                  'TestMainBatchSubmitSimpleDefaults': ['positional', 'flag'],
+                  'TestMainBatchSubmitSimpleExplicitInput': ['flags', 'json', 'yaml'],
+                  'TestMainBatchSubmitSimplePreflight': ['both_file_forms', 'two_paths', 'no_file', 'output_requires_wait', 'explicit_false_wait', 'poll_requires_wait', 'timeout_requires_wait', 'zero_poll', 'negative_poll', 'negative_timeout', 'malformed_timeout', 'output_is_file', 'output_exists', 'ambiguous_endpoint'],
+                  'TestMainBatchSubmitSimpleWait': [],
+                  'TestMainBatchSubmitSimpleWaitFailure': ['in_progress', 'failed'],
+                  'TestMainBatchSubmitSimplePartialDownload': ['text', 'json'],
+                  'TestMainBatchSubmitSimpleMissingPrivateFile': ['text/inferred', 'text/explicit', 'json/inferred', 'json/explicit'],
+                  'TestMainBatchSubmitTerminalRecovery': ['failed/text', 'failed/json', 'cancelled/text', 'cancelled/json', 'expired/text', 'expired/json', 'completed/text', 'completed/json'],
+                  'TestMainBatchSubmitTerminalDownloadRecovery': ['text', 'json'],
+                  'TestMainBatchSubmitTerminalDownloadTimeoutRetainsEarlierFailure': ['text', 'json'],
+              }
+              suites["batch-workflow-tests.jsonl"] = set().union(*(
+                  required_cases(root, children) for root, children in batch_workflow_cases.items()
+              ))
+              strict_packages["batch-workflow-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
               streaming_text_cases = {
                   "TestMainStreamingTextArrivesBeforeCompletion": [f"{command}/{format}"
                       for command in ["responses", "chat:completions", "completions"] for format in ["", "text"]],
@@ -1173,29 +1289,47 @@ jobs:
                   'TestListNavigationQuitRetainsRealFailures': [
                       'canceled', 'wrapped', 'joined_cancellation', 'failed', 'joined_failure',
                   ],
-                  'TestListNavigationLargeFieldPreservedAndPrewrapped': [],
-                  'TestListNavigationPrintPageCancelsWithoutFetching': [],
                   'TestListNavigationLabelsPreserveLongIDs': [],
-                  'TestListNavigationNarrowFooterKeepsQuitAndPrintVisible': [],
                   'TestListNavigationErrorPresentation': [
                       'direct/text', 'direct/json', 'wrapped/text', 'wrapped/json', 'joined/text', 'joined/json',
                       'canceled/text', 'canceled/json',
                   ],
-                  'TestListNavigationCompleteFirstPageFitsScreen': [
-                      'single_row', 'empty_result', 'empty_tiny_terminal', 'unknown_width', 'unknown_height',
-                      'exact_fit_with_separator', 'one_row_over', 'wide_characters_fit', 'wide_characters_overflow',
-                      'tabbed_filename_fits', 'tabbed_filename_overflows', 'tabbed_filename_taller_terminal',
-                      'tab_cancels_pending_wrap', 'text_after_margin_tab_wraps', 'more_API_pages',
+                  'TestListNavigationFinishRetainsInterruptDuringCompletion': [],
+                  'TestListNavigationRemovedKeysAndResizeDoNotFetch': [],
+                  'TestListNavigationCompletePageStaysOpenWithoutPrinting': [],
+                  'TestListNavigationPartialPagePreservesErrorAndRecords': [],
+                  'TestListNavigationFinalEmptyPageKeepsLoadedResults': [],
+                  'TestListNavigationUsesCompactPagerControls': [],
+                  'TestViewerBackKeepsFetchFrontier': [],
+                  'TestViewerPendingFetchIgnoresNavigation': ['<nil>', 'synthetic_second-page_failure'],
+                  'TestViewerFinalPageStaysUntilQuit': [],
+                  'TestViewerLargeLineAndResizePreserveOriginal': [],
+                  'TestViewerTabsPreserveValuesAndFooter': [
+                      f'width{width}/{kind}'
+                      for width in [12, 20]
+                      for kind in ['ascii', 'unicode']
                   ],
-                  'TestListNavigationContentFitsDisplayCells': [
-                      'tab_exactly_fills_row', 'tab_adds_wrapped_row', 'tab_after_wide_grapheme',
-                      'tab_after_combining_grapheme', 'tab_after_wrapped_text', 'tab_stops_at_right_margin',
-                      'tab_clears_pending_wrap', 'text_wraps_after_margin_tab', 'color_has_no_display_width',
-                      'blank_separator_counts', 'prompt_row_remains',
+                  'TestViewerErrorRetainsPreviouslyLoadedResults': [],
+                  'TestViewerHistoryWriteFailureDoesNotRetry': [],
+                  'TestViewerLoadingCanCancel': [],
+                  'TestViewerPreservesViewportKeyboardBindings': [
+                      'arrows', 'vim', 'half_page', 'control_half_page',
+                      'page_keys', 'f_b', 'space_b',
                   ],
-                  'TestListNavigationShortResultPreservesErrorsAndHistory': [
-                      'request_error', 'render_canceled', 'later_page', 'resized_viewer',
+                  'TestViewerPageKeysPreserveLazyCachedNavigation': ['page_keys', 'f_b', 'space_b'],
+                  'TestViewerKeyboardWhileLoadingKeepsCancellation': [],
+                  'TestViewerResizeRendersOnlySelectedPage': [],
+                  'TestViewerResizeRenderFailureRetainsCachedPages': [
+                      f'back{back}/canceled{canceled}'
+                      for back in ['false', 'true']
+                      for canceled in ['false', 'true']
                   ],
+                  'TestListPagerResizeRendersCachedRecords': [
+                      f'{resource}/{kind}'
+                      for resource in ['files', 'batches', 'admin.organization.projects', 'models']
+                      for kind in ['known', 'unfamiliar']
+                  ],
+                  'TestListPagerAdvanceAtVisibleRecordBoundary': ['24', '25', '26'],
                   'TestRenderListNavigationPageHintPolicy': [
                       'files/table', 'files/table/ordinary', 'files/table/quiet', 'files/table/quiet_verbose',
                       'files/table/machine_errors', 'files/table/inherited_machine_errors', 'files/table/extracted_errors',
@@ -1278,9 +1412,10 @@ jobs:
                       '0', '1', '1023', '1024', '1536', '1234', '1048576', '9007199254740993', '18446744073709551615',
                   ],
               }
-              suites['list-projection-helper-tests.jsonl'] = set().union(*(
-                  required_cases(root, children) for root, children in projection_helper_cases.items()
-              ))
+              if os.environ["RUNNER_OS"] != "Windows":
+                  suites['list-projection-helper-tests.jsonl'] = set().union(*(
+                      required_cases(root, children) for root, children in projection_helper_cases.items()
+                  ))
               renderer_helper_cases = {
                   'TestListTableKeepsIDsAndFitsWidth': [],
                   'TestListTableNarrowFallbackKeepsIDs': [],
@@ -1288,9 +1423,10 @@ jobs:
                   'TestListTableUnicodeWidths': [],
                   'TestListTableEmptyAndMalformedRows': [],
               }
-              suites['list-renderer-helper-tests.jsonl'] = set().union(*(
-                  required_cases(root, children) for root, children in renderer_helper_cases.items()
-              ))
+              if os.environ["RUNNER_OS"] != "Windows":
+                  suites['list-renderer-helper-tests.jsonl'] = set().union(*(
+                      required_cases(root, children) for root, children in renderer_helper_cases.items()
+                  ))
           if os.environ["CHECK_REQUEST_CONFIGURATION"] == "true":
               request_public_cases = {
                   'TestMainGlobalFlagsPlacementHeadersAndOutput': [
@@ -1412,7 +1548,7 @@ jobs:
               suites["request-configuration-helper-tests.jsonl"] = set().union(*(
                   required_cases(root, children) for root, children in request_helper_cases.items()
               ))
-              strict_packages["request-configuration-helper-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+              strict_packages["request-configuration-helper-tests.jsonl"] = "github.com/openai/openai-cli/internal/app"
               if os.environ["RUNNER_OS"] == "Windows":
                   request_shell_root = "TestMainShellWindowsNative"
                   request_shell_cases = [
@@ -1444,13 +1580,16 @@ jobs:
                   windows_download_cases = {
                       "TestWindowsDownloadAutomaticConsole": [],
                       "TestWindowsDownloadPrivateCreation": [],
-                      "TestWindowsDownloadPrivatePublication": ["hardlink", "exclusive_copy"],
                       "TestWindowsDownloadPreservesExistingDACL": ["complete", "source_failure"],
                   }
                   suites["windows-download-tests.jsonl"] = set().union(*(
                       required_cases(root, children) for root, children in windows_download_cases.items()
                   ))
-                  strict_packages["windows-download-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+                  strict_packages["windows-download-tests.jsonl"] = "github.com/openai/openai-cli/internal/app"
+                  suites["windows-download-publication-tests.jsonl"] = required_cases(
+                      "TestWindowsDownloadPrivatePublication", ["hardlink", "exclusive_copy"]
+                  )
+                  strict_packages["windows-download-publication-tests.jsonl"] = "github.com/openai/openai-cli/internal/output"
 
           if os.environ["CHECK_ENVIRONMENT"] == "true":
               suites["environment-tests.jsonl"] = required_cases(
@@ -1503,7 +1642,7 @@ jobs:
               if os.environ["RUNNER_OS"] == "Windows":
                   for filename, key, package, roots, total in [
                       ("windows-voice-public-tests.jsonl", "windows_voice_public", "github.com/openai/openai-cli/cmd/openai", 4, 138),
-                      ("windows-voice-helper-tests.jsonl", "windows_voice_helpers", "github.com/openai/openai-cli/pkg/custom", 6, 8),
+                      ("windows-voice-helper-tests.jsonl", "windows_voice_helpers", "github.com/openai/openai-cli/internal/commands/audio", 6, 8),
                   ]:
                       cases = inventory[key]
                       if len(cases) != roots or sum(len(children) for children in cases.values()) != total - roots:
@@ -1642,7 +1781,7 @@ jobs:
 
       - name: Retain Windows voice validation evidence
         if: always() && matrix.native-commands && runner.os == 'Windows'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-voice-validation-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -1651,9 +1790,220 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  wsl1-pager:
+  picker-native-setup:
     if: github.event_name != 'push'
     needs: source
+    permissions: {}
+    name: Picker installation on native Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=1 -mod=readonly'
+      GOTOOLCHAIN: local
+      OPENAI_CLI_PICKER_SETUP_CONTRACT: supported
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-compatibility-go
+      - name: Check fixture interruption and cleanup controls
+        shell: bash
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          /usr/bin/timeout --signal=TERM --kill-after=5s 45s python3 -I -B scripts/test_wsl_shell_fixtures.py -v 2>&1 | tee "$RUNNER_TEMP/picker-fixture-controls.log"
+      - name: Build native setup executables
+        shell: bash
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          go test -c -o "$RUNNER_TEMP/picker-autocomplete.test" ./internal/autocomplete
+          go test -c -o "$RUNNER_TEMP/picker-custom.test" ./internal/commands/images
+          go test -c -o "$RUNNER_TEMP/picker-process.test" ./cmd/openai
+          go build -o "$RUNNER_TEMP/picker-openai" ./cmd/openai
+      - name: Require positive installation and native setup contracts
+        shell: bash
+        timeout-minutes: 4
+        run: |
+          python3 -I -B - <<'PY'
+          import importlib.util, json, os, subprocess
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("wsl_contracts", Path("scripts/check-wsl-pager.py"))
+          checks = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(checks)
+          suites, _ = checks.load_local_cases()
+          cases = {
+              "autocomplete": suites["autocomplete"],
+              "custom": {root: children for root, children in suites["custom"].items()
+                         if root in {checks.NATIVE_CUSTOM_ROOT, "TestImagePickerShellSetupCapabilityErrors"}},
+              "process": {root: children for root, children in suites["process"].items()
+                          if root not in checks.INDEPENDENT_PROCESS_ROOTS},
+          }
+          for package, selected in cases.items():
+              binary = Path(os.environ["RUNNER_TEMP"]) / ("picker-" + package + ".test")
+              result = subprocess.run([str(binary), "-test.v", "-test.timeout=60s",
+                                       "-test.run=^(" + "|".join(selected) + ")$"],
+                                      stdin=subprocess.DEVNULL, capture_output=True, timeout=70)
+              binary.with_suffix(".stdout").write_bytes(result.stdout)
+              binary.with_suffix(".stderr").write_bytes(result.stderr)
+              names = checks.require_test_pass(result.stdout, result.stderr, result.returncode,
+                                               checks.test_names(selected), package)
+              if package == "autocomplete":
+                  checks.require_capability_receipt(result.stdout, "supported")
+              print(json.dumps({"package": package, "contract": "supported", "tests": sorted(names)}))
+          PY
+      - name: Require positive Bash startup lifecycle
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          /usr/bin/timeout --signal=TERM --kill-after=5s 120s python3 -I -B scripts/check-wsl-shell-startup.py "$RUNNER_TEMP/picker-openai" /usr/bin/bash login --setup-contract supported | tee "$RUNNER_TEMP/picker-startup-login.log"
+          /usr/bin/timeout --signal=TERM --kill-after=5s 120s python3 -I -B scripts/check-wsl-shell-startup.py "$RUNNER_TEMP/picker-openai" /usr/bin/bash nonlogin --setup-contract supported | tee "$RUNNER_TEMP/picker-startup-nonlogin.log"
+      - name: Retain native setup evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: picker-native-setup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/picker-*.stdout
+            ${{ runner.temp }}/picker-*.stderr
+            ${{ runner.temp }}/picker-startup-*.log
+            ${{ runner.temp }}/picker-fixture-controls.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Fetch once on Linux instead of four slow Ubuntu-origin transfers on Windows.
+  # Consumers recheck the pinned checksum; the artifact is only a transport.
+  wsl-image:
+    if: github.event_name != 'push'
+    needs: source
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - name: Download and verify pinned Ubuntu image
+        timeout-minutes: 8
+        run: |
+          python3 -I -B - <<'PYTHON'
+          import importlib.util, os, sys, time
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("wsl_image", "scripts/check-wsl-pager.py")
+          module = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = module
+          spec.loader.exec_module(module)
+          module.download_image(Path(os.environ["RUNNER_TEMP"]) / "ubuntu.wsl", time.monotonic() + 470)
+          PYTHON
+      - name: Stage verified Ubuntu image
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wsl-ubuntu-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ubuntu.wsl
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  # Compile each package once, alongside image preparation. Consumers receive
+  # source-bound, immutable bundles containing only their existing payloads.
+  wsl-binaries:
+    if: github.event_name != 'push'
+    needs: source
+    permissions: {}
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 20
+    outputs:
+      wsl-pager: ${{ steps.pager.outputs.artifact-id }}
+      wsl-command-contracts: ${{ steps.commands.outputs.artifact-id }}
+      wsl-local-state: ${{ steps.local.outputs.artifact-id }}
+      wsl-shell-contracts: ${{ steps.shell.outputs.artifact-id }}
+      attempt: ${{ steps.build.outputs.attempt }}
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-compatibility-go
+        timeout-minutes: 2
+        with:
+          cache-compilation: 'true'
+      - uses: ./.github/actions/link-go-sdk
+      - name: Check WSL payload controls
+        shell: pwsh
+        timeout-minutes: 1
+        run: python -I -B .github/scripts/test_wsl_payloads.py
+      - name: Build and bind the Linux compatibility executables
+        id: build
+        shell: pwsh
+        timeout-minutes: 6
+        env:
+          WSL_SOURCE_ARTIFACT_ID: ${{ needs.source.outputs.artifact-id }}
+        run: python -I -B .github/scripts/wsl_payloads.py build (Join-Path $env:RUNNER_TEMP 'wsl-payloads')
+      - name: Upload pager payloads
+        id: pager
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: wsl-pager-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wsl-payloads/wsl-pager/*
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload command payloads
+        id: commands
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: wsl-command-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wsl-payloads/wsl-command-contracts/*
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload local-state payloads
+        id: local
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: wsl-local-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wsl-payloads/wsl-local-state/*
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload shell payloads
+        id: shell
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        timeout-minutes: 2
+        with:
+          name: wsl-shell-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wsl-payloads/wsl-shell-contracts/*
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  wsl1-pager:
+    if: github.event_name != 'push'
+    needs: [source, wsl-image, wsl-binaries]
     permissions: {}
     name: ${{ matrix.name }}
     runs-on: windows-2025-vs2026
@@ -1664,12 +2014,18 @@ jobs:
         include:
           - name: Pager descriptor ownership on Ubuntu WSL 1
             arguments: ''
-            package: ./internal/output
             artifact: wsl-pager
           - name: Command contracts on Ubuntu WSL 1
             arguments: --command-contracts
-            package: ./pkg/custom
             artifact: wsl-command-contracts
+          - name: Local state and offline commands on Ubuntu WSL 1
+            arguments: --profile local-state --setup-contract refused
+            profile: local-state
+            artifact: wsl-local-state
+          - name: Bash startup, first use and executable contracts on Ubuntu WSL 1
+            arguments: --profile shell-contracts --setup-contract refused
+            profile: shell-contracts
+            artifact: wsl-shell-contracts
     steps:
       - name: Reserve WSL cleanup time
         shell: pwsh
@@ -1678,7 +2034,7 @@ jobs:
           "WSL_PAGER_WORK_DEADLINE=$($started.AddMinutes(20).ToString('o'))" >> $env:GITHUB_ENV
           "WSL_PAGER_CLEANUP_DEADLINE=$($started.AddMinutes(23).ToString('o'))" >> $env:GITHUB_ENV
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -1686,40 +2042,61 @@ jobs:
       - name: Restore candidate checkout
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        timeout-minutes: 2
-        with:
-          go-version-file: .go-version
-          check-latest: true
-      - uses: ./.github/actions/link-go-sdk
       - name: Check the WSL pilot controls
         shell: pwsh
         timeout-minutes: 1
-        run: python -I -B scripts/test_wsl_pager.py
-      - name: Build the Linux compatibility test executables
-        shell: pwsh
-        timeout-minutes: 6
-        env:
-          GOOS: linux
-          GOARCH: amd64
-          CGO_ENABLED: '0'
-          GOMAXPROCS: '2'
-          GOFLAGS: '-p=2 -mod=readonly'
-          GOTOOLCHAIN: local
         run: |
-          $ErrorActionPreference = 'Stop'
-          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') '${{ matrix.package }}'
+          python -I -B scripts/test_wsl_pager.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ./cmd/openai
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-app.test') ./internal/app
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go mod verify
+          python -I -B scripts/test_wsl_profiles.py
           exit $LASTEXITCODE
+      - name: Download source-bound Linux payloads
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: 3
+        with:
+          artifact-ids: ${{ needs.wsl-binaries.outputs[matrix.artifact] }}
+          path: ${{ runner.temp }}/wsl-payloads
+          merge-multiple: true
+      - name: Verify payload source and hashes
+        shell: pwsh
+        timeout-minutes: 1
+        env:
+          WSL_SOURCE_ARTIFACT_ID: ${{ needs.source.outputs.artifact-id }}
+          WSL_PAYLOAD_ATTEMPT: ${{ needs.wsl-binaries.outputs.attempt }}
+        run: python -I -B .github/scripts/wsl_payloads.py verify (Join-Path $env:RUNNER_TEMP 'wsl-payloads') --bundle '${{ matrix.artifact }}'
+      - name: Download verified Ubuntu image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: 3
+        with:
+          artifact-ids: ${{ needs.wsl-image.outputs.artifact-id }}
+          path: ${{ runner.temp }}/wsl-image
+          merge-multiple: true
       - name: Run compatibility checks in disposable Ubuntu WSL 1
+        env:
+          WSL_PAGER_IMAGE: ${{ runner.temp }}/wsl-image/ubuntu.wsl
         shell: pwsh
         timeout-minutes: 16
-        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test') --app-binary (Join-Path $env:RUNNER_TEMP 'wsl-app.test') ${{ matrix.arguments }}
+        run: |
+          $payloadRoot = Join-Path $env:RUNNER_TEMP 'wsl-payloads'
+          $payloads = @('--process-binary', (Join-Path $payloadRoot 'wsl-process.test'))
+          if ('${{ matrix.arguments }}' -eq '--command-contracts') {
+            $payloads += @('--app-binary', (Join-Path $payloadRoot 'wsl-pager.test'))
+            $payloads += @('--images-binary', (Join-Path $payloadRoot 'wsl-images.test'))
+          }
+          if ('${{ matrix.profile }}' -ne 'shell-contracts') {
+            $payloads += @('--binary', (Join-Path $payloadRoot 'wsl-pager.test'))
+          }
+          if ('${{ matrix.profile }}' -eq 'local-state') {
+            $payloads += @('--imageprefs-binary', (Join-Path $payloadRoot 'wsl-imageprefs.test'))
+            $payloads += @('--clihelp-binary', (Join-Path $payloadRoot 'wsl-clihelp.test'))
+            $payloads += @('--autocomplete-binary', (Join-Path $payloadRoot 'wsl-autocomplete.test'))
+          }
+          if ('${{ matrix.profile }}' -eq 'shell-contracts') {
+            $payloads += @('--autocomplete-binary', (Join-Path $payloadRoot 'wsl-autocomplete.test'))
+            $payloads += @('--cli-binary', (Join-Path $payloadRoot 'wsl-openai'))
+          }
+          python -I -B scripts/check-wsl-pager.py @payloads ${{ matrix.arguments }}
+          exit $LASTEXITCODE
       - name: Reconcile the owned WSL distribution
         if: always()
         shell: pwsh
@@ -1727,7 +2104,7 @@ jobs:
         run: python -I -B scripts/check-wsl-pager.py --cleanup ${{ matrix.arguments }}
       - name: Retain WSL process evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

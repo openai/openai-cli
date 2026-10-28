@@ -25,13 +25,21 @@ func writeITermImage(ctx context.Context, out io.Writer, img image.Image, column
 }
 
 func writeITermPayload(ctx context.Context, out io.Writer, encoded []byte, columns int) (err error) {
+	return writeITermPayloadRows(ctx, out, encoded, columns, 0)
+}
+
+func writeITermPayloadRows(ctx context.Context, out io.Writer, encoded []byte, columns, rows int) (err error) {
 	width := iterm2.Auto
 	if columns > 0 {
 		width = iterm2.Cells(columns)
 	}
 	// Released xterm image addons require the decoded byte count, even though
 	// newer implementations also accept a payload without it.
-	header := "\x1b]1337;" + (iterm2.File{Size: int64(len(encoded)), Inline: true, Width: width, Height: iterm2.Auto}).String() + ":"
+	height := iterm2.Auto
+	if rows > 0 {
+		height = iterm2.Cells(rows)
+	}
+	header := "\x1b]1337;" + (iterm2.File{Size: int64(len(encoded)), Inline: true, Width: width, Height: height}).String() + ":"
 	destination := contextWriter{ctx, out}
 	started, complete := false, false
 	defer func() {

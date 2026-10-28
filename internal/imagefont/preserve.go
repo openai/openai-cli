@@ -69,7 +69,7 @@ func PreservedGlyphCapacity(source PreserveOptions) (int, error) {
 		fontCells = min(fontCells, cffCustomStringLimit-len(font.strings))
 	}
 	pixelsPerCell := int64(source.CellWidth) * int64(source.CellHeight) * maxPreservedBitmapScale * maxPreservedBitmapScale
-	return min(MaxGlyphs, fontCells, int(maxPreservedBitmapPixels/pixelsPerCell)), nil
+	return min(MaxPreservedGlyphs, fontCells, int(maxPreservedBitmapPixels/pixelsPerCell)), nil
 }
 
 // EncodePreserving creates a private, uniquely named copy of an outline
@@ -152,7 +152,7 @@ func EncodePreserving(ctx context.Context, frames []Frame, options Options, sour
 			// Old gallery scrollback uses BMP private-use characters. Keep those aliases
 			// only when they cannot replace an existing user-font icon.
 			alias := cp - uint32(FirstSupplementaryCodepoint) + uint32(FirstCodepoint)
-			if _, exists := mapping[alias]; source.LegacyAliases && !exists {
+			if _, exists := mapping[alias]; source.LegacyAliases && alias <= uint32(LastCodepoint) && !exists {
 				mapping[alias] = uint32(count + k)
 			}
 		}

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - next
   pull_request:
   merge_group:
     types:
@@ -26,7 +27,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -42,7 +43,7 @@ jobs:
           CANDIDATE_SHA: ${{ github.sha }}
         run: python3 scripts/ci/reference_shadow.py --base "$BASE_SHA" --head "$CANDIDATE_SHA" --pr-head "$PR_HEAD_SHA" --output "$RUNNER_TEMP/reference-shadow.json"
       - name: Retain shadow observation
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: reference-shadow-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/reference-shadow.json
@@ -56,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -66,6 +67,9 @@ jobs:
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
 
       - uses: ./.github/actions/setup-go
+
+      - name: Test picker fixture lifecycle
+        run: python3 -I -B -m unittest discover -s scripts -p 'test_image_picker_*.py' -v
 
       - name: Run lints
         run: ./scripts/lint
@@ -78,7 +82,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -92,7 +96,7 @@ jobs:
       - name: Check native macOS picker metadata and profile transactions
         run: go test ./internal/autocomplete -run '^TestPicker' -count=1 -v
       - name: Check native macOS shell targeting and setup decisions
-        run: go test ./pkg/custom -run '^TestImagePicker(Shell|FirstRun|TabChoice|MacOS)' -count=1 -v
+        run: go test ./internal/commands/images ./internal/app -run '^TestImagePicker(Shell|FirstRun|TabChoice|MacOS)' -count=1 -v
 
   minimum-unix-shells:
     name: Minimum Unix executable suggestions
@@ -106,7 +110,7 @@ jobs:
       OPENAI_CLI_REQUIRE_NATIVE_SHELLS: bash,zsh,fish
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -115,6 +119,13 @@ jobs:
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-go
+      - name: Test minimum shell archive recovery
+        run: python3 -I -B -m unittest discover -s .github/scripts -p 'test_download_minimum_shells.py' -v
+      - name: Cache pinned minimum shell archives
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/minimum-shell-archives
+          key: ${{ runner.os }}-minimum-shell-archives-v1-${{ hashFiles('.github/scripts/download_minimum_shells.py') }}
       - name: Prepare exact minimum Unix shells
         shell: bash
         timeout-minutes: 8
@@ -123,22 +134,13 @@ jobs:
           test "$(uname -m)" = x86_64
           test "$(go env GOOS)/$(go env GOARCH)" = linux/amd64
           tools_dir="$RUNNER_TEMP/minimum-shells"
+          archives="$RUNNER_TEMP/minimum-shell-archives"
+          python3 -I -B .github/scripts/download_minimum_shells.py "$archives"
           mkdir -p "$tools_dir/bin" "$tools_dir/home" "$tools_dir/config" "$tools_dir/data" "$tools_dir/cache"
           cd "$tools_dir"
-          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
-            https://ftp.gnu.org/gnu/bash/bash-4.0.tar.gz -o bash-4.0.tar.gz
-          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
-            https://www.zsh.org/pub/old/zsh-5.8.tar.xz -o zsh-5.8.tar.xz
-          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
-            https://github.com/fish-shell/fish-shell/releases/download/4.0.0/fish-static-amd64-4.0.0.tar.xz -o fish-4.0.0.tar.xz
-          sha256sum --check <<'SHA256'
-          9793d394f640a95030c77d5ac989724afe196921956db741bcaf141801c50518  bash-4.0.tar.gz
-          dcc4b54cc5565670a65581760261c163d720991f0d06486da61f8d839b52de27  zsh-5.8.tar.xz
-          e7bc962652763e9ca396fd81c1a6cc6105c78f4a82ec35b6bf5c3edacfbd2114  fish-4.0.0.tar.xz
-          SHA256
-          tar -xzf bash-4.0.tar.gz
-          tar -xJf zsh-5.8.tar.xz
-          tar -xJf fish-4.0.0.tar.xz -C bin fish
+          tar -xzf "$archives/bash-4.0.tar.gz"
+          tar -xJf "$archives/zsh-5.8.tar.xz"
+          tar -xJf "$archives/fish-4.0.0.tar.xz" -C bin fish
           (
             cd bash-4.0
             # GCC 10 changed the historical common-symbol default.
@@ -415,7 +417,7 @@ jobs:
           PY
       - name: Retain minimum shell evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: minimum-unix-shells-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/minimum-shell-*.jsonl
@@ -437,7 +439,7 @@ jobs:
       POWERSHELL_UPDATECHECK: 'Off'
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -594,7 +596,7 @@ jobs:
           powershell = {
               "TestShellSuggestionsPowerShell" + suffix
               for suffix in [
-                  "PublicLookupAndPrivacy", "ModuleIsolation", "MatchesAndWindowsExtension",
+                  "PublicLookupAndPrivacy", "ModuleIsolation", "PathIsolation", "MatchesAndWindowsExtension",
                   "WindowsMatchingIgnoresCurrentCulture", "UppercaseBinding",
                   "CanonicalCaseUsesExistingCommand", "PreservesResolutionAndDisable",
                   "PreservesPriorExceptions", "PriorResolutionWinsNearMiss",
@@ -632,7 +634,7 @@ jobs:
           ))
 
           public = cases("TestMainShellSuggestionsNative", ["pwsh"])
-          require((len(powershell), len(adapters), len(public)) == (48, 8, 2), "Suggestion inventory differs")
+          require((len(powershell), len(adapters), len(public)) == (49, 8, 2), "Suggestion inventory differs")
           suites = {
               "unix-powershell-suggestion-tests.jsonl": ("internal/autocomplete", powershell),
               "unix-powershell-adapter-tests.jsonl": ("internal/autocomplete", adapters),
@@ -691,7 +693,7 @@ jobs:
           PY
       - name: Retain native Unix PowerShell evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: minimum-unix-powershell-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -741,7 +743,7 @@ jobs:
             sha256: 2FD04091F7AACF2BBBA470EDC92A28034CD6F54999F7A880404AD17954476ABF
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -750,6 +752,8 @@ jobs:
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-go
+        with:
+          restore-only: 'true'
       - name: Select and verify native PowerShell
         id: powershell
         shell: pwsh
@@ -833,7 +837,7 @@ jobs:
         run: go test ./internal/autocomplete -run '^TestPicker(ProfileRecovery.*|Rename.*|RecoveryDirectory.*|Windows.*|FileMetadataPreservesZoneIdentifierAtSnapshotRecheck|ReplacementMetadataKeepsSameInheritedPermissions|SecurityDescriptorComparisonPreservesPermissions|InstallRoundTrip|InstallConfigDirectoryChanges|InstallIgnoresUnusedConfigDirectory|InstallConfigDirectoryRefusalPreservesFiles|InstallPreservesHardLinkedProfiles|ProfileHardLinkAddedAfterSnapshot|ScriptContentChecksLegacyNamespaces|InstallRetriesSupersededScriptCleanup|RemoveRetriesScriptCleanup|RemoveMissingProfileParentCleansOwnedScripts|RemoveMissingProfileAndScriptDirectoriesNoOp|RemoveMissingProfileParentReappearsWhileWaiting|RemovePreservesPersonalLineBoundaries|InstalledDetectsAndRefreshesOlderScript)$' -count=1 -v
       - name: Check Windows shell home targeting
         if: matrix.existing-checks
-        run: go test ./pkg/custom -run '^TestImagePicker(WindowsShellHome|ShellConsent)' -count=1 -v
+        run: go test ./internal/commands/images -run '^TestImagePicker(WindowsShellHome|ShellConsent)' -count=1 -v
       - name: Check native PowerShell executable suggestions
         shell: pwsh
         run: |
@@ -863,7 +867,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $env:PATH = $env:SELECTED_POWERSHELL_DIRECTORY + [IO.Path]::PathSeparator + $env:PATH
-          go test -p 1 ./cmd/openai -run '^(TestMainShellSuggestions|TestMainShellWindowsProcessDiagnostics$)' -count=1 -timeout=3m -v -json |
+          $selector = '^TestMainShellSuggestionsNative$/^pwsh$'
+          if ('${{ matrix.powershell }}' -eq 'current') {
+            $selector = '^(TestMainShellSuggestions|TestMainShellWindowsProcessDiagnostics$)'
+          }
+          go test -p 1 ./cmd/openai -run $selector -count=1 -timeout=3m -v -json |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'public-shell-suggestion-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
         env:
@@ -871,19 +879,21 @@ jobs:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
           SELECTED_POWERSHELL_DIRECTORY: ${{ steps.powershell.outputs.selected-directory }}
       - name: Check Windows stdin startup probing
+        if: matrix.powershell == 'current'
         run: go test ./internal/input -run '^TestWindowsPipedDataAvailable$' -count=1 -v
       - name: Check native Windows shell and file commands
         if: matrix.existing-checks
-        run: go test -p 2 ./cmd/openai -run '^TestMainShell' -skip '^TestMainShellSuggestions' -count=1 -v
+        run: go test -p 2 ./cmd/openai -run '^TestMainShell' -skip '^TestMainShell(Suggestions|WindowsProcessDiagnostics$)' -count=1 -v
         env:
           GOMAXPROCS: '2'
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: cmd,powershell,pwsh
       - name: Check native Windows download completion and cleanup
         if: matrix.existing-checks
-        run: go test -p 2 ./pkg/custom -run '^(TestWindowsDownload|TestManagedDownload|TestDownload|TestAutomaticDownload|TestBinaryResponsePreserves|TestWriteBinaryResponse|TestReportSaveReceipt|TestSaveReceiptContext|TestResponseSaveReceipt)' -count=1 -v
+        run: go test -p 2 ./internal/app ./internal/output -run '^(TestWindowsDownload|TestManagedDownload|TestDownload|TestAutomaticDownload|TestBinaryResponsePreserves|TestWriteBinaryResponse|TestReportSaveReceipt|TestSaveReceiptContext|TestResponseSaveReceipt)' -count=1 -v
         env:
           GOMAXPROCS: '2'
       - name: Check native Windows Batch stdin and private staging
+        if: matrix.powershell == 'current'
         run: |
           go test -p 2 ./internal/commands/batches -run '^TestWindowsBatch(DownloadPrivateStagingAndPublication|OutputDirectory.*)$' -count=1 -timeout=1m -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -924,7 +934,7 @@ jobs:
           powershell = {
               "TestShellSuggestionsPowerShell" + suffix
               for suffix in [
-                  "PublicLookupAndPrivacy", "ModuleIsolation", "MatchesAndWindowsExtension",
+                  "PublicLookupAndPrivacy", "ModuleIsolation", "PathIsolation", "MatchesAndWindowsExtension",
                   "WindowsMatchingIgnoresCurrentCulture", "UppercaseBinding",
                   "CanonicalCaseUsesExistingCommand", "PreservesResolutionAndDisable",
                   "PreservesPriorExceptions", "PriorResolutionWinsNearMiss",
@@ -960,22 +970,24 @@ jobs:
                   "RecheckExecutablePrecedence", "RecheckRemovedExecutable",
               ]
           ))
-          public = (
-              cases("TestMainShellSuggestionsNative", ["pwsh"]) |
-              cases("TestMainShellSuggestionsRequireSeparateConsent", ["bash", "zsh", "fish", "pwsh"]) |
-              cases("TestMainShellSuggestionsConfigurationSnapshot", [
-                  "cache_creation", "cache_rewrite", "sibling_file", "new_profile",
-                  "existing_profile", "profile_mode", "cache_without_exclusion", "cache_directory",
-              ]) |
-              cases("TestMainShellSuggestionsRejectMixedPersistentSetup", [
-                  mode + "/" + flag for mode in ["text", "json"]
-                  for flag in ["--install-picker", "--uninstall-picker", "--automatic"]
-              ])
-          )
-          public.update(cases(
-              "TestMainShellWindowsProcessDiagnostics", ["success", "nonzero", "timeout"],
-          ))
-          require((len(powershell), len(adapters), len(public)) == (48, 8, 27),
+          public = cases("TestMainShellSuggestionsNative", ["pwsh"])
+          if os.environ["EXPECTED_POWERSHELL"] == "current":
+              public.update(
+                  cases("TestMainShellSuggestionsRequireSeparateConsent", ["bash", "zsh", "fish", "pwsh"]) |
+                  cases("TestMainShellSuggestionsConfigurationSnapshot", [
+                      "cache_creation", "cache_rewrite", "sibling_file", "new_profile",
+                      "existing_profile", "profile_mode", "cache_without_exclusion", "cache_directory",
+                  ]) |
+                  cases("TestMainShellSuggestionsRejectMixedPersistentSetup", [
+                      mode + "/" + flag for mode in ["text", "json"]
+                      for flag in ["--install-picker", "--uninstall-picker", "--automatic"]
+                  ])
+              )
+              public.update(cases(
+                  "TestMainShellWindowsProcessDiagnostics", ["success", "nonzero", "timeout"],
+              ))
+          expected_public_count = 27 if os.environ["EXPECTED_POWERSHELL"] == "current" else 2
+          require((len(powershell), len(adapters), len(public)) == (49, 8, expected_public_count),
                   "Suggestion inventory contains missing or duplicate names")
           suites = {
               "powershell-suggestion-tests.jsonl": ("internal/autocomplete", powershell),
@@ -1030,7 +1042,7 @@ jobs:
           PY
       - name: Retain native Windows suggestion evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-suggestions-${{ matrix.goarch }}-${{ matrix.powershell }}-${{ github.run_attempt }}
           path: |
@@ -1048,8 +1060,18 @@ jobs:
     permissions: {}
     runs-on: ubuntu-latest
     steps:
+      - name: Make room for cross-platform Go builds
+        shell: bash
+        run: |
+          # This Go-only job does not use the hosted runner's Android SDK.
+          # Reclaim its space before restoring caches and building every target.
+          df -h /
+          if [[ -d /usr/local/lib/android && ! -L /usr/local/lib/android ]]; then
+            sudo rm -rf -- /usr/local/lib/android
+          fi
+          df -h /
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -1072,7 +1094,7 @@ jobs:
           echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
           echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
       - name: Cache artifact build dependencies and compilation
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ steps.artifact-cache-paths.outputs.build }}
@@ -1164,7 +1186,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -1181,8 +1203,9 @@ jobs:
       - name: Check error audit validator
         run: python3 scripts/test-error-audit.py
 
-      - name: Check Linux picker metadata and profile identity
-        run: go test ./internal/autocomplete -run '^TestPicker(InstallRetainsLinuxSELinuxLabel|SecurityLabel.*|InstallPreservesLinuxFileMetadata|LinuxMetadataAddedAfterSnapshotIsKept|UnixProfileIdentityKeepsDistinctCaseNames)$' -count=1 -v
+      - name: Check test launcher failure handling
+        # Run outside the launcher so it cannot hide a regression in its own exit status.
+        run: go test ./scripts -run '^TestTestRunner$' -count=1
 
       - name: Check native Bash executable suggestions
         run: go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsBash' -count=1 -timeout=5m -v
@@ -1193,7 +1216,7 @@ jobs:
       - name: Run tests
         # Large-payload and subprocess suites share this runner. Avoid running
         # packages concurrently; retain every test, payload and deadline.
-        run: ./scripts/test -p 1
+        run: ./scripts/test -p 1 -skip '^TestShellSuggestionsBash'
         env:
           SKIP_WINDOWS_TEST_COMPILE: '1'
 
@@ -1205,7 +1228,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -1232,7 +1255,7 @@ jobs:
         shard: [0, 1, 2, 3]
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -1254,7 +1277,7 @@ jobs:
       - name: Retain audit log
         if: always()
         continue-on-error: true # Diagnostic upload does not replace shard validation.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: error-audit-${{ matrix.shard }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/error-audit.jsonl

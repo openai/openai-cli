@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-var ErrPending = errors.New("a previous sharp preview may still be registered; retry that saved image with the same font settings or open a new Terminal tab")
+var ErrPending = errors.New("a previous sharp preview may still be registered; retry that saved image with the same font settings. Alternatively, open a new Terminal tab with your normal text font")
 
 type pendingAttempt struct {
 	Version     int    `json:"version"`

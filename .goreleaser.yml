@@ -12,7 +12,7 @@ builds:
     main: ./cmd/openai/main.go
     mod_timestamp: '{{ .CommitTimestamp }}'
     ldflags:
-      - '-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}'
+      - '-s -w -X github.com/openai/openai-cli/internal/updatenotice.releaseVersion={{.Version}} -X github.com/openai/openai-cli/internal/updatenotice.releaseCommit={{.Commit}}'
 
   - id: linux
     goos: [linux]
@@ -23,7 +23,7 @@ builds:
     main: ./cmd/openai/main.go
     mod_timestamp: '{{ .CommitTimestamp }}'
     ldflags:
-      - '-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}'
+      - '-s -w -X github.com/openai/openai-cli/internal/updatenotice.releaseVersion={{.Version}} -X github.com/openai/openai-cli/internal/updatenotice.releaseCommit={{.Commit}}'
 
   - id: windows
     goos: [windows]
@@ -32,7 +32,7 @@ builds:
     main: ./cmd/openai/main.go
     mod_timestamp: '{{ .CommitTimestamp }}'
     ldflags:
-      - '-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}'
+      - '-s -w -X github.com/openai/openai-cli/internal/updatenotice.releaseVersion={{.Version}} -X github.com/openai/openai-cli/internal/updatenotice.releaseCommit={{.Commit}}'
 
 archives:
   - id: linux-archive

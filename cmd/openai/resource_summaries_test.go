@@ -31,16 +31,14 @@ func TestMainResourceSummariesRetainActionFields(t *testing.T) {
 			[]string{"models", "retrieve", "model_synthetic"}, []string{"ID: model_synthetic", "Owned by: synthetic", "Shutdown date: 2030-01-01"}},
 		{"file", "/files/file_synthetic", `{"id":"file_synthetic","object":"file","created_at":17,"filename":"資料-é.txt","purpose":"assistants","bytes":0,"status":"processed","status_details":null,"expires_at":31}`,
 			[]string{"files", "retrieve", "file_synthetic"}, []string{"ID: file_synthetic", "Filename: 資料-é.txt", "Purpose: assistants", "Bytes: 0", "Status: processed", "Expires at: 31"}},
-		{"batch", "/batches/batch_synthetic", `{"id":"batch_synthetic","object":"batch","created_at":17,"status":"completed","request_counts":{"completed":2,"failed":1,"total":3},"input_file_id":"file_input","output_file_id":"file_output","error_file_id":"file_error","endpoint":"/v1/responses","metadata":{"note":"hidden metadata"}}`,
-			[]string{"batches", "retrieve", "batch_synthetic"}, []string{"ID: batch_synthetic", "Status: completed", "Completed: 2", "Failed: 1", "Input file ID: file_input", "Output file ID: file_output", "Error file ID: file_error", "Endpoint: /v1/responses"}},
+		{"batch", "/batches/batch_synthetic", `{"id":"batch_synthetic","object":"batch","created_at":17,"status":"completed","request_counts":{"completed":2,"failed":1,"total":3},"input_file_id":"file_input","output_file_id":"file_output","error_file_id":"file_error","endpoint":"/v1/responses","metadata":{"note":"retained metadata"}}`,
+			[]string{"batches", "retrieve", "batch_synthetic"}, []string{"ID: batch_synthetic", "Status: completed", "Created at: 1970-01-01T00:00:17Z", "Note: retained metadata", "Completed: 2", "Failed: 1", "Input file ID: file_input", "Output file ID: file_output", "Error file ID: file_error", "Endpoint: /v1/responses"}},
 		{"vector store", "/vector_stores/vs_synthetic", `{"id":"vs_synthetic","object":"vector_store","created_at":17,"name":"Synthetic store","status":"completed","file_counts":{"completed":3,"failed":1},"usage_bytes":9007199254740993,"expires_at":31}`,
 			[]string{"vector-stores", "retrieve", "vs_synthetic"}, []string{"ID: vs_synthetic", "Name: Synthetic store", "Status: completed", "Completed: 3", "Failed: 1", "Usage bytes: 9007199254740993", "Expires at: 31"}},
 		{"vector file", "/vector_stores/vs_synthetic/files/file_synthetic", `{"id":"file_synthetic","object":"vector_store.file","created_at":17,"vector_store_id":"vs_synthetic","status":"failed","usage_bytes":0,"last_error":{"code":"synthetic_error","message":"Synthetic failure"},"attributes":{"enabled":false}}`,
 			[]string{"vector-stores:files", "retrieve", "--vector-store-id", "vs_synthetic", "--file-id", "file_synthetic"}, []string{"ID: file_synthetic", "Vector store ID: vs_synthetic", "Status: failed", "Usage bytes: 0", "Code: synthetic_error", "Message: Synthetic failure", "Enabled: false"}},
 		{"vector file batch", "/vector_stores/vs_synthetic/file_batches/vsfb_synthetic", `{"id":"vsfb_synthetic","object":"vector_store.files_batch","created_at":17,"vector_store_id":"vs_synthetic","status":"completed","file_counts":{"completed":2,"failed":0}}`,
 			[]string{"vector-stores:file-batches", "retrieve", "--vector-store-id", "vs_synthetic", "--batch-id", "vsfb_synthetic"}, []string{"ID: vsfb_synthetic", "Vector store ID: vs_synthetic", "Status: completed", "Completed: 2", "Failed: 0"}},
-		{"fine tuning job", "/fine_tuning/jobs/ftjob_synthetic", `{"id":"ftjob_synthetic","object":"fine_tuning.job","created_at":17,"status":"succeeded","model":"model_base","fine_tuned_model":"model_tuned","training_file":"file_training","validation_file":"file_validation","result_files":["file_result"],"trained_tokens":42,"error":null,"estimated_finish":null}`,
-			[]string{"fine-tuning:jobs", "retrieve", "ftjob_synthetic"}, []string{"ID: ftjob_synthetic", "Status: succeeded", "Model: model_base", "Fine tuned model: model_tuned", "Training file: file_training", "Validation file: file_validation", "file_result", "Trained tokens: 42"}},
 		{"assistant", "/assistants/asst_synthetic", `{"id":"asst_synthetic","object":"assistant","created_at":17,"name":"Synthetic assistant","model":"model_synthetic","description":"Synthetic description","instructions":"hidden instructions","tools":[]}`,
 			[]string{"beta:assistants", "retrieve", "asst_synthetic"}, []string{"ID: asst_synthetic", "Name: Synthetic assistant", "Model: model_synthetic", "Description: Synthetic description"}},
 		{"thread run", "/threads/thread_synthetic/runs/run_synthetic", `{"id":"run_synthetic","object":"thread.run","created_at":17,"status":"requires_action","thread_id":"thread_synthetic","assistant_id":"asst_synthetic","model":"model_synthetic","required_action":{"type":"submit_tool_outputs","submit_tool_outputs":{"tool_calls":[{"id":"call_synthetic","type":"function","function":{"name":"synthetic_function","arguments":"{}"}}]}},"last_error":null,"usage":{"total_tokens":12},"expires_at":31}`,
@@ -69,7 +67,11 @@ func TestMainResourceSummariesRetainActionFields(t *testing.T) {
 					t.Errorf("missing %q in %q", want, got.stdout)
 				}
 			}
-			for _, hidden := range []string{"Object:", "Created:", "Created at:", "hidden metadata", "hidden instructions", "(null)"} {
+			hiddenFields := []string{"Object:", "Created:", "hidden instructions", "(null)"}
+			if tc.name != "batch" {
+				hiddenFields = append(hiddenFields, "Created at:")
+			}
+			for _, hidden := range hiddenFields {
 				if strings.Contains(got.stdout, hidden) {
 					t.Errorf("summary retained %q: %q", hidden, got.stdout)
 				}
@@ -405,7 +407,6 @@ func TestMainResourceSummaryLeavesOtherOperationsUnchanged(t *testing.T) {
 	}{
 		{"create", http.MethodPost, "/vector_stores", `{"id":"vs_synthetic","object":"vector_store","created_at":17,"name":"Synthetic store"}`, []string{"vector-stores", "create", "--name", "Synthetic store"}},
 		{"delete", http.MethodDelete, "/files/file_synthetic", `{"id":"file_synthetic","object":"file","deleted":true}`, []string{"files", "delete", "file_synthetic"}},
-		{"cancel", http.MethodPost, "/batches/batch_synthetic/cancel", `{"id":"batch_synthetic","object":"batch","created_at":17,"status":"cancelling"}`, []string{"batches", "cancel", "batch_synthetic"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -9,11 +9,12 @@ Files in `generated/commands/` are generated from the OpenAPI specification by
 Castiron. Generated files identify themselves with a `File generated` header;
 `.castiron.stats.yml` and `api_reference/openapi.transformed.yml` record the
 generation inputs. Establish whether the generator owns a file before editing
-it. Fix recurring generated defects in the authoritative schema or generator
-when available instead of introducing broad manual changes.
+it. Never edit generated files by hand. Fix the authoritative schema, generation
+configuration, or compiler and regenerate instead.
 
 Handwritten CLI features are moving into `internal/commands/<feature>/` (Codex,
-tokenizer, and manpages are there now); remaining behavior lives in `pkg/custom/`. API response selection
+tokenizer, manpages, files, batches, models, admin, audio, and images are there now); application assembly and request/output policy live in `internal/app/`.
+Generated runtime adapters call `internal/app/` directly. API response selection
 and reshaping live in `internal/output/transform/`. Use cohesive `internal/` helpers for
 shared implementation, including text rendering and terminal escaping.
 `internal/commands/` owns command-tree routing, compatibility aliases, shortcuts,
@@ -25,15 +26,21 @@ and explain the distinct responsibility of any new package. Preserve command
 compatibility, generated ownership, and the separate `api_reference/go.mod`
 module.
 
-## Custom-code budget
+## Generated-file ownership
 
-Follow [the custom-code guidance](scripts/castiron/CUSTOM_CODE.md). Budget changes
-belong in a separate PR containing only `.castiron-ratchet.json`, with an explicit justification
-in the PR description. Increases require a **human approving review** before merging.
-Agents may investigate and draft proposals, but must not approve budget increases
-(including through a human's credentials) or bypass the gate. Do not weaken
-counting, broaden exclusions, or alter generation metadata to make a change pass.
-The checker and effective budget come from main, not the PR. Keep default CODEOWNERS.
+Never hand-edit generated SDK files, including generated tests, documentation,
+workflows, or the generated-file inventory. Change the authoritative API schema,
+configuration, or compiler, then regenerate. Put SDK-specific behavior in
+separately owned handwritten helpers and extension points.
+
+Regeneration replaces generator-owned files and deletes retired generated paths.
+Handwritten edits to generated files are overwritten; they are never replayed or
+merged into new output. Preserve separately owned handwritten files and resolve
+ownership collisions explicitly. Follow this AGENTS.md rule and review generated output and inventory changes
+together. Generated-file ownership currently relies on contributor guidance and
+code review; there is no dedicated generated-file edit check or required gate.
+Fix violations in the inputs/compiler and regenerate; never update inventory
+hashes to accept a handwritten patch.
 
 ## Security requirements
 

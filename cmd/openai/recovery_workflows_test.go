@@ -227,7 +227,7 @@ func TestMainCommandRecoveryPreservesExplicitContext(t *testing.T) {
 	}
 	// Execute the literal suggestion. Appending --help would hide unsafe recovery.
 	copied := runMainDispatchWithEnv(t, "bash", environment, strings.Fields(suggestion)...)
-	if copied.code != 0 || copied.stderr != "" || requests.Load() != 0 || !strings.Contains(copied.stdout, "SYNOPSIS:\n   openai vector-stores create") {
+	if copied.code != 0 || copied.stderr != "" || requests.Load() != 0 || !strings.Contains(copied.stdout, "SYNOPSIS\n  openai vector-stores create") {
 		t.Fatalf("literal recovery must show help without an API mutation: %+v; requests=%d", copied, requests.Load())
 	}
 	if suggestion != "openai help vector-stores create" {

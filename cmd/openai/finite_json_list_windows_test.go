@@ -266,7 +266,7 @@ func TestMainDispatchFiniteJSONListCancellationPreservesPartialOutput(t *testing
 	defer cancel()
 	env := []string{"HOME=" + home, "USERPROFILE=" + home, "OPENAI_API_KEY=sk-fake-list-test",
 		"OPENAI_BASE_URL=" + server.URL, "NO_COLOR=1", "FORCE_COLOR=0", "TERM=dumb"}
-	child, interrupt, verifyFixture := imageEditInterruptCommand(t, ctx, binary, home, env,
+	child, interrupt, verifyFixture := windowsInterruptCommand(t, ctx, binary, home, env, uint32(windows.STATUS_CONTROL_C_EXIT),
 		"openai", "--format", "json", "files", "list")
 	child.WaitDelay = 2 * time.Second
 	reader, writer, err := os.Pipe()
@@ -361,4 +361,26 @@ func TestMainDispatchFiniteJSONListCancellationPreservesPartialOutput(t *testing
 	}
 	assertFiniteJSONListPartial(t, stdout.checkedText(t), "file_a")
 	t.Log("finite-list CTRL_C verified: partial array preserved, HTTP source closed, two requests")
+}
+
+func TestFiniteJSONListInterruptControllerResult(t *testing.T) {
+	controlExit := uint32(windows.STATUS_CONTROL_C_EXIT)
+	for _, test := range []struct {
+		name  string
+		exit  int
+		valid bool
+	}{
+		{"CTRL_C exit", int(controlExit), true},
+		{"signed CTRL_C exit", int(int32(controlExit)), true},
+		{"cooperative exit 130", 130, false},
+		{"unrelated exit 1", 1, false},
+		{"zero exit", 0, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := windowsConsoleResult{Started: true, EventSent: true, Event: windows.CTRL_C_EVENT, ChildExit: &test.exit}
+			if err := verifyWindowsInterruptControllerResult(result, test.exit, controlExit); (err == nil) != test.valid {
+				t.Fatalf("valid=%v, want %v: %v", err == nil, test.valid, err)
+			}
+		})
+	}
 }

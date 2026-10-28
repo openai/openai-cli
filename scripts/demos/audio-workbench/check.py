@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--source", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repo-root", type=Path, default=os.environ.get("DEMO_REPO_ROOT"))
-    parser.add_argument("--case", choices=("workflow", "compact", "navigation", "navigation-compact", "failure", "failure-compact",
+    parser.add_argument("--case", choices=("workflow", "compact", "navigation", "navigation-compact", "failure", "failure-compact", "wide",
                                           "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
                                           "stopped-reader", "startup", "print-command", "all"), default="all")
     parser.add_argument("--theme", choices=("dark", "light", "no-color"), default="dark")

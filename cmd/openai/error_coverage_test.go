@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/openai/openai-cli/generated/commands"
+	"github.com/openai/openai-cli/internal/app"
 	"github.com/openai/openai-cli/internal/requestflag"
-	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/urfave/cli/v3"
 )
 
@@ -144,6 +144,10 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 		"@manpages":   "Parser cases here; destination failures use TestMainRecoveryManpageOutput.",
 	}
 	hiddenFlags := map[string]string{
+		"@completion/--suggestions-only":                   "Managed insertion-hook generation; setup and native shell tests cover valid use. Parser errors retain only the declared option name.",
+		"explore/--suggestions":                            "Shell-owned recent-command input; search and native shell tests cover valid use. Parser errors must not echo rejected values.",
+		"explore/--shell-integration":                      "Shell-owned selection protocol; search and native shell tests cover valid use. Parser errors must not echo rejected values.",
+		"explore/--shell":                                  "Shell-owned selection encoding; search and native shell tests cover valid use. Parser errors retain only the declared option name.",
 		"help/--all":                                       "Deprecated help migration flag; help compatibility tests cover valid usage.",
 		"admin certificates create/--content":              "Hidden compatibility field; explicit-use errors retain its declared name, but suggestions omit it.",
 		"admin organization certificates create/--content": "Hidden compatibility field; explicit-use errors retain its declared name, but suggestions omit it.",
@@ -309,11 +313,11 @@ func TestMainErrorCoverageManifestProcess(t *testing.T) {
 		return
 	}
 	root := commands.Command
-	root.Flags = append(root.Flags, custom.NewRequestHeaderFlag())
-	if _, _, err := custom.ConfigureHelp(root, []string{"openai", "--help"}); err != nil {
+	root.Flags = append(root.Flags, app.NewRequestHeaderFlag())
+	if _, _, err := app.ConfigureHelp(root, []string{"openai", "--help"}); err != nil {
 		t.Fatal(err)
 	}
-	custom.ConfigureCommandErrors(root)
+	app.ConfigureCommandErrors(root)
 	manifest, err := buildErrorCoverageManifest(root)
 	if err != nil {
 		t.Fatal(err)

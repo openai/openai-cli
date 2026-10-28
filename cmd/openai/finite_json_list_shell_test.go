@@ -102,8 +102,25 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 				if pipeline {
 					consumer = transport("parse-json", output)
 				}
-				script, status := finiteJSONListShellScript(t, shell, directory, transport("produce", fixture), consumer, output)
-				got := runNativeShell(t, shell, directory, t.TempDir(), "http://127.0.0.1:1", script)
+				producer := transport("produce", fixture)
+				observedShell := shell
+				trace := ""
+				if runtime.GOOS == "windows" && shell.name == "powershell" {
+					trace = filepath.Join(directory, "shell-startup")
+					observedShell.args = append([]string{"-test.run=^TestShellFileWindowsProcessHelper$", "--", "observe-start", trace}, shell.args[2:]...)
+					producer = invoke(helper, "-test.run=^TestFiniteJSONListShellProcess$", "--", "produce", fixture, "observe-start")
+					t.Cleanup(func() {
+						for _, checkpoint := range []string{trace, trace + ".entered", fixture + ".entered", fixture + ".finished"} {
+							data, err := os.ReadFile(checkpoint)
+							t.Logf("PowerShell startup pipeline=%t checkpoint=%s value=%q error=%v", pipeline, filepath.Base(checkpoint), data, err)
+						}
+					})
+				}
+				script, status := finiteJSONListShellScript(t, shell, directory, producer, consumer, output)
+				if trace != "" {
+					script = "[IO.File]::WriteAllText(" + finiteJSONListShellQuote(shell, trace+".entered") + ", [DateTime]::UtcNow.ToString('O')); " + script
+				}
+				got := runNativeShell(t, observedShell, directory, t.TempDir(), "http://127.0.0.1:1", script)
 				assertFiniteJSONListShellStatus(t, status, 0, got, fmt.Sprintf("native producer control pipeline=%t", pipeline))
 				if got.code != 0 || got.stdout != "" || got.stderr != "" {
 					t.Fatalf("native producer control failed: pipeline=%t result=%+v", pipeline, got)
@@ -408,11 +425,24 @@ func TestFiniteJSONListShellProcess(t *testing.T) {
 		return
 	}
 	args := os.Args[separator+1:]
+	observe := len(args) == 3 && args[0] == "produce" && args[2] == "observe-start"
+	if observe {
+		args = args[:2]
+	}
 	if len(args) != 2 {
 		t.Fatal("invalid native list helper arguments")
 	}
+	checkpoint := func(suffix string) {
+		if observe {
+			value := fmt.Sprintf("pid=%d utc=%s", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))
+			if err := os.WriteFile(args[1]+suffix, []byte(value), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	watchdog := time.AfterFunc(15*time.Second, func() { os.Exit(124) })
 	defer watchdog.Stop()
+	checkpoint(".entered")
 	var err error
 	switch args[0] {
 	case "produce":
@@ -450,5 +480,6 @@ func TestFiniteJSONListShellProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkpoint(".finished")
 	os.Exit(0)
 }

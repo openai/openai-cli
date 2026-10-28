@@ -329,7 +329,7 @@ func TestMainRequestHeadersHelpAndCompletion(t *testing.T) {
 		got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_CUSTOM_HEADERS=X-Test: fake-env-help-secret"}, args...)
 		documentation := "OPENAI_CUSTOM_HEADERS"
 		if len(path) > 0 {
-			documentation = "Global option details: openai --help"
+			documentation = "Run $ openai --help for details."
 		}
 		if got.code != 0 || !strings.Contains(got.stdout, documentation) || !strings.Contains(got.stdout, "--header") || strings.Contains(got.stdout+got.stderr, "fake-help-secret") || strings.Contains(got.stdout+got.stderr, "fake-env-help-secret") {
 			t.Errorf("full header help = %+v; want documentation without header values", got)

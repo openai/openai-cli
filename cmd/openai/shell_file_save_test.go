@@ -122,6 +122,46 @@ func TestMainShellSavePreservesGoodDestination(t *testing.T) {
 	}
 }
 
+func TestMainShellSaveRejectsSymlinkDestinations(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte{0, 255, 's', 'y', 'n', 't', 'h', 'e', 't', 'i', 'c'})
+	}))
+	defer server.Close()
+	for _, command := range shellBinarySaveCommands() {
+		t.Run(strings.Join(command, " "), func(t *testing.T) {
+			for _, flag := range []string{"--output", "-o"} {
+				t.Run(flag, func(t *testing.T) {
+					directory := t.TempDir()
+					target := filepath.Join(directory, "target.bin")
+					path := filepath.Join(directory, "output.bin")
+					if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(filepath.Base(target), path); err != nil {
+						t.Skipf("symlink creation unavailable: %v", err)
+					}
+					args := append(append([]string{}, command...), flag, path)
+					got := runShellSaveCommand(t, server, args...)
+					if got.code != 1 || got.stdout != "" || !strings.Contains(got.stderr, "destination was not changed") || strings.Contains(got.stderr, "Wrote output to:") {
+						t.Fatalf("command=%+v", got)
+					}
+					data, err := os.ReadFile(target)
+					if err != nil || string(data) != "keep" {
+						t.Fatalf("symlink target changed: %q, %v", data, err)
+					}
+					if link, err := os.Readlink(path); err != nil || link != filepath.Base(target) {
+						t.Fatalf("symlink changed: %q, %v", link, err)
+					}
+					stages, err := filepath.Glob(filepath.Join(directory, ".openai-download-*"))
+					if err != nil || len(stages) != 0 {
+						t.Fatalf("stages=%v err=%v", stages, err)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestMainShellSaveReceiptErrorFormats(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "synthetic bytes") }))
 	defer server.Close()

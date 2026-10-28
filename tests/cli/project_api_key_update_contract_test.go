@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/openai/openai-cli/internal/mocktest"
 )
 
 // Verify request encoding at the public CLI entrypoint without updating real keys.
@@ -19,9 +21,7 @@ func TestProjectAPIKeyUpdateRequestContract(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	if output, err := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../cmd/openai").CombinedOutput(); err != nil {
-		t.Fatalf("build CLI = %v (%s), want success", err, output)
-	}
+	mocktest.CopyCLI(t, binary)
 
 	tests := []struct {
 		name, stdin, wantJSON string

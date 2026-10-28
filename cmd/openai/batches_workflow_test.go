@@ -934,7 +934,7 @@ func TestMainBatchesWorkflowHelpWithoutCredentials(t *testing.T) {
 			}
 			plain := strings.Join(strings.Fields(got.stdout), " ")
 			for _, want := range []string{
-				"[BATCH_ID | --batch-id BATCH_ID]", "ID of the batch.",
+				"[BATCH_ID | --batch-id=BATCH_ID]", "ID of the batch.",
 				"The shown positional arguments can replace their matching flags.", "JSON/YAML keys: batch_id.",
 			} {
 				if !strings.Contains(plain, want) {
@@ -967,7 +967,7 @@ func TestMainBatchesHelpInputFormsExecute(t *testing.T) {
 				prefix, rest, found := strings.Cut(synopsis, "[")
 				choices, _, closed := strings.Cut(rest, "]")
 				if !found || !closed || strings.TrimSpace(prefix) != "openai batches "+operation ||
-					choices != "BATCH_ID | --batch-id BATCH_ID" {
+					choices != "BATCH_ID | --batch-id=BATCH_ID" {
 					t.Fatalf("missing executable Batch input alternatives: %s", synopsis)
 				}
 				// Run both alternatives copied from the synopsis against a local API.

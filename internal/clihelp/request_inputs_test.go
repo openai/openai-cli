@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/app"
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/requestflag"
-	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/urfave/cli/v3"
 )
 
@@ -55,14 +55,14 @@ func TestDescribeRequestInputsSurvivesResourceCloning(t *testing.T) {
 		clihelp.DescribeRequestInputs(root)
 		localcommands.ConfigureSubgroups(root)
 		args := append(append([]string{"openai"}, path...), "--help")
-		args, _, err := custom.ConfigureHelp(root, args)
+		args, _, err := app.ConfigureHelp(root, args)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := root.Run(t.Context(), args); err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"[PROJECT_ID | --project-id PROJECT_ID]", "ID of the project.", "JSON/YAML keys: project_id."} {
+		for _, want := range []string{"[PROJECT_ID | --project-id=PROJECT_ID]", "ID of the project.", "JSON/YAML keys: project_id."} {
 			if !strings.Contains(strings.Join(strings.Fields(out.String()), " "), want) {
 				t.Errorf("route %q lost %q: %s", path, want, out.String())
 			}

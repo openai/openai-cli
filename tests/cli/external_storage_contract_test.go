@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/openai/openai-cli/internal/mocktest"
 )
 
 // Exercise the public entrypoint, including the real SDK's admin authentication
@@ -23,9 +25,7 @@ func TestExternalStorageContract(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	if output, err := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../cmd/openai").CombinedOutput(); err != nil {
-		t.Fatalf("build CLI = %v (%s), want success", err, output)
-	}
+	mocktest.CopyCLI(t, binary)
 	run := func(t *testing.T, endpoint, format, stdin string, admin bool, args ...string) ([]byte, error) {
 		t.Helper()
 		flags := []string{"--base-url", endpoint, "--format", format, "admin:organization:external-storage"}

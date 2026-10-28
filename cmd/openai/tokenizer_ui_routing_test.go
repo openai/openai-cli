@@ -91,6 +91,7 @@ func TestMainTokenizerEditorHelpAndDiscoveryStayNonInteractive(t *testing.T) {
 	rootHelp := runMainDispatchWithEnv(t, "bash", env, "openai", "--help")
 	require.Zero(t, rootHelp.code, "%s", rootHelp.stderr)
 	require.Contains(t, rootHelp.stdout, "LOCAL TOOLS")
+	require.Contains(t, rootHelp.stdout, "SHORTCUTS")
 	require.Contains(t, rootHelp.stdout, "tokenizer")
 	require.Contains(t, rootHelp.stdout, "codex")
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
