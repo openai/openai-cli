@@ -7,6 +7,7 @@ import email.policy
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -199,7 +200,16 @@ def main():
     print("Press Ctrl+N to create a batch with requests.jsonl, or choose an uploaded input.", flush=True)
     print("Use the Responses endpoint. New demo batches finish after three progress updates.\n", flush=True)
     process = None
-    interrupted = False
+    stop_signal = None
+
+    def request_stop(signum, _frame):
+        nonlocal stop_signal
+        # Let Popen return the child before cleanup, even if a second signal arrives.
+        if stop_signal is None:
+            stop_signal = signum
+
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGTERM, request_stop)
     log_descriptor = os.open(directory / "request-log.jsonl", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(log_descriptor, "w", encoding="utf-8") as log:
         fixture = BrowserFixture(log)
@@ -210,9 +220,12 @@ def main():
             try:
                 process = subprocess.Popen([str(binary), "batches", "browse"], cwd=directory,
                                            env=environment, start_new_session=(os.name == "posix"))
-                process.wait()
-            except KeyboardInterrupt:
-                interrupted = True
+                while stop_signal is None:
+                    try:
+                        process.wait(timeout=0.2)
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
             except OSError:
                 print("Could not start the candidate executable. Check its permissions and platform.", file=sys.stderr)
             finally:
@@ -222,7 +235,9 @@ def main():
                 finally:
                     server.shutdown()
                     thread.join(timeout=5)
-    code = 130 if interrupted else process.returncode if process is not None else 1
+    code = process.returncode if process is not None else 1
+    if stop_signal is not None:
+        code = 128 + stop_signal
     outcome = {"synthetic": True, "exit": code, "fixture_failures": fixture.failures,
                "server_stopped": not thread.is_alive(),
                "process_stopped": process is not None and process.poll() is not None,

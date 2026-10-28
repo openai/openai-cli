@@ -15,8 +15,60 @@ import (
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
+
+func TestBatchBrowserGuidedMetadataRejectsInvalidValuesBeforeReview(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+	client := openai.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("synthetic-metadata-key"))
+	for _, source := range []string{"local", "uploaded"} {
+		for _, raw := range []string{
+			`{"note":null}`, `{"note":null,"note":"ok"}`, `{"note":"ok","note":null}`,
+			`{"note":false}`, `{"note":123}`, `{"note":["value"]}`, `{"note":{}}`, `null`, `[]`, `{} {}`,
+		} {
+			t.Run(source+"/"+raw, func(t *testing.T) {
+				draft := newBatchBrowserDraft()
+				draft.metadata = raw
+				if source == "local" {
+					draft.path = "requests.jsonl"
+				} else {
+					draft.inputID = "file_synthetic"
+				}
+				show := func(_ context.Context, screen *batchBrowserScreen) error {
+					require.Equal(t, "Create batch", screen.title, "invalid metadata must stop before preparation or confirmation")
+					screen.chosen = "review"
+					return nil
+				}
+				_, err := (workflow{}).createBatchInBrowser(t.Context(), &cli.Command{}, client, nil, draft, show)
+				require.ErrorContains(t, err, "Metadata must be a JSON object with text values")
+			})
+		}
+	}
+}
+
+func TestBatchBrowserGuidedMetadataPreservesStrings(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{" \t", ""}, {"{}", "{}"},
+		{`{"é":"","message":"\u8cc7料\ntext","note":"first","note":"last"}`, `{"é":"","message":"資料\ntext","note":"last"}`},
+	} {
+		draft := newBatchBrowserDraft()
+		draft.metadata = tc.raw
+		body, err := draft.body()
+		require.NoError(t, err)
+		got := gjson.GetBytes(body, "metadata")
+		if tc.want == "" {
+			require.False(t, got.Exists())
+		} else {
+			require.JSONEq(t, tc.want, got.Raw)
+		}
+	}
+}
 
 func TestBatchBrowserGuidedNoticeSurvivesLongFolder(t *testing.T) {
 	m := newBatchBrowserFlow("picker", "Choose a JSONL input file", strings.Repeat("/long-synthetic-folder", 18), []batchBrowserChoice{

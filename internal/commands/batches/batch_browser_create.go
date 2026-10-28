@@ -52,6 +52,16 @@ func batchBrowserEndpoints() []batchBrowserChoice {
 	return choices
 }
 
+type batchBrowserMetadataString string
+
+func (s *batchBrowserMetadataString) UnmarshalJSON(data []byte) error {
+	// A plain string accepts JSON null. Check every value, including repeated keys.
+	if data[0] != '"' {
+		return errors.New("expected a JSON string")
+	}
+	return json.Unmarshal(data, (*string)(s))
+}
+
 func (d *batchBrowserDraft) body() ([]byte, error) {
 	fields := map[string]any{"endpoint": d.endpoint, "completion_window": "24h"}
 	validEndpoint := false
@@ -62,7 +72,7 @@ func (d *batchBrowserDraft) body() ([]byte, error) {
 		return nil, batchError("Choose a supported endpoint.")
 	}
 	if strings.TrimSpace(d.metadata) != "" {
-		var metadata map[string]string
+		var metadata map[string]batchBrowserMetadataString
 		if err := json.Unmarshal([]byte(d.metadata), &metadata); err != nil || metadata == nil {
 			return nil, batchError("Metadata must be a JSON object with text values, such as {\"scenario\":\"sentiment\"}.")
 		}
