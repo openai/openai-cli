@@ -60,6 +60,7 @@ func ConfigureCommand(root *cli.Command) {
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
 	filecommands.Configure(root)
+	configureVectorStoreWorkspace(root)
 	tokenize.Register(root)
 	codex.Register(root)
 	localcommands.RemoveFineTuningCommands(root)
