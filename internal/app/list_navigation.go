@@ -21,7 +21,7 @@ func InteractiveListOutput(opts ShowJSONOpts) bool {
 	// Keep the initial rollout within the public-command coverage. Other
 	// generated page callbacks retain their existing iterator path.
 	switch opts.Operation {
-	case "(resource) files > (method) list", "(resource) batches > (method) list",
+	case "(resource) files > (method) list", "(resource) batches > (method) list", "(resource) models > (method) list",
 		"(resource) admin.organization.projects > (method) list":
 	default:
 		return false

@@ -70,20 +70,28 @@ func TestViewerPreservesViewportKeyboardBindings(t *testing.T) {
 func TestViewerPageKeysPreserveLazyCachedNavigation(t *testing.T) {
 	for _, test := range []struct {
 		name          string
+		local         bool
 		forward, back tea.KeyPressMsg
 	}{
-		{"page_keys", tea.KeyPressMsg{Code: tea.KeyPgDown}, tea.KeyPressMsg{Code: tea.KeyPgUp}},
-		{"f_b", tea.KeyPressMsg{Code: 'f', Text: "f"}, tea.KeyPressMsg{Code: 'b', Text: "b"}},
-		{"space_b", tea.KeyPressMsg{Code: ' ', Text: " "}, tea.KeyPressMsg{Code: 'b', Text: "b"}},
+		{"page_keys", false, tea.KeyPressMsg{Code: tea.KeyPgDown}, tea.KeyPressMsg{Code: tea.KeyPgUp}},
+		{"f_b", false, tea.KeyPressMsg{Code: 'f', Text: "f"}, tea.KeyPressMsg{Code: 'b', Text: "b"}},
+		{"space_b", false, tea.KeyPressMsg{Code: ' ', Text: " "}, tea.KeyPressMsg{Code: 'b', Text: "b"}},
+		{"local_arrows", true, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyUp}},
+		{"local_vim", true, tea.KeyPressMsg{Code: 'j', Text: "j"}, tea.KeyPressMsg{Code: 'k', Text: "k"}},
+		{"local_half_page", true, tea.KeyPressMsg{Code: 'd', Text: "d"}, tea.KeyPressMsg{Code: 'u', Text: "u"}},
+		{"local_control_half_page", true, tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl}, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var out bytes.Buffer
 			var requests atomic.Int32
-			m := New(keyboardOptions(t, &out), func() (Page, error) {
+			opts := keyboardOptions(t, &out)
+			m := New(opts, func() (Page, error) {
+				page := keyboardPage("second", false)
 				if requests.Add(1) == 1 {
-					return keyboardPage("first", true), nil
+					page = keyboardPage("first", true)
 				}
-				return keyboardPage("second", false), nil
+				page.Local = test.local
+				return page, nil
 			}, func() {}, 80, 8)
 			m.Update(m.Init()())
 			var next tea.Cmd
@@ -125,6 +133,23 @@ func TestViewerPageKeysPreserveLazyCachedNavigation(t *testing.T) {
 				t.Fatal("page keys changed successful quit output", err, out.String())
 			}
 		})
+	}
+}
+
+func TestViewerLineKeysDoNotRequestAnotherAPIPage(t *testing.T) {
+	var out bytes.Buffer
+	m := New(keyboardOptions(t, &out), func() (Page, error) {
+		return viewerPage("second"), nil
+	}, func() {}, 80, 8)
+	page := viewerPage("first")
+	page.More = true
+	m.Update(listPageMessage{page: page})
+	for _, key := range []tea.KeyPressMsg{
+		{Code: tea.KeyDown}, {Code: 'j', Text: "j"}, {Code: 'd', Text: "d"}, {Code: 'd', Mod: tea.ModCtrl},
+	} {
+		if _, next := m.Update(key); next != nil || m.loading {
+			t.Fatalf("%s requested another API page", key.String())
+		}
 	}
 }
 

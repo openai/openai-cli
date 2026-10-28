@@ -16,6 +16,10 @@ import (
 // RenderTable lists IDs and owners. Explicit machine formats retain complete
 // records through their existing presentation paths.
 func RenderTable(ctx context.Context, items []gjson.Result, width int, diagnostics bool, style listview.Style) (string, bool, error) {
+	return renderTable(ctx, items, width, diagnostics, style, len(items))
+}
+
+func renderTable(ctx context.Context, items []gjson.Result, width int, diagnostics bool, style listview.Style, total int) (string, bool, error) {
 	options, _ := ctx.Value(modelsListOptionsKey{}).(modelsListOptions)
 	models, supported, err := transformers.ProjectModelsList(ctx, items, options.selection.Descending)
 	if err != nil || !supported {
@@ -65,11 +69,21 @@ func RenderTable(ctx context.Context, items []gjson.Result, width int, diagnosti
 	if err := ctx.Err(); err != nil {
 		return "", true, err
 	}
-	noun := "models"
-	if len(models) == 1 {
-		noun = "model"
+	if total < 0 {
+		noun := "models"
+		if len(models) == 1 {
+			noun = "model"
+		}
+		content.WriteString(style.Note(fmt.Sprintf("\nShowing %d %s on this page.\n", len(models), noun)))
+	} else if len(models) < total {
+		content.WriteString(style.Note(fmt.Sprintf("\nShowing %d of %d models.\n", len(models), total)))
+	} else {
+		noun := "models"
+		if len(models) == 1 {
+			noun = "model"
+		}
+		content.WriteString(style.Note(fmt.Sprintf("\nListed %d %s.\n", len(models), noun)))
 	}
-	content.WriteString(style.Note(fmt.Sprintf("\nListed %d %s.\n", len(models), noun)))
 	if diagnostics {
 		content.WriteString(style.Note(ansi.Wrap("Details: --format json", max(1, width), "")))
 		content.WriteByte('\n')

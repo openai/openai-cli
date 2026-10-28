@@ -189,7 +189,7 @@ func TestModelsListPagerIncludesShortAndEmptyResults(t *testing.T) {
 				Operation: "(resource) models > (method) list", OutputKind: OutputPageItem})
 			// A regular file cannot start the terminal runtime. Both successful
 			// responses must reach that runtime instead of printing and returning.
-			require.Error(t, models.WriteList(iter, opts, 80, 24))
+			require.Error(t, models.WriteList(iter, opts, 80, 24, true))
 			content, err := os.ReadFile(file.Name())
 			require.NoError(t, err)
 			require.Empty(t, content)

@@ -132,14 +132,21 @@ func (m *Model) viewerKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.loading || len(v.pages) == 0 {
 		return nil
 	}
+	keys := v.viewport.KeyMap
+	forward, back := key.Matches(msg, keys.PageDown), key.Matches(msg, keys.PageUp)
+	// Line keys can cross a loaded boundary. Only a page key can request more data.
+	if m.local || v.index+1 < len(v.pages) {
+		forward = forward || key.Matches(msg, keys.Down, keys.HalfPageDown)
+	}
+	back = back || key.Matches(msg, keys.Up, keys.HalfPageUp)
 	switch {
-	case key.Matches(msg, v.viewport.KeyMap.PageDown) && v.viewport.AtBottom():
+	case forward && v.viewport.AtBottom():
 		if v.index+1 < len(v.pages) {
 			return m.selectViewerPage(v.index+1, false)
 		} else if m.more {
 			return m.load()
 		}
-	case key.Matches(msg, v.viewport.KeyMap.PageUp) && v.viewport.AtTop() && v.index > 0:
+	case back && v.viewport.AtTop() && v.index > 0:
 		return m.selectViewerPage(v.index-1, true)
 	}
 	var cmd tea.Cmd
