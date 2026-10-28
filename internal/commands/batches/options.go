@@ -33,6 +33,9 @@ type RecordOutput struct {
 	TemporaryFile         func() (*os.File, func() error, error)
 	BatchID, File, FileID string
 	Visit                 func(func(RecordItem) error) error
+	// StopSource interrupts an active download after presentation fails.
+	// Stored records need no interruption and leave this callback nil.
+	StopSource context.CancelCauseFunc
 }
 
 // RecordItem exposes one stored record, or a group's matching metadata.

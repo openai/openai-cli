@@ -87,6 +87,9 @@ func showBatchRecords(ctx context.Context, command *cli.Command, records batchco
 		go func() { err := writeJSON(writer); _ = writer.CloseWithError(err); done <- err }()
 		err := readable.WriteJSONStream(ctx, clioutput.Writer{Context: ctx, Sink: out}, reader, records.TemporaryFile)
 		_ = reader.CloseWithError(err)
+		if err != nil && records.StopSource != nil {
+			records.StopSource(err)
+		}
 		return errors.Join(err, <-done)
 	}
 	if format != "json" && format != "jsonl" && format != "raw" {

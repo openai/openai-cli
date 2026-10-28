@@ -110,15 +110,17 @@ func (s *batchJSONScanner) outerSpace() error {
 			}
 			continue
 		}
-		data, _ := s.in.Peek(utf8.UTFMax)
-		r, size := utf8.DecodeRune(data)
-		if !unicode.IsSpace(r) {
-			return nil
+		// Read only this rune. The next JSONL record may not be available yet.
+		r, size, err := s.in.ReadRune()
+		if err != nil {
+			return err
 		}
-		for range size {
-			if _, err := s.take(false); err != nil {
-				return err
-			}
+		if !unicode.IsSpace(r) {
+			return s.in.UnreadRune()
+		}
+		s.consumed += int64(size)
+		if err := s.ctx.Err(); err != nil {
+			return err
 		}
 	}
 }

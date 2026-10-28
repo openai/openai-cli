@@ -108,15 +108,19 @@ func TestMainBatchResultsTextLateError(t *testing.T) {
 }
 
 func TestMainBatchResultsRecordStreaming(t *testing.T) {
+	const firstRecord = `{"custom_id":"first-visible","response":{"status_code":200,"body":{"output_text":"hello"}}}`
 	for _, test := range []struct {
 		name, format string
 		rawOutput    bool
+		firstLine    string
 	}{
-		{"text", "text", false},
-		{"text_raw_output", "text", true},
-		{"json", "json", false},
-		{"jsonl", "jsonl", false},
-		{"raw", "raw", false},
+		{"text", "text", false, firstRecord},
+		{"text_raw_output", "text", true, firstRecord},
+		{"json", "json", false, firstRecord},
+		{"jsonl", "jsonl", false, firstRecord},
+		{"raw", "raw", false, firstRecord},
+		{"jsonl_trailing_nbsp", "jsonl", false, firstRecord + "\u00a0"},
+		{"text_raw_output_unpaired_surrogate", "text", true, `{"custom_id":"first-visible\ud800"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
@@ -130,7 +134,7 @@ func TestMainBatchResultsRecordStreaming(t *testing.T) {
 					io.WriteString(w, `{"id":"batch_stream","output_file_id":"file_stream"}`)
 					return
 				}
-				io.WriteString(w, "{\"custom_id\":\"first-visible\",\"response\":{\"status_code\":200,\"body\":{\"output_text\":\"hello\"}}}\n")
+				io.WriteString(w, test.firstLine+"\n")
 				w.(http.Flusher).Flush()
 				select {
 				case <-output.seen:
