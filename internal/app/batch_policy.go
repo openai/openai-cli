@@ -80,7 +80,7 @@ func showBatchRecords(ctx context.Context, command *cli.Command, records batchco
 		return ShowJSON(gjson.Parse(document.String()), opts)
 	}
 	if format == "text" {
-		if records.Visit != nil {
+		if records.Visit != nil && !opts.RawOutput {
 			return showReadableBatchRecords(ctx, records, out, diagnostics)
 		}
 		reader, writer := io.Pipe()

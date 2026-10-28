@@ -93,16 +93,51 @@ func TestBatchResultsInvalidUTF8IDsRemainDistinct(t *testing.T) {
 		rows := gjson.GetBytes(out.Bytes(), "data").Array()
 		if filter == "" {
 			require.Len(t, rows, 2)
+			require.Equal(t, "\"\xff\"", rows[0].Get("custom_id").Raw)
+			require.Equal(t, "\"\ufffd\"", rows[1].Get("custom_id").Raw)
 			require.Equal(t, "missing_input", rows[0].Get("match").String())
 			require.Equal(t, "missing_result", rows[1].Get("match").String())
 		} else {
 			require.Len(t, rows, 1)
+			require.Equal(t, "\""+filter+"\"", rows[0].Get("custom_id").Raw)
 			status := "missing_result"
 			if filter == "\xff" {
 				status = "missing_input"
 			}
 			require.Equal(t, status, rows[0].Get("match").String())
 		}
+	}
+}
+
+func TestBatchResultsMatchedInvalidUTF8IDsPreserveBytes(t *testing.T) {
+	for name, id := range map[string]string{
+		"invalid byte":     "\xff",
+		"invalid sequence": "\xed\xa0\x80",
+		"truncated rune":   "\xe2\x82",
+		"buffer boundary":  strings.Repeat("x", 4095) + "\xff\ufffd",
+	} {
+		t.Run(name, func(t *testing.T) {
+			encodedID := `"` + id + `"`
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/batches/batch_example" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"id":"batch_example","output_file_id":"file_output","input_file_id":"file_input"}`)
+					return
+				}
+				_, _ = io.WriteString(w, `{"custom_id":`+encodedID+`}`)
+			}))
+			defer server.Close()
+			var out bytes.Buffer
+			root := batchRecordsTestCommand(t, server.URL, &out)
+			err := root.Run(t.Context(), []string{"openai", "batches", "results", "batch_example", "--match-input", "--custom-id", id})
+			require.NoError(t, err)
+			rows := gjson.GetBytes(out.Bytes(), "data").Array()
+			require.Len(t, rows, 1)
+			require.Equal(t, encodedID, rows[0].Get("custom_id").Raw)
+			require.Equal(t, "matched", rows[0].Get("match").String())
+			require.Equal(t, encodedID, rows[0].Get("inputs.0.custom_id").Raw)
+			require.Equal(t, encodedID, rows[0].Get("results.0.custom_id").Raw)
+		})
 	}
 }
 

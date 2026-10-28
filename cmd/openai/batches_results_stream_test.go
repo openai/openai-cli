@@ -108,8 +108,17 @@ func TestMainBatchResultsTextLateError(t *testing.T) {
 }
 
 func TestMainBatchResultsRecordStreaming(t *testing.T) {
-	for _, format := range []string{"text", "json", "jsonl", "raw"} {
-		t.Run(format, func(t *testing.T) {
+	for _, test := range []struct {
+		name, format string
+		rawOutput    bool
+	}{
+		{"text", "text", false},
+		{"text_raw_output", "text", true},
+		{"json", "json", false},
+		{"jsonl", "jsonl", false},
+		{"raw", "raw", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 			defer cancel()
 			output := &batchStreamFirstRecord{seen: make(chan struct{})}
@@ -130,7 +139,11 @@ func TestMainBatchResultsRecordStreaming(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			child := batchesWorkflowProcess(t, ctx, server, "batches", "results", "batch_stream", "--format", format)
+			args := []string{"batches", "results", "batch_stream", "--format", test.format}
+			if test.rawOutput {
+				args = append(args, "--raw-output")
+			}
+			child := batchesWorkflowProcess(t, ctx, server, args...)
 			missing := filepath.Join(t.TempDir(), "unavailable")
 			child.Env = append(child.Env, "TMPDIR="+missing, "TMP="+missing, "TEMP="+missing)
 			var stderr bytes.Buffer
@@ -142,7 +155,7 @@ func TestMainBatchResultsRecordStreaming(t *testing.T) {
 			if !bytes.Contains(output.buffer.Bytes(), []byte("second-visible")) {
 				t.Fatal("the command lost the second record")
 			}
-			if format != "text" {
+			if test.format != "text" {
 				var document struct {
 					FileID string            `json:"file_id"`
 					Data   []json.RawMessage `json:"data"`
