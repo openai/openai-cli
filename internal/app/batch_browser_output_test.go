@@ -7,16 +7,33 @@ import (
 	"io"
 	"testing"
 
+	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
+
+func TestBatchBrowserInputDetailShowsSettingsWithoutRepeatedFileMetadata(t *testing.T) {
+	var out, diagnostics bytes.Buffer
+	raw := `{"custom_id":"request-one","method":"POST","url":"/v1/responses","body":{"model":"synthetic","input":"Hello","instructions":"Classify","max_output_tokens":32,"reasoning":{"effort":"low"},"temperature":0}}`
+	records := batchReadableOutput(batchcommands.RecordItem{Kind: "input_detail", WriteJSON: func(w io.Writer) error { _, err := io.WriteString(w, raw); return err }})
+	records.Detail = true
+	require.NoError(t, showReadableBatchRecords(t.Context(), records, &out, &diagnostics))
+	for _, label := range []string{"Request: request-one", "Input: Hello", "Instructions: Classify", "Settings:", "Model: synthetic", "Max output tokens: 32", "Effort: low", "Temperature: 0"} {
+		require.Contains(t, out.String(), label)
+	}
+	for _, label := range []string{"Batch:", "Source:", "File ID:"} {
+		require.NotContains(t, out.String(), label)
+	}
+}
 
 func TestBatchBrowserPrivateRecordOutputPreservesReadablePolicy(t *testing.T) {
 	for _, tc := range []struct {
 		command, format string
 		readable        bool
 	}{
+		{"browse", "auto", true},
+		{"browse", "text", true},
 		{"results", "auto", true},
 		{"results", "json", false},
 		{"results", "text", true},

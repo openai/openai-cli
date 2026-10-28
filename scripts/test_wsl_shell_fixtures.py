@@ -2,6 +2,7 @@
 """Offline controls for bounded fixture captures and owned PTY cleanup."""
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from copy import deepcopy
+import codecs
 import errno
 import importlib.util
 import io
@@ -261,6 +262,7 @@ class TerminalTests(unittest.TestCase):
         terminal = harness.Terminal.__new__(harness.Terminal)
         terminal.master, terminal.slave = 20, 21
         terminal.raw, terminal.events = bytearray(), []
+        terminal._event_decoder = codecs.getincrementaldecoder('utf-8')('replace')
         terminal.max_output_bytes = raw_limit
         terminal.max_events = event_limit
         terminal.max_event_bytes = event_bytes
@@ -308,6 +310,36 @@ class TerminalTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "event bytes"):
             self.read(terminal, b"\xff")
         self.assertEqual(terminal.raw, b"")
+        self.assertEqual(terminal.events, [])
+
+    def test_split_utf8_keeps_original_bytes_and_one_complete_event(self):
+        terminal = self.terminal()
+        self.read(terminal, b"\xe2\x82")
+        self.assertEqual(bytes(terminal.raw), b"\xe2\x82")
+        self.assertEqual(terminal.events, [])
+        self.read(terminal, b"\xac")
+        self.assertEqual(bytes(terminal.raw), b"\xe2\x82\xac")
+        self.assertEqual([event[1:] for event in terminal.events], [["o", "\u20ac"]])
+        self.assertEqual(terminal.event_bytes, 3)
+
+    def test_incomplete_utf8_flushes_once_at_eof_or_eio(self):
+        for error in (None, OSError(errno.EIO, "closed PTY")):
+            with self.subTest(error=error):
+                terminal = self.terminal()
+                self.read(terminal, b"\xe2")
+                self.read(terminal, b"", error=error)
+                self.read(terminal, b"")
+                self.assertTrue(terminal.eof)
+                self.assertEqual(bytes(terminal.raw), b"\xe2")
+                self.assertEqual([event[1:] for event in terminal.events], [["o", "\ufffd"]])
+                self.assertEqual(terminal.event_bytes, 3)
+
+    def test_incomplete_utf8_eof_preserves_event_byte_limit(self):
+        terminal = self.terminal(event_bytes=2)
+        self.read(terminal, b"\xe2")
+        with self.assertRaisesRegex(RuntimeError, "event bytes"):
+            self.read(terminal, b"")
+        self.assertEqual(bytes(terminal.raw), b"\xe2")
         self.assertEqual(terminal.events, [])
 
     def test_eof_does_not_append_empty_events(self):

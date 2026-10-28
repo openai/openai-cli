@@ -99,7 +99,7 @@ func (w workflow) configureBatchCommands(root *cli.Command) {
 				}
 			}
 		}
-		resource.Commands = append(resource.Commands, w.newBatchWaitCommand(), w.newBatchDownloadCommand(), w.newBatchResultsCommand(), w.newBatchInputsCommand())
+		resource.Commands = append(resource.Commands, w.newBatchWaitCommand(), w.newBatchDownloadCommand(), w.newBatchResultsCommand(), w.newBatchInputsCommand(), w.newBatchBrowseCommand())
 		if submit != nil {
 			resource.Commands = append(resource.Commands, submit)
 		}
@@ -310,6 +310,9 @@ func (w workflow) batchShowJSON(ctx context.Context, cmd *cli.Command, batch gjs
 	root := cmd.Root()
 	var diagnostics io.Writer = terminal.BorrowedWriter{Writer: batchDiagnosticWriter{ctx: ctx, file: os.Stderr}, File: os.Stderr}
 	out := root.Writer
+	if w.browserOutput != nil {
+		out, diagnostics = w.browserOutput, io.Discard
+	}
 	return writeBatchStdoutWithCleanup(ctx, out, batchOutputCleanupGrace, func(out io.Writer) error {
 		return w.options.ShowResult(ctx, cmd, batch, operation, out, diagnostics)
 	})

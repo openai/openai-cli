@@ -12,7 +12,7 @@ func configureBatchHelpContent(root *cli.Command) {
 		return
 	}
 	group := clihelp.Content{
-		Description: "Start a new batch with submit. Inspect existing batches with list.\n" +
+		Description: "Start a new batch with submit. Inspect existing batches with browse or list.\n" +
 			"A batch processes the requests in a JSONL file. Each request needs a unique custom_id.",
 		Notes: "Help does not contact the API. Batch operations use your configured API key and project.\n" +
 			"Use --help after any command for its options and examples.",

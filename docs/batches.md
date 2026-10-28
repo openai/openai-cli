@@ -16,7 +16,33 @@ openai explore batches
 `explore batches` searches the CLI's commands and examples locally.
 Add `--help` to any command for its options.
 
+Open the interactive browser to choose an existing batch without copying its ID:
+
+```sh
+openai batches browse
+```
+
+Choose a batch to read its results, errors, input requests, or details.
+Expand Save a file to choose output, error, or input files.
+Each save shows the destination folder and accepts a filename or path.
+Search applies to the loaded page. Use Next page to reach older batches.
+Press Ctrl+R to reload the first page.
+Escape returns to batch actions or the batch list.
+At the batch list, Escape exits. Ctrl+C exits from any screen.
+Downloads ask for a destination and never overwrite an existing file.
+The browser uses your configured connection, API key, and project.
+Press Ctrl+N to start guided creation from a local JSONL file or an uploaded input.
+Review the input, endpoint, project, and optional settings before submitting.
+Only Ctrl+S on the review screen submits the batch. Enter does not submit.
+The browser opens the new batch and updates progress every ten seconds while you view its actions.
+The browser does not cancel remote batches.
+
+Request lists support search by ID or content. Enter opens one request.
+Press `j` in request details to switch between Readable and Raw JSON.
+Press `p` in a document to print it into shell scrollback.
+
 For scripts, use `list`, `retrieve`, `results`, and `--format json`.
+The browser requires an interactive terminal and readable output.
 
 ## Prepare and submit
 
@@ -402,7 +428,7 @@ Use `batches download` when you need exact file bytes.
 Non-matching results emit each validated record in text, JSON, JSONL, and raw formats.
 Ordinary records use bounded memory without temporary files.
 Oversized records use one reusable private file, with temporary space proportional to the largest record.
-Matching uses indexed temporary storage for the selected files.
+Matching and browser navigation use indexed temporary storage for the selected files.
 Large object labels can also use temporary storage during readable rendering.
 The command removes owned temporary storage after success, failure, or handled interruption.
 JSON, JSONL, and raw output retain one envelope containing the complete selected `data` array.

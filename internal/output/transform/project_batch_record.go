@@ -23,6 +23,8 @@ func ProjectBatchRecord(ctx context.Context, value gjson.Result, kind string) (g
 	}
 	var out batchRecordProjection
 	switch kind {
+	case "input_detail":
+		return projectBatchInputDetail(value), ctx.Err()
 	case "group":
 		out.add("request", batchRequestID(value))
 		out.text("input_match", strings.ReplaceAll(value.Get("match").String(), "_", " "))
