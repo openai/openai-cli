@@ -29,6 +29,7 @@ type Options struct {
 // RecordOutput lets presentation stream validated records and borrow private
 // scratch storage for unusually large labels. The workflow owns all cleanup.
 type RecordOutput struct {
+	Operation             string
 	WriteJSON             func(io.Writer) error
 	TemporaryFile         func() (*os.File, func() error, error)
 	BatchID, File, FileID string

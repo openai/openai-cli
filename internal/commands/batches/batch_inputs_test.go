@@ -110,13 +110,13 @@ func TestBatchPageCollectionFailuresAndLimits(t *testing.T) {
 		{`{"data":[`, -1, 0, true},
 	} {
 		calls := 0
-		items, err := batchFetchPages(t.Context(), "", tc.maximum, func(string) ([]byte, error) { calls++; require.Less(t, calls, 4); return []byte(tc.body), nil }, nil)
+		items, err := batchFetchInputTestPages(t, t.Context(), "", tc.maximum, func(string) ([]byte, error) { calls++; require.Less(t, calls, 4); return []byte(tc.body), nil }, nil)
 		require.Equal(t, tc.fail, err != nil, tc.body)
 		require.Len(t, items, tc.length, tc.body)
 	}
 	want := errors.New("synthetic second-page failure")
 	calls := 0
-	items, err := batchFetchPages(t.Context(), "", -1, func(string) ([]byte, error) {
+	items, err := batchFetchInputTestPages(t, t.Context(), "", -1, func(string) ([]byte, error) {
 		calls++
 		if calls == 2 {
 			return nil, want
@@ -127,6 +127,23 @@ func TestBatchPageCollectionFailuresAndLimits(t *testing.T) {
 	require.Len(t, items, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = batchFetchPages(ctx, "", -1, func(string) ([]byte, error) { t.Fatal("request after cancellation"); return nil, nil }, nil)
+	_, err = batchFetchInputTestPages(t, ctx, "", -1, func(string) ([]byte, error) { t.Fatal("request after cancellation"); return nil, nil }, nil)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func batchFetchInputTestPages(t *testing.T, ctx context.Context, after string, maximum int64, fetch func(string) ([]byte, error), keep func(gjson.Result) bool) ([]gjson.Result, error) {
+	t.Helper()
+	require.Empty(t, after)
+	store, err := newBatchRecordStore(t.Context())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.close()) }()
+	files := &batchInputCollection{store: store}
+	fetchErr := files.fetch(ctx, maximum, fetch, keep)
+	var items []gjson.Result
+	for id := int64(1); id <= store.recordCount; id++ {
+		item, err := files.item(ctx, id)
+		require.NoError(t, err)
+		items = append(items, item)
+	}
+	return items, fetchErr
 }

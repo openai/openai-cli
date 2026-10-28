@@ -36,13 +36,17 @@ func (item batchInputItem) Description() string { return batchInputLabel(item.va
 func (item batchInputItem) FilterValue() string { return item.Title() + " " + item.Description() }
 
 type batchInputPicker struct {
-	input                textinput.Model
-	items                []gjson.Result
-	visible              []int
-	index, width, height int
-	ctx                  context.Context
-	selected             gjson.Result
-	err                  error
+	input         textinput.Model
+	items         []gjson.Result
+	visible       []int
+	index         int64
+	width, height int
+	files         *batchInputCollection
+	storedRows    []batchInputDisplay
+	storedFirst   int64
+	ctx           context.Context
+	selected      gjson.Result
+	err           error
 }
 
 func newBatchInputPicker(ctx context.Context, items []gjson.Result, width, height int) *batchInputPicker {
@@ -56,7 +60,46 @@ func newBatchInputPicker(ctx context.Context, items []gjson.Result, width, heigh
 	return m
 }
 
+type batchInputDisplay struct{ title, description string }
+
+func (m *batchInputPicker) count() int64 {
+	if m.files != nil {
+		return m.files.matchCount
+	}
+	return int64(len(m.visible))
+}
+
+func (m *batchInputPicker) refreshStoredRows() tea.Cmd {
+	if m.files == nil {
+		return nil
+	}
+	m.storedRows = m.storedRows[:0]
+	capacity := int64(max(1, (m.height-3)/2))
+	m.storedFirst = max(0, m.index-capacity+1)
+	for i := m.storedFirst; i < m.count() && i < m.storedFirst+capacity; i++ {
+		value, err := m.files.selected(m.ctx, i)
+		if err != nil {
+			m.err = err
+			return tea.Quit
+		}
+		item := batchInputItem{value: value}
+		m.storedRows = append(m.storedRows, batchInputDisplay{
+			title:       ansi.Truncate(item.Title(), max(1, m.width-2), "…"),
+			description: ansi.Truncate(item.Description(), max(1, m.width-2), "…"),
+		})
+	}
+	return nil
+}
+
 func (m *batchInputPicker) filter() {
+	if m.files != nil {
+		m.err = m.files.filter(m.ctx, m.input.Value())
+		m.index = 0
+		if m.err == nil {
+			m.refreshStoredRows()
+		}
+		return
+	}
 	m.visible = m.visible[:0]
 	search := strings.ToLower(m.input.Value())
 	for i, item := range m.items {
@@ -79,6 +122,9 @@ func (m *batchInputPicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.input.SetWidth(max(1, msg.Width-8))
+		if command := m.refreshStoredRows(); command != nil {
+			return m, command
+		}
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":
@@ -86,13 +132,17 @@ func (m *batchInputPicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "up":
 			m.index = max(0, m.index-1)
-			return m, nil
+			return m, m.refreshStoredRows()
 		case "down":
-			m.index = min(max(0, len(m.visible)-1), m.index+1)
-			return m, nil
+			m.index = min(max(0, m.count()-1), m.index+1)
+			return m, m.refreshStoredRows()
 		case "enter":
-			if m.height >= 5 && m.width >= 12 && len(m.visible) > 0 {
-				m.selected = m.items[m.visible[m.index]]
+			if m.height >= 5 && m.width >= 12 && m.count() > 0 {
+				if m.files != nil {
+					m.selected, m.err = m.files.selected(m.ctx, m.index)
+				} else {
+					m.selected = m.items[m.visible[m.index]]
+				}
 				return m, tea.Quit
 			}
 			return m, nil
@@ -116,18 +166,28 @@ func (m *batchInputPicker) View() tea.View {
 	var view strings.Builder
 	view.WriteString(ansi.Truncate("Select a Batch input file", m.width, "…") + "\n")
 	view.WriteString(m.input.View() + "\n")
-	capacity := max(1, (m.height-3)/2)
+	capacity := int64(max(1, (m.height-3)/2))
 	start := max(0, m.index-capacity+1)
-	for i := start; i < len(m.visible) && i < start+capacity; i++ {
-		item := batchInputItem{value: m.items[m.visible[i]]}
+	for i := start; i < m.count() && i < start+capacity; i++ {
+		var title, description string
+		if m.files != nil {
+			if i-m.storedFirst >= int64(len(m.storedRows)) {
+				break
+			}
+			row := m.storedRows[i-m.storedFirst]
+			title, description = row.title, row.description
+		} else {
+			item := batchInputItem{value: m.items[m.visible[i]]}
+			title, description = item.Title(), item.Description()
+		}
 		prefix := "  "
 		if i == m.index {
 			prefix = "> "
 		}
-		view.WriteString(ansi.Truncate(prefix+item.Title(), m.width, "…") + "\n")
-		view.WriteString(ansi.Truncate("  "+item.Description(), m.width, "…") + "\n")
+		view.WriteString(ansi.Truncate(prefix+title, m.width, "…") + "\n")
+		view.WriteString(ansi.Truncate("  "+description, m.width, "…") + "\n")
 	}
-	if len(m.visible) == 0 {
+	if m.count() == 0 {
 		view.WriteString("No matching files.\n")
 	}
 	view.WriteString(ansi.Truncate("↑/↓: choose   Enter: select   Esc: cancel", m.width, "…"))
@@ -136,6 +196,23 @@ func (m *batchInputPicker) View() tea.View {
 
 func runBatchInputPicker(ctx context.Context, items []gjson.Result) (gjson.Result, error) {
 	m := newBatchInputPicker(ctx, items, 80, 24)
+	err := runBatchPickerModel(ctx, m, batchFilePickerInputPolicy())
+	if err = errors.Join(m.err, err); err != nil {
+		return gjson.Result{}, err
+	}
+	if !m.selected.Exists() {
+		return gjson.Result{}, batchError("No input file selected. No batch was created.")
+	}
+	return m.selected, nil
+}
+
+func runStoredBatchInputPicker(ctx context.Context, files *batchInputCollection) (gjson.Result, error) {
+	m := newBatchInputPicker(ctx, nil, 80, 24)
+	m.files = files
+	m.filter()
+	if m.err != nil {
+		return gjson.Result{}, m.err
+	}
 	err := runBatchPickerModel(ctx, m, batchFilePickerInputPolicy())
 	if err = errors.Join(m.err, err); err != nil {
 		return gjson.Result{}, err

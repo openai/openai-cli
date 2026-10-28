@@ -139,9 +139,18 @@ func (w workflow) submitBatch(ctx context.Context, cmd *cli.Command) (err error)
 			}
 		}
 		var detail *WorkflowError
+		detailErr := err
+		if waitState.Stopped {
+			// Context wrappers describe waiting. Keep the underlying collection
+			// diagnostics when the remote status already requires inspection.
+			for errors.As(detailErr, &detail) && (detail.code == 124 || detail.code >= 128) {
+				detailErr = detail.cause
+			}
+		}
 		if waitState.Stopped && errors.Is(err, context.DeadlineExceeded) {
 			message += "\nThe local operation timed out after receiving this status."
-		} else if submission.Stage == "wait" && errors.As(err, &detail) && detail.Error() != "" && !errors.Is(err, context.Canceled) {
+		}
+		if submission.Stage == "wait" && errors.As(detailErr, &detail) && detail.Error() != "" && (!errors.Is(err, context.Canceled) || waitState.Stopped) {
 			message += "\n" + detail.Error()
 		} else if isAPI && !errors.Is(err, context.Canceled) {
 			message += "\n" + w.options.APIErrorMessage(cmd.Root(), err, apierr)

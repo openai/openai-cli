@@ -3,11 +3,13 @@ package batches
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/clihelp"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
@@ -62,8 +64,14 @@ func (w workflow) listBatchInputs(ctx context.Context, cmd *cli.Command) (err er
 		return err
 	}
 	client := openai.NewClient(w.options.DefaultRequestOptions(cmd)...)
+	store, err := newBatchRecordStore(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, store.close()) }()
+	files := &batchInputCollection{store: store}
 	search := strings.ToLower(cmd.String("search"))
-	items, fetchErr := batchFetchPages(ctx, "", maximum, func(after string) ([]byte, error) {
+	fetchErr := files.fetch(ctx, maximum, func(after string) ([]byte, error) {
 		var raw []byte
 		opts := append(options[:len(options):len(options)], option.WithQuery("purpose", "batch"), option.WithQuery("order", "desc"), option.WithQuery("limit", "100"), option.WithResponseBodyInto(&raw))
 		if after != "" {
@@ -80,21 +88,17 @@ func (w workflow) listBatchInputs(ctx context.Context, cmd *cli.Command) (err er
 		if fetchErr != nil {
 			return fetchErr
 		}
-		if len(items) == 0 {
+		if store.recordCount == 0 {
 			return batchError("No matching Batch input files were found. Change --search or upload a file with files upload --purpose batch.")
 		}
-		selected, err := runBatchInputPicker(ctx, items)
+		selected, err := runStoredBatchInputPicker(ctx, files)
 		if err != nil {
 			return err
 		}
 		return w.batchShowJSON(ctx, cmd, selected, "inputs")
 	}
-	if fetchErr != nil && len(items) == 0 {
+	if fetchErr != nil && store.recordCount == 0 {
 		return fetchErr
-	}
-	value, err := batchRawArray(ctx, items)
-	if err != nil {
-		return errors.Join(fetchErr, err)
 	}
 	if fetchErr != nil {
 		message := "Input file listing stopped. Displayed files may be incomplete."
@@ -108,7 +112,16 @@ func (w workflow) listBatchInputs(ctx context.Context, cmd *cli.Command) (err er
 		message += "\nRetry batches inputs with the same search, connection, and project settings."
 		fetchErr = &WorkflowError{message: message, cause: fetchErr}
 	}
-	return errors.Join(fetchErr, w.batchShowJSON(ctx, cmd, value, "inputs"))
+	diagnostics := terminal.BorrowedWriter{Writer: batchDiagnosticWriter{ctx: ctx, file: os.Stderr}, File: os.Stderr}
+	var renderErr error
+	outputErr := writeBatchStdoutWithCleanup(ctx, cmd.Root().Writer, batchOutputCleanupGrace, func(out io.Writer) error {
+		renderErr = w.options.ShowRecords(ctx, cmd, RecordOutput{
+			Operation: "inputs", WriteJSON: files.writeJSON, TemporaryFile: store.temporaryFile,
+		}, out, diagnostics)
+		// Preserve already rendered records when a later storage read fails.
+		return nil
+	})
+	return errors.Join(fetchErr, renderErr, outputErr)
 }
 
 func batchInputSelectionAllowed(root *cli.Command, inputTerminal, errorTerminal bool) bool {
@@ -118,75 +131,4 @@ func batchInputSelectionAllowed(root *cli.Command, inputTerminal, errorTerminal 
 	}
 	format = strings.ToLower(format)
 	return inputTerminal && errorTerminal && root.String("transform-error") == "" && !root.Bool("quiet") && !root.Bool("debug") && (format == "" || format == "auto" || format == "text")
-}
-
-// batchFetchPages preserves complete records and returns partial results with failures.
-// The caller decides whether partial records can be printed or selected.
-func batchFetchPages(ctx context.Context, after string, maximum int64, fetch func(string) ([]byte, error), keep func(gjson.Result) bool) ([]gjson.Result, error) {
-	var items []gjson.Result
-	seen := map[string]bool{after: true}
-	for {
-		if err := ctx.Err(); err != nil {
-			return items, err
-		}
-		raw, err := fetch(after)
-		if err != nil {
-			return items, err
-		}
-		if !gjson.ValidBytes(raw) {
-			return items, batchError("The API returned invalid list JSON. Results may be incomplete; retry the list operation.")
-		}
-		page := gjson.ParseBytes(raw)
-		data, more := page.Get("data"), page.Get("has_more")
-		if !page.IsObject() || !data.IsArray() || more.Type != gjson.True && more.Type != gjson.False {
-			return items, batchError("The API returned an unfamiliar list response. Results may be incomplete; retry the list operation.")
-		}
-		var last string
-		var invalid bool
-		data.ForEach(func(_, item gjson.Result) bool {
-			if ctx.Err() != nil || maximum >= 0 && int64(len(items)) >= maximum {
-				return false
-			}
-			id := item.Get("id")
-			if !item.IsObject() || id.Type != gjson.String || id.Str == "" {
-				invalid = true
-				return false
-			}
-			last = id.Str
-			if keep == nil || keep(item) {
-				items = append(items, item)
-			}
-			return true
-		})
-		if err := ctx.Err(); err != nil {
-			return items, err
-		}
-		if invalid {
-			return items, batchError("The API returned a list item without a valid ID. Results may be incomplete; retry the list operation.")
-		}
-		if maximum >= 0 && int64(len(items)) >= maximum || !more.Bool() {
-			return items, nil
-		}
-		if last == "" || seen[last] {
-			return items, batchError("List pagination stopped because the API returned a missing or repeated cursor. Results may be incomplete.\nRetry from the first page with the same search, connection, and project settings.")
-		}
-		seen[last] = true
-		after = last
-	}
-}
-
-func batchRawArray(ctx context.Context, items []gjson.Result) (gjson.Result, error) {
-	var raw strings.Builder
-	raw.WriteByte('[')
-	for i, item := range items {
-		if err := ctx.Err(); err != nil {
-			return gjson.Result{}, err
-		}
-		if i != 0 {
-			raw.WriteByte(',')
-		}
-		raw.WriteString(item.Raw)
-	}
-	raw.WriteByte(']')
-	return gjson.Parse(raw.String()), ctx.Err()
 }

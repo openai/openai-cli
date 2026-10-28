@@ -77,11 +77,14 @@ openai batches results batch_demo --custom-id sentiment-positive --match-input
 ```
 
 Submit infers an omitted endpoint from the JSONL request URLs and defaults the completion window to 24h.
+Prepare a valid JSONL request file first. Submit uploads that file; it does not write requests.
 Remove `--wait --output-dir results` to return immediately after creation.
 Explicit endpoint, completion-window, metadata, expiration, JSON/YAML input, and connection options remain supported.
 Use `--file requests.jsonl` instead of the positional path when needed.
 The output directory must not contain existing output.jsonl or error.jsonl files.
-If waiting fails, resume with the returned batch ID. Do not submit the file again.
+If local waiting stops before completion, resume with the returned batch ID. Do not submit the file again.
+If the batch has finished, inspect its status, results, and errors instead of waiting again.
+Keep saved files. Use `batches download` only for files still needed.
 
 The trial isolates CLI configuration and ignores personal API keys.
 It checks three labels, reordered result IDs, exact downloaded bytes, and one upload plus one Batch creation.
@@ -110,11 +113,12 @@ python3 scripts/demos/batches/try_browser.py /absolute/path/to/openai
 ```
 
 The browser shows three synthetic batches: successful, partially failed, and still processing.
-Choose a batch, then open View results, View errors, View input, Save a file, or Batch details.
+Choose a batch, then open View results, View errors, View input, Batch details, or Save a file.
 View errors hides only when the snapshot proves success and explicitly contains no error file or validation errors.
 Missing or unfamiliar error metadata keeps View errors available. Validation diagnostics remain available alongside error-file content.
 The overview summarizes consistent counts. Unknown or inconsistent counts retain explicit labels.
-The fixture keeps these statuses fixed. It accepts only read operations and fake credentials.
+The three examples keep fixed statuses. Guided creation uses separate synthetic batches.
+The fixture accepts only fake credentials.
 Relative download paths use a temporary directory, printed when the demo closes.
 Escape returns to batch actions or the batch list.
 View input, View results, and View errors open a searchable request list when their file exists.

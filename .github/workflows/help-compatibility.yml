@@ -508,6 +508,14 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainResourceSummariesRetainActionFields|TestMainResourceSummaryListFilesInVectorBatch|TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits|TestMainResourceSummaryListNoticeForMixedRecords|TestMainResourceSummaryEmptyList|TestMainResourceSummaryUnknownFieldsAndShapesFallBack|TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData|TestMainResourceSummaryListFormatsAndExtractionKeepFullItems|TestMainResourceSummaryLeavesOtherOperationsUnchanged|TestMainDispatchBatchesPresentation|TestMainDispatchBatchResultsMatchByExactIDAndPreserveModes|TestMainBatchSubmitTransportRecovery|TestMainBatchSubmitMissingReceiptRecovery|TestMainDispatchBatchInputsPartialFailureRecovery|TestMainBatchWatchCombinedOutputAndAPIFailure|TestMainBatchSubmitFailureRecovery|TestMainResourceSummaryPreservesLargeActionArguments|TestMainResourceSummaryPreservesPartialPageOnFailure|TestMainResourceSummaryWritesBeforeNextPageArrives|TestMainListNavigationNoninteractive)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'resource-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Windows Batch submission and stored inputs
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainBatchSubmitSimpleDefaults|TestMainBatchSubmitSimpleExplicitInput|TestMainBatchSubmitSimplePreflight|TestMainBatchSubmitSimpleWait|TestMainBatchSubmitSimpleWaitFailure|TestMainBatchSubmitSimplePartialDownload|TestMainBatchSubmitSimpleMissingPrivateFile|TestMainBatchSubmitTerminalRecovery|TestMainBatchSubmitTerminalDownloadRecovery|TestMainBatchSubmitTerminalDownloadTimeoutRetainsEarlierFailure|TestMainBatchInputsStoredOutputModes|TestMainBatchInputsStoredEmptyAndLimit|TestMainBatchInputsStoredCombinedOutputAndAPIFailure|TestMainBatchInputsStoredRawWhitespace)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'batch-workflow-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test Windows Batch storage, snapshots, and helper lifecycle
         if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
@@ -1219,6 +1227,26 @@ jobs:
               ))
               strict_packages["resource-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
               strict_packages["batch-storage-tests.jsonl"] = "github.com/openai/openai-cli/internal/commands/batches"
+              batch_workflow_cases = {
+                  'TestMainBatchInputsStoredOutputModes': ['json', 'jsonl', 'raw', 'pretty', 'yaml', 'text', 'auto', 'transform-json', 'transform-text', 'transform-yaml'],
+                  'TestMainBatchInputsStoredEmptyAndLimit': ['0', '1'],
+                  'TestMainBatchInputsStoredCombinedOutputAndAPIFailure': ['text', 'json'],
+                  'TestMainBatchInputsStoredRawWhitespace': ['list', 'record', 'nested'],
+                  'TestMainBatchSubmitSimpleDefaults': ['positional', 'flag'],
+                  'TestMainBatchSubmitSimpleExplicitInput': ['flags', 'json', 'yaml'],
+                  'TestMainBatchSubmitSimplePreflight': ['both_file_forms', 'two_paths', 'no_file', 'output_requires_wait', 'explicit_false_wait', 'poll_requires_wait', 'timeout_requires_wait', 'zero_poll', 'negative_poll', 'negative_timeout', 'malformed_timeout', 'output_is_file', 'output_exists', 'ambiguous_endpoint'],
+                  'TestMainBatchSubmitSimpleWait': [],
+                  'TestMainBatchSubmitSimpleWaitFailure': ['in_progress', 'failed'],
+                  'TestMainBatchSubmitSimplePartialDownload': ['text', 'json'],
+                  'TestMainBatchSubmitSimpleMissingPrivateFile': ['text/inferred', 'text/explicit', 'json/inferred', 'json/explicit'],
+                  'TestMainBatchSubmitTerminalRecovery': ['failed/text', 'failed/json', 'cancelled/text', 'cancelled/json', 'expired/text', 'expired/json', 'completed/text', 'completed/json'],
+                  'TestMainBatchSubmitTerminalDownloadRecovery': ['text', 'json'],
+                  'TestMainBatchSubmitTerminalDownloadTimeoutRetainsEarlierFailure': ['text', 'json'],
+              }
+              suites["batch-workflow-tests.jsonl"] = set().union(*(
+                  required_cases(root, children) for root, children in batch_workflow_cases.items()
+              ))
+              strict_packages["batch-workflow-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
               streaming_text_cases = {
                   "TestMainStreamingTextArrivesBeforeCompletion": [f"{command}/{format}"
                       for command in ["responses", "chat:completions", "completions"] for format in ["", "text"]],

@@ -23,15 +23,16 @@ const terminalRecoveryOutput = "{\"custom_id\":\"synthetic-success\",\"response\
 const terminalRecoveryErrors = "{\"custom_id\":\"synthetic-failure\",\"error\":{\"code\":\"invalid_request\"}}\n"
 
 type submitRecoveryFixture struct {
+	errorDownloadStarted    chan struct{}
 	server                  *httptest.Server
 	uploads, creates, polls atomic.Int32
 	unexpected              atomic.Int32
 	pollStarted             chan struct{}
 }
 
-func newSubmitRecoveryFixture(t *testing.T, status string, denyError, holdPoll bool) *submitRecoveryFixture {
+func newSubmitRecoveryFixture(t *testing.T, status, downloadMode string, holdPoll bool) *submitRecoveryFixture {
 	t.Helper()
-	f := &submitRecoveryFixture{pollStarted: make(chan struct{})}
+	f := &submitRecoveryFixture{pollStarted: make(chan struct{}), errorDownloadStarted: make(chan struct{})}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "application/json")
@@ -62,9 +63,19 @@ func newSubmitRecoveryFixture(t *testing.T, status string, denyError, holdPoll b
 			}
 			_ = json.NewEncoder(w).Encode(batch)
 		case "GET /files/file_recovery_output/content":
+			if downloadMode == "deny-output-hold-error" {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `{"error":{"message":"Missing scopes: api.files.read.","type":"invalid_request_error","code":"synthetic_denied"}}`)
+				return
+			}
 			_, _ = io.WriteString(w, terminalRecoveryOutput)
 		case "GET /files/file_recovery_error/content":
-			if denyError {
+			close(f.errorDownloadStarted)
+			if downloadMode == "hold-error" || downloadMode == "deny-output-hold-error" {
+				<-r.Context().Done()
+				return
+			}
+			if downloadMode == "deny-error" {
 				w.WriteHeader(http.StatusForbidden)
 				_, _ = io.WriteString(w, `{"error":{"message":"Missing scopes: api.files.read.","type":"invalid_request_error","code":"synthetic_denied"}}`)
 				return
@@ -101,7 +112,7 @@ func TestMainBatchSubmitTerminalRecovery(t *testing.T) {
 	for _, status := range []string{"failed", "cancelled", "expired", "completed"} {
 		for _, format := range []string{"text", "json"} {
 			t.Run(status+"/"+format, func(t *testing.T) {
-				f := newSubmitRecoveryFixture(t, status, false, false)
+				f := newSubmitRecoveryFixture(t, status, "", false)
 				destination := filepath.Join(t.TempDir(), "results")
 				got := runReadableCommand(t, f.server, "--format", "json", "--format-error", format, "batches", "submit", simpleBatchPath(t, simpleBatchInput), "--wait", "--output-dir", destination)
 				message := assertSubmitRecoveryIdentity(t, f, got, format, 1)
@@ -110,6 +121,9 @@ func TestMainBatchSubmitTerminalRecovery(t *testing.T) {
 				}
 				if !strings.Contains(strings.ToLower(message), "inspect") && !strings.Contains(message, "batches results") {
 					t.Errorf("terminal batch lacks inspection guidance: %s", message)
+				}
+				if strings.Contains(message, "Download its error file") || strings.Contains(message, "Download any available output and error files") {
+					t.Errorf("terminal batch recommends duplicating completed downloads: %s", message)
 				}
 				if !json.Valid([]byte(got.stdout)) || gjson.Get(got.stdout, "status").String() != status {
 					t.Fatalf("terminal response lost its status: %s", got.stdout)
@@ -134,7 +148,7 @@ func TestMainBatchSubmitTerminalRecovery(t *testing.T) {
 func TestMainBatchSubmitTerminalDownloadRecovery(t *testing.T) {
 	for _, format := range []string{"text", "json"} {
 		t.Run(format, func(t *testing.T) {
-			f := newSubmitRecoveryFixture(t, "completed", true, false)
+			f := newSubmitRecoveryFixture(t, "completed", "deny-error", false)
 			destination := filepath.Join(t.TempDir(), "results")
 			got := runReadableCommand(t, f.server, "--format", "json", "--format-error", format, "batches", "submit", simpleBatchPath(t, simpleBatchInput), "--wait", "--output-dir", destination)
 			message := assertSubmitRecoveryIdentity(t, f, got, format, 1)
@@ -166,7 +180,7 @@ func TestMainBatchSubmitInterruptedWaitRecovery(t *testing.T) {
 				if reason == "SIGINT" && runtime.GOOS == "windows" {
 					t.Skip("os.Process.Signal cannot deliver SIGINT on Windows")
 				}
-				f := newSubmitRecoveryFixture(t, "in_progress", false, reason == "SIGINT")
+				f := newSubmitRecoveryFixture(t, "in_progress", "", reason == "SIGINT")
 				args := []string{"--format", "json", "--format-error", format, "batches", "submit", simpleBatchPath(t, simpleBatchInput), "--wait", "--poll-interval", "1h"}
 				var got mainDispatchResult
 				wantCode := 124
@@ -174,28 +188,7 @@ func TestMainBatchSubmitInterruptedWaitRecovery(t *testing.T) {
 					got = runReadableCommand(t, f.server, append(args, "--wait-timeout", "250ms")...)
 				} else {
 					wantCode = 130
-					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-					defer cancel()
-					child := batchesWorkflowProcess(t, ctx, f.server, args...)
-					var stdout, stderr bytes.Buffer
-					child.Stdout, child.Stderr = &stdout, &stderr
-					if err := child.Start(); err != nil {
-						t.Fatal(err)
-					}
-					select {
-					case <-f.pollStarted:
-					case <-ctx.Done():
-						t.Fatal("batch polling never started")
-					}
-					if err := child.Process.Signal(os.Interrupt); err != nil {
-						t.Fatal(err)
-					}
-					err := child.Wait()
-					exit, ok := err.(*exec.ExitError)
-					if !ok || ctx.Err() != nil {
-						t.Fatalf("signal did not stop local waiting: %v", err)
-					}
-					got = mainDispatchResult{code: exit.ExitCode(), stdout: stdout.String(), stderr: stderr.String()}
+					got = runSubmitRecoveryInterrupt(t, f, f.pollStarted, args...)
 				}
 				message := assertSubmitRecoveryIdentity(t, f, got, format, wantCode)
 				if !strings.Contains(strings.ToLower(message), "resume") || !strings.Contains(message, "batches wait") {
@@ -206,5 +199,86 @@ func TestMainBatchSubmitInterruptedWaitRecovery(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func runSubmitRecoveryInterrupt(t *testing.T, f *submitRecoveryFixture, entered <-chan struct{}, args ...string) mainDispatchResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	child := batchesWorkflowProcess(t, ctx, f.server, args...)
+	var stdout, stderr bytes.Buffer
+	child.Stdout, child.Stderr = &stdout, &stderr
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("expected batch operation never started")
+	}
+	if err := child.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	err := child.Wait()
+	exit, ok := err.(*exec.ExitError)
+	if !ok || ctx.Err() != nil {
+		t.Fatalf("signal did not stop local operation: %v", err)
+	}
+	return mainDispatchResult{code: exit.ExitCode(), stdout: stdout.String(), stderr: stderr.String()}
+}
+
+func TestMainBatchSubmitInterruptedDownloadRecovery(t *testing.T) {
+	for _, reason := range []string{"timeout", "SIGINT"} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(reason+"/"+format, func(t *testing.T) {
+				if reason == "SIGINT" && runtime.GOOS == "windows" {
+					t.Skip("os.Process.Signal cannot deliver SIGINT on Windows")
+				}
+				f := newSubmitRecoveryFixture(t, "completed", "hold-error", false)
+				destination := filepath.Join(t.TempDir(), "results")
+				args := []string{"--format", "json", "--format-error", format, "batches", "submit", simpleBatchPath(t, simpleBatchInput), "--wait", "--output-dir", destination}
+				var got mainDispatchResult
+				wantCode := 124
+				if reason == "timeout" {
+					got = runReadableCommand(t, f.server, append(args, "--wait-timeout", "250ms")...)
+				} else {
+					wantCode = 130
+					got = runSubmitRecoveryInterrupt(t, f, f.errorDownloadStarted, args...)
+				}
+				message := assertSubmitRecoveryIdentity(t, f, got, format, wantCode)
+				if strings.Contains(message, "batches wait") || strings.Contains(strings.ToLower(message), "resume") {
+					t.Errorf("interrupted download recommends more batch waiting: %s", message)
+				}
+				if !strings.Contains(message, "completed") || !strings.Contains(message, "batches download") {
+					t.Errorf("interrupted download lost terminal state or recovery: %s", message)
+				}
+				if data, err := os.ReadFile(filepath.Join(destination, "output.jsonl")); err != nil || string(data) != terminalRecoveryOutput {
+					t.Fatal("interrupted error download lost the saved output")
+				}
+				if _, err := os.Stat(filepath.Join(destination, "error.jsonl")); !os.IsNotExist(err) {
+					t.Fatal("interrupted download published an incomplete file")
+				}
+			})
+		}
+	}
+}
+
+func TestMainBatchSubmitTerminalDownloadTimeoutRetainsEarlierFailure(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			f := newSubmitRecoveryFixture(t, "completed", "deny-output-hold-error", false)
+			destination := filepath.Join(t.TempDir(), "results")
+			got := runReadableCommand(t, f.server, "--format", "json", "--format-error", format, "batches", "submit", simpleBatchPath(t, simpleBatchInput), "--wait", "--output-dir", destination, "--wait-timeout", "250ms")
+			message := assertSubmitRecoveryIdentity(t, f, got, format, 124)
+			for _, want := range []string{"Could not save output.jsonl", "HTTP 403", "Could not save error.jsonl", "timed out", "batches download"} {
+				if !strings.Contains(message, want) {
+					t.Errorf("later timeout discarded %q: %s", want, message)
+				}
+			}
+			if strings.Contains(message, "batches wait") {
+				t.Errorf("known terminal state incorrectly recommends waiting: %s", message)
+			}
+		})
 	}
 }

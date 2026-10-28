@@ -51,10 +51,14 @@ func configureBatchCommands(root *cli.Command) {
 
 func showBatchRecords(ctx context.Context, command *cli.Command, records batchcommands.RecordOutput, out, diagnostics io.Writer) error {
 	root := command.Root()
+	operation := records.Operation
+	if operation == "" {
+		operation = "results"
+	}
 	opts := ShowJSONOpts{
-		CallerHandlesSignals: true, Context: ctx, Operation: "(resource) batches > (method) results", OutputKind: OutputResponse,
+		CallerHandlesSignals: true, Context: ctx, Operation: "(resource) batches > (method) " + operation, OutputKind: OutputResponse,
 		Format: root.String("format"), ExplicitFormat: root.IsSet("format"), RawOutput: root.Bool("raw-output"),
-		Transform: root.String("transform"), Title: "batches results", Stdout: out, Stderr: diagnostics,
+		Transform: root.String("transform"), Title: "batches " + operation, Stdout: out, Stderr: diagnostics,
 	}
 	writeJSON := records.WriteJSON
 	format := resolvedOutputFormat(opts)
@@ -91,7 +95,7 @@ func showBatchRecords(ctx context.Context, command *cli.Command, records batchco
 	}
 	stream := batchJSONOutput{
 		out:    bufio.NewWriterSize(clioutput.Writer{Context: ctx, Sink: out}, 32*1024),
-		indent: format == "json", color: format != "raw" && clioutput.UseColors(isTerminal(out)),
+		indent: format == "json", raw: format == "raw", color: format != "raw" && clioutput.UseColors(isTerminal(out)),
 	}
 	if err := writeJSON(&stream); err != nil {
 		return err
@@ -102,11 +106,11 @@ func showBatchRecords(ctx context.Context, command *cli.Command, records batchco
 	return stream.out.Flush()
 }
 
-// batchJSONOutput formats an already validated, compact document incrementally.
+// batchJSONOutput formats an already validated document incrementally.
 // The stack tracks nesting only; payload strings and numbers never accumulate.
 type batchJSONOutput struct {
 	out                                     *bufio.Writer
-	indent, color                           bool
+	indent, color, raw                      bool
 	stack                                   []bool
 	key, pending, inString, escaped, scalar bool
 	escapeDigits                            int
@@ -135,6 +139,9 @@ func (w *batchJSONOutput) paint(value byte, style [2]string) error {
 	return nil
 }
 func (w *batchJSONOutput) Write(data []byte) (int, error) {
+	if w.raw {
+		return w.out.Write(data)
+	}
 	for i, b := range data {
 		if err := w.byte(b); err != nil {
 			return i, err
@@ -183,6 +190,9 @@ func (w *batchJSONOutput) byte(b byte) error {
 				return w.text(w.style[1])
 			}
 		}
+		return nil
+	}
+	if b == ' ' || b == '\t' || b == '\r' || b == '\n' {
 		return nil
 	}
 	if w.scalar && strings.ContainsRune(",]}:", rune(b)) {

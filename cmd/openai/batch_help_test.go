@@ -23,7 +23,7 @@ func TestMainBatchHelpDiscoveryIsOffline(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("offline discovery failed: %+v", got)
 			}
-			for _, want := range []string{"batches browse", "batches submit --file requests.jsonl"} {
+			for _, want := range []string{"batches browse", "batches submit requests.jsonl"} {
 				if !strings.Contains(got.stdout, want) {
 					t.Errorf("discovery omitted %q:\n%s", want, got.stdout)
 				}

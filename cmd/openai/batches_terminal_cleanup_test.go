@@ -224,8 +224,6 @@ try:
                 sent = True
             elif ((mode == "result_blocked" and hidden) or browser_ready) and frame:
                 # The menu has initialized before output becomes blocked.
-                if mode.startswith("browser_interrupt_"):
-                    termios.tcflow(slave, termios.TCOOFF)
                 stop_drain = True
                 phases.append(["fill_start", time.monotonic() - started])
                 for _ in range(3):
@@ -242,6 +240,8 @@ try:
                 phases.append(["fill_end", time.monotonic() - started])
                 assert 0 < filled < 1 << 20, "owned PTY did not become saturated"
                 if mode.startswith("browser_interrupt_"):
+                    # Fill first; Linux rejects writes while output flow is stopped.
+                    termios.tcflow(slave, termios.TCOOFF)
                     os.write(master, b"\x1b" if mode == "browser_interrupt_quit_drain" else b"\r")
                     phases.append(["selection_sent", time.monotonic() - started])
                     time.sleep(.3)

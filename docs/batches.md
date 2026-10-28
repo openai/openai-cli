@@ -1,6 +1,6 @@
 # Batch requests
 
-Prepare requests locally, upload the file, then create a batch.
+Prepare requests locally, then submit the file with one command.
 Waiting and downloading use existing Batches and Files APIs.
 
 ## Find your way around
@@ -22,14 +22,24 @@ Open the interactive browser to choose an existing batch without copying its ID:
 openai batches browse
 ```
 
-Choose a batch, then select Status, Results, Errors, Inputs, or Download.
+Choose a batch to read its results, errors, input requests, or details.
+Expand Save a file to choose output, error, or input files.
+Each save shows the destination folder and accepts a filename or path.
 Search applies to the loaded page. Use Next page to reach older batches.
-Use Refresh to reload the first page.
+Press Ctrl+R to reload the first page.
 Escape returns to batch actions or the batch list.
 At the batch list, Escape exits. Ctrl+C exits from any screen.
 Downloads ask for a destination and never overwrite an existing file.
 The browser uses your configured connection, API key, and project.
-It does not create or cancel batches.
+Press Ctrl+N to start guided creation from a local JSONL file or an uploaded input.
+Review the input, endpoint, project, and optional settings before submitting.
+Only Ctrl+S on the review screen submits the batch. Enter does not submit.
+The browser opens the new batch and updates progress every ten seconds while you view its actions.
+The browser does not cancel remote batches.
+
+Request lists support search by ID or content. Enter opens one request.
+Press `j` in request details to switch between Readable and Raw JSON.
+Press `p` in a document to print it into shell scrollback.
 
 For scripts, use `list`, `retrieve`, `results`, and `--format json`.
 The browser requires an interactive terminal and readable output.
@@ -50,11 +60,18 @@ Save these lines as `requests.jsonl`.
 Upload and create one batch with one command:
 
 ```sh
-openai batches submit --file requests.jsonl \
-  --endpoint /v1/responses --completion-window 24h
+openai batches submit requests.jsonl
 ```
 
-`submit` requires a regular local file.
+`submit` requires an existing regular JSONL request file. It does not write requests.
+An omitted endpoint comes from the file's request URLs. An omitted completion window defaults to `24h`.
+Explicit flags override these defaults. `--file requests.jsonl` remains available instead of the positional path.
+Create, wait, and save without copying the batch ID:
+
+```sh
+openai batches submit requests.jsonl --wait --output-dir ./results
+```
+
 It accepts the same request fields as `create`, except `input_file_id`.
 You can provide those fields through flags or piped JSON/YAML.
 Stdin remains available for request fields; `--file -` is not supported.
@@ -72,6 +89,10 @@ Check `files list` after an uncertain upload, or `batches list` after uncertain 
 Reuse the same connection and project settings.
 Then use `create --input-file-id` if you confirm that no batch exists.
 Structured submission errors include the original error under `error` and recovery data under `batch_submission`.
+If local waiting stops before completion, resume with `batches wait` and the returned batch ID.
+If the batch has finished, inspect its status, results, and errors instead of waiting again.
+Keep saved files. Download only missing files after a partial download failure.
+Use the same connection and project settings. Do not repeat `submit` to recover results.
 
 You can also upload separately:
 

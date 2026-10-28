@@ -3,7 +3,6 @@ package batches
 import (
 	"context"
 	"errors"
-	"hash/maphash"
 	"io"
 	"strings"
 
@@ -78,99 +77,16 @@ func (s *batchWatchSnapshot) fetch(after string, maximum int64, fetch func(strin
 }
 
 func (s *batchWatchSnapshot) appendBytes(data []byte) error {
-	if err := s.store.write(s.store.data, data, s.store.position); err != nil {
-		return batchWatchStorageError(err)
-	}
-	s.store.position += int64(len(data))
-	return nil
+	return batchWatchStorageError(s.store.appendListBytes(data))
 }
 
-// The page validator already checked this object. Remove only JSON whitespace
-// outside strings, preserving number lexemes, escapes, duplicate keys, and UTF-8.
 func (s *batchWatchSnapshot) appendRecord(raw string) error {
-	start := s.store.position
-	var chunk [32 * 1024]byte
-	used := 0
-	quoted, escaped := false, false
-	for index := 0; index < len(raw); index++ {
-		if index%4096 == 0 {
-			if err := s.store.ctx.Err(); err != nil {
-				return err
-			}
-		}
-		value := raw[index]
-		if !quoted && (value == ' ' || value == '\t' || value == '\r' || value == '\n') {
-			continue
-		}
-		chunk[used] = value
-		used++
-		if quoted {
-			if escaped {
-				escaped = false
-			} else if value == '\\' {
-				escaped = true
-			} else if value == '"' {
-				quoted = false
-			}
-		} else if value == '"' {
-			quoted = true
-		}
-		if used == len(chunk) {
-			if err := s.appendBytes(chunk[:]); err != nil {
-				return err
-			}
-			used = 0
-		}
-	}
-	if err := s.appendBytes(chunk[:used]); err != nil {
-		return err
-	}
-	id := s.store.recordCount + 1
-	if err := s.store.saveRecord(id, batchStoredRecord{start: start, length: s.store.position - start}); err != nil {
-		return batchWatchStorageError(err)
-	}
-	s.store.recordCount = id
-	return nil
+	return batchWatchStorageError(s.store.appendListRecord(raw, true))
 }
 
-func (s *batchWatchSnapshot) rememberCursor(cursor string) (seen bool, err error) {
-	defer func() { err = batchWatchStorageError(err) }()
-	if cursor == "" {
-		return false, nil
-	}
-	hash := maphash.String(s.store.seed, cursor)
-	head, err := s.store.bucket(hash)
-	if err != nil {
-		return false, err
-	}
-	for id := head; id != 0; {
-		group, err := s.store.group(id)
-		if err != nil {
-			return false, err
-		}
-		equal, err := s.store.equalKey(group, cursor)
-		if err != nil || equal {
-			return equal, err
-		}
-		id = group.next
-	}
-	start := s.store.position
-	for offset := 0; offset < len(cursor); {
-		end := min(offset+32*1024, len(cursor))
-		if err := s.appendBytes([]byte(cursor[offset:end])); err != nil {
-			return false, err
-		}
-		offset = end
-	}
-	id := s.store.groupCount + 1
-	if err := s.store.saveGroup(id, batchStoredGroup{next: head, keyStart: start, keyLength: int64(len(cursor))}); err != nil {
-		return false, err
-	}
-	if err := s.store.saveBucket(hash, id); err != nil {
-		return false, err
-	}
-	s.store.groupCount = id
-	return false, s.store.grow()
+func (s *batchWatchSnapshot) rememberCursor(cursor string) (bool, error) {
+	seen, err := s.store.rememberListCursor(cursor)
+	return seen, batchWatchStorageError(err)
 }
 
 func (s *batchWatchSnapshot) writeRecord(out io.Writer, id int64) error {
