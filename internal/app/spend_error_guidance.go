@@ -7,6 +7,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -20,7 +21,7 @@ func commandErrorContext(root *cli.Command, failure error) *cli.Command {
 
 const spendRecoveryContext = "Keep the original API address, authentication, organization, and project options for any check."
 
-// Response conversion happens after the mutation returned successfully. Keep
+// Response validation and conversion follow a successful SDK call. Keep
 // that provenance separate from JSON errors raised while preparing a request.
 type spendMutationResponseError struct{ cause error }
 
@@ -55,25 +56,72 @@ func spendMutationResponseFailure(err error, opts ShowJSONOpts) error {
 }
 
 func isSpendMutationResponse(opts ShowJSONOpts) bool {
+	return spendMutationResponseObject(opts) != ""
+}
+
+func spendMutationResponseObject(opts ShowJSONOpts) string {
 	if opts.OutputKind != OutputResponse {
-		return false
+		return ""
 	}
 	switch opts.Operation {
-	case "(resource) admin.organization.spend_limit > (method) update",
-		"(resource) admin.organization.spend_limit > (method) delete",
-		"(resource) admin.organization.projects.spend_limit > (method) update",
-		"(resource) admin.organization.projects.spend_limit > (method) delete",
-		"(resource) admin.organization.spend_alerts > (method) create",
-		"(resource) admin.organization.spend_alerts > (method) update",
-		"(resource) admin.organization.spend_alerts > (method) delete",
-		"(resource) admin.organization.projects.spend_alerts > (method) create",
-		"(resource) admin.organization.projects.spend_alerts > (method) update",
-		"(resource) admin.organization.projects.spend_alerts > (method) delete",
-		"(resource) admin.organization.projects.rate_limits > (method) update_rate_limit":
-		return true
+	case "(resource) admin.organization.spend_limit > (method) update":
+		return "organization.spend_limit"
+	case "(resource) admin.organization.spend_limit > (method) delete":
+		return "organization.spend_limit.deleted"
+	case "(resource) admin.organization.projects.spend_limit > (method) update":
+		return "project.spend_limit"
+	case "(resource) admin.organization.projects.spend_limit > (method) delete":
+		return "project.spend_limit.deleted"
+	case "(resource) admin.organization.spend_alerts > (method) create",
+		"(resource) admin.organization.spend_alerts > (method) update":
+		return "organization.spend_alert"
+	case "(resource) admin.organization.spend_alerts > (method) delete":
+		return "organization.spend_alert.deleted"
+	case "(resource) admin.organization.projects.spend_alerts > (method) create",
+		"(resource) admin.organization.projects.spend_alerts > (method) update":
+		return "project.spend_alert"
+	case "(resource) admin.organization.projects.spend_alerts > (method) delete":
+		return "project.spend_alert.deleted"
+	case "(resource) admin.organization.projects.rate_limits > (method) update_rate_limit":
+		return "project.rate_limit"
 	default:
-		return false
+		return ""
 	}
+}
+
+func validateSpendMutationResponse(value gjson.Result, opts ShowJSONOpts) error {
+	expected := spendMutationResponseObject(opts)
+	if expected == "" {
+		return nil
+	}
+	if !gjson.Valid(value.Raw) {
+		var raw json.RawMessage
+		if err := json.Unmarshal([]byte(value.Raw), &raw); err != nil {
+			return spendMutationResponseFailure(err, opts)
+		}
+	}
+	if !value.IsObject() {
+		return &spendMutationResponseError{cause: errors.New("The mutation response must contain an object.")}
+	}
+	objects := 0
+	var canceled error
+	value.ForEach(func(key, _ gjson.Result) bool {
+		if canceled = opts.Context.Err(); canceled != nil {
+			return false
+		}
+		if key.Str == "object" {
+			objects++
+		}
+		return objects <= 1
+	})
+	if canceled != nil {
+		return canceled
+	}
+	object := value.Get("object")
+	if objects != 1 || object.Type != gjson.String || object.Str != expected {
+		return &spendMutationResponseError{cause: errors.New("The mutation response has an unexpected object type.")}
+	}
+	return nil
 }
 
 // A status alone cannot establish configuration at an arbitrary API address.

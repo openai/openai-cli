@@ -311,11 +311,8 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 		return err
 	}
 	// Validate before projections or extraction can conceal an invalid response.
-	if isSpendMutationResponse(opts) && !gjson.Valid(res.Raw) {
-		var raw json.RawMessage
-		if err := json.Unmarshal([]byte(res.Raw), &raw); err != nil {
-			return errors.Join(spendMutationResponseFailure(err, opts), opts.Context.Err())
-		}
+	if err := validateSpendMutationResponse(res, opts); err != nil {
+		return errors.Join(err, opts.Context.Err())
 	}
 	if err := opts.Context.Err(); err != nil {
 		return err

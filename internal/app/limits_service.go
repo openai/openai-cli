@@ -394,6 +394,9 @@ func (backend *limitsAPIBackend) list(ctx context.Context, rates bool) ([]gjson.
 		if err := limitsUniqueObjectContext(ctx, page); err != nil {
 			return items, false, err
 		}
+		if object := page.Get("object"); object.Type != gjson.String || object.Str != "list" {
+			return items, false, errors.New("The limits page has an unexpected object type.")
+		}
 		data, more := page.Get("data"), page.Get("has_more")
 		if !data.IsArray() || more.Type != gjson.True && more.Type != gjson.False {
 			return items, false, errors.New("The limits page is missing its records or pagination state.")

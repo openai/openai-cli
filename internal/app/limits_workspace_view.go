@@ -2,7 +2,9 @@ package app
 
 import (
 	"strings"
+	"unicode/utf8"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -139,7 +141,7 @@ func (m *limitsWorkspace) View() tea.View {
 				marker = "> "
 				label = accent.Render(label)
 			}
-			body = append(body, label, marker+ansi.Truncate(m.draft.inputs[i].View(), width, "…"))
+			body = append(body, label, marker+ansi.Truncate(limitsInputView(m.draft.inputs[i]), width, "…"))
 		}
 		if len(fields) < count {
 			body = append(body, line("Other rate fields were not returned."))
@@ -197,6 +199,20 @@ func (m *limitsWorkspace) View() tea.View {
 	}
 	view.Content = header + "\n" + strings.Join(rows, "\n") + "\n\n" + strings.Join(controls, "\n")
 	return view
+}
+
+// Escape only a display copy, before the input applies cursor and overflow layout.
+func limitsInputView(input textinput.Model) string {
+	value := input.Value()
+	escaped := readable.Text(value)
+	if escaped != value {
+		position := input.Position()
+		prefix := string([]rune(value)[:position])
+		input.Reset()
+		input.SetValue(escaped)
+		input.SetCursor(utf8.RuneCountInString(readable.Text(prefix)))
+	}
+	return input.View()
 }
 
 // Keep external text on one row after escaping terminal controls.

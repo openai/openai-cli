@@ -524,9 +524,17 @@ func TestMainSpendThresholdMalformedAPIErrors(t *testing.T) {
 
 func TestMainSpendThresholdControlsAndDeleteIdentity(t *testing.T) {
 	const body = `{"object":"organization.spend_limit","threshold_amount":123,"currency":"ZZZ\u001b[31m","interval":"quarter\r\u001b[2J","future":"keep\u0007value"}`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, body)
+		response := body
+		if r.Method == http.MethodDelete {
+			object := "organization.spend_limit.deleted"
+			if r.URL.Path == "/organization/spend_alerts/alert_synthetic" {
+				object = "organization.spend_alert.deleted"
+			}
+			response = strings.Replace(body, "organization.spend_limit", object, 1)
+		}
+		io.WriteString(w, response)
 	}))
 	defer server.Close()
 	got := runSpendThresholdCommand(t, server, spendThresholdArgs(false, "spend-limit", "retrieve")...)

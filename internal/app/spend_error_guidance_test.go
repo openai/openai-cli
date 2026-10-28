@@ -70,7 +70,7 @@ func TestSpendErrorGuidanceResponseConversionProvenance(t *testing.T) {
 		})
 	}
 	options.Stdout = failOutputWriter{err: syscall.EPIPE}
-	failure = ShowJSON(gjson.Parse(`{"id":"alert_synthetic"}`), options)
+	failure = ShowJSON(gjson.Parse(`{"object":"organization.spend_alert","id":"alert_synthetic"}`), options)
 	require.ErrorIs(t, failure, syscall.EPIPE)
 	require.True(t, clioutput.IsBrokenPipe(failure))
 	require.False(t, errors.As(failure, &marker), "sink failures must retain their output classification")
@@ -83,7 +83,8 @@ func TestSpendErrorGuidanceResponseConversionProvenance(t *testing.T) {
 }
 
 func TestSpendMutationResponseValidationPreservesCancellation(t *testing.T) {
-	for _, body := range []string{"", `{"synthetic-private-response": broken}`, `{"id":"alert_synthetic"}`} {
+	for _, body := range []string{"", `{"synthetic-private-response": broken}`, `null`, `[]`, `{"id":"alert_synthetic"}`,
+		`{"object":"organization.spend_alert"}`, `{"object":"organization.spend_alert","object":"organization.spend_alert"}`} {
 		t.Run(body, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()

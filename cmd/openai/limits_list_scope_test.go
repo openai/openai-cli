@@ -19,7 +19,7 @@ func TestMainLimitsListScopeFailuresPreservePartialOutput(t *testing.T) {
 		{"project_alerts", "spend-alerts", "spend_alerts", "project.spend_alert", "organization.spend_alert", true},
 		{"project_rates", "rate-limits", "project_rate_limits", "project.rate_limit", "project.spend_alert", true},
 	} {
-		for _, invalid := range []string{"wrong_scope", "duplicate_object"} {
+		for _, invalid := range []string{"wrong_scope", "duplicate_object", "wrong_wrapper"} {
 			for _, mode := range []string{"text", "json", "raw", "extraction"} {
 				t.Run(scope.name+"/"+invalid+"/"+mode, func(t *testing.T) {
 					_, record := limitsWorkflowRecords(scope.project)
@@ -28,6 +28,10 @@ func TestMainLimitsListScopeFailuresPreservePartialOutput(t *testing.T) {
 					}
 					first := strings.Replace(record, gjson.Get(record, "id").Str, "first_valid", 1)
 					second := strings.Replace(record, gjson.Get(record, "id").Str, "second_valid", 1)
+					wanted := []string{first, second}
+					if invalid == "wrong_wrapper" {
+						wanted = wanted[:1]
+					}
 					bad := fmt.Sprintf(`{"object":%q,"id":"rejected_synthetic","private":"synthetic-private-scope"}`, scope.other)
 					if invalid == "duplicate_object" {
 						bad = fmt.Sprintf(`{"object":%q,"object":%q,"id":"rejected_synthetic","private":"synthetic-private-scope"}`, scope.object, scope.object)
@@ -42,6 +46,9 @@ func TestMainLimitsListScopeFailuresPreservePartialOutput(t *testing.T) {
 						}
 						if r.URL.Query().Get("after") != "first_valid" {
 							t.Error("overview changed the list cursor")
+						}
+						if invalid == "wrong_wrapper" {
+							return http.StatusOK, strings.Replace(limitsWorkflowPage(second, false, "second_valid"), `"object":"list"`, `"object":"synthetic-private-wrapper"`, 1)
 						}
 						return http.StatusOK, limitsWorkflowPage(second+","+bad, false, "rejected_synthetic")
 					})
@@ -59,7 +66,11 @@ func TestMainLimitsListScopeFailuresPreservePartialOutput(t *testing.T) {
 						!strings.Contains(diagnostic["message"], "overview is incomplete") || !strings.Contains(diagnostic["message"], "help") {
 						t.Fatalf("missing safe structured recovery: %q", got.stderr)
 					}
-					for _, forbidden := range []string{"rejected_synthetic", "synthetic-private-scope", "sk-fake-", "\x1b"} {
+					forbiddenValues := []string{"rejected_synthetic", "synthetic-private-scope", "synthetic-private-wrapper", "sk-fake-", "\x1b"}
+					if invalid == "wrong_wrapper" {
+						forbiddenValues = append(forbiddenValues, "second_valid")
+					}
+					for _, forbidden := range forbiddenValues {
 						if strings.Contains(got.stdout+got.stderr, forbidden) {
 							t.Fatalf("rejected record or private data reached output: %q", forbidden)
 						}
@@ -69,7 +80,11 @@ func TestMainLimitsListScopeFailuresPreservePartialOutput(t *testing.T) {
 						if scope.route == "rate-limits" {
 							label = "Project rate limits complete: false"
 						}
-						for _, value := range []string{"first_valid", "second_valid", label, "request_failed", "123456789012345678901234567890"} {
+						values := []string{"first_valid", label, "request_failed", "123456789012345678901234567890"}
+						if invalid != "wrong_wrapper" {
+							values = append(values, "second_valid")
+						}
+						for _, value := range values {
 							if !strings.Contains(got.stdout, value) {
 								t.Errorf("partial readable output lost %q", value)
 							}
@@ -87,7 +102,7 @@ func TestMainLimitsListScopeFailuresPreservePartialOutput(t *testing.T) {
 						value.Get("source_errors.0.resource").Str != scope.field || value.Get("source_errors.0.status").Str != "request_failed" {
 						t.Fatalf("partial overview lost its exact source state: %s", got.stdout)
 					}
-					assertSpendThresholdJSON(t, rows.Raw, "["+first+","+second+"]")
+					assertSpendThresholdJSON(t, rows.Raw, "["+strings.Join(wanted, ",")+"]")
 				})
 			}
 		}

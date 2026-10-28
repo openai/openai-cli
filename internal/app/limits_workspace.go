@@ -414,6 +414,31 @@ func (m *limitsWorkspace) reconcileDraft() {
 		m.formError = "Cannot refresh this draft. Inspect the resource with the API command."
 		return
 	}
+	if change.Kind == "limit_set" || change.Kind == "alert_update" {
+		updated, err := newLimitsDraft(limitsChange{Kind: change.Kind, ID: change.ID, Before: current})
+		if err != nil {
+			m.formError = "Cannot refresh this draft. Inspect the resource with the API command."
+			return
+		}
+		for i := range m.draft.inputs {
+			untouched := m.draft.inputs[i].Value() == m.draft.initial[i]
+			switch i {
+			case 0:
+				amount, err := parseLimitsDollars(m.draft.inputs[i].Value(), 0)
+				previous, beforeErr := limitsInteger(change.Before.Get("threshold_amount"))
+				untouched = err == nil && beforeErr == nil && amount == previous
+			case 1:
+				recipients, err := parseLimitsRecipients(m.draft.inputs[i].Value())
+				untouched = err == nil && limitsRecipientsUnchanged(change.Before.Get("notification_channel.recipients"), recipients)
+			case 2:
+				untouched = untouched && m.draft.prefixMode == 0
+			}
+			if untouched {
+				m.draft.inputs[i].SetValue(updated.inputs[i].Value())
+			}
+			m.draft.initial[i] = updated.initial[i]
+		}
+	}
 	change.Before, change.BeforeMissing = current, false
 	m.draft.change, m.refreshRequired, m.formError = change, false, "Baseline refreshed. Review the before and after values."
 	if change.Kind == "rate_update" {

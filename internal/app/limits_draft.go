@@ -150,6 +150,24 @@ func (d limitsDraft) validate() (limitsChange, error) {
 	return c, nil
 }
 
+func limitsRecipientsUnchanged(previous gjson.Result, recipients []string) bool {
+	if !previous.IsArray() || len(previous.Array()) != len(recipients) {
+		return false
+	}
+	// Match the existing mutation-confirmation contract, including duplicate counts.
+	counts := make(map[string]int, len(recipients))
+	for _, recipient := range recipients {
+		counts[recipient]++
+	}
+	for _, recipient := range previous.Array() {
+		if recipient.Type != gjson.String || counts[recipient.Str] == 0 {
+			return false
+		}
+		counts[recipient.Str]--
+	}
+	return true
+}
+
 func (d limitsDraft) inputAvailable(index int) bool {
 	return d.change.Kind != "rate_update" || index >= len(d.inputs) ||
 		d.change.Before.Get(limitsRateInputs[index].key).Type == gjson.Number

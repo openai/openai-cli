@@ -189,6 +189,65 @@ func TestLimitsServiceListRequiresMatchingObject(t *testing.T) {
 	}
 }
 
+func TestLimitsServiceListRequiresListWrapper(t *testing.T) {
+	for _, scope := range []struct {
+		name, project, record string
+		rates                 bool
+	}{
+		{"organization_alerts", "", limitsTestAlert, false},
+		{"project_alerts", "proj_demo", strings.Replace(limitsTestAlert, "organization.", "project.", 1), false},
+		{"project_rates", "proj_demo", limitsTestRate, true},
+	} {
+		for _, wrapper := range []struct{ name, fields string }{
+			{"missing", `"future":true`},
+			{"wrong", `"object":"page"`},
+			{"null", `"object":null`},
+			{"number", `"object":1`},
+			{"duplicate", `"object":"list","object":"list"`},
+			{"escaped_duplicate", `"object":"list","\u006fbject":"list"`},
+			{"valid", `"object":"list","future":{"exact":9007199254740993}`},
+		} {
+			t.Run(scope.name+"/"+wrapper.name, func(t *testing.T) {
+				var reads atomic.Int32
+				var zeroItems atomic.Bool
+				backend := limitsTestBackend(t, scope.project, -1, func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodGet {
+						t.Errorf("list sent a mutation: %s", r.Method)
+					}
+					reads.Add(1)
+					if !zeroItems.Load() && r.URL.Query().Get("after") == "" {
+						limitsTestWrite(t, w, `{"object":"list","data":[`+scope.record+`],"has_more":true,"last_id":"first"}`)
+						return
+					}
+					if !zeroItems.Load() && r.URL.Query().Get("after") != "first" {
+						t.Error("list changed its pagination cursor")
+					}
+					limitsTestWrite(t, w, `{`+wrapper.fields+`,"data":[`+scope.record+`],"has_more":false}`)
+				})
+				items, complete, err := backend.list(t.Context(), scope.rates)
+				if wrapper.name == "valid" {
+					require.NoError(t, err)
+					require.True(t, complete)
+					require.Len(t, items, 2)
+				} else {
+					require.Error(t, err)
+					require.False(t, complete)
+					require.Len(t, items, 1, "retain only records from the accepted first page")
+				}
+				require.Equal(t, scope.record, items[0].Raw)
+				require.Equal(t, int32(2), reads.Load())
+				backend.maxItems = 0
+				zeroItems.Store(true)
+				items, complete, err = backend.list(t.Context(), scope.rates)
+				require.Equal(t, wrapper.name != "valid", err != nil)
+				require.False(t, complete)
+				require.Empty(t, items)
+				require.Equal(t, int32(3), reads.Load())
+			})
+		}
+	}
+}
+
 func TestLimitsServiceRejectsStaleLimitAndDuplicateBaselineWithoutWriting(t *testing.T) {
 	var writes atomic.Int32
 	backend := limitsTestBackend(t, "", 100, func(w http.ResponseWriter, r *http.Request) {

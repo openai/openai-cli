@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -34,12 +35,20 @@ func TestSpendErrorGuidancePresentationProvenance(t *testing.T) {
 				continue
 			}
 			t.Run(scope+"/"+operation.resource+"/"+operation.method, func(t *testing.T) {
+				object := "organization." + strings.TrimSuffix(operation.resource, "s")
+				if scope == "admin.organization.projects" {
+					object = "project." + strings.TrimSuffix(operation.resource, "s")
+				}
+				if operation.method == "delete" {
+					object += ".deleted"
+				}
+				response := fmt.Sprintf(`{"object":%q,"id":"synthetic","value":9007199254740993}`, object)
 				cause := &os.PathError{Op: "write", Path: "synthetic-private-output", Err: os.ErrPermission}
 				command := spendGuidanceTestCommand(strings.ReplaceAll(scope, ".", ":")+":"+strings.ReplaceAll(operation.resource, "_", "-"), operation.command)
 				for _, format := range []string{"text", "json", "raw", "yaml"} {
 					options := ShowJSONOpts{Context: t.Context(), Operation: "(resource) " + scope + "." + operation.resource + " > (method) " + operation.method,
 						OutputKind: OutputResponse, Format: format, ExplicitFormat: true, Stdout: failOutputWriter{cause}, Stderr: io.Discard}
-					failure := ShowJSON(gjson.Parse(`{"id":"synthetic","value":9007199254740993}`), options)
+					failure := ShowJSON(gjson.Parse(response), options)
 					var marker *spendMutationPresentationError
 					var writeFailure *clioutput.WriteError
 					require.ErrorAs(t, failure, &marker)
@@ -74,7 +83,8 @@ func TestSpendErrorGuidancePresentationModesAndControls(t *testing.T) {
 	cause := errors.New("synthetic-private-output \x1b]52;c;secret\a")
 	opts := ShowJSONOpts{Context: t.Context(), Operation: "(resource) admin.organization.spend_alerts > (method) create",
 		OutputKind: OutputResponse, Format: "text", Stdout: failOutputWriter{cause}, Stderr: io.Discard}
-	failure := withCommandError(command, ShowJSON(gjson.Parse(`{"id":"alert_synthetic"}`), opts))
+	const response = `{"object":"organization.spend_alert","id":"alert_synthetic"}`
+	failure := withCommandError(command, ShowJSON(gjson.Parse(response), opts))
 	const machineMessage = "The command could not be completed. Check your arguments with --help."
 	for _, flags := range [][]string{nil, {"--quiet"}, {"--format-error", "json"}, {"--format-error", "jsonl"}, {"--format-error", "text", "--transform-error", "message"}} {
 		var out bytes.Buffer
@@ -102,12 +112,12 @@ func TestSpendErrorGuidancePresentationModesAndControls(t *testing.T) {
 			other.Operation = ""
 		}
 		var marker *spendMutationPresentationError
-		err := ShowJSON(gjson.Parse(`{"id":"alert_synthetic"}`), other)
+		err := ShowJSON(gjson.Parse(response), other)
 		require.ErrorIs(t, err, cause)
 		require.False(t, errors.As(err, &marker), control)
 	}
 	opts.Stdout = failOutputWriter{syscall.EPIPE}
-	err := ShowJSON(gjson.Parse(`{"id":"alert_synthetic"}`), opts)
+	err := ShowJSON(gjson.Parse(response), opts)
 	require.ErrorIs(t, err, syscall.EPIPE)
 	require.True(t, clioutput.IsBrokenPipe(err), "preserve the existing closed-consumer policy")
 	var partial bytes.Buffer
@@ -118,7 +128,7 @@ func TestSpendErrorGuidancePresentationModesAndControls(t *testing.T) {
 		partial.Write(value[:1])
 		return 1, cause
 	})
-	err = ShowJSON(gjson.Parse(`{"id":"alert_synthetic"}`), opts)
+	err = ShowJSON(gjson.Parse(response), opts)
 	require.ErrorIs(t, err, cause)
 	require.Len(t, partial.Bytes(), 1, "preserve the accepted output prefix")
 }
