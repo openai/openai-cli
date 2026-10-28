@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-cli/internal/mocktest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,8 +29,7 @@ func TestAudioVoiceConsentsLifecycleContract(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	output, err := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../cmd/openai").CombinedOutput()
-	require.NoError(t, err, "%s", output)
+	mocktest.CopyCLI(t, binary)
 	recording := []byte("RIFF\x00\xffsynthetic consent")
 	filename := filepath.Join(directory, "consent.wav")
 	require.NoError(t, os.WriteFile(filename, recording, 0600))

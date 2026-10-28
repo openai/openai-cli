@@ -88,12 +88,16 @@ func decodeArguments(format string, offset time.Duration) ([]string, error) {
 		"-c:a", "pcm_f32le", "-f", "wav", "pipe:1"), nil
 }
 
-func playerArguments(format string) ([]string, error) {
+func playerArguments(format string, progress bool) ([]string, error) {
 	demux, err := demuxer(format)
 	if err != nil {
 		return nil, err
 	}
-	args := []string{"-hide_banner", "-nodisp", "-autoexit", "-vn", "-sn", "-nostats", "-loglevel", "error",
+	status := "-nostats"
+	if progress {
+		status = "-stats"
+	}
+	args := []string{"-hide_banner", "-nodisp", "-autoexit", "-vn", "-sn", status, "-loglevel", "error",
 		"-protocol_whitelist", "pipe", "-f", demux}
 	if format == "pcm" {
 		args = append(args, "-sample_rate", "24000")
@@ -147,8 +151,8 @@ func decodeAnalysis(ctx context.Context, file *os.File, size int64, format strin
 	return decoded.analyzer, nil
 }
 
-func playReader(ctx context.Context, source io.Reader, format string, h helpers) error {
-	args, err := playerArguments(format)
+func playReader(ctx context.Context, source io.Reader, format string, offset time.Duration, report func(time.Duration), h helpers) error {
+	args, err := playerArguments(format, report != nil)
 	if err != nil {
 		return err
 	}
@@ -156,10 +160,11 @@ func playReader(ctx context.Context, source io.Reader, format string, h helpers)
 	if err != nil {
 		return err
 	}
-	diagnostics := &helperDiagnostics{}
+	diagnostics := &playerOutput{ctx: ctx, offset: offset, report: report}
 	command.Stdin, command.Stdout, command.Stderr = &contextReader{ctx, source}, io.Discard, diagnostics
 	err = command.Run()
 	stopHelperProcess(command)
+	diagnostics.finish()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -169,7 +174,7 @@ func playReader(ctx context.Context, source io.Reader, format string, h helpers)
 	return nil
 }
 
-func playDecoded(ctx context.Context, file *os.File, size int64, format string, offset time.Duration, h helpers) error {
+func playDecoded(ctx context.Context, file *os.File, size int64, format string, offset time.Duration, report func(time.Duration), h helpers) error {
 	work, cancel := context.WithCancel(ctx)
 	defer cancel()
 	decodeArgs, err := decodeArguments(format, offset)
@@ -180,7 +185,7 @@ func playDecoded(ctx context.Context, file *os.File, size int64, format string, 
 	if err != nil {
 		return err
 	}
-	playArgs, _ := playerArguments("wav")
+	playArgs, _ := playerArguments("wav", report != nil)
 	player, err := helperCommand(work, h, "ffplay", playArgs)
 	if err != nil {
 		return err
@@ -191,7 +196,8 @@ func playDecoded(ctx context.Context, file *os.File, size int64, format string, 
 	}
 	defer read.Close()
 	defer write.Close()
-	decoderDiagnostics, playerDiagnostics := &helperDiagnostics{}, &helperDiagnostics{}
+	decoderDiagnostics := &helperDiagnostics{}
+	playerDiagnostics := &playerOutput{ctx: work, offset: offset, report: report}
 	decoder.Stdin = &contextReader{work, io.NewSectionReader(file, 0, size)}
 	decoder.Stdout, decoder.Stderr = write, decoderDiagnostics
 	player.Stdin, player.Stdout, player.Stderr = read, io.Discard, playerDiagnostics
@@ -226,6 +232,7 @@ func playDecoded(ctx context.Context, file *os.File, size int64, format string, 
 	go func() {
 		err := player.Wait()
 		stopHelperProcess(player)
+		playerDiagnostics.finish()
 		completed <- completion{player: true, failed: err != nil || playerDiagnostics.present}
 	}()
 	first := <-completed

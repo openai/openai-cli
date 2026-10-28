@@ -9,14 +9,19 @@ import (
 	"os"
 
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
+	"github.com/openai/openai-cli/internal/commandsuggest"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/terminalimage"
+	"github.com/openai/openai-cli/internal/updatenotice"
 	"github.com/urfave/cli/v3"
 )
 
 // Run executes one CLI process invocation and returns its exit status.
 // The caller supplies the process-scoped command tree; Run is called once per process.
 func Run(ctx context.Context, argv []string, app *cli.Command) int {
+	if updatenotice.RunUpdateHelper(argv) {
+		return 0
+	}
 	if handled, err := terminalimage.RunKittyOutputHelper(argv); handled {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Image output helper failed.")
@@ -37,6 +42,8 @@ func Run(ctx context.Context, argv []string, app *cli.Command) int {
 		return 0
 	}
 	ConfigureCommand(app)
+	finishSuggestions := commandsuggest.Configure(app)
+	defer finishSuggestions()
 	app.Flags = append(app.Flags, requestconfig.NewRequestHeaderFlag())
 
 	completing := len(argv) > 1 && argv[1] == "__complete"
@@ -66,6 +73,7 @@ func Run(ctx context.Context, argv []string, app *cli.Command) int {
 		}
 		return exitCode
 	}
+	showUpdateNotice(ctx, argv, app, updatenotice.CheckOrUpdate)
 	return 0
 }
 

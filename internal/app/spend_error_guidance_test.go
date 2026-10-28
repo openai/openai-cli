@@ -103,19 +103,33 @@ func TestSpendMutationResponseValidationPreservesCancellation(t *testing.T) {
 }
 
 func TestSpendErrorGuidanceAdminMetadata(t *testing.T) {
+	cleanAPIAuthGuidanceEnvironment(t)
+	t.Setenv("OPENAI_API_KEY", "sk-fake-project-auth")
+	t.Setenv("OPENAI_ADMIN_KEY", "sk-fake-admin-auth")
 	root := readableErrorTestCommand(t)
 	root.Metadata["help-invocation"] = "'/tmp/synthetic app/openai'"
-	for _, required := range []bool{false, true} {
-		command := &cli.Command{Name: "retrieve", Metadata: map[string]any{admin.CredentialsRequiredMetadata: required}}
-		failure := &openai.Error{StatusCode: http.StatusUnauthorized}
-		message := readableAPIErrorMessage(root, withCommandError(command, failure), failure)
-		want := "Key setup: '/tmp/synthetic app/openai' help setup"
-		if required {
-			want += " admin"
-			require.Contains(t, message, "OPENAI_ADMIN_KEY")
-			require.Contains(t, message, "Authorization override")
-		}
-		require.Contains(t, strings.Split(message, "\n"), want)
+	for _, resource := range []string{"models", "admin:organization:spend-limit", "admin:organization:projects:spend-limit"} {
+		t.Run(resource, func(t *testing.T) {
+			command := spendGuidanceTestCommand(resource, "retrieve")
+			failure := &openai.Error{StatusCode: http.StatusUnauthorized, Message: "synthetic-private-auth\x1b[2J"}
+			contextual := withCommandError(command, failure)
+			message := readableAPIErrorMessage(root, contextual, failure)
+			require.Contains(t, strings.Split(message, "\n"), "Key setup: '/tmp/synthetic app/openai' help setup")
+			if strings.HasPrefix(resource, "admin:") {
+				require.Contains(t, message, "Credential source: OPENAI_ADMIN_KEY. An explicit --admin-api-key takes precedence.")
+				require.Contains(t, message, "ask an organization owner to check this admin key's access")
+				require.NotContains(t, message, "OPENAI_API_KEY")
+			} else {
+				require.Contains(t, message, "Credential source: OPENAI_API_KEY. An explicit --api-key takes precedence.")
+				require.NotContains(t, message, "OPENAI_ADMIN_KEY")
+			}
+			for _, private := range []string{"synthetic-private", "sk-fake-", "\x1b"} {
+				require.NotContains(t, message, private)
+			}
+			var machine bytes.Buffer
+			require.NoError(t, ShowCommandError(readableErrorTestCommand(t, "--format-error", "json"), contextual, &machine))
+			require.JSONEq(t, `{"status_code":401,"message":"HTTP 401 Unauthorized: the server returned no usable JSON error details."}`, machine.String())
+		})
 	}
 }
 

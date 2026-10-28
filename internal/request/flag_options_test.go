@@ -61,6 +61,40 @@ func TestFlagOptionsFeatureValidationPrecedesFileExpansion(t *testing.T) {
 	}
 }
 
+func TestFlagOptionsResolvedInputValidationClosesUploads(t *testing.T) {
+	t.Setenv(UntrustedStdinEnv, "false")
+	path := filepath.Join(t.TempDir(), "purpose.txt")
+	require.NoError(t, os.WriteFile(path, []byte("batch"), 0600))
+	query := &requestflag.Flag[string]{Name: "purpose", QueryPath: "purpose"}
+	require.NoError(t, query.PreParse())
+	require.NoError(t, query.Set("purpose", "@"+path))
+	source := &recordingReadCloser{reader: strings.NewReader("synthetic upload")}
+	failure := errors.New("synthetic resolved-input rejection")
+	var phases []string
+	_, err := FlagOptions(&cli.Command{Name: "create", Flags: []cli.Flag{query}},
+		apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatRepeat, MultipartFormEncoded,
+		true, strings.NewReader(""), PreparationHooks{
+			EmbedMultipart: func(body map[string]any, stdin *OnceStdinReader) (map[string]any, error) {
+				phases = append(phases, "expand")
+				return map[string]any{"file": FileUpload{Reader: source, FileName: "synthetic.txt"}}, nil
+			},
+			ValidateResolvedInputs: func(contents requestflag.RequestContents) error {
+				phases = append(phases, "validate")
+				require.Equal(t, "batch", contents.Queries["purpose"])
+				_, ok := contents.Body.(map[string]any)["file"].(FileUpload)
+				require.True(t, ok)
+				return failure
+			},
+			Encoding: EncodingHooks{PrepareMultipart: func(map[string]any) error {
+				phases = append(phases, "encode")
+				return nil
+			}},
+		})
+	require.ErrorIs(t, err, failure)
+	require.Equal(t, []string{"expand", "validate"}, phases)
+	require.EqualValues(t, 1, source.closeCount.Load())
+}
+
 func TestFlagOptionsMultipartHookCleanupPreservesJoinedCauses(t *testing.T) {
 	t.Setenv(UntrustedStdinEnv, "false")
 	for _, failHeader := range []bool{true, false} {

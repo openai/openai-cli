@@ -143,7 +143,22 @@ func writeKittyImage(ctx context.Context, out io.Writer, img image.Image, column
 }
 
 func writeKittyFrames(ctx context.Context, out io.Writer, encoded *bytes.Buffer, columns int) (err error) {
-	options := (&kitty.Options{Action: kitty.TransmitAndPut, Transmission: kitty.Direct, Format: kitty.PNG, Quite: 2, Columns: columns}).Options()
+	return writeKittyFramesRows(ctx, out, encoded, columns, 0)
+}
+
+func writePreviewStripe(ctx context.Context, out io.Writer, img image.Image, protocol string, columns int) error {
+	var encoded bytes.Buffer
+	if err := imagefont.EncodePNG(ctx, &png.Encoder{}, &encoded, img); err != nil {
+		return err
+	}
+	if protocol == "kitty" {
+		return writeKittyFramesRows(ctx, out, &encoded, columns, 1)
+	}
+	return writeITermPayloadRows(ctx, out, encoded.Bytes(), columns, 1)
+}
+
+func writeKittyFramesRows(ctx context.Context, out io.Writer, encoded *bytes.Buffer, columns, rows int) (err error) {
+	options := (&kitty.Options{Action: kitty.TransmitAndPut, Transmission: kitty.Direct, Format: kitty.PNG, Quite: 2, Columns: columns, Rows: rows, DoNotMoveCursor: rows > 0}).Options()
 	destination := contextWriter{ctx, out}
 	incomplete := false
 	defer func() {

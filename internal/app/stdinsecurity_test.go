@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/mocktest"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/stretchr/testify/require"
 )
@@ -63,9 +64,7 @@ func TestUntrustedStdinModeEndToEnd(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.Command("go", "build", "-o", binary, "../../cmd/openai")
-	buildOutput, err := build.CombinedOutput()
-	require.NoError(t, err, "building test CLI: %s", buildOutput)
+	mocktest.CopyCLI(t, binary)
 
 	type recordedRequest struct {
 		body    []byte

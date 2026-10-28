@@ -34,7 +34,15 @@ class SourceSelectionTest(unittest.TestCase):
                         GITHUB_EVENT_PATH=str(self.root / "event.json"), GITHUB_REF="refs/pull/3/merge",
                         GITHUB_REPOSITORY="test/cli", RUNNER_TEMP=str(self.root))
         self.git(self.root, "init", "--bare", str(self.origin))
-        self.tree = self.git(self.origin, "mktree", data="")
+        self.files = {
+            "source.txt": ("100644", "synthetic source: \u03bb\n"),
+            "script.sh": ("100755", "#!/bin/sh\nexit 0\n"),
+        }
+        entries = []
+        for name, (mode, contents) in self.files.items():
+            blob = self.git(self.origin, "hash-object", "-w", "--stdin", data=contents)
+            entries.append(f"{mode} blob {blob}\t{name}\n")
+        self.tree = self.git(self.origin, "mktree", data="".join(entries))
         self.base = self.commit("base")
         self.head = self.commit("head", self.base)
         self.old = self.commit("old merge", self.base, self.head)
@@ -81,6 +89,12 @@ class SourceSelectionTest(unittest.TestCase):
                        cwd=self.root, env=self.env, check=True, capture_output=True)
         with tarfile.open(self.root / "ci-source.tar.gz") as archive:
             self.assertEqual(archive.extractfile("./.git/HEAD").read().decode().strip(), self.current)
+            for name, (mode, contents) in self.files.items():
+                with self.subTest(archived_file=name):
+                    member = archive.getmember(f"./{name}")
+                    self.assertTrue(member.isfile())
+                    self.assertEqual(archive.extractfile(member).read(), contents.encode("utf-8"))
+                    self.assertEqual(bool(member.mode & 0o111), mode == "100755")
         # The existing recorder must bind actual Git HEAD, not stale GITHUB_SHA.
         for language in ["actions", "go", "javascript-typescript", "python"]:
             env = dict(self.env, CODEQL_LANGUAGE=language, SARIF_DIRECTORY=str(self.root),

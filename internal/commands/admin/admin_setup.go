@@ -107,6 +107,7 @@ func ConfigureSetupHelp(root *cli.Command) {
 	}
 	setup.Commands = append(setup.Commands, &cli.Command{
 		Name: "admin", Usage: "Create an admin key and test it safely", HideHelpCommand: true,
+		Metadata:           map[string]any{"help-guide": true},
 		CustomHelpTemplate: adminSetupHelp,
 		Action: func(_ context.Context, command *cli.Command) error {
 			if command.Args().Present() {

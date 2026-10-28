@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import struct
 import sys
 import termios
 import time
@@ -17,7 +18,7 @@ def failure_case(ctx):
     result = ctx.result
     public = ctx.public
     env = ctx.env
-    summary = "The API did not accept this key."
+    summary = "Authentication failed for this API endpoint."
     protocol_summary = "HTTP 401: Unauthorized."
 
     def safe_screen(target=terminal):
@@ -42,19 +43,6 @@ def failure_case(ctx):
                                absent=(summary, protocol_summary, "HTTP status:", "Request ID:",
                                        "Setup: openai", "Command preview", "F1 details"), target=target)
 
-    def home_snapshot():
-        home = Path(env["HOME"])
-        snapshot = {}
-        for path in home.rglob("*"):
-            relative = str(path.relative_to(home))
-            if path.is_file():
-                snapshot[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-            elif path.is_dir():
-                snapshot[relative] = "directory"
-            else:
-                raise AssertionError("Unexpected synthetic HOME entry during recovery help check")
-        return snapshot
-
     terminal.send(b"\t")
     ctx.wait(terminal, ("╭ Instructions ", "› Instructions"))
     visible_failure((ctx.fixture.DEFAULT_INSTRUCTIONS,))
@@ -65,57 +53,20 @@ def failure_case(ctx):
     ctx.mark(terminal, "failure-ready", result)
     assert not server.records, "Editing submitted speech before explicit generation"
     terminal.send(b"\x07")
-    visible_failure((summary, "› API setup", "Error details", "Back to form"),
-                    absent=(protocol_summary, "HTTP status:", ctx.fixture.FAILURE_REQUEST_ID))
-    ctx.mark(terminal, "failure-recovery", result)
+    visible_failure((summary, "Error details", "1. Check the credential required by this API endpoint.", "Esc back"),
+                    absent=("API setup", "Back to form", protocol_summary, "HTTP status:", ctx.fixture.FAILURE_REQUEST_ID))
+    ctx.mark(terminal, "failure-details", result)
     assert len(server.records) == 1 and server.records[0].get("response_status") == 401
     failed_request = server.records[0]["body"]
     assert failed_request["input"] == ctx.fixture.TEXT
     assert failed_request["instructions"] == ctx.fixture.DEFAULT_INSTRUCTIONS, "New draft omitted its actual Instructions example"
     assert json.loads(public(["--format", "json", "audio", "history"])) == [], "Failed speech entered History"
 
-    # Inspect the actual in-form canonical guide. This action must neither
-    # run setup steps nor mutate HOME, credentials, or request state.
-    before_help = home_snapshot()
-    terminal.send(b"\r")
-    visible_failure(("API setup", "Close this form before following these steps.", "Then reopen audio speak in that shell."))
-    ctx.mark(terminal, "failure-api-setup", result)
-    guide_frames = [safe_screen()]
-    for _ in range(32):
-        terminal.send(b"\x1b[6~")
-        ctx.drain(terminal, .08)
-        current = safe_screen()
-        guide_frames.append(current)
-        if current == guide_frames[-2]:
-            break
-    else:
-        raise AssertionError("API setup guide did not reach a bounded scroll endpoint")
-    guide = " ".join(guide_frames)
-    help_output = public(["help", "setup"])
-    help_text = ctx.picker.ANSI.sub("", help_output.decode("utf-8", errors="strict"))
-    for phrase in ("Set up your API key", "OPENAI_API_KEY", "This is a guide only."):
-        assert phrase in guide and phrase in help_text, "API setup panel omitted canonical setup guidance"
-    assert b"synthetic-demo-key" not in help_output
-    assert all(canary.encode() not in help_output for canary in ctx.fixture.FAILURE_CANARIES)
-    assert home_snapshot() == before_help, "Reading API setup changed synthetic HOME"
-    assert len(server.records) == 1, "Reading API setup reached the speech API"
-    (ctx.args.output / "failure-setup-help.txt").write_bytes(help_output)
-    (ctx.args.output / "failure-setup-panel.json").write_text(json.dumps(guide_frames, ensure_ascii=False, indent=2) + "\n")
-    result["setup_recovery"] = {"panel_title": "API setup", "canonical_panel_visible": True,
-                                "close_and_reopen_guidance_visible": True,
-                                "verification_arguments": [str(ctx.args.binary), "help", "setup"],
-                                "exit_status": 0, "requests_added": 0, "synthetic_home_unchanged": True}
+    # Details are immediate. Removed menu controls must not start an action.
+    terminal.send(b"\r\tsd\x07")
+    visible_failure((summary, "Error details", "Esc back"), absent=("API setup", "Back to form"))
+    assert len(server.records) == 1, "Viewing error details retried speech"
     terminal.send(b"\x1b")
-    visible_failure((summary, "› API setup"))
-    terminal.send(ctx.picker.DOWN + b"\r")
-    visible_failure(("Error details",))
-    terminal.send(ctx.picker.END)
-    visible_failure(("Error details", "HTTP status: 401", "Request ID: " + ctx.fixture.FAILURE_REQUEST_ID, "Esc back"))
-    ctx.mark(terminal, "failure-details", result)
-    assert len(server.records) == 1, "Viewing recovery details retried speech"
-    terminal.send(b"\x1b")
-    visible_failure((summary, "› Error details"))
-    terminal.send(ctx.picker.END + b"\r")
     main_form()
     visible_failure(("› More actions…",))
     assert terminal.child.poll() is None, "Back to form quit the application"
@@ -126,8 +77,8 @@ def failure_case(ctx):
     ctx.wait(terminal, "gpt-4o-mini-tts-2025-03-20")
     terminal.send(ctx.picker.DOWN + ctx.picker.UP + b"\r")
     main_form()
-    terminal.send(ctx.picker.END + b"\r" + ctx.picker.END + ctx.picker.UP + b"\r")
-    visible_failure((summary, "› API setup"))  # More -> Last error.
+    terminal.send(ctx.picker.END + b"\r" + ctx.picker.END + b"\r")
+    visible_failure((summary, "Error details", "Esc back"))  # More -> Last error.
     terminal.send(b"\x1b")
     visible_failure(("More actions", "› Last error"))
     terminal.send(b"\x1b")
@@ -139,7 +90,7 @@ def failure_case(ctx):
     result["requests_before_explicit_retry"] = len(server.records)
 
     terminal.send(b"\x07")
-    visible_failure(("Duration 00:02.000", "Play audio"),
+    visible_failure(("00:00.000 / 00:02.000", "Play audio"),
                     absent=(summary, protocol_summary, "HTTP status:", ctx.fixture.FAILURE_REQUEST_ID))
     ctx.mark(terminal, "failure-recovered-result", result)
     assert len(server.records) == 2, "Explicit retry did not produce exactly one new request"
@@ -157,16 +108,18 @@ def failure_case(ctx):
     assert original == ctx.fixture.WAV, "Successful retry did not retain original WAV bytes"
     (ctx.args.output / "failure-inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
     (ctx.args.output / "failure-recovered.wav").write_bytes(original)
-    terminal.send(b"\x1b[Z" + ctx.picker.END + b"\r")
-    visible_failure(("More actions", "Back to form"), absent=("Last error",))
+    terminal.send(b"\x1b")
+    main_form()
+    terminal.send(b"\t\t" + ctx.picker.END + b"\r")
+    visible_failure(("More actions", "[Esc] Back"), absent=("Last error",))
     terminal.send(b"\x1b")
     main_form()
     visible_failure(("› More actions…",))
     terminal.send(b"\t")
-    visible_failure(("Duration 00:02.000", "› Play audio"))
+    visible_failure(("00:00.000 / 00:02.000", "› Play audio"))
     result["failure_checks"] = {
         "http_status": 401, "request_id": ctx.fixture.FAILURE_REQUEST_ID,
-        "safe_details_visible": True, "untrusted_message_canaries_absent": True,
+        "safe_details_visible": True, "single_error_screen": True, "untrusted_message_canaries_absent": True,
         "escape_returned_without_retry": True, "navigation_did_not_retry": True,
         "default_instructions_sent": True, "draft_preserved": True,
         "explicit_retry_succeeded": True, "obsolete_feedback_cleared": True,
@@ -211,7 +164,7 @@ def failure_case(ctx):
         assert len(server.records) == 2, "Legacy model selection submitted speech"
         ctx.mark(failed_terminal, "failure-legacy-ready", result)
         failed_terminal.send(b"\x07")
-        visible_failure((summary, "API setup", "Back to form"), target=failed_terminal)
+        visible_failure((summary, "Error details", "Esc back"), absent=("API setup", "Back to form"), target=failed_terminal)
         ctx.mark(failed_terminal, "failure-error-exit-recovery", result)
         assert len(server.records) == 3 and server.records[2].get("response_status") == 401
         legacy = server.records[2]["body"]
@@ -232,7 +185,8 @@ def failure_case(ctx):
         diagnostic = ctx.picker.ANSI.sub("", restored[1].decode("utf-8", errors="strict"))
         assert protocol_summary in diagnostic, "Error exit omitted its HTTP status after terminal restoration"
         assert "Request ID: " + ctx.fixture.FAILURE_REQUEST_ID in diagnostic
-        assert "Check API key, organization and project." in diagnostic
+        assert "Authentication failed for the custom API address." in diagnostic
+        assert "Next: set the credential required by this API endpoint." in diagnostic
         assert "Key setup:" in diagnostic and "help setup" in diagnostic
         ctx.mark(failed_terminal, "failure-error-exit-summary", result)
         observer = failed_terminal.navigation_observer
@@ -272,8 +226,8 @@ def navigation_case(ctx):
     result = ctx.result
     up, down, ss3_up, ss3_down = b"\x1b[A", b"\x1b[B", b"\x1bOA", b"\x1bOB"
     backtab = b"\x1b[Z"
-    focus = {"text": "› Text", "instructions": "› Instructions", "model": "› Model",
-             "more": "› More actions…", "generate": "› [ Generate speech ]", "history": "› History",
+    focus = {"text": ("╭─", "More actions…"), "instructions": "› Instructions", "model": "› Model",
+             "more": "› More actions…", "generate": "› Generate speech", "history": "› History",
              "play": "› Play audio", "save": "› Save audio…", "command": "Command · Bash/zsh"}
     result["navigation_checks"] = []
 
@@ -316,8 +270,10 @@ def navigation_case(ctx):
     check("Escape returns to Model", "model", b"\x1b")
     check("End selects More", "more", ctx.picker.END)
     check("More Down stays bounded without result", "more", down)
-    check("More Up selects Generate", "generate", up)
-    check("Generate Down selects More", "more", ss3_down)
+    check("More Up selects History", "history", up)
+    check("History Up selects Generate", "generate", up)
+    check("Generate Down selects History", "history", ss3_down)
+    check("History Down selects More", "more", down)
     check("Tab More to Text for long command", "text", b"\t")
     ctx.paste(terminal, "Command inspection sample. " * 180)
     check("long command draft stays local", "text")
@@ -338,9 +294,9 @@ def navigation_case(ctx):
     check("Help opens locally", "Use Tab to move between sections.", b"\r")
     check("Help End remains local", "Help", ctx.picker.END)
     check("Help Escape returns to More", "› Help", b"\x1b")
-    check("More End selects Back", "› Back to form", ctx.picker.END)
-    check("More Down stays at last action", "› Back to form", down)
-    check("Back returns to Settings More", "more", b"\r")
+    check("More End selects Help", "› Help", ctx.picker.END)
+    check("More Down stays at last action", "› Help", down)
+    check("Escape returns to Settings More", "more", b"\x1b")
     check("open More to clear long command draft", "history", b"\r")
     check("select Clear for long command draft", "› Clear form", down * 2)
     check("clear long command draft locally", "more", b"\r")
@@ -349,8 +305,12 @@ def navigation_case(ctx):
     check("Instructions Up enters Text", "text", up)
 
     editor_columns = terminal.initial_size[0] - 8
-    result["exact_width_editor_columns"] = editor_columns
+    result["exact_width_editor_columns"] = {}
     for editor in ("text", "instructions"):
+        editor_columns = terminal.initial_size[0] - 8
+        if editor == "instructions" and terminal.initial_size[0] >= 60 and terminal.initial_size[1] >= 24:
+            editor_columns = min(100, terminal.initial_size[0] - 4) - 17
+        result["exact_width_editor_columns"][editor] = editor_columns
         for name, value in (("single-line", "Boundary"), ("multiline", "First line\nSecond line\nThird line"),
                             ("wrapped-unicode", "界🙂e\u0301 " * 26), ("exact-width-unicode", "界" * editor_columns)):
             prefix = editor + " " + name
@@ -387,16 +347,17 @@ def navigation_case(ctx):
 
     check("select Settings for History", "model", b"\t\t")
     open_more("History")
-    check("open local History", "Enter select · Esc back", b"\r")
+    check("open local History", "Enter open · Esc back", b"\r")
     check("restore local result", "play", b"\r")
-    ctx.wait(terminal, "Duration 00:02.000")
+    ctx.wait(terminal, "00:00.000 / 00:02.000")
     ctx.mark(terminal, result["case"] + "-restored-result", result)
     check("reverse Tab Result to Settings", "more", backtab)
     check("More Down enters Play", "play", down)
     check("Result Down selects Save", "save", ss3_down)
     check("Result Down stays on Save", "save", down)
-    check("Result Up returns to Play", "play", up)
-    check("Result Up enters Settings More", "more", ss3_up)
+    check("Result Left returns to Play", "play", b"\x1b[D")
+    check("Result Up focuses waveform", "←→ seek", ss3_up)
+    check("Waveform Up enters Settings More", "more", ss3_up)
     check("Tab Settings to Result", "play", b"\t")
     check("Result End selects Save", "save", ctx.picker.END)
     check("Result Home selects Play", "play", ctx.picker.HOME)
@@ -411,7 +372,8 @@ def navigation_case(ctx):
     assert "Command preview" not in visible and "printf" not in visible, "Main form retained advanced command content"
     ctx.mark(terminal, result["case"] + "-complete", result)
     result["navigation_check_count"] = len(result["navigation_checks"])
-    assert result["navigation_check_count"] == 185, "Navigation inventory changed"
+    # Direct History adds a stop between Generate and More in both directions.
+    assert result["navigation_check_count"] == 188, "Navigation inventory changed"
     zero_requests()
     terminal.send(b"\x03")
     terminal.finish(130)
@@ -529,7 +491,11 @@ def startup_case(ctx):
                         assert destination.read_bytes() == ctx.fixture.WAV
                 assert {str(p): p.read_bytes() for p in canaries} == expected_profiles, "Startup changed a profile canary"
                 assert files(config) == expected_config, "Startup wrote optional shell configuration"
-                assert files(cache) == expected_cache, "Startup changed existing private history"
+                observed_cache = files(cache)
+                if observed_cache != expected_cache:
+                    result["startup_cache_change"] = {"shell": name, "command": command, "position": position,
+                                                       "expected": expected_cache, "actual": observed_cache}
+                assert observed_cache == expected_cache, "Startup changed existing private history"
         assert not server.records, "Local startup coverage reached the synthetic API"
     assert result["commands"], "No supported native shell was available"
     result.update(pass_=True, exit_status=0, requests=[])
@@ -646,19 +612,83 @@ def workflow_case(ctx):
     public = ctx.public
     private = ctx.private
     playback = ctx.playback
+
+    def player_record(index):
+        deadline = time.monotonic() + 3
+        while True:
+            records = playback.read_text().splitlines() if playback.exists() else []
+            if len(records) > index:
+                return json.loads(records[index])
+            assert time.monotonic() < deadline, "The fake player did not receive generated audio"
+            ctx.drain(terminal, .05)
+
+    def marker_column(visible):
+        # Asciinema text preserves soft wraps as one logical line. This fixture
+        # uses only single-cell characters, so recorded widths recover its rows.
+        width = terminal.initial_size[0]
+        for event in terminal.events:
+            if event[1] == "r":
+                width = int(event[2].split("x")[0])
+        physical = []
+        for line in visible.splitlines():
+            assert all(32 <= ord(char) < 127 or char in "│┃╷╵█▀▄─·›…←→↑↓" for char in line), \
+                "Waveform fixture contains a character with an unverified cell width"
+            physical.extend([line[start:start + width] for start in range(0, len(line), width)] or [""])
+        indices = [index for index, row in enumerate(physical) if "┃" in row]
+        assert len(indices) == 5, "The result did not expose its five-row waveform"
+        assert indices == list(range(indices[0], indices[0] + 5)), "Waveform rows were not contiguous"
+        rows = [physical[index] for index in indices]
+        assert all(row.count("┃") == 1 for row in rows), "A waveform row contained multiple playback markers"
+        columns = {row.index("┃") for row in rows}
+        assert len(columns) == 1, "The playback marker did not span the waveform"
+        return columns.pop()
+
+    def advance_player(played, initial, following, clock):
+        assert played["stats"], "Workbench playback did not request FFplay status"
+        ctx.drain(terminal, .2)
+        before = ctx.wait(terminal, initial)
+        before_column = marker_column(before)
+        # The fake clock remains fixed until this process-specific release.
+        # Wall-clock passage alone must not advance the displayed position.
+        ctx.drain(terminal, .3)
+        assert initial in ctx.screen(terminal), "Playback advanced without a helper clock report"
+        ctx.playback_clock.write_text(json.dumps({"pid": played["pid"], "clock": clock}))
+        ctx.wait(terminal, following)
+        # A PTY read can end after the timeline and before the action rows.
+        # Require both values in one snapshot before judging playback state.
+        after = ctx.wait(terminal, "Stop audio")
+        assert following in after, "Reported playback position disappeared before its controls appeared"
+        after_column = marker_column(after)
+        assert after_column > before_column, "Helper progress did not move the waveform marker"
+        assert "Stop audio" in after, "Playback ended before its reported position appeared"
+        return {"reported_seconds": clock, "before": initial, "after": following,
+                "marker_before": before_column, "marker_after": after_column,
+                "stationary_before_report": True}
+
+    def saved_file(path):
+        deadline = time.monotonic() + 3
+        while not path.exists() or path.read_bytes() != ctx.fixture.WAV:
+            assert time.monotonic() < deadline, "Save did not export the complete original recording"
+            ctx.drain(terminal, .05)
+        ctx.wait(terminal, "Saved:", absent=("Saving audio", "Enter save · Esc back"))
+
     result["resize_checkpoints"] = not ctx.args.no_resize
     ctx.mark(terminal, "initial-form", result)
     ctx.paste(terminal, ctx.fixture.TEXT)
     terminal.send(b"\t")
-    ctx.wait(terminal, ("╭ Instructions ", "› Instructions"))
+    visible = ctx.wait(terminal, "› Instructions")
+    assert "╭" in visible and "╰" in visible, "Instructions replaced the primary input box"
     terminal.send(b"\x01\x0b")
     ctx.paste(terminal, ctx.fixture.INSTRUCTIONS)
+    ctx.mark(terminal, "instructions-editor", result)
     terminal.send(b"\t\r")
     ctx.wait(terminal, "gpt-4o-mini-tts-2025-12-15")
     terminal.send(ctx.picker.DOWN * 2)
     ctx.mark(terminal, "model-choices", result)
     terminal.send(b"\r")
-    ctx.wait(terminal, "Model          gpt-4o-mini-tts-2025-12-15")
+    visible = ctx.wait(terminal, "Model          gpt-4o-mini-tts-2025-12-15")
+    assert "╭" in visible and "╰" in visible, "Settings replaced the primary input box"
+    ctx.mark(terminal, "settings-form", result)
     terminal.send(ctx.picker.DOWN + b"\r")
     ctx.wait(terminal, "Enter select · Esc back")
     terminal.send(ctx.picker.UP * 3)
@@ -677,7 +707,9 @@ def workflow_case(ctx):
     ctx.mark(terminal, "selected-settings", result)
     assert not server.records, "Choosing or typing generated speech"
     terminal.send(b"\x07")
-    ctx.wait(terminal, "Duration 00:02.000")
+    visible = ctx.wait(terminal, "00:00.000 / 00:02.000")
+    assert "More actions…" not in visible and "Instructions" not in visible, "Playback still displayed the editing form"
+    marker_column(visible)
     ctx.mark(terminal, "generated-result", result)
     assert len(server.records) == 1, "Generation request count changed"
     request = server.records[0]["body"]
@@ -694,35 +726,108 @@ def workflow_case(ctx):
     (ctx.args.output / "inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
     terminal.send(b" ")
     ctx.wait(terminal, "Stop audio")
-    deadline = time.monotonic() + 3
-    while not playback.exists() and time.monotonic() < deadline:
-        ctx.drain(terminal, .05)
-    assert playback.exists(), "The fake player never received generated audio"
-    played = json.loads(playback.read_text().splitlines()[0])
+    played = player_record(0)
     assert played["sha256"] == hashlib.sha256(ctx.fixture.WAV).hexdigest()
+    progress = [advance_player(played, "00:00.000 / 00:02.000", "00:00.600 / 00:02.000", .6)]
+    ctx.mark(terminal, "playback-progress", result)
     terminal.send(b" ")
     ctx.wait(terminal, "Play audio")
+    terminal.send(b"\x1b[A")
+    ctx.wait(terminal, "←→ seek")
+    terminal.send(b"\x1b[D" * 35)
+    ctx.wait(terminal, "00:00.000 / 00:02.000")
+    # Seven boundaries at the wide layout's 35 bars select exactly 400 ms.
+    terminal.send(b"\x1b[C" * 7)
+    ctx.wait(terminal, "00:00.400 / 00:02.000")
+    ctx.mark(terminal, "selected-playback-start", result)
+    assert len(playback.read_text().splitlines()) == 1, "Seeking started playback"
+    assert len(server.records) == 1, "Seeking generated speech"
+    terminal.send(b" ")
+    ctx.wait(terminal, "Stop audio")
+    played = player_record(1)
+    samples = ctx.fixture.WAV[44 + 9600 * 2:]
+    header = bytearray(ctx.fixture.WAV[:44])
+    struct.pack_into("<I", header, 4, 36 + len(samples))
+    struct.pack_into("<I", header, 40, len(samples))
+    expected = bytes(header) + samples
+    assert played["bytes"] == len(expected)
+    assert played["sha256"] == hashlib.sha256(expected).hexdigest(), "Player received the wrong selected samples"
+    progress.append(advance_player(played, "00:00.400 / 00:02.000", "00:01.000 / 00:02.000", .6))
+    # Seeking an active result stops it without starting another helper.
+    terminal.send(b"\x1b[D" * 35)
+    ctx.wait(terminal, "00:00.000 / 00:02.000")
+    ctx.wait(terminal, "Play audio")
+    assert len(playback.read_text().splitlines()) == 2, "Seeking restarted playback"
+    result["seek"] = {"offset_ms": 400, "frames_skipped": 9600,
+                      "played_bytes": len(expected), "explicit_play": True,
+                      "seek_stopped_playback": True, "requests": 1}
+    result["playback_progress"] = progress
     terminal.send(b"s")
-    ctx.wait(terminal, "Save original audio to:")
-    terminal.send(b"\x01\x0b-\r")
-    ctx.wait(terminal, "Enter a file path for saving.")
+    ctx.wait(terminal, "Filename")
+    terminal.send(b"\t\x01\x0b-\r")
+    ctx.wait(terminal, "Enter a filename for saving.")
     assert len(server.records) == 1, "Invalid save path generated speech"
     ctx.mark(terminal, "save-validation", result)
     destination = private / "saved speech.wav"
     terminal.send(b"\x01\x0b")
     ctx.paste(terminal, str(destination))
     terminal.send(b"\r")
-    ctx.wait(terminal, "Saved:")
+    saved_file(destination)
     assert destination.read_bytes() == ctx.fixture.WAV
     (ctx.args.output / "exported.wav").write_bytes(destination.read_bytes())
     ctx.mark(terminal, "saved-result", result)
-    terminal.send(b"\x1b[Z" + ctx.picker.END + b"\r")
+    default_folder = private / "Downloads" / "gpt-audio"
+    assert not default_folder.exists(), "Custom Save created the default audio folder"
+    default_name = "hello-from-the-audio-workbench-this-clip-is"
+    defaults = [default_folder / (default_name + suffix + ".wav") for suffix in ("", "-2")]
+    for path in defaults:
+        terminal.send(b"s")
+        ctx.wait(terminal, "Filename")
+        ctx.mark(terminal, "save-default" + ("-2" if path == defaults[1] else ""), result)
+        if path == defaults[1]:
+            terminal.send(b"\t\t")
+            ctx.wait(terminal, "› Save to")
+            ctx.mark(terminal, "save-folder" + ("-2" if path == defaults[1] else ""), result)
+            terminal.send(b"\t")
+            ctx.wait(terminal, "› Save audio")
+            if path == defaults[1]:
+                terminal.send(b"\x1b[Z\x1b[Z")
+                ctx.wait(terminal, "› Filename")
+        terminal.send(b"\r")
+        saved_file(path)
+    assert all(path.read_bytes() == ctx.fixture.WAV for path in defaults)
+    assert destination.read_bytes() == ctx.fixture.WAV, "Default Save changed the explicit export"
+    result["default_save"] = {"directory": "~/Downloads/gpt-audio", "filenames": [path.name for path in defaults],
+                              "prompt_derived": True, "numbered_collision": True, "original_bytes_preserved": True}
+    ctx.mark(terminal, "default-saved-result", result)
+    terminal.send(b"s")
+    ctx.wait(terminal, "Filename")
+    terminal.send(b"\t\x01\x0b")
+    ctx.paste(terminal, "chosen-folder.wav")
+    terminal.send(b"\t\x01\x0b")
+    ctx.paste(terminal, str(private))
+    terminal.send(b"\r")
+    ctx.wait(terminal, "› Save audio")
+    assert not (private / "chosen-folder.wav").exists(), "Committing the folder saved audio"
+    terminal.send(b"\r")
+    saved_file(private / "chosen-folder.wav")
+    assert (private / "chosen-folder.wav").read_bytes() == ctx.fixture.WAV
+    terminal.send(b"\x1b")
+    ctx.wait(terminal, ("╭─", "More actions…"))
+    played_before_listen = len(playback.read_text().splitlines())
+    terminal.send(b"\x0f")
+    ctx.wait(terminal, "Play audio")
+    assert len(playback.read_text().splitlines()) == played_before_listen, "Listen shortcut started playback"
+    ctx.mark(terminal, "listen-shortcut", result)
+    terminal.send(b"\x1b")
+    ctx.wait(terminal, ("╭─", "More actions…"))
+    terminal.send(b"\t\t" + ctx.picker.END + ctx.picker.UP)
     ctx.wait(terminal, "› History")
     terminal.send(b"\r")
-    ctx.wait(terminal, entry["id"])
+    ctx.wait(terminal, ctx.fixture.TEXT.splitlines()[0])
     ctx.mark(terminal, "history", result)
     terminal.send(b"\r")
-    ctx.wait(terminal, "Duration 00:02.000")
+    ctx.wait(terminal, "00:00.000 / 00:02.000")
     ctx.wait(terminal, "Play audio", absent=("Opening audio",))
     ctx.mark(terminal, "restored-result", result)
     if not ctx.args.no_resize:
@@ -736,9 +841,9 @@ def workflow_case(ctx):
         assert len(server.records) == 1, "Small terminal accepted a hidden submission"
         ctx.mark(terminal, "too-small", result)
         terminal.resize(90, 34)
-        ctx.wait(terminal, "Duration 00:02.000")
+        ctx.wait(terminal, "00:00.000 / 00:02.000")
     terminal.send(b"\x1b")
-    ctx.wait(terminal, ("╭ Text ", "› Text"))
+    ctx.wait(terminal, ("╭─", "More actions…"))
     terminal.send(b"\t\t" + ctx.picker.HOME + ctx.picker.DOWN + b"\r")
     ctx.wait(terminal, "Enter select · Esc back")
     terminal.send(ctx.picker.DOWN + b"\r")
@@ -747,22 +852,27 @@ def workflow_case(ctx):
     terminal.send(ctx.picker.END + b"\r")
     ctx.wait(terminal, "› History")
     terminal.send(ctx.picker.DOWN + b"\r")
-    ctx.wait(terminal, "Result: Ballad")
+    ctx.wait(terminal, "Ballad · WAV")
     ctx.mark(terminal, "voice-audition", result)
     assert len(server.records) == 2 and server.records[1]["body"]["input"] == ctx.fixture.AUDITION
     assert json.loads(public(["--format", "json", "audio", "history"])) == entries
     terminal.send(b"\x1b")
-    ctx.wait(terminal, "Result: Ash")
+    ctx.wait(terminal, ("╭─", "More actions…"))
+    terminal.send(b"\t\t\t")
+    ctx.wait(terminal, "Ash · WAV")
+    terminal.send(b"\x1b")
+    ctx.wait(terminal, ("╭─", "More actions…"))
     terminal.send(b"\t\t" + ctx.picker.END + b"\r")
     ctx.wait(terminal, "› History")
     terminal.send(ctx.picker.DOWN * 2)
     ctx.wait(terminal, "› Clear form")
     terminal.send(b"\r")
-    ctx.wait(terminal, "› More actions…", absent=("Result:", ctx.fixture.TEXT.splitlines()[0], ctx.fixture.INSTRUCTIONS,
+    ctx.wait(terminal, "› More actions…", absent=("Audio ready", ctx.fixture.TEXT.splitlines()[0], ctx.fixture.INSTRUCTIONS,
                                                 ctx.fixture.DEFAULT_INSTRUCTIONS))
     ctx.mark(terminal, "cleared-form", result)
     assert json.loads(public(["--format", "json", "audio", "history"])) == entries
     assert destination.read_bytes() == ctx.fixture.WAV and len(server.records) == 2
+    assert all(path.read_bytes() == ctx.fixture.WAV for path in defaults), "Clear removed a default export"
     terminal.send(b"\x03")
     terminal.finish(130)
 
@@ -776,7 +886,7 @@ def compact_case(ctx):
     ctx.paste(terminal, ctx.fixture.TEXT)
     assert not server.records, "Typing generated speech"
     terminal.send(b"\x07")
-    ctx.wait(terminal, "Duration 00:02.000")
+    ctx.wait(terminal, "00:00.000 / 00:02.000")
     assert len(server.records) == 1, "Compact generation request count changed"
     request = server.records[0]["body"]
     assert request["input"] == ctx.fixture.TEXT and request.get("instructions", "") == ctx.fixture.DEFAULT_INSTRUCTIONS
@@ -794,6 +904,16 @@ def compact_case(ctx):
     (ctx.args.output / "compact-exported.wav").write_bytes(original)
     (ctx.args.output / "compact-inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
     ctx.mark(terminal, "compact-40x12", result)
+    terminal.send(b"s")
+    ctx.wait(terminal, "Filename")
+    ctx.wait(terminal, "Enter save · Tab edit · Esc back")
+    ctx.mark(terminal, "compact-save", result)
+    terminal.send(b"\t\t")
+    ctx.wait(terminal, "› Save to")
+    ctx.wait(terminal, "Enter done · Esc back")
+    ctx.mark(terminal, "compact-save-folder", result)
+    terminal.send(b"\x1b")
+    ctx.wait(terminal, "Play audio")
     assert not any(event[1] == "r" for event in terminal.events), "Fixed-size capture contains a resize"
     result["fixed_geometry"] = True
     result["original_audio_sha256"] = hashlib.sha256(original).hexdigest()
@@ -801,6 +921,34 @@ def compact_case(ctx):
     terminal.finish(130)
     assert json.loads(public(["--format", "json", "audio", "history"])) == entries
     assert len(server.records) == 1, "Compact cancellation generated speech"
+
+
+def wide_case(ctx):
+    terminal, result, server = ctx.terminal, ctx.result, ctx.server
+    visible = ctx.wait(terminal, "Text to speech")
+    border = visible.split("╭", 1)[1].split("╮", 1)[0]
+    assert len(border) + 2 == 96, "Wide composer escaped its reading column"
+    ctx.mark(terminal, "wide-empty-form", result)
+    draft = "Hello. This draft stays near its settings."
+    ctx.paste(terminal, draft)
+    terminal.send(b"\t\t" + ctx.picker.END)
+    ctx.wait(terminal, "› More actions…")
+    for keys, label in [(b"\x1b[D", "History"), (b"\x1b[D", "Generate speech"),
+                        (b"\x1b[C", "History"), (b"\x1b[C", "More actions…")]:
+        terminal.send(keys)
+        ctx.wait(terminal, "› " + label)
+        assert not server.records, "Horizontal navigation generated speech"
+    ctx.mark(terminal, "wide-actions", result)
+    terminal.send(b"\r")
+    visible = ctx.wait(terminal, "› History")
+    assert draft in visible and "Settings" in visible, "More actions lost form context"
+    ctx.mark(terminal, "wide-more", result)
+    terminal.send(b"\x1b")
+    ctx.wait(terminal, "› More actions…")
+    terminal.send(b"\x03")
+    terminal.finish(130)
+    assert not server.records and not server.failures, "Wide form navigation sent a request"
+    result.update(reading_column=96, horizontal_navigation=True, zero_requests=True)
 
 
 def busy_cancel_case(ctx):
@@ -902,6 +1050,7 @@ def stopped_reader_case(ctx):
 SCENARIOS = {
     "workflow": workflow_case,
     "compact": compact_case,
+    "wide": wide_case,
     "navigation": navigation_case,
     "navigation-compact": navigation_case,
     "failure": failure_case,

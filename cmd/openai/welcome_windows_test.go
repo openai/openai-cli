@@ -22,7 +22,8 @@ import (
 // The console is isolated and hidden; no terminal application or desktop input is used.
 func TestMainDispatchWelcomeWindowsConsole(t *testing.T) {
 	control := runWelcomeWindowsConsole(t, []string{"--help"}, nil)
-	if !strings.HasPrefix(control, "NAME:") {
+	const description = "Use the OpenAI API from your terminal."
+	if !strings.HasPrefix(control, "OpenAI CLI") || !strings.Contains(control, description) {
 		t.Fatalf("complete help control missing: %q", control)
 	}
 	for _, tc := range []struct {
@@ -39,8 +40,12 @@ func TestMainDispatchWelcomeWindowsConsole(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := runWelcomeWindowsConsole(t, tc.args, tc.env)
+			want := control
+			if strings.Contains(got, "\x1b") {
+				t.Fatalf("classic console help contains terminal controls: %q", got)
+			}
 			if tc.banner {
-				at := strings.Index(got, "NAME:")
+				at := strings.Index(got, description)
 				if at < 0 {
 					t.Fatalf("welcome lost complete help: %q", got)
 				}
@@ -53,10 +58,11 @@ func TestMainDispatchWelcomeWindowsConsole(t *testing.T) {
 						t.Fatalf("classic console welcome contains non-ASCII text or controls: %q", header)
 					}
 				}
-				got = strings.TrimSpace(got[at:])
+				got = got[at:]
+				want = control[strings.Index(control, description):]
 			}
-			if got != control {
-				t.Fatalf("existing help changed: got=%q want=%q", got, control)
+			if got != want {
+				t.Fatalf("existing help changed: got=%q want=%q", got, want)
 			}
 		})
 	}
@@ -80,7 +86,8 @@ func runWelcomeWindowsConsole(t *testing.T, args, extra []string) string {
 			process.Env = append(process.Env, name+"="+value)
 		}
 	}
-	process.Env = append(process.Env, "HOME="+home, "USERPROFILE="+home, "APPDATA="+home, "LOCALAPPDATA="+home,
+	// Keep the welcome-only fixture offline and independent of optional update checks.
+	process.Env = append(process.Env, "OPENAI_CLI_NO_UPDATE_CHECK=1", "HOME="+home, "USERPROFILE="+home, "APPDATA="+home, "LOCALAPPDATA="+home,
 		"TEMP="+home, "TMP="+home, "XDG_CONFIG_HOME="+home, "XDG_CACHE_HOME="+home,
 		"OPENAI_BASE_URL=not%url", "OPENAI_CLI_WELCOME_CONSOLE_CHILD=1", "GOMAXPROCS=2")
 	process.Env = append(process.Env, extra...)

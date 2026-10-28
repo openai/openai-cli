@@ -62,7 +62,7 @@ func TestDescribeRequestInputsSurvivesResourceCloning(t *testing.T) {
 		if err := root.Run(t.Context(), args); err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"[PROJECT_ID | --project-id PROJECT_ID]", "ID of the project.", "JSON/YAML keys: project_id."} {
+		for _, want := range []string{"[PROJECT_ID | --project-id=PROJECT_ID]", "ID of the project.", "JSON/YAML keys: project_id."} {
 			if !strings.Contains(strings.Join(strings.Fields(out.String()), " "), want) {
 				t.Errorf("route %q lost %q: %s", path, want, out.String())
 			}

@@ -8,6 +8,9 @@ import (
 
 // Keep keyboard traversal in the same order as the visible form.
 func (m *audioWorkbench) focusSection(focus int) tea.Cmd {
+	if focus == 4 && m.focus != 4 {
+		m.waveformFocused = false
+	}
 	m.input.Blur()
 	m.instructions.Blur()
 	m.focus = focus
@@ -78,6 +81,15 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 		}
 	case 2:
 		switch key {
+		case "left", "right":
+			if m.setting < 4 || len(m.formActionRows()) != 1 {
+				return false, nil
+			}
+			step := 1
+			if key == "left" {
+				step = -1
+			}
+			m.setting = max(4, min(audioSettingMore, m.setting+step))
 		case "up":
 			if m.setting == 0 {
 				if !m.instructionsSupported() {
@@ -87,7 +99,7 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			}
 			m.setting--
 		case "down":
-			if m.setting == 5 {
+			if m.setting == audioSettingMore {
 				if m.result != nil {
 					m.resultAction = 0
 					return true, m.focusSection(4)
@@ -98,26 +110,40 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 		case "home":
 			m.setting = 0
 		case "end":
-			m.setting = 5
+			m.setting = audioSettingMore
 		default:
 			return false, nil
 		}
 		return true, nil
 	case 4:
 		switch key {
+		case "left", "right":
+			if m.waveformFocused {
+				return false, nil
+			}
+			step := 1
+			if key == "left" {
+				step = -1
+			}
+			m.resultAction = max(0, min(1, m.resultAction+step))
 		case "up":
-			if m.resultAction > 0 {
-				m.resultAction--
+			if !m.waveformFocused && m.result.seekDuration() > 0 {
+				m.waveformFocused = true
 			} else {
-				m.setting = 5
+				m.waveformFocused = false
+				m.setting = audioSettingMore
 				return true, m.focusSection(2)
 			}
 		case "down":
-			m.resultAction = min(1, m.resultAction+1)
+			if m.waveformFocused {
+				m.waveformFocused = false
+			} else {
+				m.resultAction = min(1, m.resultAction+1)
+			}
 		case "home":
-			m.resultAction = 0
+			m.waveformFocused, m.resultAction = false, 0
 		case "end":
-			m.resultAction = 1
+			m.waveformFocused, m.resultAction = false, 1
 		default:
 			return false, nil
 		}

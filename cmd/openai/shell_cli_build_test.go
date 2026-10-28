@@ -39,7 +39,8 @@ func runShellTests(m *testing.M) (code int) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-		build := exec.CommandContext(ctx, goBinary, "build", "-o", binary, ".")
+		build := exec.CommandContext(ctx, goBinary, "build", "-p", "2", "-o", binary, ".")
+		build.Env = append(os.Environ(), "GOMAXPROCS=2")
 		if output, err := build.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("build shell test CLI: %w\n%s", err, output)
 		}

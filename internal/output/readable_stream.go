@@ -14,13 +14,19 @@ func writeReadableStream(iter jsonview.Iterator[JSON], opts ReadableOptions) err
 	out := Writer{Context: opts.Context, Sink: opts.Stdout}
 	writer := readable.NewStreamWriter(out)
 	route := opts.Route
+	var agents transformers.AgentsStreamProjector
 	for iter.Next() {
 		value := iter.Current().Result
-		event, projected := transformers.ProjectTextStream(value, route)
+		event, projected, err := agents.Project(opts.Context, value, route)
+		if err != nil {
+			return errors.Join(err, iter.Err())
+		}
+		if !projected {
+			event, projected = transformers.ProjectTextStream(value, route)
+		}
 		if !projected {
 			event, projected = transformers.ProjectAudioStream(value, route)
 		}
-		var err error
 		if projected {
 			err = writer.Write(event)
 		} else {
@@ -30,11 +36,21 @@ func writeReadableStream(iter jsonview.Iterator[JSON], opts ReadableOptions) err
 			return errors.Join(err, iter.Err())
 		}
 	}
-	if err := errors.Join(iter.Err(), writer.Finish()); err != nil {
+	if err := errors.Join(iter.Err(), writer.Finish(), writeAgentsStreamHint(opts, agents.HasOmissions())); err != nil {
 		return err
 	}
-	if !writer.HasOutput() {
+	if !writer.HasOutput() && !agents.HasOmissions() {
 		return readable.WriteText(out, "No results.")
 	}
 	return opts.Context.Err()
+}
+
+// The shared diagnostic policy controls suppression and preserves write errors.
+// Emit the omission hint once, after the readable stream finishes.
+func writeAgentsStreamHint(opts ReadableOptions, omitted bool) error {
+	if !omitted || !transformers.IsAgentsStream(opts.Route) || ResolveFormat(opts.FormatOptions) != "text" ||
+		opts.Transform != "" || opts.RawOutput {
+		return nil
+	}
+	return writeReadableHint(opts, "Some fields omitted. Use --format jsonl for complete events.")
 }

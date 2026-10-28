@@ -288,11 +288,11 @@ func TestMainSpendErrorRecoveryAdminSetup(t *testing.T) {
 			var requests atomic.Int32
 			project := args[0] == "projects"
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				attempt := requests.Add(1)
+				requests.Add(1)
 				if r.Method != http.MethodGet || r.URL.Path != spendThresholdPath(project, "spend-limit") {
 					t.Error("unexpected authentication recovery request")
 				}
-				if attempt == 1 {
+				if r.Header.Get("Authorization") == "Bearer sk-fake-rejected-admin" {
 					checkSpendRecoveryContext(t, r, "sk-fake-rejected-admin")
 					writeSpendRecoveryFailure(w, http.StatusUnauthorized, "invalid_api_key")
 					return
@@ -306,14 +306,29 @@ func TestMainSpendErrorRecoveryAdminSetup(t *testing.T) {
 			env = spendRecoverySetEnvironment(env, "OPENAI_ADMIN_KEY", "sk-fake-rejected-admin")
 			argv := append([]string{"openai"}, args...)
 			got := runMainDispatchWithEnv(t, "bash", env, argv...)
-			checkSpendRecoveryFailure(t, got, "HTTP 401", "OPENAI_ADMIN_KEY", "help setup admin")
+			checkSpendRecoveryFailure(t, got, "HTTP 401", "custom API address", "OPENAI_ADMIN_KEY", "--admin-api-key", "help setup")
+			if strings.Contains(got.stderr, "OPENAI_API_KEY") {
+				t.Fatal("admin authentication recovery selected the project credential", got.stderr)
+			}
 			help := followSpendRecoveryHelp(t, env, got.stderr, "Key setup")
-			if !strings.Contains(help.stdout, "organization/admin-keys") || !strings.Contains(help.stdout, "OPENAI_ADMIN_KEY") || requests.Load() != 1 {
+			if !strings.Contains(help.stdout, "OPENAI_ADMIN_KEY") || !strings.Contains(help.stdout, "--admin-api-key") || requests.Load() != 1 {
+				t.Fatal("setup recovery omitted admin credential instructions or performed a request")
+			}
+			adminHelp := followSpendRecoveryHelp(t, env, help.stdout, "Admin key setup")
+			if !strings.Contains(adminHelp.stdout, "organization/admin-keys") || !strings.Contains(adminHelp.stdout, "OPENAI_ADMIN_KEY") || requests.Load() != 1 {
 				t.Fatal("admin setup recovery omitted admin instructions or performed a request")
+			}
+			machine := runMainDispatchWithEnv(t, "bash", env, append([]string{"openai", "--format-error", "json"}, args...)...)
+			if machine.code != 1 || machine.stdout != "" || requests.Load() != 2 {
+				t.Fatalf("admin authentication machine error changed routing or request count: %+v", machine)
+			}
+			assertSpendThresholdJSON(t, machine.stderr, spendRecoveryDetails("invalid_api_key"))
+			if strings.Contains(machine.stderr, "sk-fake-") || strings.Contains(machine.stderr, "Key setup:") {
+				t.Fatal("admin authentication machine error exposed a credential or human guidance", machine.stderr)
 			}
 			env = spendRecoverySetEnvironment(env, "OPENAI_ADMIN_KEY", "sk-fake-spend-admin")
 			recovered := runMainDispatchWithEnv(t, "bash", env, argv...)
-			if recovered.code != 0 || recovered.stderr != "" || requests.Load() != 2 {
+			if recovered.code != 0 || recovered.stderr != "" || requests.Load() != 3 {
 				t.Fatalf("following admin setup did not recover the fixture: %+v", recovered)
 			}
 		})

@@ -1,11 +1,16 @@
 package debugmiddleware
 
 import (
+	"context"
+	"errors"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"slices"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 // For the time being these type definitions are duplicated here so that we can
@@ -30,13 +35,21 @@ var sensitiveHeaders = []string{
 type RequestLogger struct {
 	logger           interface{ Printf(string, ...any) } // field for testability; usually log.Default()
 	sensitiveHeaders []string                            // field for testability; usually sensitiveHeaders
+	attempts         atomic.Uint64
+	capture          CaptureOptions
 }
 
 // NewRequestLogger redacts known credential headers and any additional header names.
 func NewRequestLogger(additionalSensitiveHeaders ...string) *RequestLogger {
+	return NewRequestLoggerWithOptions(CaptureOptions{}, additionalSensitiveHeaders...)
+}
+
+// NewRequestLoggerWithOptions adds explicit bounded payload diagnostics.
+func NewRequestLoggerWithOptions(capture CaptureOptions, additionalSensitiveHeaders ...string) *RequestLogger {
 	return &RequestLogger{
 		logger:           log.Default(),
 		sensitiveHeaders: slices.Concat(sensitiveHeaders, additionalSensitiveHeaders),
+		capture:          capture.normalized(),
 	}
 }
 
@@ -50,13 +63,68 @@ func (m *RequestLogger) Middleware() Middleware {
 			m.logger.Printf("Request Content:\n%s\n", reqBytes)
 		}
 
+		attempt := m.attempts.Add(1)
+		var requestCapture *captureRequestBody
+		if m.capture.Bodies && req.Body != nil && req.Body != http.NoBody {
+			requestCapture = newCaptureRequestBody(req.Body, req.Header.Get("Content-Type"), m.capture.MaxBytes, req.ContentLength)
+			cloned := new(http.Request)
+			*cloned = *req
+			cloned.Body = requestCapture
+			if getBody := req.GetBody; getBody != nil {
+				cloned.GetBody = func() (io.ReadCloser, error) {
+					body, err := getBody()
+					if err != nil || body == nil || body == http.NoBody {
+						return body, err
+					}
+					return requestCapture.replay(body), nil
+				}
+			}
+			req = cloned
+		}
+		started := time.Now()
 		resp, err := mn(req)
+		elapsed := time.Since(started)
+		if requestCapture != nil {
+			m.logger.Printf("HTTP attempt %d: %s", attempt, requestCapture.finish())
+		}
 		if err != nil || resp == nil {
+			outcome := "transport failed"
+			if req.Context().Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				outcome = "request canceled"
+			} else if err == nil {
+				outcome = "no response received"
+			}
+			m.logTiming(attempt, outcome, elapsed)
 			return resp, err
 		}
+		// Status text comes from the standard library, never an arbitrary reason phrase.
+		m.logger.Printf("HTTP attempt %d: response headers received after %d ms (%d %s)",
+			attempt, elapsed.Round(time.Millisecond).Milliseconds(), resp.StatusCode, http.StatusText(resp.StatusCode))
 
 		if respBytes, err := httputil.DumpResponse(m.redactResponse(resp), false); err == nil {
 			m.logger.Printf("Response Content:\n%s\n", respBytes)
+		}
+		// The upgraded protocol owns this connection, including its write and
+		// shutdown interfaces. HTTP body diagnostics must leave it unchanged.
+		if resp.StatusCode == http.StatusSwitchingProtocols {
+			return resp, nil
+		}
+		if resp.Body != nil {
+			timing := &responseTiming{logger: m, attempt: attempt, started: started}
+			if m.capture.Bodies {
+				timing.capture = newBodyCapture(resp.Header.Get("Content-Type"), m.capture.MaxBytes)
+			}
+			if (m.capture.SSEFrames || m.capture.EventTiming) && mediaType(resp.Header.Get("Content-Type")) == "text/event-stream" {
+				timing.sse = newSSECapture(m.capture)
+			}
+			resp.Body = &timedResponseBody{body: resp.Body, context: req.Context(), responseTiming: timing}
+			// Keep the final request's context, including redirects and deadlines.
+			// A clone carries bounded diagnostic state; the transport's request stays intact.
+			finalRequest := resp.Request
+			if finalRequest == nil {
+				finalRequest = req
+			}
+			resp.Request = finalRequest.WithContext(context.WithValue(finalRequest.Context(), responseTimingKey{}, timing))
 		}
 
 		return resp, err

@@ -82,6 +82,7 @@ func RegisterSetup(root *cli.Command, policy Options) {
 	if setup == nil {
 		setup = &cli.Command{
 			Name: "setup", Usage: "Verify credentials interactively", HideHelpCommand: true,
+			Metadata:           map[string]any{"help-guide": true},
 			CustomHelpTemplate: adminSetupRootHelp,
 		}
 		root.Commands = append(root.Commands, setup)
@@ -89,6 +90,7 @@ func RegisterSetup(root *cli.Command, policy Options) {
 	if setup.Command("admin") == nil {
 		setup.Commands = append(setup.Commands, &cli.Command{
 			Name: "admin", Usage: "Enter an admin key securely and verify access",
+			Metadata:        map[string]any{"help-guide": true},
 			HideHelpCommand: true, CustomHelpTemplate: adminSetupInteractiveHelp,
 			Action: func(ctx context.Context, command *cli.Command) error { return handleAdminSetup(ctx, command, policy) },
 		})

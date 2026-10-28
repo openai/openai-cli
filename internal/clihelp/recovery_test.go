@@ -136,3 +136,20 @@ func TestCommandRecoveryWithoutSuggestion(t *testing.T) {
 		}
 	}
 }
+
+func TestCommandRecoveryKeepsHelpTyposOutOfUnrelatedTopics(t *testing.T) {
+	root := &cli.Command{Name: "openai", Suggest: true, Commands: []*cli.Command{
+		{Name: "help"}, {Name: "explore"},
+	}}
+	for _, name := range []string{"hepl", "help", "HELP", "hel", "hlep"} {
+		t.Run(name, func(t *testing.T) {
+			got := RecoveryAt(root, name, nil, true)
+			if want := "Unknown help topic. Run openai help to see commands."; got != want {
+				t.Fatalf("recovery = %q; want %q", got, want)
+			}
+		})
+	}
+	if got := RecoveryAt(root, "explroe", nil, true); got != "Unknown help topic. Did you mean: openai help explore?" {
+		t.Fatalf("explore typo lost its declared recovery: %q", got)
+	}
+}

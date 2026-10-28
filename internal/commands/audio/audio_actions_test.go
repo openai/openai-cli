@@ -1,7 +1,6 @@
 package audio
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -144,65 +143,53 @@ func TestAudioActionsVoiceMenuMatchesLocalValidation(t *testing.T) {
 	}
 }
 
-func TestAudioActionsSetupGuideIsLocalAndPreservesWriters(t *testing.T) {
+func TestAudioActionsRecoveryUsesOneScreen(t *testing.T) {
 	m := audioReviewModel(t)
-	var calls atomic.Int32
-	var output bytes.Buffer
-	setup := &cli.Command{Name: "setup", CustomHelpTemplate: "SYNTHETIC_REGISTERED_GUIDE\nNo request is needed.", Action: func(context.Context, *cli.Command) error {
-		calls.Add(1)
-		return nil
-	}}
-	m.command.Commands = append(m.command.Commands, &cli.Command{Name: "help", Commands: []*cli.Command{setup}})
-	m.command.Writer = &output
 	m.input.SetValue("Keep this draft")
 	failure := audioUnauthorizedFailure()
 	m.Update(audioWorkMessage{kind: "generate", err: failure})
-	require.Nil(t, audioReviewKey(m, tea.KeyEnter))
-	require.Equal(t, "info", m.modal)
 	view := audioFeedbackView(t, m)
-	require.Contains(t, view, "API setup")
-	require.Contains(t, view, "SYNTHETIC_REGISTERED_GUIDE")
-	require.Zero(t, calls.Load(), "Showing the guide must not run the setup command")
-	require.Empty(t, output.String())
-	require.Same(t, &output, m.command.Writer)
-	audioReviewKey(m, tea.KeyEscape)
-	require.Equal(t, "recovery", m.modal)
-	audioReviewKey(m, tea.KeyEnd)
-	require.Nil(t, audioReviewKey(m, tea.KeyEnter))
+	require.Contains(t, view, "Error details")
+	require.Contains(t, view, "1. Check your API key and project access.")
+	require.Contains(t, view, "Esc back")
+	require.NotContains(t, view, "API setup")
+	require.NotContains(t, view, "Back to form")
+	for _, key := range []rune{tea.KeyEnter, tea.KeyTab, 's', 'd', tea.KeyF1} {
+		require.Nil(t, audioReviewKey(m, key))
+		require.Equal(t, view, audioFeedbackView(t, m))
+		require.False(t, m.busy)
+	}
+	require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 	require.Empty(t, m.modal)
 	require.Equal(t, 2, m.focus)
-	require.Equal(t, 5, m.setting)
-	require.Nil(t, audioReviewKey(m, tea.KeyEnter))
-	require.Equal(t, "more", m.modal)
-	require.Equal(t, 0, m.moreChoice, "Repeated Enter must select a local action, not generate")
+	require.Equal(t, audioSettingMore, m.setting)
 	require.Equal(t, "Keep this draft", m.input.Value())
 	require.ErrorIs(t, m.lastErr, failure)
+	require.Nil(t, audioReviewMore(t, m, "Last error"))
+	require.Equal(t, "recovery", m.modal)
+	require.Equal(t, view, audioFeedbackView(t, m))
+	require.Nil(t, audioReviewKey(m, tea.KeyEscape))
+	require.Equal(t, "more", m.modal)
 }
 
 func TestAudioActionsNewSuccessRemovesObsoleteRecovery(t *testing.T) {
-	for _, panel := range []string{"recovery", "error", "info", "info-details"} {
-		t.Run(panel, func(t *testing.T) {
+	for _, parent := range []string{"", "info", "save"} {
+		t.Run("parent_"+parent, func(t *testing.T) {
 			m := audioReviewModel(t)
+			if parent == "info" {
+				m.openInformation("Help", "Keep this help page.", "more")
+			} else {
+				m.modal = parent
+			}
 			result := audioReviewResult("retained", false)
 			m.result, m.focus, m.busy = &result, 4, true
 			m.Update(audioWorkMessage{kind: "play", playID: m.playID, err: audioUnauthorizedFailure()})
 			require.Equal(t, "recovery", m.modal)
-			if panel == "error" {
-				m.failureParent, m.modal = "recovery", "error"
-			} else if panel == "info" || panel == "info-details" {
-				m.openInformation("API setup", "An older failure guide", "recovery")
-				if panel == "info-details" {
-					m.failureParent, m.modal = "info", "error"
-				}
-			}
 			m.Update(audioWorkMessage{kind: "export", entryID: result.entry.ID, path: "saved.wav"})
-			require.Empty(t, m.modal)
+			require.Equal(t, parent, m.modal)
 			require.False(t, m.activeFailure())
 			require.NoError(t, m.lastErr)
-			view := audioFeedbackView(t, m)
-			require.Contains(t, view, "saved.wav")
-			require.NotContains(t, view, "API setup")
-			require.NotContains(t, view, "could not verify")
+			require.NotContains(t, audioFeedbackView(t, m), "could not verify")
 		})
 	}
 }
@@ -217,16 +204,13 @@ func TestAudioActionsRecoveryRestoresInterruptedInformation(t *testing.T) {
 	}
 	m.Update(audioWorkMessage{kind: "play", playID: m.playID, err: audioUnauthorizedFailure()})
 	require.Equal(t, "info", m.recoveryParent)
-	audioReviewKey(m, tea.KeyEnter)
-	require.Equal(t, "API setup", m.infoTitle)
-	audioReviewKey(m, tea.KeyEscape)
+	require.Contains(t, audioFeedbackView(t, m), "Error details")
 	audioReviewKey(m, tea.KeyEscape)
 	require.Equal(t, "info", m.modal)
 	require.Equal(t, "Help", m.infoTitle)
 	require.Equal(t, original, m.infoText)
 	require.Equal(t, "more", m.infoParent)
 	require.Equal(t, 3, m.infoOffset)
-	require.Nil(t, m.recoveryInfo)
 }
 
 func TestAudioActionsCommandRowsPreserveSpacesAndUnicode(t *testing.T) {
@@ -257,7 +241,31 @@ func TestAudioActionsLocalValidationKeepsOriginalExitContract(t *testing.T) {
 	require.Equal(t, "recovery", m.modal)
 	require.NoError(t, m.lastErr)
 	require.Contains(t, audioFeedbackView(t, m), "Enter text before generating speech.")
+	audioReviewKey(m, tea.KeyF1)
+	require.Equal(t, "recovery", m.modal)
+	view := audioFeedbackView(t, m)
+	require.Contains(t, view, "Text is empty.")
+	require.Contains(t, view, "1. Enter text before generating speech.")
+	require.NotContains(t, view, "API key")
+	require.False(t, m.busy)
 	audioReviewKey(m, tea.KeyEscape)
 	require.NotNil(t, audioReviewKey(m, tea.KeyEscape))
 	require.Zero(t, m.exitCode)
+}
+
+func TestAudioHistoryOpensDirectlyWithoutGenerating(t *testing.T) {
+	m := audioReviewModel(t)
+	result := audioSaveControllerResult(t, m, "Synthetic retained bytes")
+	m.input.SetValue("A draft must remain editable")
+	m.focus, m.setting = 2, audioSettingHistory
+	command := audioReviewKey(m, tea.KeyEnter)
+	require.NotNil(t, command)
+	message := audioSaveControllerRun(t, command)
+	require.Equal(t, "history", message.kind)
+	require.NoError(t, message.err)
+	m.Update(message)
+	require.Equal(t, "history", m.modal)
+	require.Len(t, m.entries, 1)
+	require.Same(t, result, m.result)
+	require.Equal(t, "A draft must remain editable", m.input.Value())
 }

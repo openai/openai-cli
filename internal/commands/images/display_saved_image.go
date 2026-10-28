@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/imagegallery"
 	"github.com/openai/openai-cli/internal/imageoutput"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
@@ -111,7 +112,7 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 		if writeErr := reportImageFontUnavailable(diagnostics, fontErr); writeErr != nil {
 			return writeErr
 		}
-		if savedImageBlockColor(os.Getenv) {
+		if !errors.Is(err, imagegallery.ErrFull) && savedImageBlockColor(os.Getenv) {
 			// Font preparation can outlive a window resize. Recheck the current
 			// viewport before emitting the optional block fallback.
 			width, height, sizeErr := term.GetSize(file.Fd())

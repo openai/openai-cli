@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -172,7 +173,8 @@ func TestMainShellSuggestionsNative(t *testing.T) {
 				program = shellSuggestionNativeFish
 			} else if shell.name == "pwsh" {
 				// Keep PowerShell's module cache outside the configuration snapshot.
-				environment = append(environment, "PSModuleAnalysisCachePath="+filepath.Join(work, "ModuleAnalysisCache"))
+				environment = append(environment, "PSModuleAnalysisCachePath="+filepath.Join(work, "ModuleAnalysisCache"),
+					"SUGGEST_PHASE_LOG="+filepath.Join(work, "phases.log"))
 				program = shellSuggestionNativePowerShell
 			} else {
 				handler := "command_not_found_handle"
@@ -189,7 +191,17 @@ func TestMainShellSuggestionsNative(t *testing.T) {
 			command.Stdin = strings.NewReader("SYNTHETIC_UNREAD_STDIN\n")
 			var stdout, stderr bytes.Buffer
 			command.Stdout, command.Stderr = &stdout, &stderr
-			err = command.Run()
+			starting := time.Now()
+			t.Logf("native %s phase=before_start", shell.name)
+			err = command.Start()
+			t.Logf("native %s phase=start_returned elapsed=%s error_type=%T", shell.name, time.Since(starting), err)
+			if err == nil {
+				err = command.Wait()
+			}
+			t.Logf("native %s phase=wait_returned elapsed=%s error_type=%T deadline=%v", shell.name, time.Since(starting), err, ctx.Err())
+			if shell.name == "pwsh" {
+				logShellSuggestionPhases(t, filepath.Join(work, "phases.log"))
+			}
 			if ctx.Err() != nil {
 				t.Fatalf("native %s exceeded its deadline: stdout=%q stderr=%q", shell.name, stdout.String(), stderr.String())
 			}
@@ -526,13 +538,39 @@ printf 'STDIN:%s\n' "$remaining"
 exit 0
 `
 
+// Read before asserting process success, including after a killed shell.
+func logShellSuggestionPhases(t *testing.T, path string) {
+	t.Helper()
+	file, err := os.Open(path)
+	if os.IsNotExist(err) {
+		t.Log("PowerShell phases: script entry was not observed")
+		return
+	}
+	if err != nil {
+		t.Errorf("open PowerShell phases: error_type=%T", err)
+		return
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, (8<<10)+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil || len(data) > 8<<10 {
+		t.Errorf("read bounded PowerShell phases: read_type=%T close_type=%T bytes=%d", readErr, closeErr, len(data))
+		return
+	}
+	t.Logf("PowerShell phases: %s", data)
+}
+
 const shellSuggestionNativePowerShell = `
 $ErrorActionPreference = 'Stop'
+function Write-Phase([string]$stage) {
+    [IO.File]::AppendAllText($env:SUGGEST_PHASE_LOG, $stage + [char]10)
+}
+Write-Phase script_entered
 function Save-Status($name, [bool]$success) {
     if (-not $success) { throw ('Failed stage: ' + $name) }
     [IO.File]::WriteAllText((Join-Path $PWD ($name + '.status')), "0" + [char]10)
 }
 function Invoke-Typo($stage) {
+    Write-Phase ($stage + ':lookup_started')
     $global:LASTEXITCODE = 73
     $savedError = [Console]::Error
     $errorWriter = [IO.StreamWriter]::new((Join-Path $PWD ($stage + '.err')))
@@ -551,21 +589,41 @@ value' > ($stage + '.out')
         $errorWriter.Dispose()
     }
     [IO.File]::WriteAllText((Join-Path $PWD ($stage + '.status')), $statusText + [char]10)
+    Write-Phase ($stage + ':lookup_finished')
 }
-openai '@completion' pwsh --suggest-executable | Out-String | Invoke-Expression
+Write-Phase setup1:cli_started
+$hook = openai '@completion' pwsh --suggest-executable | Out-String
+if ($LASTEXITCODE -ne 0) { throw 'Completion command failed' }
+Write-Phase setup1:cli_finished
+$hook | Invoke-Expression
 Save-Status setup1 $?
-openai '@completion' pwsh --suggest-executable | Out-String | Invoke-Expression
+Write-Phase setup1:hook_installed
+Write-Phase setup2:cli_started
+$hook = openai '@completion' pwsh --suggest-executable | Out-String
+if ($LASTEXITCODE -ne 0) { throw 'Completion command failed' }
+Write-Phase setup2:cli_finished
+$hook | Invoke-Expression
 Save-Status setup2 $?
+Write-Phase setup2:hook_installed
 $env:PATH = $env:SUGGEST_SENTINEL_DIRECTORY + [IO.Path]::PathSeparator + $env:SUGGEST_BASE_PATH
 Invoke-Typo active
+Write-Phase disable1:cleanup_started
 openai_suggestions_disable
 Save-Status disable1 $?
+Write-Phase disable1:cleanup_finished
+Write-Phase disable2:cleanup_started
 openai_suggestions_disable
 Save-Status disable2 $?
+Write-Phase disable2:cleanup_finished
 Invoke-Typo disabled
 $env:PATH = $env:SUGGEST_CLI_DIRECTORY + [IO.Path]::PathSeparator + $env:SUGGEST_BASE_PATH
-openai '@completion' pwsh --suggest-executable | Out-String | Invoke-Expression
+Write-Phase setup3:cli_started
+$hook = openai '@completion' pwsh --suggest-executable | Out-String
+if ($LASTEXITCODE -ne 0) { throw 'Completion command failed' }
+Write-Phase setup3:cli_finished
+$hook | Invoke-Expression
 Save-Status setup3 $?
+Write-Phase setup3:hook_installed
 $env:PATH = $env:SUGGEST_SENTINEL_DIRECTORY + [IO.Path]::PathSeparator + $env:SUGGEST_BASE_PATH
 Invoke-Typo reenabled
 $later = [System.EventHandler[System.Management.Automation.CommandLookupEventArgs]] {
@@ -580,15 +638,26 @@ $later = [System.EventHandler[System.Management.Automation.CommandLookupEventArg
 }
 $ExecutionContext.InvokeCommand.CommandNotFoundAction = $later
 $env:PATH = $env:SUGGEST_CLI_DIRECTORY + [IO.Path]::PathSeparator + $env:SUGGEST_BASE_PATH
-openai '@completion' pwsh --suggest-executable | Out-String | Invoke-Expression
+Write-Phase setup4:cli_started
+$hook = openai '@completion' pwsh --suggest-executable | Out-String
+if ($LASTEXITCODE -ne 0) { throw 'Completion command failed' }
+Write-Phase setup4:cli_finished
+$hook | Invoke-Expression
 Save-Status setup4 $?
+Write-Phase setup4:hook_installed
 $env:PATH = $env:SUGGEST_SENTINEL_DIRECTORY + [IO.Path]::PathSeparator + $env:SUGGEST_BASE_PATH
+Write-Phase disable3:cleanup_started
 openai_suggestions_disable
 Save-Status disable3 $?
+Write-Phase disable3:cleanup_finished
+Write-Phase disable4:cleanup_started
 openai_suggestions_disable
 Save-Status disable4 $?
+Write-Phase disable4:cleanup_finished
 Invoke-Typo later
+Write-Phase stdin_read_started
 [Console]::Out.WriteLine('STDIN:' + [Console]::ReadLine())
+Write-Phase script_finished
 exit 0
 `
 

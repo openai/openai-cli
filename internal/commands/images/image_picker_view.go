@@ -31,7 +31,7 @@ func imagePickerLine(value string) string {
 func (m *imagePicker) heading() string {
 	switch m.page {
 	case "folder", "path":
-		return "Save to · existing folder"
+		return "Save to"
 	case "choose":
 		if m.field == "count" {
 			return "Choose image count"
@@ -58,58 +58,60 @@ func (m *imagePicker) View() tea.View {
 		return view
 	}
 	width := min(m.width-4, 100)
+	if m.workspace {
+		width = m.width - 4
+	}
 	strong := lipgloss.NewStyle().Bold(true)
 	muted := lipgloss.NewStyle()
 	selected := lipgloss.NewStyle().Bold(true)
 	accent := selected
+	keyStyle := strong
 	border := lipgloss.NewStyle()
-	input := lipgloss.NewStyle()
-	focusColor, fillColor, textColor, mutedColor, borderColor := "#3159BC", "#E9EFFE", "#20283B", "#657087", "#BAC4D8"
+	focusColor, textColor, mutedColor, borderColor := "#3159BC", "#20283B", "#657087", "#BAC4D8"
 	if m.dark {
-		focusColor, fillColor, textColor, mutedColor, borderColor = "#8AA8FF", "#343D58", "#F2F4FA", "#A4ACC2", "#51566B"
+		focusColor, textColor, mutedColor, borderColor = "#8AA8FF", "#F2F4FA", "#A4ACC2", "#51566B"
 	}
 	if m.color {
+		keyStyle = keyStyle.Foreground(lipgloss.Color(focusColor))
 		muted = muted.Foreground(lipgloss.Color(mutedColor))
-		selected = selected.Foreground(lipgloss.Color(textColor)).Background(lipgloss.Color(fillColor))
-		accent = accent.Foreground(lipgloss.Color(focusColor)).Background(lipgloss.Color(fillColor))
+		selected = selected.Foreground(lipgloss.Color(textColor))
+		accent = accent.Foreground(lipgloss.Color(focusColor))
 		border = border.Foreground(lipgloss.Color(borderColor))
 		if m.focus == "prompt" {
 			border = border.Foreground(lipgloss.Color(focusColor))
-			if m.settings.prompt != "" {
-				input = input.Foreground(lipgloss.Color(textColor)).Background(lipgloss.Color(fillColor))
-			}
 		}
 	}
 	highlight := func(text string, active bool) string {
 		if active {
 			text = ansi.Truncate(text, width-2, "…")
-			return accent.Render("› ") + selected.Render(text+strings.Repeat(" ", max(0, width-2-ansi.StringWidth(text))))
+			return accent.Render("› ") + selected.Render(text)
 		}
 		return "  " + text
 	}
-	roomy := height >= 16
-	_, commandHeight := m.commandDimensions()
-	commandLines, commandStart, commandTotal := m.commandPreview(width-2, commandHeight)
 	prompt := imagePickerLine(m.settings.prompt)
 	if m.focus == "prompt" {
-		before := imagePickerLine(string(m.draft[:m.cursor]))
-		after := imagePickerLine(string(m.draft[m.cursor:]))
-		before = imagePickerPromptTail(before, width-6)
-		prompt = before + "▏" + after
+		var x int
+		prompt, x = imagePickerEditLine(m.draft, m.cursor, width-4)
+		view.Cursor = tea.NewCursor(4+x, 2)
+		view.Cursor.Shape = tea.CursorBar
 	}
 	if m.settings.prompt == "" {
-		prompt = muted.Render("Describe your image…")
-		if m.focus == "prompt" {
-			prompt = border.Render("▏") + " " + prompt
-		}
+		prompt = "Describe your image…"
+		prompt = muted.Render(prompt)
 	}
+	if m.workspace {
+		return m.workspaceView(view, prompt, strong, muted, accent, border, keyStyle)
+	}
+	roomy := height >= 16
+	commandWidth, commandHeight := m.commandDimensions()
+	commandLines, commandStart, commandTotal := m.commandPreview(commandWidth, commandHeight)
 	lines := []string{strong.Render("Create image")}
 	if height >= 18 && m.width >= 50 {
 		prompt = cliterminal.FitPrompt(prompt, width-4)
 		caption := "╭ Prompt "
 		// Match the painter's conservative width budget. Position the closing
 		// edge explicitly because terminals disagree on emoji cluster widths.
-		row := border.Render("│") + input.Render(ansi.EraseCharacter(width-2)+" "+prompt+" ") +
+		row := border.Render("│") + ansi.EraseCharacter(width-2) + " " + prompt + " " +
 			ansi.CursorHorizontalAbsolute(width+2) + border.Render("│")
 		lines = append(lines,
 			border.Render(caption+strings.Repeat("─", width-ansi.StringWidth(caption)-1)+"╮"),
@@ -122,36 +124,86 @@ func (m *imagePicker) View() tea.View {
 		}
 		lines = append(lines, border.Render(caption), "  "+prompt)
 	}
-	heading := strong.Render("  " + m.heading())
-	if m.width < 60 && m.page != "path" {
-		heading += muted.Render(" · Tab switch")
+	headingText := m.heading()
+	if height < 12 && m.page == "folder" {
+		headingText = "Save to"
+	}
+	heading := strong.Render("  " + headingText)
+	if height < 12 && m.page != "path" {
+		key, action := "Tab", "Switch"
+		if m.focus == "command" {
+			key, action = "↑↓", "Scroll"
+		}
+		heading += "  " + keyStyle.Render("["+key+"]") + " " + muted.Render(action)
 	}
 	lines = append(lines, heading)
 	if m.page == "path" {
-		before := imagePickerLine(string(m.folder.draft[:m.folder.cursor]))
-		after := imagePickerLine(string(m.folder.draft[m.folder.cursor:]))
-		before = ansi.TruncateLeft(before, max(0, ansi.StringWidth(before)-(width-6)), "…")
-		path := before + "▏" + after
+		path, x := imagePickerEditLine(m.folder.draft, m.folder.cursor, width-2)
 		if len(m.folder.draft) == 0 {
-			path += "Enter a folder path…"
+			path = muted.Render("Enter a folder path…")
 		}
-		lines = append(lines, highlight(path, true))
+		if m.focus == "path" {
+			view.Cursor = tea.NewCursor(4+x, len(lines))
+			view.Cursor.Shape = tea.CursorBar
+		}
+		lines = append(lines, "  "+path)
 	}
 	// Prompt, command and contextual help remain visible. The option list scrolls
 	// independently, keeping every selected choice accessible in a short terminal.
-	showFooter := m.focus != "prompt" || !m.hidePromptHint
-	// Keep the same layout when a resumed prompt hides its routine hint.
-	reserved := len(lines) + len(commandLines) + 1
+	footer := m.footer(width-2, keyStyle, muted)
+	reserved := len(lines) + len(commandLines) + len(footer)
 	if m.note != "" {
 		reserved++
 	}
 	rows := m.rows()
+	commandHeading := roomy && height-reserved > len(rows)
+	if commandHeading {
+		reserved++
+	}
 	commandGap := roomy && height-reserved > len(rows)
 	if commandGap {
 		reserved++
 	}
+	footerGap := roomy && height-reserved > len(rows)
+	if footerGap {
+		reserved++
+	}
 	available := max(1, height-reserved)
 	start, end := m.optionWindow(len(rows), available)
+	lines = append(lines, m.optionLines(rows, start, end, width, selected, accent, muted)...)
+	if commandGap {
+		lines = append(lines, "")
+	}
+	commandLabel := "Command preview"
+	if commandTotal > len(commandLines) {
+		commandLabel += fmt.Sprintf(" · %d–%d of %d", commandStart+1, commandStart+len(commandLines), commandTotal)
+	}
+	if commandHeading {
+		lines = append(lines, muted.Render("  "+commandLabel))
+	}
+	for i, line := range commandLines {
+		line = highlight(line, m.focus == "command" && i == 0)
+		if m.focus != "command" {
+			line = muted.Render(line)
+		}
+		lines = append(lines, line)
+	}
+	if footerGap {
+		lines = append(lines, "")
+	}
+	if m.note != "" {
+		lines = append(lines, "  "+muted.Render(imagePickerLine(m.note)))
+	}
+	for _, line := range footer {
+		lines = append(lines, "  "+line)
+	}
+	view.Content = m.fit(lines, width, height)
+	return view
+}
+
+// Share choice alignment and escaping between inline and workspace forms.
+func (m *imagePicker) optionLines(rows []imagePickerRow, start, end, width int, selected, accent, muted lipgloss.Style) []string {
+	var lines []string
 	choiceWidth := 0
 	for _, row := range rows {
 		if row.id == "choice" {
@@ -176,58 +228,18 @@ func (m *imagePicker) View() tea.View {
 		} else if row.value != "" {
 			text = fmt.Sprintf("%-14s %s", row.label, imagePickerLine(row.value))
 		}
-		active := i == m.selected && (m.focus == "options" || m.focus == "path" && m.folder.match >= 0)
-		lines = append(lines, highlight(ansi.Truncate(text, width-2, "…"), active))
-	}
-	if commandGap {
-		lines = append(lines, "")
-	}
-	for i, line := range commandLines {
-		line = highlight(line, m.focus == "command" && i == 0)
-		if m.focus != "command" {
-			line = muted.Render(line)
+		active := (!m.workspace || !m.generating) && i == m.selected && (m.focus == "options" || m.focus == "path" && m.folder.match >= 0)
+		if m.page == "path" && row.id == "" {
+			text = muted.Render(text)
 		}
-		lines = append(lines, line)
-	}
-	footer := "Ctrl+C exit · Enter select · ↑↓"
-	if m.focus == "prompt" {
-		footer = "Ctrl+C exit · Enter generate · ↓ settings"
-		if ansi.StringWidth(footer) > width {
-			footer = "Ctrl+C exit · Enter run · ↓ settings"
+		text = ansi.Truncate(text, width-2, "…")
+		if active {
+			lines = append(lines, accent.Render("› ")+selected.Render(text))
+		} else {
+			lines = append(lines, "  "+text)
 		}
-	} else if m.focus == "command" {
-		footer = "Ctrl+C exit · Enter generate"
-		if commandTotal > len(commandLines) {
-			footer = fmt.Sprintf("Ctrl+C exit · ↑↓ scroll %d-%d/%d · Enter generate", commandStart+1, commandStart+len(commandLines), commandTotal)
-			if ansi.StringWidth(footer) > width {
-				footer = "Ctrl+C exit · Enter run · ↑↓ scroll"
-			}
-		}
-		if cliterminal.ShellQuoter(m.shell) != nil && ansi.StringWidth(footer+" · Ctrl+P print") <= width {
-			footer += " · Ctrl+P print"
-		}
-	} else if m.focus == "path" {
-		footer = "Ctrl+C exit · Enter use · Tab complete"
 	}
-	if len(rows) > available && m.focus == "options" {
-		footer = fmt.Sprintf("Ctrl+C exit · ↑↓ %d/%d · Enter select", m.selected+1, len(rows))
-	}
-	if m.focus == "options" && ansi.StringWidth(footer+" · Ctrl+G generate") <= width {
-		footer += " · Ctrl+G generate"
-	}
-	if m.focus != "path" && ansi.StringWidth(footer+" · Tab switch") <= width {
-		footer += " · Tab switch"
-	}
-	if m.note != "" {
-		lines = append(lines, muted.Render(imagePickerLine(m.note)))
-	}
-	if showFooter {
-		lines = append(lines, muted.Render(footer))
-	} else {
-		lines = append(lines, "")
-	}
-	view.Content = m.fit(lines, width, height)
-	return view
+	return lines
 }
 
 // Cache only the visible option window. Repeated views keep the same offset;
@@ -245,6 +257,30 @@ func (m *imagePicker) optionWindow(length, available int) (start, end int) {
 	}
 	m.optionOffset = start
 	return start, min(length, start+available)
+}
+
+// Return the visible draft and terminal cursor column without adding text cells.
+// Preserve complete clusters when the rune cursor sits inside a combined glyph.
+func imagePickerEditLine(draft []rune, cursor, width int) (string, int) {
+	text := imagePickerLine(string(draft))
+	position := len(imagePickerLine(string(draft[:cursor])))
+	start := len(text)
+	for offset := 0; offset < len(text); {
+		_, _, read := cliterminal.Sequence(text[offset:])
+		if position < offset+read {
+			start = offset
+			break
+		}
+		offset += read
+	}
+	before := imagePickerPromptTail(text[:start], max(1, width-2))
+	x := 0
+	for rest := before; len(rest) > 0; {
+		_, cells, read := cliterminal.Sequence(rest)
+		x += cells
+		rest = rest[read:]
+	}
+	return before + text[start:], x
 }
 
 // Fit complete clusters using the same width bound as the inline painter.
@@ -272,12 +308,86 @@ func (m *imagePicker) viewHeight() int {
 	if m.height < 12 {
 		return max(0, min(m.height, 2))
 	}
-	return min(18, m.height-3)
+	if m.workspace {
+		limit := 19
+		if m.width < 90 {
+			limit = 20
+		}
+		return min(limit, max(9, m.height-4))
+	}
+	return min(21, m.height-3)
+}
+
+// Keep whole key/action pairs together, using the same visual language as Agents.
+// Short terminals keep submission and cancellation visible in one row.
+func (m *imagePicker) footer(width int, keyStyle, muted lipgloss.Style) []string {
+	if m.workspace {
+		return m.workspaceFooter(width, keyStyle, muted)
+	}
+	if m.generating {
+		return []string{keyStyle.Render("[Ctrl+C]") + " " + muted.Render("Cancel generation"), muted.Render("Your prompt and settings stay here.")}
+	}
+	primary := [][2]string{{"↑↓", "Move"}, {"Enter", "Select"}, {"Ctrl+G", "Generate"}}
+	secondary := [][2]string{{"Tab", "Switch"}, {"Ctrl+C", "Quit"}}
+	enter := "Select"
+	switch m.focus {
+	case "prompt":
+		enter = "Generate"
+		primary = [][2]string{{"Enter", enter}, {"↓", "Settings"}, {"Alt+Enter", "New line"}}
+		secondary = [][2]string{{"Tab", "Switch"}, {"Ctrl+C", "Quit"}, {"Ctrl+G", "Generate"}}
+	case "command":
+		enter = "Generate"
+		primary = [][2]string{{"Enter", enter}, {"↑↓", "Scroll"}}
+		if cliterminal.ShellQuoter(m.shell) != nil {
+			primary = append(primary, [2]string{"Ctrl+P", "Print command"})
+		}
+	case "path":
+		enter = "Use folder"
+		primary = [][2]string{{"Enter", enter}, {"Tab", "Complete"}}
+		secondary = [][2]string{{"Esc", "Back"}, {"Ctrl+C", "Quit"}}
+	case "images":
+		enter = "Expand images"
+		primary = [][2]string{{"Enter", enter}, {"↑↓", "Select"}}
+		secondary = [][2]string{{"Tab", "Switch"}, {"Ctrl+C", "Quit"}, {"Ctrl+G", "Generate"}}
+	}
+	if m.viewHeight() < 12 && !m.workspace {
+		return []string{imagePickerShortcutLine([][2]string{{"Enter", enter}, {"Ctrl+C", "Quit"}}, width, keyStyle, muted)}
+	}
+	return []string{
+		imagePickerShortcutLine(primary, width, keyStyle, muted),
+		imagePickerShortcutLine(secondary, width, keyStyle, muted),
+	}
+}
+
+func imagePickerShortcutLine(shortcuts [][2]string, width int, keyStyle, muted lipgloss.Style) string {
+	var parts []string
+	used := 0
+	for _, shortcut := range shortcuts {
+		key := "[" + shortcut[0] + "]"
+		cells := ansi.StringWidth(key + " " + shortcut[1])
+		gap := 0
+		if len(parts) > 0 {
+			gap = 2
+		}
+		if used+gap+cells > width {
+			continue
+		}
+		parts = append(parts, keyStyle.Render(key)+" "+muted.Render(shortcut[1]))
+		used += gap + cells
+	}
+	return strings.Join(parts, "  ")
 }
 
 func (m *imagePicker) commandPreview(width, height int) ([]string, int, int) {
 	lines := m.commandLines(width)
 	start := max(0, min(m.commandOffset, len(lines)-height))
+	if m.focus != "command" {
+		start = 0
+		if m.workspace {
+			// Keep the changing prompt visible when a long command needs scrolling.
+			start = max(0, len(lines)-height)
+		}
+	}
 	return lines[start:min(len(lines), start+height)], start, len(lines)
 }
 
@@ -289,21 +399,42 @@ func (m *imagePicker) commandLines(width int) []string {
 	var lines []string
 	var line strings.Builder
 	used, width := 0, max(1, width)
+	breakAt, breakWidth := 0, 0
 	for len(command) > 0 {
 		sequence, cells, read := cliterminal.Sequence(command)
 		command = command[read:]
-		if used > 0 && used+cells > width {
-			lines = append(lines, line.String())
+		for used > 0 && used+cells > width {
+			text := line.String()
+			if breakAt == 0 {
+				breakAt, breakWidth = len(text), used
+			}
+			// Keep whitespace in the preview so scrolling still exposes every
+			// command byte. Only words wider than the viewport need a hard wrap.
+			lines = append(lines, text[:breakAt])
 			line.Reset()
-			used = 0
+			line.WriteString(text[breakAt:])
+			used -= breakWidth
+			breakAt, breakWidth = 0, 0
 		}
 		line.WriteString(sequence)
 		used += cells
+		if sequence == " " {
+			breakAt, breakWidth = line.Len(), used
+		}
 	}
 	return append(lines, line.String())
 }
 
 func (m *imagePicker) commandDimensions() (width, height int) {
+	if m.workspace {
+		width = max(1, m.width-8)
+		height = 1
+		if m.viewHeight() >= 12 {
+			height = min(2, len(m.commandLines(width)))
+		}
+		return width, height
+	}
+	width = max(1, min(m.width-4, 100)-2)
 	height = 1
 	if m.viewHeight() >= 16 {
 		height = 3
@@ -311,7 +442,7 @@ func (m *imagePicker) commandDimensions() (width, height int) {
 	if m.viewHeight() >= 18 {
 		height = 4
 	}
-	return max(1, min(m.width-4, 100)-2), height
+	return width, height
 }
 
 func (m *imagePicker) clampCommandOffset() {

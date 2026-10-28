@@ -20,8 +20,8 @@ func TestSummaryManagementResources(t *testing.T) {
 		},
 		{
 			"files",
-			`{"object":"file","id":"file_example","bytes":9007199254740993,"created_at":123,"filename":"training data.jsonl","purpose":"fine-tune","status":"processed","expires_at":null,"status_details":null}`,
-			`{"id":"file_example","filename":"training data.jsonl","purpose":"fine-tune","bytes":9007199254740993,"status":"processed"}`,
+			`{"object":"file","id":"file_example","bytes":9007199254740993,"created_at":123,"filename":"research data.jsonl","purpose":"user_data","status":"processed","expires_at":null,"status_details":null}`,
+			`{"id":"file_example","filename":"research data.jsonl","purpose":"user_data","bytes":9007199254740993,"status":"processed"}`,
 		},
 		{
 			"batches",
@@ -42,11 +42,6 @@ func TestSummaryManagementResources(t *testing.T) {
 			"vector_stores.file_batches",
 			`{"id":"vsfb_example","object":"vector_store.files_batch","created_at":123,"status":"in_progress","vector_store_id":"vs_example","file_counts":{"total":2,"in_progress":1,"completed":1,"failed":0,"cancelled":0}}`,
 			`{"id":"vsfb_example","vector_store_id":"vs_example","status":"in_progress","file_counts":{"total":2,"in_progress":1,"completed":1,"failed":0,"cancelled":0}}`,
-		},
-		{
-			"fine_tuning.jobs",
-			`{"id":"ftjob_example","object":"fine_tuning.job","created_at":123,"status":"succeeded","model":"gpt-example","fine_tuned_model":"ft:gpt-example:org:exact-id","training_file":"file_training","validation_file":null,"result_files":["file_result"],"trained_tokens":9007199254740993,"error":null,"hyperparameters":{"n_epochs":1},"seed":42,"method":{"type":"supervised"},"metadata":{}}`,
-			`{"id":"ftjob_example","status":"succeeded","model":"gpt-example","fine_tuned_model":"ft:gpt-example:org:exact-id","training_file":"file_training","result_files":["file_result"],"trained_tokens":9007199254740993}`,
 		},
 		{
 			"beta.assistants",
@@ -181,7 +176,6 @@ func TestSummaryPreservesIssuesAndActionableContent(t *testing.T) {
 		{"models", `{"id":"gpt-example","object":"model","owned_by":"system","shutdown_date":"2026-07-01"}`, []string{"shutdown_date"}},
 		{"batches", `{"id":"batch_example","object":"batch","status":"failed","errors":{"data":[{"code":"invalid_request","line":9007199254740993,"param":"model","message":"Unsupported model."}]}}`, []string{"status", "errors"}},
 		{"vector_stores.files", `{"id":"file_example","object":"vector_store.file","status":"failed","last_error":{"code":"unsupported_file","message":"Use a supported file."}}`, []string{"status", "last_error"}},
-		{"fine_tuning.jobs", `{"id":"ftjob_example","object":"fine_tuning.job","status":"failed","error":{"code":"invalid_file","message":"Review input.","param":"training_file"}}`, []string{"status", "error"}},
 		{"beta.threads.runs", `{"id":"run_example","object":"thread.run","status":"requires_action","required_action":{"type":"submit_tool_outputs","submit_tool_outputs":{"tool_calls":[{"id":"call_example","type":"function","function":{"name":"lookup","arguments":"{\"key\":\"example\"}"}}]}}}`, []string{"status", "required_action"}},
 		{"beta.threads.runs", `{"id":"run_example","object":"thread.run","status":"incomplete","incomplete_details":{"reason":"max_completion_tokens"},"last_error":{"code":"server_error","message":"Retry later."}}`, []string{"status", "incomplete_details", "last_error"}},
 	} {

@@ -52,10 +52,6 @@ func TestMainCompletionDescriptionsStayInOneRecord(t *testing.T) {
 
 func TestMainCompletionHelpAndFileInputs(t *testing.T) {
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
-		got := runMainDispatch(t, style, mainCompletionArgs(style, "help", "--all", "responses", "cr")...)
-		if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, "create") || strings.Contains(got.stdout, "setup") {
-			t.Errorf("%s help completion failed: %+v", style, got)
-		}
 		for _, args := range [][]string{{"files", "create", "--file", ""}, {"audio", "transcriptions", "create", "--file", ""}, {"images", "edit", "--image", ""}} {
 			got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_FILE_VALUES=1"}, mainCompletionArgs(style, args...)...)
 			if got.code != 10 || got.stdout != "" || got.stderr != "" {

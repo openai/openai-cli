@@ -17,6 +17,10 @@ import (
 // The welcome header adds no input, terminal queries, subprocesses, or state.
 // Keep the framework's help path so request setup still never runs.
 func welcomeHeader(root *cli.Command) string {
+	format := root.String("format")
+	if format != "" && !strings.EqualFold(format, "auto") && !strings.EqualFold(format, "text") {
+		return ""
+	}
 	input, output := root.Reader, root.Writer
 	if input == nil {
 		input = os.Stdin

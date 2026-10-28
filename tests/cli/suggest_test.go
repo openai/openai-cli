@@ -65,19 +65,17 @@ func TestSuggestCommandRealTree(t *testing.T) {
 		provided string
 		want     string
 	}{
-		{[]string{"fine-tuning:alpha:graders"}, "rn", "run"},
-		{[]string{"fine-tuning:alpha:graders"}, "rnu", "run"},
-		{[]string{"fine-tuning:alpha:graders"}, "urn", "run"},
-		{[]string{"fine-tuning:alpha:graders"}, "RN", "run"},
-		{[]string{"fine-tuning:alpha:graders"}, "valdate", "validate"},
-		{[]string{"fine-tuning:alpha:graders"}, "zzz", ""},
+		{[]string{"files"}, "gt", "get"},
+		{[]string{"files"}, "gte", "get"},
+		{[]string{"files"}, "egt", "get"},
+		{[]string{"files"}, "GT", "get"},
+		{[]string{"admin:organization:external-storage"}, "valdate", "validate"},
+		{[]string{"files"}, "zzz", ""},
 		{[]string{"responses"}, "zzzzz", ""},
-		{[]string{"models"}, "ls", "list"},     // jaro-winkler 0.85
-		{[]string{"models"}, "lete", "delete"}, // jaro-winkler 0.72
+		{[]string{"models"}, "ls", "list"},    // jaro-winkler 0.85
+		{[]string{"files"}, "dlete", "delete"},
 		// Both are one edit away; the higher jaro-winkler score wins.
 		{[]string{"admin:organization:certificates"}, "dactivate", "deactivate"},
-		// Exact 7/10 jaro scores that float error would otherwise let through.
-		{[]string{"fine-tuning:jobs"}, "status", ""},
 		{nil, "hi", ""},
 		{nil, "RESPONSES", "responses"},
 		{nil, "respones", "responses"},
@@ -98,6 +96,14 @@ func TestSuggestCommandRealTree(t *testing.T) {
 				t.Errorf("got %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestSuggestCommandOmitsRetiredModelDeletion(t *testing.T) {
+	for _, typo := range []string{"delete", "lete", "delet"} {
+		if got := cli.SuggestCommand(findCommand(t, "models").Commands, typo); strings.Contains(got, "delete") {
+			t.Errorf("retired model deletion suggested for %q: %q", typo, got)
+		}
 	}
 }
 
@@ -131,4 +137,11 @@ func TestSuggestCommandRealTreeSingleEdits(t *testing.T) {
 		}
 	}
 	visit(commands.Command)
+}
+
+// Exact 7/10 Jaro scores must not pass the suggestion threshold through rounding.
+func TestSuggestCommandThresholdBoundary(t *testing.T) {
+	if got := cli.SuggestCommand([]*cli.Command{{Name: "pause"}}, "status"); got != "" {
+		t.Errorf("threshold boundary suggested an unrelated command: %q", got)
+	}
 }

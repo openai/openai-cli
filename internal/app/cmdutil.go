@@ -20,6 +20,8 @@ import (
 	"github.com/openai/openai-cli/internal/commands/audio"
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/images"
+	"github.com/openai/openai-cli/internal/commands/webhooks"
+	"github.com/openai/openai-cli/internal/debugmiddleware"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
@@ -41,7 +43,8 @@ func ValidateBaseURL(value, source string) error {
 
 // GetDefaultRequestOptions keeps feature middleware composition with its current owner.
 func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
-	return requestconfig.DefaultOptions(cmd, Version, audio.CaptureText, captureSaveReceiptPolicy(cmd))
+	opts := requestconfig.DefaultOptions(cmd, Version, audio.CaptureText, captureSaveReceiptPolicy(cmd), webhooks.CaptureTestRequest)
+	return append(opts, agentsRequestOptions(cmd)...)
 }
 
 func isTerminal(w io.Writer) bool { return terminal.IsWriterTerminal(w) }
@@ -50,6 +53,7 @@ func isTerminal(w io.Writer) bool { return terminal.IsWriterTerminal(w) }
 //
 // Takes in a stdout reference so we can test this function without overriding os.Stdout in tests.
 func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (message string, err error) {
+	finishTiming := debugmiddleware.DeferResponseBodyTiming(response)
 	body := &clioutput.DownloadResponseBody{ReadCloser: response.Body}
 	copyResponse := *response
 	copyResponse.Body = body
@@ -69,6 +73,7 @@ func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile stri
 				err = errors.Join(err, closeErr)
 			}
 		}
+		finishTiming()
 		if err != nil {
 			message = ""
 		}
@@ -315,7 +320,13 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if err := opts.Context.Err(); err != nil {
 		return err
 	}
+	if handled, err := webhooks.ShowResult(res, webhooks.ResultOptions{ReadableOptions: readableOutputOptions(opts), WriteHint: writeWebhookHint}); handled {
+		return err
+	}
 	if handled, err := filecommands.ShowResult(res, filecommands.ResultOptions{ReadableOptions: fileResultOptions(opts), Quiet: quietOutput(opts.Context)}); handled {
+		return err
+	}
+	if handled, err := showProjectLifecycleResult(res, opts); handled {
 		return err
 	}
 	if isSavedImageRoute(opts, OutputResponse) {
@@ -400,6 +411,11 @@ type hasRawJSON interface {
 
 // ShowJSONIterator displays an iterator of values to the user. Use itemsToDisplay = -1 for no limit.
 func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts) error {
+	route := transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}
+	if transformers.IsAgentsStream(route) {
+		state := transformers.AgentsStreamState{AllowNoInputSessionCreation: agentsSessionCreationWithoutInput(opts.Context)}
+		return showJSONIterator(&agentsStream[T]{source: iter, route: route, state: state}, itemsToDisplay, opts, transformers.Select)
+	}
 	return showJSONIterator(iter, itemsToDisplay, opts, transformers.Select)
 }
 
@@ -448,7 +464,11 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	if strings.ToLower(opts.Format) == "explore" {
 		if isTerminal(opts.Stdout) {
 			out := clioutput.TerminalWriter{Writer: clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}, File: opts.Stdout.(*os.File)}
-			err := jsonview.ExploreJSONStreamWithOutput(opts.Title, iter, out)
+			var explorer jsonview.Iterator[outputJSON] = iter
+			if transformers.IsAgentsStream(transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}) {
+				explorer = &agentsExplorerStream{source: iter}
+			}
+			err := jsonview.ExploreJSONStreamWithOutput(opts.Title, explorer, out)
 			if iterErr := iter.Err(); iterErr != nil && !errors.Is(err, iterErr) {
 				return errors.Join(err, iterErr)
 			}

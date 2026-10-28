@@ -12,10 +12,9 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
-	"github.com/openai/openai-cli/internal/commands/admin"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
+	"github.com/openai/openai-cli/internal/commands/webhooks"
 	clioutput "github.com/openai/openai-cli/internal/output"
-	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/tidwall/gjson"
@@ -117,6 +116,7 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 		isAPI, isStream = false, false
 	}
 	if format == "text" && root.String("transform-error") == "" {
+		presenter := clihelp.NewSuggestedText(out, root)
 		message := ""
 		var batchFailure *batchcommands.WorkflowError
 		if limitsFailure != nil {
@@ -127,13 +127,13 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 		} else if errors.As(failure, &batchFailure) {
 			message = batchFailure.Error()
 		} else if isAPI && !errors.Is(failure, context.Canceled) {
-			message = readableAPIErrorMessage(root, failure, apierr)
+			message = readableAPIErrorMessageTo(root, failure, apierr, presenter)
 		} else if isStream {
 			message = readableStreamErrorText
 		} else {
-			message = readableLocalErrorMessage(root, failure)
+			message = readableLocalErrorMessage(root, failure, presenter)
 		}
-		return readable.WriteText(out, message)
+		return presenter.WriteText(message)
 	}
 	var value gjson.Result
 	if isAPI {
@@ -168,17 +168,19 @@ const readableStreamErrorMessage = "The response stream failed. Output may be in
 const readableStreamErrorText = "The response stream failed.\nOutput may be incomplete.\nAPI error details: --format-error json."
 
 func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Error) string {
-	invocation := clihelp.DisplayInvocation(root)
+	return readableAPIErrorMessageTo(root, failure, apierr)
+}
+
+func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.Error, output ...io.Writer) string {
 	message := "The API could not complete the request."
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
-		message = "Check API key, organization and project.\nKey setup: " + invocation + " help setup"
-		if required, _ := commandErrorContext(root, failure).Metadata[admin.CredentialsRequiredMetadata].(bool); required {
-			message = "Check --admin-api-key or OPENAI_ADMIN_KEY and any Authorization override.\n" +
-				"Check the organization and API address.\nKey setup: " + invocation + " help setup admin"
-		}
+		message = readableAPIAuthenticationMessage(root, failure, apierr, output...)
 	case http.StatusForbidden:
 		message = "Check your key's permissions.\nCheck project access to this resource."
+		if permission := readableAPIAccessPermissionMessage(root, failure, apierr); permission != "" {
+			message = permission
+		}
 	case http.StatusNotFound:
 		message = "Check the resource or model ID.\nCheck your key's access to it."
 		if guidance := readableSpendNotFoundMessage(root, failure); guidance != "" {
@@ -190,7 +192,7 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 		if errors.As(failure, &contextual) {
 			command = contextual.command
 		}
-		message = readableAPIArgumentMessage(apierr, command)
+		message = readableAPIArgumentMessage(apierr, command, output...)
 	case http.StatusTooManyRequests:
 		message = "Wait before trying again."
 		switch apierr.Code {
@@ -211,9 +213,18 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 		}
 	}
 	if guidance := readableAPIPermissionMessage(failure, apierr); guidance != "" {
-		message = guidance
+		if strings.Contains(message, "Missing permission: api.webhooks.") {
+			message += "\n" + guidance
+		} else {
+			message = guidance
+		}
 	}
-
+	// Workflow messages contain fixed local stage/outcome guidance. Preserve
+	// the underlying API error for structured formats and error identity.
+	var workflow *webhooks.WorkflowError
+	if errors.As(failure, &workflow) {
+		message = workflow.Error() + "\n" + message
+	}
 	if apierr.StatusCode > 0 {
 		status := fmt.Sprintf("HTTP %d", apierr.StatusCode)
 		if reason := http.StatusText(apierr.StatusCode); reason != "" {
@@ -231,7 +242,7 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 // Parameter names are untrusted API data. Match only paths declared by this
 // exact command, and print only the matching locally defined flag name. Never
 // display an arbitrary param, server message, rejected value, or remote choice.
-func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command) string {
+func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command, output ...io.Writer) string {
 	flagName, path := clioutput.ParameterFlag(command, apierr.Param)
 	message := "The API rejected the request."
 	if flagName != "" {
@@ -274,7 +285,7 @@ func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command) stri
 	}
 	invocation := clihelp.DisplayInvocation(command.Root())
 	pathToCommand := strings.TrimPrefix(command.FullName(), command.Root().Name+" ")
-	return message + "\nOptions and examples: " + invocation + " help " + pathToCommand
+	return message + "\nOptions and examples: " + clihelp.SuggestedCommandPath(command, output, invocation+" help "+pathToCommand)
 }
 
 func readableParameterChoices(command *cli.Command, path string) string {

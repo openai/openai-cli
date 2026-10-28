@@ -16,13 +16,15 @@ func TestMainHelpExperienceRootMapAndOrdering(t *testing.T) {
 			t.Fatalf("offline overview failed: %+v", got)
 		}
 		last := -1
-		for _, group := range clihelp.VisibleCommands(commands.Command) {
+		groups := clihelp.VisibleCommands(commands.Command)
+		for _, group := range groups {
 			if group.Category != "API RESOURCE" {
 				continue
 			}
 			index, occurrences := -1, 0
 			for lineIndex, line := range strings.Split(got.stdout, "\n") {
-				if fields := strings.Fields(line); len(fields) > 0 && fields[0] == group.Name {
+				// Count command labels, not words on wrapped description lines.
+				if line == "  "+group.Name || strings.HasPrefix(line, "  "+group.Name+" ") {
 					index = lineIndex
 					occurrences++
 				}

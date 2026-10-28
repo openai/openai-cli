@@ -28,6 +28,10 @@ type PickerInstallation struct {
 	Directory  string
 	Profile    string
 	OptOutPath string // Optional shared marker for managed fish activation.
+	// The zero value preserves the existing picker namespace and script format.
+	integration string
+	executable  string
+	doubleTab   bool
 }
 
 type PickerInstallResult struct {
@@ -48,6 +52,9 @@ type pickerInstalledBlock struct {
 	Shell          CompletionStyle `json:"shell"`
 	Script         string          `json:"script"`
 	ProfileCreated bool            `json:"profile_created,omitempty"`
+	Integration    string          `json:"integration,omitempty"`
+	Executable     string          `json:"executable,omitempty"`
+	DoubleTab      bool            `json:"double_tab,omitempty"`
 }
 
 type pickerFileSnapshot struct {
@@ -97,60 +104,68 @@ func RemovePicker(ctx context.Context, options PickerInstallation) (PickerInstal
 // IsPickerInstalled verifies an intact profile block and an owned script that
 // matches this CLI's current content, without creating files or locking.
 func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, error) {
+	_, current, err := inspectPickerInstallation(ctx, options)
+	return current, err
+}
+
+func inspectPickerInstallation(ctx context.Context, options PickerInstallation) (*pickerInstalledBlock, bool, error) {
 	if err := validatePickerInstallation(options); err != nil {
-		return false, err
+		return nil, false, err
 	}
 	if err := preflightPickerScriptDirectory(ctx, options); err != nil {
-		return false, err
+		return nil, false, err
 	}
 	root, err := openPickerProfileDirectory(ctx, filepath.Dir(options.Profile), false)
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	defer root.Close()
 	callerProfile := options.Profile
 	options.Profile, err = pickerProfileIdentity(ctx, root, options.Profile)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	profile, err := readPickerFile(ctx, root, filepath.Base(options.Profile))
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	_, _, installed, err := parsePickerBlock(profile.data, options)
 	if err != nil || installed == nil {
-		return false, err
+		return nil, false, err
 	}
 	// Existing profiles keep their verified script location when the user's
 	// configuration root changes. New profiles use the caller-selected root.
 	options.Directory = filepath.Dir(installed.Script)
 	scripts, err := openPickerScriptDirectory(ctx, options.Directory, false)
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	defer scripts.Close()
 	script, err := readPickerFile(ctx, scripts, filepath.Base(installed.Script))
 	if err != nil || script.info == nil {
-		return false, err
+		return nil, false, err
 	}
 	if !validInstalledPickerScript(options, *installed, script.data) {
-		return false, errors.New("installed shell integration script was modified")
+		return nil, false, errors.New("installed shell integration script was modified")
+	}
+	if options.integration == suggestionsIntegration {
+		options.executable, options.doubleTab = installed.Executable, installed.DoubleTab
 	}
 	current, err := renderInstalledPicker(options)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	if !bytes.Equal(script.data, current) {
-		return false, ctx.Err()
+		return installed, false, ctx.Err()
 	}
 	pending, err := reconcilePickerScripts(ctx, scripts, options, callerProfile, script, false)
-	return !pending && err == nil, err
+	return installed, !pending && err == nil, err
 }
 
 func changePickerInstallation(ctx context.Context, options PickerInstallation, remove bool) (result PickerInstallResult, err error) {
@@ -258,7 +273,8 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 		}
 		next = pickerInstalledBlock{
 			Shell: options.Shell, Script: filepath.Join(options.Directory, pickerScriptName(options, script)),
-			ProfileCreated: profile.info == nil || installed != nil && installed.ProfileCreated,
+			ProfileCreated: profile.info == nil || installed != nil && installed.ProfileCreated || siblingCreatedProfile(profile.data, options),
+			Integration:    options.integration, Executable: options.executable, DoubleTab: options.doubleTab,
 		}
 		result.ScriptPath = next.Script
 		newSnapshot, err = readPickerFile(ctx, scriptRoot, filepath.Base(next.Script))
@@ -360,10 +376,16 @@ func preflightPickerScriptDirectory(ctx context.Context, options PickerInstallat
 }
 
 func validatePickerInstallation(options PickerInstallation) error {
+	if options.integration != "" && options.integration != suggestionsIntegration {
+		return errors.New("unsupported shell integration")
+	}
 	if _, ok := shellCompletions[options.Shell]; !ok {
 		return errors.New("unsupported picker shell")
 	}
 	if options.Shell == CompletionStylePowershell {
+		if options.integration == suggestionsIntegration {
+			return errors.New("command insertion setup supports Bash 4.3+, zsh, and fish")
+		}
 		return errors.New("PowerShell uses normal Tab completion. Type openai images generate and press Enter to open the image picker.")
 	}
 	paths := []string{options.Directory, options.Profile}
@@ -389,7 +411,7 @@ func pickerScriptName(options PickerInstallation, data []byte) string {
 
 func pickerScriptProfilePrefix(options PickerInstallation) string {
 	profileHash := sha256.Sum256([]byte(options.Profile))
-	return fmt.Sprintf("picker-%s-%x-", options.Shell, profileHash[:8])
+	return fmt.Sprintf("%s-%s-%x-", pickerIntegrationNamespace(options.integration), options.Shell, profileHash[:8])
 }
 
 func pickerScriptMatchesProfile(options PickerInstallation, callerProfile string, block pickerInstalledBlock) bool {
@@ -412,10 +434,10 @@ func validInstalledPickerScript(options PickerInstallation, block pickerInstalle
 }
 
 func validPickerScriptContent(options PickerInstallation, block pickerInstalledBlock, data []byte) bool {
-	if !bytes.HasPrefix(data, []byte(pickerScriptHeader)) {
+	if !bytes.HasPrefix(data, []byte(pickerIntegrationHeader(options.integration))) {
 		return false
 	}
-	name, ok := strings.CutPrefix(filepath.Base(block.Script), "picker-"+string(options.Shell)+"-")
+	name, ok := strings.CutPrefix(filepath.Base(block.Script), pickerIntegrationNamespace(options.integration)+"-"+string(options.Shell)+"-")
 	if !ok || len(name) < 17 || name[16] != '-' {
 		return false
 	}
@@ -427,37 +449,42 @@ func validPickerScriptContent(options PickerInstallation, block pickerInstalledB
 }
 
 func validOwnedPickerScript(options PickerInstallation, block pickerInstalledBlock, data []byte) bool {
-	return bytes.HasPrefix(data, []byte(pickerScriptHeader)) && filepath.Base(block.Script) == pickerScriptName(options, data)
+	return bytes.HasPrefix(data, []byte(pickerIntegrationHeader(options.integration))) && filepath.Base(block.Script) == pickerScriptName(options, data)
 }
 
 func parsePickerBlock(data []byte, options PickerInstallation) ([]byte, []byte, *pickerInstalledBlock, error) {
 	if !utf8.Valid(data) || bytes.ContainsRune(data, 0) {
 		return nil, nil, nil, errors.New("shell startup file must contain UTF-8 text")
 	}
-	begin, end := bytes.Count(data, []byte("# >>> openai image picker")), bytes.Count(data, []byte("# <<< openai image picker"))
+	blockBegin, blockEnd, metadataPrefix, marker := pickerIntegrationMarkers(options.integration)
+	begin, end := bytes.Count(data, []byte("# >>> "+marker)), bytes.Count(data, []byte("# <<< "+marker))
 	if begin == 0 && end == 0 {
 		return data, nil, nil, nil
 	}
 	if begin != 1 || end != 1 {
 		return nil, nil, nil, errors.New("shell startup file has ambiguous integration markers; existing files were kept")
 	}
-	start := bytes.Index(data, []byte("\n"+pickerBlockBegin+"\n"))
-	finish := bytes.Index(data, []byte(pickerBlockEnd+"\n"))
+	start := bytes.Index(data, []byte("\n"+blockBegin+"\n"))
+	finish := bytes.Index(data, []byte(blockEnd+"\n"))
 	if start < 0 || finish < start {
 		return nil, nil, nil, errors.New("shell integration block was modified; existing files were kept")
 	}
-	finish += len(pickerBlockEnd) + 1
+	finish += len(blockEnd) + 1
 	block := data[start:finish]
 	lines := bytes.Split(block, []byte("\n"))
-	if len(lines) < 4 || !bytes.HasPrefix(lines[2], []byte("# openai-picker: ")) {
+	if len(lines) < 4 || !bytes.HasPrefix(lines[2], []byte(metadataPrefix)) {
 		return nil, nil, nil, errors.New("shell integration block was modified; existing files were kept")
 	}
-	metadata, err := base64.RawURLEncoding.DecodeString(string(bytes.TrimPrefix(lines[2], []byte("# openai-picker: "))))
+	metadata, err := base64.RawURLEncoding.DecodeString(string(bytes.TrimPrefix(lines[2], []byte(metadataPrefix))))
 	var installed pickerInstalledBlock
-	if err != nil || json.Unmarshal(metadata, &installed) != nil || installed.Shell != options.Shell ||
+	if err != nil || json.Unmarshal(metadata, &installed) != nil || installed.Shell != options.Shell || installed.Integration != options.integration ||
 		!filepath.IsAbs(installed.Script) || filepath.Clean(installed.Script) != installed.Script ||
 		!utf8.ValidString(installed.Script) || strings.ContainsAny(installed.Script, "\x00\r\n") || !bytes.Equal(block, renderPickerBlock(installed)) {
 		return nil, nil, nil, errors.New("shell integration block was modified or belongs to another setup; existing files were kept")
+	}
+	if installed.Integration == suggestionsIntegration && !validSuggestionExecutable(installed.Executable) ||
+		installed.Integration == "" && (installed.Executable != "" || installed.DoubleTab) {
+		return nil, nil, nil, errors.New("shell integration block contains invalid startup settings; existing files were kept")
 	}
 	recorded := options
 	recorded.Directory = filepath.Dir(installed.Script)
@@ -480,18 +507,25 @@ func withoutPickerBlock(before, after []byte) []byte {
 func renderPickerBlock(block pickerInstalledBlock) []byte {
 	metadata, _ := json.Marshal(block)
 	script := quotePickerPath(block.Shell, block.Script)
+	commandGuard := " && command -v openai >/dev/null 2>&1"
+	fishCommandGuard := " and command -sq openai;"
+	if block.Integration == suggestionsIntegration {
+		// The loader validates its pinned executable and the matching PATH entry.
+		commandGuard, fishCommandGuard = "", ""
+	}
 	var source string
 	switch block.Shell {
 	case CompletionStyleBash:
 		// Bash may read .profile, which is also a POSIX login-shell file.
 		// Keep the entire block parseable there and activate only in Bash.
-		source = "case $- in\n  *i*) if [ -n \"${BASH_VERSION-}\" ] && [ -f " + script + " ] && [ -r " + script + " ] && command -v openai >/dev/null 2>&1; then\n    . " + script + "\n  fi ;;\nesac"
+		source = "case $- in\n  *i*) if [ -n \"${BASH_VERSION-}\" ] && [ -f " + script + " ] && [ -r " + script + " ]" + commandGuard + "; then\n    . " + script + "\n  fi ;;\nesac"
 	case CompletionStyleFish:
-		source = "if status is-interactive; and command -sq openai; and test -f " + script + "; and test -r " + script + "\n    source " + script + "\nend"
+		source = "if status is-interactive;" + fishCommandGuard + " and test -f " + script + "; and test -r " + script + "\n    source " + script + "\nend"
 	default:
-		source = "if [[ $- == *i* && -f " + script + " && -r " + script + " ]] && command -v openai >/dev/null 2>&1; then\n  source " + script + "\nfi"
+		source = "if [[ $- == *i* && -f " + script + " && -r " + script + " ]]" + commandGuard + "; then\n  source " + script + "\nfi"
 	}
-	return []byte("\n" + pickerBlockBegin + "\n# openai-picker: " + base64.RawURLEncoding.EncodeToString(metadata) + "\n" + source + "\n" + pickerBlockEnd + "\n")
+	blockBegin, blockEnd, metadataPrefix, _ := pickerIntegrationMarkers(block.Integration)
+	return []byte("\n" + blockBegin + "\n" + metadataPrefix + base64.RawURLEncoding.EncodeToString(metadata) + "\n" + source + "\n" + blockEnd + "\n")
 }
 
 func quotePickerPath(shell CompletionStyle, path string) string {
@@ -504,6 +538,9 @@ func quotePickerPath(shell CompletionStyle, path string) string {
 }
 
 func renderInstalledPicker(options PickerInstallation) ([]byte, error) {
+	if options.integration == suggestionsIntegration {
+		return renderInstalledSuggestions(options)
+	}
 	completion, err := shellCompletions[options.Shell](nil, "openai")
 	if err != nil {
 		return nil, err

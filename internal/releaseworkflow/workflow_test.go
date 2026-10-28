@@ -33,6 +33,7 @@ var releaseInputPaths = []string{
 }
 
 type workflow struct {
+	Env         map[string]string      `yaml:"env"`
 	Permissions map[string]string      `yaml:"permissions"`
 	Jobs        map[string]workflowJob `yaml:"jobs"`
 }
@@ -57,6 +58,7 @@ type workflowJob struct {
 
 type workflowStep struct {
 	ContinueOnError bool           `yaml:"continue-on-error"`
+	If              string         `yaml:"if"`
 	Shell           string         `yaml:"shell"`
 	Name            string         `yaml:"name"`
 	Uses            string         `yaml:"uses"`
@@ -154,7 +156,7 @@ func TestSDKSourcePreparationIsIsolatedFromPRCode(t *testing.T) {
 		t.Fatalf("SDK preparation must check out trusted target code without persisting credentials: %#v", checkout)
 	}
 	tokenIndex, token := requireStep(t, job, "Create read-only Go repository token")
-	if token.Uses != "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1" || !reflect.DeepEqual(token.With, map[string]any{
+	if token.Uses != "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510" || !reflect.DeepEqual(token.With, map[string]any{
 		"client-id": "${{ vars.OPENAI_SDKS_APP_CLIENT_ID }}", "private-key": "${{ secrets.OPENAI_SDKS_APP_PRIVATE_KEY }}",
 		"owner": "openai", "repositories": "openai-go-internal", "permission-contents": "read",
 	}) {
@@ -770,6 +772,7 @@ func TestCandidateJobsUseOnlySameRunSourceArtifacts(t *testing.T) {
 	for filename, names := range map[string][]string{
 		"ci.yml":                 {"lint", "test-linux", "test-windows-compile", "error-audit", "build-artifacts", "macos-uploads"},
 		"help-compatibility.yml": {"help"}, "codeql.yml": {"analyze"},
+		"tokenizer-stress.yml": {"windows"},
 	} {
 		jobs := readWorkflow(t, filename).Jobs
 		for _, name := range names {
@@ -919,7 +922,8 @@ func TestParallelTestGateRequiresAllJobs(t *testing.T) {
 }
 
 func TestErrorAuditShardsRemainRequired(t *testing.T) {
-	jobs := readWorkflow(t, "ci.yml").Jobs
+	ci := readWorkflow(t, "ci.yml")
+	jobs := ci.Jobs
 	audit := jobs["error-audit"]
 	if audit.ContinueOnError || audit.Strategy.FailFast == nil || *audit.Strategy.FailFast || !reflect.DeepEqual(audit.Strategy.Matrix.Shard, []int{0, 1, 2, 3}) {
 		t.Fatalf("audit must retain four mandatory shards without fail-fast: %+v", audit)
@@ -938,13 +942,27 @@ func TestErrorAuditShardsRemainRequired(t *testing.T) {
 	}
 	linux := jobs["test-linux"]
 	_, validator := requireStep(t, linux, "Check error audit validator")
-	_, bash := requireStep(t, linux, "Check native Bash executable suggestions")
-	_, tests := requireStep(t, linux, "Run tests")
-	if validator.Run != "python3 scripts/test-error-audit.py" || validator.ContinueOnError || bash.ContinueOnError || bash.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"] != "bash" || !strings.Contains(bash.Run, "-run '^TestShellSuggestionsBash'") {
-		t.Fatal("Linux tests must retain the audit validator and mandatory native Bash suggestion checks")
+	bashIndex, bash := requireStep(t, linux, "Check native Bash executable suggestions")
+	launcherIndex, launcher := requireStep(t, linux, "Check test launcher failure handling")
+	testsIndex, tests := requireStep(t, linux, "Run tests")
+	if launcherIndex >= testsIndex || launcher.If != "" || launcher.ContinueOnError || launcher.Run != "go test ./scripts -run '^TestTestRunner$' -count=1" {
+		t.Fatal("Linux tests must check launcher failures independently before running the launcher")
 	}
-	if linux.ContinueOnError || tests.Env["SKIP_WINDOWS_TEST_COMPILE"] != "1" || tests.Run != "./scripts/test -p 1" || tests.ContinueOnError {
-		t.Fatalf("Linux tests must preserve their separate Windows compile contract: %+v", tests)
+	if validator.Run != "python3 scripts/test-error-audit.py" || validator.If != "" || validator.ContinueOnError {
+		t.Fatal("Linux tests must retain the mandatory audit validator")
+	}
+	if bashIndex >= testsIndex || bash.If != "" || bash.ContinueOnError || bash.Env["GOMAXPROCS"] != "2" || bash.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"] != "bash" || bash.Run != "go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsBash' -count=1 -timeout=5m -v" {
+		t.Fatal("Linux tests must run mandatory native Bash suggestion checks before the full suite")
+	}
+	_, workflowRequirement := ci.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"]
+	_, jobRequirement := linux.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"]
+	_, suiteRequirement := tests.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"]
+	if workflowRequirement || jobRequirement || suiteRequirement {
+		t.Fatal("required native shells must be scoped to the dedicated Bash step")
+	}
+	_, suiteCPUOverride := tests.Env["GOMAXPROCS"]
+	if linux.If != "" || linux.ContinueOnError || tests.If != "" || tests.ContinueOnError || suiteCPUOverride || tests.Env["SKIP_WINDOWS_TEST_COMPILE"] != "1" || tests.Run != "./scripts/test -p 1 -skip '^TestShellSuggestionsBash'" {
+		t.Fatalf("Linux tests must exclude only the dedicated Bash roots and preserve Windows compile separation: %+v", tests)
 	}
 	windows := jobs["test-windows-compile"]
 	_, compilation := requireStep(t, windows, "Compile all test packages for Windows")

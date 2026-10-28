@@ -10,6 +10,7 @@ import json
 import os
 import pathlib
 import pty
+import re
 import shutil
 import signal
 import subprocess
@@ -128,11 +129,15 @@ def main():
                 mark = len(terminal.raw)
                 terminal.send(b'\x1b[200~'+prompt.encode()+b'\x1b[201~')
                 terminal.wait(prompt, after=mark)
+                # The workspace clears and pads the complete prompt row.
+                repaint = (rb'\r\x1b\[0K' + re.escape(('  │ Prompt '+prompt).encode())
+                           + rb' +\x1b\[78G' + '│'.encode())
                 deadline = time.monotonic()+8
-                while b'\x1b[78G' not in terminal.raw[mark:]:
+                # The border bytes can arrive in a later read.
+                while not re.search(repaint, terminal.raw[mark:]):
                     terminal.read()
-                    assert terminal.child.poll() is None and time.monotonic() < deadline, 'right-border positioning was stripped'
-                assert b'\x1b[74X' in terminal.raw[mark:], 'prompt interior fill control was stripped'
+                    assert terminal.child.poll() is None and time.monotonic() < deadline, 'prompt repaint was incomplete'
+                assert re.search(repaint, terminal.raw[mark:]), 'prompt repaint, padding, or right border was stripped'
                 assert b';2;' not in terminal.raw[mark:] and b';5;' not in terminal.raw[mark:], 'NO_COLOR emitted color'
                 mark = len(terminal.raw)
                 terminal.send(b'\r')
@@ -142,6 +147,7 @@ def main():
                 assert len(server.requests) == before+1, 'expected one image request'
                 check_body(server.requests[-1], {'prompt': prompt})
                 check_saved(home)
+                picker.check_receipts(terminal, (home/'Downloads'/'gpt-images').glob('*.png'))
                 passed(name)
             finally:
                 try:
@@ -183,6 +189,7 @@ def main():
                         'count': '1', 'output_dir': ''}, saved_state
                     terminal.send(b'\x03')
                     terminal.finish(130)
+                    picker.check_receipts(terminal, (home/'Downloads'/'gpt-images').glob('*.png'))
                     reopened = picker.Terminal(binary, ['images', 'generate'], env)
                     try:
                         reopened.wait(prompt.splitlines()[0])
@@ -332,6 +339,7 @@ def main():
                                     assert len(saved) == 2 and all(f.read_bytes() == picker.PNG for f in saved)
                                 else:
                                     check_saved(home)
+                                picker.check_receipts(terminal, (home/'Downloads'/'gpt-images').glob('*.png'))
                     states = list(home.rglob('image-picker.json'))
                     assert len(states) == int(action != 'cancel'), (name, states)
                     if states:
