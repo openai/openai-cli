@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import tempfile
 import time
@@ -56,10 +57,13 @@ class GuidedCaptureCleanupTest(unittest.TestCase):
             self.assertEqual(evidence["failure"], "TimeoutError")
 
     def test_recording_failures_preserve_the_capture_error(self):
-        for blocked in (("workflow.cast", "terminal.raw"), ("evidence.json",)):
-            with self.subTest(blocked=blocked), tempfile.TemporaryDirectory() as directory:
+        for original, blocked in (
+            (RuntimeError("capture failed"), ("workflow.cast", "terminal.raw")),
+            (KeyboardInterrupt(), ("workflow.cast",)),
+            (SystemExit(23), ("evidence.json",)),
+        ):
+            with self.subTest(error=type(original).__name__, blocked=blocked), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / "capture"
-                original = RuntimeError("capture failed")
                 terminal = Mock(events=[], raw=b"partial output")
                 terminal.running.return_value = False
 
@@ -71,7 +75,7 @@ class GuidedCaptureCleanupTest(unittest.TestCase):
                 terminal.wait.side_effect = fail_capture
                 with patch.object(sys, "argv", ["capture", sys.executable, str(output)]), \
                      patch.object(capture.harness, "Terminal", return_value=terminal), \
-                     self.assertRaises(RuntimeError) as caught:
+                     self.assertRaises(type(original)) as caught:
                     capture.main()
 
                 self.assertIs(caught.exception, original)
@@ -82,6 +86,50 @@ class GuidedCaptureCleanupTest(unittest.TestCase):
                     self.assertEqual(evidence["detail"], str(original))
                     for name in blocked:
                         self.assertTrue(any(name in detail for detail in evidence["secondary_failures"]))
+
+    def test_interrupt_during_shutdown_waits_and_closes(self):
+        terminal = Mock()
+        terminal.child.wait.side_effect = TimeoutError("launcher wait expired")
+        interrupted = KeyboardInterrupt()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(capture, "drain_shutdown_output", side_effect=interrupted), \
+                 self.assertRaises(KeyboardInterrupt) as caught:
+                capture.finish_capture(terminal, Path(directory), {}, {}, None)
+            self.assertIs(caught.exception, interrupted)
+            terminal.child.wait.assert_called_once()
+            terminal.close.assert_called_once()
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_second_sigint_waits_for_launcher_and_terminal_close(self):
+        events = []
+
+        def interrupt(_signal, _frame):
+            events.append("SIGINT")
+            raise KeyboardInterrupt
+
+        self.addCleanup(signal.signal, signal.SIGINT, signal.signal(signal.SIGINT, interrupt))
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+        self.addCleanup(signal.pthread_sigmask, signal.SIG_SETMASK, previous_mask)
+        initial_mask = (previous_mask | {signal.SIGUSR1}) - {signal.SIGINT}
+        signal.pthread_sigmask(signal.SIG_SETMASK, initial_mask)
+
+        def wait_for_launcher(*, timeout):
+            signal.raise_signal(signal.SIGINT)
+            events.append("wait finished")
+
+        terminal = Mock(events=[], raw=b"")
+        terminal.wait.side_effect = lambda _marker: signal.raise_signal(signal.SIGINT)
+        terminal.child.wait.side_effect = wait_for_launcher
+        terminal.close.side_effect = lambda: events.append("close finished")
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "capture"
+            with patch.object(sys, "argv", ["capture", sys.executable, str(output)]), \
+                 patch.object(capture.harness, "Terminal", return_value=terminal), \
+                 patch.object(capture, "drain_shutdown_output"), self.assertRaises(KeyboardInterrupt):
+                capture.main()
+
+        self.assertEqual(events, ["SIGINT", "wait finished", "close finished", "SIGINT"])
+        self.assertEqual(signal.pthread_sigmask(signal.SIG_BLOCK, set()), initial_mask)
 
 
 if __name__ == "__main__":

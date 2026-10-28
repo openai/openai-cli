@@ -2,7 +2,7 @@
 """Capture guided creation, automatic progress, results, and saving through a real PTY."""
 
 import argparse
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import hashlib
 import importlib.util
 import json
@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import select
+import signal
 import sys
 import tempfile
 import time
@@ -41,6 +42,52 @@ def drain_shutdown_output(terminal, until):
                 break
 
 
+def finish_capture(terminal, output, header, evidence, primary_error):
+    failures = [] if primary_error is None else [primary_error]
+
+    @contextmanager
+    def retain_failure():
+        try:
+            yield
+        except Exception as error:
+            failures.append(error)
+
+    if terminal is not None:
+        with ExitStack() as shutdown:
+            # Deliver pending Ctrl+C only after the launcher has stopped its detached CLI and the PTY closes.
+            previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+            shutdown.callback(signal.pthread_sigmask, signal.SIG_SETMASK, previous)
+            try:
+                with retain_failure():
+                    if terminal.running():
+                        terminal.child.terminate()
+                        until = time.monotonic() + 8
+                        try:
+                            with retain_failure():
+                                drain_shutdown_output(terminal, until)
+                        finally:
+                            with retain_failure():
+                                terminal.child.wait(timeout=max(0, until - time.monotonic()))
+            finally:
+                with retain_failure():
+                    terminal.close()
+        with retain_failure():
+            (output / "workflow.cast").write_text(
+                "\n".join(json.dumps(row) for row in [header, *terminal.events]) + "\n")
+        with retain_failure():
+            (output / "terminal.raw").write_bytes(bytes(terminal.raw))
+    evidence["pass"] = not failures
+    if failures:
+        first = failures[0]
+        evidence.update(failure=type(first).__name__, detail=str(first))
+        if len(failures) > 1:
+            evidence["secondary_failures"] = [f"{type(error).__name__}: {error}" for error in failures[1:]]
+    with retain_failure():
+        (output / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
+    if primary_error is None and failures:
+        raise failures[0]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
@@ -63,16 +110,8 @@ def main():
                 "source": "Actual CLI frames from a macOS PTY", "screens": {}, "keys": [],
                 "limits": "PTY replay does not establish physical terminal appearance or native Windows/Linux execution."}
     terminal = None
-    failures = []
-
-    @contextmanager
-    def retain_failure():
-        try:
-            yield
-        except BaseException as error:
-            failures.append(error)
-
-    with retain_failure():
+    with ExitStack() as cleanup:
+        cleanup.push(lambda _type, error, _traceback: finish_capture(terminal, args.output, header, evidence, error))
         with tempfile.TemporaryDirectory(prefix="f13-guided-capture-home-") as home:
             environment = {"PATH": os.defpath, "HOME": home, "XDG_CONFIG_HOME": home,
                            "XDG_CACHE_HOME": home, "TERM": "xterm-256color", "COLORTERM": "truecolor",
@@ -172,34 +211,6 @@ def main():
             assert [(r["method"], r["path"]) for r in requests if r["method"] == "POST"] == [
                 ("POST", "/files"), ("POST", "/batches")]
             evidence.update(session=session, saved_file=str(directory / filename), requests=requests)
-    if terminal is not None:
-        try:
-            with retain_failure():
-                if terminal.running():
-                    # The launcher owns the detached CLI. Its shutdown must outlive the capture deadline.
-                    terminal.child.terminate()
-                    until = time.monotonic() + 8
-                    with retain_failure():
-                        drain_shutdown_output(terminal, until)
-                    terminal.child.wait(timeout=max(0, until - time.monotonic()))
-        finally:
-            with retain_failure():
-                terminal.close()
-        with retain_failure():
-            (args.output / "workflow.cast").write_text(
-                "\n".join(json.dumps(row) for row in [header, *terminal.events]) + "\n")
-        with retain_failure():
-            (args.output / "terminal.raw").write_bytes(bytes(terminal.raw))
-    evidence["pass"] = not failures
-    if failures:
-        first = failures[0]
-        evidence.update(failure=type(first).__name__, detail=str(first))
-        if len(failures) > 1:
-            evidence["secondary_failures"] = [f"{type(error).__name__}: {error}" for error in failures[1:]]
-    with retain_failure():
-        (args.output / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
-    if failures:
-        raise failures[0]
     print(args.output)
 
 
