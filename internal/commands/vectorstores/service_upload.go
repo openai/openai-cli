@@ -32,7 +32,10 @@ func (s *sdkService) UploadFile(ctx context.Context, path string) (file *openai.
 	}()
 	// MultipartRequestOptions streams once and disables SDK upload retries.
 	file, err = s.client.Files.New(ctx, openai.FileNewParams{}, options...)
-	if err == nil && (file == nil || file.ID == "") {
+	if file != nil && !validResponseID(file.JSON.ID) {
+		file = nil
+	}
+	if err == nil && file == nil {
 		err = workspaceFailure("The API returned no file ID. Check Files before uploading again.", nil)
 	}
 	return file, err

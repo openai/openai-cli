@@ -155,3 +155,29 @@ func TestManagementRejectsUnconfirmedResults(t *testing.T) {
 		})
 	}
 }
+
+func TestManagementRejectsCoercedReceiptsAndContent(t *testing.T) {
+	for _, scalar := range []string{`"true"`, "1"} {
+		t.Run("deletion/"+scalar, func(t *testing.T) {
+			s := testService(t, func(w http.ResponseWriter, r *http.Request) {
+				id := "vs_demo"
+				if strings.HasSuffix(r.URL.Path, "/file_demo") {
+					id = "file_demo"
+				}
+				serviceJSON(w, 200, `{"id":"`+id+`","deleted":`+scalar+`}`)
+			}).(ManagementService)
+			require.Error(t, s.DeleteStore(t.Context(), "vs_demo"))
+			require.Error(t, s.RemoveFile(t.Context(), "vs_demo", "file_demo"))
+		})
+	}
+	for _, scalar := range []string{"true", "42"} {
+		t.Run("content/"+scalar, func(t *testing.T) {
+			s := testService(t, func(w http.ResponseWriter, _ *http.Request) {
+				serviceJSON(w, 200, `{"data":[{"type":"text","text":"valid first part"},{"type":"text","text":`+scalar+`}]}`)
+			}).(ManagementService)
+			content, err := s.FileContent(t.Context(), "vs_demo", "file_demo")
+			require.Error(t, err)
+			assert.Empty(t, content)
+		})
+	}
+}

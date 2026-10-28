@@ -51,7 +51,7 @@ func (s *sdkService) UpdateStore(ctx context.Context, id string, changes map[str
 		opts = append(opts, option.WithJSONSet(key, value))
 	}
 	store, err := s.client.VectorStores.Update(ctx, id, openai.VectorStoreUpdateParams{}, opts...)
-	if err == nil && (store == nil || store.ID != id) {
+	if err == nil && (store == nil || !validResponseID(store.JSON.ID) || store.ID != id) {
 		err = workspaceFailure("The API returned an unexpected store. Refresh before retrying.", nil)
 	}
 	return store, err
@@ -59,7 +59,7 @@ func (s *sdkService) UpdateStore(ctx context.Context, id string, changes map[str
 
 func (s *sdkService) DeleteStore(ctx context.Context, id string) error {
 	result, err := s.client.VectorStores.Delete(ctx, id, option.WithMaxRetries(0))
-	if err == nil && (result == nil || result.ID != id || !result.Deleted) {
+	if err == nil && (result == nil || !validResponseID(result.JSON.ID) || result.ID != id || result.JSON.Deleted.Raw() != "true") {
 		err = workspaceFailure("Store deletion was not confirmed. Refresh stores before retrying.", nil)
 	}
 	return err
@@ -79,7 +79,7 @@ func (s *sdkService) ListSourceFiles(ctx context.Context, after string) (SourceP
 	}
 	last := ""
 	for _, file := range page.Data {
-		if file.ID == "" {
+		if !validResponseID(file.JSON.ID) {
 			return SourcePage{}, workspaceFailure("The API returned a file without an ID.", nil)
 		}
 		last = file.ID
@@ -94,7 +94,8 @@ func (s *sdkService) AttachConfigured(ctx context.Context, store, file string, o
 }
 
 func checkBatch(batch *openai.VectorStoreFileBatch, err error, store, id string) (*openai.VectorStoreFileBatch, error) {
-	if err == nil && (batch == nil || batch.ID == "" || batch.VectorStoreID != store || id != "" && batch.ID != id) {
+	if err == nil && (batch == nil || !validResponseID(batch.JSON.ID) || id != "" && batch.ID != id ||
+		!validResponseID(batch.JSON.VectorStoreID) || batch.VectorStoreID != store) {
 		err = workspaceFailure("The API returned an unexpected batch. Check Files before retrying.", nil)
 	}
 	return batch, err
@@ -129,7 +130,7 @@ func (s *sdkService) ListBatchFiles(ctx context.Context, store, id, after string
 	}
 	last := ""
 	for _, file := range page.Data {
-		if file.ID == "" || file.VectorStoreID != "" && file.VectorStoreID != store {
+		if !validAttachmentID(file, store) {
 			return FilePage{}, workspaceFailure("The API returned an unexpected batch file.", nil)
 		}
 		last = file.ID
@@ -146,7 +147,7 @@ func (s *sdkService) UpdateFile(ctx context.Context, store, file string, attribu
 
 func (s *sdkService) RemoveFile(ctx context.Context, store, file string) error {
 	result, err := s.client.VectorStores.Files.Delete(ctx, store, file, option.WithMaxRetries(0))
-	if err == nil && (result == nil || result.ID != file || !result.Deleted) {
+	if err == nil && (result == nil || !validResponseID(result.JSON.ID) || result.ID != file || result.JSON.Deleted.Raw() != "true") {
 		err = workspaceFailure("Attachment removal was not confirmed. Refresh Files before retrying.", nil)
 	}
 	return err
@@ -165,7 +166,7 @@ func (s *sdkService) FileContent(ctx context.Context, store, file string) (strin
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		if part.Type != "text" || !part.JSON.Text.Valid() {
+		if part.Type != "text" || !strings.HasPrefix(part.JSON.Text.Raw(), `"`) {
 			return "", workspaceFailure(fmt.Sprintf("The API returned unsupported file content at part %d.", i+1), nil)
 		}
 		if i > 0 {

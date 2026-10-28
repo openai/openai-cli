@@ -317,6 +317,24 @@ func TestServiceGetStatusAndResponseIdentity(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestServiceRejectsCoercedMutationIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notes.txt")
+	require.NoError(t, os.WriteFile(path, []byte("synthetic text"), 0o600))
+	s := testService(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		serviceJSON(w, 200, `{"id":42,"vector_store_id":"vs_demo"}`)
+	})
+	_, err := s.CreateStore(t.Context(), "demo")
+	require.Error(t, err)
+	uploaded, err := s.UploadFile(t.Context(), path)
+	require.Error(t, err)
+	require.Nil(t, uploaded, "the workspace must not retain a coerced file ID")
+	_, err = s.(ManagementService).CreateBatch(t.Context(), "vs_demo", []string{"file_demo"}, AttachOptions{})
+	require.Error(t, err)
+	_, err = s.AttachFile(t.Context(), "vs_demo", "42")
+	require.Error(t, err)
+}
+
 func TestServiceCancellationStopsInFlightRequest(t *testing.T) {
 	started := make(chan struct{})
 	stopped := make(chan struct{})

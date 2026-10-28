@@ -110,6 +110,15 @@ func TestWorkspaceRenameDisplaysDirectionalControlsAndPreservesSubmittedName(t *
 	assert.Equal(t, stored+pasted, submitted)
 }
 
+func TestManagementFormPrefillsLiteralStoreName(t *testing.T) {
+	m := modelForTest(t, modelService{})
+	m.store = &openai.VectorStore{ID: "vs_demo", Name: "null"}
+	m.enter("rename")
+	assert.Equal(t, "null", m.editor.Value())
+	m.enter("metadata")
+	assert.Equal(t, "{}", m.editor.Value())
+}
+
 func TestManagementFileContentAttributesAndRemoval(t *testing.T) {
 	mutations := 0
 	m := managementModel(t, func(w http.ResponseWriter, r *http.Request) {

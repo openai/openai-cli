@@ -2,9 +2,11 @@ package vectorstores
 
 import (
 	"context"
+	"strings"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/respjson"
 	"github.com/tidwall/gjson"
 )
 
@@ -44,6 +46,12 @@ type sdkService struct{ client openai.Client }
 // NewService uses the client's existing authentication, transport, and request policies.
 func NewService(client openai.Client) Service { return &sdkService{client: client} }
 
+// The SDK decodes numeric and boolean fields into strings. Only trust IDs sent as strings.
+func validResponseID(field respjson.Field) bool {
+	raw := field.Raw()
+	return strings.HasPrefix(raw, `"`) && raw != `""`
+}
+
 func (s *sdkService) ListStores(ctx context.Context, after string) (StorePage, error) {
 	params := openai.VectorStoreListParams{Limit: openai.Int(20), Order: openai.VectorStoreListParamsOrderDesc}
 	if after != "" {
@@ -59,7 +67,7 @@ func (s *sdkService) ListStores(ctx context.Context, after string) (StorePage, e
 	result := StorePage{Stores: page.Data}
 	var last string
 	for _, store := range page.Data {
-		if store.ID == "" {
+		if !validResponseID(store.JSON.ID) {
 			return result, workspaceFailure("The API returned a store without an ID. Refresh stores to try again.", nil)
 		}
 		last = store.ID
@@ -73,7 +81,7 @@ func (s *sdkService) GetStore(ctx context.Context, id string) (*openai.VectorSto
 	if err != nil {
 		return nil, err
 	}
-	if store == nil || store.ID == "" || store.ID != id {
+	if store == nil || !validResponseID(store.JSON.ID) || store.ID != id {
 		return nil, workspaceFailure("The API returned an unexpected store. Refresh stores to try again.", nil)
 	}
 	return store, nil
@@ -84,7 +92,7 @@ func (s *sdkService) CreateStore(ctx context.Context, name string) (*openai.Vect
 	if err != nil {
 		return nil, err
 	}
-	if store == nil || store.ID == "" {
+	if store == nil || !validResponseID(store.JSON.ID) {
 		return nil, workspaceFailure("The API returned no store ID. Refresh stores before creating another store.", nil)
 	}
 	return store, nil
@@ -105,7 +113,7 @@ func (s *sdkService) ListFiles(ctx context.Context, storeID, after string) (File
 	result := FilePage{Files: page.Data}
 	var last string
 	for _, file := range page.Data {
-		if file.ID == "" || file.VectorStoreID != "" && file.VectorStoreID != storeID {
+		if !validAttachmentID(file, storeID) {
 			return result, workspaceFailure("The API returned an unexpected file. Refresh files to try again.", nil)
 		}
 		last = file.ID
@@ -140,10 +148,15 @@ func checkAttachedFile(file *openai.VectorStoreFile, err error, storeID, fileID 
 	if err != nil {
 		return nil, err
 	}
-	if file == nil || file.ID == "" || file.ID != fileID || file.VectorStoreID != "" && file.VectorStoreID != storeID {
+	if file == nil || !validAttachmentID(*file, storeID) || file.ID != fileID {
 		return nil, workspaceFailure("The API returned an unexpected attachment. Refresh files to check its status.", nil)
 	}
 	return file, nil
+}
+
+func validAttachmentID(file openai.VectorStoreFile, storeID string) bool {
+	return validResponseID(file.JSON.ID) &&
+		(file.VectorStoreID == "" || validResponseID(file.JSON.VectorStoreID) && file.VectorStoreID == storeID)
 }
 
 func (s *sdkService) Search(ctx context.Context, storeID, query string) (SearchPage, error) {

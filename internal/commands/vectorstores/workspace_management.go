@@ -91,7 +91,7 @@ func (m *workspace) managementInput(page string) {
 		value = compactJSON(*m.editableAttachOptions())
 	}
 	if _, ok := managementForms[page]; ok {
-		if value == "null" {
+		if (page == "metadata" || page == "attributes") && value == "null" {
 			value = "{}"
 		}
 		m.editor.SetValue(value)
