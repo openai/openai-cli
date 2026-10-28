@@ -204,14 +204,14 @@ def mixed_rollout(binary, prefix):
 def cancel_pending(binary, prefix):
     for later in (False, True):
         replies = [(200, page("alpha-first", True, TOKEN))] if later else []
-        for action, code in [(b"q", 0), (signal.SIGTERM, 0), (signal.SIGINT, 130)]:
+        for action, code in [(b"q", 0), (b"\x03", 130), (signal.SIGINT, 130), (signal.SIGTERM, 143)]:
             with command(binary, prefix, [*replies, (200, None)]) as (terminal, server):
                 terminal.wait("q: quit")
                 if later:
                     terminal.wait("alpha-first")
                     terminal.send(b" ")
                 assert server.pending.wait(5), "Models request did not reach the server"
-                if action == b"q":
+                if isinstance(action, bytes):
                     terminal.send(action)
                 else:
                     os.kill(terminal.child.pid, action)

@@ -61,8 +61,8 @@ func showInteractiveModelsList(ctx context.Context, cmd *cli.Command) (bool, err
 	}
 	client := openai.NewClient(GetDefaultRequestOptions(cmd)...)
 	opts.setDefaults()
-	return true, clioutput.StreamToStdout(func(*os.File) error {
-		return models.ShowPages(listViewerOptions(opts), client, options, outputDiagnosticsAllowed(ctx))
+	return true, runInteractiveList(opts, func(opts ShowJSONOpts) error {
+		return models.ShowPages(listViewerOptions(opts), client, options, outputDiagnosticsAllowed(opts.Context))
 	})
 }
 
