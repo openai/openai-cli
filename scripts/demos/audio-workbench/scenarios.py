@@ -227,7 +227,7 @@ def navigation_case(ctx):
     shortcuts = "  "
     chooser_hint = shortcuts.join(("Enter select", "Esc back"))
     focus = {"text": "Tab Instructions", "instructions": "› Instructions", "voice": "› Voice", "model": "› Model",
-             "settings": "› Settings", "empty-audio": "Esc back",
+             "settings": "› Settings", "empty-audio": "Ctrl+G Generate",
              "more": "› More actions…", "generate": "› Generate speech", "history": "› History",
              "play": "› Play audio", "save": "› Save audio…", "command": "Command (Bash/zsh)"}
     result["navigation_checks"] = []

@@ -563,23 +563,30 @@ func (m *audioWorkbench) resultHintRows() []string {
 	var lines []string
 	if m.focus == 4 {
 		r := m.result
+		above := [2]string{"↑", "form"}
+		if m.inlineActions() {
+			above[1] = "Generate"
+			if m.setting == audioSettingMore || m.setting == audioSettingHistory {
+				above[1] = "Actions"
+			}
+		}
 		if r == nil && !m.busy {
-			return m.formShortcutRows([2]string{"↑", "form"}, [2]string{"Ctrl+G", "Generate"}, [2]string{"Esc", "back"})
+			return m.formShortcutRows(above, [2]string{"Ctrl+G", "Generate"}, [2]string{"Esc", "back"})
 		}
 		playAction := "play"
 		if r != nil {
 			playAction = strings.ToLower(m.playbackVerb())
 		}
-		navigation := [][2]string{{"←→", "choose"}}
+		navigation := [][2]string{{"←→", "choose"}, above}
 		if r.hasWaveform() {
-			navigation = append(navigation, [2]string{"↑", "waveform"})
+			navigation[1] = [2]string{"↑", "waveform"}
 		}
 		control := [2]string{"Space", playAction}
 		if m.resultAction == 1 && !m.waveformFocused {
 			control = [2]string{"Enter", "save"}
 		}
 		if m.waveformFocused {
-			navigation = [][2]string{{"←→", "seek"}, {"↑", "back"}, {"↓", "controls"}}
+			navigation = [][2]string{{"←→", "seek"}, above, {"↓", "controls"}}
 		}
 		if r.seekDuration() > 0 {
 			navigation = append(navigation, [2]string{"G", "time"})

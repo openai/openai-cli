@@ -92,6 +92,7 @@ func TestAudioResultNavigationSkipsTimelineWithoutPeaks(t *testing.T) {
 		m.result.analysis.Peaks = nil
 		require.Positive(t, m.result.seekDuration())
 		require.NotContains(t, m.View().Content, "↑ waveform")
+		require.Contains(t, m.View().Content, "↑ form")
 		require.Nil(t, audioReviewKey(m, tea.KeyUp))
 		require.False(t, m.waveformFocused)
 		require.Equal(t, size.aboveAudio, m.setting)
