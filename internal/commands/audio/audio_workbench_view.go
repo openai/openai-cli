@@ -173,9 +173,7 @@ func (m *audioWorkbench) editorView(editor textarea.Model) string {
 	style := textarea.Styles{}
 	// Use the terminal foreground for editable text. Only the caret marks focus.
 	style.Focused.Placeholder, style.Blurred.Placeholder = m.muted(), m.muted()
-	if m.color {
-		style.Focused.Selection = m.accent().Underline(true)
-	}
+	style.Focused.Selection = m.accent().Underline(true)
 	style.Blurred.Selection = style.Focused.Selection
 	editor.SetStyles(style)
 	return editor.View()

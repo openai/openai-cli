@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -181,7 +182,10 @@ func TestAudioTypedSeekAvailabilityAndCompactView(t *testing.T) {
 	view = m.View()
 	require.Contains(t, view.Content, "Use seconds or M:SS.")
 	require.NotNil(t, view.Cursor)
-	require.NotContains(t, view.Content, "\x1b")
+	require.True(t, m.seekInput.HasSelection())
+	// The restored timestamp permits only underline and reset sequences in monochrome.
+	underlineAndReset := regexp.MustCompile(`\x1b\[(?:4(?:;4)*|24|0)?m`)
+	require.NotContains(t, underlineAndReset.ReplaceAllString(view.Content, ""), "\x1b")
 	audioReviewKey(m, tea.KeyEscape)
 	require.Equal(t, 1, m.resultAction)
 	require.False(t, m.waveformFocused)

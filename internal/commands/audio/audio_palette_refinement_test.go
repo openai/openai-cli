@@ -72,6 +72,18 @@ func TestAudioFormPaletteKeepsValuesNeutralAndSelectionVisible(t *testing.T) {
 	}
 }
 
+func TestAudioMonochromeEditorSelection(t *testing.T) {
+	for _, focus := range []int{0, 1} {
+		m, editor := audioNavigationEditor(t, focus, "take")
+		m.Update(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+		require.Equal(t, "e", editor.SelectedText())
+		underlined := lipgloss.NewStyle().Underline(true).Render("e")
+		require.Contains(t, m.View().Content, "tak"+underlined)
+		editor.Blur()
+		require.Contains(t, m.editorView(*editor), "tak"+underlined)
+	}
+}
+
 func TestAudioFormDistinguishesGenerateFromSecondaryActions(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		m := audioReviewModel(t)
