@@ -274,13 +274,15 @@ The Bash parent stays alive after the CLI exits.
 The checker compares native terminal modes before releasing that parent.
 It requires final cursor and bracketed-paste cleanup before the printed command.
 It compares complete command bytes against an independent synthetic request specification.
+It sends `c` through a simulated SSH session and checks the encoded terminal clipboard request against the same specification.
+Opening View command must leave the clipboard untouched. Copy must keep the workbench open.
 The expected shell command includes each continuation, indentation level, and the terminal’s original newline translation.
 The checker preserves raw output, casts, emitted bytes, process statuses, and owned-process cleanup records.
 Both sessions must make zero accepted or rejected requests and create no audio History.
 A forced harness cleanup fails the case.
 
 This case verifies public process behavior and terminal restoration.
-It does not verify actual graphical-terminal selection, clipboard bytes, fonts, or audible playback.
+The PTY captures the clipboard request. It cannot confirm a graphical terminal accepted that request or inspect the macOS pasteboard.
 The Go Bash/zsh recorder tests separately execute printed command bytes through both shells.
 Keep unavailable platforms and deferred restore/close fault injection explicit.
 

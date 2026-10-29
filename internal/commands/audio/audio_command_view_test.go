@@ -40,7 +40,7 @@ func TestAudioCommandViewMoreAndEscapePreserveDrafts(t *testing.T) {
 				require.False(t, m.busy)
 				require.False(t, m.input.Focused())
 				require.False(t, m.instructions.Focused())
-				require.Contains(t, audioFeedbackView(t, m), "Text to speech")
+				require.Contains(t, audioFeedbackView(t, m), audioCommandTitle)
 				m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 				require.Equal(t, "more", m.modal)
 				require.Equal(t, "View command", m.moreItems()[m.moreChoice])
@@ -259,7 +259,7 @@ func TestAudioCommandInspectorStaysOutsideNormalTabOrder(t *testing.T) {
 	}
 }
 
-func TestAudioCommandInspectorReservesAccentForKeys(t *testing.T) {
+func TestAudioCommandInspectorAccentsOperationAndShortcuts(t *testing.T) {
 	for _, size := range [][2]int{{40, 12}, {101, 29}} {
 		for _, dark := range []bool{true, false} {
 			m := audioPreviewModel(t, "openai", "--project=synthetic")
@@ -269,18 +269,15 @@ func TestAudioCommandInspectorReservesAccentForKeys(t *testing.T) {
 			m.color, m.dark = true, dark
 			// Rejoin wrapped rows because a token can span two terminal lines.
 			rows := strings.Join(m.commandDisplayRows(), "")
-			for _, token := range []string{m.invocation, "--project=synthetic", "audio speak", "--output", "speech.wav"} {
+			for _, token := range []string{m.invocation, "--project=synthetic", "speech.wav"} {
 				audioRequireTextForeground(t, rows, token, lipgloss.NewStyle())
 			}
-			for _, token := range []string{"printf", "OPENAI_UNTRUSTED_STDIN=true", "\\"} {
+			for _, token := range []string{"printf", "OPENAI_UNTRUSTED_STDIN=true", "--output", "\\"} {
 				audioRequireTextForeground(t, rows, token, m.muted())
 			}
 			view := m.View().Content
-			title := m.strong()
-			if m.framed() {
-				title = m.primaryText()
-			}
-			require.Contains(t, view, title.Render("Text to speech"))
+			audioRequireTextForeground(t, rows, "audio speak", m.accent())
+			require.Contains(t, view, m.strong().Render(audioCommandTitle))
 			audioRequireTextForeground(t, view, "Ctrl+P", m.accent())
 			m.color = false
 			require.Equal(t, ansi.Strip(view), m.View().Content)
@@ -307,7 +304,7 @@ func TestAudioCommandInspectorPreservesDraftAndExecutable(t *testing.T) {
 			require.Equal(t, audioFocusCommand, m.focus)
 			require.Greater(t, m.commandViewportHeight(), 1, "expanded command must expose multiple rows")
 			view := audioFeedbackView(t, m)
-			for _, label := range []string{"Text to speech", "Expansion draft.", audioCommandTitle, "Esc back", "Ctrl+P"} {
+			for _, label := range []string{audioCommandTitle, "Output", "speech.wav", "c copy", "Esc back", "Ctrl+P"} {
 				require.Contains(t, view, label)
 			}
 			require.Nil(t, audioReviewKey(m, tea.KeyEnd))
@@ -487,4 +484,10 @@ func TestAudioPlayerActionPositionsStayStableAcrossStates(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Existing command contract tests compare the public clipboard/print bytes.
+func (m *audioWorkbench) commandPreview() string {
+	raw, _ := m.rawCommand()
+	return raw
 }

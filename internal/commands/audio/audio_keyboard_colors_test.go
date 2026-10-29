@@ -60,8 +60,8 @@ func TestAudioViewsDistinguishKeysFromDescriptions(t *testing.T) {
 			audioReviewKey(m, tea.KeyF1)
 			m.failure.Action = strings.Repeat("Check the selected project.\n", 40)
 		}},
-		{"help", "↑↓", "scroll", func(m *audioWorkbench) {
-			m.modal, m.infoTitle, m.infoText = "info", "Help", audioFormHelp
+		{"help", "Esc", "back", func(m *audioWorkbench) {
+			m.openHelp("more")
 		}},
 		{"command", "Ctrl+P", "print/exit", func(m *audioWorkbench) {
 			m.focusCommand()

@@ -264,6 +264,7 @@ func TestAudioMoreActionsPreservesEveryActionAtCompactSizes(t *testing.T) {
 					m.moreChoice = i
 					view := ansi.Strip(m.moreView().Content)
 					require.Contains(t, view, "› "+item)
+					require.Contains(t, view, audioActionDescriptions[item])
 					require.NotContains(t, view, "Back to form")
 					require.Contains(t, view, "Esc back")
 					require.LessOrEqual(t, len(strings.Split(view, "\n")), height)

@@ -56,7 +56,7 @@ func TestAudioViewUsesPanelAndAlignedSettings(t *testing.T) {
 	require.True(t, strings.HasPrefix(view, "╭"))
 	require.Contains(t, strings.Split(view, "\n")[1], "Text to speech")
 	require.NotContains(t, view, "Setting        Value")
-	require.Contains(t, view, "Settings          ▸ gpt-4o-mini-tts  WAV  1.00×")
+	require.Contains(t, view, "Settings          ▸ Model gpt-4o-mini-tts  Format WAV  Speed 1.00×")
 	require.NotContains(t, view, "Model             ")
 	m.settingsExpanded = true
 	view = ansi.Strip(m.View().Content)
@@ -200,7 +200,8 @@ func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 			require.Contains(t, rows[6], "Voice")
 			require.Equal(t, 3, ansi.StringWidth(rows[6][:strings.Index(rows[6], "Voice")]))
 			require.Equal(t, 21, ansi.StringWidth(rows[6][:strings.Index(rows[6], "Coral")]))
-			require.Contains(t, rows[7], "Settings          ▸ "+m.settings.Model)
+			require.Contains(t, rows[7], "Settings          ▸ ")
+			require.Contains(t, rows[7], m.settings.Model)
 			require.NotContains(t, view, "› Text to speech")
 			require.Equal(t, focus == 0 || focus == 1, m.View().Cursor != nil)
 			if focus == 2 {
@@ -392,8 +393,14 @@ func TestAudioWideActionsAlignWithTheComposer(t *testing.T) {
 		start := column(rows[heading], "Actions")
 		require.LessOrEqual(t, start, 87, "Actions must remain beside the draft on wide terminals")
 		require.NotContains(t, rows[heading+1], "History", "leave one open row below the heading")
-		for i, name := range m.moreItems() {
-			row := rows[heading+i+2]
+		rowIndex := heading + 2
+		for _, name := range m.moreItems() {
+			if name == "View command" {
+				require.Empty(t, strings.TrimSpace(ansi.Cut(rows[rowIndex], start-2, size[0]-2)))
+				rowIndex++
+			}
+			row := rows[rowIndex]
+			rowIndex++
 			require.Equal(t, start, column(row, name))
 			require.Equal(t, start+16, column(row, audioActionDescriptions[name]))
 		}

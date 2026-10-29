@@ -58,7 +58,7 @@ func TestAudioWorkspaceKeepsDraftAndRecordingVisibleAcrossFocus(t *testing.T) {
 				m.focusSection(focus)
 				m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 				view := ansi.Strip(m.View().Content)
-				for _, text := range []string{"Text to speech", "Editable draft.", "Instructions", "Settings", "Voice", "gpt-4o-mini-tts  WAV  1.00×", "Generate speech", "History", "More actions", "Alloy  MP3  120.6 KiB", "Recording: Retained recording.", "┠", "00:00.000 / 00:01.000", "Play audio", "Save audio…", "Saved: …", "clip.mp3"} {
+				for _, text := range []string{"Text to speech", "Editable draft.", "Instructions", "Settings", "Voice", "gpt-4o-mini-tts", "WAV", "1.00×", "Generate speech", "History", "More actions", "Alloy  MP3  120.6 KiB", "Recording: Retained recording.", "┠", "00:00.000 / 00:01.000", "Play audio", "Save audio…", "Saved: …", "clip.mp3"} {
 					require.Contains(t, view, text)
 				}
 				require.Contains(t, strings.Split(view, "\n")[1], "Text to speech")

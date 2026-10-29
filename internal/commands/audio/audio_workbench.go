@@ -36,12 +36,13 @@ type audioWorkResult struct {
 	savedPaths []string
 }
 type audioWorkMessage struct {
-	kind          string
-	result        audioWorkResult
-	entries       []audiohistory.Entry
-	err           error
-	playID        uint64
-	path, entryID string
+	kind               string
+	result             audioWorkResult
+	entries            []audiohistory.Entry
+	err                error
+	playID             uint64
+	path, entryID      string
+	clipboardConfirmed bool
 }
 type audioWorkTick time.Time
 
@@ -111,12 +112,12 @@ type audioWorkbench struct {
 	waveformFocused           bool
 	recoveryParent            string
 	recoveryRestoreFocus      bool
-	infoTitle, infoText       string
 	commandToPrint            string
 	infoParent                string
 	infoOffset                int
 	commandOffset             int
 	commandCache              audioCommandCache
+	clipboard                 audioCommandClipboard
 	lastErr                   error
 	exitCode                  int
 	lastFinished              time.Time
@@ -299,6 +300,20 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			return m, audioTick()
 		}
 	case audioWorkMessage:
+		if msg.kind == "copy-command" {
+			m.clipboard.pending = false
+			if m.focus == audioFocusCommand && m.clipboard.notice == "Copying…" {
+				switch {
+				case msg.err != nil:
+					m.clipboard.notice = "Copy failed. Ctrl+P prints."
+				case msg.clipboardConfirmed:
+					m.clipboard.notice = "Command copied."
+				default:
+					m.clipboard.notice = "Copy requested. Ctrl+P prints."
+				}
+			}
+			return m, nil
+		}
 		if msg.kind == "play" {
 			if msg.playID != m.playID {
 				return m, nil
@@ -512,6 +527,9 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			return m, m.generate(false)
 		}
 		if m.focus == audioFocusCommand {
+			if key == "c" || key == "C" {
+				return m, m.copyCommand()
+			}
 			rows := m.commandDisplayRows()
 			m.commandOffset = audioScrollOffset(m.commandOffset, len(rows), m.commandViewportHeight(), key)
 			return m, nil
@@ -654,7 +672,7 @@ func (m *audioWorkbench) updateModal(message tea.KeyPressMsg, key string) tea.Cm
 		return nil
 	}
 	if m.modal == "info" {
-		m.infoOffset = audioScrollOffset(m.infoOffset, len(m.infoRows()), m.informationHeight(), key)
+		m.infoOffset = audioScrollOffset(m.infoOffset, len(m.helpRows()), m.helpHeight(), key)
 		return nil
 	}
 	if m.modal == "speed" {

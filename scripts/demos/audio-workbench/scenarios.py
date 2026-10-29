@@ -1,5 +1,6 @@
 """Direct audio workbench scenarios; CaseContext owns their resources and capture state."""
 
+import base64
 import hashlib
 import json
 import os
@@ -299,7 +300,7 @@ def navigation_case(ctx):
     check("Command Escape returns to More", "› View command", b"\x1b")
     check("More Home selects History", "history", ctx.picker.HOME)
     check("More Help is selectable", "› Help", down * 4)
-    check("Help opens locally", "Use Tab to move between sections.", b"\r")
+    check("Help opens locally", "Insert a new line", b"\r")
     check("Help End remains local", "Help", ctx.picker.END)
     check("Help Escape returns to More", "› Help", b"\x1b")
     check("More End selects Help", "› Help", ctx.picker.END)
@@ -522,7 +523,8 @@ def print_command_case(ctx):
     on_path = programs / "openai"
     on_path.symlink_to(ctx.args.binary.resolve())
     assert os.path.samefile(on_path, ctx.args.binary), "PATH selected a different executable"
-    command_env = dict(env, AUDIO_EXPECTED_COMMAND=str(on_path), SHELL="/bin/bash")
+    # Exercise the remote clipboard path without writing to the host pasteboard.
+    command_env = dict(env, AUDIO_EXPECTED_COMMAND=str(on_path), SHELL="/bin/bash", SSH_TTY="/dev/pts/fixture")
     parent_script = ('[ "$(command -v openai)" = "$AUDIO_EXPECTED_COMMAND" ] || exit 90\n'
                      'openai audio speak\naudio_status=$?\n'
                      'printf "\\n__AUDIO_PRINT_STATUS__=%s\\n" "$audio_status"\n'
@@ -570,6 +572,14 @@ def print_command_case(ctx):
             send_and_wait(b"\r", "History")
             send_and_wait(ctx.picker.DOWN * 3, "View command")
             send_and_wait(b"\r", "Ctrl+P print/exit")
+            assert b"\x1b]52;" not in child.raw, "Opening View command changed the clipboard"
+            if action == "print":
+                child.send(b"c")
+                encoded = base64.b64encode(expected)
+                child.wait("Copy requested", timeout=remaining())
+                assert re.search(rb"\x1b\]52;c;" + re.escape(encoded) + rb"(?:\x07|\x1b\\)", child.raw), "Copy included extra bytes"
+                assert child.child.poll() is None, "Copy exited the workbench"
+                zero_requests()
             child.send(b"\r")
             ctx.drain(child, min(.2, remaining()))
             zero_requests()
@@ -964,7 +974,7 @@ def wide_case(ctx):
     terminal.send(ctx.picker.UP)
     ctx.wait(terminal, "› Help")
     terminal.send(b"\r")
-    ctx.wait(terminal, "Up/Down, Page Up/Down")
+    ctx.wait(terminal, "Copy command")
     terminal.send(b"\x1b")
     ctx.wait(terminal, "› Help")
     ctx.mark(terminal, "wide-more", result)

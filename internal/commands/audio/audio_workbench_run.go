@@ -76,6 +76,7 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 	painter := cliterminal.NewPainter(cursorOutput, cancel)
 	defer painter.Stop()
 	m := newAudioWorkbench(ctx, command, next, store)
+	m.clipboard.write = audioClipboardWriter(painter.Control)
 	m.width, m.height = width, height
 	m.dark = cliterminal.DarkBackground(os.Getenv("COLORFGBG"))
 	profile := cliterminal.ColorProfile(output, os.Environ(), term.IsTerminal(output.Fd()))

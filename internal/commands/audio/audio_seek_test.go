@@ -288,7 +288,7 @@ func TestAudioSeekRespectsFocusModalBusyAndSizeGuards(t *testing.T) {
 		{"history modal", func(m *audioWorkbench) { m.modal = "history" }},
 		{"choice modal", func(m *audioWorkbench) { m.modal = "choice" }},
 		{"more modal", func(m *audioWorkbench) { m.modal = "more" }},
-		{"information modal", func(m *audioWorkbench) { m.openInformation("Help", "Synthetic help", "") }},
+		{"information modal", func(m *audioWorkbench) { m.openHelp("") }},
 		{"recovery modal", func(m *audioWorkbench) { m.rememberFailure("play", errors.New("synthetic player failure")) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {

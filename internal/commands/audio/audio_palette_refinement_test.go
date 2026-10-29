@@ -30,8 +30,8 @@ func TestAudioFormPaletteKeepsValuesNeutralAndSelectionVisible(t *testing.T) {
 		for _, field := range []struct{ label, value string }{
 			{"Model", m.settings.Model}, {"Format", "WAV"}, {"Speed", "1.00 x"},
 		} {
-			row := m.muted().Render(fmt.Sprintf("%-17s", field.label)) + " " + field.value
-			require.Contains(t, view, row, "ordinary settings need muted labels and neutral values")
+			row := m.muted().Render(fmt.Sprintf("%-17s", field.label)) + " " + m.primaryText().Render(field.value)
+			require.Contains(t, view, row, "settings need muted labels and primary values")
 			require.NotContains(t, view, m.accent().Bold(false).Render(field.value))
 		}
 		for _, value := range []string{m.input.Value(), m.instructions.Value()} {

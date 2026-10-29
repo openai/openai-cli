@@ -247,7 +247,7 @@ func TestAudioResultNavigationGuardsPreserveSelectionAndPlayback(t *testing.T) {
 					case "save":
 						m.Update(tea.KeyPressMsg{Code: 's'})
 					case "info":
-						m.openInformation("Help", "Synthetic help", "")
+						m.openHelp("")
 					case "tiny":
 						m.Update(tea.WindowSizeMsg{Width: 39, Height: 11})
 					default:

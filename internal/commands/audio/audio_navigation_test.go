@@ -298,7 +298,7 @@ func TestAudioActionsKeyboardRouteBeforeGeneration(t *testing.T) {
 			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
 			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			require.Equal(t, "info", m.modal)
-			require.Equal(t, "Help", m.infoTitle)
+			require.Contains(t, ansi.Strip(m.View().Content), "Help")
 			require.Nil(t, m.result)
 		})
 	}

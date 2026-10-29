@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/openai/openai-cli/internal/readable"
 	requestconfig "github.com/openai/openai-cli/internal/request"
@@ -16,9 +15,17 @@ import (
 const audioFocusCommand = 3
 const audioShellContinuation = "\\\n"
 
+type audioCommandRole uint8
+
+const (
+	commandValue audioCommandRole = iota
+	commandSyntax
+	commandOperation
+)
+
 type audioCommandPart struct {
-	text      string
-	secondary bool
+	text string
+	role audioCommandRole
 }
 
 type audioCommandCache struct {
@@ -36,48 +43,60 @@ func (m *audioWorkbench) commandParts(s audiohistory.Settings, requestArgs []str
 	}
 	data, _ := json.Marshal(body)
 	parts := []audioCommandPart{
-		{"printf %s ", true}, {audioShellContinuation, true},
-		{"  " + audioShellQuote(string(data)), false}, {" | ", true}, {audioShellContinuation, true},
-		{"  OPENAI_UNTRUSTED_STDIN=true ", true}, {m.invocation, false},
+		{"printf %s ", commandSyntax}, {audioShellContinuation, commandSyntax},
+		{"  " + audioShellQuote(string(data)), commandValue}, {" | ", commandSyntax}, {audioShellContinuation, commandSyntax},
+		{"  OPENAI_UNTRUSTED_STDIN=true ", commandSyntax}, {m.invocation, commandValue},
 	}
 	for _, arg := range requestArgs {
-		parts = append(parts, audioCommandPart{" ", false}, audioCommandPart{audioShellContinuation, true}, audioCommandPart{"    " + audioShellQuote(arg), false})
+		parts = append(parts, audioCommandPart{" ", commandValue}, audioCommandPart{audioShellContinuation, commandSyntax}, audioCommandPart{"    " + audioShellQuote(arg), commandValue})
 	}
-	return append(parts, audioCommandPart{" ", false}, audioCommandPart{audioShellContinuation, true},
-		audioCommandPart{"    audio speak ", false}, audioCommandPart{audioShellContinuation, true},
-		audioCommandPart{"      --output speech." + s.Format, false})
+	return append(parts, audioCommandPart{" ", commandValue}, audioCommandPart{audioShellContinuation, commandSyntax},
+		audioCommandPart{"    audio speak ", commandOperation}, audioCommandPart{audioShellContinuation, commandSyntax},
+		audioCommandPart{"      --output ", commandSyntax}, audioCommandPart{"speech." + s.Format, commandValue})
 }
 
-// Printing retains the exact protected-stdin command and invocation.
-func (m *audioWorkbench) commandPreview() string {
+// The clipboard, printed command, and preview all use the same admission checks.
+func (m *audioWorkbench) commandOptions() (args []string, speed float64, reason string) {
 	args, omit := requestconfig.NextCommandOptions(m.command.Root())
 	if omit {
-		return "Command preview unavailable with private request overrides."
+		return nil, 0, "Command preview unavailable with private request overrides."
+	}
+	speed = m.settings.Speed
+	if m.speedEditing {
+		value, valid := audioSpeedValue(m.speedInput.Value())
+		if !valid {
+			return nil, 0, "Apply a valid Speed to preview the command."
+		}
+		speed = value
+	}
+	return args, speed, ""
+}
+
+func (m *audioWorkbench) rawCommand() (string, bool) {
+	args, speed, reason := m.commandOptions()
+	if reason != "" {
+		return reason, false
 	}
 	var raw strings.Builder
-	for _, part := range m.commandParts(m.effectiveSettings(), args) {
+	s := m.effectiveSettings()
+	s.Speed = speed
+	for _, part := range m.commandParts(s, args) {
 		raw.WriteString(part.text)
 	}
-	return raw.String()
+	return raw.String(), true
 }
 
 func audioShellQuote(value string) string { return cliterminal.ShellQuote(value) }
 
 // Cache request-derived wrapping across cursor blinks and unrelated redraws.
 func (m *audioWorkbench) commandDisplayRows() []string {
-	args, omit := requestconfig.NextCommandOptions(m.command.Root())
-	if omit {
+	args, speed, reason := m.commandOptions()
+	if reason != "" {
 		m.commandCache = audioCommandCache{}
-		return audioCommandRows("Command unavailable with private request overrides.", max(1, m.audioWidth()-4))
+		return audioCommandRows(reason, max(1, m.audioWidth()-4))
 	}
 	s := m.effectiveSettings()
-	if m.speedEditing {
-		value, valid := audioSpeedValue(m.speedInput.Value())
-		if !valid {
-			return audioCommandRows("Apply a valid Speed to preview the command.", max(1, m.audioWidth()-4))
-		}
-		s.Speed = value
-	}
+	s.Speed = speed
 	key, width := strings.Join(args, "\x00"), max(1, m.audioWidth()-4)
 	c := &m.commandCache
 	if c.valid && c.settings == s && c.request == key && c.invocation == m.invocation && c.width == width && c.color == m.color && c.dark == m.dark {
@@ -88,7 +107,7 @@ func (m *audioWorkbench) commandDisplayRows() []string {
 	}
 	rows, used := []string{""}, 0
 	for _, part := range m.commandParts(s, args) {
-		continuation := part.secondary && part.text == audioShellContinuation
+		continuation := part.role == commandSyntax && part.text == audioShellContinuation
 		if continuation {
 			part.text = "\\"
 		}
@@ -96,8 +115,11 @@ func (m *audioWorkbench) commandDisplayRows() []string {
 		var chunk strings.Builder
 		flush := func() {
 			text := chunk.String()
-			if part.secondary {
+			switch part.role {
+			case commandSyntax:
 				text = m.muted().Render(text)
+			case commandOperation:
+				text = m.accent().Render(text)
 			}
 			rows[len(rows)-1] += text
 			chunk.Reset()
@@ -125,25 +147,28 @@ func (m *audioWorkbench) commandDisplayRows() []string {
 
 func (m *audioWorkbench) focusCommand() tea.Cmd {
 	m.modal, m.setting, m.commandOffset = "", audioSettingMore, 0
+	m.clipboard.notice = ""
 	return m.focusSection(audioFocusCommand)
 }
 
 func (m *audioWorkbench) printCommand() tea.Cmd {
-	if _, omit := requestconfig.NextCommandOptions(m.command.Root()); omit {
+	raw, ok := m.rawCommand()
+	if !ok {
 		return nil
 	}
-	m.commandToPrint = m.commandPreview()
+	m.commandToPrint = raw
 	m.quit = true
 	m.stopPlayback()
 	return tea.Quit
 }
 
 func (m *audioWorkbench) commandFooter() []string {
-	controls := [][2]string{{"↑↓", "scroll"}, {"PgUp/PgDn", "page"}}
-	if _, omit := requestconfig.NextCommandOptions(m.command.Root()); !omit {
-		controls = append(controls, [2]string{"Ctrl+P", "print/exit"})
+	var controls [][2]string
+	if _, _, reason := m.commandOptions(); reason == "" {
+		controls = append(controls, [2]string{"c", "copy"}, [2]string{"Ctrl+P", "print/exit"})
 	}
-	return m.formShortcutRows(append(controls, [2]string{"Tab", "Audio"}, [2]string{"Shift+Tab", "More"}, [2]string{"Esc", "back"})...)
+	controls = append(controls, [2]string{"↑↓", "scroll"}, [2]string{"PgUp/PgDn", "page"}, [2]string{"Esc", "back"})
+	return m.formShortcutRows(controls...)
 }
 
 func (m *audioWorkbench) commandView() tea.View {
@@ -152,16 +177,18 @@ func (m *audioWorkbench) commandView() tea.View {
 	height := m.commandViewportHeight()
 	start := audioScrollOffset(m.commandOffset, len(rows), height, "")
 	m.commandOffset = start
-	heading := audioCommandTitle
+	heading := "  " + m.strong().Render(audioCommandTitle)
 	if len(rows) > height {
-		heading += fmt.Sprintf("  %d–%d/%d", start+1, min(len(rows), start+height), len(rows))
+		heading += m.muted().Render(fmt.Sprintf("  %d–%d/%d", start+1, min(len(rows), start+height), len(rows)))
 	}
-	input := strings.Join(strings.Fields(readable.Text(m.input.Value())), " ")
-	title := m.strong()
-	if m.framed() {
-		title = m.primaryText()
+	var detail string
+	if m.commandCache.valid {
+		detail = "  " + m.muted().Render("Output") + "   " + m.primaryText().Render("speech."+m.commandCache.settings.Format)
 	}
-	lines := []string{"  " + title.Render("Text to speech"), "  " + ansi.Truncate(input, m.audioWidth()-4, "…"), "", "  " + m.muted().Render(heading)}
+	if m.clipboard.notice != "" {
+		detail = "  " + m.muted().Render(m.clipboard.notice)
+	}
+	lines := []string{heading, detail, m.listeningRule()}
 	for _, row := range rows[start:min(len(rows), start+height)] {
 		lines = append(lines, "  "+row)
 	}
@@ -169,7 +196,7 @@ func (m *audioWorkbench) commandView() tea.View {
 }
 
 func (m *audioWorkbench) commandViewportHeight() int {
-	return max(1, m.audioHeight()-4-len(m.commandFooter()))
+	return max(1, m.audioHeight()-3-len(m.commandFooter()))
 }
 
 // Executable wrapping keeps every sequence, including repeated whitespace.
