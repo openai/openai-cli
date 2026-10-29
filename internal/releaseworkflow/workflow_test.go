@@ -971,10 +971,10 @@ func TestErrorAuditShardsRemainRequired(t *testing.T) {
 	}
 }
 
-func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
+func TestArtifactBuildCacheIsModuleOnlyAndRefreshable(t *testing.T) {
 	job := readWorkflow(t, "ci.yml").Jobs["build-artifacts"]
 	setupIndex, setup := requireStep(t, job, "Set up Go for artifact builds")
-	cacheIndex, cache := requireStep(t, job, "Cache artifact build dependencies and compilation")
+	cacheIndex, cache := requireStep(t, job, "Cache artifact build dependencies")
 	bootstrapIndex, _ := requireStep(t, job, "Bootstrap")
 	buildIndex, _ := requireStep(t, job, "Run GoReleaser")
 	if setup.Uses != setupGoAction || setup.With["cache"] != false {
@@ -983,9 +983,16 @@ func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
 	if !(setupIndex < cacheIndex && cacheIndex < bootstrapIndex && bootstrapIndex < buildIndex) {
 		t.Errorf("artifact setup/cache/bootstrap/build order=%v, want setup before restore before bootstrap before build", []int{setupIndex, cacheIndex, bootstrapIndex, buildIndex})
 	}
-	prefix := "artifact-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-"
+	prefix := "artifact-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-"
 	if cache.With["key"] != prefix+"${{ github.sha }}" || strings.TrimSpace(fmt.Sprint(cache.With["restore-keys"])) != prefix {
 		t.Errorf("artifact cache inputs=%v, want revision-specific save and compatible artifact-only restore", cache.With)
+	}
+	pathsIndex, paths := requireStep(t, job, "Locate Go module cache")
+	if pathsIndex <= setupIndex || pathsIndex >= cacheIndex || paths.Run != "echo \"modules=$(go env GOMODCACHE)\" >> \"$GITHUB_OUTPUT\"\n" {
+		t.Errorf("artifact cache discovery must locate only modules after Go setup and before restore: %+v", paths)
+	}
+	if cache.With["path"] != "${{ steps.artifact-cache-paths.outputs.modules }}" {
+		t.Errorf("artifact cache must retain only downloaded modules, not stale compiled archives: %v", cache.With["path"])
 	}
 	if cache.Uses != "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" {
 		t.Errorf("artifact cache action=%q, want reviewed cache action with success-only post-save", cache.Uses)
