@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.45.0](https://github.com/openai/openai-cli/compare/v1.44.2...v1.45.0) (2026-10-29)
+
+
+### Features
+
+* **api:** add organization external key management ([#660](https://github.com/openai/openai-cli/issues/660)) ([8f1e5f2](https://github.com/openai/openai-cli/commit/8f1e5f285890dc10863a35a3acdbfa3badc3c7ec))
+
 ## [1.44.2](https://github.com/openai/openai-cli/compare/v1.44.1...v1.44.2) (2026-10-28)
 
 
