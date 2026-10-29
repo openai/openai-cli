@@ -34,8 +34,7 @@ Select this copy in Bash or zsh and check its version.
 
 ```sh
 export PATH="$HOME/.openai/bin:$PATH"
-"$HOME/.openai/bin/openai" --version
-command -v openai
+"$HOME/.openai/bin/openai" --version && command -v openai
 ```
 
 To keep using this copy, add the export to your shell profile.

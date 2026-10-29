@@ -75,8 +75,7 @@ Start in the extracted directory.
 ```sh
 sh ./install.sh && {
   export PATH="$HOME/.openai/bin:$PATH"
-  "$HOME/.openai/bin/openai" --version
-  command -v openai
+  "$HOME/.openai/bin/openai" --version && command -v openai
 }
 ```
 
