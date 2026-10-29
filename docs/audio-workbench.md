@@ -229,7 +229,8 @@ The recording adds the timer, waveform, seek rail, and transport controls in tha
 One blank row separates the recording details from the waveform when space permits.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.
 The playhead follows playback through silence. Elapsed bars and rail use green. Upcoming bars use the secondary text color.
-Long bars have darker tips at both ends. Short bars keep their contrast. Elapsed time uses blue.
+Long bars fade toward both tips. Their shades reflect peak heights between terminal half-cell steps.
+Short bars keep their contrast. Elapsed time uses blue.
 Amber marks a paused or manually positioned playhead. The status describes its state.
 The heavier rail shows the played portion in monochrome. The final marker turns green when playback completes.
 Play starts under the first timeline marker. Save and the timer follow in the same row.

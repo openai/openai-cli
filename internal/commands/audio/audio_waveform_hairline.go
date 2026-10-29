@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"math"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -23,7 +24,7 @@ func (m *audioWorkbench) elapsedWaveformStyle() lipgloss.Style {
 	return m.waveformInk("#157656", "#51C89D")
 }
 
-func (m *audioWorkbench) workspaceHairlineRows(wave []string, marker int) []string {
+func (m *audioWorkbench) workspaceHairlineRows(wave []string, marker int, levels []float64) []string {
 	if !m.color {
 		return wave
 	}
@@ -32,35 +33,28 @@ func (m *audioWorkbench) workspaceHairlineRows(wave []string, marker int) []stri
 		axis
 		playhead
 		upcoming
-		played
-		upcomingTip
-		playedTip
 	)
-	styles := [...]lipgloss.Style{
-		plain:       lipgloss.NewStyle(),
-		axis:        m.borderStyle(),
-		playhead:    m.playheadStyle(),
-		upcoming:    m.muted(),
-		played:      m.elapsedWaveformStyle(),
-		upcomingTip: m.waveformInk("#576174", "#8F96A8"),
-		playedTip:   m.waveformInk("#116449", "#44A985"),
+	const shades = 8
+	const played = upcoming + shades
+	styles := [played + shades]lipgloss.Style{
+		plain:    lipgloss.NewStyle(),
+		axis:     m.borderStyle(),
+		playhead: m.playheadStyle(),
 	}
-	grid := make([][]rune, len(wave))
-	for row, line := range wave {
-		grid[row] = []rune(line)
-	}
-	rows := make([]string, len(wave))
-	middle := len(grid) / 2
-	for row, cells := range grid {
-		// Shade one terminal cell at each end of a bar at least five rows tall.
-		// Shorter bars keep their core color at this resolution.
-		tintTips := row <= middle-2 || row >= middle+2
-		var outward []rune
-		if row > 0 && row < middle {
-			outward = grid[row-1]
-		} else if row > middle && row+1 < len(grid) {
-			outward = grid[row+1]
+	// Use the same perceptual blend as the section divider, without painting the background.
+	setRamp := func(start int, tip, core lipgloss.Style) {
+		for i, ink := range lipgloss.Blend1D(shades, tip.GetForeground(), core.GetForeground()) {
+			styles[start+i] = lipgloss.NewStyle().Foreground(ink)
 		}
+		styles[start], styles[start+shades-1] = tip, core
+	}
+	setRamp(upcoming, m.waveformInk("#435067", "#737C91"), m.muted())
+	setRamp(played, m.waveformInk("#104F3B", "#326F5C"), m.elapsedWaveformStyle())
+	rows := make([]string, len(wave))
+	middle := len(wave) / 2
+	for row, line := range wave {
+		cells := []rune(line)
+		distance := 2 * max(middle-row, row-middle) // half-cells from the centerline
 		var text strings.Builder
 		start, previous := 0, plain
 		for column, glyph := range cells {
@@ -71,17 +65,20 @@ func (m *audioWorkbench) workspaceHairlineRows(wave []string, marker int) []stri
 			case '┃', '╂', '┠', '┨':
 				role = playhead
 			case '│', '╷', '╵', '┼':
-				tip := tintTips && (outward == nil || outward[column] == ' ')
-				switch {
-				case column < marker && tip:
-					role = playedTip
-				case column < marker:
+				role = upcoming
+				if column < marker {
 					role = played
-				case tip:
-					role = upcomingTip
-				default:
-					role = upcoming
 				}
+				shade := shades - 1
+				if distance >= 4 {
+					// Fade the last third of each half-bar. The first visible tip
+					// appears when rounding reaches the next half-cell.
+					level := levels[column-1] // column zero belongs to the timeline endpoint.
+					inset := level - float64(distance) + 0.5
+					fraction := min(1, max(0, inset/max(2, level/3)))
+					shade = int(math.Round(fraction * (shades - 1)))
+				}
+				role += shade
 			}
 			if role != previous {
 				if column > start {

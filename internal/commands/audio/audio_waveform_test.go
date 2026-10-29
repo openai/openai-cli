@@ -9,6 +9,16 @@ import (
 	"unicode/utf8"
 )
 
+func audioWaveform(peaks []float64, width, height, selectedBoundary int) []string {
+	rows, _ := audioWaveformRows(peaks, min(width, 120), height, selectedBoundary, false)
+	return rows
+}
+
+func audioDenseWaveform(peaks []float64, width, height, selectedBoundary int) []string {
+	rows, _ := audioWaveformRows(peaks, width, height, selectedBoundary, true)
+	return rows
+}
+
 func TestAudioWaveformPreservesFractionalRatios(t *testing.T) {
 	peaks := []float64{0, .125, .25, .375, .5, .625, .75, .875, 1}
 	if got := audioWaveform(peaks, 19, 1, 0); !slices.Equal(got, []string{"┃─ ▁ ▂ ▃ ▄ ▅ ▆ ▇ █ "}) {

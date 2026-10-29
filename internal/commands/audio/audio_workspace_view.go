@@ -275,7 +275,7 @@ func (m *audioWorkbench) workspaceWaveformRows(budget int) []string {
 	}
 	height := m.waveformDetailHeight(budget - 1)
 	boundary := m.selectedBoundary()
-	wave := audioDenseWaveform(m.result.analysis.Peaks, m.waveformWidth(), max(3, height), boundary)
+	wave, levels := audioWaveformRows(m.result.analysis.Peaks, m.waveformWidth(), max(3, height), boundary, true)
 	middle := len(wave) / 2
 	// Connect the measured columns only at zero amplitude, keeping all peak tips.
 	axis := []rune(waveformCenterline.Replace(wave[middle]))
@@ -292,7 +292,7 @@ func (m *audioWorkbench) workspaceWaveformRows(budget int) []string {
 	if height == 1 {
 		wave = wave[middle : middle+1]
 	}
-	rows := m.workspaceHairlineRows(wave, marker)
+	rows := m.workspaceHairlineRows(wave, marker, levels)
 	for i, row := range rows {
 		prefix := "  "
 		if i == height/2 && m.focus == 4 && m.waveformFocused && !m.busy {

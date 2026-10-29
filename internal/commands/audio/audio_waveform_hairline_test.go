@@ -3,6 +3,7 @@ package audio
 import (
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,16 +14,16 @@ import (
 )
 
 func TestAudioHairlineShowsElapsedStrokesAcrossFocusChanges(t *testing.T) {
-	wave := []string{
-		" │    ┃    │ ",
-		" │    ┃    │ ",
-		" │╷   ┃   ╷│ ",
-		" ││╷  ┃  ╷││ ",
-		" │││· ┃ ·│││ ",
-		" ││╵  ┃  ╵││ ",
-		" │╵   ┃   ╵│ ",
-		" │    ┃    │ ",
-		" │    ┃    │ ",
+	// The two middle-sized peaks round to identical glyphs.
+	peaks := []float64{1, 4.05 / 9, 4.30 / 9, .3, 0, 0, 0, .3, 4.30 / 9, 4.05 / 9, 1}
+	wave, levels := audioWaveformRows(peaks, 13, 9, 3, true)
+	const marker = 6
+	greenChannel := func(cell audioHairlineCell) int {
+		rgb := strings.Split(cell.foreground, ";")
+		require.Len(t, rgb, 3)
+		value, err := strconv.Atoi(rgb[1])
+		require.NoError(t, err)
+		return value
 	}
 	for _, dark := range []bool{false, true} {
 		for _, state := range []struct {
@@ -32,27 +33,35 @@ func TestAudioHairlineShowsElapsedStrokesAcrossFocusChanges(t *testing.T) {
 			m := audioReviewModel(t)
 			m.color, m.dark, m.focus, m.waveformFocused, m.busy = true, dark, state.focus, state.waveform, state.busy
 			primary, secondary, border := "32;40;59", "101;112;135", "186;196;216"
-			elapsed, elapsedTip, futureTip := "21;118;86", "17;100;73", "87;97;116"
+			elapsed := "21;118;86"
 			if dark {
 				primary, secondary, border = "242;244;250", "164;172;194", "81;86;107"
-				elapsed, elapsedTip, futureTip = "81;200;157", "68;169;133", "143;150;168"
+				elapsed = "81;200;157"
 			}
-			const marker = 6
-			rows := m.workspaceHairlineRows(wave, marker)
+			rows := m.workspaceHairlineRows(wave, marker, levels)
+			top := audioHairlineCells(t, rows[2])
+			bottom := audioHairlineCells(t, rows[6])
+			for _, pair := range [][2]int{{2, 3}, {10, 9}} {
+				lo, hi := pair[0], pair[1]
+				require.Equal(t, '╷', top[lo].glyph)
+				require.Equal(t, top[lo].glyph, top[hi].glyph)
+				require.Less(t, greenChannel(top[lo]), greenChannel(top[hi]), "taller tips carry more of the core color")
+				require.Equal(t, top[lo].foreground, bottom[lo].foreground)
+				require.Equal(t, top[hi].foreground, bottom[hi].foreground)
+			}
 			for row, text := range rows {
 				require.Equal(t, wave[row], ansi.Strip(text))
 				for column, cell := range audioHairlineCells(t, text) {
 					require.False(t, cell.bold, "the glyph supplies the stroke weight")
 					switch cell.glyph {
 					case '│', '╷', '╵':
-						stroke, tip := secondary, futureTip
+						stroke := secondary
 						if column < marker {
-							stroke, tip = elapsed, elapsedTip
+							stroke = elapsed
 						}
-						if (row == 0 || row == 8) || ((row == 2 || row == 6) && (column == 2 || column == 10)) {
-							stroke = tip
+						if row >= 3 && row <= 5 {
+							require.Equal(t, stroke, cell.foreground, "the core and short bars keep their contrast")
 						}
-						require.Equal(t, stroke, cell.foreground, "row %d col %d", row, column)
 					case '·':
 						require.Equal(t, border, cell.foreground)
 					case '┃':
@@ -63,7 +72,7 @@ func TestAudioHairlineShowsElapsedStrokesAcrossFocusChanges(t *testing.T) {
 				}
 			}
 			m.color = false
-			require.Equal(t, wave, m.workspaceHairlineRows(wave, marker))
+			require.Equal(t, wave, m.workspaceHairlineRows(wave, marker, levels))
 		}
 	}
 }
@@ -75,9 +84,9 @@ func TestAudioHairlineKeepsMeasuredGeometryAndSilence(t *testing.T) {
 	before := append([]float64(nil), peaks...)
 	for _, tc := range []struct{ width, height int }{{49, 3}, {89, 7}, {89, 9}, {120, 9}} {
 		for _, boundary := range []int{0, audioWaveformBars(tc.width) / 2, audioWaveformBars(tc.width), 1} {
-			wave := audioDenseWaveform(peaks, tc.width, tc.height, boundary)
+			wave, levels := audioWaveformRows(peaks, tc.width, tc.height, boundary, true)
 			original := append([]string(nil), wave...)
-			rows := m.workspaceHairlineRows(wave, audioWaveformMarker(tc.width, boundary))
+			rows := m.workspaceHairlineRows(wave, audioWaveformMarker(tc.width, boundary), levels)
 			require.Equal(t, original, wave, "shading must not edit measured geometry")
 			for row, text := range rows {
 				require.Equal(t, wave[row], ansi.Strip(text))
@@ -94,8 +103,8 @@ func TestAudioHairlineKeepsMeasuredGeometryAndSilence(t *testing.T) {
 		require.Equal(t, math.Float64bits(before[i]), math.Float64bits(value))
 	}
 	// Invalid samples cannot acquire an apparent contour through styling.
-	wave := audioDenseWaveform([]float64{0, math.NaN(), math.Inf(-1), -1}, 11, 9, 0)
-	for _, row := range m.workspaceHairlineRows(wave, 0) {
+	wave, levels := audioWaveformRows([]float64{0, math.NaN(), math.Inf(-1), -1}, 11, 9, 0, true)
+	for _, row := range m.workspaceHairlineRows(wave, 0, levels) {
 		for _, cell := range audioHairlineCells(t, row) {
 			require.Contains(t, " ┃·", string(cell.glyph))
 		}
