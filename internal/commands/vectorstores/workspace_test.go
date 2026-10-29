@@ -19,12 +19,14 @@ import (
 )
 
 type modelService struct {
+	// Leave Service nil so any unstubbed operation fails the test.
+	Service
 	listStores  func(context.Context, string) (StorePage, error)
 	getStore    func(context.Context, string) (*openai.VectorStore, error)
 	createStore func(context.Context, string) (*openai.VectorStore, error)
 	listFiles   func(context.Context, string, string) (FilePage, error)
 	upload      func(context.Context, string) (*openai.FileObject, error)
-	attach      func(context.Context, string, string) (*openai.VectorStoreFile, error)
+	attach      func(context.Context, string, string, AttachOptions) (*openai.VectorStoreFile, error)
 	getFile     func(context.Context, string, string) (*openai.VectorStoreFile, error)
 	search      func(context.Context, string, string) (SearchPage, error)
 }
@@ -44,8 +46,8 @@ func (s modelService) ListFiles(ctx context.Context, id, after string) (FilePage
 func (s modelService) UploadFile(ctx context.Context, path string) (*openai.FileObject, error) {
 	return s.upload(ctx, path)
 }
-func (s modelService) AttachFile(ctx context.Context, store, file string) (*openai.VectorStoreFile, error) {
-	return s.attach(ctx, store, file)
+func (s modelService) AttachFile(ctx context.Context, store, file string, opts AttachOptions) (*openai.VectorStoreFile, error) {
+	return s.attach(ctx, store, file, opts)
 }
 func (s modelService) GetFile(ctx context.Context, store, file string) (*openai.VectorStoreFile, error) {
 	return s.getFile(ctx, store, file)
@@ -203,8 +205,9 @@ func TestWorkspaceUploadRetainsFileAndChecksBeforeRetry(t *testing.T) {
 					assert.Equal(t, "/synthetic/kite.txt", path)
 					return &openai.FileObject{ID: "file_demo", Filename: "kite.txt"}, nil
 				},
-				attach: func(_ context.Context, store, file string) (*openai.VectorStoreFile, error) {
+				attach: func(_ context.Context, store, file string, opts AttachOptions) (*openai.VectorStoreFile, error) {
 					calls = append(calls, "attach")
+					assert.Equal(t, AttachOptions{}, opts)
 					assert.Equal(t, "vs_demo", store)
 					assert.Equal(t, "file_demo", file)
 					if len(calls) == 2 {
@@ -463,7 +466,7 @@ func TestWorkspaceWatchingAnotherFilePreservesRetainedUpload(t *testing.T) {
 		upload: func(context.Context, string) (*openai.FileObject, error) {
 			return &openai.FileObject{ID: "file_retained", Filename: "retained.txt"}, nil
 		},
-		attach: func(context.Context, string, string) (*openai.VectorStoreFile, error) {
+		attach: func(context.Context, string, string, AttachOptions) (*openai.VectorStoreFile, error) {
 			return nil, errors.New("synthetic attachment failure")
 		},
 		listFiles: func(context.Context, string, string) (FilePage, error) {

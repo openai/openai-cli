@@ -9,21 +9,6 @@ import (
 	"github.com/openai/openai-go/v3/option"
 )
 
-// ManagementService supplies the remaining store, attachment, and batch operations.
-type ManagementService interface {
-	UpdateStore(context.Context, string, map[string]any) (*openai.VectorStore, error)
-	DeleteStore(context.Context, string) error
-	ListSourceFiles(context.Context, string) (SourcePage, error)
-	AttachConfigured(context.Context, string, string, AttachOptions) (*openai.VectorStoreFile, error)
-	CreateBatch(context.Context, string, []string, AttachOptions) (*openai.VectorStoreFileBatch, error)
-	GetBatch(context.Context, string, string) (*openai.VectorStoreFileBatch, error)
-	CancelBatch(context.Context, string, string) (*openai.VectorStoreFileBatch, error)
-	ListBatchFiles(context.Context, string, string, string) (FilePage, error)
-	UpdateFile(context.Context, string, string, map[string]any) (*openai.VectorStoreFile, error)
-	RemoveFile(context.Context, string, string) error
-	FileContent(context.Context, string, string) (IndexedContent, error)
-}
-
 type SourcePage struct {
 	Files []openai.FileObject
 	Next  string
@@ -34,6 +19,7 @@ type IndexedContent struct {
 	Partial bool
 }
 
+// AttachOptions uses the API defaults for fields left nil.
 type AttachOptions struct {
 	Attributes map[string]any `json:"attributes,omitempty"`
 	Chunking   map[string]any `json:"chunking_strategy,omitempty"`
@@ -91,11 +77,6 @@ func (s *sdkService) ListSourceFiles(ctx context.Context, after string) (SourceP
 	}
 	next, err := nextCursor(after, last, page.HasMore)
 	return SourcePage{Files: page.Data, Next: next}, err
-}
-
-func (s *sdkService) AttachConfigured(ctx context.Context, store, file string, opts AttachOptions) (*openai.VectorStoreFile, error) {
-	result, err := s.client.VectorStores.Files.New(ctx, store, openai.VectorStoreFileNewParams{FileID: file}, opts.requestOptions()...)
-	return checkAttachedFile(result, err, store, file)
 }
 
 func checkBatch(batch *openai.VectorStoreFileBatch, err error, store, id string) (*openai.VectorStoreFileBatch, error) {

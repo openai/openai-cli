@@ -178,7 +178,7 @@ func (m *workspace) loadFiles(more bool) tea.Cmd {
 	}
 	return m.start("files", "Loading files…", func(ctx context.Context) workMessage {
 		if batch != "" {
-			page, err := m.manager().ListBatchFiles(ctx, id, batch, cursor)
+			page, err := m.service.ListBatchFiles(ctx, id, batch, cursor)
 			return workMessage{files: page, err: err, reset: !more}
 		}
 		page, err := m.service.ListFiles(ctx, id, cursor)
@@ -679,11 +679,7 @@ func (m *workspace) attach() tea.Cmd {
 	id, file := m.store.ID, m.pendingFile
 	opts := m.attachOptions
 	return m.start("attach", "Attaching file…", func(ctx context.Context) workMessage {
-		if opts.Attributes != nil || opts.Chunking != nil {
-			result, err := m.manager().AttachConfigured(ctx, id, file, opts)
-			return workMessage{attached: result, err: err}
-		}
-		result, err := m.service.AttachFile(ctx, id, file)
+		result, err := m.service.AttachFile(ctx, id, file, opts)
 		return workMessage{attached: result, err: err}
 	})
 }

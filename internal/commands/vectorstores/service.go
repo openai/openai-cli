@@ -35,10 +35,20 @@ type Service interface {
 	ListStores(context.Context, string) (StorePage, error)
 	GetStore(context.Context, string) (*openai.VectorStore, error)
 	CreateStore(context.Context, string) (*openai.VectorStore, error)
+	UpdateStore(context.Context, string, map[string]any) (*openai.VectorStore, error)
+	DeleteStore(context.Context, string) error
 	ListFiles(context.Context, string, string) (FilePage, error)
+	ListSourceFiles(context.Context, string) (SourcePage, error)
 	UploadFile(context.Context, string) (*openai.FileObject, error)
-	AttachFile(context.Context, string, string) (*openai.VectorStoreFile, error)
+	AttachFile(context.Context, string, string, AttachOptions) (*openai.VectorStoreFile, error)
 	GetFile(context.Context, string, string) (*openai.VectorStoreFile, error)
+	UpdateFile(context.Context, string, string, map[string]any) (*openai.VectorStoreFile, error)
+	RemoveFile(context.Context, string, string) error
+	FileContent(context.Context, string, string) (IndexedContent, error)
+	CreateBatch(context.Context, string, []string, AttachOptions) (*openai.VectorStoreFileBatch, error)
+	GetBatch(context.Context, string, string) (*openai.VectorStoreFileBatch, error)
+	CancelBatch(context.Context, string, string) (*openai.VectorStoreFileBatch, error)
+	ListBatchFiles(context.Context, string, string, string) (FilePage, error)
 	Search(context.Context, string, string) (SearchPage, error)
 }
 
@@ -159,10 +169,10 @@ func nextCursor(after, last string, more bool) (string, error) {
 	return last, nil
 }
 
-func (s *sdkService) AttachFile(ctx context.Context, storeID, fileID string) (*openai.VectorStoreFile, error) {
+func (s *sdkService) AttachFile(ctx context.Context, storeID, fileID string, opts AttachOptions) (*openai.VectorStoreFile, error) {
 	file, err := s.client.VectorStores.Files.New(ctx, storeID, openai.VectorStoreFileNewParams{
 		FileID: fileID,
-	}, option.WithMaxRetries(0))
+	}, opts.requestOptions()...)
 	return checkAttachedFile(file, err, storeID, fileID)
 }
 

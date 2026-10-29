@@ -48,11 +48,6 @@ var managementForms = map[string]string{
 	"open-batch": "Batch ID", "cancel-batch": "Confirm batch ID", "attach-options": "Attachment options (JSON object)",
 }
 
-func (m *workspace) manager() ManagementService {
-	service, _ := m.service.(ManagementService)
-	return service
-}
-
 func (m *workspace) filteredStores() []openai.VectorStore {
 	query := strings.ToLower(m.storeFilter)
 	if query == "" {
@@ -200,7 +195,7 @@ func (m *workspace) loadSources(more bool) tea.Cmd {
 		after = m.sourceNext
 	}
 	return m.start("sources", "Loading uploaded files…", func(ctx context.Context) workMessage {
-		page, err := m.manager().ListSourceFiles(ctx, after)
+		page, err := m.service.ListSourceFiles(ctx, after)
 		return workMessage{managementResult: managementResult{sources: page}, reset: !more, err: err}
 	})
 }
@@ -217,10 +212,6 @@ func (m *workspace) activateManagement() (tea.Cmd, bool) {
 		return m.enter("filter"), true
 	}
 	if menu := managementMenus[m.page]; menu != nil {
-		if m.manager() == nil {
-			m.note = "Management is unavailable with this API client."
-			return nil, true
-		}
 		return m.activateManagementMenu(menu[m.selected]), true
 	}
 	if _, ok := managementForms[m.page]; ok {
@@ -258,7 +249,7 @@ func (m *workspace) activateManagement() (tea.Cmd, bool) {
 			}
 			id, opts := m.store.ID, m.batchOptions
 			return m.start("batch-create", "Attaching selected files…", func(ctx context.Context) workMessage {
-				batch, err := m.manager().CreateBatch(ctx, id, ids, opts)
+				batch, err := m.service.CreateBatch(ctx, id, ids, opts)
 				return workMessage{managementResult: managementResult{batch: batch}, err: err}
 			}), true
 		case 2:
@@ -319,7 +310,7 @@ func (m *workspace) activateManagementMenu(action string) tea.Cmd {
 	case "Read content":
 		file := m.file.ID
 		return m.start("content", "Reading indexed content…", func(ctx context.Context) workMessage {
-			content, err := m.manager().FileContent(ctx, id, file)
+			content, err := m.service.FileContent(ctx, id, file)
 			return workMessage{managementResult: managementResult{content: content}, err: err}
 		})
 	case "Edit attributes", "Remove attachment":
@@ -362,7 +353,7 @@ func displayTimestamp(value int64) string {
 func (m *workspace) getBatch(id string) tea.Cmd {
 	store := m.store.ID
 	return m.start("batch", "Reading batch status…", func(ctx context.Context) workMessage {
-		batch, err := m.manager().GetBatch(ctx, store, id)
+		batch, err := m.service.GetBatch(ctx, store, id)
 		return workMessage{managementResult: managementResult{batch: batch}, err: err}
 	})
 }
@@ -406,12 +397,12 @@ func (m *workspace) submitManagement() tea.Cmd {
 		}
 		return m.start(page, "Applying confirmed action…", func(ctx context.Context) workMessage {
 			if page == "delete-store" {
-				return workMessage{err: m.manager().DeleteStore(ctx, id)}
+				return workMessage{err: m.service.DeleteStore(ctx, id)}
 			}
 			if page == "remove-file" {
-				return workMessage{err: m.manager().RemoveFile(ctx, id, target)}
+				return workMessage{err: m.service.RemoveFile(ctx, id, target)}
 			}
-			batch, err := m.manager().CancelBatch(ctx, id, target)
+			batch, err := m.service.CancelBatch(ctx, id, target)
 			return workMessage{managementResult: managementResult{batch: batch}, err: err}
 		})
 	}
@@ -446,14 +437,14 @@ func (m *workspace) submitManagement() tea.Cmd {
 		if page == "attributes" {
 			file := m.file.ID
 			return m.start("attributes", "Updating file attributes…", func(ctx context.Context) workMessage {
-				result, err := m.manager().UpdateFile(ctx, id, file, values)
+				result, err := m.service.UpdateFile(ctx, id, file, values)
 				return workMessage{attached: result, err: err}
 			})
 		}
 		changes["metadata"] = values
 	}
 	return m.start("update-store", "Updating store…", func(ctx context.Context) workMessage {
-		store, err := m.manager().UpdateStore(ctx, id, changes)
+		store, err := m.service.UpdateStore(ctx, id, changes)
 		return workMessage{store: store, err: err}
 	})
 }
