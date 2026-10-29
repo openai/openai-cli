@@ -15,22 +15,45 @@ import (
 // Requests retain only the visible catalog page and the selected match position.
 // Catalog scans run outside the terminal event loop and stop when replaced.
 type batchBrowserRequestState struct {
-	ctx      context.Context
-	catalog  *batchBrowserCatalog
-	cancel   context.CancelFunc
-	sequence uint64
-	page     batchBrowserRecordPage
-	selected int64
-	loading  bool
-	loaded   bool
-	err      error
+	ctx          context.Context
+	catalog      *batchBrowserCatalog
+	cancel       context.CancelFunc
+	sequence     uint64
+	page         batchBrowserRecordPage
+	selected     int64
+	loading      bool
+	loaded       bool
+	err          error
+	expanded     bool
+	autoExpanded bool
+	offerCSV     bool
+	preview      batchBrowserInlinePreview
 }
 
 func (s *batchBrowserRequestState) stop() {
+	s.preview.stop()
 	if s.cancel != nil {
 		s.cancel()
 	}
 	s.sequence++
+}
+
+func (m *batchBrowserScreen) requestKeys(shortcut func(string, string) string) []string {
+	var keys []string
+	if m.requestState.autoExpanded && m.requestState.expanded {
+		keys = []string{shortcut("Enter", "collapse"), shortcut("→", "full record"), shortcut("Ctrl+V", "view all")}
+	} else if m.requestState.expanded {
+		keys = []string{shortcut("↑↓", "select"), shortcut("→", "full record"), shortcut("Ctrl+V", "view all")}
+	} else {
+		keys = []string{shortcut("↑↓", "select"), shortcut("Enter", "expand"), shortcut("→", "full record"), shortcut("Ctrl+V", "view all")}
+	}
+	if m.requestState.offerCSV {
+		keys = append(keys, shortcut("Ctrl+O", "original CSV"))
+	}
+	if m.requestState.expanded && !m.requestState.autoExpanded {
+		return append(keys, shortcut("Esc", "collapse"))
+	}
+	return append(keys, shortcut("Esc", "back"))
 }
 
 type batchBrowserRequestsReady struct {
@@ -44,7 +67,8 @@ type batchBrowserRequestsReady struct {
 func newBatchBrowserRequests(ctx context.Context, catalog *batchBrowserCatalog, title, batchID string) *batchBrowserScreen {
 	m := newBatchBrowserScreen("requests", title, batchID, nil)
 	m.input.Placeholder = "Find ID or text"
-	m.requestState = &batchBrowserRequestState{ctx: ctx, catalog: catalog}
+	onlyError := catalog.selection == "error" && catalog.store.recordCount == 1
+	m.requestState = &batchBrowserRequestState{ctx: ctx, catalog: catalog, expanded: onlyError, autoExpanded: onlyError}
 	return m
 }
 
@@ -58,7 +82,7 @@ func (m *batchBrowserScreen) requestRows() int {
 		heading += 2 // Divider and column headings.
 		footer = 2   // Blank separator and first shortcut line.
 		used := 2
-		for _, key := range []string{"↑↓ select", "Enter open", "Ctrl+V view all", "Esc back"} {
+		for _, key := range m.requestKeys(func(key, label string) string { return key + " " + label }) {
 			gap := 0
 			if used > 2 {
 				gap = 2
@@ -98,6 +122,16 @@ func (m *batchBrowserScreen) loadRequests(first int64, end bool) tea.Cmd {
 func (m *batchBrowserScreen) updateRequests(message tea.Msg) (tea.Model, tea.Cmd) {
 	s := m.requestState
 	switch msg := message.(type) {
+	case batchBrowserPreviewReady:
+		if msg.screen == m && msg.sequence == s.preview.sequence && !m.closed {
+			s.preview.lines = msg.lines
+			s.preview.loading = false
+			if msg.err != nil {
+				s.err, m.closed = msg.err, true
+				return m, tea.Quit
+			}
+		}
+		return m, nil
 	case batchBrowserRequestsReady:
 		if msg.screen != m || msg.sequence != s.sequence || m.closed {
 			return m, nil
@@ -116,7 +150,7 @@ func (m *batchBrowserScreen) updateRequests(message tea.Msg) (tea.Model, tea.Cmd
 		if len(s.page.Rows) == 0 {
 			s.selected, m.searchFocused = 0, true
 		}
-		return m, nil
+		return m, m.loadRequestPreview()
 	case tea.WindowSizeMsg:
 		rows := m.requestRows()
 		m.width, m.height = msg.Width, msg.Height
@@ -126,7 +160,19 @@ func (m *batchBrowserScreen) updateRequests(message tea.Msg) (tea.Model, tea.Cmd
 		return m, m.loadRequests(m.requestFirst(), false)
 	case tea.KeyPressMsg:
 		switch msg.String() {
+		case "ctrl+o":
+			if s.offerCSV {
+				s.stop()
+				m.closed, m.chosen = true, "original-csv"
+				return m, tea.Quit
+			}
+			return m, nil
 		case "esc", "ctrl+c", "ctrl+v":
+			if msg.String() == "esc" && s.expanded && !s.autoExpanded {
+				s.expanded = false
+				s.preview.stop()
+				return m, nil
+			}
 			s.stop()
 			m.closed, m.chosen = true, "back"
 			if msg.String() == "ctrl+c" {
@@ -135,12 +181,26 @@ func (m *batchBrowserScreen) updateRequests(message tea.Msg) (tea.Model, tea.Cmd
 				m.chosen = "all"
 			}
 			return m, tea.Quit
+		case "right":
+			if m.searchFocused {
+				break // Right edits the search query.
+			}
+			fallthrough
 		case "enter":
 			if m.width < 30 || m.height < 7 || s.loading {
 				return m, nil
 			}
 			index := s.selected - s.page.First
 			if index >= 0 && index < int64(len(s.page.Rows)) {
+				if msg.String() == "enter" {
+					m.searchFocused = false
+					s.autoExpanded = false
+					s.expanded = !s.expanded
+					if !s.expanded || m.requestPreviewRows() > 0 {
+						return m, m.loadRequestPreview()
+					}
+					s.expanded = false
+				}
 				s.stop()
 				m.closed, m.chosen = true, "record:"+strconv.FormatInt(s.page.Rows[index].ID, 10)
 				return m, tea.Quit
@@ -149,6 +209,8 @@ func (m *batchBrowserScreen) updateRequests(message tea.Msg) (tea.Model, tea.Cmd
 		case "up", "shift+tab":
 			if m.searchFocused || s.selected == 0 {
 				m.searchFocused = true
+				s.expanded = false
+				s.preview.stop()
 				return m, nil
 			}
 			if !s.loading {
@@ -168,7 +230,7 @@ func (m *batchBrowserScreen) updateRequests(message tea.Msg) (tea.Model, tea.Cmd
 			return m, nil
 		case "pgup", "pgdown":
 			if !s.loading {
-				delta := int64(m.requestRows())
+				delta := int64(m.requestRows() - m.requestPreviewRows())
 				if msg.String() == "pgup" {
 					delta = -delta
 				}
@@ -191,6 +253,8 @@ func (m *batchBrowserScreen) updateRequests(message tea.Msg) (tea.Model, tea.Cmd
 	m.input, command = m.input.Update(message)
 	if m.input.Value() != previous || m.input.Position() != position {
 		m.searchFocused = true
+		s.expanded = false
+		s.preview.stop()
 	}
 	if m.input.Value() != previous {
 		s.selected = 0
@@ -211,13 +275,13 @@ func (m *batchBrowserScreen) selectRequest(selected int64) tea.Cmd {
 	if selected < s.page.First || selected >= s.page.First+int64(len(s.page.Rows)) {
 		return m.loadRequests(selected, false)
 	}
-	return nil
+	return m.loadRequestPreview()
 }
 
-func (m *batchBrowserScreen) requestLines(height, width int, footer []string, rule func() string, muted, accent, highlight lipgloss.Style, colors bool) ([]string, *tea.Cursor) {
+func (m *batchBrowserScreen) requestLines(height, width int, footer []string, rule func() string, muted, accent, highlight lipgloss.Style, semantic func(lipgloss.Style, string) lipgloss.Style, colors bool) ([]string, *tea.Cursor) {
 	s := m.requestState
 	clip := func(text string, width int) string { return ansi.Truncate(batchInputLabel(text), max(1, width), "…") }
-	heading := accent.Bold(colors)
+	heading := lipgloss.NewStyle().Bold(colors)
 	lines := []string{"  " + heading.Render(clip(m.title, width)), "  " + muted.Render(clip(m.subtitle, width))}
 	count := fmt.Sprintf("%d requests", s.page.Total)
 	if s.page.Total == 1 {
@@ -251,7 +315,11 @@ func (m *batchBrowserScreen) requestLines(height, width int, footer []string, ru
 		cursor.Shape, cursor.Blink = tea.CursorBar, true
 	}
 	if height < 10 {
-		footer = []string{"  " + accent.Render("↑↓ Enter Ctrl+V Esc")}
+		shortcuts := "↑↓ Enter →full Ctrl+V Esc"
+		if s.offerCSV {
+			shortcuts = "↑↓ Enter → Ctrl+V ^O CSV Esc"
+		}
+		footer = []string{"  " + accent.Render(shortcuts)}
 	}
 	numberWidth := 1
 	for _, row := range s.page.Rows {
@@ -288,7 +356,11 @@ func (m *batchBrowserScreen) requestLines(height, width int, footer []string, ru
 		}
 		lines = append(lines, "  "+muted.Render(clip(notice, width)))
 	} else {
-		for i, row := range s.page.Rows[:min(len(s.page.Rows), budget)] {
+		budget = max(1, budget-m.requestPreviewRows())
+		offset := int(s.selected - s.page.First)
+		first := max(0, offset-budget+1)
+		for i := first; i < min(len(s.page.Rows), first+budget); i++ {
+			row := s.page.Rows[i]
 			selected := !m.searchFocused && s.selected == s.page.First+int64(i)
 			prefix := cell(strconv.FormatInt(row.ID, 10), numberWidth) + "  "
 			name, preview := clip(row.Label, width-ansi.StringWidth(prefix)), ""
@@ -304,6 +376,13 @@ func (m *batchBrowserScreen) requestLines(height, width int, footer []string, ru
 				}
 				padding := strings.Repeat(" ", max(0, rowWidth-ansi.StringWidth(text)))
 				lines = append(lines, highlight.Render("> "+prefix)+highlight.Bold(colors).Render(name)+highlight.Render(preview+padding))
+				if s.expanded {
+					shownWidth := 0
+					if table {
+						shownWidth = previewWidth
+					}
+					lines = append(lines, m.requestPreviewLines(row, width, shownWidth, muted, semantic)...)
+				}
 			} else {
 				lines = append(lines, "  "+muted.Render(prefix)+accent.Render(name)+preview)
 			}

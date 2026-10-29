@@ -90,7 +90,7 @@ func TestBatchBrowserCatalogResultPreviews(t *testing.T) {
 	require.Equal(t, "positive", page.Rows[0].Preview)
 	require.Equal(t, "negative", page.Rows[1].Preview)
 	require.Equal(t, "Use a supported model", page.Rows[2].Preview)
-	require.Equal(t, "Open request details", page.Rows[3].Preview)
+	require.Equal(t, "No text preview", page.Rows[3].Preview)
 }
 
 func TestBatchBrowserCatalogCancellationAndConcurrentQueries(t *testing.T) {
@@ -124,7 +124,7 @@ func TestBatchBrowserCatalogPreviewsUsePayloadPaths(t *testing.T) {
 	page, err := catalog.page(t.Context(), "", 0, 5)
 	require.NoError(t, err)
 	require.Equal(t, "Actual input", page.Rows[0].Preview)
-	require.Equal(t, "Open request details", page.Rows[1].Preview)
+	require.Equal(t, "No text preview", page.Rows[1].Preview)
 	page, err = catalog.page(t.Context(), "also misleading", 0, 5)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), page.Total)

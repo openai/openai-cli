@@ -2,11 +2,14 @@
 """Browse synthetic batches using an explicit local CLI binary. No live API calls."""
 
 import argparse
+import copy
+import csv
 import email.parser
 import email.policy
 import json
 import os
 from pathlib import Path
+import shlex
 import signal
 import subprocess
 import sys
@@ -18,6 +21,35 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from try_workflows import stop_process
 from workflow_fixture import INPUT_BYTES, OUTPUT_BYTES, OUTPUT_RECORDS, WorkflowFixture, write_new
+
+
+TICKETS = Path(__file__).with_name("tickets.csv")
+LABEL_BY_TICKET = {"001": "billing", "002": "login", "003": "other"}
+with TICKETS.open(encoding="utf-8", newline="") as source:
+    TICKET_CATEGORIES = {row["message"]: LABEL_BY_TICKET[row["ticket_id"]] for row in csv.DictReader(source)}
+
+
+def ticket_results(contents):
+    """Return fixed answers for the three demo messages, using their uploaded IDs."""
+    records = [json.loads(line) for line in contents.decode("utf-8").splitlines()]
+    if len(records) != len(TICKET_CATEGORIES):
+        raise ValueError("choose the provided tickets.csv sample")
+    answers, seen = [], set()
+    for record, message in zip(records, TICKET_CATEGORIES):
+        if (not isinstance(record, dict) or set(record) != {"custom_id", "method", "url", "body"}
+                or record["method"] != "POST" or record["url"] != "/v1/responses"):
+            raise ValueError("unexpected synthetic ticket request")
+        body, identifier = record["body"], record["custom_id"]
+        if (not isinstance(body, dict) or set(body) != {"model", "instructions", "input"} or body["input"] != message
+                or not all(isinstance(body[key], str) and body[key].strip() for key in ("model", "instructions"))
+                or not isinstance(identifier, str) or not identifier or identifier in seen):
+            raise ValueError("use the message column of the provided tickets.csv sample")
+        seen.add(identifier)
+        answer = copy.deepcopy(OUTPUT_RECORDS[len(answers)])
+        answer["custom_id"] = identifier
+        answer["response"]["body"]["output"][0]["content"][0]["text"] = TICKET_CATEGORIES[message]
+        answers.append(answer)
+    return b"".join((json.dumps(answer) + "\n").encode() for answer in reversed(answers))
 
 
 class BrowserFixture(WorkflowFixture):
@@ -91,11 +123,16 @@ class BrowserFixture(WorkflowFixture):
                     parts = list(message.iter_parts())
                     values = {part.get_param("name", header="content-disposition"): part.get_payload(decode=True)
                               for part in parts}
-                    if len(parts) != 2 or values != {"purpose": b"batch", "file": INPUT_BYTES}:
+                    if len(parts) != 2 or set(values) != {"purpose", "file"} or values["purpose"] != b"batch":
                         raise ValueError("upload does not match the synthetic inputs")
+                    contents = values["file"]
+                    results = OUTPUT_BYTES if contents == INPUT_BYTES else ticket_results(contents)
                     state["uploads"] += 1
                     file = fixture.file()
                     file["id"] = "file_uploaded_demo_" + str(state["uploads"])
+                    if contents != INPUT_BYTES:
+                        file.update(filename="tickets.jsonl", bytes=len(contents))
+                    state.setdefault("file_contents", {})[file["id"]] = (contents, results)
                     state.setdefault("uploaded_files", []).append(file)
                     return file
                 if route != "/batches":
@@ -145,13 +182,13 @@ class BrowserFixture(WorkflowFixture):
                         record["retrieves"] += 1
                         return fixture.created_batch(record)
                     if route == "/files/" + record["output_file_id"] + "/content" and record["retrieves"] >= 3:
-                        return OUTPUT_BYTES
+                        return state.get("file_contents", {}).get(record["input_file_id"], (INPUT_BYTES, OUTPUT_BYTES))[1]
                 for row in rows:
                     if route == "/batches/" + row["id"]:
                         return row
                 for file in fixture.files(state):
                     if route == "/files/" + file["id"] + "/content":
-                        return INPUT_BYTES
+                        return state.get("file_contents", {}).get(file["id"], (INPUT_BYTES, OUTPUT_BYTES))[0]
                     if route == "/files/" + file["id"]:
                         return file
                 if route == "/files/file_result/content":
@@ -163,7 +200,7 @@ class BrowserFixture(WorkflowFixture):
                     return (json.dumps({"custom_id": "sentiment-negative", "response": {
                         "status_code": 500, "request_id": "req_synthetic_failed", "body": {
                             "error": {"code": "server_error", "type": "server_error",
-                                      "message": "Synthetic service error. Retry this request in a new batch."}}},
+                                      "message": "The service could not process this request."}}},
                         "error": None}) + "\n").encode()
                 raise ValueError("unexpected browser demo route")
 
@@ -183,22 +220,28 @@ def main():
     if not binary.is_file() or not os.access(binary, os.X_OK):
         parser.error("binary must identify an executable file")
     directory = Path(tempfile.mkdtemp(prefix="f13-browser-"))
+    examples = directory / "examples"
+    examples.mkdir(mode=0o700)
     isolated_home = directory / "home"
     isolated_home.mkdir(mode=0o700)
     environment = {
         "PATH": os.defpath, "HOME": str(isolated_home), "USERPROFILE": str(isolated_home),
         "APPDATA": str(isolated_home), "LOCALAPPDATA": str(isolated_home),
         "XDG_CONFIG_HOME": str(isolated_home), "XDG_CACHE_HOME": str(isolated_home),
-        "OPENAI_API_KEY": "synthetic-demo-key", "OPENAI_CLI_NO_UPDATE_CHECK": "1",
+        "OPENAI_API_KEY": "synthetic-demo-key", "OPENAI_PROJECT_ID": "proj_synthetic_local_demo",
+        "OPENAI_CLI_NO_UPDATE_CHECK": "1",
         "TERM": os.environ.get("TERM", "xterm-256color"), "LANG": "en_US.UTF-8", "GOMAXPROCS": "2",
     }
     for name in ("SystemRoot", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORFGBG", "COLORTERM", "NO_COLOR"):
         if name in os.environ:
             environment[name] = os.environ[name]
-    write_new(directory / "requests.jsonl", INPUT_BYTES)
+    write_new(examples / "requests.jsonl", INPUT_BYTES)
+    write_new(examples / TICKETS.name, TICKETS.read_bytes())
     print("Demo: synthetic batches. No live API calls or charges.", flush=True)
-    print("Press Ctrl+N to create a batch with requests.jsonl, or choose an uploaded input.", flush=True)
-    print("Use the Responses endpoint. New demo batches finish after three progress updates.\n", flush=True)
+    print(f"Demo folder: {directory}", flush=True)
+    print("Ctrl+N starts a batch. Choose requests.jsonl for prepared requests or tickets.csv for spreadsheet rows.", flush=True)
+    print("For tickets.csv, choose message and enter: Classify each ticket as billing, login, or other.", flush=True)
+    print("Model: synthetic-demo-model. Enter on Review starts the demo batch.\n", flush=True)
     process = None
     stop_signal = None
 
@@ -218,7 +261,7 @@ def main():
             thread.start()
             environment["OPENAI_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
             try:
-                process = subprocess.Popen([str(binary), "batches", "browse"], cwd=directory,
+                process = subprocess.Popen([str(binary), "batches", "browse"], cwd=examples,
                                            env=environment, start_new_session=(os.name == "posix"))
                 while stop_signal is None:
                     try:
@@ -243,9 +286,15 @@ def main():
                "process_stopped": process is not None and process.poll() is not None,
                "uploads": sum(state["uploads"] for state in fixture.states.values()),
                "creates": sum(state["creates"] for state in fixture.states.values()),
-               "request_log": "request-log.jsonl", "input_file": "requests.jsonl"}
+               "request_log": "request-log.jsonl", "input_file": "examples/requests.jsonl",
+               "csv_input_file": "examples/" + TICKETS.name}
     write_new(directory / "session.json", (json.dumps(outcome, indent=2) + "\n").encode())
     print(f"\nDemo downloads and details: {directory}")
+    print(f"Example inputs and saved files: {examples}")
+    results = examples / "tickets-results.csv"
+    if sys.platform == "darwin" and results.is_file():
+        print("Open the saved CSV in your default app:")
+        print(shlex.join(["open", str(results)]))
     if fixture.failures or not outcome["server_stopped"] or not outcome["process_stopped"]:
         print("The demo did not finish cleanly. Inspect session.json before repeating.", file=sys.stderr)
         return 1

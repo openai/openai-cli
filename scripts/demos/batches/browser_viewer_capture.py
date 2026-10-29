@@ -30,7 +30,8 @@ def settle(terminal, duration=0.4):
 def action_index(screen, label):
     labels = {'View results', 'View errors', 'View input', 'Batch details', 'Save a file'}
     visible = [line.strip(' │>▸▾') for line in screen.splitlines()]
-    actions = [line for line in visible if line in labels]
+    actions = [name for line in visible for name in labels
+               if line == name or line.startswith(name + '  ')]
     assert actions.count(label) == 1, ('action missing or duplicated', label, actions)
     return actions.index(label)
 
@@ -168,8 +169,20 @@ def main():
                             terminal.wait('Ctrl+V', after=at)
                             settle(terminal)
                             request_screen = save('requests')
+                            if args.message == 'errors':
+                                preview = save('inline')
+                                if args.height >= 16 and args.width >= 50:
+                                    assert '500' in preview, 'sole error did not expand automatically'
+                            elif args.width >= 50 and args.height >= 16:
+                                terminal.send(b'\r')
+                                settle(terminal)
+                                preview = save('inline')
+                                assert 'Search' in preview and preview != request_screen, 'request did not expand in place'
+                                terminal.send(b'\x1b')
+                                settle(terminal)
+                                assert save('collapsed') == request_screen, 'collapsing changed the request list'
                             at = len(terminal.raw)
-                            terminal.send(b'\r')
+                            terminal.send(b'\x1b[C')
                         terminal.wait('PgUp/PgDn', after=at)
                         settle(terminal)
                         message_screen = save('message')

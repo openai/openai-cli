@@ -126,7 +126,9 @@ Escape returns to batch actions or the batch list.
 View input, View results, and View errors open a searchable request list when their file exists.
 Request search covers the complete selected file, including text outside each preview.
 Each row shows its record number, request ID, and preview. Duplicate IDs retain separate rows.
-Press Enter to open one request. Escape returns to the same search and selection.
+Short answers appear in the list. Enter expands the selected request in place.
+Use the arrows to inspect neighboring requests. Escape collapses the preview.
+Right opens the full record. Escape returns to the same search and selection.
 Request details show content before settings. Press `j` to switch between Readable and Raw JSON.
 Result details place the request ID beside its reported outcome, followed by a separate Output block.
 Simple token counts share one secondary line. Extended usage and unfamiliar records retain their complete readable details.
@@ -135,8 +137,9 @@ Outcome colors supplement explicit words. Refusals and incomplete results do not
 Input details use blue section headings and muted setting labels. Input content keeps the normal foreground.
 Press Ctrl+V from the request list to view all records.
 Batch details and missing-file notices open a framed document viewer with wrapped text and fixed controls.
-Batch details places status and counts first, followed by timing, files, usage, and metadata.
-Validation errors appear before timing. Labels align within each section.
+Batch details opens with status, request counts, and elapsed time when available.
+The timeline groups event times by UTC date. Validation errors appear before the timeline.
+Files, usage, and metadata follow when the batch provides them.
 Complete Batch IDs remain in the document for wrapping and printing.
 Unfamiliar fields keep the complete readable fallback. Standalone command output stays unchanged.
 Use arrows to scroll, Page Up/Down to change pages, and Home/End to jump.
@@ -145,7 +148,8 @@ Press Enter or Escape after printing to return to the document.
 The viewer keeps missing-file notices and errors inside the same frame.
 Save a file is the last action. Press Enter to expand its Output, Error, and Input file choices.
 Press Enter on a file choice to edit its suggested filename. The browser shows the destination folder.
-Relative filenames use the current working directory. Paths beginning with `~/` use your home directory.
+Ctrl+L opens the folder picker. Later saves from this batch reuse the chosen folder.
+Relative filenames use the displayed folder. Paths beginning with `~/` use your home directory.
 Existing files are never overwritten.
 Escape collapses the choices before returning to the batch list. Right expands; Left collapses.
 Canceling a destination returns to the same file choice. Each file choice keeps its own destination draft.
@@ -154,14 +158,42 @@ The trial stops its child process and loopback server before returning.
 It does not use personal API keys, install the CLI, or make live API calls.
 
 Press Ctrl+N at the batch list to create a batch.
-Choose a local JSONL file or an uploaded input file.
-Review the endpoint, project, input file, and optional settings.
-Only Ctrl+S on the review screen submits the batch. Enter does not submit.
+Press Enter on **Input file** to see `requests.jsonl` and `tickets.csv` in the demo's examples folder.
+Type to filter the list. Ctrl+L accepts a path. Backspace on an empty filter opens the parent folder.
+Select **Choose an uploaded file** to reuse a project file.
+Edit **Metadata** or **Output expiration** directly on **Create batch**.
+Selecting JSONL opens Review with the endpoint and request count. Escape returns to editing.
+On **Review batch**, press Enter to submit. Ctrl+S also works.
 The browser opens the created batch and updates its progress every ten seconds.
 Updates stop when processing finishes or you leave its action screen.
 Choose View results or Save a file after processing finishes.
-The demo includes `requests.jsonl` and completes created batches after three progress updates.
+The demo includes `requests.jsonl` and `tickets.csv`. Created batches finish after three progress updates.
 Real processing can take up to the selected completion window. Leaving the browser does not cancel remote work.
+
+### Try three tickets from CSV
+
+The browser trial above runs entirely against a loopback server using a fake key.
+
+1. Press Ctrl+N.
+2. Enter `tickets.csv` in **Input file**.
+3. On **Set up CSV**, select the `message` column.
+4. Enter `Classify each ticket as billing, login, or other.`
+5. Enter `synthetic-demo-model` as the model.
+6. On **Review batch**, press Enter to submit.
+7. When the batch completes, open **View rows with answers**.
+8. To save `tickets-results.csv`, press `s`. Ctrl+S lets you choose another filename or folder.
+
+The fixture sends its answers in reverse order. The CSV keeps the original ticket order.
+Ticket `001` gets `billing`, `002` gets `login`, and `003` gets `other`.
+The launcher prints the directory containing both files when you exit.
+On macOS, it also prints the exact `open` command for the saved `tickets-results.csv`.
+
+To run this CSV trial automatically on a POSIX terminal, use a new capture directory:
+
+```sh
+python3 scripts/demos/batches/browser_guided_capture.py --csv \
+  /absolute/path/to/openai /absolute/new/csv-capture
+```
 
 Capture the complete synthetic workflow through the actual terminal interface:
 

@@ -121,6 +121,27 @@ func TestBatchBrowserViewerFramesRemainWithinTerminal(t *testing.T) {
 	}
 }
 
+func TestBatchDetailsHeaderLeavesRoomForTheFullID(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	id := "batch_" + strings.Repeat("abcdefgh", 6)
+	d := browserTestDocument(t, "Completed  3 of 3 succeeded\nBatch ID  "+id+"\n")
+	m := newBatchBrowserDocumentScreen(t.Context(), d, "Batch details", "")
+	t.Cleanup(m.documentState.stop)
+	_, resize := m.Update(tea.WindowSizeMsg{Width: 32, Height: 14})
+	applyBrowserDocumentCommand(t, m, resize)
+	view := strings.Split(m.View().Content, "\n")
+	require.Contains(t, view[0], "Batch details")
+	require.Contains(t, view[1], "─")
+	require.Contains(t, view[2], "3 of 3 succeeded")
+	for _, line := range view {
+		require.LessOrEqual(t, ansi.StringWidth(line), 32)
+	}
+	require.Contains(t, strings.Join(m.documentState.page.Lines, ""), id, "wrapped lines retain the complete identifier")
+	var printed strings.Builder
+	require.NoError(t, d.writeTo(t.Context(), &printed))
+	require.Equal(t, 1, strings.Count(printed.String(), id))
+}
+
 func TestBatchBrowserViewerIgnoresOldPageAndCancelsExit(t *testing.T) {
 	m := newBatchBrowserDocumentScreen(t.Context(), browserTestDocument(t, "Input: first\nInput: second"), "Input requests", "batch_test")
 	old := m.Init()

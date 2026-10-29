@@ -37,7 +37,7 @@ func TestBatchBrowserLocalInputBrowse(t *testing.T) {
 	selected := filepath.Join(directory, "z folder", "résultats 日本語.jsonl")
 	require.NoError(t, os.WriteFile(selected, []byte("{}\n"), 0600))
 	step := 0
-	path, err := chooseBatchBrowserLocalFile(t.Context(), directory, func(ctx context.Context, m *batchBrowserScreen) error {
+	path, err := chooseBatchBrowserFile(t.Context(), directory, "JSONL", func(ctx context.Context, m *batchBrowserScreen) error {
 		step++
 		require.Equal(t, "picker", m.flow.mode)
 		require.Contains(t, m.subtitle, "Folder: ")
@@ -46,7 +46,7 @@ func TestBatchBrowserLocalInputBrowse(t *testing.T) {
 			for _, choice := range m.choices {
 				names = append(names, choice.title)
 			}
-			require.Equal(t, []string{"Parent folder", "z folder" + string(filepath.Separator), "a.jsonl", "Enter a file or folder path", "Refresh folder"}, names)
+			require.Equal(t, []string{"z folder" + string(filepath.Separator), "a.jsonl"}, names)
 			batchInputChooseTitle(t, m, "z folder"+string(filepath.Separator))
 		} else {
 			require.Equal(t, 2, step)
@@ -97,7 +97,7 @@ func TestBatchBrowserLocalInputTypedPathRecoveryAndHome(t *testing.T) {
 	}
 	t.Setenv(homeVariable, directory)
 	step := 0
-	path, err := chooseBatchBrowserLocalFile(t.Context(), directory, func(ctx context.Context, m *batchBrowserScreen) error {
+	path, err := chooseBatchBrowserFile(t.Context(), directory, "JSONL", func(ctx context.Context, m *batchBrowserScreen) error {
 		step++
 		switch step {
 		case 1:
@@ -108,8 +108,6 @@ func TestBatchBrowserLocalInputTypedPathRecoveryAndHome(t *testing.T) {
 			m.chosen = "value"
 		case 3:
 			require.Contains(t, m.notice, "Could not read that location")
-			m.chosen = "path"
-		case 4:
 			require.Equal(t, "~/missing.jsonl", m.input.Value())
 			m.input.SetValue("~/" + filename)
 			m.chosen = "value"
@@ -124,7 +122,7 @@ func TestBatchBrowserLocalInputTypedPathRecoveryAndHome(t *testing.T) {
 
 func TestBatchBrowserLocalInputReadFailureAndCancel(t *testing.T) {
 	step := 0
-	path, err := chooseBatchBrowserLocalFile(t.Context(), filepath.Join(t.TempDir(), "missing"), func(ctx context.Context, m *batchBrowserScreen) error {
+	path, err := chooseBatchBrowserFile(t.Context(), filepath.Join(t.TempDir(), "missing"), "JSONL", func(ctx context.Context, m *batchBrowserScreen) error {
 		step++
 		switch step {
 		case 1:
@@ -148,7 +146,7 @@ func TestBatchBrowserLocalInputRejectsDevices(t *testing.T) {
 		t.Skip("Unix device path")
 	}
 	step := 0
-	path, err := chooseBatchBrowserLocalFile(t.Context(), t.TempDir(), func(ctx context.Context, m *batchBrowserScreen) error {
+	path, err := chooseBatchBrowserFile(t.Context(), t.TempDir(), "JSONL", func(ctx context.Context, m *batchBrowserScreen) error {
 		step++
 		switch step {
 		case 1:
@@ -158,6 +156,8 @@ func TestBatchBrowserLocalInputRejectsDevices(t *testing.T) {
 			m.chosen = "value"
 		case 3:
 			require.Contains(t, m.notice, "regular input file")
+			m.chosen = "back"
+		case 4:
 			m.chosen = "back"
 		default:
 			t.Fatal("unexpected selector screen")
@@ -312,9 +312,138 @@ func TestBatchBrowserUploadedInputPropagatesTerminalFailure(t *testing.T) {
 func TestBatchBrowserInputLocationPreservesExplicitComponents(t *testing.T) {
 	t.Chdir(t.TempDir())
 	for _, path := range []string{".", "..", "link/../input.jsonl", "folder/"} {
-		resolved, err := batchBrowserInputLocation(path)
+		resolved, err := batchBrowserInputLocation(path, "")
 		require.NoError(t, err)
 		require.True(t, filepath.IsAbs(resolved))
 		require.True(t, strings.HasSuffix(resolved, path))
 	}
+}
+
+func TestBatchBrowserInputPickerCombinesFormatsAndRemembersFolder(t *testing.T) {
+	base := t.TempDir()
+	base, err := filepath.EvalSymlinks(base)
+	require.NoError(t, err)
+	sub := filepath.Join(base, "data")
+	require.NoError(t, os.Mkdir(sub, 0700))
+	for _, name := range []string{"labels.CSV", "requests.jsonl", "hidden.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(sub, name), []byte("fixture"), 0600))
+	}
+	folder, step := base, 0
+	var expected string
+	selected, uploaded, err := browseBatchBrowserFolder(t.Context(), &folder, "", func(_ context.Context, m *batchBrowserScreen) error {
+		step++
+		require.Equal(t, "Choose input file", m.title)
+		switch step {
+		case 1:
+			require.True(t, m.flow.localFiles)
+			batchInputChooseTitle(t, m, "data"+string(filepath.Separator))
+		case 2:
+			require.Equal(t, "Folder: "+batchBrowserFolderLabel(sub), m.subtitle)
+			var names []string
+			for _, choice := range m.choices {
+				names = append(names, choice.title)
+			}
+			require.Equal(t, []string{"Choose an uploaded file", "labels.CSV", "requests.jsonl"}, names)
+			require.Equal(t, "labels.CSV", m.choices[m.visible[m.index]].title)
+			m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+			m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+			require.False(t, m.closed)
+			require.Equal(t, "labels.CSV", m.choices[m.visible[m.index]].title)
+			m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+			require.Equal(t, "parent", m.chosen)
+		case 3:
+			require.Equal(t, "data"+string(filepath.Separator), m.choices[m.visible[m.index]].title)
+			m.Update(tea.PasteMsg{Content: "data/labels.CSV"})
+			require.Empty(t, m.visible)
+			m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			require.Equal(t, "typed-path", m.chosen)
+			expected = filepath.Join(sub, "labels.CSV")
+		default:
+			t.Fatal("unexpected picker screen")
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, expected, filepath.Clean(selected))
+	require.False(t, uploaded)
+	require.Equal(t, base, folder)
+	_, uploaded, err = browseBatchBrowserFolder(t.Context(), &folder, "", func(_ context.Context, m *batchBrowserScreen) error {
+		m.Update(tea.PasteMsg{Content: "uploaded"})
+		m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		require.Equal(t, "uploaded", m.chosen)
+		return nil
+	})
+	require.NoError(t, err)
+	require.True(t, uploaded)
+}
+
+func TestBatchBrowserPathShortcutUsesVisibleFolder(t *testing.T) {
+	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+	folder := filepath.Join(root, "nested")
+	require.NoError(t, os.Mkdir(folder, 0700))
+	target := filepath.Join(root, "original.csv")
+	require.NoError(t, os.WriteFile(target, []byte("fixture"), 0600))
+	t.Chdir(t.TempDir()) // Relative paths must resolve from the displayed folder.
+	step := 0
+	path, _, err := browseBatchBrowserFolder(t.Context(), &folder, "", func(_ context.Context, m *batchBrowserScreen) error {
+		step++
+		if step == 1 {
+			m.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
+			require.Equal(t, "path", m.chosen)
+		} else {
+			require.Equal(t, "Folder: "+batchBrowserFolderLabel(folder), m.subtitle)
+			m.Update(tea.PasteMsg{Content: "../original.csv"})
+			m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Clean(target), filepath.Clean(path))
+}
+
+func TestBatchBrowserPastedPathCorrection(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "more")
+	require.NoError(t, os.Mkdir(nested, 0700))
+	target := filepath.Join(nested, "answers.csv")
+	require.NoError(t, os.WriteFile(target, []byte("fixture"), 0600))
+	step := 0
+	file, _, err := browseBatchBrowserFolder(t.Context(), &root, "", func(_ context.Context, m *batchBrowserScreen) error {
+		step++
+		if step == 1 {
+			m.Update(tea.PasteMsg{Content: "more/typo.csv"})
+			m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		} else {
+			require.Equal(t, "Go to file or folder", m.title)
+			require.Contains(t, m.notice, "Check its name")
+			require.Equal(t, "more/typo.csv", m.input.Value())
+			m.input.SetValue("more/answers.csv")
+			m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	expected, err := filepath.EvalSymlinks(target)
+	require.NoError(t, err)
+	require.Equal(t, expected, filepath.Clean(file))
+}
+
+func TestBatchBrowserSelectedFilenameRetainsControlCharacters(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows filenames cannot contain newlines.")
+	}
+	folder := t.TempDir()
+	name := "two\nlines.jsonl"
+	target := filepath.Join(folder, name)
+	require.NoError(t, os.WriteFile(target, []byte("{}\n"), 0600))
+	path, _, err := browseBatchBrowserFolder(t.Context(), &folder, "", func(_ context.Context, m *batchBrowserScreen) error {
+		batchInputChooseTitle(t, m, name)
+		return nil
+	})
+	require.NoError(t, err)
+	expected, err := filepath.EvalSymlinks(target)
+	require.NoError(t, err)
+	require.Equal(t, expected, path)
 }

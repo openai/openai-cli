@@ -19,9 +19,17 @@ import (
 // The save resolver supplies home expansion and an absolute location. Appending
 // a temporary component permits folder operands such as "." and "~/" without
 // changing the save field's filename validation. No component is created.
-func batchBrowserInputLocation(value string) (string, error) {
-	if strings.TrimSpace(value) == "" {
+func batchBrowserInputLocation(value, folder string) (string, error) {
+	if strings.TrimSpace(value) == "" || strings.ContainsAny(value, "\r\n\x00") {
 		return "", batchError("Enter a file or folder path.")
+	}
+	homePath := value == "~" || len(value) >= 2 && value[0] == '~' && os.IsPathSeparator(value[1])
+	if folder != "" && !homePath && filepath.VolumeName(value) == "" && !os.IsPathSeparator(value[0]) {
+		// Preserve symlink/.. traversal in user paths. filepath.Join would clean it away.
+		if !os.IsPathSeparator(folder[len(folder)-1]) {
+			folder += string(filepath.Separator)
+		}
+		return folder + value, nil
 	}
 	suffix := string(filepath.Separator) + ".batch-picker-location"
 	path, err := batchBrowserSaveDestination(value + suffix)
@@ -31,8 +39,49 @@ func batchBrowserInputLocation(value string) (string, error) {
 	return strings.TrimSuffix(path, suffix), nil
 }
 
-func batchBrowserInputEntry(ctx context.Context, title, prompt, value, notice string, show func(context.Context, *batchBrowserScreen) error) (string, bool, error) {
-	m := newBatchBrowserFlow("entry", title, "", nil)
+func batchBrowserFolderLabel(folder string) string {
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		if folder == home {
+			return "~"
+		}
+		if strings.HasPrefix(folder, home+string(filepath.Separator)) {
+			return "~" + folder[len(home):]
+		}
+	}
+	return folder
+}
+
+// Resolve the parent as the filesystem does, including symlink/.. traversal.
+func batchBrowserFileFolder(path string) string {
+	parent, _ := filepath.Split(path)
+	if folder, err := filepath.EvalSymlinks(parent); err == nil {
+		return folder
+	}
+	return parent
+}
+
+func batchBrowserTypedLocation(value, folder string) (string, bool, error) {
+	path, err := batchBrowserInputLocation(value, folder)
+	if err != nil {
+		return "", false, err
+	}
+	return batchBrowserLocalEntry(path)
+}
+
+func batchBrowserLocalEntry(path string) (string, bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", false, batchError("Could not read that location. Check its name, folder, and permissions.")
+	}
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		return "", false, batchError("Choose a regular input file or folder. Devices and pipes cannot be uploaded here.")
+	}
+	return path, info.IsDir(), nil
+}
+
+func batchBrowserInputEntry(ctx context.Context, title, subtitle, prompt, value, notice string, show func(context.Context, *batchBrowserScreen) error) (string, bool, error) {
+	m := newBatchBrowserFlow("entry", title, subtitle, nil)
 	m.input.Prompt = prompt
 	m.input.SetValue(value)
 	m.notice = notice
@@ -42,20 +91,52 @@ func batchBrowserInputEntry(ctx context.Context, title, prompt, value, notice st
 	return m.input.Value(), m.chosen != "back", ctx.Err()
 }
 
-func chooseBatchBrowserLocalFile(ctx context.Context, initialDirectory string, show func(context.Context, *batchBrowserScreen) error) (string, error) {
+func chooseBatchBrowserFile(ctx context.Context, initialDirectory, format string, show func(context.Context, *batchBrowserScreen) error) (string, error) {
+	path, _, err := browseBatchBrowserFolder(ctx, &initialDirectory, format, show)
+	return path, err
+}
+
+// The Create form offers both local formats and uploaded inputs. CSV export only needs a local CSV.
+func browseBatchBrowserFolder(ctx context.Context, folder *string, format string, show func(context.Context, *batchBrowserScreen) error) (string, bool, error) {
+	initialDirectory := *folder
+	accepts := func(name string) bool {
+		if format == "folder" {
+			return false
+		}
+		ext := filepath.Ext(name)
+		if format == "" {
+			return strings.EqualFold(ext, ".csv") || strings.EqualFold(ext, ".jsonl")
+		}
+		return strings.EqualFold(ext, "."+format)
+	}
 	if initialDirectory == "" {
 		initialDirectory = "."
 	}
-	directory, err := batchBrowserInputLocation(initialDirectory)
-	if err != nil {
-		return "", err
+	directory := initialDirectory
+	if !filepath.IsAbs(directory) {
+		var err error
+		directory, err = batchBrowserInputLocation(initialDirectory, "")
+		if err != nil {
+			return "", false, err
+		}
 	}
-	draft, notice := "", ""
+	draft, notice, highlightPath := "", "", ""
 	for {
 		if err := ctx.Err(); err != nil {
-			return "", err
+			return "", false, err
 		}
 		choices := []batchBrowserChoice{}
+		title := "Choose a " + format + " file"
+		if format == "CSV" {
+			title = "Choose the original CSV"
+		}
+		if format == "" {
+			title = "Choose input file"
+			choices = append(choices, batchBrowserChoice{value: "uploaded", title: "Choose an uploaded file", search: "Choose an uploaded file"})
+		}
+		if format == "folder" {
+			title = "Choose save folder"
+		}
 		locations := map[string]string{}
 		// Resolve existing folders before joining child names. Cleaning an
 		// unresolved symlink/.. path would select a different file.
@@ -63,10 +144,13 @@ func chooseBatchBrowserLocalFile(ctx context.Context, initialDirectory string, s
 		var entries []os.DirEntry
 		if readErr == nil {
 			directory = canonical
+			*folder = directory
 			entries, readErr = os.ReadDir(directory)
 		}
 		if readErr != nil {
 			notice = "Could not read this folder. Check folder access or enter another file or folder path."
+		} else if format == "folder" {
+			choices = append(choices, batchBrowserChoice{value: "use-folder", title: "Use this folder", search: "Use this folder"})
 		}
 		type localEntry struct {
 			name, path string
@@ -75,9 +159,9 @@ func chooseBatchBrowserLocalFile(ctx context.Context, initialDirectory string, s
 		var available []localEntry
 		for _, entry := range entries {
 			if err := ctx.Err(); err != nil {
-				return "", err
+				return "", false, err
 			}
-			if !entry.IsDir() && entry.Type()&os.ModeSymlink == 0 && !strings.EqualFold(filepath.Ext(entry.Name()), ".jsonl") {
+			if !entry.IsDir() && entry.Type()&os.ModeSymlink == 0 && !accepts(entry.Name()) {
 				continue
 			}
 			path := filepath.Join(directory, entry.Name())
@@ -85,76 +169,107 @@ func chooseBatchBrowserLocalFile(ctx context.Context, initialDirectory string, s
 			if statErr != nil {
 				continue
 			}
-			if info.IsDir() || info.Mode().IsRegular() && strings.EqualFold(filepath.Ext(entry.Name()), ".jsonl") {
+			if info.IsDir() || info.Mode().IsRegular() && accepts(entry.Name()) {
 				available = append(available, localEntry{entry.Name(), path, info.IsDir()})
 			}
 		}
 		sort.SliceStable(available, func(i, j int) bool { return available[i].folder && !available[j].folder })
-		if parent := filepath.Dir(directory); parent != directory {
-			choices = append(choices, batchBrowserChoice{value: "parent", title: "Parent folder", detail: parent, search: "Parent folder"})
-			locations["parent"] = parent
-		}
 		for index, entry := range available {
 			key := "local:" + strconv.Itoa(index)
 			name := entry.name
 			if entry.folder {
 				name += string(filepath.Separator)
 			}
-			choices = append(choices, batchBrowserChoice{value: key, title: name, detail: entry.path, search: entry.name})
+			choices = append(choices, batchBrowserChoice{value: key, title: name, search: entry.name})
 			locations[key] = entry.path
 		}
-		choices = append(choices,
-			batchBrowserChoice{value: "path", title: "Enter a file or folder path", detail: "Paste a path, including ~/ for your home folder."},
-			batchBrowserChoice{value: "refresh", title: "Refresh folder"})
-		m := newBatchBrowserFlow("picker", "Choose a JSONL input file", "Folder: "+directory, choices)
-		m.input.Placeholder = "Find a folder or JSONL file"
+		m := newBatchBrowserFlow("picker", title, "Folder: "+batchBrowserFolderLabel(directory), choices)
+		if format == "" && len(available) > 0 {
+			// Keep uploaded files visible above the list while focusing a local entry.
+			m.index = 1
+		}
+		m.flow.localFiles = true
+		m.input.Prompt = "Search  "
+		m.input.Placeholder = "Filter this folder"
 		m.notice = notice
+		for i, choice := range choices {
+			if highlightPath != "" && locations[choice.value] == highlightPath {
+				m.index = i
+				break
+			}
+		}
+		highlightPath = ""
 		if err := show(ctx, m); err != nil {
-			return "", err
+			return "", false, err
 		}
 		if m.chosen == "back" {
-			return "", nil
+			return "", false, nil
 		}
 		notice = ""
-		if m.chosen == "refresh" {
+		switch m.chosen {
+		case "use-folder":
+			return directory, false, nil
+		case "uploaded":
+			if format == "" {
+				return "", true, nil
+			}
+			continue
+		case "parent":
+			highlightPath, directory, draft = directory, filepath.Dir(directory), ""
+			continue
+		case "refresh":
 			continue
 		}
 		path := locations[m.chosen]
-		if m.chosen == "path" {
+		var isFolder bool
+		var err error
+		if m.chosen == "path" || m.chosen == "typed-path" {
+			editPath := m.chosen == "path"
+			if !editPath {
+				draft = m.input.Value()
+			}
 			for {
-				value, selected, inputErr := batchBrowserInputEntry(ctx, "Choose a local input file", "File or folder: ", draft, notice, show)
-				if inputErr != nil {
-					return "", inputErr
+				if editPath {
+					title := "Go to file or folder"
+					if format == "folder" {
+						title = "Go to folder"
+					}
+					value, selected, err := batchBrowserInputEntry(ctx, title, "Folder: "+batchBrowserFolderLabel(directory), "Path: ", draft, notice, show)
+					if err != nil {
+						return "", false, err
+					}
+					draft = value
+					if !selected {
+						notice = ""
+						break
+					}
 				}
-				draft = value
-				if !selected {
+				path, isFolder, err = batchBrowserTypedLocation(draft, directory)
+				if err == nil && format == "folder" && !isFolder {
+					err = batchError("That location is a file. Enter a folder instead.")
 					path = ""
+				}
+				if err == nil {
 					break
 				}
-				path, inputErr = batchBrowserInputLocation(value)
-				if inputErr == nil {
-					break
-				}
-				notice = inputErr.Error()
+				notice, editPath = err.Error(), true
+			}
+		} else {
+			// A listed entry may disappear between listing and selection.
+			path, isFolder, err = batchBrowserLocalEntry(path)
+			if err != nil {
+				notice = err.Error()
+				continue
 			}
 		}
 		if path == "" {
 			continue
 		}
-		info, statErr := os.Stat(path)
-		if statErr != nil {
-			notice = "Could not read that location. Check the path and access, or choose another file."
+		if isFolder {
+			directory, draft = path, ""
 			continue
 		}
-		if info.IsDir() {
-			directory = path
-			continue
-		}
-		if !info.Mode().IsRegular() {
-			notice = "Choose a regular input file. Folders, devices, and pipes cannot be uploaded here."
-			continue
-		}
-		return path, nil
+		return path, false, nil
 	}
 }
 
@@ -288,7 +403,7 @@ func chooseBatchBrowserUploadedFile(ctx context.Context, client openai.Client, o
 			return "", "", nil
 		case "manual":
 			for {
-				value, selected, err := batchBrowserInputEntry(ctx, "Use an uploaded input file", "File ID: ", draft, notice, show)
+				value, selected, err := batchBrowserInputEntry(ctx, "Use an uploaded input file", "", "File ID: ", draft, notice, show)
 				if err != nil {
 					return "", "", err
 				}

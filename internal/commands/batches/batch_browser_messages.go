@@ -16,6 +16,8 @@ func batchBrowserActionLabel(action string) string {
 		return "Create batch"
 	case "output":
 		return "Results"
+	case "raw-output":
+		return "API results"
 	case "error":
 		return "Request errors"
 	case "input":
@@ -28,6 +30,8 @@ func batchBrowserActionLabel(action string) string {
 		return "Save error file"
 	case "save:input":
 		return "Save input file"
+	case "save:csv":
+		return "Save results spreadsheet"
 	case "status":
 		return "Batch details"
 	case "refresh":

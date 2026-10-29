@@ -767,11 +767,12 @@ func TestBatchBrowserPrintIsExplicitAndRestoresDocument(t *testing.T) {
 		case 2:
 			require.Equal(t, "document", screen.kind)
 			require.Equal(t, "Batch details", screen.title)
-			require.Equal(t, "batch_one", screen.subtitle)
+			require.Empty(t, screen.subtitle, "the printable Batch details already contains the complete ID")
 			require.Empty(t, out.String(), "viewing must not dump output into terminal history")
 			require.Zero(t, teardown, "viewing must preserve the active panel")
 			original = screen.document
 			require.NoError(t, original.writeTo(ctx, &expected))
+			require.Equal(t, 1, strings.Count(expected.String(), "batch_one"))
 			screen.chosen = "print"
 		case 3:
 			require.Equal(t, "return", screen.kind)

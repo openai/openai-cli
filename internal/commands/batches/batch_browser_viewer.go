@@ -56,7 +56,7 @@ func (w workflow) showBatchBrowserFailure(ctx context.Context, cmd *cli.Command,
 	return showBatchBrowserDocument(ctx, cmd, document, "Action failed", id, show, beforeOutput)
 }
 
-func (w workflow) runBatchBrowserAction(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, id string, actions *batchBrowserScreen, drafts map[string]string, show func(context.Context, *batchBrowserScreen) error, beforeOutput func(context.Context) error) (err error) {
+func (w workflow) runBatchBrowserAction(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, id string, actions *batchBrowserScreen, show func(context.Context, *batchBrowserScreen) error, beforeOutput func(context.Context) error) (err error) {
 	document, err := newBatchBrowserDocument(ctx)
 	if err != nil {
 		return err
@@ -72,7 +72,7 @@ func (w workflow) runBatchBrowserAction(ctx context.Context, cmd *cli.Command, c
 		terminalFailed = terminalFailed || err != nil
 		return err
 	}
-	failure := presentation.renderBatchBrowserAction(ctx, cmd, client, options, id, actions, drafts, showAction, beforeOutput, document)
+	failure := presentation.renderBatchBrowserAction(ctx, cmd, client, options, id, actions, showAction, beforeOutput, document)
 	var printFailure *batchBrowserPrintError
 	if errors.As(failure, &printFailure) {
 		return failure
@@ -94,6 +94,10 @@ func (w workflow) runBatchBrowserAction(ctx context.Context, cmd *cli.Command, c
 		}
 	}
 	if document.hasContent() {
+		if failure == nil && actions.chosen == "status" {
+			// Batch details already includes the complete, wrappable ID in the document and its printed copy.
+			id = ""
+		}
 		if err = showBatchBrowserDocument(ctx, cmd, document, title, id, show, beforeOutput); err != nil {
 			return errors.Join(failure, err)
 		}
@@ -130,12 +134,13 @@ func showBatchBrowserDocument(ctx context.Context, cmd *cli.Command, document *b
 }
 
 type batchBrowserDocumentState struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	sequence uint64
-	page     batchBrowserDocumentPage
-	loading  bool
-	err      error
+	ctx        context.Context
+	cancel     context.CancelFunc
+	sequence   uint64
+	page       batchBrowserDocumentPage
+	loading    bool
+	err        error
+	csvResults bool
 }
 
 func (s *batchBrowserDocumentState) stop() {
@@ -157,7 +162,7 @@ func newBatchBrowserDocumentScreen(ctx context.Context, document *batchBrowserDo
 	return m
 }
 
-// Match the shared frame's content area, two heading rows, divider, and footer.
+// Match the shared frame's heading, optional subtitle, divider, and footer.
 func (m *batchBrowserScreen) documentSize() (int, int) {
 	width, height := max(1, m.width), max(1, m.height)
 	if width >= 50 && height >= 12 {
@@ -165,6 +170,10 @@ func (m *batchBrowserScreen) documentSize() (int, int) {
 	}
 	footer, used := 2, 2
 	keys := []string{"↑↓ scroll", "PgUp/PgDn page", "p print", "Esc back"}
+	if m.documentState.csvResults {
+		keys[2] = "s save CSV"
+		keys = append(keys[:3], "Ctrl+S save as", keys[3])
+	}
 	if m.documentRawAvailable {
 		label := "j Raw JSON"
 		if m.documentRaw {
@@ -188,7 +197,11 @@ func (m *batchBrowserScreen) documentSize() (int, int) {
 	if m.width >= 50 && m.height >= 12 {
 		content--
 	}
-	return max(1, content), max(1, height-3-footer)
+	header := 2
+	if m.subtitle != "" {
+		header++
+	}
+	return max(1, content), max(1, height-header-footer)
 }
 
 func (m *batchBrowserScreen) loadDocument(operation string, first int64) tea.Cmd {
@@ -234,6 +247,19 @@ func (m *batchBrowserScreen) updateDocument(message tea.Msg) (tea.Model, tea.Cmd
 		return m, m.loadDocument("anchor", 0)
 	case tea.KeyPressMsg:
 		_, rows := m.documentSize()
+		if s.csvResults {
+			switch msg.String() {
+			case "s", "ctrl+s":
+				s.stop()
+				m.closed, m.chosen = true, "save"
+				if msg.String() == "ctrl+s" {
+					m.chosen = "save-as"
+				}
+				return m, tea.Quit
+			case "p":
+				return m, nil
+			}
+		}
 		if msg.String() == "j" && m.documentRawAvailable {
 			s.stop()
 			m.closed, m.chosen = true, "toggle_raw"
@@ -286,8 +312,11 @@ func (m *batchBrowserScreen) documentLines(height, width int, footer []string, r
 	position = ansi.Truncate(position, max(0, width-14), "…")
 	titleWidth := width - ansi.StringWidth(position)
 	title := ansi.Truncate(batchInputLabel(m.title), max(1, titleWidth-2), "…")
-	lines := []string{"  " + heading.Render(title) + strings.Repeat(" ", max(0, titleWidth-ansi.StringWidth(title))) + muted.Render(position),
-		"  " + muted.Render(ansi.Truncate(batchInputLabel(m.subtitle), width, "…")), rule()}
+	lines := []string{"  " + lipgloss.NewStyle().Bold(colors).Render(title) + strings.Repeat(" ", max(0, titleWidth-ansi.StringWidth(title))) + muted.Render(position)}
+	if m.subtitle != "" {
+		lines = append(lines, "  "+muted.Render(ansi.Truncate(batchInputLabel(m.subtitle), width, "…")))
+	}
+	lines = append(lines, rule())
 	for index, text := range s.page.Lines[:min(len(s.page.Lines), max(0, height-len(lines)-len(footer)))] {
 		// These are presentation cues, never inferred request outcomes. Unknown
 		// values and continuation rows remain ordinary text.
@@ -312,6 +341,12 @@ func (m *batchBrowserScreen) documentLines(height, width int, footer []string, r
 			}
 			styled.WriteString(text[position:])
 			text = styled.String()
+		} else if s.csvResults && strings.HasPrefix(text, "Row ") {
+			text = heading.Render(text)
+		} else if s.csvResults && strings.HasPrefix(text, "Answer: ") {
+			text = heading.Render("Answer: ") + strings.TrimPrefix(text, "Answer: ")
+		} else if s.csvResults && strings.HasPrefix(text, "Error: ") {
+			text = semantic(muted, "negative").Render("Error: ") + strings.TrimPrefix(text, "Error: ")
 		} else if strings.HasPrefix(text, "Request: ") {
 			text = heading.Render(text)
 		} else if label, value, ok := strings.Cut(text, ": "); ok {

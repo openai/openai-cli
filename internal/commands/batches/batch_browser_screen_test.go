@@ -793,6 +793,33 @@ func TestBatchBrowserActionsGroupIdentityAndOutcome(t *testing.T) {
 	require.Contains(t, lines[4], "> View results", "actions follow the divider without a blank row")
 }
 
+func TestBatchBrowserActionHintsFollowFilesAndWidth(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "")
+	t.Setenv("COLORFGBG", "0")
+	batch := gjson.Parse(`{"status":"completed","endpoint":"/v1/responses","output_file_id":"file_out","input_file_id":"file_in","error_file_id":"file_err","request_counts":{"total":3,"completed":2,"failed":1}}`)
+	m := newBatchBrowserActions("batch_partial_demo")
+	m.setOverview(batch)
+	view := m.View().Content
+	for _, value := range []string{"Output ready", "Error file ready", "Request JSONL", "/v1/responses"} {
+		require.Contains(t, ansi.Strip(view), value)
+	}
+	fg, _ := batchBrowserTestTextStyle(t, view, "Error file ready")
+	require.Equal(t, "229;154;154", fg)
+	fg, _ = batchBrowserTestTextStyle(t, view, "Output ready")
+	require.Equal(t, "141;201;160", fg)
+	t.Setenv("NO_COLOR", "1")
+	require.Equal(t, ansi.Strip(view), m.View().Content)
+	m.width = 40
+	require.NotContains(t, m.View().Content, "Output ready")
+	require.Contains(t, m.View().Content, "> View results")
+	m.width = 80
+	m.setOverview(gjson.Parse(`{"status":"in_progress","output_file_id":null}`))
+	require.Contains(t, m.View().Content, "No file yet")
+	m.setOverview(gjson.Parse(`{"status":"completed","error_file_id":null,"errors":{"data":[{"code":"invalid"}]}}`))
+	require.Contains(t, m.View().Content, "Check diagnostics")
+}
+
 func TestBatchBrowserActionsShowsAllChoicesAt50x12(t *testing.T) {
 	m := newBatchBrowserActions("batch_one")
 	m.setOverview(gjson.Parse(`{"status":"completed","request_counts":{"completed":2,"failed":1,"total":3},"error_file_id":"file_errors","errors":null}`))

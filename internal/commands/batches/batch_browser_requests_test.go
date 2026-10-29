@@ -54,6 +54,9 @@ func TestBatchBrowserRequestsSearchFocusAndSelection(t *testing.T) {
 	require.Equal(t, int64(1), m.requestState.page.Total)
 	require.Contains(t, ansi.Strip(m.View().Content), "1 match")
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.False(t, m.closed)
+	require.True(t, m.requestState.expanded)
+	m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	require.Equal(t, "record:3", m.chosen)
 	require.True(t, m.closed)
 	require.Nil(t, m.Init(), "returning from details must retain the ready list without a loading flash")
@@ -75,6 +78,8 @@ func TestBatchBrowserRequestsPagingEndAndResizePreserveSelection(t *testing.T) {
 	require.Equal(t, int64(99), m.requestState.selected)
 	require.Contains(t, ansi.Strip(m.View().Content), "> 100  request-100")
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Contains(t, ansi.Strip(m.View().Content), "Message 100")
+	m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	require.Equal(t, "record:100", m.chosen)
 	// The session supplies size before Init when reopening this same screen.
 	m.Update(tea.WindowSizeMsg{Width: 30, Height: 7})
@@ -175,4 +180,112 @@ func TestBatchBrowserRequestsEmptySearchKeepsEditingAndBlocksOpen(t *testing.T) 
 	require.True(t, m.searchFocused)
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	require.Equal(t, "back", m.chosen)
+}
+
+func TestBatchBrowserRequestsInlinePreviewFollowsSelection(t *testing.T) {
+	m := requestScreenFixture(t, 3)
+	m.requestState.preview.read = func(ctx context.Context, id int64) ([]batchBrowserPreviewLine, error) {
+		return []batchBrowserPreviewLine{{fmt.Sprintf("Usage for %d", id), "secondary"}}, ctx.Err()
+	}
+	_, first := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, second := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	stale := first().(batchBrowserPreviewReady)
+	require.ErrorIs(t, stale.err, context.Canceled)
+	m.Update(stale)
+	applyRequestCommand(t, m, second)
+	view := ansi.Strip(m.View().Content)
+	require.Contains(t, view, "> 2  request-002")
+	require.Contains(t, view, "Usage for 2")
+	require.NotContains(t, view, "Usage for 1")
+	_, third := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	applyRequestCommand(t, m, third)
+	require.False(t, m.closed)
+	require.False(t, m.requestState.expanded)
+	require.NotContains(t, ansi.Strip(m.View().Content), "Usage for")
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.True(t, m.closed)
+}
+
+func TestBatchBrowserRequestsPreviewKeepsAnswerAndTrustedOutcome(t *testing.T) {
+	m := requestScreenFixture(t, 3)
+	m.requestState.catalog.selection = "output"
+	row := &m.requestState.page.Rows[0]
+	row.Preview = "neutral"
+	m.requestState.expanded = true
+	lines := []batchBrowserPreviewLine{{"Completed", "positive"}, {"Output", "heading"}, {"neutral", ""}, {"Tokens  31 input  5 output  36 total", "secondary"}}
+	m.requestState.preview.lines = lines
+	view := ansi.Strip(m.View().Content)
+	require.Equal(t, 1, strings.Count(view, "neutral"))
+	require.Equal(t, 1, strings.Count(view, "request-001"))
+	require.Contains(t, view, "Completed")
+	require.Contains(t, view, "Tokens  31 input")
+	require.NotContains(t, view, "Output")
+	m.width, m.height = 30, 7
+	view = ansi.Strip(m.View().Content)
+	require.Contains(t, view, "neutral")
+	require.LessOrEqual(t, len(strings.Split(view, "\n")), m.height)
+	m.width, m.height = 80, 24
+	m.requestState.preview.lines = []batchBrowserPreviewLine{{"Output", ""}, {"neutral", ""}}
+	require.Contains(t, ansi.Strip(m.View().Content), "Output", "untrusted model text must never identify a section")
+}
+
+func TestBatchBrowserInlineInputsAndFailuresAddContextWithoutRepeatingTheRow(t *testing.T) {
+	m := requestScreenFixture(t, 3)
+	row := &m.requestState.page.Rows[0]
+	m.requestState.expanded = true
+	row.Preview = "This is awful."
+	m.requestState.preview.lines = []batchBrowserPreviewLine{{"Input", "heading"}, {row.Preview, ""},
+		{"Instructions", "heading"}, {"Classify the message.", ""}, {"Settings", "heading"},
+		{"Model", "field"}, {"synthetic-model", ""}}
+	view := ansi.Strip(m.View().Content)
+	require.Equal(t, 1, strings.Count(view, row.Preview))
+	require.Regexp(t, `Instructions +Classify the message`, view)
+	require.Regexp(t, `Model +synthetic-model`, view)
+	require.NotContains(t, view, "Settings")
+	m.requestState.catalog.selection = "error"
+	row.Preview = "Temporary issue."
+	m.requestState.preview.lines = []batchBrowserPreviewLine{{"Failed", "negative"}, {row.Preview, "record_message"},
+		{"Next", "field"}, {"Retry this request.", ""}, {"HTTP", "field"}, {"500", ""}}
+	view = ansi.Strip(m.View().Content)
+	require.Equal(t, 1, strings.Count(view, row.Preview))
+	require.Regexp(t, `Next +Retry this request`, view)
+	require.Regexp(t, `HTTP +500`, view)
+	for _, size := range [][2]int{{30, 7}, {45, 10}, {50, 12}} {
+		m.width, m.height = size[0], size[1]
+		lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+		require.LessOrEqual(t, len(lines), size[1])
+		for _, line := range lines {
+			require.LessOrEqual(t, ansi.StringWidth(line), size[0])
+		}
+	}
+}
+
+func TestBatchBrowserSingleErrorStartsExpandedAndEscapeReturns(t *testing.T) {
+	row := `{"custom_id":"r","error":{"code":"bad_input","message":"Check input."}}`
+	newErrors := func(items ...string) *batchBrowserScreen {
+		m := newBatchBrowserRequests(t.Context(), catalogFixture(t, "error", items...), "Request errors", "batch_demo")
+		t.Cleanup(m.requestState.stop)
+		applyRequestCommand(t, m, m.Init())
+		return m
+	}
+	m := newErrors(row)
+	require.True(t, m.requestState.expanded)
+	require.Contains(t, ansi.Strip(m.View().Content), "Esc back")
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.True(t, m.closed)
+	require.Equal(t, "back", m.chosen)
+
+	m = newErrors(row)
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.False(t, m.requestState.expanded)
+	_, resize := m.Update(tea.WindowSizeMsg{Width: 30, Height: 7})
+	applyRequestCommand(t, m, resize)
+	require.False(t, m.requestState.expanded, "resizing must preserve an explicit collapse")
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.True(t, m.requestState.expanded)
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.False(t, m.closed, "Escape collapses an explicitly expanded row")
+	require.False(t, m.requestState.expanded)
+	require.False(t, newErrors(row, row).requestState.expanded)
 }

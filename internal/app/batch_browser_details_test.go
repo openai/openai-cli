@@ -20,13 +20,13 @@ func TestBatchBrowserDetailsPreserveSectionsAndTrustedStyles(t *testing.T) {
 	err := showBatchBrowserDetails(t.Context(), gjson.Parse(raw), &out, func(style batchcommands.RecordTextStyle) { styles = append(styles, style) })
 	require.NoError(t, err)
 	text := out.String()
-	require.True(t, strings.HasPrefix(text, "Completed  2 succeeded  1 failed  3 total\n"), text)
-	for _, value := range []string{"batch_資料", "/v1/responses", "synthetic", "1970-01-01T00:00:00Z", "1970-01-01T00:00:01Z", "1970-01-01T00:00:05Z", "1970-01-02T00:00:00Z", "5s", "24h", "file_input", "file_output", "file_error", "9007199254740993", "Outcome: failed"} {
+	require.True(t, strings.HasPrefix(text, "Completed  2 of 3 succeeded  1 failed  5s elapsed\n"), text)
+	for _, value := range []string{"batch_資料", "/v1/responses", "synthetic", "Jan 1, 1970 UTC", "00:00:01", "00:00:05", "Jan 2, 1970 UTC\nExpires", "00:00:00", "24h", "file_input", "file_output", "file_error", "9007199254740993", "Outcome: failed"} {
 		require.Contains(t, text, value)
 	}
 	require.NotContains(t, text, "\x1b")
 	previous := -1
-	for _, section := range []string{"\nErrors\n", "\nTiming\n", "\nFiles\n", "\nUsage\n", "\nMetadata\n"} {
+	for _, section := range []string{"\nErrors\n", "\nTimeline  ", "\nFiles\n", "\nUsage\n", "\nMetadata\n"} {
 		at := strings.Index(text, section)
 		require.Greater(t, at, previous, section)
 		previous = at
@@ -38,6 +38,31 @@ func TestBatchBrowserDetailsPreserveSectionsAndTrustedStyles(t *testing.T) {
 			require.Equal(t, "warning", style.Role)
 		}
 	}
+}
+
+func TestBatchBrowserDetailsShareDateAndOmitRedundantCounts(t *testing.T) {
+	batch := gjson.Parse(`{"object":"batch","id":"batch_demo","status":"completed","created_at":1792800000,"completed_at":1792800005,"request_counts":{"total":3,"completed":3,"failed":0},"input_file_id":"file_input","output_file_id":"file_output","metadata":{"scenario":"Three synthetic labels","owner":"team"}}`)
+	var out bytes.Buffer
+	require.NoError(t, showBatchBrowserDetails(t.Context(), batch, &out, func(batchcommands.RecordTextStyle) {}))
+	body := out.String()
+	require.True(t, strings.HasPrefix(body, "Completed  3 of 3 succeeded  5s elapsed\n"), body)
+	require.Equal(t, 1, strings.Count(body, "Oct 24, 2026 UTC"))
+	require.NotContains(t, body, "0 failed")
+	require.NotContains(t, body, "3 total")
+	require.Contains(t, body, "Completed  00:00:05")
+	require.Contains(t, body, "scenario  Three synthetic labels\nowner     team")
+	require.Equal(t, 1, strings.Count(body, "batch_demo"))
+}
+
+func TestBatchBrowserDetailsKeepDateBoundariesAndMetadataControls(t *testing.T) {
+	batch := gjson.Parse(`{"object":"batch","id":"batch_dates","status":"completed","created_at":-62167219200,"completed_at":253402300799,"metadata":{"fake\u001b[31m":"unsafe\u202etext"}}`)
+	var out bytes.Buffer
+	require.NoError(t, showBatchBrowserDetails(t.Context(), batch, &out, func(batchcommands.RecordTextStyle) {}))
+	for _, text := range []string{"Jan 1, 0000 UTC", "Dec 31, 9999 UTC", "00:00:00", "23:59:59", "3652424d 23h 59m 59s elapsed", "unsafe", "text"} {
+		require.Contains(t, out.String(), text)
+	}
+	require.NotContains(t, out.String(), "\x1b")
+	require.NotContains(t, out.String(), "\u202e")
 }
 
 func TestBatchBrowserDetailsKeepUnfamiliarCountsAndFallback(t *testing.T) {
