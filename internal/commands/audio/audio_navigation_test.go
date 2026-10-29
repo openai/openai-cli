@@ -71,7 +71,7 @@ func TestAudioNavigationEmptyEditors(t *testing.T) {
 		require.Equal(t, step.focus == 0, m.input.Focused())
 		require.Equal(t, step.focus == 1, m.instructions.Focused())
 	}
-	require.Zero(t, m.setting)
+	require.Equal(t, 1, m.setting)
 	require.Nil(t, m.result)
 }
 
@@ -270,24 +270,58 @@ func TestAudioNavigationTabUsesVisibleSectionOrder(t *testing.T) {
 	}
 }
 
+func TestAudioActionsKeyboardRouteBeforeGeneration(t *testing.T) {
+	for _, size := range []tea.WindowSizeMsg{{Width: 40, Height: 12}, {Width: 80, Height: 24}, {Width: 137, Height: 41}} {
+		t.Run(fmt.Sprintf("%dx%d", size.Width, size.Height), func(t *testing.T) {
+			m := audioReviewModel(t)
+			m.Update(size)
+			m.input.SetValue("Keep this draft.")
+			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyF2})
+			require.Zero(t, m.focus)
+			require.Empty(t, m.modal)
+
+			tab := tea.KeyPressMsg{Code: tea.KeyTab}
+			audioNavigationKey(t, m, tab) // Instructions.
+			audioNavigationKey(t, m, tab) // Settings.
+			if size.Width >= 110 {
+				require.Contains(t, ansi.Strip(m.View().Content), "Tab Actions")
+				audioNavigationKey(t, m, tab)
+			} else {
+				audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
+				view := ansi.Strip(m.View().Content)
+				require.Contains(t, view, "› More actions…")
+				require.Contains(t, view, "Enter open")
+				audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			}
+			require.Equal(t, "more", m.modal)
+			require.Contains(t, ansi.Strip(m.View().Content), "› History")
+			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
+			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			require.Equal(t, "info", m.modal)
+			require.Equal(t, "Help", m.infoTitle)
+			require.Nil(t, m.result)
+		})
+	}
+}
+
 func TestAudioNavigationSettingsArrowsDoNotWrapOrActivate(t *testing.T) {
 	for _, withResult := range []bool{false, true} {
 		t.Run(fmt.Sprintf("result_%t", withResult), func(t *testing.T) {
 			m := audioReviewModel(t)
 			m.input.SetValue("Clear must remain an explicit action")
-			m.focus, m.setting = 2, 0
+			m.focus, m.setting = 2, 1
 			if withResult {
 				result := audioReviewResult("retained", false)
 				m.result = &result
 			}
-			for setting := 1; setting <= audioSettingMore; setting++ {
+			for _, setting := range []int{audioSettingDisclosure, 4, audioSettingHistory, audioSettingMore} {
 				audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 				require.Equal(t, 2, m.focus)
 				require.Equal(t, setting, m.setting)
 			}
 			for _, key := range []rune{tea.KeyEnd, tea.KeyHome, tea.KeyHome, tea.KeyEnd} {
 				audioNavigationKey(t, m, tea.KeyPressMsg{Code: key})
-				expected := 0
+				expected := 1
 				if key == tea.KeyEnd {
 					expected = audioSettingMore
 				}
@@ -298,7 +332,7 @@ func TestAudioNavigationSettingsArrowsDoNotWrapOrActivate(t *testing.T) {
 			require.Equal(t, 4, m.focus, "visible player controls must remain reachable before generation")
 			require.Empty(t, m.modal)
 			m.focus, m.setting = 2, audioSettingMore
-			for setting := audioSettingMore - 1; setting >= 0; setting-- {
+			for _, setting := range []int{audioSettingHistory, 4, audioSettingDisclosure, 1} {
 				audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
 				require.Equal(t, 2, m.focus)
 				require.Equal(t, setting, m.setting)
@@ -409,7 +443,7 @@ func TestAudioNavigationRespectsBusyTinyAndModalGuards(t *testing.T) {
 					require.True(t, m.activeFailure())
 					require.Zero(t, m.failureOffset, "short error details need no scrolling")
 				}
-				if (modal == "choice" || modal == "history") && index < 2 {
+				if modal == "choice" && index < 2 {
 					require.Equal(t, 1-index, m.choice, "modal must retain arrow navigation")
 				}
 			}

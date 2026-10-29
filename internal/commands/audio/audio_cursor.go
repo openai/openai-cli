@@ -24,50 +24,6 @@ func audioEditorCursor(editor textarea.Model, x, y int) *tea.Cursor {
 	return cursor
 }
 
-// Coordinates refer to the unframed form rows before optional gaps are removed.
-func (m *audioWorkbench) formCursor(compact bool) *tea.Cursor {
-	if m.modal != "" || m.busy || m.quit || !m.usable() {
-		return nil
-	}
-	textHeight := 1
-	if !compact || m.focus == 0 {
-		textHeight = m.input.Height()
-	}
-	x, gap := 2, 0
-	if !compact {
-		x, gap = m.formLabelWidth()+3, 1
-		textHeight++ // The full-width composer keeps its heading above the editor.
-	}
-	switch m.focus {
-	case 0:
-		if !compact {
-			return audioEditorCursor(m.input, 2, 1)
-		}
-		return audioEditorCursor(m.input, x, 0)
-	case 1:
-		if !m.instructionsSupported() {
-			return nil
-		}
-		y := textHeight + gap
-		if compact {
-			y++ // Compact Instructions keeps its label above the editor.
-		}
-		return audioEditorCursor(m.instructions, x, y)
-	case 2:
-		if m.setting == 3 && m.speedEditing {
-			instructionsHeight := 1
-			if !compact && !m.instructionsSupported() && m.instructions.Value() != "" {
-				instructionsHeight++
-			}
-			// Model, Voice, and Format precede Speed. Framed rows also have
-			// two section gaps.
-			y := textHeight + instructionsHeight + 3 + 2*gap
-			return audioEditorCursor(m.speedInput, m.formLabelWidth()+3, y)
-		}
-	}
-	return nil
-}
-
 // Translate body coordinates only after the final row budget is known.
 func (m *audioWorkbench) cursorView(lines []string, footerCount int, cursor *tea.Cursor) tea.View {
 	view := tea.NewView(m.fitAudio(lines, footerCount))

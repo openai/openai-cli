@@ -21,7 +21,7 @@ func TestAudioWorkbenchDrawSynchronizesGeometryAfterNonKeyMessage(t *testing.T) 
 			m.instructions.SetValue("Keep these instructions.")
 			result := audioReviewResult("retained", false)
 			m.result, m.focus = &result, 4
-			m.note = "Audio retained. Space plays or stops. S saves the original bytes."
+			m.note = "Audio retained. Space plays the recording. S opens Save."
 			paint := &audioRecordedFrames{}
 			inline := &audioWorkbenchInline{model: m, painter: paint, profile: colorprofile.ASCII, started: true}
 
@@ -47,7 +47,7 @@ func TestAudioWorkbenchDrawSynchronizesGeometryAfterNonKeyMessage(t *testing.T) 
 			require.NotContains(t, frame, "\x1b[3J")
 			if size[0] == 40 {
 				require.Contains(t, frame, "Text to speech")
-				require.Contains(t, frame, "Coral • WAV")
+				require.Contains(t, frame, "Coral  WAV")
 				require.Contains(t, frame, "00:00.000 / 00:01.000")
 			} else {
 				require.Contains(t, frame, "Resize to 40 x 12.")

@@ -30,6 +30,14 @@ func (m *audioWorkbench) cycleSection(backward bool) tea.Cmd {
 		}
 		return m.focusSection(4)
 	}
+	if m.inlineActions() {
+		if m.focus == 2 && !backward || m.focus == 4 && backward {
+			return m.openActions()
+		}
+		if m.setting == audioSettingMore || m.setting == audioSettingHistory {
+			m.setting = 1
+		}
+	}
 	order := []int{0, 1, 2, 4}
 	if !m.instructionsSupported() {
 		order = []int{0, 2, 4}
@@ -39,6 +47,18 @@ func (m *audioWorkbench) cycleSection(backward bool) tea.Cmd {
 		step = -1
 	}
 	return m.focusSection(order[(slices.Index(order, m.focus)+step+len(order))%len(order)])
+}
+
+func (m *audioWorkbench) settingOrder() []int {
+	order := []int{1, audioSettingDisclosure}
+	if m.settingsExpanded {
+		order = append(order, 0, 2, 3)
+	}
+	order = append(order, 4)
+	if !m.inlineActions() {
+		order = append(order, audioSettingHistory, audioSettingMore)
+	}
+	return order
 }
 
 // Call after busy, minimum-size, and modal guards. Editing keeps modified arrows
@@ -77,15 +97,22 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 		}
 		if key == "down" && editor.Line() == editor.LineCount()-1 && line.RowOffset == line.Height-1 {
 			if m.focus == 1 || !m.instructionsSupported() {
-				m.setting = 0
+				m.setting = 1
 				return true, m.focusSection(2)
 			}
 			return true, m.focusSection(1)
 		}
 	case 2:
+		order := m.settingOrder()
 		switch key {
 		case "left", "right":
-			if m.setting < 4 || len(m.formActionRows()) != 1 {
+			if m.inlineActions() && m.setting == 4 {
+				if key == "right" {
+					return true, m.openActions()
+				}
+				return true, nil
+			}
+			if m.setting < 4 || m.setting > audioSettingMore || len(m.formActionRows()) != 1 {
 				return false, nil
 			}
 			step := 1
@@ -94,22 +121,30 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			}
 			m.setting = max(4, min(audioSettingMore, m.setting+step))
 		case "up":
-			if m.setting == 0 {
+			index := slices.Index(order, m.setting)
+			if index <= 0 {
 				if !m.instructionsSupported() {
 					return true, m.focusSection(0)
 				}
 				return true, m.focusSection(1)
 			}
-			m.setting--
+			m.setting = order[index-1]
 		case "down":
-			if m.setting == audioSettingMore {
+			index := slices.Index(order, m.setting)
+			if index == len(order)-1 {
+				if m.inlineActions() {
+					return true, m.openActions()
+				}
 				m.resultAction = 0
 				return true, m.focusSection(4)
 			}
-			m.setting++
+			m.setting = order[index+1]
 		case "home":
-			m.setting = 0
+			m.setting = order[0]
 		case "end":
+			if m.inlineActions() {
+				return true, m.openActions()
+			}
 			m.setting = audioSettingMore
 		default:
 			return false, nil
@@ -131,6 +166,9 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 				m.waveformFocused = true
 			} else {
 				m.waveformFocused = false
+				if m.inlineActions() {
+					return true, m.openActions()
+				}
 				m.setting = audioSettingMore
 				return true, m.focusSection(2)
 			}

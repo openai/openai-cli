@@ -90,19 +90,14 @@ func TestAudioResultViewKeepsWaveformAndControlsVisible(t *testing.T) {
 					m.resultAction = action
 					view := ansi.Strip(m.View().Content)
 					require.Contains(t, view, "00:00.750 / 00:02.250")
-					if size[1] >= 24 && size[0] >= 60 {
-						require.Contains(t, view, "╂", "the framed playhead crosses the centerline")
-						require.Contains(t, view, "┼", "measured speech must retain a visible thin shape")
-						require.NotContains(t, view, "█")
-						if saved == 0 {
-							require.NotContains(t, view, "Save to")
-						} else {
-							require.Contains(t, view, "Saved: synthetic-speech-29.wav")
-							require.NotContains(t, view, "Save to  "+audioDefaultSaveFolder)
-						}
+					require.Contains(t, view, "╂", "the framed playhead crosses the centerline")
+					require.Contains(t, view, "┼", "measured speech must retain a visible thin shape")
+					require.NotContains(t, view, "█")
+					if saved == 0 {
+						require.NotContains(t, view, "Save to")
 					} else {
-						require.Contains(t, view, "┃")
-						require.Contains(t, view, "█")
+						require.Contains(t, view, "Saved: synthetic-speech-29.wav")
+						require.NotContains(t, view, "Save to  "+audioDefaultSaveFolder)
 					}
 					require.Contains(t, view, []string{"› Play audio", "› Save audio…"}[action])
 					require.Contains(t, view, []string{"Space play", "Enter save"}[action])
@@ -143,12 +138,57 @@ func TestAudioResultViewLongTimesAndEndpoint(t *testing.T) {
 	m.result, m.focus = &r, 4
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 	view := ansi.Strip(m.View().Content)
-	require.Contains(t, view, "Duration 150000000:00.000")
-	require.Contains(t, view, "› Play audio · 149999999:59.000")
+	require.Contains(t, view, "149999999:59.000 / 150000000:00.000")
+	require.Contains(t, view, "› Play audio")
 	r.position = r.seekDuration()
 	view = ansi.Strip(m.View().Content)
 	require.Contains(t, view, "At end")
 	require.Contains(t, view, "Save audio…")
+}
+
+func TestAudioCompactSeekKeepsRailAfterFailedRetry(t *testing.T) {
+	m := audioReviewModel(t)
+	r := audioReviewResult("retained", false)
+	r.savedPaths = []string{"saved.wav"}
+	m.result = &r
+	m.input.SetValue("Changed draft")
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+	m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	audioReviewKey(m, tea.KeyUp)
+	view := ansi.Strip(m.View().Content)
+	require.True(t, m.waveformFocused)
+	for _, marker := range []string{"┷", "Saved:", "F1 details", "←→ seek"} {
+		require.Contains(t, view, marker)
+	}
+	rows := strings.Split(view, "\n")
+	for i, row := range rows {
+		if strings.Contains(row, "┷") {
+			require.Positive(t, i)
+			require.Contains(t, rows[i-1], "┠", "the smallest player keeps its measured row beside the rail")
+		}
+	}
+}
+
+func TestAudioPlaybackStatusAlignsWithLastTimelineCell(t *testing.T) {
+	for _, size := range [][2]int{{40, 12}, {80, 24}, {137, 41}} {
+		m := audioReviewModel(t)
+		r := audioReviewResult("timeline-status", false)
+		r.entry.Settings = m.effectiveSettings()
+		m.result, m.focus = &r, 4
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		statusEnd, railEnd := -1, -1
+		for _, row := range strings.Split(ansi.Strip(m.View().Content), "\n") {
+			if before, _, found := strings.Cut(row, "Ready"); found {
+				statusEnd = ansi.StringWidth(before) + len("Ready")
+			}
+			if before, _, found := strings.Cut(row, "┤"); found {
+				railEnd = ansi.StringWidth(before) + 1
+			}
+		}
+		require.Positive(t, railEnd)
+		require.Equal(t, railEnd, statusEnd, "status must end over the final timeline tick at %dx%d", size[0], size[1])
+	}
 }
 
 func TestAudioSaveViewKeepsFailureRecoveryVisible(t *testing.T) {

@@ -14,25 +14,39 @@ import (
 // Keep one selectable row per recording. Date groups and footer details do not
 // consume the selected recording's row, including in the compact layout.
 func (m *audioWorkbench) historyView(now time.Time) tea.View {
+	entries := m.visibleHistory()
 	count := "recordings"
 	if len(m.entries) == 1 {
 		count = "recording"
 	}
-	lines := []string{m.strong().Render(fmt.Sprintf("  History (%d %s)", len(m.entries), count)), ""}
+	title := fmt.Sprintf("  History (%d %s)", len(m.entries), count)
+	if m.historySearch.query != "" {
+		title = fmt.Sprintf("  History (%d of %d %s)", len(entries), len(m.entries), count)
+	}
+	search, cursor := m.historySearchRow()
+	lines := []string{m.strong().Render(title), search}
+	if m.framed() {
+		lines = append(lines, m.listeningRule())
+	}
 	footer := []string{""}
 	if m.store.Directory != "" {
 		footer = append(footer, m.historyPathRow("History", m.store.Directory))
 	}
-	controls := "  " + m.hintLine([2]string{"Enter", "open"}, [2]string{"Esc", "back"})
-	if len(m.entries) == 0 {
-		footer = append(footer, controls)
-		return tea.NewView(m.fitAudio(append(append(lines, "  No saved audio yet."), footer...), len(footer)))
+	if len(entries) == 0 {
+		empty := "  No saved audio yet."
+		hints := [][2]string{{"Esc", "back"}}
+		if len(m.entries) > 0 {
+			empty = "  No matching recordings."
+			hints = [][2]string{{"Ctrl+U", "clear"}, {"Esc", "back"}}
+		}
+		footer = append(footer, m.shortcutLine(hints...))
+		return m.cursorView(append(append(lines, empty), footer...), len(footer), cursor)
 	}
-	choice := max(0, min(m.choice, len(m.entries)-1))
-	selected := m.entries[choice]
-	metadata := readable.ChoiceTitle(selected.Settings.Voice) + " · " + strings.ToUpper(selected.Settings.Format)
+	choice := max(0, min(m.choice, len(entries)-1))
+	selected := entries[choice]
+	metadata := readable.ChoiceTitle(selected.Settings.Voice) + "  " + strings.ToUpper(selected.Settings.Format)
 	if selected.Bytes > 0 {
-		metadata += " · " + audioFileSize(selected.Bytes)
+		metadata += "  " + audioFileSize(selected.Bytes)
 	}
 	footer = append([]string{"", "  " + m.muted().Render(ansi.Truncate(audioHistoryCell(metadata), max(1, m.audioWidth()-4), "…"))}, footer[1:]...)
 	// Export locations are session evidence, not persisted History metadata.
@@ -44,16 +58,20 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 			}
 		}
 	}
-	footer = append(footer, controls)
+	move := [2]string{"↑↓", "move"}
+	if m.historySearch.focused {
+		move = [2]string{"↓", "recordings"}
+	}
+	footer = append(footer, m.shortcutLine(move, [2]string{"Enter", "open"}, [2]string{"Esc", "back"}))
 	lines = append(lines, "  "+m.muted().Render(audioHistoryTableRow("Clip", "Voice", "Format", "Created time", m.audioWidth()-4)))
 
 	type row struct {
 		entry int
 		date  string
 	}
-	rows := make([]row, 0, len(m.entries)+1)
+	rows := make([]row, 0, len(entries)+1)
 	selectedRow, previous := 0, ""
-	for i, entry := range m.entries {
+	for i, entry := range entries {
 		date := audioHistoryDate(entry.CreatedAt, now)
 		if date != previous {
 			rows = append(rows, row{entry: -1, date: date})
@@ -83,19 +101,16 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 			lines = append(lines, "  "+m.muted().Render(r.date))
 			continue
 		}
-		entry := m.entries[r.entry]
-		prompt := strings.Join(strings.Fields(readable.Text(entry.Settings.Input)), " ")
-		if prompt == "" {
-			prompt = "Generated speech"
-		}
+		entry := entries[r.entry]
+		prompt := audioHistoryClip(entry.Settings.Input)
 		stamp := "--:--"
 		if !entry.CreatedAt.IsZero() {
 			stamp = entry.CreatedAt.In(now.Location()).Format("15:04")
 		}
 		text := audioHistoryTableRow(prompt, readable.ChoiceTitle(entry.Settings.Voice), strings.ToUpper(entry.Settings.Format), stamp, m.audioWidth()-4)
-		lines = append(lines, m.choiceRow(text, r.entry == choice))
+		lines = append(lines, m.choiceRow(text, r.entry == choice && !m.historySearch.focused, m.audioWidth()))
 	}
-	return tea.NewView(m.fitAudio(append(lines, footer...), len(footer)))
+	return m.cursorView(append(lines, footer...), len(footer), cursor)
 }
 
 // The caller reserves two cells for selection and two for the right inset.
@@ -120,23 +135,27 @@ func audioHistoryCell(value string) string {
 
 func (m *audioWorkbench) historyPathRow(label, path string) string {
 	label += ": "
-	path = audioHistoryCell(path)
 	available := max(1, m.audioWidth()-4-ansi.StringWidth(label))
+	path, _ = audioHistorySuffix(audioHistoryCell(path), available)
+	return "  " + m.muted().Render(label+path)
+}
+
+func audioHistorySuffix(text string, available int) (string, int) {
 	width := 0
-	for remaining := path; len(remaining) > 0; {
+	for remaining := text; len(remaining) > 0; {
 		_, cells, consumed := cliterminal.Sequence(remaining)
 		width += cells
 		remaining = remaining[consumed:]
 	}
 	if width > available {
-		for len(path) > 0 && width > available-1 {
-			_, cells, consumed := cliterminal.Sequence(path)
-			path = path[consumed:]
+		for len(text) > 0 && width > available-1 {
+			_, cells, consumed := cliterminal.Sequence(text)
+			text = text[consumed:]
 			width -= cells
 		}
-		path = "…" + path
+		return "…" + text, width + 1
 	}
-	return "  " + m.muted().Render(label+path)
+	return text, width
 }
 
 func audioHistoryDate(created, now time.Time) string {

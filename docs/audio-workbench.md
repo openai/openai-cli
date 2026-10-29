@@ -6,21 +6,25 @@ Run this command with terminal input and output:
 openai audio speak
 ```
 
-The form exposes Text, Instructions, Model, Voice, Format, and Speed.
+Type in the editor below **Text to speech**. The caret marks the insertion point as text wraps.
+Instructions and Voice stay on the form. Settings summarizes the model, format, and speed.
+Select Settings and press Enter to edit those three fields inline. Escape collapses Settings and keeps applied values.
 Each new form fills Instructions with the editable example: “Speak warmly and clearly.”
 The example is real text. The form sends it when the selected model supports Instructions.
 Clear form empties both editors. It does not restore the example.
 
-Tab moves through Text, Instructions, Settings, then Audio.
+Tab moves through Text, Instructions, Settings, then Audio. Wide terminals include Actions between Settings and Audio.
 Shift+Tab reverses that order.
 Up and Down move between sections at their boundaries.
 Inside an editor, arrows move through multiline and wrapped text before leaving the first or last visual row.
 Modified arrows and active selections remain inside the editor.
-Up from Model returns to Instructions. Down from More actions moves to Audio.
+Up from Voice returns to Instructions when the model supports them. Down from More actions moves to Audio.
 Home and End select the first and last settings.
 Enter opens a choice or starts generation from an editor.
 Enter on Speed accepts an exact number from 0.25 to 4. Left and Right adjust speed by 0.25.
 Alt+Enter adds a newline. Ctrl+G generates from any ordinary form section.
+Ctrl+S opens Save for the current recording. Before generation, it shows “Generate speech first.”
+Ctrl+O focuses Audio without starting playback.
 Navigation preserves draft text and playback. Navigation never generates speech.
 
 The form disables Instructions for `tts-1` models and keeps the draft while you change models.
@@ -30,9 +34,10 @@ Returning to a compatible model restores access to the instruction draft.
 Voice choices follow the form's existing model validator.
 Changing models preserves the selected voice. An unavailable voice needs another explicit choice before generation.
 
-Generate speech is the primary action.
-More actions contains History, Preview voice, Clear form, View command, and Help.
-The form keeps command text and help inside More actions.
+Generate speech is the primary action. At 110 columns and 24 rows, Actions sits beside the editor.
+Press Tab from Settings to focus Actions. Use the arrow keys to select an action. Press Enter to open it.
+Actions contains History, Preview voice, Clear form, View command, and Help.
+On smaller terminals, select More actions and press Enter.
 View command opens a vertically scrollable Bash/zsh command.
 Up/Down and PageUp/PageDown scroll it. Home/End select its start or end.
 Escape returns to More actions with View command selected.
@@ -59,7 +64,10 @@ It stores History under the operating system's user cache directory, within `ope
 History can contain sensitive text.
 Clear form resets the draft and current result. It preserves History and exported files.
 
-A failed action opens Error details with the cause and a recovery instruction.
+The form shows local validation beside the field that needs attention.
+If generation fails with a previous recording available, the player keeps that recording and shows the cause.
+Press F1 for recovery details. Press Ctrl+G to retry when ready.
+A generation failure without a previous recording opens Error details directly.
 Multiple instructions appear in order. A missing API key shows one setup command using the same CLI invocation.
 For an installed CLI, the command is `openai help setup`.
 When you launch with `go run ./cmd/openai`, the command is `go run ./cmd/openai help setup`.
@@ -72,8 +80,13 @@ When analysis succeeds, they also show a waveform derived from decoded samples a
 Result labels retain the original generation settings when you change the form.
 Left and Right select Play audio or Save audio. Enter performs the selected action.
 Up focuses the waveform. Down returns to the selected action.
-On the waveform, Left and Right move the playback position. Shift moves five waveform bars. Seeking stops playback.
-Space plays from the selected position or stops playback.
+On the waveform, Left and Right move the playback position. Shift moves five waveform bars.
+With a measured recording focused, press G to enter a time. Typing a digit also starts time entry.
+Enter seconds such as `2.5` or a timestamp such as `1:02.500`. Enter applies the time. Esc cancels.
+Invalid input restores the current position in the field. You can type a replacement immediately.
+Playback continues while you edit. Selecting a different position stops playback.
+Space plays from the selected position. Once the player reports progress in a measured recording, Space pauses.
+Resume starts playback from the last reported position. Otherwise the control shows Stop.
 The marker follows player-reported progress. Players without progress reports keep a stationary marker.
 With the result focused, S opens Save and H opens History.
 Save exports the complete original audio, including when playback starts from a selected position.
@@ -91,7 +104,7 @@ Those WAV variants include compressed encodings, RF64, and streaming headers wit
 Playback requires FFplay. Audio requiring external decoding also needs FFmpeg.
 The CLI does not install either tool.
 Missing tools do not delete retained audio or prevent exporting its original bytes.
-The form supports Play, Stop, Replay, and seeking. It does not provide a separate Pause control.
+Replay starts a completed recording from the beginning.
 
 The chooser includes the seven models, thirteen voices, and six formats shown in the supplied Playground screenshots.
 The API determines model access and availability.
@@ -187,6 +200,9 @@ openai audio translate --file recording.wav --model whisper-1
 ```
 
 Speech History groups recordings by local date and shows one prompt row per recording.
+Type in History to filter by clip text, voice, or format. Search ignores letter case.
+Up from the first recording focuses Search. Down selects a matching recording. Enter opens it.
+Backspace removes one character. Ctrl+U clears Search.
 Roomy terminals show timestamps and selected-recording metadata.
 Compact terminals preserve prompt space and keep the selected recording visible.
 More actions lists secondary commands and brief descriptions when space permits.
@@ -196,15 +212,24 @@ Escape returns to the form.
 
 At 60 columns and 24 rows, the draft, settings, and audio share one frame.
 Field labels start at column 4. Instructions and setting values start at column 22.
-Generate speech, History, and More actions share one row. Left and Right select an action.
+Below 110 columns, Generate speech, History, and More actions share a row when space permits.
+In wider frames, Right from Generate enters the Actions list. Up and Down move through it.
+A separate column explains each action beside its name.
+Clear form uses amber because it resets the draft. Last error uses red when recovery details are available.
 The focused action has a selection marker. In color terminals, it also has a selected background.
 
-Before generation, Audio shows “No recording yet” and a zero timer.
-Select Play or Save to see “Generate speech first.”
+The Batch browser’s thin divider separates the form from the player. Its brightest cell sits at the center.
+Before generation, the player shows “Your recording will appear here.”
+Playback and Save shortcuts explain that speech must be generated first.
+The recording adds the timer, waveform, seek rail, and transport controls in that location.
+One blank row separates the recording details from the waveform when space permits.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.
-The playhead follows playback through silence. Its final rail marker turns green when playback completes.
+The playhead follows playback through silence. Played strokes and elapsed time use blue.
+Amber marks a paused or manually positioned playhead. The status describes its state.
+The heavier rail shows the played portion in monochrome. The final marker turns green when playback completes.
 Play starts under the first timeline marker. Save and the timer follow in the same row.
-A spare row separates the timeline from these controls when space permits.
+When space permits, one blank row separates the waveform from the seek rail.
+A second spare row separates the rail from the controls.
 When the timer needs more space, it moves above the actions and aligns with the final marker.
 Save opens the destination picker. A successful export adds its path below the actions.
 

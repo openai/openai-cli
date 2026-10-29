@@ -154,7 +154,7 @@ func (m *audioWorkbench) commandView() tea.View {
 	m.commandOffset = start
 	heading := audioCommandTitle
 	if len(rows) > height {
-		heading += fmt.Sprintf(" · %d–%d/%d", start+1, min(len(rows), start+height), len(rows))
+		heading += fmt.Sprintf("  %d–%d/%d", start+1, min(len(rows), start+height), len(rows))
 	}
 	input := strings.Join(strings.Fields(readable.Text(m.input.Value())), " ")
 	title := m.strong()

@@ -15,7 +15,7 @@ import (
 )
 
 const audioInstructionsExample = "Speak warmly and clearly."
-const audioCommandTitle = "Command · Bash/zsh"
+const audioCommandTitle = "Command (Bash/zsh)"
 const audioNoGenerationNotice = "Generate speech first."
 
 func (m *audioWorkbench) instructionsSupported() bool {
@@ -165,6 +165,8 @@ func (m *audioWorkbench) restoreEditorFocus() tea.Cmd {
 	switch m.modal {
 	case "save":
 		return m.focusSave(m.saveFocus)
+	case "seek":
+		return m.seekInput.Focus()
 	case "speed":
 		return m.speedInput.Focus()
 	case "":
@@ -184,6 +186,11 @@ func (m *audioWorkbench) moreItems() []string {
 		items = append(items, "Last error")
 	}
 	return items
+}
+
+func (m *audioWorkbench) openActions() tea.Cmd {
+	m.modal, m.setting, m.moreChoice = "more", audioSettingMore, 0
+	return m.focusSection(2)
 }
 
 func (m *audioWorkbench) updateMore(key string) tea.Cmd {
@@ -214,6 +221,9 @@ func (m *audioWorkbench) updateMore(key string) tea.Cmd {
 			m.input.SetValue("")
 			m.instructions.SetValue("")
 			m.settings = audioDefaultSettings()
+			m.settingsExpanded = false
+			m.validation = nil
+			m.retainedGenerationFailure = false
 			m.result, m.priorResult = nil, nil
 			m.playerNotice = ""
 			m.note = "Draft cleared."
@@ -324,14 +334,18 @@ Enter chooses the highlighted action.
 
 Enter in Text or Instructions creates speech.
 Ctrl+G also creates speech.
-Ctrl+O opens generated audio without starting playback.
+Ctrl+S opens Save for the current recording. Choose a destination and confirm to write the file.
+Ctrl+O focuses Audio without starting playback.
 Text, settings, and retained audio share the workspace when the terminal is at least 60 x 24.
-In smaller terminals, Tab changes the visible section. Ctrl+O focuses retained audio.
-More actions → View command opens the full command.
+In smaller terminals, Tab changes the visible section.
+From Settings, Tab focuses Actions on wide terminals. On smaller terminals, choose More actions.
+Choose View command to inspect the full command.
 Up/Down, Page Up/Down, Home, and End scroll the command.
 Esc returns to the menu. Tab opens Audio. Shift+Tab returns to More actions.
 Ctrl+P prints the full command and exits the form.
-Left and Right change Model, Voice, Format, and Speed.
+Voice stays on the form. Enter on Settings reveals Model, Format, and Speed.
+Esc collapses Settings and keeps applied values.
+Left and Right change the selected field.
 Type a Speed directly; Enter applies it and Esc cancels the edit.
 Alt+Enter adds a new line.
 
@@ -344,12 +358,15 @@ It stores only the inputs sent with each request.
 Clear removes the current draft, not History or saved files.
 
 Choose Play audio or Save audio in the result.
-Space plays or stops; S opens Save.
+Space plays the recording. Pause and Resume use the last reported position.
+When that position is unavailable, Space stops playback. S opens Save.
 Left and Right choose Play or Save.
 Up focuses the waveform. Down returns to the selected action.
 Left and Right on the waveform choose the playback start.
 Shift+Left and Shift+Right move five waveform bars.
-Seeking stops playback. Press Space to play from the selected time.
+G or a digit opens Go to time for measured audio. Type seconds or M:SS.
+Enter applies the time. Esc cancels. Invalid input restores the current position.
+Changing the playback position stops playback. Press Space to play from the selected time.
 The marker follows FFplay's reported playback position.
 If FFplay does not report progress, the marker keeps its selected position.
 Waveform height scales to each recording. Playback volume stays unchanged.
@@ -363,5 +380,5 @@ func (m *audioWorkbench) progressView() string {
 	if action == "" {
 		action = "Working"
 	}
-	return m.muted().Render(fmt.Sprintf("%s… %.1fs · ", action, time.Since(m.started).Seconds())) + m.keyHint("Ctrl+C", "cancels")
+	return m.muted().Render(fmt.Sprintf("%s… %.1fs  ", action, time.Since(m.started).Seconds())) + m.keyHint("Ctrl+C", "cancels")
 }

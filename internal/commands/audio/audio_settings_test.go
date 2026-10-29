@@ -20,6 +20,7 @@ func audioInlineSettingsModel(t *testing.T, width, height, setting int) *audioWo
 	m.input.SetValue("Keep this speech draft.")
 	m.focusSection(2)
 	m.setting = setting
+	m.settingsExpanded = true
 	return m
 }
 
@@ -27,6 +28,109 @@ func audioInlineType(m *audioWorkbench, text string) {
 	for _, character := range text {
 		m.Update(tea.KeyPressMsg{Code: character, Text: string(character)})
 	}
+}
+
+func TestAudioSettingsDisclosureKeyboard(t *testing.T) {
+	m := audioReviewModel(t)
+	m.input.SetValue("Keep this draft.")
+	for range 2 {
+		audioReviewKey(m, tea.KeyTab)
+	}
+	require.Equal(t, 1, m.setting)
+	audioReviewKey(m, tea.KeyDown)
+	require.Equal(t, audioSettingDisclosure, m.setting)
+	audioReviewKey(m, tea.KeyRight)
+	require.Equal(t, audioSettingDisclosure, m.setting)
+	audioReviewKey(m, tea.KeyEnter)
+	require.True(t, m.settingsExpanded)
+	require.Equal(t, 0, m.setting)
+	audioReviewKey(m, tea.KeyDown)
+	require.Equal(t, 2, m.setting)
+	audioReviewKey(m, tea.KeyRight)
+	format := m.settings.Format
+	audioReviewKey(m, tea.KeyDown)
+	require.Equal(t, 3, m.setting)
+	audioReviewKey(m, tea.KeyRight)
+	audioReviewKey(m, tea.KeyEscape)
+	require.False(t, m.settingsExpanded)
+	require.Equal(t, audioSettingDisclosure, m.setting)
+	require.Equal(t, format, m.settings.Format)
+	require.Equal(t, 1.25, m.settings.Speed)
+	require.False(t, m.busy)
+	require.False(t, m.quit)
+}
+
+func TestAudioValidationRevealsInvalidFieldAndKeepsRecording(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		field  int
+		change func(*audioWorkbench)
+	}{
+		{"voice", 1, func(m *audioWorkbench) { m.settings.Model, m.settings.Voice = "tts-1", "cedar" }},
+		{"format", 2, func(m *audioWorkbench) { m.settings.Format = "unknown" }},
+		{"speed", 3, func(m *audioWorkbench) { m.settings.Speed = 8 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := audioReviewModel(t)
+			m.input.SetValue("Synthetic text")
+			retained := audioReviewResult("previous", false)
+			m.result = &retained
+			tc.change(m)
+			m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+			require.Same(t, &retained, m.result)
+			require.False(t, m.busy)
+			require.Empty(t, m.modal)
+			require.Equal(t, 2, m.focus)
+			require.Equal(t, tc.field, m.setting)
+			require.Equal(t, tc.field != 1, m.settingsExpanded)
+			message := m.fieldValidation(tc.field)
+			require.NotEmpty(t, message)
+			require.Contains(t, ansi.Strip(m.View().Content), message)
+			audioReviewKey(m, tea.KeyRight)
+			require.Empty(t, m.fieldValidation(tc.field))
+			require.False(t, m.activeFailure())
+			require.NoError(t, m.lastErr)
+		})
+	}
+}
+
+func TestAudioFailedGenerationRetainsPlayerAndRecovery(t *testing.T) {
+	m := audioReviewModel(t)
+	prior := audioReviewResult("usable", false)
+	m.result = &prior
+	failure := audioUnauthorizedFailure()
+	m.Update(audioWorkMessage{kind: "generate", err: failure})
+	require.Same(t, &prior, m.result)
+	require.ErrorIs(t, m.lastErr, failure)
+	require.Empty(t, m.modal)
+	require.True(t, m.retainedGenerationFailure)
+	audioReviewKey(m, tea.KeyTab)
+	audioReviewKey(m, tea.KeyF1)
+	require.Equal(t, "recovery", m.modal)
+	audioReviewKey(m, tea.KeyEscape)
+	require.Empty(t, m.modal)
+	require.Equal(t, 1, m.focus)
+	require.True(t, m.instructions.Focused())
+	require.False(t, m.busy)
+	require.True(t, m.activeFailure())
+	m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	require.Equal(t, "save", m.modal)
+	m.saveFolder.SetValue("")
+	audioReviewKey(m, tea.KeyEnter)
+	view := ansi.Strip(m.View().Content)
+	require.Contains(t, view, "Enter a folder for saving.")
+	require.NotContains(t, view, m.failure.Summary)
+	audioReviewKey(m, tea.KeyF1)
+	require.Equal(t, "recovery", m.modal)
+	require.Contains(t, ansi.Strip(m.View().Content), m.failure.Summary)
+	audioReviewKey(m, tea.KeyEscape)
+	require.Equal(t, "save", m.modal)
+	require.Contains(t, ansi.Strip(m.View().Content), "Enter a folder for saving.")
+	audioReviewKey(m, tea.KeyEscape)
+	m.Update(audioWorkMessage{kind: "generate", result: audioReviewResult("success", false)})
+	require.False(t, m.retainedGenerationFailure)
+	require.False(t, m.activeFailure())
+	require.NoError(t, m.lastErr)
 }
 
 func TestAudioInlineSpeedTypingAndEnterStayOnForm(t *testing.T) {
@@ -93,7 +197,9 @@ func TestAudioInlineSpeedInvalidDraftBlocksNavigationAndGeneration(t *testing.T)
 				m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 				require.False(t, m.speedEditing)
 				require.Empty(t, m.speedError)
-				require.False(t, m.quit, "first Escape cancels only the inline edit")
+				require.False(t, m.quit)
+				require.False(t, m.settingsExpanded)
+				require.Equal(t, audioSettingDisclosure, m.setting)
 				require.Equal(t, float64(1), m.settings.Speed)
 				m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 				require.True(t, m.quit)

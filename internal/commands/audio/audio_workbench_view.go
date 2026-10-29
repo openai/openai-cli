@@ -50,6 +50,15 @@ func (m *audioWorkbench) borderStyle() lipgloss.Style {
 	return s
 }
 
+// A single tapered rule separates composing from listening.
+func (m *audioWorkbench) listeningRule() string {
+	fill, edge, secondary := "#E9EFFE", "#BAC4D8", "#657087"
+	if m.dark {
+		fill, edge, secondary = "#343D58", "#51566B", "#A4ACC2"
+	}
+	return "  " + cliterminal.SectionDivider(m.audioWidth()-4, m.color, fill, edge, secondary)
+}
+
 func (m *audioWorkbench) selected(text string, width int) string {
 	text = ansi.Strip(ansi.Truncate(text, width, "…"))
 	s := lipgloss.NewStyle()
@@ -145,11 +154,6 @@ func (m *audioWorkbench) failureStyle() lipgloss.Style {
 	return style
 }
 
-func (m *audioWorkbench) centeredRow(text string) string {
-	text = ansi.Truncate(text, m.audioWidth()-4, "…")
-	return strings.Repeat(" ", max(2, (m.audioWidth()-ansi.StringWidth(text))/2)) + text
-}
-
 func (m *audioWorkbench) label(text string, active bool) string {
 	if !active {
 		return "  " + text
@@ -158,18 +162,20 @@ func (m *audioWorkbench) label(text string, active bool) string {
 	return m.accent().Render("› ") + text
 }
 
-func (m *audioWorkbench) choiceRow(text string, active bool) string {
+func (m *audioWorkbench) choiceRow(text string, active bool, width int) string {
 	if active && m.framed() {
-		return m.selected("› "+text, m.audioWidth())
+		return m.selected("› "+text, width)
 	}
 	return m.label(text, active)
 }
 
 func (m *audioWorkbench) editorView(editor textarea.Model) string {
 	style := textarea.Styles{}
-	style.Focused.Text, style.Focused.CursorLine = m.primaryText(), m.primaryText()
+	// Use the terminal foreground for editable text. Only the caret marks focus.
 	style.Focused.Placeholder, style.Blurred.Placeholder = m.muted(), m.muted()
-	style.Focused.Selection = m.accent().Underline(true)
+	if m.color {
+		style.Focused.Selection = m.accent().Underline(true)
+	}
 	style.Blurred.Selection = style.Focused.Selection
 	editor.SetStyles(style)
 	return editor.View()
@@ -196,31 +202,6 @@ func (m *audioWorkbench) plainEditorRows(name string, editor textarea.Model, act
 	return rows
 }
 
-// The outer panel groups the workspace; editors need no additional outline.
-func (m *audioWorkbench) formEditorRows(name string, editor textarea.Model, active bool) []string {
-	if !active {
-		editor.Blur()
-	}
-	if name == "Text" && m.framed() {
-		rows := []string{"  " + m.primaryText().Render("Text to speech")}
-		for _, row := range strings.Split(m.editorView(editor), "\n") {
-			rows = append(rows, "  "+row)
-		}
-		return rows
-	}
-	if name == "Instructions" {
-		if m.height < 24 || m.width < 60 {
-			return m.plainEditorRows(name, editor, active)
-		}
-		return m.inlineEditorRows(name, editor, active, m.formLabelWidth())
-	}
-	var rows []string
-	for index, row := range strings.Split(m.editorView(editor), "\n") {
-		rows = append(rows, m.label(row, active && !m.busy && index == 0))
-	}
-	return rows
-}
-
 // Keep keyboard controls distinct from their quieter descriptions without
 // changing footer text, spacing, or focus styles.
 func (m *audioWorkbench) keyHint(key, action string) string {
@@ -236,11 +217,7 @@ func (m *audioWorkbench) hintLine(pairs ...[2]string) string {
 	for _, pair := range pairs {
 		items = append(items, m.keyHint(pair[0], pair[1]))
 	}
-	separator := " · "
-	if m.framed() {
-		separator = "  "
-	}
-	return strings.Join(items, m.muted().Render(separator))
+	return strings.Join(items, "  ")
 }
 
 func (m *audioWorkbench) shortcutLine(pairs ...[2]string) string {
@@ -289,11 +266,19 @@ func (m *audioWorkbench) View() tea.View {
 	case "info":
 		return m.informationView()
 	case "more":
+		if m.inlineActions() {
+			return m.workspaceView()
+		}
 		return m.moreView()
 	case "choice", "history":
 		return m.choiceView()
 	case "save":
 		return m.saveView()
+	case "seek":
+		if m.framed() {
+			return m.workspaceView()
+		}
+		return m.seekView()
 	case "speed":
 		lines := []string{m.strong().Render("  Speed"), "  " + m.editorView(m.speedInput), "  " + m.muted().Render("0.25–4.00×"), "  " + m.hintLine([2]string{"Enter", "apply"}, [2]string{"Esc", "back"})}
 		footer := lines[len(lines)-1]
@@ -307,102 +292,177 @@ func (m *audioWorkbench) View() tea.View {
 		return m.workspaceView()
 	}
 
-	lines := []string{m.strong().Render("Text to speech")}
-	if m.focus == 4 && m.result == nil {
-		lines = append(lines, "  "+m.emptyAudioStatus())
-		timing, _ := m.playerTiming()
-		lines = append(lines, "  "+timing, m.playbackActionRow("Play audio", m.resultAction == 0), m.playerActionRow("Save audio…", m.resultAction == 1, 14))
+	if m.focus == 4 {
+		lines := m.workspaceAudioHeader()
 		footer := m.resultHintRows()
+		controls := m.workspacePlayerControls()
+		budget := m.audioHeight() - len(lines) - len(controls) - len(footer)
+		// Keep the seek rail visible when a save receipt and recovery hint share this screen.
+		if !m.result.hasWaveform() || budget > 2 {
+			lines = append([]string{m.strong().Render("Text to speech")}, lines...)
+			budget--
+		}
+		wave := m.workspaceWaveformRows(budget)
+		free := budget - len(wave)
+		if len(wave) > 0 && free > 0 && len(m.result.savedPaths) == 0 {
+			// Keep the inline frame the same height when the save receipt appears.
+			controls = append(controls, "")
+			free--
+		}
+		if len(wave) > 0 && free > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, wave...)
+		lines = append(lines, controls...)
 		return tea.NewView(m.fitAudio(append(lines, footer...), len(footer)))
 	}
-	if m.focus == 4 && m.result != nil {
-		lines = append(lines, m.resultRows(true, true)...)
-		return tea.NewView(m.fitAudio(lines, len(m.resultHintRows())))
+	rows, cursor, active := m.formRows(true)
+	actions := m.formActionRows()
+	if m.focus == 2 && m.setting >= 4 && m.setting <= audioSettingMore {
+		active = len(rows)
+		if len(actions) > 1 {
+			active += m.setting - 4
+		}
 	}
-	cursor := m.formCursor(true)
+	rows = append(rows, actions...)
+	footer := m.workspaceFooter()
+	if warning := m.retainedGenerationErrorRow(); warning != "" {
+		footer = append([]string{warning}, footer...)
+	} else if m.result == nil {
+		rows = append(rows, "  "+m.emptyAudioStatus())
+	}
+	// Keep the active field visible even in the smallest usable terminal.
+	room := max(1, m.audioHeight()-len(footer))
 	if cursor != nil {
-		cursor.Y += len(lines)
+		active = cursor.Y
 	}
-	lines = append(lines, m.formRows(true, true)...)
-	lines = append(lines, m.formActionRows()...)
-	return m.cursorView(lines, 0, cursor)
+	start := max(0, active-room+2)
+	start = min(start, max(0, len(rows)-room))
+	if cursor != nil {
+		cursor.Y -= start
+	}
+	rows = rows[start:min(len(rows), start+room)]
+	return m.cursorView(append(rows, footer...), len(footer), cursor)
 }
 
-// Reuse the same field layout while opening secondary actions.
-func (m *audioWorkbench) formRows(compact, interactive bool) []string {
-	interactive = interactive && !m.busy
-	var textRows, instructions []string
+// Position the native caret from the rendered rows so disclosures and validation
+// messages can move it without duplicating the layout in a second calculation.
+func (m *audioWorkbench) formRows(compact bool) ([]string, *tea.Cursor, int) {
 	labelWidth := m.formLabelWidth()
-	for i, editor := range []textarea.Model{m.input, m.instructions} {
-		name := []string{"Text", "Instructions"}[i]
-		var rows []string
-		if i == 1 && !m.instructionsSupported() {
-			rows = append(rows, m.label(m.muted().Render(fmt.Sprintf("%-*s Not used by this model", labelWidth, "Instructions")), false))
-			if !compact && editor.Value() != "" {
-				rows = append(rows, "  "+readable.Text(strings.ReplaceAll(editor.Value(), "\n", " ")))
-			}
-		} else if interactive && m.focus == i || i == 0 && !compact {
-			rows = append(rows, m.formEditorRows(name, editor, interactive && m.focus == i)...)
-		} else {
-			value := readable.Text(strings.ReplaceAll(editor.Value(), "\n", " "))
-			if value == "" {
-				value = "(optional)"
-				if i == 0 {
-					value = "(empty)"
-				}
-			}
-			label := fmt.Sprintf("%-*s", labelWidth, name)
-			rows = append(rows, m.label(m.muted().Render(label)+" "+value, false))
+	rows := []string{"  " + m.strong().Render("Text to speech")}
+	var cursor *tea.Cursor
+	focusRow := 0
+	if m.focus == 0 && !m.busy {
+		cursor = audioEditorCursor(m.input, 2, len(rows))
+	}
+	for _, line := range strings.Split(m.editorView(m.input), "\n") {
+		rows = append(rows, "  "+line)
+	}
+	validation := m.fieldValidationRows(audioFieldText)
+	rows = append(rows, validation...)
+	// A short draft already has a spare editor row before Instructions.
+	spareEditorRow := m.input.LineCount() == 1 && m.input.LineInfo().Height < m.input.Height()
+	if !compact && (!spareEditorRow || len(validation) > 0) {
+		rows = append(rows, "")
+	}
+	instructions := m.instructions
+	switch {
+	case !m.instructionsSupported():
+		label := m.muted().Render(fmt.Sprintf("%-*s", labelWidth, "Instructions"))
+		rows = append(rows, "  "+label+" "+m.muted().Render("Not used by this model"))
+		if !compact && instructions.Value() != "" {
+			value := readable.Text(strings.Join(strings.Fields(instructions.Value()), " "))
+			rows = append(rows, strings.Repeat(" ", labelWidth+3)+m.muted().Render(value))
 		}
-		if i == 0 {
-			textRows = rows
+	case m.focus == 1 && !m.busy:
+		if compact {
+			cursor = audioEditorCursor(instructions, 2, len(rows)+1)
+			rows = append(rows, m.plainEditorRows("Instructions", instructions, true)...)
 		} else {
-			instructions = rows
+			cursor = audioEditorCursor(instructions, labelWidth+3, len(rows))
+			rows = append(rows, m.inlineEditorRows("Instructions", instructions, true, labelWidth)...)
 		}
+	default:
+		value := readable.Text(strings.Join(strings.Fields(instructions.Value()), " "))
+		if value == "" {
+			value = m.muted().Render("(optional)")
+		}
+		label := m.muted().Render(fmt.Sprintf("%-*s", labelWidth, "Instructions"))
+		rows = append(rows, "  "+label+" "+value)
 	}
-	var settings []string
-	values := []string{m.settings.Model, readable.ChoiceTitle(m.settings.Voice), strings.ToUpper(m.settings.Format), fmt.Sprintf("%.2f x", m.settings.Speed)}
-	if !audioSupportsVoice(m.settings.Model, m.settings.Voice) {
-		values[1] += " (unavailable)"
+
+	if !compact && m.height >= 32 {
+		rows = append(rows, "")
 	}
-	for index, name := range []string{"Model", "Voice", "Format", "Speed"} {
-		active := interactive && m.focus == 2 && m.setting == index
-		label := fmt.Sprintf("%-*s", labelWidth, name)
-		if active && index == 3 && m.speedEditing {
-			settings = append(settings, m.inlineEditorRows(name, m.speedInput, true, labelWidth)...)
-			if m.speedError != "" {
-				settings = append(settings, "  "+m.failureStyle().Render(m.speedError))
+	fields := []int{1, audioSettingDisclosure}
+	if m.settingsExpanded {
+		fields = append(fields, 0, 2, 3)
+	}
+	for _, field := range fields {
+		active := !m.busy && m.focus == 2 && m.setting == field
+		if active {
+			focusRow = len(rows)
+		}
+		var name, value string
+		switch field {
+		case 0:
+			name, value = "Model", readable.Text(m.settings.Model)
+		case 1:
+			name, value = "Voice", readable.Text(readable.ChoiceTitle(m.settings.Voice))
+			if !audioSupportsVoice(m.settings.Model, m.settings.Voice) {
+				value = m.warningStyle().Render(value + " (unavailable)")
 			}
+		case 2:
+			name, value = "Format", readable.Text(strings.ToUpper(m.settings.Format))
+		case 3:
+			name, value = "Speed", fmt.Sprintf("%.2f x", m.settings.Speed)
+		case audioSettingDisclosure:
+			name = "Settings"
+			value = "▾"
+			if !m.settingsExpanded {
+				summary := fmt.Sprintf("%s  %s  %.2f×", m.settings.Model, strings.ToUpper(m.settings.Format), m.settings.Speed)
+				value = "▸ " + m.muted().Render(readable.Text(summary))
+			}
+		}
+		if active && field == 3 && m.speedEditing {
+			cursor = audioEditorCursor(m.speedInput, labelWidth+3, len(rows))
+			rows = append(rows, m.inlineEditorRows(name, m.speedInput, true, labelWidth)...)
 		} else {
-			value := readable.Text(values[index])
-			if index == 1 && !audioSupportsVoice(m.settings.Model, m.settings.Voice) {
-				value = m.warningStyle().Render(readable.Text(values[index]))
-			}
-			label = m.muted().Render(label)
-			settings = append(settings, m.choiceRow(label+" "+value, active))
+			label := m.muted().Render(fmt.Sprintf("%-*s", labelWidth, name))
+			rows = append(rows, m.choiceRow(label+" "+value, active, m.composerWidth()))
 		}
+		rows = append(rows, m.fieldValidationRows(field)...)
 	}
-	if !compact {
-		textRows = append(textRows, "")
+	return rows, cursor, focusRow
+}
+
+func (m *audioWorkbench) fieldValidationRows(field int) []string {
+	message := m.fieldValidation(field)
+	if message == "" {
+		return nil
 	}
-	lines := append(textRows, instructions...)
-	if !compact {
-		lines = append(lines, "")
+	lines := strings.Split(ansi.Wrap(message, max(1, m.composerWidth()-2), ""), "\n")
+	for i, line := range lines {
+		lines[i] = "  " + m.warningStyle().Render(line)
 	}
-	return append(lines, settings...)
+	return lines
 }
 
 // Keep related actions in one row, matching Left/Right navigation.
 func (m *audioWorkbench) formActionRows() []string {
 	active := !m.busy && m.focus == 2 && m.setting == 4
-	generate := m.actionRow("Generate speech", active)
+	label := m.primaryText().Render("Generate speech") + "  " + m.keyHint("Ctrl+G", "")
+	generate := m.actionRow(label, active)
 	if m.busy {
 		generate = m.label(m.progressView(), active)
 	}
+	if m.inlineActions() {
+		return []string{generate}
+	}
 	rows := []string{
 		generate,
-		m.actionRow("History", m.focus == 2 && m.setting == audioSettingHistory),
-		m.actionRow("More actions…", m.focus == 2 && m.setting == audioSettingMore),
+		m.actionRow(m.muted().Render("History"), m.focus == 2 && m.setting == audioSettingHistory),
+		m.actionRow(m.muted().Render("More actions…"), m.focus == 2 && m.setting == audioSettingMore),
 	}
 	if m.framed() {
 		// Selected actions include a trailing cell. Reserve it before focus moves.
@@ -412,11 +472,9 @@ func (m *audioWorkbench) formActionRows() []string {
 			}
 		}
 	}
-	if m.height >= 24 && m.width >= 60 {
-		joined := strings.Join(rows, "  ")
-		if ansi.StringWidth(joined) <= m.audioWidth() {
-			return []string{joined}
-		}
+	joined := strings.Join(rows, "  ")
+	if ansi.StringWidth(joined) <= m.audioWidth() {
+		return []string{joined}
 	}
 	return rows
 }
@@ -450,109 +508,11 @@ func (m *audioWorkbench) emptyAudioStatus() string {
 	if m.playerNotice != "" {
 		return m.warningStyle().Render(m.playerNotice)
 	}
-	return m.muted().Render("No recording yet")
-}
-
-func (m *audioWorkbench) resultRows(compact, full bool) []string {
-	r := m.result
-	title := strings.Join(strings.Fields(readable.Text(r.entry.Settings.Input)), " ")
-	if title == "" {
-		title = "Generated speech"
-	}
-	metadata := readable.Text(readable.ChoiceTitle(r.entry.Settings.Voice)) + " • " + strings.ToUpper(r.entry.Settings.Format) + " • " + audioFileSize(r.entry.Bytes)
-	lines := []string{"  " + m.primaryText().Render(title)}
-	if !full {
-		return nil
-	}
-	lines = append(lines, "  "+m.muted().Render(metadata))
-	if !compact {
-		for range 1 + min(3, max(0, (m.audioHeight()-18)/3)) {
-			lines = append(lines, "")
-		}
-	}
-	position := audioDuration(r.playbackPosition().Seconds())
-	longTime := false
-	if r.hasWaveform() {
-		height := 5
-		if compact {
-			height = 1
-		}
-		for index, row := range audioWaveform(r.analysis.Peaks, m.waveformWidth(), height, m.selectedBoundary()) {
-			parts := strings.SplitN(row, "┃", 2)
-			inset := 2
-			if !compact {
-				inset = max(2, (m.audioWidth()-ansi.StringWidth(row))/2)
-			}
-			prefix := strings.Repeat(" ", inset)
-			if m.waveformFocused && index == height/2 {
-				prefix = strings.Repeat(" ", inset-2) + m.accent().Render("› ")
-			}
-			style := m.waveformStyle()
-			lines = append(lines, prefix+style.Render(parts[0])+m.primaryText().Render("┃")+style.Render(parts[1]))
-		}
-		if !compact {
-			lines = append(lines, "")
-		}
-		timing, _ := m.playerTiming()
-		if ansi.StringWidth(timing) > m.audioWidth()-2 {
-			longTime = true
-			timing = m.muted().Render("Duration " + audioDuration(r.analysis.Duration))
-		}
-		status := m.playerStatus()
-		if ansi.StringWidth(status)+2+ansi.StringWidth(timing) <= m.audioWidth()-4 {
-			timing = status + "  " + timing
-		}
-		if compact {
-			lines = append(lines, "  "+timing)
-		} else {
-			lines = append(lines, m.centeredRow(timing))
-		}
-	} else {
-		lines = append(lines, m.centeredRow(m.playerStatus()), "  "+m.muted().Render("Preview unavailable"))
-		timing, _ := m.playerTiming()
-		lines = append(lines, "  "+timing)
-	}
-	if !compact {
-		lines = append(lines, "")
-	}
-	play := "Play audio"
-	if m.playing {
-		play = "Stop audio"
-	} else if r.finished {
-		play = "Replay audio"
-	} else if duration := r.seekDuration(); duration > 0 && r.playbackPosition() >= duration {
-		play = "At end"
-	} else if longTime {
-		play += " · " + position
-	}
-	playRow := m.playbackActionRow(play, m.focus == 4 && !m.waveformFocused && m.resultAction == 0)
-	saveRow := m.playerActionRow("Save audio…", m.focus == 4 && !m.waveformFocused && m.resultAction == 1, 14)
-	controlInset := max(2, (m.audioWidth()-44)/2)
-	if !compact && ansi.StringWidth(playRow)+ansi.StringWidth(saveRow)+4 <= m.audioWidth() {
-		gap := strings.Repeat(" ", max(4, 22-ansi.StringWidth(playRow)))
-		lines = append(lines, strings.Repeat(" ", controlInset)+playRow+gap+saveRow)
-	} else {
-		lines = append(lines, playRow, saveRow)
-	}
-	if len(r.savedPaths) > 0 {
-		destinationLabel, destinationPath := "Saved: ", r.savedPaths[len(r.savedPaths)-1]
-		destinationInset := 2
-		if !compact {
-			destinationInset = controlInset + 2
-		}
-		available := max(0, m.audioWidth()-destinationInset-2-ansi.StringWidth(destinationLabel))
-		destination := m.muted().Render(destinationLabel + audioPathSuffix(destinationPath, available))
-		lines = append(lines, strings.Repeat(" ", destinationInset)+destination)
-	}
-	if !compact {
-		lines = append(lines, "")
-	}
-	return append(lines, m.resultHintRows()...)
+	return m.muted().Render("Your recording will appear here.")
 }
 
 // Status describes the retained playback state, not whether output was audible.
 func (m *audioWorkbench) playerStatus() string {
-	label := "Ready"
 	if m.playing {
 		return m.accent().Bold(false).Render("Playing")
 	}
@@ -561,12 +521,21 @@ func (m *audioWorkbench) playerStatus() string {
 			return m.playbackProgressStyle().Render("Completed")
 		}
 		if duration := m.result.seekDuration(); duration > 0 && m.result.playbackPosition() >= duration {
-			label = "At end"
+			return m.warningStyle().Render("At end")
+		} else if m.result.resumable {
+			return m.warningStyle().Render("Paused")
 		} else if m.result.playbackPosition() > 0 {
-			label = "Stopped"
+			return m.warningStyle().Render("Stopped")
 		}
 	}
-	return m.muted().Render(label)
+	return m.muted().Render("Ready")
+}
+
+func (m *audioWorkbench) playheadStyle() lipgloss.Style {
+	if !m.playing && m.result != nil && !m.result.finished && m.result.playbackPosition() > 0 {
+		return m.warningStyle()
+	}
+	return m.primaryText()
 }
 
 // Preserve the filename end without splitting a display grapheme or escape.
@@ -596,9 +565,12 @@ func (m *audioWorkbench) resultHintRows() []string {
 	var lines []string
 	if m.focus == 4 {
 		r := m.result
+		if r == nil && !m.busy {
+			return m.formShortcutRows([2]string{"Ctrl+G", "Generate"}, [2]string{"Esc", "back"})
+		}
 		playAction := "play"
-		if m.playing {
-			playAction = "stop"
+		if r != nil {
+			playAction = strings.ToLower(m.playbackVerb())
 		}
 		navigation := [][2]string{{"←→", "choose"}}
 		if r.hasWaveform() {
@@ -610,6 +582,9 @@ func (m *audioWorkbench) resultHintRows() []string {
 		}
 		if m.waveformFocused {
 			navigation = [][2]string{{"←→", "seek"}, {"↓", "actions"}}
+		}
+		if r.seekDuration() > 0 {
+			navigation = append(navigation, [2]string{"G", "time"})
 		}
 		movement := m.hintLine(navigation...)
 		controls := m.hintLine(control, [2]string{"Esc", "back"})
@@ -628,7 +603,7 @@ func (m *audioWorkbench) saveView() tea.View {
 	compact := m.height < 24 || m.width < 60
 	lines := []string{m.strong().Render("  Save audio")}
 	if m.result != nil {
-		lines = append(lines, "  "+m.muted().Render(strings.ToUpper(m.result.entry.Settings.Format)+" · "+audioFileSize(m.result.entry.Bytes)+" · Full recording"))
+		lines = append(lines, "  "+m.muted().Render(strings.ToUpper(m.result.entry.Settings.Format)+"  "+audioFileSize(m.result.entry.Bytes)+"  Full recording"))
 	}
 	if !compact {
 		lines = append(lines, "")
@@ -676,24 +651,58 @@ func audioFileSize(bytes int64) string {
 	return ""
 }
 
+var audioActionDescriptions = map[string]string{
+	"History": "Find a recording", "Preview voice": "Hear a sample",
+	"Clear form": "Reset the draft", "View command": "Inspect the command",
+	"Help": "Keyboard controls", "Last error": "Recovery details",
+}
+
+func (m *audioWorkbench) actionName(label string) string {
+	switch label {
+	case "Clear form":
+		return m.warningStyle().Render(label)
+	case "Last error":
+		return m.failureStyle().Render(label)
+	default:
+		return label
+	}
+}
+
+func (m *audioWorkbench) withActionColumn(rows []string) []string {
+	left := m.composerWidth()
+	panel := []string{"  " + m.strong().Render("Actions"), ""}
+	for index, label := range m.moreItems() {
+		gap := strings.Repeat(" ", max(0, 16-ansi.StringWidth(label)))
+		row := m.actionName(label) + gap + m.muted().Render(audioActionDescriptions[label])
+		if m.modal == "more" && index == m.moreChoice {
+			row = m.selected("› "+row, audioActionWidth)
+		} else {
+			row = "  " + ansi.Truncate(row, audioActionWidth-2, "…")
+		}
+		panel = append(panel, row)
+	}
+	for i := range max(len(rows), len(panel)) {
+		if i >= len(rows) {
+			rows = append(rows, "")
+		}
+		rows[i] = ansi.Truncate(rows[i], left, "…")
+		if i < len(panel) && panel[i] != "" {
+			rows[i] += strings.Repeat(" ", left+audioActionGap-ansi.StringWidth(rows[i])) + panel[i]
+		}
+	}
+	return rows
+}
+
 func (m *audioWorkbench) moreView() tea.View {
 	lines := []string{m.strong().Render("  More actions"), ""}
-	descriptions := map[string]string{
-		"History":       "Browse retained recordings",
-		"Preview voice": "Hear a short voice sample",
-		"Clear form":    "Reset text and settings",
-		"View command":  "Inspect the terminal command",
-		"Help":          "Keyboard controls and tips",
-		"Last error":    "Review the latest error",
-	}
 	for index, label := range m.moreItems() {
-		row := label
+		row := m.actionName(label)
 		if m.framed() {
-			row = fmt.Sprintf("%-18s", label) + m.muted().Render(ansi.Truncate(descriptions[label], m.audioWidth()-22, "…"))
+			row += strings.Repeat(" ", 18-ansi.StringWidth(label)) + m.muted().Render(ansi.Truncate(audioActionDescriptions[label], m.audioWidth()-22, "…"))
 		}
-		lines = append(lines, m.choiceRow(row, index == m.moreChoice))
+		lines = append(lines, m.choiceRow(row, index == m.moreChoice, m.audioWidth()))
 	}
-	lines = append(lines, "", m.shortcutLine([2]string{"Enter", "choose"}, [2]string{"Esc", "back"}))
+	lines = append(lines, "", m.shortcutLine([2]string{"↑↓", "choose"}, [2]string{"Enter", "open"}, [2]string{"Esc", "back"}))
 	return tea.NewView(m.fitAudio(lines, 1))
 }
 
@@ -708,9 +717,9 @@ func (m *audioWorkbench) choiceView() tea.View {
 	if m.setting == 0 && count > 0 {
 		note := ""
 		if strings.HasSuffix(m.choices[m.choice], "1106") {
-			note = "Historical snapshot · access unverified"
+			note = "Historical snapshot, access unverified"
 		} else if strings.Contains(m.choices[m.choice], "-2025-") {
-			note = "Snapshot · fixed model release"
+			note = "Snapshot, fixed model release"
 		}
 		if note != "" {
 			footer = append([]string{"  " + m.muted().Render(note)}, footer...)
@@ -722,13 +731,13 @@ func (m *audioWorkbench) choiceView() tea.View {
 	visible := max(1, m.audioHeight()-len(lines)-len(footer))
 	start := max(0, min(m.choice-visible+1, count-visible))
 	for i := start; i < min(count, start+visible); i++ {
-		lines = append(lines, m.choiceRow(readable.Text(m.choices[i]), i == m.choice))
+		lines = append(lines, m.choiceRow(readable.Text(m.choices[i]), i == m.choice, m.audioWidth()))
 	}
 	return tea.NewView(m.fitAudio(append(lines, footer...), len(footer)))
 }
 
 func (m *audioWorkbench) feedbackLines() []string {
-	if m.activeFailure() {
+	if m.activeFailure() && m.note == m.failureNote {
 		return m.failureSummaryRows()
 	}
 	note := m.note

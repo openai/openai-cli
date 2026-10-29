@@ -67,7 +67,7 @@ func TestAudioNativeCursorRetainsWrappedPositionAcrossResize(t *testing.T) {
 			editor = &m.instructions
 		}
 		line, column := editor.Line(), editor.Column()
-		for _, size := range [][2]int{{101, 29}, {60, 27}, {60, 28}, {60, 27}, {60, 24}, {40, 12}, {101, 29}} {
+		for _, size := range [][2]int{{101, 29}, {60, 27}, {60, 28}, {60, 27}, {60, 24}, {40, 12}, {109, 24}, {110, 24}, {137, 41}, {101, 29}} {
 			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			view := m.View()
 			assertAudioNativeCursorBefore(t, view, "Z")
@@ -86,6 +86,7 @@ func TestAudioNativeCursorFollowsEditableSpeedAndSaveFields(t *testing.T) {
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		m.focusSection(2)
 		m.setting = 3
+		m.settingsExpanded = true
 		m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		m.Update(tea.PasteMsg{Content: "9Z"})
 		m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -133,7 +134,7 @@ func TestAudioNativeCursorHidesOutsideEditableFields(t *testing.T) {
 	require.NotNil(t, view.Cursor)
 	rows := strings.Split(ansi.Strip(view.Content), "\n")
 	require.Contains(t, rows[1], "Text to speech")
-	require.Contains(t, rows[2], "Enter text to speak")
+	require.Contains(t, rows[2], "Type what you want to hear…")
 	require.Equal(t, 3, view.Cursor.X, "placeholder must not move the insertion point")
 	require.Equal(t, 2, view.Cursor.Y)
 	for _, modal := range []string{"info", "more", "choice", "history", "recovery"} {

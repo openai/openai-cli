@@ -15,14 +15,14 @@ func TestAudioWorkspaceActionFocusDoesNotMovePlayback(t *testing.T) {
 	for _, width := range []int{68, 69, 70, 71, 72, 73, 74, 101} {
 		m := audioReviewModel(t)
 		m.Update(tea.WindowSizeMsg{Width: width, Height: 24})
-		var initial [3]int
+		var initial [2]int
 		for i, target := range [][2]int{{0, 0}, {2, 4}, {2, audioSettingHistory}, {2, audioSettingMore}, {4, 0}} {
 			m.focusSection(target[0])
 			m.setting = target[1]
 			view := ansi.Strip(m.View().Content)
-			var positions [3]int
+			var positions [2]int
 			for row, line := range strings.Split(view, "\n") {
-				for item, label := range []string{"More actions…", "No recording yet", "Play audio"} {
+				for item, label := range []string{"More actions…", "Your recording will appear here."} {
 					if strings.Contains(line, label) {
 						positions[item] = row
 					}
@@ -58,7 +58,7 @@ func TestAudioWorkspaceKeepsDraftAndRecordingVisibleAcrossFocus(t *testing.T) {
 				m.focusSection(focus)
 				m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 				view := ansi.Strip(m.View().Content)
-				for _, text := range []string{"Text to speech", "Editable draft.", "Instructions", "Model", "Voice", "Format", "Speed", "Generate speech", "History", "More actions", "Alloy • MP3 • 120.6 KiB", "Recording: Retained recording.", "┠", "00:00.000 / 00:01.000", "Play audio", "Save audio…", "Saved: …", "clip.mp3"} {
+				for _, text := range []string{"Text to speech", "Editable draft.", "Instructions", "Settings", "Voice", "gpt-4o-mini-tts  WAV  1.00×", "Generate speech", "History", "More actions", "Alloy  MP3  120.6 KiB", "Recording: Retained recording.", "┠", "00:00.000 / 00:01.000", "Play audio", "Save audio…", "Saved: …", "clip.mp3"} {
 					require.Contains(t, view, text)
 				}
 				require.Contains(t, strings.Split(view, "\n")[1], "Text to speech")
@@ -66,7 +66,7 @@ func TestAudioWorkspaceKeepsDraftAndRecordingVisibleAcrossFocus(t *testing.T) {
 				rows := strings.Split(view, "\n")
 				positions := [3]int{-1, -1, -1}
 				for index, row := range rows {
-					if strings.Contains(row, "Alloy • MP3") {
+					if strings.Contains(row, "Alloy  MP3") {
 						require.Contains(t, row, "Ready", "player state must share the recording header")
 						require.Greater(t, strings.Index(row, "Ready"), strings.Index(row, "120.6 KiB"))
 					}
@@ -112,7 +112,8 @@ func TestAudioWorkspaceKeepsDraftAndRecordingVisibleAcrossFocus(t *testing.T) {
 				} else {
 					require.NotContains(t, view, "› Play audio")
 					require.NotContains(t, view, "Space play")
-					require.Contains(t, view, "Ctrl+O Audio")
+					require.Contains(t, view, "Ctrl+S Save")
+					require.NotContains(t, view, "Ctrl+O Audio")
 				}
 				assertAudioWorkspaceBounds(t, view, size)
 			})
@@ -145,7 +146,7 @@ func TestAudioWorkspaceGroupsWrappedTextWithoutDivider(t *testing.T) {
 		require.NotEqual(t, -1, tailRow, "wrapped draft tail must remain visible")
 		require.Empty(t, strings.Trim(rows[tailRow+1], " │"), "space separates Text from Instructions")
 		require.Contains(t, rows[tailRow+2], "Instructions")
-		for _, item := range []string{"Model", "Voice", "Audio", "Play audio", "Save audio…"} {
+		for _, item := range []string{"Settings", "Voice", "Audio", "Play audio", "Save audio…"} {
 			require.Contains(t, view, item)
 		}
 		assertAudioWorkspaceBounds(t, view, [2]int{width, 29})
@@ -168,6 +169,7 @@ func TestAudioWorkspaceKeepsControlsUnderCrowdedStates(t *testing.T) {
 				case "invalid speed":
 					m.focusSection(2)
 					m.setting = 3
+					m.settingsExpanded = true
 					m.beginInlineSpeed()
 					m.speedInput.SetValue("nope")
 					m.speedError = "Enter a speed from 0.25 to 4.00."
@@ -184,7 +186,7 @@ func TestAudioWorkspaceKeepsControlsUnderCrowdedStates(t *testing.T) {
 				}
 				m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 				view := ansi.Strip(m.View().Content)
-				for _, text := range []string{"Model", "Speed", "Audio", "Recording: Retained recording.", "Play audio", "Save audio…", "Saved: …", "clip.wav"} {
+				for _, text := range []string{"Settings", "Voice", "Audio", "Recording: Retained recording.", "Play audio", "Save audio…", "Saved: …", "clip.wav"} {
 					require.Contains(t, view, text)
 				}
 				switch name {
@@ -218,27 +220,27 @@ func TestAudioWorkspaceDoesNotInventAudioBeforeGeneration(t *testing.T) {
 		m.input.SetValue("A future recording.")
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		view := ansi.Strip(m.View().Content)
-		require.Contains(t, view, "No recording yet")
+		require.Contains(t, view, "Your recording will appear here.")
 		require.NotContains(t, view, "Generate speech to create audio.")
 		require.NotContains(t, view, "┷")
 		require.NotContains(t, view, "┃")
-		require.Contains(t, view, "00:00.000 / 00:00.000")
-		require.Contains(t, view, "Play audio")
-		require.Contains(t, view, "Save audio…")
+		require.NotContains(t, view, "00:00.000 / 00:00.000")
+		require.NotContains(t, view, "Play audio")
+		require.NotContains(t, view, "Save audio…")
 		require.NotContains(t, view, "printf %s")
 		assertAudioWorkspaceBounds(t, view, size)
 	}
 }
 
-func TestAudioEmptyClockAndUnknownTimingRemainDistinct(t *testing.T) {
+func TestAudioEmptyRecordingAndUnknownTimingRemainDistinct(t *testing.T) {
 	for _, size := range [][2]int{{40, 12}, {60, 24}, {101, 29}} {
 		m := audioReviewModel(t)
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		m.focusSection(4)
 		m.color, m.dark = true, true
 		view := m.View().Content
-		require.Contains(t, view, m.muted().Render("00:00.000 / 00:00.000"))
-		require.Contains(t, view, m.muted().Render("No recording yet"))
+		require.NotContains(t, ansi.Strip(view), "00:00.000 / 00:00.000")
+		require.Contains(t, view, m.muted().Render("Your recording will appear here."))
 		require.NotContains(t, view, "┃")
 		r := audioReviewResult("unknown-timing", false)
 		r.measured = false
@@ -284,9 +286,9 @@ func TestAudioWorkspaceExplainsChangedDraftWithoutRelabelingRecording(t *testing
 			if field == "preview" {
 				require.NotContains(t, ansi.Strip(view), "Draft changed")
 			} else {
-				require.Contains(t, view, m.warningStyle().Render("Draft changed · Showing previous audio."))
+				require.Contains(t, view, m.warningStyle().Render("Draft changed. Showing previous audio."))
 			}
-			require.Contains(t, ansi.Strip(view), "Coral • WAV")
+			require.Contains(t, ansi.Strip(view), "Coral  WAV")
 			if field == "input" {
 				require.Contains(t, ansi.Strip(view), "Recording: "+r.entry.Settings.Input)
 			}
@@ -305,7 +307,7 @@ func TestAudioWorkspaceSeparatesMeasuredWaveformsOnlyWhenRoomPermits(t *testing.
 	for _, size := range [][2]int{{60, 24}, {80, 24}, {101, 29}, {101, 30}, {120, 40}} {
 		for _, state := range []string{"empty", "unmeasured", "measured"} {
 			m := audioReviewModel(t)
-			bottomLabel := "No recording yet"
+			bottomLabel := "Your recording will appear here."
 			if state != "empty" {
 				r := audioReviewResult("framed-player", false)
 				r.entry.Settings = m.effectiveSettings()
@@ -337,36 +339,40 @@ func TestAudioWorkspaceSeparatesMeasuredWaveformsOnlyWhenRoomPermits(t *testing.
 				}
 			}
 			require.Positive(t, bottom)
+			if state == "empty" {
+				require.Equal(t, -1, timing)
+				require.Equal(t, -1, actions)
+				audioReviewKey(m, tea.KeySpace)
+				require.Contains(t, ansi.Strip(m.View().Content), audioNoGenerationNotice)
+				require.Contains(t, ansi.Strip(m.View().Content), "Ctrl+G")
+				continue
+			}
 			require.Positive(t, timing)
 			require.Positive(t, actions)
-			wantGap := 0
-			if state == "measured" && size[1] >= 30 {
-				wantGap = 1
-				require.Empty(t, strings.Trim(rows[bottom+1], " │"))
+			beforeRail := state == "measured" && size[1] >= 29
+			afterRail := 0
+			if beforeRail && size[1] >= 30 {
+				afterRail = 1
 			}
-			require.Equal(t, wantGap, min(timing, actions)-bottom-1, "%dx%d %s", size[0], size[1], state)
-			if wantGap == 1 {
+			require.Equal(t, afterRail, min(timing, actions)-bottom-1, "%dx%d %s", size[0], size[1], state)
+			if state == "measured" {
+				require.Equal(t, beforeRail, strings.Trim(rows[bottom-1], " │") == "")
 				m.result.savedPaths = []string{"/synthetic/clip.wav"}
 				saved := strings.Split(ansi.Strip(m.View().Content), "\n")
-				require.Empty(t, strings.Trim(saved[bottom+1], " │"))
+				require.Equal(t, rows[:bottom+1], saved[:bottom+1], "a receipt must preserve the measured rows and rail")
 				require.Equal(t, rows[actions], saved[actions], "a receipt must not move the transport")
 				require.Contains(t, saved[actions+1], "Saved: /synthetic/clip.wav")
 			}
 			require.NotContains(t, view, "Save to")
 			assertAudioWorkspaceBounds(t, view, size)
-			if state == "empty" {
-				audioReviewKey(m, tea.KeySpace)
-				require.Contains(t, ansi.Strip(m.View().Content), audioNoGenerationNotice)
-			}
 		}
 	}
 }
 
 func TestAudioWorkspaceToolbarKeepsExactTimingAndBounds(t *testing.T) {
-	// Short timers wrap below 64 columns, use available space through 67,
-	// and then hold column 40 for all wider workspaces.
+	// Short timers wrap below 64 columns. Wider workspaces hold column 40.
 	for _, tc := range []struct{ width, height, shortStart int }{
-		{60, 24, -1}, {63, 24, -1}, {64, 24, 35}, {66, 24, 37}, {68, 24, 39}, {101, 29, 39}, {186, 40, 39},
+		{60, 24, -1}, {63, 24, -1}, {64, 24, 39}, {66, 24, 39}, {68, 24, 39}, {101, 29, 39}, {186, 40, 39},
 	} {
 		size := [2]int{tc.width, tc.height}
 		for _, duration := range []float64{1.35, 9000000000} {
@@ -384,7 +390,13 @@ func TestAudioWorkspaceToolbarKeepsExactTimingAndBounds(t *testing.T) {
 			colored := m.View().Content
 			view := ansi.Strip(colored)
 			require.Contains(t, view, elapsed+" / "+total, "exact timing must survive the narrow fallback")
-			require.Contains(t, colored, m.muted().Render(elapsed+" / "+total))
+			header := m.workspaceAudioHeader()[0]
+			audioRequireTextForeground(t, header, "Coral", m.primaryText())
+			audioRequireTextForeground(t, header, "WAV", m.muted())
+			audioRequireTextForeground(t, header, audioFileSize(r.entry.Bytes), m.muted())
+			require.Contains(t, colored, m.accent().Bold(false).Render(elapsed))
+			require.Contains(t, colored, m.borderStyle().Render(" / "))
+			require.Contains(t, colored, m.muted().Render(total))
 			require.NotContains(t, colored, m.playbackProgressStyle().Render(elapsed))
 			rows := strings.Split(view, "\n")
 			left, right := -1, -1
@@ -425,7 +437,7 @@ func TestAudioWorkspaceToolbarKeepsExactTimingAndBounds(t *testing.T) {
 						require.Contains(t, rows[i+1], "Play audio")
 					}
 				}
-				if strings.Contains(row, "Generate speech") {
+				if strings.Contains(row, "Generate speech") && !m.inlineActions() {
 					require.Contains(t, row, "More actions…")
 					require.NotContains(t, view, "View command")
 				}
@@ -467,7 +479,7 @@ func TestAudioWorkspaceLongRecordingKeepsToolbarStableWhileSeeking(t *testing.T)
 		total := audioDuration(r.analysis.Duration)
 		timerEnd := 39 + 2*ansi.StringWidth(total) + 3 // Exclusive edge of the widest timer.
 		if width == 60 {
-			timerEnd = 52 // Exclusive edge under the final tick.
+			timerEnd = 56 // Exclusive edge under the final tick.
 		}
 		for _, seconds := range []int{1, 6000, 60000, 89999, 90000} {
 			r.position = time.Duration(seconds) * time.Second
@@ -563,7 +575,7 @@ func TestAudioWorkspaceResizeKeepsRetainedResultAndEditingTail(t *testing.T) {
 				inputLine, inputColumn := m.input.Line(), m.input.Column()
 				instructionLine, instructionColumn := m.instructions.Line(), m.instructions.Column()
 				tail := []string{"TEXT_TAIL", "INSTRUCTION_TAIL"}[focus]
-				for index, height := range []int{24, 26, 28, 24} {
+				for _, height := range []int{24, 26, 28, 24} {
 					m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 					view := ansi.Strip(m.View().Content)
 					require.Equal(t, input, m.input.Value())
@@ -572,8 +584,8 @@ func TestAudioWorkspaceResizeKeepsRetainedResultAndEditingTail(t *testing.T) {
 					require.Equal(t, inputColumn, m.input.Column(), "resize moved the Text caret")
 					require.Equal(t, instructionLine, m.instructions.Line())
 					require.Equal(t, instructionColumn, m.instructions.Column(), "resize moved the Instructions caret")
-					require.Equal(t, []int{1, 2, 3, 1}[index], m.input.Height())
-					require.Equal(t, []int{1, 2, 3, 1}[index], m.instructions.Height())
+					require.Equal(t, 3, m.input.Height())
+					require.Equal(t, 3, m.instructions.Height())
 					require.Equal(t, focus, m.focus)
 					require.Same(t, &r, m.result)
 					require.Contains(t, view, tail, "focused editor tail must survive height changes")
