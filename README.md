@@ -42,6 +42,7 @@ brew update && brew upgrade --cask openai/tools/openai
 
 If Homebrew says “already installed,” compare its cask version with the [latest CLI release](https://github.com/openai/openai-cli/releases/latest).
 The tap can trail a release. Reinstalling the same cask gives you the same version.
+Wait for the tap update or use the [prebuilt archive](#installing-a-prebuilt-binary) without installing Go.
 In Bash or zsh, check which copy your shell runs.
 
 ```sh
@@ -78,8 +79,8 @@ go install github.com/openai/openai-cli/cmd/openai@latest && {
     go_bin="${go_path%%:*}/bin"
   fi
   export PATH="$go_bin:$PATH"
+  "$go_bin/openai" --version
   command -v openai
-  openai --version
 }
 ```
 
