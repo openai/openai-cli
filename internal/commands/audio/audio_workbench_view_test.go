@@ -351,6 +351,11 @@ func TestAudioWidePanelActionsStayBesideDraft(t *testing.T) {
 		}
 		audioReviewKey(m, tea.KeyDown)
 	}
+	require.Equal(t, 4, m.focus)
+	require.Empty(t, m.modal)
+	audioReviewKey(m, tea.KeyUp)
+	require.Equal(t, "more", m.modal)
+	require.Contains(t, ansi.Strip(m.View().Content), "› Help")
 	audioReviewKey(m, tea.KeyEscape)
 	require.Equal(t, 4, m.setting)
 	require.Empty(t, m.modal)

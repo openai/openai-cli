@@ -123,23 +123,45 @@ func (m *audioWorkbench) workspaceFooter() []string {
 	if m.focus == 4 {
 		return m.resultHintRows()
 	}
-	if m.inlineActions() && m.modal == "more" {
-		return m.formShortcutRows([2]string{"↑↓", "choose"}, [2]string{"Enter", "open"}, [2]string{"Tab", "Audio"}, [2]string{"Esc", "back"})
+	below := "Audio"
+	if m.result.hasWaveform() {
+		below = "waveform"
 	}
-	next := "Settings"
+	if m.inlineActions() && m.modal == "more" {
+		move := [][2]string{{"↑↓", "choose"}}
+		if m.moreChoice == len(m.moreItems())-1 {
+			move = [][2]string{{"↑", "choose"}, {"↓", below}}
+		}
+		return m.formShortcutRows(append(move, [2]string{"←", "Generate"}, [2]string{"Enter", "open"}, [2]string{"Tab", "Audio"}, [2]string{"Esc", "back"})...)
+	}
+	nextKey, next := "Tab", "Settings"
 	if m.focus == 0 && m.instructionsSupported() {
 		next = "Instructions"
 	} else if m.focus == 2 {
 		next = "Audio"
 		if m.inlineActions() {
 			next = "Actions"
+			if m.setting == 4 || m.setting == audioSettingDisclosure {
+				nextKey = "→"
+			}
 		}
 	}
-	shortcuts := [][2]string{{"Ctrl+C", "Exit"}, {"Tab", next}}
+	shortcuts := [][2]string{{"Ctrl+C", "Exit"}, {nextKey, next}}
 	if m.focus == 0 || m.focus == 1 {
 		shortcuts = append(shortcuts, [2]string{"Alt+Enter", "New line"})
-	} else if m.focus == 2 && m.setting == audioSettingMore {
-		shortcuts = append(shortcuts, [2]string{"Enter", "open"})
+	} else if m.focus == 2 && m.setting >= 4 && m.setting <= audioSettingMore {
+		horizontal := len(m.formActionRows()) == 1
+		if horizontal && !m.inlineActions() {
+			shortcuts = append(shortcuts, [2]string{"←→", "choose"})
+		}
+		if horizontal || m.setting == audioSettingMore {
+			shortcuts = append(shortcuts, [2]string{"↓", below})
+		}
+		action := "open"
+		if m.setting == 4 {
+			action = "generate"
+		}
+		shortcuts = append(shortcuts, [2]string{"Enter", action})
 	} else if m.focus == 2 && m.setting == audioSettingDisclosure {
 		action := "expand"
 		if m.settingsExpanded {
@@ -281,7 +303,7 @@ func (m *audioWorkbench) workspaceWaveformRows(budget int) []string {
 	// The heavier played rail remains distinct when the terminal disables color.
 	played, remaining := "", ""
 	if marker > 0 {
-		played = m.accent().Bold(false).Render("├" + strings.Repeat("━", marker-1))
+		played = m.elapsedWaveformStyle().Render("├" + strings.Repeat("━", marker-1))
 	}
 	if marker < last {
 		remaining = m.borderStyle().Render(strings.Repeat("─", last-marker-1) + "┤")

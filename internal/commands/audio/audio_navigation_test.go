@@ -308,6 +308,7 @@ func TestAudioNavigationSettingsArrowsDoNotWrapOrActivate(t *testing.T) {
 	for _, withResult := range []bool{false, true} {
 		t.Run(fmt.Sprintf("result_%t", withResult), func(t *testing.T) {
 			m := audioReviewModel(t)
+			m.Update(tea.WindowSizeMsg{Width: 40, Height: 12}) // Actions occupy separate rows.
 			m.input.SetValue("Clear must remain an explicit action")
 			m.focus, m.setting = 2, 1
 			if withResult {
@@ -342,6 +343,70 @@ func TestAudioNavigationSettingsArrowsDoNotWrapOrActivate(t *testing.T) {
 			require.True(t, m.instructions.Focused())
 		})
 	}
+}
+
+func TestAudioNavigationWideActionsToWaveform(t *testing.T) {
+	for _, lastError := range []bool{false, true} {
+		t.Run(fmt.Sprintf("last_error_%t", lastError), func(t *testing.T) {
+			m := audioResultNavigationModel(t, 120, 32)
+			m.input.SetValue("Keep this draft.")
+			if lastError {
+				m.failure.Summary = "A previous action failed."
+				m.failureNote = m.note
+			}
+			key := func(code rune) { audioNavigationKey(t, m, tea.KeyPressMsg{Code: code}) }
+			m.setting = audioSettingDisclosure
+			m.focusSection(2)
+			key(tea.KeyRight)
+			require.Equal(t, "more", m.modal)
+			key(tea.KeyLeft)
+			require.Empty(t, m.modal)
+			require.Equal(t, 4, m.setting)
+			key(tea.KeyRight)
+			key(tea.KeyEnd)
+			last := len(m.moreItems()) - 1
+			require.Equal(t, last, m.moreChoice)
+			key(tea.KeyDown)
+			require.Empty(t, m.modal)
+			require.Equal(t, 4, m.focus)
+			require.True(t, m.waveformFocused)
+			key(tea.KeyUp)
+			require.Equal(t, "more", m.modal)
+			require.Equal(t, last, m.moreChoice)
+			key(tea.KeyLeft)
+			key(tea.KeyDown)
+			require.Equal(t, 4, m.focus)
+			require.True(t, m.waveformFocused)
+			key(tea.KeyUp)
+			require.Empty(t, m.modal)
+			require.Equal(t, 2, m.focus)
+			require.Equal(t, 4, m.setting)
+		})
+	}
+}
+
+func TestAudioNavigationHorizontalFormActions(t *testing.T) {
+	m := audioResultNavigationModel(t, 101, 29)
+	key := func(code rune) { audioNavigationKey(t, m, tea.KeyPressMsg{Code: code}) }
+	key(tea.KeyRight) // Select Save before returning to the form.
+	m.focusSection(2)
+	m.setting = 4
+	for _, action := range []int{4, audioSettingHistory, audioSettingMore} {
+		require.Equal(t, action, m.setting)
+		key(tea.KeyDown)
+		require.Equal(t, 4, m.focus)
+		require.True(t, m.waveformFocused)
+		key(tea.KeyDown)
+		require.False(t, m.waveformFocused)
+		require.Equal(t, 1, m.resultAction)
+		key(tea.KeyUp)
+		key(tea.KeyUp)
+		require.Equal(t, 2, m.focus)
+		require.Equal(t, action, m.setting)
+		key(tea.KeyRight)
+	}
+	key(tea.KeyUp)
+	require.Equal(t, audioSettingDisclosure, m.setting)
 }
 
 func TestAudioNavigationCommandScrollingStaysBounded(t *testing.T) {
@@ -465,6 +530,7 @@ func TestAudioNavigationResultArrowsPreservePlayback(t *testing.T) {
 	}{
 		{tea.KeyUp, 4, 0},
 		{tea.KeyUp, 2, 0},
+		{tea.KeyDown, 4, 0},
 		{tea.KeyDown, 4, 0},
 		{tea.KeyDown, 4, 1},
 		{tea.KeyDown, 4, 1},

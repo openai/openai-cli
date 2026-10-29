@@ -18,7 +18,9 @@ Shift+Tab reverses that order.
 Up and Down move between sections at their boundaries.
 Inside an editor, arrows move through multiline and wrapped text before leaving the first or last visual row.
 Modified arrows and active selections remain inside the editor.
-Up from Voice returns to Instructions when the model supports them. Down from More actions moves to Audio.
+Up from Voice returns to Instructions when the model supports them.
+Down from the bottom row of the form moves to Audio. It focuses the waveform when the recording has one.
+When Generate speech, History, and More actions share a row, Left and Right move between them.
 Home and End select the first and last settings.
 Enter opens a choice or starts generation from an editor.
 Enter on Speed accepts an exact number from 0.25 to 4. Left and Right adjust speed by 0.25.
@@ -35,7 +37,9 @@ Voice choices follow the form's existing model validator.
 Changing models preserves the selected voice. An unavailable voice needs another explicit choice before generation.
 
 Generate speech is the primary action. At 110 columns and 24 rows, Actions sits beside the editor.
-Press Tab from Settings to focus Actions. Use the arrow keys to select an action. Press Enter to open it.
+Press Right from Generate speech or the Settings heading to enter Actions. Tab from Settings also enters Actions.
+Up and Down select an action. Enter opens it. Left returns to Generate speech.
+Down from the last action moves to Audio. Up from the waveform returns to the action you left.
 Actions contains History, Preview voice, Clear form, View command, and Help.
 On smaller terminals, select More actions and press Enter.
 View command opens a vertically scrollable Bash/zsh command.
@@ -224,7 +228,8 @@ Playback and Save shortcuts explain that speech must be generated first.
 The recording adds the timer, waveform, seek rail, and transport controls in that location.
 One blank row separates the recording details from the waveform when space permits.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.
-The playhead follows playback through silence. Played strokes and elapsed time use blue.
+The playhead follows playback through silence. Elapsed bars and rail use green. Upcoming bars use the secondary text color.
+Long bars have darker tips at both ends. Short bars keep their contrast. Elapsed time uses blue.
 Amber marks a paused or manually positioned playhead. The status describes its state.
 The heavier rail shows the played portion in monochrome. The final marker turns green when playback completes.
 Play starts under the first timeline marker. Save and the timer follow in the same row.

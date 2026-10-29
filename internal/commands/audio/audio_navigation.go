@@ -61,6 +61,16 @@ func (m *audioWorkbench) settingOrder() []int {
 	return order
 }
 
+// Down enters the first available part of Audio. Tab still lands on its controls.
+func (m *audioWorkbench) enterAudioFromAbove() tea.Cmd {
+	cmd := m.focusSection(4)
+	m.waveformFocused = m.result.hasWaveform()
+	if !m.waveformFocused {
+		m.resultAction = 0
+	}
+	return cmd
+}
+
 // Call after busy, minimum-size, and modal guards. Editing keeps modified arrows
 // and active selections; plain arrows leave only the first or last visual row.
 func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
@@ -104,15 +114,16 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 		}
 	case 2:
 		order := m.settingOrder()
+		onActionRow := m.setting >= 4 && m.setting <= audioSettingMore && len(m.formActionRows()) == 1
 		switch key {
 		case "left", "right":
-			if m.inlineActions() && m.setting == 4 {
+			if m.inlineActions() && (m.setting == 4 || m.setting == audioSettingDisclosure) {
 				if key == "right" {
 					return true, m.openActions()
 				}
 				return true, nil
 			}
-			if m.setting < 4 || m.setting > audioSettingMore || len(m.formActionRows()) != 1 {
+			if !onActionRow {
 				return false, nil
 			}
 			step := 1
@@ -122,6 +133,9 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			m.setting = max(4, min(audioSettingMore, m.setting+step))
 		case "up":
 			index := slices.Index(order, m.setting)
+			if onActionRow {
+				index = slices.Index(order, 4)
+			}
 			if index <= 0 {
 				if !m.instructionsSupported() {
 					return true, m.focusSection(0)
@@ -131,12 +145,8 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			m.setting = order[index-1]
 		case "down":
 			index := slices.Index(order, m.setting)
-			if index == len(order)-1 {
-				if m.inlineActions() {
-					return true, m.openActions()
-				}
-				m.resultAction = 0
-				return true, m.focusSection(4)
+			if index == len(order)-1 || onActionRow {
+				return true, m.enterAudioFromAbove()
 			}
 			m.setting = order[index+1]
 		case "home":
@@ -166,10 +176,13 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 				m.waveformFocused = true
 			} else {
 				m.waveformFocused = false
-				if m.inlineActions() {
-					return true, m.openActions()
+				// Retrace a vertical move to its action. Other routes use the bottom form row.
+				if len(m.formActionRows()) != 1 {
+					m.setting = audioSettingMore
+				} else if m.setting < 4 || m.setting > audioSettingMore {
+					m.setting = 4
 				}
-				m.setting = audioSettingMore
+				m.moreChoice = min(m.moreChoice, len(m.moreItems())-1)
 				return true, m.focusSection(2)
 			}
 		case "down":

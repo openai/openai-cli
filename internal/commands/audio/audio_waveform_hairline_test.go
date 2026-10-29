@@ -13,7 +13,17 @@ import (
 )
 
 func TestAudioHairlineShowsElapsedStrokesAcrossFocusChanges(t *testing.T) {
-	wave := []string{" │    ┃    │ ", " │╷   ┃   ╷│ ", " │││· ┃ ·│││ ", " │╵   ┃   ╵│ ", " │    ┃    │ "}
+	wave := []string{
+		" │    ┃    │ ",
+		" │    ┃    │ ",
+		" │╷   ┃   ╷│ ",
+		" ││╷  ┃  ╷││ ",
+		" │││· ┃ ·│││ ",
+		" ││╵  ┃  ╵││ ",
+		" │╵   ┃   ╵│ ",
+		" │    ┃    │ ",
+		" │    ┃    │ ",
+	}
 	for _, dark := range []bool{false, true} {
 		for _, state := range []struct {
 			focus          int
@@ -21,9 +31,11 @@ func TestAudioHairlineShowsElapsedStrokesAcrossFocusChanges(t *testing.T) {
 		}{{0, true, false}, {4, false, false}, {4, true, false}, {4, true, true}} {
 			m := audioReviewModel(t)
 			m.color, m.dark, m.focus, m.waveformFocused, m.busy = true, dark, state.focus, state.waveform, state.busy
-			primary, secondary, accent, border := "32;40;59", "101;112;135", "49;89;188", "186;196;216"
+			primary, secondary, border := "32;40;59", "101;112;135", "186;196;216"
+			elapsed, elapsedTip, futureTip := "21;118;86", "17;100;73", "87;97;116"
 			if dark {
-				primary, secondary, accent, border = "242;244;250", "164;172;194", "138;168;255", "81;86;107"
+				primary, secondary, border = "242;244;250", "164;172;194", "81;86;107"
+				elapsed, elapsedTip, futureTip = "81;200;157", "68;169;133", "143;150;168"
 			}
 			const marker = 6
 			rows := m.workspaceHairlineRows(wave, marker)
@@ -33,11 +45,14 @@ func TestAudioHairlineShowsElapsedStrokesAcrossFocusChanges(t *testing.T) {
 					require.False(t, cell.bold, "the glyph supplies the stroke weight")
 					switch cell.glyph {
 					case '│', '╷', '╵':
-						stroke := secondary
+						stroke, tip := secondary, futureTip
 						if column < marker {
-							stroke = accent
+							stroke, tip = elapsed, elapsedTip
 						}
-						require.Equal(t, stroke, cell.foreground)
+						if (row == 0 || row == 8) || ((row == 2 || row == 6) && (column == 2 || column == 10)) {
+							stroke = tip
+						}
+						require.Equal(t, stroke, cell.foreground, "row %d col %d", row, column)
 					case '·':
 						require.Equal(t, border, cell.foreground)
 					case '┃':
@@ -99,7 +114,7 @@ func TestAudioHairlinePreservesOneRowAndCompactOutput(t *testing.T) {
 		// The one-row timeline retains the center of the original three-row wave.
 		// Its 53-cell span has 25 played and 25 future measured columns.
 		want := "  " + m.borderStyle().Render("╶") +
-			m.accent().Bold(false).Render(strings.Repeat("┼", 25)) +
+			m.elapsedWaveformStyle().Render(strings.Repeat("┼", 25)) +
 			m.warningStyle().Render("╂") + m.muted().Render(strings.Repeat("┼", 25)) + m.borderStyle().Render("╴")
 		require.Equal(t, audioHairlineCells(t, want), audioHairlineCells(t, m.workspaceWaveformRows(2)[0]))
 		m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})

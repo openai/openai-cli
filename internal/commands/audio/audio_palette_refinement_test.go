@@ -394,7 +394,7 @@ func audioRequireTextForeground(t *testing.T, view, text string, style lipgloss.
 	t.Fatalf("text %q is missing", text)
 }
 
-func TestAudioDesignSystemUsesGreenOnlyForCompletedPlayback(t *testing.T) {
+func TestAudioDesignSystemReservesSuccessColorForCompletedPlayback(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		green := "35;107;67"
 		if dark {

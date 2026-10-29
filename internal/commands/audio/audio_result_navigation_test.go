@@ -37,10 +37,10 @@ func audioResultNavigationPlayback(t *testing.T, m *audioWorkbench) context.Cont
 }
 
 func TestAudioResultNavigationEmptyPlayerRemainsReachable(t *testing.T) {
-	for _, size := range [][2]int{{40, 12}, {60, 24}, {101, 29}} {
-		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+	for _, size := range []struct{ width, height, aboveAudio int }{{40, 12, audioSettingMore}, {60, 24, 4}, {101, 29, 4}} {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
 			m := audioReviewModel(t)
-			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			m.Update(tea.WindowSizeMsg{Width: size.width, Height: size.height})
 			m.input.SetValue("Keep this synthetic draft 世界")
 			m.instructions.SetValue("Keep this delivery")
 			for _, focus := range []int{1, 2, 4, 0} {
@@ -68,7 +68,7 @@ func TestAudioResultNavigationEmptyPlayerRemainsReachable(t *testing.T) {
 			}
 			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
 			require.Equal(t, 2, m.focus, "empty waveform must be skipped")
-			require.Equal(t, audioSettingMore, m.setting)
+			require.Equal(t, size.aboveAudio, m.setting)
 			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 			require.Equal(t, 4, m.focus)
 			require.Zero(t, m.resultAction)
@@ -87,14 +87,14 @@ func TestAudioResultNavigationEmptyPlayerRemainsReachable(t *testing.T) {
 }
 
 func TestAudioResultNavigationSkipsTimelineWithoutPeaks(t *testing.T) {
-	for _, size := range [][2]int{{40, 12}, {60, 24}} {
-		m := audioResultNavigationModel(t, size[0], size[1])
+	for _, size := range []struct{ width, height, aboveAudio int }{{40, 12, audioSettingMore}, {60, 24, 4}} {
+		m := audioResultNavigationModel(t, size.width, size.height)
 		m.result.analysis.Peaks = nil
 		require.Positive(t, m.result.seekDuration())
 		require.NotContains(t, m.View().Content, "↑ waveform")
 		require.Nil(t, audioReviewKey(m, tea.KeyUp))
 		require.False(t, m.waveformFocused)
-		require.Equal(t, audioSettingMore, m.setting)
+		require.Equal(t, size.aboveAudio, m.setting)
 		require.Equal(t, 2, m.focus)
 		require.Nil(t, audioReviewKey(m, tea.KeyDown))
 		require.Contains(t, m.View().Content, "› Play audio")
@@ -274,10 +274,10 @@ func TestAudioResultNavigationGuardsPreserveSelectionAndPlayback(t *testing.T) {
 }
 
 func TestAudioResultNavigationSkipsUnavailableWaveform(t *testing.T) {
-	for _, size := range [][2]int{{40, 12}, {90, 34}} {
+	for _, size := range []struct{ width, height, aboveAudio int }{{40, 12, audioSettingMore}, {90, 34, 4}} {
 		for _, unavailable := range []string{"unmeasured", "zero-duration"} {
-			t.Run(fmt.Sprintf("%dx%d/%s", size[0], size[1], unavailable), func(t *testing.T) {
-				m := audioResultNavigationModel(t, size[0], size[1])
+			t.Run(fmt.Sprintf("%dx%d/%s", size.width, size.height, unavailable), func(t *testing.T) {
+				m := audioResultNavigationModel(t, size.width, size.height)
 				playing := audioResultNavigationPlayback(t, m)
 				if unavailable == "unmeasured" {
 					m.result.measured = false
@@ -287,7 +287,7 @@ func TestAudioResultNavigationSkipsUnavailableWaveform(t *testing.T) {
 				require.Nil(t, audioReviewKey(m, tea.KeyRight))
 				require.Nil(t, audioReviewKey(m, tea.KeyUp))
 				require.Equal(t, 2, m.focus)
-				require.Equal(t, audioSettingMore, m.setting)
+				require.Equal(t, size.aboveAudio, m.setting)
 				require.False(t, m.waveformFocused)
 				require.Nil(t, audioReviewKey(m, tea.KeyDown))
 				require.Equal(t, 4, m.focus)
@@ -368,7 +368,7 @@ func TestAudioResultNavigationNoColorMarksFocusedWaveform(t *testing.T) {
 			view := m.View().Content
 			require.NotContains(t, view, "\x1b")
 			require.Contains(t, view, "←→ seek")
-			require.Contains(t, view, "↓ actions")
+			require.Contains(t, view, "↓ controls")
 			require.NotContains(t, view, "› Play audio")
 			require.NotContains(t, view, "› Save audio")
 			var focused []string

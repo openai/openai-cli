@@ -99,7 +99,7 @@ func TestAudioWaveformTimelineConnectsPlayheadWithoutMovingBars(t *testing.T) {
 	}
 }
 
-func TestAudioWaveformTimelineMovesPlayedColorAndReservesGreenForCompletion(t *testing.T) {
+func TestAudioWaveformTimelineMovesPlayedColorAndReservesSuccessForCompletion(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, focused := range []bool{false, true} {
 			m := audioReviewModel(t)
@@ -108,9 +108,9 @@ func TestAudioWaveformTimelineMovesPlayedColorAndReservesGreenForCompletion(t *t
 			r := audioReviewResult("frame-color", false)
 			r.analysis.Peaks = []float64{0, 1, 0, 1, 0, 1}
 			m.result, m.focus, m.waveformFocused = &r, 4, focused
-			primary, border, secondary, accent, green := "32;40;59", "186;196;216", "101;112;135", "49;89;188", "35;107;67"
+			primary, border, secondary, elapsed, green := "32;40;59", "186;196;216", "101;112;135", "21;118;86", "35;107;67"
 			if dark {
-				primary, border, secondary, accent, green = "242;244;250", "81;86;107", "164;172;194", "138;168;255", "141;201;160"
+				primary, border, secondary, elapsed, green = "242;244;250", "81;86;107", "164;172;194", "81;200;157", "141;201;160"
 			}
 			amber := "136;91;20"
 			if dark {
@@ -155,11 +155,11 @@ func TestAudioWaveformTimelineMovesPlayedColorAndReservesGreenForCompletion(t *t
 						case '━', '├':
 							require.Equal(t, len(rows)-1, index)
 							require.Less(t, column, marker)
-							require.Equal(t, accent, cell.foreground, "the heavier rail marks elapsed time")
+							require.Equal(t, elapsed, cell.foreground, "the heavier rail marks elapsed time")
 						case '│', '╷', '╵', '┼':
 							stroke := secondary
 							if column < marker {
-								stroke = accent
+								stroke = elapsed
 							}
 							require.Equal(t, stroke, cell.foreground)
 						}

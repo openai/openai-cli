@@ -223,6 +223,7 @@ def navigation_case(ctx):
     up, down, ss3_up, ss3_down = b"\x1b[A", b"\x1b[B", b"\x1bOA", b"\x1bOB"
     backtab = b"\x1b[Z"
     wide = terminal.initial_size[0] >= 60
+    previous_action, next_action = (b"\x1b[D", b"\x1b[C") if wide else (up, ss3_down)
     shortcuts = "  "
     chooser_hint = shortcuts.join(("Enter select", "Esc back"))
     focus = {"text": "Tab Instructions", "instructions": "› Instructions", "voice": "› Voice", "model": "› Model",
@@ -276,10 +277,10 @@ def navigation_case(ctx):
     check("End selects More", "more", ctx.picker.END)
     check("More Down focuses empty Audio", "empty-audio", down)
     check("empty Audio Up restores More", "more", up)
-    check("More Up selects History", "history", up)
-    check("History Up selects Generate", "generate", up)
-    check("Generate Down selects History", "history", ss3_down)
-    check("History Down selects More", "more", down)
+    check("move from More to History", "history", previous_action)
+    check("move from History to Generate", "generate", previous_action)
+    check("move from Generate to History", "history", next_action)
+    check("move from History to More", "more", next_action)
     check("Tab More to Audio", "empty-audio", b"\t")
     check("Tab Audio to Text for long command", "text", b"\t")
     ctx.paste(terminal, "Command inspection sample. " * 180)
@@ -361,7 +362,8 @@ def navigation_case(ctx):
     ctx.wait(terminal, "00:00.000 / 00:02.000")
     ctx.mark(terminal, result["case"] + "-restored-result", result)
     check("reverse Tab Result to Settings", "more", backtab)
-    check("More Down enters Play", "play", down)
+    check("More Down reaches the waveform", "←→ seek", down)
+    check("waveform Down selects Play", "play", down)
     check("Result Down selects Save", "save", ss3_down)
     check("Result Down stays on Save", "save", down)
     check("Result Left returns to Play", "play", b"\x1b[D")
@@ -381,7 +383,7 @@ def navigation_case(ctx):
     assert "Command preview" not in visible and "printf" not in visible, "Main form retained advanced command content"
     ctx.mark(terminal, result["case"] + "-complete", result)
     result["navigation_check_count"] = len(result["navigation_checks"])
-    assert result["navigation_check_count"] == 195, "Navigation inventory changed"
+    assert result["navigation_check_count"] == 196, "Navigation inventory changed"
     zero_requests()
     terminal.send(b"\x03")
     terminal.finish(130)
@@ -839,7 +841,7 @@ def workflow_case(ctx):
     ctx.mark(terminal, "listen-shortcut", result)
     terminal.send(b"\x1b")
     ctx.wait(terminal, "Tab Instructions")
-    terminal.send(b"\t\t" + ctx.picker.END + ctx.picker.UP)
+    terminal.send(b"\t\t" + ctx.picker.END + b"\x1b[D")
     ctx.wait(terminal, "› History")
     terminal.send(b"\r")
     ctx.wait(terminal, ctx.fixture.TEXT.splitlines()[0])
@@ -957,6 +959,10 @@ def wide_case(ctx):
         visible = ctx.wait(terminal, "› " + name)
         assert draft in visible, "Selecting an action hid the draft"
     ctx.mark(terminal, "wide-actions", result)
+    terminal.send(ctx.picker.DOWN)
+    ctx.wait(terminal, "Ctrl+G Generate")
+    terminal.send(ctx.picker.UP)
+    ctx.wait(terminal, "› Help")
     terminal.send(b"\r")
     ctx.wait(terminal, "Up/Down, Page Up/Down")
     terminal.send(b"\x1b")
@@ -965,6 +971,10 @@ def wide_case(ctx):
     terminal.send(b"\x1b")
     visible = ctx.wait(terminal, "› Generate speech")
     assert draft in visible, "Returning from Actions lost the draft"
+    terminal.send(ctx.picker.DOWN)
+    ctx.wait(terminal, "Ctrl+G Generate")
+    terminal.send(ctx.picker.UP)
+    ctx.wait(terminal, "› Generate speech")
     terminal.send(b"\x03")
     terminal.finish(130)
     assert not server.records and not server.failures, "Wide form navigation sent a request"

@@ -363,9 +363,10 @@ func TestAudioInlineSpeedRecoveryPreservesDraftAndRestoresFocus(t *testing.T) {
 					require.Equal(t, "recovery", m.modal)
 					m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 					require.Equal(t, audioSettingMore, m.setting)
-					for range audioSettingMore - 3 {
+					for step := 0; step < 3 && m.setting != 3; step++ {
 						m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 					}
+					require.Equal(t, 3, m.setting)
 				}
 				audioInlineType(m, "4.01")
 				m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})

@@ -338,7 +338,8 @@ Ctrl+S opens Save for the current recording. Choose a destination and confirm to
 Ctrl+O focuses Audio without starting playback.
 Text, settings, and retained audio share the workspace when the terminal is at least 60 x 24.
 In smaller terminals, Tab changes the visible section.
-From Settings, Tab focuses Actions on wide terminals. On smaller terminals, choose More actions.
+When Actions is beside the form, press Right from Generate speech to enter it. Left returns to Generate speech.
+Down from the last item in Actions moves to Audio. On smaller terminals, choose More actions to open the menu.
 Choose View command to inspect the full command.
 Up/Down, Page Up/Down, Home, and End scroll the command.
 Esc returns to the menu. Tab opens Audio. Shift+Tab returns to More actions.
@@ -360,8 +361,9 @@ Clear removes the current draft, not History or saved files.
 Choose Play audio or Save audio in the result.
 Space plays the recording. Pause and Resume use the last reported position.
 When that position is unavailable, Space stops playback. S opens Save.
-Left and Right choose Play or Save.
-Up focuses the waveform. Down returns to the selected action.
+Arrows follow the layout. Down from the last form row focuses the waveform when one is available.
+Up from Play or Save focuses the waveform. Down from the waveform returns to the playback controls.
+Left and Right choose between Play and Save.
 Left and Right on the waveform choose the playback start.
 Shift+Left and Shift+Right move five waveform bars.
 G or a digit opens Go to time for measured audio. Type seconds or M:SS.

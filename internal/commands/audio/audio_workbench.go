@@ -473,6 +473,11 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 		}
 		if m.inlineActions() && m.modal == "more" {
 			switch key {
+			case "down":
+				if m.moreChoice >= len(m.moreItems())-1 {
+					m.modal, m.setting = "", audioSettingMore
+					return m, m.enterAudioFromAbove()
+				}
 			case "tab", "shift+tab", "left":
 				m.modal, m.setting = "", 4
 				if key == "tab" {

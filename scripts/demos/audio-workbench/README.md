@@ -105,7 +105,7 @@ A private synthetic History entry supplies Result navigation without generation.
 Both cases require zero accepted or rejected fixture requests and strict cancellation cleanup.
 Settings End selects More actions. Clear is the third More action.
 Clear empties Text and Instructions without reseeding the constructor example.
-The navigation inventory contains 195 current-viewport checkpoints at each size.
+The navigation cases follow the visible action layout and enter the waveform before Play and Save.
 The navigation cases test Alt+Enter without submitting editor text.
 They leave Enter generation and the existing repeat-submit guard unchanged.
 
@@ -307,4 +307,5 @@ They do not replace the full checker run against the exact candidate binary.
 
 The `wide` case runs at 186×34. The frame leaves the last terminal column free to prevent a soft wrap.
 Tab moves focus to the Actions column. Down moves through its rows while the draft remains visible.
-The case opens Help, returns to Generate, and checks that navigation made zero speech requests.
+The case follows Down into Audio from Help and Generate. Up restores each selection.
+It also opens Help and checks that navigation made zero speech requests.

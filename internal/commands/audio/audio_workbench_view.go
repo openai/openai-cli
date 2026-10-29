@@ -564,7 +564,7 @@ func (m *audioWorkbench) resultHintRows() []string {
 	if m.focus == 4 {
 		r := m.result
 		if r == nil && !m.busy {
-			return m.formShortcutRows([2]string{"Ctrl+G", "Generate"}, [2]string{"Esc", "back"})
+			return m.formShortcutRows([2]string{"↑", "form"}, [2]string{"Ctrl+G", "Generate"}, [2]string{"Esc", "back"})
 		}
 		playAction := "play"
 		if r != nil {
@@ -579,7 +579,7 @@ func (m *audioWorkbench) resultHintRows() []string {
 			control = [2]string{"Enter", "save"}
 		}
 		if m.waveformFocused {
-			navigation = [][2]string{{"←→", "seek"}, {"↓", "actions"}}
+			navigation = [][2]string{{"←→", "seek"}, {"↑", "back"}, {"↓", "controls"}}
 		}
 		if r.seekDuration() > 0 {
 			navigation = append(navigation, [2]string{"G", "time"})
@@ -591,7 +591,7 @@ func (m *audioWorkbench) resultHintRows() []string {
 		} else if ansi.StringWidth(movement)+ansi.StringWidth(controls)+4 <= m.audioWidth()-2 {
 			lines = append(lines, "  "+movement+"    "+controls)
 		} else {
-			lines = append(lines, "  "+movement, "  "+controls)
+			lines = m.formShortcutRows(append(navigation, control, [2]string{"Esc", "back"})...)
 		}
 	}
 	return lines
