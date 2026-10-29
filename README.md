@@ -68,9 +68,14 @@ Extract the archive.
 For a manual installation, place `openai` (`openai.exe` on Windows) in a directory on your `PATH`.
 Run `openai --version` to verify it.
 
-**Want automatic updates?** On macOS or Linux, place the official release binary at `$HOME/.openai/bin/openai`.
-The updater requires a compatible GitHub CLI (`gh`) and interactive launches.
-See [automatic updates](docs/automatic-updates.md) for permissions, version pins, and opt-outs.
+**Want automatic updates?** On macOS or Linux, run this block from the extracted directory in Bash or zsh.
+
+```sh
+sh ./install.sh && export PATH="$HOME/.openai/bin:$PATH" && openai --version
+```
+
+Future updates require a compatible GitHub CLI (`gh`) and interactive launches.
+See [automatic update setup](docs/automatic-updates.md#install-from-a-release-archive) for older archives, persistent PATH settings, and version pins.
 Homebrew and Go manage their own installations.
 
 ### Installing with Go

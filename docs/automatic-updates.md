@@ -2,6 +2,39 @@
 
 Supported self-managed installations prepare release updates automatically. Other installations retain the existing update notice.
 
+## Install from a release archive
+
+On macOS and Linux, an official release can keep itself current.
+The updater uses [GitHub CLI](https://cli.github.com/) (`gh`) to verify each new release.
+On a Mac with Homebrew, `brew install gh` supplies that prerequisite.
+
+1. Download the archive for your platform from [GitHub Releases](https://github.com/openai/openai-cli/releases/latest).
+2. Extract the archive.
+3. Run this command from the extracted directory.
+
+   ```sh
+   sh ./install.sh
+   ```
+
+The helper installs `openai` at `$HOME/.openai/bin/openai`. It stops if that path already contains a file or link.
+If setup stops, rerun the helper. If an executable already exists, check its version with `"$HOME/.openai/bin/openai" --version`.
+A forced stop can leave a private `.openai-install.*` staging directory under `$HOME/.openai/bin`.
+After all installers exit, you can remove a staging directory left by that interrupted attempt.
+
+Older archives may lack the helper. For those releases, follow the location and ownership rules under [supported installations](#supported-installations).
+
+Select this copy in Bash or zsh and check its version.
+
+```sh
+export PATH="$HOME/.openai/bin:$PATH"
+command -v openai
+openai --version
+```
+
+To keep using this copy, add the export to your shell profile.
+Bare `openai` starts the background update check on eligible interactive runs.
+After activation, the CLI prints `Updated to vX.Y.Z.` once. See [controls](#controls) to disable updates or pin a version.
+
 ## Supported installations
 
 Automatic installation requires all these conditions:
