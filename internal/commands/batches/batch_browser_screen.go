@@ -680,16 +680,7 @@ func (m *batchBrowserScreen) View() tea.View {
 	}
 	line = func(text string) string { return ansi.Truncate(batchInputLabel(text), contentWidth, "…") }
 	sectionRule := func() string {
-		rule := strings.Repeat("─", contentWidth)
-		if colors {
-			var tapered strings.Builder
-			shades := lipgloss.Blend1D((contentWidth+1)/2, lipgloss.Color(fill), lipgloss.Color(edge), lipgloss.Color(secondary))
-			for i := range contentWidth {
-				tapered.WriteString(lipgloss.NewStyle().Foreground(shades[min(i, contentWidth-1-i)]).Render("─"))
-			}
-			rule = tapered.String()
-		}
-		return "  " + rule
+		return "  " + terminal.SectionDivider(contentWidth, colors, fill, edge, secondary)
 	}
 	if m.flow != nil {
 		lines, cursor := m.flowLines(height, contentWidth, footer, sectionRule, muted, semantic(muted, "warning"), accent, highlight)

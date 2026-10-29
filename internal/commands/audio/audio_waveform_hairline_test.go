@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAudioHairlineUsesOnlyWaveformFocusAndPaletteRoles(t *testing.T) {
+func TestAudioHairlineShowsElapsedStrokesAcrossFocusChanges(t *testing.T) {
 	wave := []string{" │    ┃    │ ", " │╷   ┃   ╷│ ", " │││· ┃ ·│││ ", " │╵   ┃   ╵│ ", " │    ┃    │ "}
 	for _, dark := range []bool{false, true} {
 		for _, state := range []struct {
@@ -25,18 +25,19 @@ func TestAudioHairlineUsesOnlyWaveformFocusAndPaletteRoles(t *testing.T) {
 			if dark {
 				primary, secondary, accent, border = "242;244;250", "164;172;194", "138;168;255", "81;86;107"
 			}
-			stroke := secondary
-			if state.focus == 4 && state.waveform && !state.busy {
-				stroke = accent
-			}
-			rows := m.workspaceHairlineRows(wave)
+			const marker = 6
+			rows := m.workspaceHairlineRows(wave, marker)
 			for row, text := range rows {
 				require.Equal(t, wave[row], ansi.Strip(text))
-				for _, cell := range audioHairlineCells(t, text) {
+				for column, cell := range audioHairlineCells(t, text) {
 					require.False(t, cell.bold, "the glyph supplies the stroke weight")
 					switch cell.glyph {
 					case '│', '╷', '╵':
-						require.Equal(t, stroke, cell.foreground, "every measured stroke uses the same focus role")
+						stroke := secondary
+						if column < marker {
+							stroke = accent
+						}
+						require.Equal(t, stroke, cell.foreground)
 					case '·':
 						require.Equal(t, border, cell.foreground)
 					case '┃':
@@ -47,7 +48,7 @@ func TestAudioHairlineUsesOnlyWaveformFocusAndPaletteRoles(t *testing.T) {
 				}
 			}
 			m.color = false
-			require.Equal(t, wave, m.workspaceHairlineRows(wave))
+			require.Equal(t, wave, m.workspaceHairlineRows(wave, marker))
 		}
 	}
 }
@@ -61,7 +62,7 @@ func TestAudioHairlineKeepsMeasuredGeometryAndSilence(t *testing.T) {
 		for _, boundary := range []int{0, audioWaveformBars(tc.width) / 2, audioWaveformBars(tc.width), 1} {
 			wave := audioDenseWaveform(peaks, tc.width, tc.height, boundary)
 			original := append([]string(nil), wave...)
-			rows := m.workspaceHairlineRows(wave)
+			rows := m.workspaceHairlineRows(wave, audioWaveformMarker(tc.width, boundary))
 			require.Equal(t, original, wave, "shading must not edit measured geometry")
 			for row, text := range rows {
 				require.Equal(t, wave[row], ansi.Strip(text))
@@ -79,7 +80,7 @@ func TestAudioHairlineKeepsMeasuredGeometryAndSilence(t *testing.T) {
 	}
 	// Invalid samples cannot acquire an apparent contour through styling.
 	wave := audioDenseWaveform([]float64{0, math.NaN(), math.Inf(-1), -1}, 11, 9, 0)
-	for _, row := range m.workspaceHairlineRows(wave) {
+	for _, row := range m.workspaceHairlineRows(wave, 0) {
 		for _, cell := range audioHairlineCells(t, row) {
 			require.Contains(t, " ┃·", string(cell.glyph))
 		}
@@ -96,16 +97,16 @@ func TestAudioHairlinePreservesOneRowAndCompactOutput(t *testing.T) {
 		m.result, m.focus, m.waveformFocused = &r, 4, false
 		m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
 		// The one-row timeline retains the center of the original three-row wave.
-		// Its 49-cell span has 23 played and 23 future measured columns.
+		// Its 53-cell span has 25 played and 25 future measured columns.
 		want := "  " + m.borderStyle().Render("╶") +
-			m.muted().Render(strings.Repeat("┼", 23)) +
-			m.primaryText().Render("╂") + m.muted().Render(strings.Repeat("┼", 23)) + m.borderStyle().Render("╴")
+			m.accent().Bold(false).Render(strings.Repeat("┼", 25)) +
+			m.warningStyle().Render("╂") + m.muted().Render(strings.Repeat("┼", 25)) + m.borderStyle().Render("╴")
 		require.Equal(t, audioHairlineCells(t, want), audioHairlineCells(t, m.workspaceWaveformRows(2)[0]))
 		m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
-		wave := audioWaveform(r.analysis.Peaks, m.waveformWidth(), 1, m.selectedBoundary())[0]
-		parts := strings.SplitN(wave, "┃", 2)
-		want = "  " + m.muted().Render(parts[0]) + m.primaryText().Render("┃") + m.muted().Render(parts[1])
-		require.Contains(t, m.View().Content, want, "compact ANSI output must retain its original sparse rendering")
+		view := m.View().Content
+		require.Contains(t, view, m.warningStyle().Render("╂"), "the compact playhead crosses the same measured centerline")
+		require.Contains(t, view, m.warningStyle().Render("┷"))
+		require.NotContains(t, ansi.Strip(view), "█")
 	}
 }
 

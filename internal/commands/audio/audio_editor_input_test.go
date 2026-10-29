@@ -60,9 +60,10 @@ func TestAudioEditorNarrowValidationRemainsVisible(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 	m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	view := audioFeedbackView(t, m)
-	require.Contains(t, view, "Text is empty.")
+	require.Contains(t, view, "Text to speech")
 	require.Contains(t, view, "Enter text before generating speech.")
-	require.Contains(t, view, "Esc back")
+	require.Empty(t, m.modal)
+	require.True(t, m.input.Focused())
 	require.False(t, m.busy)
 }
 

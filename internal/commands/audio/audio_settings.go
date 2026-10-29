@@ -11,6 +11,51 @@ import (
 
 const audioSpeedError = "Enter a speed from 0.25 to 4."
 
+type audioFormValidation struct {
+	field   int
+	preview bool
+	message string
+}
+
+func audioAdvancedSetting(field int) bool {
+	return field == 0 || field == 2 || field == 3
+}
+
+func (m *audioWorkbench) fieldValidation(field int) string {
+	if field == 3 && m.speedError != "" {
+		return m.speedError
+	}
+	if m.validation == nil || m.validation.field != field {
+		return ""
+	}
+	switch field {
+	case 2:
+		return "Choose a supported audio format."
+	case 3:
+		return audioSpeedError
+	default:
+		return m.validation.message
+	}
+}
+
+func (m *audioWorkbench) clearResolvedValidation() {
+	if m.validation == nil {
+		return
+	}
+	settings := m.effectiveSettings()
+	if m.validation.preview {
+		settings.Input = audioAuditionText
+	}
+	field, err := validateAudioFields(settings)
+	if err != nil && field == m.validation.field {
+		return
+	}
+	if m.note == m.validation.message {
+		m.note = ""
+	}
+	m.validation = nil
+}
+
 func (m *audioWorkbench) beginInlineSpeed() tea.Cmd {
 	m.speedEditing, m.speedError = true, ""
 	m.speedInput.SetValue(strconv.FormatFloat(m.settings.Speed, 'f', -1, 64))
@@ -65,7 +110,7 @@ func (m *audioWorkbench) updateInlineSetting(message tea.Msg) (bool, tea.Cmd) {
 			case "enter":
 				m.commitInlineSpeed()
 				return true, nil
-			case "up", "down", "tab", "shift+tab", "home", "end", "ctrl+g", "ctrl+o", "ctrl+p", "f1":
+			case "up", "down", "tab", "shift+tab", "home", "end", "ctrl+g", "ctrl+o", "ctrl+s", "ctrl+p", "f1":
 				return !m.commitInlineSpeed(), nil
 			case "left", "right":
 				speed, valid := audioSpeedValue(m.speedInput.Value())

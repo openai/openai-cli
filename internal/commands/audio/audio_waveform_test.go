@@ -141,7 +141,7 @@ func TestAudioWaveformBoundsDimensions(t *testing.T) {
 			}
 		})
 	}
-	for _, test := range [][2]int{{-1, 0}, {2, 0}, {3, 1}, {4, 1}, {34, 16}, {71, 35}, {72, 35}, {120, 59}, {math.MaxInt, 59}} {
+	for _, test := range [][2]int{{-1, 0}, {2, 0}, {3, 1}, {4, 1}, {34, 16}, {71, 35}, {72, 35}, {120, 59}, {math.MaxInt, math.MaxUint16 / 2}} {
 		if got := audioWaveformBars(test[0]); got != test[1] {
 			t.Fatalf("bars at width %d: %d; want %d", test[0], got, test[1])
 		}

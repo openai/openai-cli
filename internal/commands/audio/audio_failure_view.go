@@ -10,6 +10,7 @@ import (
 )
 
 func (m *audioWorkbench) rememberFailure(operation string, failure error) {
+	m.retainedGenerationFailure = false
 	m.failure = m.failureFeedback(operation, failure)
 	m.failureNote = m.note
 	m.failureOffset = 0
@@ -19,7 +20,7 @@ func (m *audioWorkbench) rememberFailure(operation string, failure error) {
 // A later status or validation message owns the visible feedback, even when
 // lastErr must remain available for the command's eventual exit status.
 func (m *audioWorkbench) activeFailure() bool {
-	return m.failure.Summary != "" && m.note == m.failureNote
+	return m.failure.Summary != "" && (m.retainedGenerationFailure || m.note == m.failureNote)
 }
 
 func (m *audioWorkbench) failureSummaryRows() []string {

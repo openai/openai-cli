@@ -2,19 +2,28 @@ package audio
 
 import "math"
 
+const audioMaxWaveformHeight = 13
+
 // Sparse bars define the shared seek steps. Their last gap is the audio endpoint.
 func audioWaveformBars(width int) int {
 	if width < 3 {
 		return 0
 	}
-	return (min(width, 120) - 1) / 2
+	return (min(width, math.MaxUint16) - 1) / 2
+}
+
+// Dense timelines use every cell between their endpoint slots. Round each seek
+// boundary to its nearest cell, including the final cell of an even-width row.
+func audioWaveformMarker(width, boundary int) int {
+	bars := int64(audioWaveformBars(width))
+	return int((int64(boundary)*int64(width-1) + bars/2) / bars)
 }
 
 // audioWaveform draws a relative waveform for the workbench only. One gain
 // applies to the recording's measured peaks; original audio remains unchanged.
 // The marker occupies a gap, so selection never replaces a measured bar.
 func audioWaveform(peaks []float64, width, height, selectedBoundary int) []string {
-	return audioWaveformRows(peaks, width, height, selectedBoundary, false)
+	return audioWaveformRows(peaks, min(width, 120), height, selectedBoundary, false)
 }
 
 // Dense framed waveforms keep the existing endpoints and seek boundaries.
@@ -24,26 +33,30 @@ func audioDenseWaveform(peaks []float64, width, height, selectedBoundary int) []
 }
 
 func audioWaveformRows(peaks []float64, width, height, selectedBoundary int, dense bool) []string {
+	// Native terminal dimensions fit in an unsigned 16-bit coordinate.
+	width = min(width, math.MaxUint16)
 	bars := audioWaveformBars(width)
 	if len(peaks) == 0 || bars == 0 || height < 1 {
 		return nil
 	}
+	selectedBoundary = max(0, min(bars, selectedBoundary))
+	span, marker := bars*2+1, selectedBoundary*2
 	columns := bars
 	maximumHeight := 5
 	if dense {
-		columns = 2*bars - 1
-		maximumHeight = 9
+		span, marker = width, audioWaveformMarker(width, selectedBoundary)
+		columns = width - 2
+		maximumHeight = audioMaxWaveformHeight
 	}
 	height = min(height, maximumHeight)
 	if height%2 == 0 {
 		height--
 	}
-	selectedBoundary = max(0, min(bars, selectedBoundary))
 	amplitudes := make([]float64, columns)
 	maximum := 0.0
 	// Divide before multiplying so interval boundaries cannot overflow.
 	boundary := func(index int) int {
-		return len(peaks)/columns*index + len(peaks)%columns*index/columns
+		return len(peaks)/columns*index + int(int64(len(peaks)%columns)*int64(index)/int64(columns))
 	}
 	for column := range columns {
 		start, end := boundary(column), boundary(column+1)
@@ -75,7 +88,7 @@ func audioWaveformRows(peaks []float64, width, height, selectedBoundary int, den
 	blocks := [...]rune{'─', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 	rows := make([]string, height)
 	for row := range height {
-		cells := make([]rune, bars*2+1)
+		cells := make([]rune, span)
 		for column := range cells {
 			cells[column] = ' '
 		}
@@ -107,7 +120,7 @@ func audioWaveformRows(peaks []float64, width, height, selectedBoundary int, den
 			}
 			cells[position] = cell
 		}
-		cells[selectedBoundary*2] = '┃'
+		cells[marker] = '┃'
 		rows[row] = string(cells)
 	}
 	return rows

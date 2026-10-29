@@ -13,10 +13,10 @@ import (
 
 func TestAudioWaveformTimelineConnectsPlayheadWithoutMovingBars(t *testing.T) {
 	for _, width := range []int{60, 61, 101, 186} {
-		for _, height := range []int{1, 3, 5, 7, 9} {
+		for _, height := range []int{1, 3, 5, 7, 9, 11, 13} {
 			t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {
 				m := audioReviewModel(t)
-				m.Update(tea.WindowSizeMsg{Width: width, Height: 32})
+				m.Update(tea.WindowSizeMsg{Width: width, Height: 41})
 				r := audioReviewResult("frame-seek", false)
 				r.analysis.Peaks = []float64{0, .125, .5, 1, .25, 0}
 				m.result, m.focus, m.waveformFocused = &r, 4, true
@@ -32,7 +32,9 @@ func TestAudioWaveformTimelineConnectsPlayheadWithoutMovingBars(t *testing.T) {
 					}
 					rows := m.workspaceWaveformRows(height + 1)
 					require.Len(t, rows, height+1, "one lower rail follows the measured rows")
-					require.Equal(t, rows, m.workspaceWaveformRows(height+2), "an extra row cannot add an even waveform height")
+					spaced := m.workspaceWaveformRows(height + 2)
+					require.Equal(t, rows[:height], spaced[:height], "a spare row must preserve the measured detail")
+					require.Equal(t, []string{"", rows[height]}, spaced[height:], "the spare row precedes the rail")
 					marker := audioWaveformFrameColumn(t, rows[len(rows)-1], "┷")
 					switch step {
 					case 0:
@@ -91,15 +93,13 @@ func TestAudioWaveformTimelineConnectsPlayheadWithoutMovingBars(t *testing.T) {
 					}
 				}
 				require.Equal(t, before, r.analysis.Peaks)
-				if width >= 132 {
-					require.Equal(t, 118, end-start, "wide timelines must preserve the capped waveform span")
-				}
+				require.Equal(t, m.audioWidth()-5, end-start, "both ticks must align with the content gutters")
 			})
 		}
 	}
 }
 
-func TestAudioWaveformTimelineKeepsNeutralRailAndCompletionAnchor(t *testing.T) {
+func TestAudioWaveformTimelineMovesPlayedColorAndReservesGreenForCompletion(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, focused := range []bool{false, true} {
 			m := audioReviewModel(t)
@@ -108,14 +108,15 @@ func TestAudioWaveformTimelineKeepsNeutralRailAndCompletionAnchor(t *testing.T) 
 			r := audioReviewResult("frame-color", false)
 			r.analysis.Peaks = []float64{0, 1, 0, 1, 0, 1}
 			m.result, m.focus, m.waveformFocused = &r, 4, focused
-			border, secondary, accent, green := "186;196;216", "101;112;135", "49;89;188", "35;107;67"
+			primary, border, secondary, accent, green := "32;40;59", "186;196;216", "101;112;135", "49;89;188", "35;107;67"
 			if dark {
-				border, secondary, accent, green = "81;86;107", "164;172;194", "138;168;255", "141;201;160"
+				primary, border, secondary, accent, green = "242;244;250", "81;86;107", "164;172;194", "138;168;255", "141;201;160"
 			}
-			stroke := secondary
-			if focused {
-				stroke = accent
+			amber := "136;91;20"
+			if dark {
+				amber = "226;188;121"
 			}
+
 			for _, state := range []struct {
 				position          time.Duration
 				finished, playing bool
@@ -124,17 +125,42 @@ func TestAudioWaveformTimelineKeepsNeutralRailAndCompletionAnchor(t *testing.T) 
 				{time.Second, true, false}, {time.Second, true, true}, {250 * time.Millisecond, false, false},
 			} {
 				r.position, r.finished, m.playing = state.position, state.finished, state.playing
+				playhead := primary
+				if !state.finished && !state.playing && state.position > 0 {
+					playhead = amber
+				}
 				rows := m.workspaceWaveformRows(4)
 				greenCells := 0
+				marker := audioWaveformFrameColumn(t, rows[len(rows)-1], "┷")
 				for index, row := range rows {
-					for _, cell := range audioHairlineCells(t, row) {
+					for column, cell := range audioHairlineCells(t, row) {
 						if strings.ContainsRune("│╷╵┼┃╂┠┨┷", cell.glyph) {
 							require.False(t, cell.bold, "the measured strokes and playhead use regular weight")
 						}
 						switch cell.glyph {
-						case '─', '├', '┤', '╶', '╴':
-							require.Equal(t, border, cell.foreground, "rail and silence remain neutral, including focus")
+						case '─', '┤', '╶', '╴':
+							require.Equal(t, border, cell.foreground, "silence and future rail remain neutral")
+							if index == len(rows)-1 {
+								require.Greater(t, column, marker)
+							}
+						case '┃', '╂', '┠', '┨':
+							require.Equal(t, marker, column)
+							require.Equal(t, playhead, cell.foreground)
+						case '┷':
+							anchor := playhead
+							if state.finished && !state.playing {
+								anchor = green
+							}
+							require.Equal(t, anchor, cell.foreground)
+						case '━', '├':
+							require.Equal(t, len(rows)-1, index)
+							require.Less(t, column, marker)
+							require.Equal(t, accent, cell.foreground, "the heavier rail marks elapsed time")
 						case '│', '╷', '╵', '┼':
+							stroke := secondary
+							if column < marker {
+								stroke = accent
+							}
 							require.Equal(t, stroke, cell.foreground)
 						}
 						if cell.foreground == green {
@@ -177,7 +203,7 @@ func TestAudioWaveformTimelineDoesNotInventPlayheadWithoutMeasuredAudio(t *testi
 			require.Empty(t, m.workspaceWaveformRows(size[1]), "unknown audio must reserve no waveform rows")
 			header := strings.Join(m.workspaceAudioHeader(), "\n")
 			if state == "empty" {
-				require.Contains(t, header, "No recording yet")
+				require.Contains(t, header, "Your recording will appear here.")
 			} else {
 				require.Contains(t, header, "Preview unavailable")
 			}
@@ -189,41 +215,42 @@ func TestAudioWaveformTimelineKeepsEndpointPeaksAndQuietIntervals(t *testing.T) 
 	m := audioReviewModel(t)
 	m.Update(tea.WindowSizeMsg{Width: 101, Height: 31})
 	r := audioReviewResult("timeline-endpoints", false)
-	r.analysis.Peaks = make([]float64, 87)
-	r.analysis.Peaks[0], r.analysis.Peaks[86] = 1, .5
+	const span = 94 // 101 terminal columns, excluding the outer frame and both gutters.
+	r.analysis.Peaks = make([]float64, span-2)
+	r.analysis.Peaks[0], r.analysis.Peaks[len(r.analysis.Peaks)-1] = 1, .5
 	m.result = &r
 	before := append([]float64(nil), r.analysis.Peaks...)
 	for _, position := range []time.Duration{0, time.Second} {
 		r.position = position
 		rows := m.workspaceWaveformRows(10)
 		middle, rail := []rune(rows[4]), []rune(rows[9])
-		require.Len(t, middle, 91, "two gutter cells plus the unchanged 89-cell timeline")
+		require.Len(t, middle, 2+span, "two gutter cells precede the complete timeline")
 		require.Equal(t, '┼', middle[3], "the first measured interval follows the zero slot")
-		require.Equal(t, '┼', middle[89], "the final measured interval precedes the duration slot")
-		require.Equal(t, strings.Repeat("─", 85), string(middle[4:89]), "quiet intervals remain flat between endpoint peaks")
+		require.Equal(t, '┼', middle[span], "the final measured interval precedes the duration slot")
+		require.Equal(t, strings.Repeat("─", span-4), string(middle[4:span]), "quiet intervals remain flat between endpoint peaks")
 		if position == 0 {
-			require.Equal(t, "  ┷"+strings.Repeat("─", 87)+"┤", string(rail))
+			require.Equal(t, "  ┷"+strings.Repeat("─", span-2)+"┤", string(rail))
 			require.Equal(t, '┠', middle[2])
-			require.Equal(t, '╴', middle[90])
+			require.Equal(t, '╴', middle[span+1])
 		} else {
-			require.Equal(t, "  ├"+strings.Repeat("─", 87)+"┷", string(rail))
+			require.Equal(t, "  ├"+strings.Repeat("━", span-2)+"┷", string(rail))
 			require.Equal(t, '╶', middle[2])
-			require.Equal(t, '┨', middle[90])
+			require.Equal(t, '┨', middle[span+1])
 		}
 		for _, row := range rows {
-			require.Len(t, []rune(row), 91, "there must be no decorative extension beyond the duration slot")
+			require.Len(t, []rune(row), 2+span, "there must be no decorative extension beyond the duration slot")
 		}
 	}
 	require.Equal(t, before, r.analysis.Peaks)
 	r.analysis.Peaks = []float64{0}
 	rows := m.workspaceWaveformRows(10)
-	require.Equal(t, "  ╶"+strings.Repeat("─", 87)+"┨", rows[4])
+	require.Equal(t, "  ╶"+strings.Repeat("─", span-2)+"┨", rows[4])
 	for _, row := range rows[:9] {
 		require.NotContains(t, row, "│")
 		require.NotContains(t, row, "╷")
 		require.NotContains(t, row, "╵")
 	}
-	require.Equal(t, "  ├"+strings.Repeat("─", 87)+"┷", rows[9], "silent audio still has its full duration")
+	require.Equal(t, "  ├"+strings.Repeat("━", span-2)+"┷", rows[9], "silent audio still has its full duration")
 }
 
 func audioWaveformFrameColumn(t *testing.T, row, glyph string) int {

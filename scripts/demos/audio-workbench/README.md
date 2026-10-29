@@ -68,14 +68,17 @@ The fixture does not synthesize spoken words.
 The workflow drives the actual bare `openai audio speak` form.
 New drafts contain the editable Instructions example `Speak warmly and clearly.`
 The workflow replaces that example with multiline instructions containing literal `@` and backslash-`@` values.
-It opens model, voice, and format choices, then changes speed to 1.25.
+Voice stays visible. Settings starts collapsed and summarizes Model, Format, and Speed.
+The workflow expands Settings, opens each chooser, and changes Speed to 1.25.
 Choices and typing must make no request.
 Ctrl+G starts one explicit synthetic generation.
 The harness checks request fields, measured duration, varying peaks, and exact saved audio bytes.
-It exercises Play and Save controls, History, 40×12, too-small blocking, explicit audition, restoration, and Clear.
+It exercises playback, Save, History, explicit audition, restoration, and Clear.
+It also resizes to 40×12 and below the minimum usable size.
 History opens directly from the form. More actions retains History, Preview voice, and Clear form.
 The ordinary form keeps command inspection in More actions and shows contextual keyboard shortcuts.
-Save coverage rejects `-`, then verifies the corrected destination contains the original audio bytes.
+Save coverage rejects `-` and verifies the corrected destination contains the original audio bytes.
+Ctrl+S opens Save from the Text editor. Escape restores focus to Save.
 Audition entries must remain absent from ordinary History.
 Clear must preserve retained results and exported files.
 
@@ -92,16 +95,17 @@ This separation avoids replaying resize events that agg 1.9.0 ignores.
 
 The `navigation` and `navigation-compact` cases use monochrome focus markers.
 They cover CSI and SS3 arrows, editor visual boundaries, multiline text, wrapped Unicode, modifiers, and active selection.
-They check forward and reverse Tab, settings boundaries, chooser navigation, and the More actions menu.
+They check forward and reverse Tab, collapsed and expanded Settings, chooser navigation, and the More actions menu.
+Enter expands Settings and selects Model. Escape collapses Settings and restores focus to Settings.
 Command inspection opens a separate scrollable modal through More actions.
 A long synthetic draft proves command scrolling at both terminal sizes.
 Help opens locally without submitting speech.
-The Result section exposes separate Play and Save actions.
+The empty Audio section shows one placeholder. A recording adds playback and Save actions.
 A private synthetic History entry supplies Result navigation without generation.
 Both cases require zero accepted or rejected fixture requests and strict cancellation cleanup.
 Settings End selects More actions. Clear is the third More action.
 Clear empties Text and Instructions without reseeding the constructor example.
-The navigation inventory contains 192 current-viewport checkpoints at each size.
+The navigation inventory contains 195 current-viewport checkpoints at each size.
 The navigation cases test Alt+Enter without submitting editor text.
 They leave Enter generation and the existing repeat-submit guard unchanged.
 
@@ -183,7 +187,8 @@ The fixture uses fake credentials and fake secrets. It reads no real credentials
 Source preparation does not establish passing behavior. Execution requires a reserved slot.
 
 Playback uses a private fake FFplay executable.
-That helper consumes the real fixture bytes, records their hash, and produces no sound.
+That helper consumes the fixture bytes, records their hash, and produces no sound.
+Its first positive clock report enables Pause. Resume preserves that measured position.
 Actual FFplay and audible device behavior require separate native evidence.
 No microphone, real credential, paid API, or remote account is used.
 
@@ -301,5 +306,5 @@ These tests cover partial startup, deferred interruption, continued cleanup, sou
 They do not replace the full checker run against the exact candidate binary.
 
 The `wide` case runs at 186×34. The frame leaves the last terminal column free to prevent a soft wrap.
-The case moves between actions with Left and Right, opens More actions, and returns to the draft.
-It checks the menu descriptions, retained text, zero speech requests, and terminal cleanup.
+Tab moves focus to the Actions column. Down moves through its rows while the draft remains visible.
+The case opens Help, returns to Generate, and checks that navigation made zero speech requests.

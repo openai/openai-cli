@@ -34,7 +34,7 @@ func TestAudioViewsDistinguishKeysFromDescriptions(t *testing.T) {
 			m.focusSection(4)
 			m.playing = true
 		}},
-		{"player-finished", "Space", "play", func(m *audioWorkbench) {
+		{"player-finished", "Space", "replay", func(m *audioWorkbench) {
 			m.focusSection(4)
 			m.result.finished = true
 		}},
@@ -53,9 +53,11 @@ func TestAudioViewsDistinguishKeysFromDescriptions(t *testing.T) {
 		{"save-folder", "Enter", "done", func(m *audioWorkbench) { m.openSave(); m.focusSave(1) }},
 		{"error-details", "Esc", "back", func(m *audioWorkbench) {
 			m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+			audioReviewKey(m, tea.KeyF1)
 		}},
 		{"error-details-scroll", "↑↓", "scroll", func(m *audioWorkbench) {
 			m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+			audioReviewKey(m, tea.KeyF1)
 			m.failure.Action = strings.Repeat("Check the selected project.\n", 40)
 		}},
 		{"help", "↑↓", "scroll", func(m *audioWorkbench) {

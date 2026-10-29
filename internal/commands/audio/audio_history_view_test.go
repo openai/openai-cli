@@ -26,7 +26,7 @@ func TestAudioHistoryGroupsDatesAndShowsMetadataOnce(t *testing.T) {
 	view := ansi.Strip(m.historyView(now).Content)
 	require.Equal(t, 1, strings.Count(view, "Today"))
 	require.Equal(t, 1, strings.Count(view, "Yesterday"))
-	require.Equal(t, 1, strings.Count(view, "Coral · WAV"))
+	require.Equal(t, 1, strings.Count(view, "Coral  WAV"))
 	require.Contains(t, view, "10:00")
 	require.Contains(t, view, "Enter open")
 	require.Contains(t, view, "Esc back")

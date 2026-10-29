@@ -8,20 +8,13 @@ import (
 
 var waveformCenterline = strings.NewReplacer("·", "─", "│", "┼", "┃", "╂")
 
-func (m *audioWorkbench) waveformStyle() lipgloss.Style {
-	if m.focus == 4 && m.waveformFocused && !m.busy {
-		return m.accent().Bold(false)
-	}
-	return m.muted()
-}
-
-// Only the waveform's actual focus changes its color; samples never change.
-func (m *audioWorkbench) workspaceHairlineRows(wave []string) []string {
+// Measured strokes before the playhead use blue, regardless of keyboard focus.
+func (m *audioWorkbench) workspaceHairlineRows(wave []string, marker int) []string {
 	if !m.color {
 		return wave
 	}
 	styles := [...]lipgloss.Style{
-		lipgloss.NewStyle(), m.borderStyle(), m.primaryText(), m.waveformStyle(),
+		lipgloss.NewStyle(), m.borderStyle(), m.playheadStyle(), m.muted(), m.accent().Bold(false),
 	}
 	rows := make([]string, len(wave))
 	for row, line := range wave {
@@ -37,6 +30,9 @@ func (m *audioWorkbench) workspaceHairlineRows(wave []string) []string {
 				role = 2
 			case '│', '╷', '╵', '┼':
 				role = 3
+				if column < marker {
+					role = 4
+				}
 			}
 			if role != previous {
 				if column > start {

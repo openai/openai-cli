@@ -82,7 +82,7 @@ func TestAudioActionsEmptyPlayerRespectsGuards(t *testing.T) {
 			}
 			focus, modal, playID := m.focus, m.modal, m.playID
 			for _, key := range []tea.KeyPressMsg{
-				{Code: ' '}, {Code: tea.KeyEnter}, {Code: 's'}, {Code: 'o', Mod: tea.ModCtrl},
+				{Code: ' '}, {Code: tea.KeyEnter}, {Code: 's'}, {Code: 'o', Mod: tea.ModCtrl}, {Code: 's', Mod: tea.ModCtrl},
 			} {
 				_, command := m.Update(key)
 				require.Nil(t, command)
@@ -100,6 +100,45 @@ func TestAudioActionsEmptyPlayerRespectsGuards(t *testing.T) {
 				require.Equal(t, 1.0, m.settings.Speed)
 			}
 		})
+	}
+}
+
+func TestAudioSaveShortcutWithoutRecording(t *testing.T) {
+	for _, size := range [][2]int{{40, 12}, {137, 41}} {
+		m := audioReviewModel(t)
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+		_, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+		require.Nil(t, cmd)
+		require.Empty(t, m.modal)
+		require.Equal(t, "s", m.input.Value())
+		require.Contains(t, ansi.Strip(m.View().Content), audioNoGenerationNotice)
+	}
+}
+
+func TestAudioSaveShortcutOpensFolderWithoutExport(t *testing.T) {
+	audioSaveTestHome(t)
+	for _, focus := range []int{0, 1, 2, 4, audioFocusCommand} {
+		m := audioReviewModel(t)
+		audioSaveControllerResult(t, m, "Retained bytes")
+		m.input.SetValue("A different draft")
+		m.focusSection(focus)
+		m.waveformFocused = focus == 4
+		key := tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
+		m.Update(key)
+		require.Equal(t, "save", m.modal)
+		require.True(t, m.saveFolder.Focused())
+		m.saveFolder.SetValue("/my destination")
+		m.Update(key)
+		require.Equal(t, "/my destination", m.saveFolder.Value())
+		require.Equal(t, "save", m.modal)
+		require.False(t, m.busy)
+		audioReviewKey(m, tea.KeyEscape)
+		require.Empty(t, m.modal)
+		require.Equal(t, 4, m.focus)
+		require.Equal(t, 1, m.resultAction)
+		require.False(t, m.waveformFocused)
+		require.Equal(t, "A different draft", m.input.Value())
 	}
 }
 
@@ -353,8 +392,10 @@ func TestAudioActionsLocalValidationKeepsOriginalExitContract(t *testing.T) {
 	m := audioReviewModel(t)
 	m.lastFinished = time.Time{}
 	m.input.SetValue("")
-	require.Nil(t, audioReviewKey(m, tea.KeyEnter))
-	require.Equal(t, "recovery", m.modal)
+	audioReviewKey(m, tea.KeyEnter)
+	require.Empty(t, m.modal)
+	require.Equal(t, 0, m.focus)
+	require.True(t, m.input.Focused())
 	require.NoError(t, m.lastErr)
 	require.Contains(t, audioFeedbackView(t, m), "Enter text before generating speech.")
 	audioReviewKey(m, tea.KeyF1)

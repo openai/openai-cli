@@ -18,9 +18,9 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 	r.entry.Settings = m.effectiveSettings()
 	m.input.MoveToEnd()
 	line, column := m.input.Line(), m.input.Column()
-	for _, tc := range []struct{ width, height, wave, gap int }{
-		{60, 24, 3, 0}, {80, 24, 5, 0}, {101, 27, 7, 0}, {101, 28, 9, 0}, {101, 29, 9, 0},
-		{101, 30, 9, 1}, {101, 31, 9, 1}, {101, 40, 9, 1}, {101, 29, 9, 0}, {60, 24, 3, 0},
+	for _, tc := range []struct{ width, height, wave, aboveRail, belowRail int }{
+		{60, 24, 5, 0, 0}, {80, 24, 5, 0, 0}, {101, 27, 9, 0, 0}, {101, 28, 9, 0, 0}, {101, 29, 9, 1, 0},
+		{101, 30, 9, 1, 1}, {101, 31, 9, 1, 1}, {101, 40, 13, 1, 1}, {137, 41, 13, 1, 1}, {101, 29, 9, 1, 0}, {60, 24, 5, 0, 0},
 	} {
 		for _, recorded := range []bool{false, true} {
 			m.result = nil
@@ -29,20 +29,23 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 			}
 			m.Update(tea.WindowSizeMsg{Width: tc.width, Height: tc.height})
 			view := ansi.Strip(m.View().Content)
-			positions := audioWaveformDetailPositions(t, view)
-			toolbarOffset := 1 + tc.gap
+			toolbarOffset := 1 + tc.belowRail
 			if tc.width == 60 {
 				toolbarOffset++ // Exact timing gets its own row when fixed controls would overlap.
 			}
 			if recorded {
-				require.Equal(t, tc.wave, positions[1]-positions[0], "unexpected waveform height at %dx%d", tc.width, tc.height)
+				positions := audioWaveformDetailPositions(t, view)
+				require.Equal(t, tc.wave+tc.aboveRail, positions[1]-positions[0], "unexpected rail position at %dx%d", tc.width, tc.height)
+				if tc.aboveRail > 0 {
+					require.Empty(t, strings.Trim(strings.Split(view, "\n")[positions[1]-1], " │"))
+				}
 				require.Equal(t, positions[1]+toolbarOffset, positions[2], "only spare rows may separate the waveform and toolbar")
-				require.Contains(t, view, "Coral • WAV")
+				require.Contains(t, view, "Coral  WAV")
 				require.Contains(t, view, "00:00.000 / 00:01.000")
 			} else {
-				require.Equal(t, -1, positions[0])
-				require.Equal(t, -1, positions[1])
-				require.Contains(t, view, "No recording yet")
+				require.NotContains(t, view, "Play audio")
+				require.NotContains(t, view, "┷")
+				require.Contains(t, view, "Your recording will appear here.")
 				require.NotContains(t, view, "┃")
 			}
 			require.Contains(t, view, m.input.Value())
@@ -66,6 +69,49 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 	require.Nil(t, audioReviewKey(m, tea.KeyUp))
 	require.True(t, m.waveformFocused)
 	require.Equal(t, initial, audioWaveformDetailPositions(t, ansi.Strip(m.View().Content)))
+}
+
+func TestAudioWaveformStartsBelowItsLastMetadataRow(t *testing.T) {
+	m := audioReviewModel(t)
+	r := audioReviewResult("header-gap", false)
+	m.input.SetValue("Updated draft")
+	m.result = &r
+	for _, size := range [][2]int{{137, 41}, {55, 35}, {137, 41}} {
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		m.focusSection(4)
+		view := ansi.Strip(m.View().Content)
+		rows := strings.Split(view, "\n")
+		wave := audioWaveformDetailPositions(t, view)[0]
+		require.GreaterOrEqual(t, wave, 2)
+		require.Contains(t, rows[wave-2], "Recording: Synthetic text")
+		require.Empty(t, strings.Trim(rows[wave-1], " │"))
+		if m.framed() {
+			require.Empty(t, strings.Trim(rows[1], " │"))
+			require.Contains(t, rows[2], "Text to speech")
+			require.Contains(t, rows[2], "Actions")
+		}
+	}
+}
+
+func TestAudioCompactHeaderGapReservesTheFirstReceipt(t *testing.T) {
+	for _, height := range []int{19, 21} {
+		m := audioReviewModel(t)
+		m.Update(tea.WindowSizeMsg{Width: 45, Height: height})
+		r := audioReviewResult("compact-receipt", false)
+		r.entry.Settings = m.effectiveSettings()
+		if height == 21 {
+			m.input.SetValue("A changed draft.")
+		}
+		m.result = &r
+		m.focusSection(4)
+		initial := ansi.Strip(m.View().Content)
+		before := audioWaveformDetailPositions(t, initial)
+		r.savedPaths = []string{"/synthetic/speech.wav"}
+		view := ansi.Strip(m.View().Content)
+		require.Contains(t, view, "Saved: /synthetic/speech.wav")
+		require.Equal(t, before, audioWaveformDetailPositions(t, view))
+		require.Equal(t, strings.Count(initial, "\n"), strings.Count(view, "\n"))
+	}
 }
 
 func TestAudioWaveformDetailReservesRecordingIdentityAndLongTiming(t *testing.T) {
@@ -92,7 +138,7 @@ func TestAudioWaveformDetailReservesRecordingIdentityAndLongTiming(t *testing.T)
 		positions := audioWaveformDetailPositions(t, view)
 		require.Less(t, positions[1]-positions[0], 9, "extra content must take priority over waveform detail")
 		for _, text := range []string{
-			"DRAFT_TAIL", "INSTRUCTION_TAIL", "Draft changed · Showing previous audio.",
+			"DRAFT_TAIL", "INSTRUCTION_TAIL", "Draft changed. Showing previous audio.",
 			"Alloy", "MP3", "120.6 KiB", "Recording: Original recording.",
 			"149999999:59.000 / 150000000:00.000", "Saved: …", "retained.mp3", "Ctrl+C Exit",
 		} {

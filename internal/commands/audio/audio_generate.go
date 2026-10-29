@@ -144,21 +144,32 @@ func generateAudio(ctx context.Context, command *cli.Command, next cli.ActionFun
 }
 
 func validateAudioSettings(s audiohistory.Settings) error {
+	_, err := validateAudioFields(s)
+	return err
+}
+
+// Return the field to reveal in the form without changing the speech request's validation.
+func validateAudioFields(s audiohistory.Settings) (int, error) {
 	if strings.TrimSpace(s.Input) == "" {
-		return classifiedAudioFailure(audioEmptyTextFailure, "Enter text before generating speech.", nil)
+		return audioFieldText, classifiedAudioFailure(audioEmptyTextFailure, "Enter text before generating speech.", nil)
 	}
-	if !slices.Contains(audioFormats, s.Format) || math.IsNaN(s.Speed) || math.IsInf(s.Speed, 0) || s.Speed < .25 || s.Speed > 4 {
-		return classifiedAudioFailure(audioInvalidSettingsFailure, "Choose a supported format and speed from 0.25 to 4.", nil)
+	formatOK := slices.Contains(audioFormats, s.Format)
+	if !formatOK || math.IsNaN(s.Speed) || math.IsInf(s.Speed, 0) || s.Speed < .25 || s.Speed > 4 {
+		field := 2
+		if formatOK {
+			field = 3
+		}
+		return field, classifiedAudioFailure(audioInvalidSettingsFailure, "Choose a supported format and speed from 0.25 to 4.", nil)
 	}
 	if strings.HasPrefix(s.Model, "tts-1") {
 		if s.Instructions != "" {
-			return classifiedAudioFailure(audioInstructionsFailure, "This model does not support instructions. Clear instructions or choose gpt-4o-mini-tts.", nil)
+			return 0, classifiedAudioFailure(audioInstructionsFailure, "This model does not support instructions. Clear instructions or choose gpt-4o-mini-tts.", nil)
 		}
 		if !audioSupportsVoice(s.Model, s.Voice) {
-			return classifiedAudioFailure(audioVoiceFailure, "This voice needs gpt-4o-mini-tts. Choose another voice or model.", nil)
+			return 1, classifiedAudioFailure(audioVoiceFailure, "This voice needs gpt-4o-mini-tts. Choose another voice or model.", nil)
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 func audioFailure(message string, cause error) error {

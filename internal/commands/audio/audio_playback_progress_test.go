@@ -49,6 +49,23 @@ func TestAudioPlaybackProgressRejectsReplacedPlayersAndEntries(t *testing.T) {
 	require.Equal(t, 2*time.Second, m.result.position)
 }
 
+func TestAudioPlaybackOffersPauseOnlyWithMeasuredPlayerProgress(t *testing.T) {
+	m := audioSeekModel(t)
+	m.playing, m.playProgress = true, &audioPlaybackProgress{entryID: m.result.entry.ID}
+	require.Equal(t, "Stop", m.playbackVerb(), "a player without a clock cannot offer Pause")
+	m.result.measured = false
+	m.playProgress.record(time.Second)
+	m.Update(audioWorkTick(time.Now()))
+	require.Equal(t, "Stop", m.playbackVerb(), "a clock alone cannot make an unmeasured recording resumable")
+	m.result.measured = true
+	m.Update(audioWorkTick(time.Now()))
+	require.Equal(t, "Pause", m.playbackVerb())
+	audioReviewKey(m, tea.KeySpace)
+	require.Equal(t, "Resume", m.playbackVerb())
+	m.seekResult("right")
+	require.Equal(t, "Play", m.playbackVerb(), "an explicit seek replaces the pause position")
+}
+
 func TestAudioPlaybackProgressCompletionClampsPosition(t *testing.T) {
 	for _, report := range []string{"short-final-sample", "no-clock-reports", "overshoot"} {
 		t.Run(report, func(t *testing.T) {

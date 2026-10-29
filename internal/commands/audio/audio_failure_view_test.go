@@ -194,6 +194,11 @@ func TestAudioFailureCompactPreservesCauseRecoveryAndFocus(t *testing.T) {
 				m.result = &retained
 			}
 			m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+			if focus == 4 {
+				require.Empty(t, m.modal)
+				require.Contains(t, audioFeedbackView(t, m), "F1 details")
+				audioReviewKey(m, tea.KeyF1)
+			}
 			view := audioFeedbackView(t, m)
 			for _, text := range []string{"The API could not verify your access.", "Check your API key and project access.", "Error details", "Esc back"} {
 				require.Contains(t, view, text)
@@ -201,12 +206,12 @@ func TestAudioFailureCompactPreservesCauseRecoveryAndFocus(t *testing.T) {
 			require.Equal(t, focus, m.focus, "opening recovery changed the underlying section")
 			require.NotContains(t, view, "HTTP")
 			require.Nil(t, audioReviewKey(m, tea.KeyEscape))
-			require.Contains(t, audioFeedbackView(t, m), "› More actions…")
 			if focus == 4 {
 				require.Equal(t, "retained", m.result.entry.ID)
-				audioReviewKey(m, tea.KeyTab)
 				require.Contains(t, audioFeedbackView(t, m), "› Play audio")
 				require.Contains(t, audioFeedbackView(t, m), "00:00.000 / 00:01.000")
+			} else {
+				require.Contains(t, audioFeedbackView(t, m), "› More actions…")
 			}
 		})
 	}

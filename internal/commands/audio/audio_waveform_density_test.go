@@ -92,9 +92,9 @@ func TestAudioDenseWaveformKeepsQuietSilenceAndMeasurements(t *testing.T) {
 func TestAudioDenseWaveformBoundsAndEndpoints(t *testing.T) {
 	for _, size := range [][4]int{
 		{-1, 3, 0, 0}, {2, 3, 0, 0}, {3, 0, 0, 0},
-		{3, 1, 3, 1}, {4, 2, 3, 1}, {34, 4, 33, 3},
-		{72, 5, 71, 5}, {120, 6, 119, 5}, {120, 7, 119, 7},
-		{120, 8, 119, 7}, {120, 9, 119, 9}, {math.MaxInt, math.MaxInt, 119, 9},
+		{3, 1, 3, 1}, {4, 2, 4, 1}, {34, 4, 34, 3},
+		{72, 5, 72, 5}, {120, 6, 120, 5}, {120, 7, 120, 7},
+		{120, 8, 120, 7}, {120, 9, 120, 9}, {186, 5, 186, 5}, {134, 14, 134, 13}, {math.MaxInt, math.MaxInt, math.MaxUint16, 13},
 	} {
 		rows := audioDenseWaveform([]float64{0, .5, 1}, size[0], size[1], math.MaxInt)
 		if size[2] == 0 {
