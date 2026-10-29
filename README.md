@@ -27,8 +27,7 @@ Homebrew shows progress when it downloads the cask.
 brew install --cask openai/tools/openai && {
   brew_bin="$(brew --prefix)/bin"
   export PATH="$brew_bin:$PATH"
-  "$brew_bin/openai" --version
-  command -v openai
+  "$brew_bin/openai" --version && command -v openai
 }
 ```
 
@@ -41,8 +40,7 @@ To upgrade an existing Homebrew installation, refresh the tap and upgrade its ca
 brew update && brew upgrade --cask openai/tools/openai && {
   brew_bin="$(brew --prefix)/bin"
   export PATH="$brew_bin:$PATH"
-  "$brew_bin/openai" --version
-  command -v openai
+  "$brew_bin/openai" --version && command -v openai
 }
 ```
 
@@ -85,8 +83,7 @@ go install github.com/openai/openai-cli/cmd/openai@latest && {
     go_bin="${go_path%%:*}/bin"
   fi
   export PATH="$go_bin:$PATH"
-  "$go_bin/openai" --version
-  command -v openai
+  "$go_bin/openai" --version && command -v openai
 }
 ```
 
