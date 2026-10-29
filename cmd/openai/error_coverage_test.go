@@ -583,6 +583,12 @@ func declaredErrorCoverageCases(manifest errorCoverageManifest) []errorCoverageC
 		// request flags supplied through stdin or positional input.
 		if len(required) == 0 {
 			required = requiredAfterInput
+			switch strings.Join(command.Path, " ") {
+			case "audio voices create", "audio:voices create":
+				// An empty request selects audio_sample. Voice preflight reports
+				// all branch requirements before generic shared-field checks.
+				required = []string{"--audio-sample", "--consent", "--name"}
+			}
 		}
 		if len(required) != 0 {
 			add("required-options", "", nil, 1, "Missing required options: "+strings.Join(required, ", ")+"."+help)

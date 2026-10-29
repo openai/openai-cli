@@ -33,6 +33,7 @@ var audioVoicesCreate = cli.Command{
 		&requestflag.Flag[string]{
 			Name:     "name",
 			Usage:    "The name of the new voice.",
+			Required: true,
 			BodyPath: "name",
 		},
 		&requestflag.Flag[string]{

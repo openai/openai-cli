@@ -111,6 +111,18 @@ func FlagOptions(
 		}
 	}
 
+	// Feature preflight owns branch-aware requirements and their error ordering.
+	// Run it before generic presence checks, credentials, or file expansion.
+	if bodyType == MultipartFormEncoded {
+		if bodyMap, ok := requestContents.Body.(map[string]any); ok {
+			if hooks.PreflightMultipart != nil {
+				if err := hooks.PreflightMultipart(bodyMap); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
 	if missingFlags := requestflag.GetMissingRequiredFlags(cmd, requestContents.Body); len(missingFlags) > 0 {
 		if len(missingFlags) == 1 {
 			return nil, fmt.Errorf("Required flag %q not set\nRun '%s --help' for usage information", missingFlags[0].Names()[0], cmd.FullName())
@@ -120,16 +132,6 @@ func FlagOptions(
 				names = append(names, flag.Names()[0])
 			}
 			return nil, fmt.Errorf("Required flags %q not set\nRun '%s --help' for usage information", strings.Join(names, ", "), cmd.FullName())
-		}
-	}
-
-	if bodyType == MultipartFormEncoded {
-		if bodyMap, ok := requestContents.Body.(map[string]any); ok {
-			if hooks.PreflightMultipart != nil {
-				if err := hooks.PreflightMultipart(bodyMap); err != nil {
-					return nil, err
-				}
-			}
 		}
 	}
 

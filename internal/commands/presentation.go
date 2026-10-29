@@ -82,6 +82,7 @@ var commandGroupDescriptions = map[string]string{
 	"admin organization roles":                "Create and manage organization roles.",
 	"admin organization data-retention":       "Inspect and update organization data retention.",
 	"admin organization external-storage":     "Manage organization external storage connections.",
+	"admin organization external-keys":        "Manage and validate organization external encryption keys.",
 	"admin organization spend-limit":          "Inspect and update the organization spend limit.",
 	"admin organization spend-alerts":         "Manage organization spend alerts.",
 	"admin organization certificates":         "Manage organization certificates.",
@@ -131,7 +132,7 @@ var commandDisplaySections = map[string][]commandDisplaySection{
 		{"Access", "users groups roles invites admin-api-keys"},
 		{"Projects", "projects"},
 		{"Usage and spending", "usage spend-limit spend-alerts"},
-		{"Security and data", "audit-logs certificates data-retention external-storage"},
+		{"Security and data", "audit-logs certificates data-retention external-storage external-keys"},
 	},
 	"admin organization projects": {
 		{"Access", "users groups roles service-accounts api-keys"},
