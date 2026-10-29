@@ -231,7 +231,9 @@ func (m *workspace) View() tea.View {
 		} else if m.store != nil {
 			lines = append(lines, m.muted().Render("Store  ")+cleanLine(m.store.Name))
 		}
-		if m.pendingFile != "" {
+		if m.page == "file" && m.stage == "Indexing file…" && m.file != nil {
+			lines = append(lines, m.muted().Render("File  ")+cleanLine(m.file.ID))
+		} else if m.pendingFile != "" {
 			lines = append(lines, m.muted().Render("Uploaded file  ")+cleanLine(m.pendingFile))
 		}
 		if m.stage == "Indexing file…" {
@@ -289,7 +291,7 @@ func (m *workspace) View() tea.View {
 		lines = append(lines, m.tableHeader(columns))
 		lines = append(lines, m.tableRows(columns, items, m.selected, m.listBudget(lines, footer, 2), m.focus == 0)...)
 		lines = append(lines, m.divider())
-		lines = append(lines, m.muted().Render("Enter opens file actions; indexing files wait for completion."))
+		lines = append(lines, m.muted().Render("Enter opens file actions."))
 	case "browse":
 		lines = append(lines, m.muted().Render(cleanLine(m.directory)), m.actions([]string{"Parent folder", "Back"}, 1), m.divider())
 		items := make([]string, 0, len(m.entries))

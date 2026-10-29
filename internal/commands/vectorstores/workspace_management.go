@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,15 @@ var managementMenus = map[string][]string{
 	"manage": {"Store details", "Rename store", "Expiration", "Edit metadata", "Attach existing files", "Open file batch", "Delete store", "Back"},
 	"file":   {"File details", "Read content", "Edit attributes", "Remove attachment", "Back"},
 	"batch":  {"Batch details", "Batch files", "Refresh status", "Cancel processing", "Back"},
+}
+
+var indexingFileMenu = slices.Insert(slices.Clone(managementMenus["file"]), 1, "Watch progress")
+
+func (m *workspace) managementMenu() []string {
+	if m.page == "file" && m.file != nil && m.file.Status == openai.VectorStoreFileStatusInProgress {
+		return indexingFileMenu
+	}
+	return managementMenus[m.page]
 }
 
 var managementForms = map[string]string{
@@ -211,7 +221,7 @@ func (m *workspace) activateManagement() (tea.Cmd, bool) {
 	if m.page == "stores" && m.focus == 4 {
 		return m.enter("filter"), true
 	}
-	if menu := managementMenus[m.page]; menu != nil {
+	if menu := m.managementMenu(); menu != nil {
 		return m.activateManagementMenu(menu[m.selected]), true
 	}
 	if _, ok := managementForms[m.page]; ok {
@@ -313,6 +323,8 @@ func (m *workspace) activateManagementMenu(action string) tea.Cmd {
 			content, err := m.service.FileContent(ctx, id, file)
 			return workMessage{managementResult: managementResult{content: content}, err: err}
 		})
+	case "Watch progress":
+		return m.watchFile(m.file.ID, false)
 	case "Edit attributes", "Remove attachment":
 		if !m.mutable() {
 			return nil
@@ -482,12 +494,7 @@ func (m *workspace) completeManagement(msg workMessage) (tea.Cmd, bool) {
 		}
 		return m.enterWithNote(m.fileOrigin, "Attachment removed. The source file remains in Files storage."), true
 	case "attributes":
-		m.file = msg.attached
-		for i := range m.files {
-			if m.files[i].ID == msg.attached.ID {
-				m.files[i] = *msg.attached
-			}
-		}
+		m.setFile(msg.attached)
 		m.results, m.searched, m.moreResults = nil, false, false
 		return m.enterWithNote("file", "File attributes updated."), true
 	case "batch-create", "cancel-batch":
@@ -501,7 +508,7 @@ func (m *workspace) completeManagement(msg workMessage) (tea.Cmd, bool) {
 		m.setStore(msg.store)
 		return m.enter("manage"), true
 	case "file-detail":
-		m.file = msg.attached
+		m.setFile(msg.attached)
 		return m.enter("file"), true
 	case "sources":
 		if msg.reset {

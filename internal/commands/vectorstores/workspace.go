@@ -269,7 +269,7 @@ func (m *workspace) focusCount() int {
 }
 
 func (m *workspace) listLength() int {
-	if menu := managementMenus[m.page]; menu != nil {
+	if menu := m.managementMenu(); menu != nil {
 		return len(menu)
 	}
 	switch m.page {
@@ -600,10 +600,6 @@ func (m *workspace) activate() tea.Cmd {
 				return nil
 			}
 			file := m.files[m.selected]
-			m.note = "File " + file.ID + ": " + string(file.Status)
-			if file.Status == "in_progress" {
-				return m.watchFile(file.ID, false)
-			}
 			m.fileOrigin = m.page
 			id := m.store.ID
 			return m.start("file-detail", "Reading file details…", func(ctx context.Context) workMessage {
@@ -738,6 +734,16 @@ func (m *workspace) setStore(store *openai.VectorStore) {
 	}
 }
 
+func (m *workspace) setFile(file *openai.VectorStoreFile) {
+	m.file = file
+	for i := range m.files {
+		if m.files[i].ID == file.ID {
+			m.files[i] = *file
+			return
+		}
+	}
+}
+
 func (m *workspace) complete(msg workMessage) tea.Cmd {
 	cancelled := m.cancelling
 	mutation := msg.kind == "create" || msg.kind == "upload" || msg.kind == "attach" || managementMutation(msg.kind)
@@ -807,14 +813,11 @@ func (m *workspace) complete(msg workMessage) tea.Cmd {
 			m.fail(workspaceFailure("The API returned no file status. Refresh Files to try again.", nil))
 			return nil
 		}
+		m.setFile(msg.attached)
 		if msg.attached.Status == "in_progress" {
 			return m.watchFile(msg.attached.ID, true)
 		}
-		for i := range m.files {
-			if m.files[i].ID == msg.attached.ID {
-				m.files[i] = *msg.attached
-			}
-		}
+		m.selected = 0
 		m.note = "File " + msg.attached.ID + ": " + string(msg.attached.Status)
 		if msg.attached.Status != "completed" {
 			m.lastErr = workspaceFailure("File indexing did not complete. Check the file status before searching.", nil)

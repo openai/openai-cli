@@ -41,9 +41,11 @@ Store details include size, activity, expiration, file counts, and an estimate o
 The estimate uses the current size across the active part of the current UTC month.
 It does not calculate billing charges.
 
-Select a completed or failed file in **Files** to inspect details, read indexed text, edit attributes, or remove its attachment.
+Select a file in **Files** or **Batch files** to open its actions.
+You can inspect details, read indexed text, edit attributes, or remove the attachment.
 If the API reports more indexed text, the workspace labels the displayed page as partial.
-Selecting an indexing file waits for completion.
+For a file still indexing, choose **Watch progress** to follow its status.
+Esc stops watching and returns to the file actions. Indexing continues on the server.
 Attachment removal preserves the source file.
 Store deletion preserves source files too.
 Removal, deletion, and batch cancellation require the exact resource ID plus explicit confirmation.

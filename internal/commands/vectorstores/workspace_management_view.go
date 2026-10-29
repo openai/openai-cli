@@ -89,7 +89,7 @@ func estimatedStorageHours(store *openai.VectorStore, now time.Time) float64 {
 }
 
 func (m *workspace) managementLines() ([]string, string) {
-	if menu := managementMenus[m.page]; menu != nil {
+	if menu := m.managementMenu(); menu != nil {
 		footer := "↑↓ choose · Enter open · Esc back · Ctrl+C exit"
 		lines := []string{m.divider()}
 		if m.page == "manage" && m.store != nil {

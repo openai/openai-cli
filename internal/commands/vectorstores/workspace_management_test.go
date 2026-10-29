@@ -164,6 +164,85 @@ func TestManagementFileContentAttributesAndRemoval(t *testing.T) {
 	assert.Contains(t, m.note, "source file remains")
 }
 
+func TestIndexingFileMenuAllowsRemovalFromStoreAndBatch(t *testing.T) {
+	const attachment = "/vector_stores/vs_demo/files/file_demo"
+	const file = `{"id":"file_demo","vector_store_id":"vs_demo","status":"in_progress"}`
+	for _, origin := range []string{"files", "batchfiles"} {
+		t.Run(origin, func(t *testing.T) {
+			listPath := "/vector_stores/vs_demo/files"
+			if origin == "batchfiles" {
+				listPath = "/vector_stores/vs_demo/file_batches/vsfb_demo/files"
+			}
+			deletes := 0
+			m := managementModel(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method + " " + r.URL.Path {
+				case "GET " + listPath:
+					serviceJSON(w, 200, `{"data":[`+file+`],"has_more":false}`)
+				case "GET " + attachment:
+					serviceJSON(w, 200, file)
+				case "DELETE " + attachment:
+					deletes++
+					serviceJSON(w, 200, `{"id":"file_demo","deleted":true}`)
+				case "GET /files":
+					serviceJSON(w, 200, `{"data":[{"id":"file_demo","filename":"example.txt"}],"has_more":false}`)
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					serviceJSON(w, 404, `{}`)
+				}
+			})
+			m.batch = &openai.VectorStoreFileBatch{ID: "vsfb_demo", VectorStoreID: "vs_demo"}
+			m.enter(origin)
+			modelComplete(t, m, m.loadFiles(false))
+			modelComplete(t, m, modelKey(m, tea.KeyEnter))
+			require.Equal(t, "file", m.page)
+			require.False(t, m.busy, "opening the menu must not start polling")
+			require.Contains(t, m.View().Content, "› File details")
+
+			modelKey(m, tea.KeyDown)
+			require.Contains(t, m.View().Content, "› Watch progress")
+			nextPoll := modelComplete(t, m, modelKey(m, tea.KeyEnter))
+			require.NotNil(t, nextPoll, "explicit watch continues while indexing")
+			modelKey(m, tea.KeyEscape)
+			modelComplete(t, m, nextPoll)
+			require.False(t, m.busy)
+			require.Equal(t, "file", m.page)
+			assert.Contains(t, m.note, "Remote indexing continues")
+			modelKey(m, tea.KeyEscape)
+			require.Equal(t, origin, m.page)
+			modelComplete(t, m, modelKey(m, tea.KeyEnter))
+
+			for range 4 {
+				modelKey(m, tea.KeyDown)
+			}
+			require.Contains(t, m.View().Content, "› Remove attachment")
+			modelKey(m, tea.KeyEnter)
+			require.Equal(t, "remove-file", m.page)
+			m.Update(tea.PasteMsg{Content: "wrong_file"})
+			modelKey(m, tea.KeyEnter)
+			require.Nil(t, modelKey(m, tea.KeyEnter))
+			require.Zero(t, deletes)
+			require.Contains(t, m.note, "ID does not match")
+			modelKey(m, tea.KeyEscape)
+			require.Equal(t, "file", m.page)
+			for range 4 {
+				modelKey(m, tea.KeyDown)
+			}
+			modelKey(m, tea.KeyEnter)
+			m.Update(tea.PasteMsg{Content: "file_demo"})
+			modelKey(m, tea.KeyEnter)
+			require.Zero(t, deletes, "typing the ID does not send a delete request")
+			modelComplete(t, m, modelKey(m, tea.KeyEnter))
+			require.Equal(t, 1, deletes)
+			assert.Equal(t, origin, m.page)
+			assert.Empty(t, m.files)
+			sources, err := m.service.ListSourceFiles(t.Context(), "")
+			require.NoError(t, err)
+			require.Len(t, sources.Files, 1)
+			assert.Equal(t, "file_demo", sources.Files[0].ID)
+		})
+	}
+}
+
 func TestManagementIndexedContentPagination(t *testing.T) {
 	for _, tc := range []struct {
 		name, metadata string

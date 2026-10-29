@@ -147,15 +147,18 @@ func TestWorkspaceWatchedFileFailureIsNotSuccess(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			m := modelForTest(t, modelService{})
 			m.store = &openai.VectorStore{ID: "vs_demo"}
-			m.page = "files"
+			m.page = "file"
 			m.pendingFile = "file_retained"
-			m.files = []openai.VectorStoreFile{{ID: "file_watched", Status: "in_progress"}}
+			m.file = &openai.VectorStoreFile{ID: "file_watched", Status: "in_progress"}
+			m.files = []openai.VectorStoreFile{*m.file}
 			m.Update(workMessage{kind: "watch", attached: &openai.VectorStoreFile{
 				ID: "file_watched", Status: openai.VectorStoreFileStatus(status),
 			}})
 			assert.Error(t, m.lastErr)
 			assert.Equal(t, "file_retained", m.pendingFile)
 			assert.Equal(t, status, string(m.files[0].Status))
+			assert.Equal(t, status, string(m.file.Status))
+			assert.NotContains(t, m.View().Content, "Watch progress")
 		})
 	}
 }
@@ -462,6 +465,7 @@ func TestWorkspaceFailedRefreshPreservesPagination(t *testing.T) {
 }
 
 func TestWorkspaceWatchingAnotherFilePreservesRetainedUpload(t *testing.T) {
+	reads := 0
 	m := modelForTest(t, modelService{
 		upload: func(context.Context, string) (*openai.FileObject, error) {
 			return &openai.FileObject{ID: "file_retained", Filename: "retained.txt"}, nil
@@ -477,7 +481,12 @@ func TestWorkspaceWatchingAnotherFilePreservesRetainedUpload(t *testing.T) {
 		getFile: func(_ context.Context, store, file string) (*openai.VectorStoreFile, error) {
 			assert.Equal(t, "vs_demo", store)
 			assert.Equal(t, "file_other", file)
-			return &openai.VectorStoreFile{ID: file, VectorStoreID: store, Status: "completed"}, nil
+			reads++
+			status := openai.VectorStoreFileStatusCompleted
+			if reads == 1 {
+				status = openai.VectorStoreFileStatusInProgress
+			}
+			return &openai.VectorStoreFile{ID: file, VectorStoreID: store, Status: status}, nil
 		},
 	})
 	m.store = &openai.VectorStore{ID: "vs_demo"}
@@ -494,10 +503,21 @@ func TestWorkspaceWatchingAnotherFilePreservesRetainedUpload(t *testing.T) {
 	modelComplete(t, m, modelKey(m, tea.KeyEnter))
 	require.Equal(t, "files", m.page)
 	modelComplete(t, m, modelKey(m, tea.KeyEnter))
+	require.Equal(t, "file", m.page)
+	require.Equal(t, 1, reads, "opening the menu reads file details once")
+	modelKey(m, tea.KeyDown)
+	require.Contains(t, m.View().Content, "› Watch progress")
+	modelComplete(t, m, modelKey(m, tea.KeyEnter))
+	require.Equal(t, 2, reads)
+	assert.Contains(t, m.View().Content, "› File details")
+	assert.NotContains(t, m.View().Content, "Watch progress")
+	assert.Equal(t, openai.VectorStoreFileStatusCompleted, m.file.Status)
 	require.Equal(t, "file_retained", m.pendingFile)
 	assert.False(t, m.pendingAttached)
 	require.Len(t, m.files, 1)
 	assert.Equal(t, "completed", string(m.files[0].Status))
+	modelKey(m, tea.KeyEscape)
+	require.Equal(t, "files", m.page)
 	modelKey(m, tea.KeyEscape)
 	modelKey(m, tea.KeyTab)
 	modelKey(m, tea.KeyTab)

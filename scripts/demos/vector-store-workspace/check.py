@@ -193,6 +193,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             assert parse_qs(url.query) == {"limit": ["20"]}
             return 200, {"data": [attachment(EXISTING_ID, "completed"),
                                  {**attachment(EXISTING_ID, "in_progress"), "id": "file_second"}], "has_more": False}, None
+        if path == base + "/files/file_second":
+            if method == "GET":
+                return 200, {**attachment(EXISTING_ID, "in_progress"), "id": "file_second"}, None
+            if method == "DELETE":
+                return 200, {"id": "file_second", "deleted": True}, None
         if path == base + f"/files/{FILE_ID}/content" and method == "GET":
             return 200, {"object": "vector_store.file_content.page", "has_more": False, "next_page": None,
                          "data": [{"type": "text", "text": TEXT.decode().strip()},
@@ -480,6 +485,23 @@ def management_scenario(name, terminal, server, harness):
     # A failed confirmation retains action focus. Return to the editor before replacing it.
     terminal.send(b"\t\t")
     submit_editor(terminal, FILE_ID, "Attachment removed.")
+    harness.wait_submit_guard(terminal)
+    # The remaining attachment is still indexing. Opening its menu reads details once.
+    indexing_path = update_path + "/files/file_second"
+    action(terminal, b"\r", "Watch progress")
+    assert server.count("GET", indexing_path) == 1
+    server.started.clear()
+    action(terminal, harness.DOWN + b"\r", "Indexing file")
+    harness.wait_for_request(terminal, server.started)
+    assert server.count("GET", indexing_path) >= 2, "Watch progress did not read the attachment"
+    action(terminal, b"\x1b", "Remote indexing continues.")
+    action(terminal, harness.DOWN * 3 + b"\r", "Confirm file ID")
+    submit_editor(terminal, "file_second ", "The ID does not match.")
+    assert server.count("DELETE", indexing_path) == 0
+    terminal.send(b"\t\t")
+    submit_editor(terminal, "file_second", "Attachment removed.")
+    assert server.count("DELETE", indexing_path) == 1
+    assert server.count("DELETE", "/v1/files/file_second") == 0, "attachment removal deleted its source"
     harness.wait_submit_guard(terminal)
     action(terminal, b"\x1b", "Batch details")
     action(terminal, harness.DOWN * 3 + b"\r", "Confirm batch ID")
