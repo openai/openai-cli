@@ -6,6 +6,7 @@
 ### Features
 
 * **api:** add image edit markup overlays ([#669](https://github.com/openai/openai-cli/issues/669)) ([c444e77](https://github.com/openai/openai-cli/commit/c444e77fd5fa0eb1b4b82716039edd0eb4f2252f))
+* **batches:** create batches from CSV and inspect or export results by row ([#665](https://github.com/openai/openai-cli/issues/665)) ([b0f8787](https://github.com/openai/openai-cli/commit/b0f8787b27f02ecd510d0de62547b8b5c0f6a8df))
 
 
 ### Chores
