@@ -16,11 +16,11 @@ import (
 
 func TestFlagOptionsFeatureValidationPrecedesFileExpansion(t *testing.T) {
 	t.Setenv(UntrustedStdinEnv, "false")
-	for _, stage := range []string{"required", "preflight", "credentials", "files"} {
+	for _, stage := range []string{"required", "preflight", "preflight-and-required", "credentials", "files"} {
 		t.Run(stage, func(t *testing.T) {
 			file := &requestflag.Flag[string]{Name: "file", BodyPath: "file", FileInput: true, Required: true}
 			require.NoError(t, file.PreParse())
-			if stage != "required" {
+			if stage != "required" && stage != "preflight-and-required" {
 				require.NoError(t, file.Set("file", filepath.Join(t.TempDir(), "synthetic-missing.bin")))
 			}
 			failure := errors.New("synthetic " + stage + " failure")
@@ -29,8 +29,8 @@ func TestFlagOptionsFeatureValidationPrecedesFileExpansion(t *testing.T) {
 				PreflightMultipart: func(body map[string]any) error {
 					events = append(events, "preflight")
 					_, marked := body["file"].(FilePathValue)
-					require.True(t, marked)
-					if stage == "preflight" {
+					require.Equal(t, stage != "required" && stage != "preflight-and-required", marked)
+					if stage == "preflight" || stage == "preflight-and-required" {
 						return failure
 					}
 					return nil
@@ -46,8 +46,8 @@ func TestFlagOptionsFeatureValidationPrecedesFileExpansion(t *testing.T) {
 			switch stage {
 			case "required":
 				require.ErrorContains(t, err, `Required flag "file" not set`)
-				require.Empty(t, events)
-			case "preflight":
+				require.Equal(t, []string{"preflight"}, events)
+			case "preflight", "preflight-and-required":
 				require.ErrorIs(t, err, failure)
 				require.Equal(t, []string{"preflight"}, events)
 			case "credentials":
