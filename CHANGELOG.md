@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.45.1](https://github.com/openai/openai-cli/compare/v1.45.0...v1.45.1) (2026-10-29)
+
+
+### Chores
+
+* **api:** refresh API reference ([#663](https://github.com/openai/openai-cli/issues/663)) ([df1b6ee](https://github.com/openai/openai-cli/commit/df1b6ee9bb7b7fd15d01707c58dee12b969f27f3))
+
 ## [1.45.0](https://github.com/openai/openai-cli/compare/v1.44.2...v1.45.0) (2026-10-29)
 
 
