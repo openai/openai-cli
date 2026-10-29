@@ -271,6 +271,14 @@ jobs:
           go test -p 1 ./internal/commands/audio -count=1 -timeout=2m -v -json -run '^(TestAudioVoiceBodyEmbeddingCancellationReleasesOwnedRead|TestAudioVoiceBodyEmbeddingPartialFailureClosesOnce|TestAudioVoiceBodyEmbeddingPreservesReplayAndOwnership|TestAudioVoiceBodyEmbeddingReadFailureRetainsCauses|TestAudioVoiceBodyEmbeddingTypeOpenFailureClosesOwnedInputs|TestAudioVoiceBodyEmbeddingValidationFailureClosesOwnedInputs)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-voice-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Windows vector store file selection
+        if: matrix.native-commands && runner.os == 'Windows' && matrix.shard != 'dispatch'
+        shell: pwsh
+        timeout-minutes: 4
+        run: |
+          go test -p 1 ./internal/commands/vectorstores -count=1 -timeout=2m -v -json -run '^TestWorkspaceBrowserUploadsExactSelectedPath$/^directional_mark$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-vector-file-selection.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test help
         if: runner.os != 'Windows' && matrix.shard != 'dispatch'
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
@@ -1643,6 +1651,8 @@ jobs:
               suites["native-command-tests.jsonl"] = selected
               strict_packages["native-command-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
               if os.environ["RUNNER_OS"] == "Windows":
+                  suites["windows-vector-file-selection.jsonl"] = required_cases("TestWorkspaceBrowserUploadsExactSelectedPath", ["directional_mark"])
+                  strict_packages["windows-vector-file-selection.jsonl"] = "github.com/openai/openai-cli/internal/commands/vectorstores"
                   for filename, key, package, roots, total in [
                       ("windows-voice-public-tests.jsonl", "windows_voice_public", "github.com/openai/openai-cli/cmd/openai", 4, 138),
                       ("windows-voice-helper-tests.jsonl", "windows_voice_helpers", "github.com/openai/openai-cli/internal/commands/audio", 6, 8),

@@ -1,0 +1,170 @@
+package vectorstores
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+)
+
+type SourcePage struct {
+	Files []openai.FileObject
+	Next  string
+}
+
+type IndexedContent struct {
+	Text    string
+	Partial bool
+}
+
+// AttachOptions uses the API defaults for fields left nil.
+type AttachOptions struct {
+	Attributes map[string]any `json:"attributes,omitempty"`
+	Chunking   map[string]any `json:"chunking_strategy,omitempty"`
+}
+
+func (o AttachOptions) requestOptions() []option.RequestOption {
+	opts := []option.RequestOption{option.WithMaxRetries(0)}
+	if o.Attributes != nil {
+		opts = append(opts, option.WithJSONSet("attributes", o.Attributes))
+	}
+	if o.Chunking != nil {
+		opts = append(opts, option.WithJSONSet("chunking_strategy", o.Chunking))
+	}
+	return opts
+}
+
+func (s *sdkService) UpdateStore(ctx context.Context, id string, changes map[string]any) (*openai.VectorStore, error) {
+	opts := []option.RequestOption{option.WithMaxRetries(0)}
+	for key, value := range changes {
+		opts = append(opts, option.WithJSONSet(key, value))
+	}
+	store, err := s.client.VectorStores.Update(ctx, id, openai.VectorStoreUpdateParams{}, opts...)
+	if err == nil && (store == nil || !validResponseID(store.JSON.ID) || store.ID != id) {
+		err = workspaceFailure("The API returned an unexpected store. Refresh before retrying.", nil)
+	}
+	return store, err
+}
+
+func (s *sdkService) DeleteStore(ctx context.Context, id string) error {
+	result, err := s.client.VectorStores.Delete(ctx, id, option.WithMaxRetries(0))
+	if err == nil && (result == nil || !validResponseID(result.JSON.ID) || result.ID != id || result.JSON.Deleted.Raw() != "true") {
+		err = workspaceFailure("Store deletion was not confirmed. Refresh stores before retrying.", nil)
+	}
+	return err
+}
+
+func (s *sdkService) ListSourceFiles(ctx context.Context, after string) (SourcePage, error) {
+	params := openai.FileListParams{Limit: openai.Int(20), Purpose: openai.String("assistants"), Order: openai.FileListParamsOrderDesc}
+	if after != "" {
+		params.After = openai.String(after)
+	}
+	page, err := s.client.Files.List(ctx, params)
+	if err != nil {
+		return SourcePage{}, err
+	}
+	if page == nil || !page.JSON.Data.Valid() || !page.JSON.HasMore.Valid() {
+		return SourcePage{}, workspaceFailure("The API returned an incomplete file list. Refresh before retrying.", nil)
+	}
+	last := ""
+	for _, file := range page.Data {
+		if !validResponseID(file.JSON.ID) {
+			return SourcePage{}, workspaceFailure("The API returned a file without an ID.", nil)
+		}
+		last = file.ID
+	}
+	next, err := nextCursor(after, last, page.HasMore)
+	return SourcePage{Files: page.Data, Next: next}, err
+}
+
+func checkBatch(batch *openai.VectorStoreFileBatch, err error, store, id string) (*openai.VectorStoreFileBatch, error) {
+	if err == nil && (batch == nil || !validResponseID(batch.JSON.ID) || id != "" && batch.ID != id ||
+		!validResponseID(batch.JSON.VectorStoreID) || batch.VectorStoreID != store) {
+		err = workspaceFailure("The API returned an unexpected batch. Check Files before retrying.", nil)
+	}
+	return batch, err
+}
+
+func (s *sdkService) CreateBatch(ctx context.Context, store string, files []string, opts AttachOptions) (*openai.VectorStoreFileBatch, error) {
+	batch, err := s.client.VectorStores.FileBatches.New(ctx, store, openai.VectorStoreFileBatchNewParams{FileIDs: files}, opts.requestOptions()...)
+	return checkBatch(batch, err, store, "")
+}
+
+func (s *sdkService) GetBatch(ctx context.Context, store, id string) (*openai.VectorStoreFileBatch, error) {
+	batch, err := s.client.VectorStores.FileBatches.Get(ctx, store, id)
+	return checkBatch(batch, err, store, id)
+}
+
+func (s *sdkService) CancelBatch(ctx context.Context, store, id string) (*openai.VectorStoreFileBatch, error) {
+	batch, err := s.client.VectorStores.FileBatches.Cancel(ctx, store, id, option.WithMaxRetries(0))
+	return checkBatch(batch, err, store, id)
+}
+
+func (s *sdkService) ListBatchFiles(ctx context.Context, store, id, after string) (FilePage, error) {
+	params := openai.VectorStoreFileBatchListFilesParams{Limit: openai.Int(20)}
+	if after != "" {
+		params.After = openai.String(after)
+	}
+	page, err := s.client.VectorStores.FileBatches.ListFiles(ctx, store, id, params)
+	if err != nil {
+		return FilePage{}, err
+	}
+	if page == nil || !page.JSON.Data.Valid() || !page.JSON.HasMore.Valid() {
+		return FilePage{}, workspaceFailure("The API returned an incomplete batch file list.", nil)
+	}
+	last := ""
+	for _, file := range page.Data {
+		if !validAttachmentID(file, store) {
+			return FilePage{}, workspaceFailure("The API returned an unexpected batch file.", nil)
+		}
+		last = file.ID
+	}
+	next, err := nextCursor(after, last, page.HasMore)
+	return FilePage{Files: page.Data, Next: next}, err
+}
+
+func (s *sdkService) UpdateFile(ctx context.Context, store, file string, attributes map[string]any) (*openai.VectorStoreFile, error) {
+	result, err := s.client.VectorStores.Files.Update(ctx, store, file, openai.VectorStoreFileUpdateParams{},
+		option.WithJSONSet("attributes", attributes), option.WithMaxRetries(0))
+	return checkAttachedFile(result, err, store, file)
+}
+
+func (s *sdkService) RemoveFile(ctx context.Context, store, file string) error {
+	result, err := s.client.VectorStores.Files.Delete(ctx, store, file, option.WithMaxRetries(0))
+	if err == nil && (result == nil || !validResponseID(result.JSON.ID) || result.ID != file || result.JSON.Deleted.Raw() != "true") {
+		err = workspaceFailure("Attachment removal was not confirmed. Refresh Files before retrying.", nil)
+	}
+	return err
+}
+
+func (s *sdkService) FileContent(ctx context.Context, store, file string) (IndexedContent, error) {
+	page, err := s.client.VectorStores.Files.Content(ctx, store, file)
+	if err != nil {
+		return IndexedContent{}, err
+	}
+	if page == nil || !page.JSON.Data.Valid() {
+		return IndexedContent{}, workspaceFailure("The API returned incomplete file content.", nil)
+	}
+	var text strings.Builder
+	for i, part := range page.Data {
+		if err := ctx.Err(); err != nil {
+			return IndexedContent{}, err
+		}
+		if part.Type != "text" || !strings.HasPrefix(part.JSON.Text.Raw(), `"`) {
+			return IndexedContent{}, workspaceFailure(fmt.Sprintf("The API returned unsupported file content at part %d.", i+1), nil)
+		}
+		if i > 0 {
+			text.WriteString("\n\n")
+		}
+		text.WriteString(part.Text)
+	}
+	if err := ctx.Err(); err != nil {
+		return IndexedContent{}, err
+	}
+	// The endpoint returns pagination metadata but accepts no continuation parameter.
+	fields := page.JSON.ExtraFields
+	partial := fields["has_more"].Raw() != "false" || fields["next_page"].Raw() != "null"
+	return IndexedContent{Text: text.String(), Partial: partial}, nil
+}

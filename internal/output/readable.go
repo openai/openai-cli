@@ -21,6 +21,8 @@ type ReadableOptions struct {
 	Stdout, Stderr     io.Writer
 	Terminal           bool
 	DiagnosticsAllowed bool
+	// EmptyText overrides the default message for a successful empty result.
+	EmptyText string
 }
 
 const ResourceSummaryHint = "Full data: --format json."
@@ -85,7 +87,11 @@ func WriteReadableIterator(iter jsonview.Iterator[JSON], opts ReadableOptions) e
 		return err
 	}
 	if !emitted {
-		return readable.WriteText(out, "No results.")
+		text := opts.EmptyText
+		if text == "" {
+			text = "No results."
+		}
+		return readable.WriteText(out, text)
 	}
 	return opts.Context.Err()
 }

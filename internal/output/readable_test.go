@@ -88,3 +88,27 @@ func TestReadableStreamDeliversBeforeAdvancing(t *testing.T) {
 	require.Contains(t, out.String(), "synthetic partial")
 	require.Equal(t, 1, source.calls)
 }
+
+func TestReadableIteratorEmptyText(t *testing.T) {
+	for _, text := range []string{"", "No matching items."} {
+		t.Run(text, func(t *testing.T) {
+			for _, upstream := range []error{nil, errors.New("synthetic upstream failure")} {
+				var out bytes.Buffer
+				source := &transformTestIterator{err: upstream}
+				iter := NewIterator(source, IteratorOptions{Context: t.Context(), Transform: transformers.Identity, Limit: -1})
+				err := WriteReadableIterator(iter, ReadableOptions{Context: t.Context(), Stdout: &out, EmptyText: text})
+				if upstream != nil {
+					require.ErrorIs(t, err, upstream)
+					require.Empty(t, out.String())
+					continue
+				}
+				require.NoError(t, err)
+				want := text
+				if want == "" {
+					want = "No results."
+				}
+				require.Equal(t, want+"\n", out.String())
+			}
+		})
+	}
+}

@@ -199,6 +199,10 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 				return fmt.Errorf("classify action-bearing group %q; unknown-child probes must not execute valid positional actions", name)
 			}
 		}
+		if name == "vector-stores manage" {
+			entry.Class += "; terminal workspace"
+			entry.ActionContract = name
+		}
 		for _, flag := range command.Flags {
 			names := flag.Names()
 			if len(names) == 0 || names[0] == "" {
@@ -526,6 +530,9 @@ func declaredErrorCoverageCases(manifest errorCoverageManifest) []errorCoverageC
 				code = 1
 			}
 			add("unknown-child", "", []string{private}, code, message)
+		}
+		if path == "vector-stores manage" {
+			add("unexpected-operand", "", []string{private}, 1, "The vector store workspace takes no positional arguments.")
 		}
 		var required, requiredAfterInput []string
 		aliasOwners := map[string]string{}

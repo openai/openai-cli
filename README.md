@@ -228,6 +228,7 @@ In PowerShell, press Enter after `openai images generate` to open the picker.
 | Generate, edit, save, and preview images | [Images](docs/image-generation-saving.md) |
 | Upload and download files | [Files](docs/files.md) |
 | Submit batches and collect results | [Batches](docs/batches.md) |
+| Create vector stores, upload files, and search | [Vector stores](docs/vector-store-workspace.md) |
 | Generate speech and work with audio | [Audio](docs/audio-workbench.md) |
 | Inspect and count tokens locally | [Tokenizer](docs/local-utilities.md) |
 | Test webhook handling | [Webhooks](docs/webhook-testing.md) |

@@ -33,6 +33,7 @@ func ConfigureCommand(root *cli.Command) {
 	root.Flags = append(root.Flags, debugCaptureFlags()...)
 	configureCertificateCompatibility(root)
 	configureAudioVoices(root)
+	configureVectorStoreSearch(root)
 	requestconfig.ConfigureRootFlags(root)
 	// Batch workflows preserve positional path inputs and need the same help annotations.
 	configureBatchCommands(root)
@@ -60,6 +61,7 @@ func ConfigureCommand(root *cli.Command) {
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
 	filecommands.Configure(root)
+	configureVectorStoreWorkspace(root)
 	tokenize.Register(root)
 	codex.Register(root)
 	localcommands.RemoveFineTuningCommands(root)
