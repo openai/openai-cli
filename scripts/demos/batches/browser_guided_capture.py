@@ -3,6 +3,7 @@
 
 import argparse
 from contextlib import ExitStack, contextmanager
+import csv
 import hashlib
 import importlib.util
 import json
@@ -19,6 +20,7 @@ sys.dont_write_bytecode = True
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workflow_fixture import OUTPUT_BYTES
+from try_browser import LABEL_BY_TICKET, TICKETS
 
 spec = importlib.util.spec_from_file_location("guided_terminal", REPO / "scripts/image_picker_harness.py")
 harness = importlib.util.module_from_spec(spec)
@@ -109,10 +111,70 @@ def finish_capture(terminal, output, header, evidence, primary_error):
         raise failures[0]
 
 
+def finish_session(terminal, evidence, filename):
+    terminal.send(b"\x1b")
+    evidence["keys"].append("Esc: exit")
+    terminal.finish(0, expect_alternate_screen=True)
+    evidence["terminal_restored"] = True
+    evidence["exit"] = terminal.child.returncode
+    match = re.search(r"Demo downloads and details: ([^\r\n]+)", terminal.text())
+    assert match, "launcher did not report its saved folder"
+    directory = Path(match.group(1))
+    session = json.loads((directory / "session.json").read_text())
+    assert session["uploads"] == 1 and session["creates"] == 1
+    assert not session["fixture_failures"] and session["server_stopped"] and session["process_stopped"]
+    requests = [json.loads(line) for line in (directory / session["request_log"]).read_text().splitlines()]
+    assert [(r["method"], r["path"]) for r in requests if r["method"] == "POST"] == [
+        ("POST", "/files"), ("POST", "/batches")]
+    examples = (directory / session["input_file"]).parent
+    evidence.update(session=session, saved_file=str(examples / filename), requests=requests)
+    return examples
+
+
+def capture_csv(terminal, advance, wait_screen, save, evidence):
+    terminal.wait("Ctrl+N")
+    advance(b"\x0e", "Ctrl+N: create", "Input file")
+    advance(b"tickets.csv", "Type the CSV filename", "tickets.csv")
+    advance(b"\r", "Choose tickets.csv", "Input column")
+    save("00-csv-setup")
+    advance(b"\x1b[B\r", "Choose message", "Describe the task")
+    advance(b"Classify each ticket as billing, login, or other.\r", "Enter task", "Model")
+    advance(b"synthetic-demo-model\r", "Enter model and open Review", "Enter submits one batch")
+    review = save("01-csv-review")
+    assert "tickets.csv" in review and "synthetic-demo-model" in review and "invoice" in review
+    assert "proj_synthetic_local_demo" in review and "http://127.0.0.1:" in review
+    demo = Path(re.search(r"Demo folder: ([^\r\n]+)", terminal.text()).group(1))
+    events = [json.loads(row) for row in (demo / "request-log.jsonl").read_text().splitlines()]
+    assert not any(row.get("method") == "POST" for row in events), "preview submitted data"
+    advance(b"\r", "Enter: submit", "batch_created_demo")
+    wait_screen("3 of 3 succeeded", timeout=40)
+    save("02-csv-completed")
+    advance(b"\r", "View rows with answers", "Row 3")
+    rows = save("03-csv-rows")
+    for label in LABEL_BY_TICKET.values():
+        assert label in rows, rows
+    assert not (demo / "examples" / "tickets-results.csv").exists(), "viewing results wrote a user file"
+    advance(b"s", "Save labeled CSV", "Saved tickets-results.csv")
+    save("03-csv-saved")
+    advance(b"\x1b", "Return to actions", "View rows with answers")
+    advance(b"\x1b", "Return to batches", "Search")
+    directory = finish_session(terminal, evidence, "tickets-results.csv")
+    with TICKETS.open(newline="", encoding="utf-8") as source:
+        tickets = list(csv.DictReader(source))
+    with (directory / "tickets-results.csv").open(newline="", encoding="utf-8") as result:
+        rows = list(csv.DictReader(result))
+    assert len(rows) == len(tickets)
+    for row, ticket in zip(rows, tickets):
+        assert row["ticket_id"] == ticket["ticket_id"] and row["message"] == ticket["message"]
+        assert row["result"] == LABEL_BY_TICKET[ticket["ticket_id"]] and row["error"] == ""
+    evidence["verified_ticket_labels"] = LABEL_BY_TICKET
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("output", type=Path, help="New directory for retained replay and evidence")
+    parser.add_argument("--csv", action="store_true", help="Exercise CSV import, preview, and labeled CSV export")
     parser.add_argument("--launcher", type=Path, default=Path(__file__).with_name("try_browser.py"),
                         help="Synthetic launcher accepting the binary path")
     parser.add_argument("--launcher-takes-no-binary", action="store_true",
@@ -178,20 +240,22 @@ def main():
                     if not terminal.running() or time.monotonic() > until:
                         raise AssertionError("Missing screen marker: " + marker)
 
+            if args.csv:
+                capture_csv(terminal, advance, wait_screen, save, evidence)
+                print(args.output)
+                return
+
             terminal.wait("Ctrl+N")
             save("01-batches")
-            advance(b"\x0e", "Ctrl+N: create", "Review and create")
+            advance(b"\x0e", "Ctrl+N: create", "Input file")
             save("02-create")
-            advance(b"\r", "Enter: choose input", "Browse local files")
-            advance(b"\r", "Enter: browse local files", "Choose a JSONL input file")
+            advance(b"\r", "Enter: browse input files", "Choose input file")
             save("03-local-files")
             terminal.send(b"requests.jsonl")
             evidence["keys"].append("Type requests.jsonl: filter local files")
             filtered = save("04-file-search")
             assert "requests.jsonl" in filtered
-            advance(b"\r", "Enter: choose requests.jsonl", "Review and create")
-            save("05-ready")
-            advance(b"\x1b[B" * 3 + b"\r", "Down three, Enter: review", "Ctrl+S creates one batch")
+            advance(b"\r", "Enter: choose requests.jsonl and review", "Enter submits one batch")
             review = save("06-review")
             assert "requests.jsonl" in review and "/v1/responses" in review and "24 hours" in review
             advance(b"\x13", "Ctrl+S: confirm creation", "batch_created_demo")
@@ -206,9 +270,10 @@ def main():
             advance(b"\r", "Enter: view results", "Ctrl+V")
             results = save("09-results")
             assert all(label in results for label in ("positive", "negative", "neutral"))
-            advance(b"\r", "Enter: inspect one result", "PgUp/PgDn")
-            save("10-result-details")
-            advance(b"\x1b", "Esc: return to results", "Ctrl+V")
+            advance(b"\r", "Enter: expand the selected result", "Tokens")
+            inline = save("10-result-preview")
+            assert "sentiment-neutral" in inline and "sentiment-positive" in inline
+            advance(b"\x1b", "Esc: collapse the selected result", "Ctrl+V")
             advance(b"\x1b", "Esc: return to batch", "Save a file")
             advance(b"\x1b[B" * 3 + b"\r", "Down three, Enter: expand Save a file", "Output file")
             save("11-save-options")
@@ -224,23 +289,9 @@ def main():
             advance(b"\x1b", "Esc: collapse Save a file", "Save a file")
             advance(b"\x1b", "Esc: return to batches", "Search")
             save("14-returned")
-            terminal.send(b"\x1b")
-            evidence["keys"].append("Esc: exit")
-            terminal.finish(0, expect_alternate_screen=True)
-            evidence["terminal_restored"] = True
-            evidence["exit"] = terminal.child.returncode
-            match = re.search(r"Demo downloads and details: ([^\r\n]+)", terminal.text())
-            assert match, "launcher did not report its saved folder"
-            directory = Path(match.group(1))
-            session = json.loads((directory / "session.json").read_text())
-            assert session["uploads"] == 1 and session["creates"] == 1
-            assert not session["fixture_failures"] and session["server_stopped"] and session["process_stopped"]
+            directory = finish_session(terminal, evidence, filename)
             assert (directory / filename).read_bytes() == OUTPUT_BYTES
             assert str(directory) in compact_destination, "the save screen did not show the output folder"
-            requests = [json.loads(line) for line in (directory / session["request_log"]).read_text().splitlines()]
-            assert [(r["method"], r["path"]) for r in requests if r["method"] == "POST"] == [
-                ("POST", "/files"), ("POST", "/batches")]
-            evidence.update(session=session, saved_file=str(directory / filename), requests=requests)
     print(args.output)
 
 

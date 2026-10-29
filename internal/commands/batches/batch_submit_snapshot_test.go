@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"
@@ -82,7 +83,9 @@ func TestBatchBrowserUploadsReviewedSnapshot(t *testing.T) {
 			require.True(t, os.SameFile(before, after))
 			require.Equal(t, before.Size(), after.Size())
 			require.Equal(t, before.ModTime(), after.ModTime())
-			screen.chosen = "confirm"
+			screen.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+			screen.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			require.Equal(t, "confirm", screen.chosen)
 			return nil
 		}
 		screen.chosen = "review"

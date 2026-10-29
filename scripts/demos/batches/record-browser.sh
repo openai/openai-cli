@@ -22,7 +22,7 @@ printf '#!/bin/bash\nexec %q -I -B %q\n' "$demo_python" "$demo_source/browser_ca
   echo 'synthetic loopback API; fake key; isolated homes; actual macOS CLI PTYs'
   echo 'scope: terminal replay; not physical terminal appearance, live API, or native Windows/Linux qualification'
   demo_capture_metadata
-  shasum -a 256 "$demo_source/try_browser.py" "$demo_source/workflow_fixture.py" \
+  shasum -a 256 "$demo_source/try_browser.py" "$demo_source/workflow_fixture.py" "$demo_source/tickets.csv" \
     "$demo_source/browser_capture_api.py" "$demo_source/browser_capture_scene.py" "$demo_source/record-browser.sh" \
     "$demo_root/scripts/image_picker_harness.py"
 } > "$demo_output/metadata.txt"

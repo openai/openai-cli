@@ -47,6 +47,15 @@ class TranscriptTerminal:
 
 
 class WorkspaceLifecycleTest(unittest.TestCase):
+    def test_expanding_a_row_scrolls_only_the_selected_region(self):
+        rows = paint('Title', 'First', 'Second', 'Third', 'Keys')
+        region = b'\x1b[2;4r'
+        expanded = rows + region + b'\x1b[T'
+        self.assertEqual(picker.screen(expanded, 12, 5).splitlines(),
+                         [b'Title', b'', b'First', b'Second', b'Keys'])
+        self.assertEqual(picker.screen(expanded + b'\x1b[S', 12, 5).splitlines(),
+                         [b'Title', b'First', b'Second', b'', b'Keys'])
+
     def test_fresh_request_accepts_completed_retained_form(self):
         previous = workspace()
         terminal = TranscriptTerminal(previous, (

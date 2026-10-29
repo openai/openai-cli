@@ -19,7 +19,7 @@ import (
 func (w workflow) newBatchBrowseCommand() *cli.Command {
 	command := &cli.Command{
 		Name: "browse", Usage: "Create a batch, follow progress, inspect results, or save a file",
-		Description:     "Opens the Batch browser. Ctrl+N opens guided creation; only Ctrl+S on the review screen submits a batch. Processing batches update every 10 seconds while their action screen is open. Leaving the browser does not cancel a remote batch. Search filters the loaded page only; use Next page for more batches. Actions preserve this session's connection and project. Downloads show their folder and never overwrite files. Requires terminal stdin, stdout, and stderr with readable output. Action failures remain failures when the browser exits.",
+		Description:     "Opens the Batch browser. Ctrl+N creates a batch from JSONL, an uploaded file, or a CSV text column. Press Enter or Ctrl+S on the review screen to submit one batch. For a CSV batch, choose View rows with answers to read results beside the original data. Press s there to save a spreadsheet. Processing batches update every 10 seconds while their action screen is open. Leaving the browser does not cancel a remote batch. Search filters the loaded page only; use Next page for more batches. Actions preserve this session's connection and project. Downloads show their folder and never overwrite files. Requires terminal stdin, stdout, and stderr with readable output. Action failures remain failures when the browser exits.",
 		HideHelpCommand: true, Suggest: true,
 		Flags: []cli.Flag{
 			&cli.Int64Flag{Name: "page-size", Value: 20, Usage: "Batches to request per page, from 1 to 100"},
@@ -173,15 +173,31 @@ func (w workflow) runBatchBrowser(ctx context.Context, cmd *cli.Command, client 
 	}
 	list := newBatchBrowserList(page, false)
 	creation := newBatchBrowserDraft()
+	csvSources := make(map[string]string)
+	var lastSaveFolder string
+	saveDrafts := make(map[string]map[string]batchBrowserSaveDraft)
 	openBatch := func(batch gjson.Result) error {
 		id := batch.Get("id").Str
 		actions := newBatchBrowserActions(id)
+		actions.actionsState.saveFolder = lastSaveFolder
+		actions.actionsState.saveDrafts = saveDrafts[id]
+		actions.actionsState.csvSource = csvSources[id]
+		defer func() {
+			lastSaveFolder = actions.actionsState.saveFolder
+			if len(actions.actionsState.saveDrafts) != 0 {
+				saveDrafts[id] = actions.actionsState.saveDrafts
+			}
+			if actions.actionsState.csvSource != "" {
+				csvSources[id] = actions.actionsState.csvSource
+			} else {
+				delete(csvSources, id)
+			}
+		}()
 		actions.setOverview(batch)
 		actions.progress = &batchBrowserProgress{ctx: ctx, fetch: func(ctx context.Context) (gjson.Result, error) {
 			return fetchBatchBrowserDetails(ctx, client, options, id)
 		}}
 		defer actions.stopProgress()
-		drafts := make(map[string]string)
 		for {
 			if err := show(ctx, actions); err != nil {
 				return err
@@ -199,7 +215,7 @@ func (w workflow) runBatchBrowser(ctx context.Context, cmd *cli.Command, client 
 			if actions.chosen == "refresh" {
 				actions.progress.paused = false
 			}
-			if err := w.runBatchBrowserAction(ctx, cmd, client, options, id, actions, drafts, show, beforeOutput); err != nil {
+			if err := w.runBatchBrowserAction(ctx, cmd, client, options, id, actions, show, beforeOutput); err != nil {
 				if actions.chosen == "refresh" {
 					actions.progress.paused = true
 				}
@@ -219,6 +235,12 @@ func (w workflow) runBatchBrowser(ctx context.Context, cmd *cli.Command, client 
 			return failure
 		case "create":
 			batch, err := w.createBatchInBrowser(ctx, cmd, client, options, creation, show)
+			if id := batch.Get("id").Str; id != "" {
+				if creation.csv != nil {
+					csvSources[id] = creation.csv.path
+				}
+				creation = newBatchBrowserDraft()
+			}
 			if err != nil {
 				if err := report(err, "create", batch.Get("id").Str); err != nil {
 					return errors.Join(err, failure)
@@ -289,7 +311,7 @@ func (w workflow) runBatchBrowser(ctx context.Context, cmd *cli.Command, client 
 	}
 }
 
-func (w workflow) renderBatchBrowserAction(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, id string, actions *batchBrowserScreen, drafts map[string]string, show func(context.Context, *batchBrowserScreen) error, beforeOutput func(context.Context) error, body io.Writer) error {
+func (w workflow) renderBatchBrowserAction(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, id string, actions *batchBrowserScreen, show func(context.Context, *batchBrowserScreen) error, beforeOutput func(context.Context) error, body io.Writer) error {
 	var raw []byte
 	opts := append(options[:len(options):len(options)], option.WithResponseBodyInto(&raw))
 	if _, err := client.Batches.Get(ctx, id, opts...); err != nil {
@@ -304,6 +326,12 @@ func (w workflow) renderBatchBrowserAction(ctx context.Context, cmd *cli.Command
 	if action == "refresh" {
 		return nil
 	}
+	if action == "output" && actions.actionsState.csvSource != "" && batchBrowserCanExportCSV(batch) {
+		return openBatchBrowserCSVRows(ctx, client, options, batch, actions, show)
+	}
+	if action == "raw-output" {
+		action = "output"
+	}
 	if selection, save := strings.CutPrefix(action, "save:"); save {
 		if batch.Get(selection+"_file_id").Str == "" {
 			title, message := batchBrowserMissingFile(batch, selection)
@@ -312,27 +340,9 @@ func (w workflow) renderBatchBrowserAction(ctx context.Context, cmd *cli.Command
 			}
 			return nil
 		}
-		path := newBatchBrowserPath(actions, selection)
-		if draft, exists := drafts[selection]; exists {
-			path.input.SetValue(draft)
-		}
-		if err := show(ctx, path); err != nil {
+		destination, err := chooseBatchBrowserSavePath(ctx, actions, selection, batchBrowserDefaultSaveName(id, selection), show)
+		if err != nil || destination == "" {
 			return err
-		}
-		drafts[selection] = path.input.Value()
-		if path.chosen == "back" {
-			selected := path.choices[path.visible[path.index]].value
-			for i, index := range actions.visible {
-				if actions.choices[index].value == selected {
-					actions.index = i
-					break
-				}
-			}
-			return nil
-		}
-		destination, err := batchBrowserSaveDestination(path.input.Value())
-		if err != nil {
-			return batchError(err.Error())
 		}
 		if err := w.downloadBatchFile(ctx, cmd, client, options, id, selection, destination); err != nil {
 			return err
@@ -378,7 +388,7 @@ func (w workflow) renderBatchBrowserAction(ctx context.Context, cmd *cli.Command
 				return err
 			}
 		} else if batch.Get(selection+"_file_id").Str != "" {
-			if err := w.browseBatchRecords(ctx, cmd, client, options, batch, selection, show, beforeOutput); err != nil {
+			if err := w.browseBatchRecords(ctx, cmd, client, options, batch, selection, actions, show, beforeOutput); err != nil {
 				return err
 			}
 		}

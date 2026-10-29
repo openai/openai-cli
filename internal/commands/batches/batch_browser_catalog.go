@@ -35,12 +35,13 @@ type batchBrowserCatalog struct {
 	query, selection             string
 	matchCount                   int64
 	ready                        bool
+	csvRows                      bool
 }
 
 const batchBrowserCatalogHint = 512
 
 func newBatchBrowserCatalog(ctx context.Context, store *batchRecordStore, selection string) (*batchBrowserCatalog, error) {
-	c := &batchBrowserCatalog{store: store, selection: selection}
+	c := &batchBrowserCatalog{store: store, selection: selection, csvRows: store.recordCount > 0}
 	for _, file := range []**os.File{&c.rows, &c.hints, &c.search, &c.matches} {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -63,6 +64,9 @@ func newBatchBrowserCatalog(ctx context.Context, store *batchRecordStore, select
 		label, preview, length, err := c.indexRecord(ctx, record, selection)
 		if err != nil {
 			return nil, err
+		}
+		if c.csvRows && !isBatchCSVRowID(label) {
+			c.csvRows = false
 		}
 		var row [48]byte
 		for i, value := range []int64{hintPosition, int64(len(label)), hintPosition + int64(len(label)), int64(len(preview)), searchPosition, length} {
@@ -153,7 +157,7 @@ func (c *batchBrowserCatalog) indexRecord(ctx context.Context, record batchStore
 		}
 	}
 	if preview == "" {
-		preview = "Open request details"
+		preview = "No text preview"
 	}
 	return label, preview, search.count, batchRecordStorageError(search.out.Flush())
 }

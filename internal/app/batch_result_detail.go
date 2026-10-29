@@ -21,9 +21,16 @@ func showBatchResultDetail(out io.Writer, value gjson.Result, decorate func(batc
 		w.text(batchResultTone(value), strings.ToUpper(text[:1])+text[1:])
 	}
 	w.text("", "\n")
+	formattedError := showBatchRequestFailure(w, value)
 	value.ForEach(func(key, field gjson.Result) bool {
 		if key.Str == "request" || key.Str == "outcome" || key.Str == "usage" {
 			return true
+		}
+		if formattedError {
+			switch key.Str {
+			case "error", "error_details", "http_status", "request_id":
+				return true
+			}
 		}
 		sections := map[string]string{
 			"output": "Output", "choices": "Choices", "error": "Error", "error_details": "Error details",

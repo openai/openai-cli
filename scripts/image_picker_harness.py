@@ -112,6 +112,11 @@ def screen(raw, width=96, height=28, history=None):
                             history.append(''.join(previous).rstrip())
                         rows.insert(scroll_bottom, [' '] * width)
                     pending = False
+                elif final == b'T':
+                    for _ in range(min(max(1, numbers[0]), scroll_bottom - scroll_top + 1)):
+                        rows.pop(scroll_bottom)
+                        rows.insert(scroll_top, [' '] * width)
+                    pending = False
                 elif final in (b'A', b'B'):
                     y = max(0, min(height - 1, y + numbers[0] * (-1 if final == b'A' else 1)))
                     pending = False

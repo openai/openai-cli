@@ -7,6 +7,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -15,7 +16,7 @@ import (
 )
 
 // Each action downloads once. Navigation and view changes reuse private records.
-func (w workflow) browseBatchRecords(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, batch gjson.Result, selection string, show func(context.Context, *batchBrowserScreen) error, beforeOutput func(context.Context) error) (err error) {
+func (w workflow) browseBatchRecords(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, batch gjson.Result, selection string, actions *batchBrowserScreen, show func(context.Context, *batchBrowserScreen) error, beforeOutput func(context.Context) error) (err error) {
 	store, err := newBatchRecordStore(ctx)
 	if err != nil {
 		return err
@@ -30,8 +31,37 @@ func (w workflow) browseBatchRecords(ctx context.Context, cmd *cli.Command, clie
 		return err
 	}
 	list := newBatchBrowserRequests(ctx, catalog, batchBrowserActionLabel(selection), batchID)
+	list.requestState.offerCSV = catalog.csvRows && batchBrowserCanExportCSV(batch) && actions.actionsState.csvSource == ""
+	// A delayed preview checks cancellation under this lock before touching the
+	// store. Full viewers and cleanup join any preview already using it.
+	var preview sync.Mutex
+	list.requestState.preview.read = func(ctx context.Context, id int64) ([]batchBrowserPreviewLine, error) {
+		preview.Lock()
+		defer preview.Unlock()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		record, err := store.record(id)
+		if err != nil || record.length > 16*1024 {
+			// For large records the catalog snippet is already available.
+			return nil, err
+		}
+		records := browserRecordOutput(store, batchID, selection, fileID, id)
+		var excerpt batchBrowserPreviewText
+		records.Decorate = excerpt.decorate
+		err = w.options.ShowRecords(ctx, cmd, records, &excerpt, io.Discard)
+		if err != nil && !errors.Is(err, errBatchPreviewFull) {
+			return nil, err
+		}
+		return excerpt.lines(), nil
+	}
+	waitPreview := func() {
+		preview.Lock()
+		preview.Unlock()
+	}
 	defer func() {
 		list.requestState.stop()
+		waitPreview()
 		catalog.wait()
 	}()
 	for {
@@ -42,6 +72,17 @@ func (w workflow) browseBatchRecords(ctx context.Context, cmd *cli.Command, clie
 			return list.requestState.err
 		}
 		if list.chosen == "back" || list.chosen == "" {
+			return nil
+		}
+		list.requestState.preview.stop()
+		waitPreview()
+		if list.chosen == "original-csv" && list.requestState.offerCSV {
+			if err := openBatchBrowserCSVRows(ctx, client, options, batch, actions, show); err != nil {
+				return err
+			}
+			if actions.actionsState.csvSource == "" {
+				continue
+			}
 			return nil
 		}
 		recordID := int64(0)

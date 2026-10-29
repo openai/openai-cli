@@ -107,19 +107,19 @@ func TestBatchBrowserGuidedLocalFailurePreservesSafeRecovery(t *testing.T) {
 
 func TestBatchBrowserGuidedReviewRequiresExplicitConfirmation(t *testing.T) {
 	for _, size := range []struct{ width, height int }{{39, 12}, {40, 11}, {40, 12}} {
-		m := newBatchBrowserFlow("confirm", "Review batch", "", nil)
-		m.width, m.height = size.width, size.height
-		m.flow.lines = []string{"API charges may apply."}
-		for range 3 {
-			m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-		}
-		if m.closed || m.chosen != "" {
-			t.Fatalf("Enter confirmed at %dx%d", size.width, size.height)
-		}
-		m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
-		want := size.width >= 40 && size.height >= 12
-		if (m.closed && m.chosen == "confirm") != want {
-			t.Errorf("Ctrl+S confirmation at %dx%d: closed=%v chosen=%q", size.width, size.height, m.closed, m.chosen)
+		for _, key := range []tea.KeyPressMsg{{Code: tea.KeyEnter}, {Code: 's', Mod: tea.ModCtrl}} {
+			m := newBatchBrowserFlow("confirm", "Review batch", "", nil)
+			m.flow.submit = true
+			m.Update(tea.WindowSizeMsg{Width: size.width, Height: size.height})
+			require.True(t, m.View().KeyboardEnhancements.ReportEventTypes)
+			m.Update(tea.PasteMsg{Content: "\n"})
+			m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, IsRepeat: true})
+			require.False(t, m.closed, "paste and held Enter must not confirm")
+			m.Update(key)
+			want := size.width >= 40 && size.height >= 12
+			if (m.closed && m.chosen == "confirm") != want {
+				t.Errorf("%s confirmation at %dx%d: closed=%v chosen=%q", key, size.width, size.height, m.closed, m.chosen)
+			}
 		}
 	}
 }
@@ -163,7 +163,7 @@ func TestBatchBrowserGuidedReviewMatchesProjectHeader(t *testing.T) {
 					if got := <-received; got != test.want {
 						t.Fatalf("actual project = %q, want %q", got, test.want)
 					}
-					view := strings.Join(batchBrowserReview(command, &batchBrowserDraft{inputID: "file_synthetic", endpoint: "/v1/responses"}, nil), "\n")
+					view := strings.Join(batchBrowserReview(command, &batchBrowserDraft{inputID: "file_synthetic", endpoint: "/v1/responses"}, nil, 0), "\n")
 					if !strings.Contains(view, "Project: "+test.want+"\n") {
 						t.Errorf("review disagrees with the request project:\n%s", view)
 					}
@@ -190,7 +190,7 @@ func TestBatchBrowserGuidedReviewOmitsConnectionSecrets(t *testing.T) {
 	cmd := &cli.Command{Name: "review", Writer: io.Discard, ErrWriter: io.Discard,
 		Flags: []cli.Flag{&cli.StringFlag{Name: "project"}, &cli.StringFlag{Name: "base-url"}, requestconfig.NewRequestHeaderFlag()},
 		Action: func(_ context.Context, command *cli.Command) error {
-			view := strings.Join(batchBrowserReview(command, &batchBrowserDraft{inputID: "file_synthetic", endpoint: "/v1/responses"}, nil), "\n")
+			view := strings.Join(batchBrowserReview(command, &batchBrowserDraft{inputID: "file_synthetic", endpoint: "/v1/responses"}, nil, 0), "\n")
 			if !strings.Contains(view, "Connection: https://gateway.example.invalid") {
 				t.Errorf("connection origin missing: %s", view)
 			}

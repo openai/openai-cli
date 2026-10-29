@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -17,6 +16,7 @@ import (
 
 type batchBrowserChoice struct {
 	value, title, detail, search string
+	setting                      string // Current value displayed beside a guided form field.
 	status, succeeded, failed    string
 	batch                        gjson.Result
 }
@@ -29,8 +29,8 @@ type batchBrowserScreen struct {
 	index, width, height                  int
 	closed                                bool
 	searchFocused                         bool
-	saveExpanded                          bool
-	overview                              gjson.Result
+	actionsState                          *batchBrowserActionsState
+	pathState                             *batchBrowserPathState
 	document                              *batchBrowserDocument
 	documentState                         *batchBrowserDocumentState
 	documentRawAvailable, documentRaw     bool
@@ -47,8 +47,6 @@ func newBatchBrowserScreen(kind, title, subtitle string, choices []batchBrowserC
 	input.SetWidth(60)
 	if kind == "list" || kind == "path" || kind == "requests" {
 		input.Focus()
-	}
-	if kind == "list" || kind == "requests" || kind == "path" {
 		input.SetVirtualCursor(false)
 	}
 	m := &batchBrowserScreen{kind: kind, title: title, subtitle: subtitle, choices: choices, input: input, width: 80, height: 24}
@@ -114,110 +112,6 @@ func batchBrowserSearchText(batch gjson.Result) string {
 	return strings.ToLower(search.String())
 }
 
-func newBatchBrowserActions(id string) *batchBrowserScreen {
-	m := newBatchBrowserScreen("actions", id, "", nil)
-	m.setOverview(gjson.Result{})
-	return m
-}
-
-func (m *batchBrowserScreen) setOverview(batch gjson.Result) {
-	selected := ""
-	if m.index >= 0 && m.index < len(m.visible) {
-		selected = m.choices[m.visible[m.index]].value
-	}
-	m.overview = batch
-	m.choices = []batchBrowserChoice{{value: "output", title: "View results"}}
-	if !batchBrowserSuccessful(batch) {
-		m.choices = append(m.choices, batchBrowserChoice{value: "error", title: "View errors"})
-	}
-	m.choices = append(m.choices,
-		batchBrowserChoice{value: "input", title: "View input"},
-		batchBrowserChoice{value: "status", title: "Batch details"},
-		batchBrowserChoice{value: "download", title: "Save a file"})
-	if m.saveExpanded {
-		m.choices = append(m.choices,
-			batchBrowserChoice{value: "save:output", title: "Output file"},
-			batchBrowserChoice{value: "save:error", title: "Error file"},
-			batchBrowserChoice{value: "save:input", title: "Input file"})
-	}
-	m.filter()
-	for i, choice := range m.choices {
-		if choice.value == selected {
-			m.index = i
-			break
-		}
-	}
-}
-
-func (m *batchBrowserScreen) setSaveExpanded(expanded bool) {
-	m.saveExpanded = expanded
-	m.setOverview(m.overview)
-	selected := "download"
-	if expanded {
-		selected = "save:output"
-	}
-	for i, choice := range m.choices {
-		if choice.value == selected {
-			m.index = i
-			break
-		}
-	}
-}
-
-func batchBrowserSuccessful(batch gjson.Result) bool {
-	file := batch.Get("error_file_id")
-	succeeded, succeededOK := batchCount(batch.Get("request_counts.completed"))
-	failed, failedOK := batchCount(batch.Get("request_counts.failed"))
-	total, totalOK := batchCount(batch.Get("request_counts.total"))
-	return batchBrowserUniqueFields(batch) && batchBrowserUniqueFields(batch.Get("request_counts")) &&
-		batch.Get("status").Str == "completed" && succeededOK && failedOK && totalOK &&
-		total > 0 && succeeded == total && failed == 0 && file.Exists() &&
-		(file.Type == gjson.Null || file.Type == gjson.String && file.Str == "") && batchBrowserNoValidationErrors(batch.Get("errors"))
-}
-
-func batchBrowserUniqueFields(object gjson.Result) bool {
-	if !object.IsObject() {
-		return false
-	}
-	seen := make(map[string]bool)
-	unique := true
-	object.ForEach(func(key, _ gjson.Result) bool {
-		unique = !seen[key.Str]
-		seen[key.Str] = true
-		return unique
-	})
-	return unique
-}
-
-// Missing or unfamiliar diagnostics remain inspectable. Only explicit absence hides View errors.
-func batchBrowserNoValidationErrors(errors gjson.Result) bool {
-	if !errors.Exists() {
-		return false
-	}
-	if errors.Type == gjson.Null {
-		return true
-	}
-	if !errors.IsObject() {
-		return false
-	}
-	valid, dataSeen, objectSeen := true, false, false
-	errors.ForEach(func(key, value gjson.Result) bool {
-		switch key.Str {
-		case "data":
-			valid = !dataSeen && value.IsArray() && value.Get("#").Int() == 0
-			dataSeen = true
-		case "object":
-			valid = !objectSeen && value.Type == gjson.String && value.Str == "list"
-			objectSeen = true
-		default:
-			valid = false
-		}
-		return valid
-	})
-	return valid && dataSeen
-}
-
-// BrowserStatus keeps detail presentation consistent with the browser overview.
 func BrowserStatus(batch gjson.Result) (string, string) {
 	return batchBrowserStatusLabel(batch.Get("status").Str), batchBrowserStatusTone(batch)
 }
@@ -282,52 +176,6 @@ func batchBrowserStatusLabel(status string) string {
 	}
 }
 
-func (m *batchBrowserScreen) overviewText(separator string, width int, render func(string, string) string) string {
-	status := batchBrowserStatusLabel(m.overview.Get("status").Str)
-	fields := []string{render(ansi.Truncate(batchInputLabel(status), width, "…"), batchBrowserStatusTone(m.overview))}
-	succeeded, succeededOK := batchCount(m.overview.Get("request_counts.completed"))
-	failed, failedOK := batchCount(m.overview.Get("request_counts.failed"))
-	total, totalOK := batchCount(m.overview.Get("request_counts.total"))
-	consistent := succeededOK && failedOK && totalOK && succeeded <= total && failed <= total-succeeded
-	if m.overview.Get("status").Str == "completed" {
-		consistent = consistent && failed == total-succeeded
-	}
-	if separator != ":" && consistent {
-		fields = append(fields, render(fmt.Sprint(succeeded), batchBrowserCountTone(m.overview, "completed"))+
-			render(" of "+fmt.Sprint(total)+" succeeded", ""))
-		if failed > 0 {
-			fields = append(fields, render(fmt.Sprint(failed), "negative")+render(" failed", ""))
-		}
-		return strings.Join(fields, "  ")
-	}
-	for _, count := range []struct{ label, field string }{
-		{"Succeeded", "completed"}, {"Failed", "failed"}, {"Total", "total"},
-	} {
-		value := "—"
-		if n, ok := batchCount(m.overview.Get("request_counts." + count.field)); ok {
-			value = fmt.Sprint(n)
-		}
-		fields = append(fields, render(count.label+separator, "")+render(value, batchBrowserCountTone(m.overview, count.field)))
-	}
-	return strings.Join(fields, "  ")
-}
-
-func newBatchBrowserPath(actions *batchBrowserScreen, selection string) *batchBrowserScreen {
-	m := newBatchBrowserScreen("path", actions.title, "", nil)
-	m.saveExpanded = true
-	m.setOverview(actions.overview)
-	for i, choice := range m.choices {
-		if choice.value == "save:"+selection {
-			m.index = i
-			break
-		}
-	}
-	m.input.Prompt = "File: "
-	m.input.Placeholder = "Filename or path"
-	m.input.SetValue(batchBrowserDefaultSaveName(actions.title, selection))
-	return m
-}
-
 func newBatchBrowserReturn(title string) *batchBrowserScreen {
 	return newBatchBrowserScreen("return", title, "", nil)
 }
@@ -353,6 +201,9 @@ func (m *batchBrowserScreen) Init() tea.Cmd {
 	}
 	if m.kind == "requests" {
 		if m.requestState.loaded && !m.requestState.loading {
+			if m.requestState.expanded {
+				return m.loadRequestPreview()
+			}
 			return nil
 		}
 		return m.loadRequests(m.requestFirst(), false)
@@ -383,32 +234,17 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if m.kind == "document" {
 		return m.updateDocument(message)
 	}
+	if m.pathState != nil {
+		return m.updatePath(message)
+	}
+	if m.actionsState != nil {
+		return m.updateActions(message)
+	}
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.input.SetWidth(max(1, msg.Width-20))
 	case tea.KeyPressMsg:
-		if m.kind == "path" && strings.TrimSpace(m.input.Value()) == "" {
-			direction := 0
-			switch msg.String() {
-			case "up", "shift+tab":
-				direction = -1
-			case "down", "tab":
-				direction = 1
-			}
-			if direction != 0 {
-				m.index = min(max(0, m.index+direction), max(0, len(m.visible)-1))
-				m.notice = ""
-				m.chosen = "back"
-				m.closed = true
-				return m, tea.Quit
-			}
-		}
-		selected := ""
-		if len(m.visible) > 0 {
-			selected = m.choices[m.visible[m.index]].value
-		}
-		saveSelected := m.kind == "actions" && (selected == "download" || strings.HasPrefix(selected, "save:"))
 		switch msg.String() {
 		case "ctrl+n":
 			if m.kind == "list" {
@@ -416,10 +252,6 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		case "esc":
-			if saveSelected && m.saveExpanded {
-				m.setSaveExpanded(false)
-				return m, nil
-			}
 			m.chosen = "back"
 			m.closed = true
 			return m, tea.Quit
@@ -427,29 +259,12 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.closed = true
 			return m, tea.Quit
 		case "ctrl+r":
-			if m.kind == "list" || m.kind == "actions" {
+			if m.kind == "list" {
 				m.chosen = "refresh"
 				m.closed = true
 				return m, tea.Quit
 			}
-		case "left":
-			if saveSelected {
-				m.setSaveExpanded(false)
-				return m, nil
-			}
-		case "right":
-			if m.kind == "actions" && selected == "download" {
-				if m.saveExpanded {
-					m.index++
-				} else {
-					m.setSaveExpanded(true)
-				}
-				return m, nil
-			}
 		case "up", "shift+tab":
-			if m.kind == "path" {
-				return m, nil
-			}
 			if m.kind == "list" && (m.searchFocused || m.index == 0) {
 				m.searchFocused = true
 				return m, nil
@@ -457,9 +272,6 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.index = max(0, m.index-1)
 			return m, nil
 		case "down", "tab":
-			if m.kind == "path" {
-				return m, nil
-			}
 			if m.kind == "list" && m.searchFocused {
 				if len(m.visible) > 0 {
 					m.searchFocused = false
@@ -480,39 +292,23 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.kind == "list" && m.searchFocused && (len(m.visible) == 0 || !strings.HasPrefix(m.choices[m.visible[m.index]].value, "batch:")) {
 				return m, nil
 			}
-			if m.kind == "path" {
-				value := m.input.Value()
-				if _, err := batchBrowserSaveDestination(value); err != nil {
-					m.notice = err.Error()
-					return m, nil
-				}
-				m.chosen = "save"
-				m.closed = true
-				return m, tea.Quit
-			}
 			if len(m.visible) > 0 {
-				if m.kind == "actions" && selected == "download" {
-					m.setSaveExpanded(!m.saveExpanded)
-					return m, nil
-				}
 				m.chosen = m.choices[m.visible[m.index]].value
 				m.closed = true
 				return m, tea.Quit
 			}
 		}
 	}
-	if m.kind == "list" || m.kind == "path" {
+	if m.kind == "list" {
 		previous := m.input.Value()
 		position := m.input.Position()
 		var command tea.Cmd
 		m.input, command = m.input.Update(message)
-		if m.kind == "list" && (m.input.Value() != previous || m.input.Position() != position) {
+		if m.input.Value() != previous || m.input.Position() != position {
 			m.searchFocused = true
 		}
 		if m.input.Value() != previous {
-			if m.kind == "list" {
-				m.filter()
-			}
+			m.filter()
 			m.notice = ""
 		}
 		return m, command
@@ -595,36 +391,23 @@ func (m *batchBrowserScreen) View() tea.View {
 		return accent.Render(key) + " " + muted.Render(action)
 	}
 	keys := []string{shortcut("↑↓", "move"), shortcut("Enter", "open"), shortcut("Esc", escape)}
-	if m.kind == "path" {
-		keys = []string{shortcut("Enter", "save"), shortcut("Esc", "back")}
-		if strings.TrimSpace(m.input.Value()) == "" {
-			keys = append([]string{shortcut("↑↓", "move")}, keys...)
-		}
-	}
-	if m.kind == "list" || m.kind == "actions" {
-		if m.kind == "list" && m.searchFocused {
+	if m.actionsState != nil {
+		keys = m.actionKeys(shortcut)
+	} else if m.kind == "list" {
+		if m.searchFocused {
 			keys[0] = shortcut("↓", "batches")
 		}
 		keys = []string{keys[0], keys[1], shortcut("Ctrl+R", "refresh"), keys[2]}
-		if m.kind == "list" && !(height < 10 && width < 70) {
+		if !(height < 10 && width < 70) {
 			keys = append(keys[:2], shortcut("Ctrl+N", "create"), keys[2], keys[3])
-		}
-		if m.kind == "actions" && len(m.visible) > 0 {
-			selected := m.choices[m.visible[m.index]].value
-			if selected == "download" {
-				label := "expand"
-				if m.saveExpanded {
-					label = "collapse"
-				}
-				keys[1] = shortcut("Enter", label)
-			}
-			if m.saveExpanded && (selected == "download" || strings.HasPrefix(selected, "save:")) {
-				keys[3] = shortcut("Esc", "collapse")
-			}
 		}
 	}
 	if m.kind == "document" {
 		keys = []string{shortcut("↑↓", "scroll"), shortcut("PgUp/PgDn", "page"), shortcut("p", "print"), shortcut("Esc", "back")}
+		if m.documentState.csvResults {
+			keys[2] = shortcut("s", "save CSV")
+			keys = append(keys[:3], shortcut("Ctrl+S", "save as"), keys[3])
+		}
 		if m.documentRawAvailable {
 			label := "Raw JSON"
 			if m.documentRaw {
@@ -634,9 +417,10 @@ func (m *batchBrowserScreen) View() tea.View {
 		}
 	}
 	if m.kind == "requests" {
-		keys = []string{shortcut("↑↓", "select"), shortcut("Enter", "open"), shortcut("Ctrl+V", "view all"), shortcut("Esc", "back")}
+		keys = m.requestKeys(shortcut)
 	}
 	if m.flow != nil {
+		view.KeyboardEnhancements.ReportEventTypes = m.flow.submit
 		keys = m.flowKeys(shortcut)
 	}
 	footer := []string{"  "}
@@ -683,14 +467,18 @@ func (m *batchBrowserScreen) View() tea.View {
 		return "  " + terminal.SectionDivider(contentWidth, colors, fill, edge, secondary)
 	}
 	if m.flow != nil {
-		lines, cursor := m.flowLines(height, contentWidth, footer, sectionRule, muted, semantic(muted, "warning"), accent, highlight)
+		lines, cursor := m.flowLines(height, contentWidth, footer, sectionRule, muted, semantic(muted, "warning"), accent, highlight, colors)
 		return finish(lines, cursor)
 	}
 	if m.kind == "document" {
 		return finish(m.documentLines(height, contentWidth, footer, sectionRule, muted, accent, semantic, colors), nil)
 	}
 	if m.kind == "requests" {
-		lines, cursor := m.requestLines(height, contentWidth, footer, sectionRule, muted, accent, highlight, colors)
+		lines, cursor := m.requestLines(height, contentWidth, footer, sectionRule, muted, accent, highlight, semantic, colors)
+		return finish(lines, cursor)
+	}
+	if m.actionsState != nil {
+		lines, cursor := m.actionLines(width, height, contentWidth, footer, sectionRule, muted, accent, highlight, semantic, colors)
 		return finish(lines, cursor)
 	}
 	succeededWidth, failedWidth, batchRows := 9, 6, 0
@@ -706,111 +494,40 @@ func (m *batchBrowserScreen) View() tea.View {
 		}
 	}
 	idWidth := contentWidth - 19 - succeededWidth - failedWidth
-	tableLayout := m.kind == "list" && width >= 68 && height >= 10 && idWidth >= 16
+	tableLayout := width >= 68 && height >= 10 && idWidth >= 16
 	table := tableLayout && batchRows > 0
 	var cursor *tea.Cursor
 	var lines []string
-	actionsLayout := m.kind == "actions" || m.kind == "path"
-	var pathLines []string
-	pathCursorX := 0
-	if m.kind == "path" {
-		value, x := m.searchView(max(1, contentWidth-4-ansi.StringWidth(m.input.Prompt)))
-		if m.input.Value() == "" {
-			value = muted.Render(value)
-		}
-		pathCursorX = 6 + ansi.StringWidth(m.input.Prompt) + x
-		pathLines = append(pathLines, "      "+muted.Render(m.input.Prompt)+value)
-		if destination, err := batchBrowserSaveDestination(m.input.Value()); err == nil {
-			folder, _ := filepath.Split(destination)
-			folderLines := strings.Split(ansi.Wrap("Folder: "+batchInputLabel(folder), max(1, contentWidth-4), ""), "\n")
-			limit := max(1, height-9)
-			if len(folderLines) > limit {
-				folderLines = folderLines[:limit]
-				folderLines[limit-1] = ansi.Truncate(folderLines[limit-1], max(1, contentWidth-5), "…") + "…"
-			}
-			for _, text := range folderLines {
-				pathLines = append(pathLines, "      "+muted.Render(text))
-			}
-		}
-		if m.notice != "" {
-			pathLines = append(pathLines, "  "+semantic(lipgloss.NewStyle(), "warning").Render(line(m.notice)))
-		}
+	headerWidth := contentWidth
+	count := line(m.title)
+	searchWidth := headerWidth - ansi.StringWidth(count) - 2
+	inline := searchWidth >= 24
+	if !inline {
+		searchWidth = contentWidth
 	}
-	if m.kind == "list" {
-		headerWidth := contentWidth
-		count := line(m.title)
-		searchWidth := headerWidth - ansi.StringWidth(count) - 2
-		inline := searchWidth >= 24
-		if !inline {
-			searchWidth = contentWidth
-		}
-		query, x := m.searchView(searchWidth - 8)
-		if m.input.Value() == "" {
-			query = muted.Render(query)
-		}
-		search := "Search  " + query
-		if m.searchFocused {
-			cursor = tea.NewCursor(10+x, 0)
-			cursor.Shape = tea.CursorBar
-			cursor.Blink = true
-		}
-		if inline {
-			search += strings.Repeat(" ", headerWidth-ansi.StringWidth(search)-ansi.StringWidth(count)) + muted.Bold(true).Render(count)
-			lines = append(lines, "  "+search)
-		} else {
-			lines = append(lines, "  "+search, "  "+strings.Repeat(" ", contentWidth-ansi.StringWidth(count))+muted.Bold(true).Render(count))
-		}
-	} else if actionsLayout {
-		lines = append(lines, "  "+lipgloss.NewStyle().Bold(colors).Render(line(m.title)))
+	query, x := m.searchView(searchWidth - 8)
+	if m.input.Value() == "" {
+		query = muted.Render(query)
+	}
+	search := "Search  " + query
+	if m.searchFocused {
+		cursor = tea.NewCursor(10+x, 0)
+		cursor.Shape = tea.CursorBar
+		cursor.Blink = true
+	}
+	if inline {
+		search += strings.Repeat(" ", headerWidth-ansi.StringWidth(search)-ansi.StringWidth(count)) + muted.Bold(colors).Render(count)
+		lines = append(lines, "  "+search)
 	} else {
-		lines = append(lines, "  "+accent.Render(line(m.title)))
+		lines = append(lines, "  "+search, "  "+strings.Repeat(" ", contentWidth-ansi.StringWidth(count))+muted.Bold(colors).Render(count))
 	}
-	if m.kind != "list" && !actionsLayout && height >= 12 {
-		lines = append(lines, "")
-	}
-	if actionsLayout {
-		reserved := 1 + len(pathLines)
-		summary := strings.Split(ansi.Wrap(m.overviewText(" ", contentWidth, summaryValue), contentWidth, ""), "\n")
-		if len(lines)+len(summary)+len(footer)+reserved > height {
-			// Compact terminals retain counts and navigation before decorative spacing.
-			footer = footer[1:]
-		}
-		if len(lines)+len(summary)+len(footer)+reserved > height {
-			if m.kind == "path" {
-				footer = []string{"  " + shortcut("Enter", "save") + "  " + shortcut("Esc", "back")}
-			} else {
-				footer = []string{accent.Render("↑↓ Enter Ctrl+R Esc")}
-			}
-		}
-		if len(lines)+len(summary)+len(footer)+reserved > height {
-			// Numeric counts can occupy 20 cells. Use the full width for this fallback.
-			summary = strings.Split(ansi.Wrap(m.overviewText(":", width, summaryValue), width, ""), "\n")
-			for _, text := range summary[:min(len(summary), max(0, height-len(lines)-len(footer)-reserved))] {
-				lines = append(lines, muted.Render(text))
-			}
-		} else {
-			for _, text := range summary {
-				lines = append(lines, "  "+muted.Render(text))
-			}
-		}
-		if height-len(lines)-len(footer)-len(pathLines) > len(m.visible) {
-			lines = append(lines, sectionRule())
-		}
-		if m.kind == "actions" && m.progress != nil && batchBrowserProcessing(m.overview) && len(lines)+len(footer)+2 <= height {
-			message := "Updates every 10s while this screen is open"
-			if m.progress.paused {
-				message = "Updates paused. Ctrl+R retries."
-			}
-			lines = append(lines, "  "+muted.Render(line(message)))
-		}
-	}
-	if !actionsLayout && m.subtitle != "" {
+	if m.subtitle != "" {
 		lines = append(lines, "  "+muted.Render(line(m.subtitle)))
 	}
-	if m.kind == "list" && height >= 12 {
+	if height >= 12 {
 		lines = append(lines, sectionRule())
 	}
-	if m.kind == "list" && batchRows == 0 {
+	if batchRows == 0 {
 		message := "No batches on this page."
 		for _, choice := range m.choices {
 			if strings.HasPrefix(choice.value, "batch:") {
@@ -835,9 +552,9 @@ func (m *batchBrowserScreen) View() tea.View {
 	if len(m.visible) > 0 {
 		choice = m.choices[m.visible[m.index]]
 	}
-	batchSelected := m.kind == "list" && strings.HasPrefix(choice.value, "batch:")
+	batchSelected := strings.HasPrefix(choice.value, "batch:")
 	gap := 0
-	if !actionsLayout && height >= 10 {
+	if height >= 10 {
 		gap = 1
 	}
 	if batchSelected && height >= 14 {
@@ -870,12 +587,12 @@ func (m *batchBrowserScreen) View() tea.View {
 	for i := range details {
 		details[i] = "  " + ansi.Truncate(details[i], contentWidth, "…")
 	}
-	capacity := max(1, height-len(lines)-len(details)-len(footer)-gap-len(pathLines))
+	capacity := max(1, height-len(lines)-len(details)-len(footer)-gap)
 	start := max(0, m.index-capacity+1)
 	detailsShown, gapShown := false, false
 	for i := start; i < len(m.visible) && i < start+capacity; i++ {
 		row := m.choices[m.visible[i]]
-		if m.kind == "list" && i > start && !strings.HasPrefix(row.value, "batch:") && strings.HasPrefix(m.choices[m.visible[i-1]].value, "batch:") {
+		if i > start && !strings.HasPrefix(row.value, "batch:") && strings.HasPrefix(m.choices[m.visible[i-1]].value, "batch:") {
 			if batchSelected {
 				if gap > 1 {
 					lines = append(lines, "")
@@ -888,23 +605,12 @@ func (m *batchBrowserScreen) View() tea.View {
 				gapShown = true
 			}
 		}
-		selected := i == m.index && (m.kind != "list" || !m.searchFocused)
+		selected := i == m.index && !m.searchFocused
 		base := lipgloss.NewStyle()
 		if selected {
 			base = highlight
 		}
 		name := ansi.Truncate(batchInputLabel(row.title), contentWidth, "…")
-		if actionsLayout {
-			if row.value == "download" {
-				marker := " ▸"
-				if m.saveExpanded {
-					marker = " ▾"
-				}
-				name = ansi.Truncate(name, contentWidth-2, "…") + marker
-			} else if strings.HasPrefix(row.value, "save:") {
-				name = "  " + ansi.Truncate(name, contentWidth-2, "…")
-			}
-		}
 		suffix := ""
 		if table && strings.HasPrefix(row.value, "batch:") {
 			name = cell(row.title, idWidth, false)
@@ -914,21 +620,13 @@ func (m *batchBrowserScreen) View() tea.View {
 		}
 		if selected {
 			padding := strings.Repeat(" ", max(0, width-2-ansi.StringWidth(name+suffix)))
-			label := highlight.Bold(true)
-			if actionsLayout && colors {
-				label = label.Foreground(lipgloss.Color(focus))
-			}
+			label := highlight.Bold(colors)
 			// Every styled segment retains the selected background, including gaps and padding.
 			lines = append(lines, highlight.Render("> ")+label.Render(name)+suffix+highlight.Render(padding))
 		} else {
 			lines = append(lines, "  "+name+suffix)
 		}
-		if i == m.index && m.kind == "path" {
-			cursor = tea.NewCursor(pathCursorX, len(lines))
-			cursor.Shape = tea.CursorBar
-			cursor.Blink = true
-			lines = append(lines, pathLines...)
-		}
+
 	}
 	if !gapShown && gap > 0 {
 		lines = append(lines, "")

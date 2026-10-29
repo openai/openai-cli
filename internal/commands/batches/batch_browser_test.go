@@ -270,15 +270,15 @@ func TestBatchBrowserOverviewRefreshAndFailurePreserveState(t *testing.T) {
 					m.chosen = "batch:batch_one"
 				case 1:
 					require.Equal(t, "actions", m.kind)
-					require.Equal(t, "validating", m.overview.Get("status").Str)
-					require.Equal(t, "0", m.overview.Get("request_counts.completed").Raw)
+					require.Equal(t, "validating", m.actionsState.overview.Get("status").Str)
+					require.Equal(t, "0", m.actionsState.overview.Get("request_counts.completed").Raw)
 					m.index = 3
 					m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 				case 2:
 					require.Equal(t, "actions", m.kind)
 					require.Equal(t, 3, m.index)
-					require.Equal(t, "in_progress", m.overview.Get("status").Str)
-					require.Equal(t, "1", m.overview.Get("request_counts.completed").Raw)
+					require.Equal(t, "in_progress", m.actionsState.overview.Get("status").Str)
+					require.Equal(t, "1", m.actionsState.overview.Get("request_counts.completed").Raw)
 					require.Empty(t, out.String(), "refresh must not print a status dump")
 					m.chosen = "error"
 				case 3:
@@ -289,8 +289,8 @@ func TestBatchBrowserOverviewRefreshAndFailurePreserveState(t *testing.T) {
 				case 4, 6:
 					require.Equal(t, "actions", m.kind)
 					require.Equal(t, 3, m.index)
-					require.Equal(t, "completed", m.overview.Get("status").Str)
-					require.Equal(t, "3", m.overview.Get("request_counts.completed").Raw)
+					require.Equal(t, "completed", m.actionsState.overview.Get("status").Str)
+					require.Equal(t, "3", m.actionsState.overview.Get("request_counts.completed").Raw)
 					m.chosen = "refresh"
 					if step == 6 {
 						m.chosen = "back"
@@ -767,11 +767,12 @@ func TestBatchBrowserPrintIsExplicitAndRestoresDocument(t *testing.T) {
 		case 2:
 			require.Equal(t, "document", screen.kind)
 			require.Equal(t, "Batch details", screen.title)
-			require.Equal(t, "batch_one", screen.subtitle)
+			require.Empty(t, screen.subtitle, "the printable Batch details already contains the complete ID")
 			require.Empty(t, out.String(), "viewing must not dump output into terminal history")
 			require.Zero(t, teardown, "viewing must preserve the active panel")
 			original = screen.document
 			require.NoError(t, original.writeTo(ctx, &expected))
+			require.Equal(t, 1, strings.Count(expected.String(), "batch_one"))
 			screen.chosen = "print"
 		case 3:
 			require.Equal(t, "return", screen.kind)

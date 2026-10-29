@@ -91,7 +91,7 @@ def main():
             assert any("batch_partial_demo" in line for line in menu_lines), "missing batch title"
             columns = []
             for label in ("View results", "View errors", "Batch details"):
-                matches = [line for line in menu_lines if line.strip(" │>─") == label]
+                matches = [line for line in menu_lines if line.strip(" │>─").partition("  ")[0] == label]
                 assert len(matches) == 1, "menu label missing or duplicated: " + label
                 columns.append(matches[0].index(label))
             assert len(set(columns)) == 1, "menu labels are misaligned"
@@ -106,7 +106,9 @@ def main():
             evidence["screens"]["result_requests"] = current_screen(terminal, alternate=True)
             assert "sentiment-positive" in evidence["screens"]["result_requests"], "matching result request missing"
             offset = len(terminal.raw)
-            terminal.send(b"\r")
+            terminal.send(b"\x1b[B")
+            pause(terminal, 0.2)
+            terminal.send(b"\x1b[C")
             terminal.wait("PgUp/PgDn page", after=offset)
             pause(terminal, 1.6)
             evidence["checkpoints"]["results"] = time.monotonic()-terminal.started
@@ -137,8 +139,8 @@ def main():
             evidence["screens"]["error_requests"] = current_screen(terminal, alternate=True)
             assert "sentiment-negative" in evidence["screens"]["error_requests"], "error request missing"
             offset = len(terminal.raw)
-            terminal.send(b"\r")
-            terminal.wait("Synthetic service error", after=offset)
+            terminal.send(b"\x1b[C")
+            terminal.wait("The service could not process this request.", after=offset)
             terminal.wait("PgUp/PgDn page", after=offset)
             pause(terminal, 1.8)
             evidence["checkpoints"]["errors"] = time.monotonic()-terminal.started
@@ -147,7 +149,7 @@ def main():
             assert any(line.strip(" │") == "Request error" for line in error_lines), "error detail heading missing"
             assert any(line.strip(" │") == "batch_partial_demo / Record 1" for line in error_lines), "error context missing from panel"
             assert any(line.strip(" │") == "sentiment-negative  Request failed" for line in error_lines), "selected error identity and outcome missing"
-            assert any(line.strip(" │") == "Error details" for line in error_lines), "grouped error section missing"
+            assert any("500" in line for line in error_lines), "HTTP status missing"
             offset = len(terminal.raw)
             terminal.send(b"\x1b")
             terminal.wait("Ctrl+V", after=offset)

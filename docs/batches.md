@@ -24,25 +24,67 @@ openai batches browse
 
 Choose a batch to read its results, errors, input requests, or details.
 Expand Save a file to choose output, error, or input files.
-Each save shows the destination folder and accepts a filename or path.
+Press Enter to save the suggested filename. Press Ctrl+L to choose another folder.
+The next file from that batch uses the selected folder. You can also type a full path.
 Search applies to the loaded page. Use Next page to reach older batches.
 Press Ctrl+R to reload the first page.
 Escape returns to batch actions or the batch list.
 At the batch list, Escape exits. Ctrl+C exits from any screen.
 Downloads ask for a destination and never overwrite an existing file.
 The browser uses your configured connection, API key, and project.
-Press Ctrl+N to start guided creation from a local JSONL file or an uploaded input.
-Review the input, endpoint, project, and optional settings before submitting.
-Only Ctrl+S on the review screen submits the batch. Enter does not submit.
+Press Ctrl+N to start guided creation from a local JSONL file, an uploaded input, or a CSV.
+With **Input file** selected, type or paste a local file path. Press Enter to use it.
+Press Enter on an empty field to browse CSV and JSONL files in the displayed folder.
+Type a filename to filter. Press Enter on a folder to open it.
+With the filter empty, Backspace goes up one folder. Ctrl+L opens a path directly.
+Relative paths start in the displayed folder. **Choose an uploaded file** opens the project file list.
+Set **Metadata** and **Output expiration** directly on **Create batch**. Enter applies an edit. Esc cancels it.
+Choosing JSONL opens **Review batch** directly. The browser reads the endpoint from the file unless you chose one yourself.
+Review the request count, endpoint, and project before submitting.
+Press Enter or Ctrl+S on **Review batch** to submit. Press Esc to edit.
 The browser opens the new batch and updates progress every ten seconds while you view its actions.
 The browser does not cancel remote batches.
 
-Request lists support search by ID or content. Enter opens one request.
-Press `j` in request details to switch between Readable and Raw JSON.
-Press `p` in a document to print it into shell scrollback.
+Search requests by ID or content. Short answers appear beside their request IDs.
+Press Enter to expand the selected request in the list. Use ↑ or ↓ to inspect another request.
+A single request error opens expanded. It shows the API message and available recovery steps.
+Use the HTTP status, error code, and request ID to investigate further.
+Press → to open the full record. Press `j` there to switch between Readable and Raw JSON.
+Press `p` in batch details or a request record to print it into shell scrollback.
 
 For scripts, use `list`, `retrieve`, `results`, and `--format json`.
 The browser requires an interactive terminal and readable output.
+
+## Start from a CSV
+
+For example, a support team can classify tickets from a CSV with `ticket_id` and `message` columns.
+
+1. Open `openai batches browse`.
+2. Press Ctrl+N.
+3. Type the path to your UTF-8 CSV in **Input file**.
+4. Press Enter.
+5. On **Set up CSV**, choose the text column, such as `message`. The browser selects a single column automatically.
+6. Describe the task, such as “Classify each ticket as billing, login, or other.”
+7. Enter a Responses model available to your project.
+8. On **Review batch**, check the row count and first input.
+9. Press Enter to submit the batch.
+10. When processing ends, open **View rows with answers**.
+11. To save a copy, press `s`. Ctrl+S lets you choose another filename or folder.
+
+CSV preparation runs locally. The browser uses the API to list existing batches.
+Confirmation uploads one Responses request per row and starts a batch that can incur charges.
+Each request contains the selected text, model, instructions, and a fingerprint derived from the entire row, its position, and headings.
+The spreadsheet's other columns do not become prompt text.
+
+Keep the original CSV. After restarting the browser, open **View results** or **View input** for the completed batch.
+Press Ctrl+O when **original CSV** appears. Choose the original spreadsheet.
+The browser verifies each row before displaying its answer. Row order stays the same when answers arrive out of order.
+The saved CSV adds result and error columns.
+Failed or missing answers appear on their original rows.
+The suggested destination is a new file beside the original, such as `tickets-results.csv`.
+Export never overwrites an existing file. It prefixes formula-like cells with an apostrophe for spreadsheet safety.
+If a filename already exists, enter another name or press Ctrl+L to choose another folder.
+Use the [local synthetic demo](../scripts/demos/batches/README.md) to try this without an API key or charges.
 
 ## Prepare and submit
 

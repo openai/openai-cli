@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	requestconfig "github.com/openai/openai-cli/internal/request"
@@ -22,6 +22,8 @@ import (
 type batchBrowserDraft struct {
 	path, inputID, inputName, endpoint, metadata, folder, blocked string
 	expires                                                       int64
+	endpointSet                                                   bool
+	csv                                                           *batchBrowserCSV
 }
 
 func newBatchBrowserDraft() *batchBrowserDraft {
@@ -29,24 +31,9 @@ func newBatchBrowserDraft() *batchBrowserDraft {
 	return &batchBrowserDraft{endpoint: string(openai.BatchNewParamsEndpointV1Responses), folder: directory}
 }
 
-func batchBrowserEdit(ctx context.Context, title, help, value string, show func(context.Context, *batchBrowserScreen) error) (string, bool, error) {
-	m := newBatchBrowserFlow("entry", title, help, nil)
-	m.input.Prompt = "Value: "
-	m.input.SetValue(value)
-	if err := show(ctx, m); err != nil {
-		return value, false, err
-	}
-	return m.input.Value(), m.chosen != "back", nil
-}
-
 func batchBrowserEndpoints() []batchBrowserChoice {
 	var choices []batchBrowserChoice
-	for _, endpoint := range []openai.BatchNewParamsEndpoint{
-		openai.BatchNewParamsEndpointV1Responses, openai.BatchNewParamsEndpointV1ChatCompletions,
-		openai.BatchNewParamsEndpointV1Embeddings, openai.BatchNewParamsEndpointV1Completions,
-		openai.BatchNewParamsEndpointV1Moderations, openai.BatchNewParamsEndpointV1ImagesGenerations,
-		openai.BatchNewParamsEndpointV1ImagesEdits, openai.BatchNewParamsEndpointV1Videos,
-	} {
+	for _, endpoint := range batchSubmitEndpoints {
 		choices = append(choices, batchBrowserChoice{value: string(endpoint), title: string(endpoint)})
 	}
 	return choices
@@ -62,6 +49,17 @@ func (s *batchBrowserMetadataString) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, (*string)(s))
 }
 
+func parseBatchBrowserMetadata(value string) (map[string]batchBrowserMetadataString, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	var metadata map[string]batchBrowserMetadataString
+	if err := json.Unmarshal([]byte(value), &metadata); err != nil || metadata == nil {
+		return nil, batchError(`Metadata must be a JSON object with text values, such as {"scenario":"sentiment"}.`)
+	}
+	return metadata, nil
+}
+
 func (d *batchBrowserDraft) body() ([]byte, error) {
 	fields := map[string]any{"endpoint": d.endpoint, "completion_window": "24h"}
 	validEndpoint := false
@@ -71,11 +69,11 @@ func (d *batchBrowserDraft) body() ([]byte, error) {
 	if !validEndpoint {
 		return nil, batchError("Choose a supported endpoint.")
 	}
-	if strings.TrimSpace(d.metadata) != "" {
-		var metadata map[string]batchBrowserMetadataString
-		if err := json.Unmarshal([]byte(d.metadata), &metadata); err != nil || metadata == nil {
-			return nil, batchError("Metadata must be a JSON object with text values, such as {\"scenario\":\"sentiment\"}.")
-		}
+	metadata, err := parseBatchBrowserMetadata(d.metadata)
+	if err != nil {
+		return nil, err
+	}
+	if metadata != nil {
 		fields["metadata"] = metadata
 	}
 	if d.expires != 0 {
@@ -88,6 +86,9 @@ func (d *batchBrowserDraft) body() ([]byte, error) {
 }
 
 func (d *batchBrowserDraft) sourceLabel() string {
+	if d.csv != nil && d.inputID == "" {
+		return filepath.Base(d.csv.path) + " (CSV)"
+	}
 	if d.inputID != "" {
 		if d.inputName != "" {
 			return d.inputName + " (uploaded)"
@@ -97,10 +98,14 @@ func (d *batchBrowserDraft) sourceLabel() string {
 	if d.path != "" {
 		return filepath.Base(d.path)
 	}
-	return "Choose a file"
+	return "Browse or type a file path"
 }
 
 func (w workflow) createBatchInBrowser(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, draft *batchBrowserDraft, show func(context.Context, *batchBrowserScreen) error) (gjson.Result, error) {
+	notice := ""
+	reviewNext := false
+	focus := "input"
+	pathEntry := ""
 	for {
 		if draft.blocked != "" {
 			m := newBatchBrowserFlow("menu", "Submission needs checking", draft.blocked, []batchBrowserChoice{
@@ -127,63 +132,141 @@ func (w workflow) createBatchInBrowser(ctx context.Context, cmd *cli.Command, cl
 		if draft.inputID != "" {
 			source = "Uploaded file: " + draft.inputID
 		}
-		m := newBatchBrowserFlow("menu", "Create batch", "Completion window: 24 hours", []batchBrowserChoice{
-			{value: "input", title: "Input file    " + draft.sourceLabel(), detail: source},
-			{value: "endpoint", title: "Endpoint      " + draft.endpoint, detail: "All requests in the file must use this endpoint."},
-			{value: "advanced", title: "Advanced", detail: "Metadata and output expiration"},
-			{value: "review", title: "Review and create", detail: "Review the file and settings before submitting."},
-		})
-		if err := show(ctx, m); err != nil {
+		settings := batchBrowserChoice{value: "endpoint", title: "Endpoint", setting: draft.endpoint, detail: "All requests in the batch use one endpoint."}
+		if draft.csv != nil {
+			settings = batchBrowserChoice{value: "csv-settings", title: "CSV setup", setting: draft.csv.column, detail: "Edit the input column, task, or model."}
+		} else if !draft.endpointSet && draft.inputID == "" {
+			settings.setting = "From JSONL file"
+		}
+		choices := []batchBrowserChoice{{value: "input", title: "Input file", setting: draft.sourceLabel(), detail: source}}
+		if draft.path != "" || draft.inputID != "" {
+			choices = append(choices, batchBrowserChoice{value: "review", title: "Review and create"})
+		}
+		choices = append(choices, settings,
+			batchBrowserChoice{value: "metadata", title: "Metadata", detail: `Optional JSON object, such as {"scenario":"sentiment"}.`},
+			batchBrowserChoice{value: "expires", title: "Output expiration", detail: "When output and error files expire after creation."},
+		)
+		m := newBatchBrowserFlow("create", "Create batch", "Completion window: 24 hours\nFolder: "+batchBrowserFolderLabel(draft.folder), choices)
+		for i, row := range choices {
+			if row.value == focus {
+				m.index = i
+			}
+		}
+		m.flow.draft = draft
+		m.updateSettingLabels()
+		m.restoreFilePrompt()
+		m.input.SetValue(pathEntry)
+		pathEntry = ""
+		m.notice, notice = notice, ""
+		if reviewNext {
+			m.chosen = "review"
+			reviewNext = false
+		} else if err := show(ctx, m); err != nil {
 			return gjson.Result{}, err
 		}
 		switch m.chosen {
 		case "back":
 			return gjson.Result{}, nil
 		case "input":
-			sources := newBatchBrowserFlow("menu", "Choose input", "Each line in the JSONL file contains one API request.", []batchBrowserChoice{
-				{value: "local", title: "Browse local files", detail: "Choose a JSONL file from this computer."},
-				{value: "uploaded", title: "Choose an uploaded file", detail: "Reuse a file already uploaded for batches."},
-			})
-			if err := show(ctx, sources); err != nil {
-				return gjson.Result{}, err
+			focus = "input"
+			var path string
+			var err error
+			if value := m.input.Value(); value != "" {
+				var folder bool
+				path, folder, err = batchBrowserTypedLocation(value, draft.folder)
+				if err != nil {
+					pathEntry, notice = value, err.Error()
+					continue
+				}
+				if folder {
+					draft.folder, path = path, ""
+				}
 			}
-			if sources.chosen == "local" {
-				path, err := chooseBatchBrowserLocalFile(ctx, draft.folder, show)
+			for path == "" {
+				var uploaded bool
+				path, uploaded, err = browseBatchBrowserFolder(ctx, &draft.folder, "", show)
 				if err != nil {
 					return gjson.Result{}, err
 				}
-				if path != "" {
-					draft.path, draft.inputID, draft.inputName = path, "", ""
-					draft.folder = filepath.Dir(path)
+				if !uploaded {
+					break
 				}
-			} else if sources.chosen == "uploaded" {
 				id, name, err := chooseBatchBrowserUploadedFile(ctx, client, options, show)
 				if err != nil {
 					return gjson.Result{}, err
 				}
 				if id != "" {
+					draft.csv = nil
 					draft.inputID, draft.inputName, draft.path = id, name, ""
+					if !draft.endpointSet {
+						draft.endpoint = string(openai.BatchNewParamsEndpointV1Responses)
+					}
+					reviewNext = true
+					break
 				}
 			}
+			if path == "" {
+				continue
+			}
+			format := strings.ToLower(filepath.Ext(path))
+			if format != ".csv" && format != ".jsonl" {
+				kind := newBatchBrowserFlow("menu", "Choose file format", filepath.Base(path), []batchBrowserChoice{
+					{value: ".jsonl", title: "JSONL requests", detail: "One prepared API request per line."},
+					{value: ".csv", title: "CSV spreadsheet", detail: "Use one text column for the batch requests."},
+				})
+				if err := show(ctx, kind); err != nil {
+					return gjson.Result{}, err
+				}
+				if kind.chosen == "back" {
+					pathEntry = path
+					continue
+				}
+				format = kind.chosen
+			}
+			if format == ".csv" {
+				reviewNext, notice, err = editBatchBrowserCSV(ctx, draft, path, true, show)
+				if err != nil {
+					return gjson.Result{}, err
+				}
+			} else {
+				draft.csv = nil
+				draft.path, draft.inputID, draft.inputName = path, "", ""
+				draft.folder = batchBrowserFileFolder(path)
+				reviewNext = true
+			}
+		case "csv-settings":
+			var err error
+			reviewNext, notice, err = editBatchBrowserCSV(ctx, draft, draft.csv.path, false, show)
+			if err != nil {
+				return gjson.Result{}, err
+			}
 		case "endpoint":
-			choices := newBatchBrowserFlow("menu", "Endpoint", "Match the request URLs in your input file.", batchBrowserEndpoints())
+			endpoints := batchBrowserEndpoints()
+			current := draft.endpoint
+			if draft.inputID == "" {
+				endpoints = append([]batchBrowserChoice{{value: "auto", title: "From JSONL file"}}, endpoints...)
+				if !draft.endpointSet {
+					current = "auto"
+				}
+			}
+			choices := newBatchBrowserFlow("menu", "Endpoint", "Match the request URLs in your input file.", endpoints)
 			for i, choice := range choices.choices {
-				if choice.value == draft.endpoint {
+				if choice.value == current {
 					choices.index = i
 				}
 			}
 			if err := show(ctx, choices); err != nil {
 				return gjson.Result{}, err
 			}
-			if choices.chosen != "back" {
+			if choices.chosen == "auto" {
+				draft.endpointSet = false
+			} else if choices.chosen != "back" {
 				draft.endpoint = choices.chosen
+				draft.endpointSet = true
 			}
-		case "advanced":
-			if err := editBatchBrowserAdvanced(ctx, draft, show); err != nil {
-				return gjson.Result{}, err
-			}
+			focus = "endpoint"
 		case "review":
-			body, err := draft.body()
+			_, err := parseBatchBrowserMetadata(draft.metadata)
 			if err != nil {
 				return gjson.Result{}, err
 			}
@@ -192,15 +275,42 @@ func (w workflow) createBatchInBrowser(ctx context.Context, cmd *cli.Command, cl
 				return gjson.Result{}, err
 			}
 			var snapshot *batchSubmissionSnapshot
+			var info batchJSONLInfo
 			if draft.path != "" {
 				snapshot, err = batchBrowserWork(ctx, "Preparing input file", show, func(workCtx context.Context) (*batchSubmissionSnapshot, error) {
-					return prepareBatchSubmissionSnapshot(workCtx, draft.path)
+					if draft.csv == nil {
+						input, err := prepareBatchSubmissionSnapshot(workCtx, draft.path)
+						if err != nil || draft.endpointSet {
+							return input, err
+						}
+						reader := batchRecordContextReader{workCtx, io.NewSectionReader(input.file, 0, input.Size())}
+						info, err = inspectBatchJSONL(workCtx, reader)
+						if err != nil {
+							if message := WorkflowErrorMessage(err); strings.HasPrefix(message, "Cannot determine the batch endpoint:") {
+								notice = strings.Replace(message, "Check the request endpoint, or provide --endpoint explicitly for a custom endpoint.", "Check the request URL in the file.", 1)
+								return nil, input.close()
+							}
+							return nil, errors.Join(err, input.close())
+						}
+						draft.endpoint = info.endpoint
+						return input, nil
+					}
+					snapshot, e := draft.csv.prepare(workCtx)
+					if msg := batchBrowserCSVNotice(e); msg != "" {
+						notice = msg
+						return nil, nil
+					}
+					return snapshot, e
 				})
 				if err != nil {
 					if snapshot != nil {
 						err = errors.Join(err, snapshot.close())
 					}
 					return gjson.Result{}, err
+				}
+				if snapshot == nil && notice != "" {
+					focus = "input"
+					continue
 				}
 			} else if draft.inputID == "" {
 				return gjson.Result{}, batchError("Choose an input file before reviewing this batch.")
@@ -211,8 +321,13 @@ func (w workflow) createBatchInBrowser(ctx context.Context, cmd *cli.Command, cl
 					defer func() { err = errors.Join(err, snapshot.close()) }()
 					reviewed = snapshot
 				}
-				review := newBatchBrowserFlow("confirm", "Review batch", "Ctrl+S creates one batch. Esc returns to editing.", nil)
-				review.flow.lines = batchBrowserReview(cmd, draft, reviewed)
+				body, err := draft.body()
+				if err != nil {
+					return state, false, err
+				}
+				review := newBatchBrowserFlow("confirm", "Review batch", "Enter submits one batch. Esc returns to editing.", nil)
+				review.flow.submit = true
+				review.flow.lines = batchBrowserReview(cmd, draft, reviewed, info.requests)
 				if err := show(ctx, review); err != nil {
 					return state, false, err
 				}
@@ -235,6 +350,7 @@ func (w workflow) createBatchInBrowser(ctx context.Context, cmd *cli.Command, cl
 				if err != nil {
 					return gjson.Result{}, err
 				}
+				focus = "review"
 				continue
 			}
 			if state.InputFileID != "" {
@@ -242,7 +358,6 @@ func (w workflow) createBatchInBrowser(ctx context.Context, cmd *cli.Command, cl
 			}
 			if state.Batch != nil && state.Batch.ID != "" {
 				batch := gjson.Parse(state.Batch.RawJSON())
-				*draft = *newBatchBrowserDraft()
 				if err != nil {
 					return batch, w.browserSubmissionError(cmd, state, err)
 				}
@@ -261,63 +376,7 @@ func (w workflow) createBatchInBrowser(ctx context.Context, cmd *cli.Command, cl
 	}
 }
 
-func editBatchBrowserAdvanced(ctx context.Context, draft *batchBrowserDraft, show func(context.Context, *batchBrowserScreen) error) error {
-	for {
-		expiration := "Server default"
-		if draft.expires != 0 {
-			expiration = fmt.Sprintf("%d seconds after file creation", draft.expires)
-		}
-		m := newBatchBrowserFlow("menu", "Advanced settings", "Optional settings", []batchBrowserChoice{
-			{value: "metadata", title: "Metadata", detail: draft.metadata},
-			{value: "expires", title: "Output expiration", detail: expiration},
-		})
-		if err := show(ctx, m); err != nil {
-			return err
-		}
-		if m.chosen == "back" {
-			return nil
-		}
-		if m.chosen == "metadata" {
-			value, apply, err := batchBrowserEdit(ctx, "Metadata", "Optional JSON object. Leave empty to omit.", draft.metadata, show)
-			if err != nil {
-				return err
-			}
-			if apply {
-				draft.metadata = value
-			}
-		} else if m.chosen == "expires" {
-			choices := newBatchBrowserFlow("menu", "Output expiration", "Time after the output/error file is created.", []batchBrowserChoice{
-				{value: "0", title: "Server default"}, {value: "3600", title: "1 hour"}, {value: "86400", title: "1 day"},
-				{value: "604800", title: "7 days"}, {value: "2592000", title: "30 days"}, {value: "custom", title: "Custom duration"},
-			})
-			if err := show(ctx, choices); err != nil {
-				return err
-			}
-			value := choices.chosen
-			if value == "back" {
-				continue
-			}
-			if value == "custom" {
-				var apply bool
-				var err error
-				value, apply, err = batchBrowserEdit(ctx, "Custom expiration", "Seconds, from 3600 (1 hour) to 2592000 (30 days).", strconv.FormatInt(draft.expires, 10), show)
-				if err != nil {
-					return err
-				}
-				if !apply {
-					continue
-				}
-			}
-			n, err := strconv.ParseInt(value, 10, 64)
-			if err != nil || n != 0 && (n < 3600 || n > 2592000) {
-				return batchError("Choose output expiration from 3600 to 2592000 seconds.")
-			}
-			draft.expires = n
-		}
-	}
-}
-
-func batchBrowserReview(cmd *cli.Command, draft *batchBrowserDraft, snapshot os.FileInfo) []string {
+func batchBrowserReview(cmd *cli.Command, draft *batchBrowserDraft, snapshot os.FileInfo, requests int) []string {
 	root := cmd.Root()
 	project := root.String("project")
 	if !root.IsSet("project") && project == "" {
@@ -347,16 +406,27 @@ func batchBrowserReview(cmd *cli.Command, draft *batchBrowserDraft, snapshot os.
 	if parsed, err := url.Parse(base); err == nil && parsed.Host != "" {
 		connection = parsed.Scheme + "://" + parsed.Host
 	}
-	lines := []string{"Project: " + project, "Connection: " + connection, ""}
+	var lines []string
 	args := []string{"batches", "create", "--input-file-id", draft.inputID}
 	if draft.path != "" {
-		lines = append(lines, "Input file: "+draft.path)
+		lines = append(lines, "Input file: "+filepath.Base(draft.path), "Folder: "+batchBrowserFolderLabel(batchBrowserFileFolder(draft.path)))
+		if requests > 0 {
+			lines = append(lines, fmt.Sprintf("Requests: %d", requests))
+		}
 		if snapshot != nil {
-			lines = append(lines, fmt.Sprintf("Size: %d bytes", snapshot.Size()))
+			if draft.csv != nil {
+				lines = append(lines, fmt.Sprintf("Prepared JSONL: %d bytes", snapshot.Size()))
+			} else {
+				lines = append(lines, fmt.Sprintf("Size: %d bytes", snapshot.Size()))
+			}
 		}
 		args = []string{"batches", "submit", "--file", draft.path}
 	} else {
 		lines = append(lines, "Uploaded file: "+draft.inputID)
+	}
+	if csv := draft.csv; csv != nil {
+		lines = append(lines, fmt.Sprintf("Requests: %d", csv.preview.Count), "Input column: "+csv.column,
+			"Task: "+csv.instructions, "Model: "+csv.model, "First input: "+csv.preview.FirstInput, "")
 	}
 	lines = append(lines, "Endpoint: "+draft.endpoint, "Completion window: 24 hours")
 	args = append(args, "--endpoint", draft.endpoint, "--completion-window", "24h")
@@ -370,8 +440,9 @@ func batchBrowserReview(cmd *cli.Command, draft *batchBrowserDraft, snapshot os.
 		lines = append(lines, "Metadata: "+draft.metadata)
 		args = append(args, "--metadata", draft.metadata)
 	}
-	lines = append(lines, "", "Creating a batch can incur API charges.", "Leaving the browser does not cancel the remote batch.")
-	if shell := filepath.Base(os.Getenv("SHELL")); terminal.ShellQuoter(shell) != nil {
+	lines = append(lines, "", "Project: "+project, "Connection: "+connection,
+		"", "Creating a batch can incur API charges.", "Leaving the browser does not cancel the remote batch.")
+	if shell := filepath.Base(os.Getenv("SHELL")); terminal.ShellQuoter(shell) != nil && (draft.csv == nil || draft.inputID != "") {
 		lines = append(lines, "", "Command arguments (reuse this session's connection settings):", terminal.FormatCommand(args, shell))
 	}
 	return lines

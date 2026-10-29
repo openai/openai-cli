@@ -184,19 +184,16 @@ try:
     terminal.send(b'\x0e')
     shown('Create batch', 'Input file')
     terminal.send(b'\r')
-    shown('Choose input')
+    shown('Choose input file', 'Choose an uploaded file', 'requests.jsonl')
     if config['phase'] == 'list':
-        terminal.send(b'\x1b[B\r')
+        terminal.send(b'uploaded\r')
     else:
-        terminal.send(b'\r')
-        shown('Choose a JSONL input file')
-        # The fixture has one matching file. Queue search before Enter instead
-        # of inferring selection from the harness's incomplete screen decoder.
         terminal.send(b'requests.jsonl\r')
-        shown('Create batch', 'requests.jsonl', 'Review and create')
-        terminal.send(b'\x1b[B' * 3 + b'\r')
-        shown('Review batch', 'Ctrl+S')
-        terminal.send(b'\x13')
+        shown('Review batch', 'requests.jsonl', 'Enter submits one batch')
+        if (Path(config['work'])/'entered').exists():
+            raise AssertionError('the browser started a request before confirmation')
+        # Test Enter and the retained Ctrl+S shortcut against active HTTP requests.
+        terminal.send(b'\r' if config['phase'] == 'upload' else b'\x13')
     wait(lambda text: (Path(config['work'])/'entered').exists() and 'Ctrl+C' in text)
     shown('Loading uploaded input files' if config['phase'] == 'list' else 'Creating batch')
     terminal.send(b'\x03')

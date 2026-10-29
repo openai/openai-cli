@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -29,7 +31,7 @@ func TestBatchBrowserRecordNavigationReusesSnapshotAndPreservesSelection(t *test
 	step := 0
 	command.Action = func(ctx context.Context, cmd *cli.Command) error {
 		client := openai.NewClient(w.options.DefaultRequestOptions(cmd)...)
-		return w.browseBatchRecords(ctx, cmd, client, nil, gjson.Parse(`{"id":"batch_one","input_file_id":"file_input"}`), "input", func(ctx context.Context, screen *batchBrowserScreen) error {
+		return w.browseBatchRecords(ctx, cmd, client, nil, gjson.Parse(`{"id":"batch_one","input_file_id":"file_input"}`), "input", newBatchBrowserActions("batch_one"), func(ctx context.Context, screen *batchBrowserScreen) error {
 			var content bytes.Buffer
 			if screen.document != nil {
 				require.NoError(t, screen.document.writeTo(ctx, &content))
@@ -81,5 +83,70 @@ func TestBatchBrowserRecordNavigationReusesSnapshotAndPreservesSelection(t *test
 	require.Equal(t, 1, gets)
 	for _, screen := range []*batchBrowserScreen{readable, raw} {
 		require.ErrorIs(t, screen.document.writeTo(t.Context(), io.Discard), io.ErrClosedPipe)
+	}
+}
+
+func TestBatchBrowserRecordPreviewJoinsReaderBeforeFullOrExit(t *testing.T) {
+	for _, full := range []bool{false, true} {
+		name := "exit"
+		if full {
+			name = "full record"
+		}
+		t.Run(name, func(t *testing.T) {
+			reads := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reads++
+				_, _ = io.WriteString(w, "{\"custom_id\":\"line-one\",\"body\":{\"input\":\"first\"}}\n")
+			}))
+			defer server.Close()
+			root := batchDownloadTestCommand(t, server.URL, io.Discard)
+			w := workflow{options: testOptions()}
+			showRecords := w.options.ShowRecords
+			started, finished := make(chan struct{}), make(chan error, 1)
+			w.options.ShowRecords = func(ctx context.Context, cmd *cli.Command, records RecordOutput, out, diag io.Writer) error {
+				if _, ok := out.(*batchBrowserPreviewText); ok {
+					close(started)
+					<-ctx.Done()
+					finished <- records.WriteJSON(io.Discard) // The store must still be open.
+					return ctx.Err()
+				}
+				return showRecords(ctx, cmd, records, out, diag)
+			}
+			command := w.newBatchBrowseCommand()
+			command.Action = func(ctx context.Context, cmd *cli.Command) error {
+				client := openai.NewClient(w.options.DefaultRequestOptions(cmd)...)
+				first := true
+				return w.browseBatchRecords(ctx, cmd, client, nil, gjson.Parse(`{"id":"batch_one","input_file_id":"input"}`), "input", newBatchBrowserActions("batch_one"), func(_ context.Context, m *batchBrowserScreen) error {
+					if !first {
+						m.chosen = "back"
+						return nil
+					}
+					first = false
+					applyRequestCommand(t, m, m.Init())
+					_, command := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+					go command()
+					select {
+					case <-started:
+					case <-time.After(5 * time.Second):
+						t.Fatal("preview never started")
+					}
+					key := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+					if full {
+						key = tea.KeyPressMsg{Code: tea.KeyRight}
+					}
+					m.Update(key)
+					return nil
+				}, func(context.Context) error { t.Fatal("inspection printed to stdout"); return nil })
+			}
+			root.Commands[0].Commands = []*cli.Command{command}
+			require.NoError(t, root.Run(t.Context(), []string{"openai", "batches", "browse"}))
+			select {
+			case err := <-finished:
+				require.NoError(t, err)
+			default:
+				t.Fatal("browser returned while the preview was still running")
+			}
+			require.Equal(t, 1, reads)
+		})
 	}
 }
