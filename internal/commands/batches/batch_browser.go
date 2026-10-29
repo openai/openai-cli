@@ -179,16 +179,16 @@ func (w workflow) runBatchBrowser(ctx context.Context, cmd *cli.Command, client 
 	openBatch := func(batch gjson.Result) error {
 		id := batch.Get("id").Str
 		actions := newBatchBrowserActions(id)
-		actions.saveFolder = lastSaveFolder
-		actions.saveDrafts = saveDrafts[id]
-		actions.csvSource = csvSources[id]
+		actions.actionsState.saveFolder = lastSaveFolder
+		actions.actionsState.saveDrafts = saveDrafts[id]
+		actions.actionsState.csvSource = csvSources[id]
 		defer func() {
-			lastSaveFolder = actions.saveFolder
-			if len(actions.saveDrafts) != 0 {
-				saveDrafts[id] = actions.saveDrafts
+			lastSaveFolder = actions.actionsState.saveFolder
+			if len(actions.actionsState.saveDrafts) != 0 {
+				saveDrafts[id] = actions.actionsState.saveDrafts
 			}
-			if actions.csvSource != "" {
-				csvSources[id] = actions.csvSource
+			if actions.actionsState.csvSource != "" {
+				csvSources[id] = actions.actionsState.csvSource
 			} else {
 				delete(csvSources, id)
 			}
@@ -326,7 +326,7 @@ func (w workflow) renderBatchBrowserAction(ctx context.Context, cmd *cli.Command
 	if action == "refresh" {
 		return nil
 	}
-	if action == "output" && actions.csvSource != "" && batchBrowserCanExportCSV(batch) {
+	if action == "output" && actions.actionsState.csvSource != "" && batchBrowserCanExportCSV(batch) {
 		return openBatchBrowserCSVRows(ctx, client, options, batch, actions, show)
 	}
 	if action == "raw-output" {

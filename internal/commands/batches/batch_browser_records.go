@@ -31,7 +31,7 @@ func (w workflow) browseBatchRecords(ctx context.Context, cmd *cli.Command, clie
 		return err
 	}
 	list := newBatchBrowserRequests(ctx, catalog, batchBrowserActionLabel(selection), batchID)
-	list.requestState.offerCSV = catalog.csvRows && batchBrowserCanExportCSV(batch) && actions.csvSource == ""
+	list.requestState.offerCSV = catalog.csvRows && batchBrowserCanExportCSV(batch) && actions.actionsState.csvSource == ""
 	// A delayed preview checks cancellation under this lock before touching the
 	// store. Full viewers and cleanup join any preview already using it.
 	var preview sync.Mutex
@@ -80,7 +80,7 @@ func (w workflow) browseBatchRecords(ctx context.Context, cmd *cli.Command, clie
 			if err := openBatchBrowserCSVRows(ctx, client, options, batch, actions, show); err != nil {
 				return err
 			}
-			if actions.csvSource == "" {
+			if actions.actionsState.csvSource == "" {
 				continue
 			}
 			return nil

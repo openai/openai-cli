@@ -14,6 +14,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBatchBrowserSaveEditorShowsFolderForRelativeNames(t *testing.T) {
+	actions := newBatchBrowserActions("batch_demo")
+	actions.actionsState.saveFolder = filepath.Join(t.TempDir(), "exports")
+	path := newBatchBrowserPath(actions, "output")
+	path.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	for _, name := range []string{"", "nested/results.jsonl"} {
+		path.input.SetValue(name)
+		view := ansi.Strip(path.View().Content)
+		require.Contains(t, view, "Folder:")
+		require.Contains(t, view, "exports")
+	}
+	for _, name := range []string{filepath.Join(actions.actionsState.saveFolder, "results.jsonl"), "~/results.jsonl"} {
+		path.input.SetValue(name)
+		require.NotContains(t, ansi.Strip(path.View().Content), "Folder:")
+	}
+	require.Contains(t, ansi.Strip(path.View().Content), "Ctrl+L folder")
+}
+
 func TestBatchBrowserInlineSaveFolderAndDrafts(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -44,7 +62,7 @@ func TestBatchBrowserInlineSaveFolderAndDrafts(t *testing.T) {
 		case 3:
 			require.Equal(t, "path", m.kind)
 			require.Equal(t, "batch-output.jsonl", m.input.Value())
-			require.Equal(t, child, m.saveFolder)
+			require.Equal(t, child, m.pathState.folder)
 			m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		default:
 			t.Fatalf("unexpected extra screen %s", m.kind)
@@ -56,7 +74,7 @@ func TestBatchBrowserInlineSaveFolderAndDrafts(t *testing.T) {
 	require.Equal(t, 4, step)
 	require.Equal(t, filepath.Join(child, "batch-output.jsonl"), output)
 	require.NoFileExists(t, output)
-	require.Equal(t, child, actions.saveFolder)
+	require.Equal(t, child, actions.actionsState.saveFolder)
 
 	// Untouched choices follow the session folder. Renamed files keep their draft.
 	choose := func(selection, suggested, field string, edit func(*batchBrowserScreen)) string {
@@ -75,7 +93,7 @@ func TestBatchBrowserInlineSaveFolderAndDrafts(t *testing.T) {
 		m.input.SetValue("renamed.jsonl")
 		m.chosen = "back"
 	}))
-	actions.saveFolder = dir
+	actions.actionsState.saveFolder = dir
 	require.Equal(t, filepath.Join(dir, "errors.jsonl"), choose("error", "errors.jsonl", "errors.jsonl", func(m *batchBrowserScreen) { m.chosen = "save" }))
 	require.Equal(t, filepath.Join(child, "renamed.jsonl"), choose("input", "input.jsonl", "renamed.jsonl", func(m *batchBrowserScreen) { m.chosen = "save" }))
 }
@@ -116,7 +134,7 @@ func TestBatchBrowserCSVSaveFolderCancellationKeepsFilename(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 4, step)
 	require.Equal(t, filepath.Join(dir, "renamed.csv"), path)
-	require.Empty(t, actions.saveFolder)
+	require.Empty(t, actions.actionsState.saveFolder)
 	require.NoFileExists(t, path)
 }
 

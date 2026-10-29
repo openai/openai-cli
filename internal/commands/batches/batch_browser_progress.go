@@ -64,7 +64,7 @@ func (m *batchBrowserScreen) stopProgress() {
 
 func (m *batchBrowserScreen) startProgress() tea.Cmd {
 	m.stopProgress()
-	if m.progress.paused || !batchBrowserProcessing(m.overview) {
+	if m.progress.paused || !batchBrowserProcessing(m.actionsState.overview) {
 		return nil
 	}
 	sequence := m.progress.sequence

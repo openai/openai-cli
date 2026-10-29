@@ -70,7 +70,7 @@ func TestBatchBrowserLayoutEmptySearch(t *testing.T) {
 
 func TestBatchBrowserLayoutActionDetails(t *testing.T) {
 	m := newBatchBrowserActions("batch_short")
-	m.overview = gjson.Parse(`{"status":"completed","request_counts":{"completed":2,"failed":1,"total":3}}`)
+	m.actionsState.overview = gjson.Parse(`{"status":"completed","request_counts":{"completed":2,"failed":1,"total":3}}`)
 	view := ansi.Strip(m.View().Content)
 	for _, text := range []string{"batch_short", "> View results", "Completed", "2 of 3 succeeded", "1 failed", "Batch details", "Ctrl+R refresh", "Esc back"} {
 		require.Contains(t, view, text)
@@ -89,7 +89,7 @@ func TestBatchBrowserActionsNarrowOverviewAndRefresh(t *testing.T) {
 		`{"status":"validating","request_counts":{"completed":null,"failed":"0","total":-1}}`,
 	} {
 		m := newBatchBrowserActions("batch_one")
-		m.overview = gjson.Parse(batch)
+		m.actionsState.overview = gjson.Parse(batch)
 		m.Update(tea.WindowSizeMsg{Width: 30, Height: 7})
 		for i := range m.choices {
 			m.index = i
@@ -101,7 +101,7 @@ func TestBatchBrowserActionsNarrowOverviewAndRefresh(t *testing.T) {
 			for _, text := range []string{"batch_one", "> " + m.choices[i].title, "Ctrl+R", "Esc"} {
 				require.Contains(t, view, text)
 			}
-			if m.overview.Get("status").Str == "validating" {
+			if m.actionsState.overview.Get("status").Str == "validating" {
 				require.Equal(t, 3, strings.Count(view, "—"))
 				require.NotContains(t, view, " 0")
 			} else {
@@ -118,7 +118,7 @@ func TestBatchBrowserActionsNarrowOverviewAndRefresh(t *testing.T) {
 
 func TestBatchBrowserActionsNarrowMaximumCountsAndLongStatus(t *testing.T) {
 	m := newBatchBrowserActions("batch_one")
-	m.overview = gjson.Parse(fmt.Sprintf(`{"status":%q,"request_counts":{"completed":18446744073709551615,"failed":18446744073709551615,"total":18446744073709551615}}`, strings.Repeat("future_界", 100)+"\u001b[31m"))
+	m.actionsState.overview = gjson.Parse(fmt.Sprintf(`{"status":%q,"request_counts":{"completed":18446744073709551615,"failed":18446744073709551615,"total":18446744073709551615}}`, strings.Repeat("future_界", 100)+"\u001b[31m"))
 	m.Update(tea.WindowSizeMsg{Width: 30, Height: 7})
 	view := ansi.Strip(m.View().Content)
 	require.Len(t, strings.Split(view, "\n"), 7, view)
@@ -550,7 +550,7 @@ func TestBatchBrowserSemanticColorsAndQuietLabels(t *testing.T) {
 				}
 			}
 			actions := newBatchBrowserActions("batch_one")
-			actions.overview = batch
+			actions.actionsState.overview = batch
 			for _, width := range []int{80, 30} {
 				actions.width = width
 				view = actions.View().Content
@@ -586,7 +586,7 @@ func TestBatchBrowserSemanticColorsPreservePlainLayout(t *testing.T) {
 	for _, size := range [][2]int{{30, 7}, {40, 12}, {80, 24}} {
 		for _, kind := range []string{"list", "actions"} {
 			m := newBatchBrowserActions("batch_one")
-			m.overview = batch
+			m.actionsState.overview = batch
 			if kind == "list" {
 				m = newBatchBrowserList(batchBrowsePage{items: []gjson.Result{batch}}, false)
 			}
@@ -714,7 +714,7 @@ func TestBatchBrowserErrorsChoiceRequiresExplicitSuccess(t *testing.T) {
 				choice := m.choices[i]
 				m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 				if choice.value == "download" {
-					require.True(t, m.saveExpanded)
+					require.True(t, m.actionsState.saveExpanded)
 					require.False(t, m.closed)
 					m.setSaveExpanded(false)
 				} else {
@@ -862,18 +862,18 @@ func TestBatchBrowserInlineSaveNavigation(t *testing.T) {
 	require.Equal(t, "save:input", m.choices[m.index].value)
 	// Refresh may add View errors. Keep the expanded child selected by value.
 	m.setOverview(gjson.Parse(`{"status":"in_progress"}`))
-	require.True(t, m.saveExpanded)
+	require.True(t, m.actionsState.saveExpanded)
 	require.Equal(t, "save:input", m.choices[m.index].value)
 	_, command = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	require.Nil(t, command)
-	require.False(t, m.saveExpanded)
+	require.False(t, m.actionsState.saveExpanded)
 	require.False(t, m.closed)
 	require.Equal(t, "download", m.choices[m.index].value)
 	m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
-	require.True(t, m.saveExpanded)
+	require.True(t, m.actionsState.saveExpanded)
 	m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
-	require.False(t, m.saveExpanded)
+	require.False(t, m.actionsState.saveExpanded)
 	require.Equal(t, "download", m.choices[m.index].value)
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	require.True(t, m.closed)

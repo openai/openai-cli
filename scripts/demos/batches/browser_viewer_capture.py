@@ -133,7 +133,7 @@ def main():
                         if not args.success:
                             assert 'Error' in expanded_screen, 'error file child missing'
                         if args.save_path:
-                            selected = [line.split('>', 1)[1].strip(' │')
+                            selected = [line.split('>', 1)[1].strip(' │').partition('  ')[0]
                                         for line in expanded_screen.splitlines() if line.lstrip(' │').startswith('>')]
                             assert selected == ['Output file'], 'expansion did not select the first file child'
                             terminal.send(b'\r')

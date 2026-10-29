@@ -37,7 +37,7 @@ func writeBatchBrowserCSVRow(out io.Writer, number int, header, row []string, an
 // A wrong or moved spreadsheet is an editable file choice. Keep the user at
 // the picker on a source mismatch; propagate actual API and storage failures.
 func openBatchBrowserCSVRows(ctx context.Context, client openai.Client, options []option.RequestOption, batch gjson.Result, actions *batchBrowserScreen, show func(context.Context, *batchBrowserScreen) error) error {
-	source := actions.csvSource
+	source := actions.actionsState.csvSource
 	var folder, notice string
 	for {
 		if source == "" {
@@ -57,7 +57,7 @@ func openBatchBrowserCSVRows(ctx context.Context, client openai.Client, options 
 		if msg == "" || ctx.Err() != nil {
 			return err
 		}
-		actions.csvSource = ""
+		actions.actionsState.csvSource = ""
 		actions.setOverview(batch)
 		folder, notice, source = batchBrowserFileFolder(source), msg, ""
 	}
@@ -82,14 +82,14 @@ func browseBatchCSVResults(ctx context.Context, client openai.Client, options []
 	}); err != nil {
 		return err
 	}
-	actions.csvSource = source
+	actions.actionsState.csvSource = source
 	actions.setOverview(batch)
 	screen := newBatchBrowserDocumentScreen(ctx, document, "Rows with answers", filepath.Base(source))
 	screen.documentState.csvResults = true
 	defer screen.documentState.stop()
 	dest := strings.TrimSuffix(source, filepath.Ext(source)) + "-results.csv"
-	if actions.saveFolder != "" {
-		dest, err = batchBrowserSaveDestinationIn(filepath.Base(dest), actions.saveFolder)
+	if actions.actionsState.saveFolder != "" {
+		dest, err = batchBrowserSaveDestinationIn(filepath.Base(dest), actions.actionsState.saveFolder)
 		if err != nil {
 			return err
 		}

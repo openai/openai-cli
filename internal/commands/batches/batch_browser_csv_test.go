@@ -273,7 +273,7 @@ func TestBatchBrowserCSVCompletionPreservesActionFocus(t *testing.T) {
 	partial := gjson.Parse(`{"status":"completed","endpoint":"/v1/responses","input_file_id":"file_1","error_file_id":"errors","request_counts":{"total":3,"completed":2,"failed":1}}`)
 	for _, selected := range []string{"output", "error", "status"} {
 		actions := newBatchBrowserActions("batch_1")
-		actions.csvSource = "tickets.csv"
+		actions.actionsState.csvSource = "tickets.csv"
 		actions.setOverview(running)
 		for i, choice := range actions.choices {
 			if choice.value == selected {
@@ -363,7 +363,7 @@ func TestBatchBrowserCSVExportAfterReopening(t *testing.T) {
 	}, func(context.Context) error { t.Fatal("no printing expected"); return nil })
 	require.NoError(t, err)
 	require.Equal(t, 2, picks)
-	require.Equal(t, source, actions.csvSource)
+	require.Equal(t, source, actions.actionsState.csvSource)
 	saved, err := os.ReadFile(dest)
 	require.NoError(t, err)
 	require.Contains(t, string(saved), "001,How do I sign in?,login,")

@@ -157,7 +157,7 @@ func TestBatchGuidedProgressPreservesSelectionAndStops(t *testing.T) {
 	}
 	m.Update(<-done)
 	require.Equal(t, "back", m.chosen)
-	require.Equal(t, "in_progress", m.overview.Get("status").Str)
+	require.Equal(t, "in_progress", m.actionsState.overview.Get("status").Str)
 	m.Init()
 	defer m.stopProgress()
 	sequence = m.progress.sequence
@@ -166,7 +166,7 @@ func TestBatchGuidedProgressPreservesSelectionAndStops(t *testing.T) {
 	require.Equal(t, "input", m.choices[m.visible[m.index]].value)
 	other := newBatchBrowserActions("other")
 	m.Update(batchBrowserProgressReady{other, sequence, gjson.Parse(`{"id":"wrong"}`), nil})
-	require.Equal(t, "batch_one", m.overview.Get("id").Str)
+	require.Equal(t, "batch_one", m.actionsState.overview.Get("id").Str)
 }
 
 func TestBatchGuidedProgressFailurePauses(t *testing.T) {
