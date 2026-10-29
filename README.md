@@ -64,18 +64,24 @@ openai --version
 Download the archive for your operating system and architecture from [GitHub Releases](https://github.com/openai/openai-cli/releases/latest).
 Choose the macOS ZIP, Linux tarball, or Windows ZIP under **Assets**.
 On a Mac, the filename ends in `macos_arm64.zip` for Apple silicon or `macos_amd64.zip` for Intel.
+If the latest release has no platform archives yet, wait for publication or choose an [earlier release](https://github.com/openai/openai-cli/releases) with assets.
 Extract the archive.
 For a manual installation, place `openai` (`openai.exe` on Windows) in a directory on your `PATH`.
 Run `openai --version` to verify it.
 
-**Want automatic updates?** On macOS or Linux, run this block from the extracted directory in Bash or zsh.
+**Want automatic updates?** If your macOS or Linux archive includes `install.sh`, run this block in Bash or zsh.
+Start in the extracted directory.
 
 ```sh
-sh ./install.sh && export PATH="$HOME/.openai/bin:$PATH" && openai --version
+sh ./install.sh && {
+  export PATH="$HOME/.openai/bin:$PATH"
+  "$HOME/.openai/bin/openai" --version
+  command -v openai
+}
 ```
 
 Future updates require a compatible GitHub CLI (`gh`) and interactive launches.
-See [automatic update setup](docs/automatic-updates.md#install-from-a-release-archive) for older archives, persistent PATH settings, and version pins.
+For archives without `install.sh`, use the [manual setup steps](docs/automatic-updates.md#install-from-a-release-archive).
 Homebrew and Go manage their own installations.
 
 ### Installing with Go

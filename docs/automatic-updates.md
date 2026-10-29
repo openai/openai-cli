@@ -10,7 +10,7 @@ On a Mac with Homebrew, `brew install gh` supplies that prerequisite.
 
 1. Download the archive for your platform from [GitHub Releases](https://github.com/openai/openai-cli/releases/latest).
 2. Extract the archive.
-3. Run this command from the extracted directory.
+3. If the extracted directory contains `install.sh`, run this command there.
 
    ```sh
    sh ./install.sh
@@ -21,14 +21,21 @@ If setup stops, rerun the helper. If an executable already exists, check its ver
 A forced stop can leave a private `.openai-install.*` staging directory under `$HOME/.openai/bin`.
 After all installers exit, you can remove a staging directory left by that interrupted attempt.
 
-Older archives may lack the helper. For those releases, follow the location and ownership rules under [supported installations](#supported-installations).
+**Older archives without the helper.** You can check the extracted CLI immediately with `./openai --version`.
+To enable future upgrades, use an official release with updater metadata, starting with v1.41.0.
+
+1. In your home directory, create `.openai/bin` if needed. Both directories must meet the [ownership requirements](#supported-installations).
+2. If the destination `.openai/bin/openai` is empty of any file or link, copy the extracted executable there as `openai`.
+3. If another installation owns that path, use its existing update method.
+
+The helper copies only the executable. The archive also contains shell completions and a manual.
 
 Select this copy in Bash or zsh and check its version.
 
 ```sh
 export PATH="$HOME/.openai/bin:$PATH"
+"$HOME/.openai/bin/openai" --version
 command -v openai
-openai --version
 ```
 
 To keep using this copy, add the export to your shell profile.
