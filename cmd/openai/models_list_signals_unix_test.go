@@ -70,8 +70,7 @@ func TestMainModelsListSignals(t *testing.T) {
 		code   int
 	}{
 		{"ctrl-c", 130}, {"q", 0}, {"escape", 0},
-		// Bubble Tea treats SIGTERM as a clean quit. Preserve that contract.
-		{"SIGTERM", 0},
+		{"SIGTERM", 143},
 	} {
 		cases = append(cases, signalCase{
 			name: control.action, stage: "loaded", action: control.action, code: control.code,
@@ -80,7 +79,7 @@ func TestMainModelsListSignals(t *testing.T) {
 	for _, interrupted := range []struct {
 		name string
 		code int
-	}{{"SIGINT", 130}, {"SIGTERM", 0}} {
+	}{{"SIGINT", 130}, {"SIGTERM", 143}} {
 		cases = append(cases, signalCase{
 			name: interrupted.name + " with a large loaded model", stage: "loaded", action: interrupted.name,
 			flags: []string{"--format-error", "json"}, code: interrupted.code, large: true,

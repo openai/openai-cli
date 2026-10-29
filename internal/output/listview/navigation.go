@@ -105,6 +105,8 @@ func newListPageFetcher[P JSONListPage[P]](ctx context.Context, first func(conte
 type Page struct {
 	Items []gjson.Result
 	More  bool
+	// Line and half-page keys can cross a local page boundary without making a request.
+	Local bool
 }
 
 // PaginationError is a fixed diagnostic that never includes API cursors or response data.
@@ -126,6 +128,7 @@ type Model struct {
 	cancel   context.CancelFunc
 	window   tea.WindowSizeMsg
 	more     bool
+	local    bool
 	loaded   bool
 	loading  bool
 	quitting bool
@@ -150,6 +153,7 @@ func Run(opts Options, fetch func() (Page, error), cancel context.CancelFunc) er
 	outputErr, runErr, signaled := runPrompt(m, opts, width, height)
 	if signaled {
 		m.pending = nil
+		m.quitting = true
 	}
 	return m.Finish(outputErr, runErr)
 }
@@ -332,6 +336,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loaded = true
 		m.more = msg.page.More
+		m.local = msg.page.Local
 		m.err = errors.Join(m.err, msg.err)
 		return m, m.receiveViewerPage(msg.page.Items, content)
 	case tea.KeyPressMsg:

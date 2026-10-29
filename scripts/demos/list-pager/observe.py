@@ -383,7 +383,7 @@ def main():
         ('files-sigint', lambda s, server: external_signal(s, server, 'SIGINT', 130), {'pid_handshake': True}),
         ('files-sigterm', lambda s, server: external_signal(s, server, 'SIGTERM', 143), {'pid_handshake': True}),
         ('models-sigint', lambda s, server: external_signal(s, server, 'SIGINT', 130), {'pid_handshake': True, 'fixture_options': {'resource': 'models', 'pages': 1}}),
-        ('models-sigterm', lambda s, server: external_signal(s, server, 'SIGTERM', 0), {'pid_handshake': True, 'fixture_options': {'resource': 'models', 'pages': 1}}),
+        ('models-sigterm', lambda s, server: external_signal(s, server, 'SIGTERM', 143), {'pid_handshake': True, 'fixture_options': {'resource': 'models', 'pages': 1}}),
     ]
     available = {name for name, _, _ in cases} | {'pipe-policy'}
     assert set(args.case) <= available, ('unknown cases', set(args.case) - available)

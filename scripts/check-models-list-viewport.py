@@ -69,8 +69,17 @@ def main():
     if args.table:
         items = [{"id": f"synthetic-model-{i:05d}", "object": "model",
                   "created": 1700000000, "owned_by": "synthetic-owner"} for i in range(args.count)]
+    for index, item in enumerate(items):
+        item["owned_by"] = f"synthetic-owner-{index:05d}"
+    # Put equal IDs on opposite sides of the first page boundary. Distinct owners
+    # expose unstable sorting and prevent a duplicated row from hiding a missing one.
+    if len(items) > 100:
+        items[100]["id"] = items[99]["id"]
+    response_items = items[::2][::-1] + items[1::2]
+    ordered = sorted(response_items, key=lambda item: item["id"])
+    pages = [ordered[start:start + 100] for start in range(0, len(ordered), 100)] or [[]]
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
-    server.body = json.dumps({"object": "list", "data": items}, separators=(",", ":")).encode()
+    server.body = json.dumps({"object": "list", "data": response_items}, separators=(",", ":")).encode()
     server.requests, server.started = [], time.monotonic()
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
     thread.start()
@@ -99,7 +108,8 @@ def main():
                     value = "Space/b/q"
                 return value[:width]
 
-            def expected_rows(width):
+            def expected_rows(width, page):
+                items = pages[page]
                 if not items:
                     return ["No results."]
                 id_width = max(len("ID"), *(len(item["id"]) for item in items))
@@ -113,12 +123,15 @@ def main():
                     for item in items:
                         logical += ["ID: " + item["id"], "Owned by: " + item["owned_by"], ""]
                 noun = "model" if len(items) == 1 else "models"
-                logical += [f"Listed {len(items)} {noun}."]
+                if len(pages) == 1:
+                    logical += [f"Listed {len(items)} {noun}."]
+                else:
+                    logical += [f"Showing {len(items)} of {len(ordered)} models."]
                 logical += textwrap.wrap("Details: --format json", width, break_on_hyphens=False)
                 return [part.rstrip() for line in logical
                         for part in ([line[i:i + width] for i in range(0, len(line), width)] or [""])]
 
-            def screen(name=None, offset=None):
+            def screen(name=None, offset=None, page=0):
                 assert terminal.child.poll() is None, "Pager exited before q"
                 value = navigation.screen_text(terminal)
                 if name is not None:
@@ -132,15 +145,15 @@ def main():
                 assert len(lines) <= height, "Pager screen overflowed the terminal"
                 data = lines[:-1]
                 if offset is not None:
-                    rows = expected_rows(width)
-                    final = offset == max(0, len(rows) - height + 1)
+                    rows = expected_rows(width, page)
+                    final = page == len(pages) - 1 and offset == max(0, len(rows) - height + 1)
                     expected = rows[offset:offset + height - 1]
                     assert data == expected, f"Pager rows differ at physical offset {offset}: {data!r} != {expected!r}"
                     assert lines[-1] == pager_footer(width, final), "Pager final-page state differs from its content"
                 return value, data
 
             id_pattern = re.compile(
-                r"(?:synthetic-finetune-model-for-viewport-regression-with-long-readable-id-|"
+                r"(?:synthetic-standard-model-for-viewport-regression-with-long-readable-id-|"
                 r"synthetic-model-)\d{5,}(?!\d)")
 
             def change_view(key):
@@ -189,40 +202,60 @@ def main():
             navigation.drain(terminal, 0.3)
             assert screen("restored-size")[0] == initial_screen, "Resize lost the initial position or records"
 
-            expected = expected_rows(args.width)
             viewport_height = args.height - 1
-            last_offset = max(0, len(expected) - viewport_height)
-            offset = 0
-            all_lines = list(initial_lines[:len(expected)])
+            all_lines = []
             steps = 0
             completion_started = time.monotonic()
-            deadline = completion_started + max(20, args.count * 0.02)
-            while offset < last_offset:
-                assert time.monotonic() < deadline, "Pager traversal exceeded its completion deadline"
-                next_screen, lines = change_view(b" ")
-                offset = min(offset + viewport_height, last_offset)
-                screen(offset=offset)
-                steps += 1
-                # Validate the exact clamped viewport before removing its known overlap.
-                overlap = len(all_lines) - offset
-                all_lines.extend(lines[overlap:min(viewport_height, len(expected) - offset)])
-                if steps == 1:
-                    (output / "after-space.txt").write_text(next_screen)
-                    result["bytes_after_space"] = len(terminal.raw)
-                    result["request_count_after_space"] = len(server.requests)
-                    assert change_view(b"b")[0] == initial_screen, "Back did not restore the first viewport"
-                    assert change_view(b" ")[0] == next_screen, "Forward after Back changed the loaded results"
+            deadline = completion_started + max(30, len(ordered) * 0.03)
+            previous_bottom = None
+            for page in range(len(pages)):
+                rows = expected_rows(args.width, page)
+                last_offset = max(0, len(rows) - viewport_height)
+                if page:
+                    change_view(b" ")
+                    steps += 1
+                    page_screen, visible = screen(offset=0, page=page)
+                    if page == 1:
+                        (output / "second-page.txt").write_text(page_screen)
+                        assert change_view(b"b")[0] == previous_bottom, "Back lost the previous page"
+                        assert change_view(b" ")[0] == page_screen, "Forward lost the cached second page"
+                        terminal.resize(max(20, args.width - 30), args.height)
+                        navigation.drain(terminal, 0.3)
+                        screen("resized-second-page", 0, page)
+                        terminal.resize(args.width, args.height)
+                        navigation.drain(terminal, 0.3)
+                        assert screen("restored-second-page", 0, page)[0] == page_screen
+                else:
+                    visible = initial_lines
+                offset = 0
+                collected = list(visible)
+                while offset < last_offset:
+                    assert time.monotonic() < deadline, "Pager traversal exceeded its completion deadline"
+                    next_screen, _ = change_view(b" ")
+                    offset = min(offset + viewport_height, last_offset)
+                    _, visible = screen(offset=offset, page=page)
+                    steps += 1
+                    collected.extend(visible[len(collected) - offset:])
+                    if steps == 1:
+                        (output / "after-space.txt").write_text(next_screen)
+                        result["bytes_after_space"] = len(terminal.raw)
+                        result["request_count_after_space"] = len(server.requests)
+                        assert change_view(b"b")[0] == initial_screen, "Back did not restore the first viewport"
+                        assert change_view(b" ")[0] == next_screen, "Forward after Back changed the loaded results"
+                assert collected == rows, f"Records missing, duplicated, or reordered on page {page + 1}"
+                all_lines.extend(collected)
+                previous_bottom, _ = screen(offset=last_offset, page=page)
             result["traversal_seconds"] = time.monotonic() - completion_started
             result["forward_steps"] = steps
-            bottom_screen, _ = screen("bottom", last_offset)
+            result["local_pages"] = len(pages)
+            bottom_screen, _ = screen("bottom", last_offset, page)
             terminal.send(b" i")
             navigation.drain(terminal, 0.15)
-            assert screen("final-stays-open", last_offset)[0] == bottom_screen, \
+            assert screen("final-stays-open", last_offset, page)[0] == bottom_screen, \
                 "Space or i dismissed or changed the final page"
 
             complete = "\n".join(all_lines) + "\n"
             (output / "paged-output.txt").write_text(complete)
-            assert all_lines == expected, "Models were missing, duplicated, shortened, reordered, or mismatched"
             assert not any(hint in terminal.text() for hint in ("p: print", "p: all", "i: inline")), \
                 "Obsolete controls remain"
             if args.expect_id_owner:
@@ -230,7 +263,7 @@ def main():
                     "Unrelated metadata expanded the list"
             result["verified_full_ids_and_owners"] = len(items)
             assert len(server.requests) == 1, "Models must use one HTTP request"
-            assert server.requests[0]["path"] == "/v1/models"
+            assert server.requests[0]["path"] == "/v1/models?limit=100"
             terminal.send(b"q")
             navigation.finish(terminal, 0)
             restored = navigation.screen_text(terminal)

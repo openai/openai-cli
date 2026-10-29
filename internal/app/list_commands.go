@@ -79,26 +79,29 @@ func configureListCommand[P JSONListPage[P]](root *cli.Command, resourceName, op
 		if cmd.IsSet("max-items") {
 			maximum = cmd.Value("max-items").(int64)
 		}
-		// Reuse the existing output signal lifecycle, also used by audio workflows.
-		// One owner cancels requests before the viewer joins its fetch worker.
-		ctx, stop := clioutput.DownloadSignalContext(ctx)
-		defer stop()
-		opts.Context, opts.CallerHandlesSignals = ctx, true
-		err = clioutput.StreamToStdout(func(*os.File) error {
+		return runInteractiveList(opts, func(opts ShowJSONOpts) error {
 			return ShowJSONPages(func(requestContext context.Context) (P, error) {
 				return first(requestContext, client, options)
 			}, maximum, opts, cursorField)
 		})
-		var interrupted *clioutput.DownloadSignalError
-		if errors.As(context.Cause(ctx), &interrupted) {
-			err = errors.Join(err, context.Cause(ctx))
-			var exit cli.ExitCoder
-			if !errors.As(err, &exit) {
-				err = &listCommandInterrupt{cause: err, code: interrupted.SignalExitCode()}
-			}
-		}
-		return err
 	}
+}
+
+// One signal owner cancels requests before the viewer joins its fetch worker.
+func runInteractiveList(opts ShowJSONOpts, show func(ShowJSONOpts) error) error {
+	ctx, stop := clioutput.DownloadSignalContext(opts.Context)
+	defer stop()
+	opts.Context, opts.CallerHandlesSignals = ctx, true
+	err := clioutput.StreamToStdout(func(*os.File) error { return show(opts) })
+	var interrupted *clioutput.DownloadSignalError
+	if errors.As(context.Cause(ctx), &interrupted) {
+		err = errors.Join(err, context.Cause(ctx))
+		var exit cli.ExitCoder
+		if !errors.As(err, &exit) {
+			err = &listCommandInterrupt{cause: err, code: interrupted.SignalExitCode()}
+		}
+	}
+	return err
 }
 
 // Keep a nonempty cause so the error presenter does not mistake cancellation
