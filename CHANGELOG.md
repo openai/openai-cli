@@ -3,6 +3,12 @@
 ## [1.45.1](https://github.com/openai/openai-cli/compare/v1.45.0...v1.45.1) (2026-10-29)
 
 
+### Features
+
+* Use `openai vector-stores manage` to attach files, track indexing, and search a vector store. ([#416](https://github.com/openai/openai-cli/pull/416)) ([8ad49e2](https://github.com/openai/openai-cli/commit/8ad49e2da144c988f0f14bcbbace6356b1bd7e92))
+* Search recording history and seek by timestamp in `openai audio speak`. ([#662](https://github.com/openai/openai-cli/pull/662)) ([441fa02](https://github.com/openai/openai-cli/commit/441fa02e13c022420939cf3b5a3fe7fd58ce1f42))
+
+
 ### Chores
 
 * **api:** refresh API reference ([#663](https://github.com/openai/openai-cli/issues/663)) ([df1b6ee](https://github.com/openai/openai-cli/commit/df1b6ee9bb7b7fd15d01707c58dee12b969f27f3))
