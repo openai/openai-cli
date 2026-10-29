@@ -28,6 +28,7 @@ brew install --cask openai/tools/openai && {
   brew_bin="$(brew --prefix)/bin"
   export PATH="$brew_bin:$PATH"
   "$brew_bin/openai" --version
+  command -v openai
 }
 ```
 
@@ -37,7 +38,12 @@ If new shells select another copy, add Homebrew's binary directory first in your
 To upgrade an existing Homebrew installation, refresh the tap and upgrade its cask.
 
 ```sh
-brew update && brew upgrade --cask openai/tools/openai
+brew update && brew upgrade --cask openai/tools/openai && {
+  brew_bin="$(brew --prefix)/bin"
+  export PATH="$brew_bin:$PATH"
+  "$brew_bin/openai" --version
+  command -v openai
+}
 ```
 
 If Homebrew says “already installed,” compare its cask version with the [latest CLI release](https://github.com/openai/openai-cli/releases/latest).
