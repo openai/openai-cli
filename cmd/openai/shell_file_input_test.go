@@ -95,7 +95,7 @@ func TestMainShellWholeRequestAndRepeatedFlags(t *testing.T) {
 		{"YAML", "model: model_synthetic\ninput: text\nfuture: null\n", nil, map[string]any{"model": "model_synthetic", "input": "text", "future": nil}},
 		{"last scalar releases stdin", `{"model":"model_synthetic"}`, []string{"--input", "@-", "--input", "literal"}, map[string]any{"model": "model_synthetic", "input": "literal"}},
 		{"last scalar selects stdin", "exact text\n", []string{"--model", "model_synthetic", "--input", "literal", "--input", "@-"}, map[string]any{"model": "model_synthetic", "input": "exact text\n"}},
-		{"nested field selects stdin", "false\n", []string{"--model", "model_synthetic", "--input", `[{"role":"user","content":[{"type":"input_text","text":"@-"}]}]`}, map[string]any{"model": "model_synthetic", "input": []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "false\n"}}}}}},
+		{"nested field selects stdin", "false\n", []string{"--model", "model_synthetic", "--input-structured", `[{"role":"user","content":[{"type":"input_text","text":"@-"}]}]`}, map[string]any{"model": "model_synthetic", "input": []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "false\n"}}}}}},
 		{"nested replacement releases stdin", `{"model":"model_synthetic","future":null}`, []string{"--metadata", `{"note":"@-"}`, "--metadata", `{"note":"literal"}`}, map[string]any{"model": "model_synthetic", "future": nil, "metadata": map[string]any{"note": "literal"}}},
 		{"empty nullable replacement releases stdin", `{"model":"model_synthetic","input":"whole request"}`, []string{"--instructions", "@-", "--instructions", ""}, map[string]any{"model": "model_synthetic", "input": "whole request", "instructions": ""}},
 		{"null nullable replacement releases stdin", `{"model":"model_synthetic","input":"whole request"}`, []string{"--instructions", "@-", "--instructions", "null"}, map[string]any{"model": "model_synthetic", "input": "whole request", "instructions": nil}},
@@ -211,7 +211,7 @@ func TestMainShellStdinConflictBeforeRead(t *testing.T) {
 		{"responses", "create", "--model", "model_synthetic", "--input", "@-", "--instructions", "@-"},
 		{"audio", "transcriptions", "create", "--model", "whisper-1", "--file", "-", "--prompt", "@-"},
 		{"images", "edit", "--model", "dall-e-2", "--prompt", "synthetic", "--image", "-", "--image", "-"},
-		{"responses", "create", "--model", "model_synthetic", "--input", `[{"role":"user","content":[{"type":"input_text","text":"@-"},{"type":"input_text","text":"@data://-"}]}]`},
+		{"responses", "create", "--model", "model_synthetic", "--input-structured", `[{"role":"user","content":[{"type":"input_text","text":"@-"},{"type":"input_text","text":"@data://-"}]}]`},
 		{"chat", "completions", "create", "--model", "model_synthetic", "--message", `{"role":"user","content":"@-"}`, "--message", `{"role":"user","content":"@file://-"}`},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {

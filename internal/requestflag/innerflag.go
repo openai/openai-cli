@@ -32,6 +32,8 @@ type InnerFlag[
 	// map[string]any before SetInnerField runs. The hint is ignored for typed outer
 	// flags whose zero value already carries a dispatchable reflect.Kind.
 	OuterIsArrayOfObjects bool
+	structured            bool
+	literal               bool
 }
 
 // GetDataAliases returns the aliases recognized when parsing inner field keys from piped or flag YAML.
@@ -74,27 +76,54 @@ func (f *InnerFlag[T]) PostParse() error {
 }
 
 func (f *InnerFlag[T]) Set(name string, rawVal string) error {
+	if f.structured {
+		return fmt.Errorf("cannot combine --%s with --%s-structured", f.Name, f.Name)
+	}
 	if parsedValue, err := parseCLIArg[T](rawVal); err != nil {
 		return err
 	} else {
-		if f.Validator != nil {
-			if err := f.Validator(parsedValue); err != nil {
-				return err
-			}
+		if err := f.setParsedValue(parsedValue); err != nil {
+			return err
 		}
-
-		if seeder, ok := f.OuterFlag.(InnerFieldSeeder); ok {
-			seeder.SeedInnerCollection(f.OuterIsArrayOfObjects)
-		}
-
-		if settableInnerField, ok := f.OuterFlag.(SettableInnerField); ok {
-			settableInnerField.SetInnerField(f.InnerField, parsedValue)
-		} else {
-			return fmt.Errorf("Cannot set inner field on %v", f.OuterFlag)
-		}
+		f.literal = true
 		return nil
 	}
 }
+
+func (f *InnerFlag[T]) setParsedValue(parsedValue T) error {
+	if f.Validator != nil {
+		if err := f.Validator(parsedValue); err != nil {
+			return err
+		}
+	}
+	if f.OuterFlag.IsSet() {
+		v := reflect.ValueOf(f.OuterFlag.Get())
+		if v.IsValid() && v.Kind() != reflect.Map && v.Kind() != reflect.Slice {
+			return fmt.Errorf("cannot combine --%s with a non-structured --%s value", f.Name, f.OuterFlag.Names()[0])
+		}
+	}
+	if seeder, ok := f.OuterFlag.(InnerFieldSeeder); ok {
+		seeder.SeedInnerCollection(f.OuterIsArrayOfObjects)
+	}
+	if settableInnerField, ok := f.OuterFlag.(SettableInnerField); ok {
+		settableInnerField.SetInnerField(f.InnerField, parsedValue)
+		return nil
+	}
+	return fmt.Errorf("Cannot set inner field on %v", f.OuterFlag)
+}
+
+func (f *InnerFlag[T]) setUntypedStdin(value any) (bool, error) {
+	if reflect.TypeFor[T]().Kind() != reflect.Interface {
+		return false, nil
+	}
+	var parsed T
+	if value != nil {
+		parsed = value.(T)
+	}
+	return true, f.setParsedValue(parsed)
+}
+
+func (f *InnerFlag[T]) isUntyped() bool { return reflect.TypeFor[T]().Kind() == reflect.Interface }
 
 func (f *InnerFlag[T]) Get() any {
 	var zeroValue T

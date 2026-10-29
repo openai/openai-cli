@@ -102,6 +102,8 @@ type Flag[
 	hasBeenSet bool      // whether the flag has been set from env or file
 	applied    bool      // whether the flag has been applied to a flag set already
 	value      cli.Value // value representing this flag's value
+	structured bool      // the explicit structured alternative was used
+	innerSet   bool      // at least one nested flag was applied
 }
 
 // Type assertions to verify we implement the relevant urfave/cli interfaces
@@ -185,6 +187,12 @@ func applyStdinDataToFlags(cmd *cli.Command, data map[string]any, onSet func(cli
 				continue
 			}
 			if innerFieldIsSet(inner) {
+				continue
+			}
+			if handled, err := setUntypedFlagFromStdin(flag, val, onSet); handled {
+				if err != nil {
+					return err
+				}
 				continue
 			}
 			setVal, err := formatForFlagSet(val)
@@ -331,6 +339,12 @@ func (f *Flag[T]) PostParse() error {
 }
 
 func (f *Flag[T]) Set(name string, val string) error {
+	if f.structured {
+		return fmt.Errorf("cannot combine --%s with --%s-structured", f.Name, f.Name)
+	}
+	if f.isUntyped() && f.innerSet {
+		return fmt.Errorf("cannot combine --%s with nested --%s flags", f.Name, f.Name)
+	}
 	// Initialize flag if needed
 	if !f.applied {
 		if err := f.PreParse(); err != nil {
@@ -586,6 +600,12 @@ func parseCLIArg[
 
 	var empty T
 
+	// Untyped request flags may accept free text. Do not infer structured data
+	// from that text; JSON or YAML can be supplied as a piped request instead.
+	if reflect.TypeFor[T]().Kind() == reflect.Interface {
+		return any(value).(T), nil
+	}
+
 	if value == "null" {
 		switch any(empty).(type) {
 		// Pointer-to-primitive: explicit nil gives the tri-state its "null" state
@@ -762,7 +782,9 @@ func (c *cliValue[T]) Set(value string) error {
 				if elemType.Kind() == reflect.Map && elemType.Key().Kind() == reflect.String {
 					singleElem, err = parseCLIArg[map[string]any](value)
 				} else {
-					singleElem, err = parseCLIArg[any](value)
+					// Elements of an explicitly typed array retain their existing
+					// structured YAML/JSON parsing behavior.
+					singleElem, err = parseUntypedCollectionElement(value)
 				}
 			}
 		}
@@ -794,6 +816,25 @@ func (c *cliValue[T]) Set(value string) error {
 	}
 
 	return nil
+}
+
+// parseUntypedCollectionElement preserves the established syntax for []any
+// flags, whose individual values are not themselves untyped union flags.
+func parseUntypedCollectionElement(value string) (any, error) {
+	if strings.HasPrefix(value, "@") {
+		return value, nil
+	}
+	var parsed any
+	if err := UnmarshalYAMLOrJSON([]byte(value), &parsed); err != nil {
+		if allowAsLiteralString(value) {
+			return value, nil
+		}
+		return nil, fmt.Errorf("failed to parse as YAML: %w", err)
+	}
+	if parsed == nil {
+		return (*struct{})(nil), nil
+	}
+	return parsed, nil
 }
 
 func (c *cliValue[T]) Get() any {
@@ -944,6 +985,7 @@ func (f *Flag[T]) SetInnerField(field string, val any) {
 	if settableInnerField, ok := f.value.(SettableInnerField); ok {
 		settableInnerField.SetInnerField(field, val)
 		f.hasBeenSet = true
+		f.innerSet = true
 	} else {
 		panic(fmt.Sprintf("Cannot set inner field: %v", f.value))
 	}

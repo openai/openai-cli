@@ -201,7 +201,7 @@ func TestUntrustedStdinModeEndToEnd(t *testing.T) {
 	})
 
 	t.Run("explicit empty inner array overrides stdin", func(t *testing.T) {
-		request, output, runErr := run(t, "context_management:\n  type: compaction\n", "1", "responses", "create", "--context-management", "[]")
+		request, output, runErr := run(t, "context_management:\n  type: compaction\n", "1", "responses", "create", "--context-management-structured", "[]")
 		require.NoError(t, runErr, "CLI output: %s", output)
 		var body map[string]any
 		require.NoError(t, json.Unmarshal(request.body, &body))
