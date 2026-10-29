@@ -31,13 +31,14 @@ func releaseBody(version string) string {
 
 func unknownInstallation(string) string { return manualGuidance }
 
-func TestCheckGoGuidanceMatchesReleaseMajor(t *testing.T) {
+func TestCheckInstallationGuidance(t *testing.T) {
 	for _, tc := range []struct{ name, latest, installed, want string }{
-		{"Go minor upgrade", "1.41.0", goGuidance, goGuidance},
-		{"Go major upgrade", "2.0.0", goGuidance, manualGuidance},
-		{"Go later major upgrade", "12.0.0", goGuidance, manualGuidance},
-		{"Homebrew major upgrade", "2.0.0", brewGuidance, brewGuidance},
-		{"unknown major upgrade", "2.0.0", manualGuidance, manualGuidance},
+		{"Go minor upgrade", "1.41.0", goGuidance, "Update to 1.41.0: " + goGuidance},
+		{"Go major upgrade", "2.0.0", goGuidance, "Update to 2.0.0: " + manualGuidance},
+		{"Go later major upgrade", "12.0.0", goGuidance, "Update to 12.0.0: " + manualGuidance},
+		{"Homebrew release", "1.42.0", brewGuidance, "GitHub v1.42.0. Once in Homebrew, run " + brewGuidance},
+		{"long Homebrew release", strings.Repeat("9", 60) + ".0.0", brewGuidance, "New on GitHub. Once in Homebrew, run " + brewGuidance},
+		{"unknown major upgrade", "2.0.0", manualGuidance, "Update to 2.0.0: " + manualGuidance},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -46,13 +47,12 @@ func TestCheckGoGuidanceMatchesReleaseMajor(t *testing.T) {
 			directory := privateCacheDirectory(t)
 			now := time.Now()
 			guidance := func(string) string { return tc.installed }
-			want := "Update to " + tc.latest + ": " + tc.want
-			if got := check(context.Background(), "1.40.1", directory, now, client, guidance); got != want {
-				t.Fatalf("notice = %q; want %q", got, want)
+			if got := check(context.Background(), "1.40.1", directory, now, client, guidance); got != tc.want {
+				t.Fatalf("notice = %q; want %q", got, tc.want)
 			}
 			// Later notices must retain the same guidance after throttling expires.
-			if got := check(context.Background(), "1.40.1", directory, now.Add(noticeInterval), client, guidance); got != want {
-				t.Fatalf("repeat notice = %q; want %q", got, want)
+			if got := check(context.Background(), "1.40.1", directory, now.Add(noticeInterval), client, guidance); got != tc.want {
+				t.Fatalf("repeat notice = %q; want %q", got, tc.want)
 			}
 		})
 	}

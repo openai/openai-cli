@@ -98,10 +98,18 @@ func check(ctx context.Context, current, directory string, now time.Time, client
 	if state.Notified != 0 && now.Sub(time.Unix(state.Notified, 0)) < noticeInterval {
 		return ""
 	}
-	text := "Update to " + state.Latest + ": " + guidanceForRelease(guidance(current), state.Latest)
+	command := guidanceForRelease(guidance(current), state.Latest)
 	state.Notified = now.Unix()
 	if ctx.Err() != nil || cache.save(state) != nil {
 		return ""
 	}
-	return text
+	if command == brewGuidance {
+		const next = ". Once in Homebrew, run " + brewGuidance
+		release := "GitHub v" + state.Latest
+		if len(release)+len(next) > 80 {
+			release = "New on GitHub"
+		}
+		return release + next
+	}
+	return "Update to " + state.Latest + ": " + command
 }

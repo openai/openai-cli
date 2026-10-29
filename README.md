@@ -12,6 +12,85 @@
   </p>
 </div>
 
+<!-- x-release-please-start-version -->
+
+## Installation
+
+One `openai` executable includes all CLI commands. Choose one installation method.
+
+### Installing with Homebrew
+
+On a Mac with Homebrew, paste this block into Bash or zsh.
+Homebrew shows progress when it downloads the cask.
+
+```sh
+brew install --cask openai/tools/openai && {
+  brew_bin="$(brew --prefix)/bin"
+  export PATH="$brew_bin:$PATH"
+  "$brew_bin/openai" --version
+}
+```
+
+This selects Homebrew for the current shell. If you configured a custom `--binarydir`, use that directory for `brew_bin`.
+If new shells select another copy, add Homebrew's binary directory first in your shell profile.
+
+To upgrade an existing Homebrew installation, refresh the tap and upgrade its cask.
+
+```sh
+brew update && brew upgrade --cask openai/tools/openai
+```
+
+If Homebrew says “already installed,” compare its cask version with the [latest CLI release](https://github.com/openai/openai-cli/releases/latest).
+The tap can trail a release. Reinstalling the same cask gives you the same version.
+In Bash or zsh, check which copy your shell runs.
+
+```sh
+brew info --cask openai/tools/openai
+type -a openai
+openai --version
+```
+
+### Installing a prebuilt binary
+
+Download the archive for your operating system and architecture from [GitHub Releases](https://github.com/openai/openai-cli/releases/latest).
+Choose the macOS ZIP, Linux tarball, or Windows ZIP under **Assets**.
+On a Mac, the filename ends in `macos_arm64.zip` for Apple silicon or `macos_amd64.zip` for Intel.
+Extract the archive.
+For a manual installation, place `openai` (`openai.exe` on Windows) in a directory on your `PATH`.
+Run `openai --version` to verify it.
+
+**Want automatic updates?** On macOS or Linux, place the official release binary at `$HOME/.openai/bin/openai`.
+The updater requires a compatible GitHub CLI (`gh`) and interactive launches.
+See [automatic updates](docs/automatic-updates.md) for permissions, version pins, and opt-outs.
+Homebrew and Go manage their own installations.
+
+### Installing with Go
+
+With [Go 1.26 or later](https://go.dev/doc/install), paste this block into Bash or zsh.
+It installs the latest CLI and puts Go’s binary directory ahead of older copies.
+
+```sh
+printf '%s\n' 'Installing the latest OpenAI CLI with Go...'
+go install github.com/openai/openai-cli/cmd/openai@latest && {
+  go_bin=$(go env GOBIN)
+  if [ -z "$go_bin" ]; then
+    go_path=$(go env GOPATH)
+    go_bin="${go_path%%:*}/bin"
+  fi
+  export PATH="$go_bin:$PATH"
+  command -v openai
+  openai --version
+}
+```
+
+Go can finish silently. Add `-v` after `install` to show each package as it compiles.
+For new shells, add the same PATH setup to your shell profile.
+
+On Windows, run `go install github.com/openai/openai-cli/cmd/openai@latest`.
+Add the Go binary directory to your user `Path`. Use `where.exe openai` to find installed copies.
+
+<!-- x-release-please-end -->
+
 <p align="center">
   <img src="./assets/openai-cli.png" alt="OpenAI CLI terminal showing commands for images, files, batches, and JSON output" width="80%">
 </p>
@@ -27,8 +106,7 @@ files, submit batches, and inspect API results without writing an application.
 
 ## Things to try
 
-These examples use an API key; see [installation](#installation) and
-[authentication](#authentication) below.
+These examples require [authentication](#authentication).
 
 ### Generate an image and save it locally
 
@@ -76,50 +154,6 @@ openai files list --format json > files.json
 Choose `--format json` for a JSON document or `--format jsonl` for records.
 The default output is readable text, **even in pipes**. The first example uses
 [jq](https://jqlang.org/).
-
-<!-- x-release-please-start-version -->
-
-## Installation
-
-### Installing a prebuilt binary
-
-Download the archive for your operating system and architecture from
-[GitHub Releases](https://github.com/openai/openai-cli/releases/latest).
-Binaries are available for macOS, Linux, and Windows. Extract the archive and
-place `openai` (`openai.exe` on Windows) in a directory on your `PATH`.
-
-### Installing with Homebrew
-
-```sh
-brew install openai/tools/openai
-```
-
-### Installing with Go
-
-Requires [Go 1.26 or later](https://go.dev/doc/install).
-
-```sh
-go install 'github.com/openai/openai-cli/cmd/openai@latest'
-```
-
-Once you have run `go install`, the binary is placed in your Go bin directory:
-
-- **Default location**: `$HOME/go/bin` (or `$GOPATH/bin` if GOPATH is set)
-- **Check your path**: Run `go env GOPATH` to see the base directory
-
-If commands aren't found after installation, add the Go bin directory to your PATH:
-
-```sh
-# Add to your shell profile (.zshrc, .bashrc, etc.)
-export PATH="$PATH:$(go env GOPATH)/bin"
-```
-
-<!-- x-release-please-end -->
-
-Supported self-managed release installations prepare automatic updates during eligible interactive runs.
-Package-manager and Go installations retain update notices and their existing installation ownership.
-Set `OPENAI_CLI_NO_AUTO_UPDATE=1` to disable automatic installation, or `OPENAI_CLI_NO_UPDATE_CHECK=1` to disable all update checks.
-See [automatic updates](docs/automatic-updates.md) for installation requirements, exact-version pins, and activation behavior.
 
 ## Authentication
 
