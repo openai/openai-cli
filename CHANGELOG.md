@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.46.0](https://github.com/openai/openai-cli/compare/v1.45.1...v1.46.0) (2026-10-29)
+
+
+### Features
+
+* **api:** add image edit markup overlays ([#669](https://github.com/openai/openai-cli/issues/669)) ([c444e77](https://github.com/openai/openai-cli/commit/c444e77fd5fa0eb1b4b82716039edd0eb4f2252f))
+
+
+### Chores
+
+* **api:** update API reference ([#667](https://github.com/openai/openai-cli/issues/667)) ([e654ec0](https://github.com/openai/openai-cli/commit/e654ec0d5301b88ffdd394ef4d050d6c0656df44))
+
 ## [1.45.1](https://github.com/openai/openai-cli/compare/v1.45.0...v1.45.1) (2026-10-29)
 
 
