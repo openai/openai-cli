@@ -58,6 +58,7 @@ func TestImagesEdit(t *testing.T) {
 			"--prompt", "A cute baby sea otter wearing a beret",
 			"--background", "transparent",
 			"--input-fidelity", "high",
+			"--markup", mocktest.TestFile(t, "Example data"),
 			"--mask", mocktest.TestFile(t, "Example data"),
 			"--model", "gpt-image-1.5",
 			"--n", "1",
@@ -81,6 +82,7 @@ func TestImagesEdit(t *testing.T) {
 			"prompt: A cute baby sea otter wearing a beret\n" +
 			"background: transparent\n" +
 			"input_fidelity: high\n" +
+			"markup: Example data\n" +
 			"mask: Example data\n" +
 			"model: gpt-image-1.5\n" +
 			"'n': 1\n" +
