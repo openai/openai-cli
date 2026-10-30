@@ -3,6 +3,7 @@ package images
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"net/url"
 	"os"
@@ -22,6 +23,7 @@ import (
 
 type imagePickerWorkspaceImage struct {
 	file                 imageoutput.SavedImage
+	nameOrdinal          int
 	protocol             string
 	rows                 []string
 	nativeRows           int
@@ -70,14 +72,13 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 	}
 	lines := make([]string, max(1, m.height))
 	entry := &w.images[w.selected]
-	title := w.imageTitle()
-	lines[0] = "    " + m.workspaceText(ansi.Truncate(title, max(0, m.width-6), "…"), imageActive)
+	lines[0] = "    " + entry.caption(m, m.width-6)
 	if len(lines) > 1 {
 		lines[1] = "    " + ansi.Truncate(m.workspaceSavedLocation(imagePickerFolderLabel(filepath.Dir(entry.file.Path))), max(0, m.width-6), "…")
 	}
 	if len(lines) > 3 {
 		if busy {
-			lines[2] = "    " + m.workspaceText(ansi.Truncate(w.progress(), max(0, m.width-6), "…"), "active")
+			lines[2] = "    " + ansi.Truncate(w.progress(m), max(0, m.width-6), "…")
 		} else if m.note != "" {
 			role := m.noteTone
 			note := m.note
@@ -317,6 +318,12 @@ func (w *imagePickerWorkspace) scrollExpanded(delta int) {
 }
 
 func (w *imagePickerWorkspace) appendImage(entry imagePickerWorkspaceImage) {
+	if w.nameCounts == nil {
+		w.nameCounts = make(map[string]int)
+	}
+	name := imagePickerLine(filepath.Base(entry.file.Path))
+	w.nameCounts[name]++
+	entry.nameOrdinal = w.nameCounts[name]
 	if imagePickerNativeRows(entry.rows) {
 		entry.nativeRows = len(entry.rows)
 		w.cacheNativeArrival(len(w.images), entry.columns, entry.rows)
@@ -324,6 +331,30 @@ func (w *imagePickerWorkspace) appendImage(entry imagePickerWorkspaceImage) {
 	}
 	w.images = append(w.images, entry)
 	w.galleryRevision++
+}
+
+func (entry *imagePickerWorkspaceImage) caption(m *imagePicker, width int) string {
+	name := imagePickerLine(filepath.Base(entry.file.Path))
+	ordinal := ""
+	if entry.nameOrdinal > 1 {
+		ordinal = fmt.Sprintf(" (%d)", entry.nameOrdinal)
+	}
+	nameWidth := ansi.StringWidth(name)
+	metadata := ordinal
+	const fallback = " · Color preview"
+	if entry.protocol == "blocks" && min(nameWidth, 16)+ansi.StringWidth(ordinal+fallback) <= width {
+		metadata += fallback
+	}
+	// Preserve both the prompt-derived stem and endings such as "-2.jpeg" and "(2)".
+	available := width - ansi.StringWidth(metadata)
+	if nameWidth > available {
+		tail := ansi.TruncateLeft(name, nameWidth-available/2, "")
+		name = ansi.Truncate(name, max(0, available-ansi.StringWidth(tail)-1), "") + "…" + tail
+	}
+	if metadata != "" {
+		name += m.workspaceText(metadata, imageSecondary)
+	}
+	return name
 }
 
 // Reserve the shared four-cell inset and two-cell right margin before encoding.
@@ -353,8 +384,14 @@ func (m *imagePicker) workspaceImageFrame(label string, width int, top bool) str
 	return "  " + m.workspaceImageBorder(left+"─ ") + label + m.workspaceImageBorder(" "+strings.Repeat("─", max(0, inside-3-ansi.StringWidth(label)))+right)
 }
 
-func (m *imagePicker) workspaceImageRow(row string, width int) string {
-	return "  " + m.workspaceImageBorder("│") + " " + row + ansi.CursorHorizontalAbsolute(max(1, width-2)) + m.workspaceImageBorder("│")
+func (m *imagePicker) workspaceImageRow(row string, width int, focused bool) string {
+	border := m.workspaceImageBorder("│")
+	left := border
+	if focused {
+		// Use the frame gutter so focus never moves filenames or pixels.
+		left = m.workspaceText("›", imageActive)
+	}
+	return "  " + left + " " + row + ansi.CursorHorizontalAbsolute(max(1, width-2)) + border
 }
 
 type imagePickerOpened struct {

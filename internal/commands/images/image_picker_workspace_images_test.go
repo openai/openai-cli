@@ -122,7 +122,7 @@ func TestImagePickerWorkspaceSeparatesImageContent(t *testing.T) {
 	for _, width := range []int{40, 96, 240} {
 		require.LessOrEqual(t, ansi.StringWidth(m.workspaceImageFrame("Images", width, true)), width-2)
 		require.LessOrEqual(t, ansi.StringWidth(m.workspaceImageFrame("[F2] Expand images", width, false)), width-2)
-		line := ansi.Strip(m.workspaceImageRow("synthetic", width))
+		line := ansi.Strip(m.workspaceImageRow("synthetic", width, false))
 		require.Equal(t, "  │ synthetic│", line)
 	}
 	w := &imagePickerWorkspace{}

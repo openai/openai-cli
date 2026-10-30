@@ -126,7 +126,7 @@ func (m *imagePicker) workspaceView(view tea.View, prompt string, strong, muted,
 	for _, line := range lines {
 		line = ansi.Truncate(line, width, "…")
 		if framed {
-			body = append(body, m.workspaceImageRow(line, m.width))
+			body = append(body, m.workspaceImageRow(line, m.width, false))
 		} else {
 			body = append(body, "    "+line)
 		}

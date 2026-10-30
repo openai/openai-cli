@@ -251,14 +251,20 @@ func TestImagePickerWorkspaceSpinnerAdvancesWithoutElapsedSecond(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("LC_ALL", "C")
 	w := &imagePickerWorkspace{since: time.Now()}
-	before := w.progress()
+	m := &imagePicker{}
+	before := w.progress(m)
 	w.animationFrame++
-	after := w.progress()
+	after := w.progress(m)
 	require.NotEqual(t, before, after)
 	require.Contains(t, before, "Generating image · 0s elapsed")
 	require.Contains(t, after, "Generating image · 0s elapsed")
 	w.stage = clioutput.LoadingSaving
-	require.Contains(t, w.progress(), "Saving image")
+	require.Contains(t, w.progress(m), "Saving image")
+	m.dark, m.color, m.profile = true, true, colorprofile.TrueColor
+	frame := clioutput.LoadingSpinner(os.Getenv, "").Frames[w.animationFrame]
+	require.True(t, strings.HasPrefix(w.progress(m), m.workspaceText(frame, imageActive)+" Saving image"))
+	t.Setenv("TERM", "dumb")
+	require.True(t, strings.HasPrefix(w.progress(m), "Saving image"), "an unanimated stage must also inherit the foreground")
 }
 
 func TestImagePickerWorkspaceShowsAllSettingsWhileTyping(t *testing.T) {

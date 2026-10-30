@@ -65,6 +65,7 @@ type imagePickerWorkspace struct {
 	receiptMu                                 sync.Mutex
 	receipts                                  []string
 	images                                    []imagePickerWorkspaceImage
+	nameCounts                                map[string]int
 	selected                                  int
 	expanded                                  bool
 	mouse                                     imagePickerMouseModes
@@ -203,7 +204,7 @@ func (w *imagePickerWorkspace) scroll(delta int) {
 	}
 }
 
-func (w *imagePickerWorkspace) progress() string {
+func (w *imagePickerWorkspace) progress(m *imagePicker) string {
 	label := "Generating image"
 	if w.stage == clioutput.LoadingSaving {
 		label = "Saving image"
@@ -213,9 +214,10 @@ func (w *imagePickerWorkspace) progress() string {
 	}
 	if clioutput.LoadingAnimationSupported(os.Getenv) {
 		animation := clioutput.LoadingSpinner(os.Getenv, runtime.GOOS)
-		label = animation.Frames[w.animationFrame%len(animation.Frames)] + " " + label
+		frame := animation.Frames[w.animationFrame%len(animation.Frames)]
+		label = m.workspaceText(frame, imageActive) + " " + label
 	}
-	return fmt.Sprintf("%s · %ds elapsed", label, int(time.Since(w.since)/time.Second))
+	return label + m.workspaceText(fmt.Sprintf(" · %ds elapsed", int(time.Since(w.since)/time.Second)), imageSecondary)
 }
 
 func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile, busy, headerChanged bool) (err error) {

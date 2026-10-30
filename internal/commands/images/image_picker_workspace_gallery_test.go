@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/imageoutput"
 	"github.com/stretchr/testify/require"
 )
@@ -47,6 +48,45 @@ func TestImagePickerGalleryCaptionsFollowPixelsWithoutExtraGap(t *testing.T) {
 	}
 	require.Equal(t, "pixels-0", w.displayRows[w.galleryStarts[1]-1])
 	require.Equal(t, len(w.displayRows), w.viewportRows, "small galleries must not pad the remaining terminal height")
+}
+
+func TestImagePickerGalleryFocusAndDuplicateFilenames(t *testing.T) {
+	m, w := browserForTest(t, 96, 40)
+	m.focus = "prompt"
+	w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: "/first/bloom.png"}, rows: []string{"first preview"}})
+	draw := func() string {
+		t.Helper()
+		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+		return ansi.Strip(strings.Join(w.painted, "\n"))
+	}
+	require.Contains(t, draw(), "│ bloom.png│\n  │ first preview│")
+	m.focus = "images"
+	require.Contains(t, draw(), "│ bloom.png│", "a single filename has no selection marker")
+	w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: "/second/bloom.png"}, rows: []string{"second preview"}})
+	w.selectImage(1)
+	require.Contains(t, draw(), "› bloom.png (2)│\n  │ second preview│")
+	require.Contains(t, ansi.Strip(w.expandedView(m, false)[0]), "bloom.png (2)")
+	m.focus = "prompt"
+	require.Contains(t, draw(), "│ bloom.png (2)│")
+	require.NotContains(t, strings.Join(w.painted, "\n"), "› bloom")
+}
+
+func TestImagePickerGalleryLongFilenamesKeepDistinctEndings(t *testing.T) {
+	m, w := browserForTest(t, 40, 28)
+	stem := strings.Repeat("花", 32)
+	for _, path := range []string{"/one/" + stem + ".jpeg", "/one/" + stem + "-2.jpeg", "/two/" + stem + "-2.jpeg"} {
+		w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: path}, protocol: "blocks", rows: []string{"pixels"}})
+	}
+	w.selectImage(2)
+	for _, height := range []int{28, 12} {
+		m.height = height
+		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+		text := ansi.Strip(strings.Join(w.painted, "\n"))
+		require.Contains(t, text, "-2.jpeg (2)", "height=%d", height)
+		heading := w.expandedView(m, false)[0]
+		require.Contains(t, ansi.Strip(heading), "-2.jpeg (2)")
+		require.LessOrEqual(t, ansi.StringWidth(heading), m.width)
+	}
 }
 
 func TestImagePickerGalleryPreservesAnchorWhenEarlierRowsChange(t *testing.T) {

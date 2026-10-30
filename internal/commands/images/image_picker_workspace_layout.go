@@ -1,7 +1,6 @@
 package images
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -23,26 +22,24 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 		w.layoutGallery(m)
 	}
 	status := ""
-	role := m.noteTone
 	if busy {
-		status = w.progress()
-		role = imageActive
+		status = w.progress(m)
 	} else if m.note != "" && m.note != "All images saved." && (m.note != imagePickerRequestFailureNote || len(w.rows) == 0) {
 		// New form notices take precedence over retained request or image-open errors.
-		status = imagePickerLine(m.note)
+		role := m.noteTone
 		if m.note == imagePickerRequestFailureNote {
 			role = imageFailure
 		}
+		status = m.workspaceText(imagePickerLine(m.note), role)
 	} else if w.openError && w.openErrorIndex == w.selected {
-		status = "Could not open this image."
-		role = imageFailure
+		status = m.workspaceText("Could not open this image.", imageFailure)
 	} else if m.note == imagePickerRequestFailureNote && w.offset >= w.messageRows {
-		status = w.requestFailureSummary()
-		role = imageFailure
+		status = m.workspaceText(w.requestFailureSummary(), imageFailure)
 	}
 	lines := append([]string(nil), header...)
-	if status != "" || len(w.displayRows) > 0 {
-		lines = append(lines, "    "+m.workspaceText(ansi.Truncate(status, max(0, m.width-6), "…"), role))
+	// A gallery keeps its progress slot. Diagnostics alone start directly below the form.
+	if status != "" || len(w.images) > 0 {
+		lines = append(lines, "    "+ansi.Truncate(status, max(0, m.width-6), "…"))
 	}
 	if len(w.displayRows) > 0 {
 		frameRows := 0
@@ -52,9 +49,14 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 		w.viewportRows = min(len(w.displayRows), max(0, m.height-len(lines)-frameRows))
 		w.scroll(0)
 		title, location := "Images", ""
+		focusRow := -1
 		if len(w.images) > 0 {
 			if !w.layoutCaptions {
-				title = w.imageTitle()
+				titleWidth := m.width - 9 // Frame corners, insets and label spacing.
+				if m.focus == "images" {
+					titleWidth -= 2 // The focus marker precedes the compact title.
+				}
+				title = w.images[w.selected].caption(m, titleWidth)
 			}
 			folder := filepath.Dir(w.images[w.selected].file.Path)
 			label := imagePickerFolderLabel(folder)
@@ -63,7 +65,12 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 			}
 			location = m.workspaceSavedLocation(label)
 			if m.focus == "images" {
-				title = m.workspaceText(title, imageActive)
+				start := w.galleryStarts[w.selected]
+				if len(w.images) > 1 && w.layoutCaptions && start >= w.offset && start < w.offset+w.viewportRows {
+					focusRow = start
+				} else {
+					title = m.workspaceText("›", imageActive) + " " + title
+				}
 			}
 		}
 		if len(w.images) > 0 {
@@ -78,9 +85,6 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 			row := ""
 			if w.offset+i < len(w.displayRows) {
 				row = w.displayRows[w.offset+i]
-				if m.focus == "images" && w.layoutCaptions && len(w.galleryStarts) > 0 && w.offset+i == w.galleryStarts[w.selected] {
-					row = m.workspaceText("›", imageActive) + strings.TrimPrefix(row, "›")
-				}
 				if native, ok := w.nativeDisplay[w.offset+i]; ok {
 					row = w.nativeViewRow(native, len(lines))
 				}
@@ -89,7 +93,7 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 				row = ansi.Truncate(row, max(0, m.width-8), "…")
 			}
 			if len(w.images) > 0 {
-				lines = append(lines, m.workspaceImageRow(row, m.width))
+				lines = append(lines, m.workspaceImageRow(row, m.width, w.offset+i == focusRow))
 			} else {
 				lines = append(lines, "    "+row)
 			}
@@ -107,14 +111,6 @@ func (w *imagePickerWorkspace) requestFailureSummary() string {
 		return w.requestFailure
 	}
 	return imagePickerRequestFailureNote
-}
-
-func (w *imagePickerWorkspace) imageTitle() string {
-	title := fmt.Sprintf("Image %d · %s", w.selected+1, imagePickerLine(filepath.Base(w.images[w.selected].file.Path)))
-	if w.images[w.selected].protocol == "blocks" {
-		title += " · Color preview"
-	}
-	return title
 }
 
 // Native slots retain their logical geometry without retaining PNG payloads.
@@ -147,17 +143,9 @@ func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 			appendRow("")
 		}
 		w.galleryStarts[i] = len(w.displayRows)
-		marker := "  "
-		if i == w.selected {
-			marker = "› "
-		}
-		caption := fmt.Sprintf("%sImage %d · %s", marker, i+1, imagePickerLine(filepath.Base(entry.file.Path)))
-		if entry.protocol == "blocks" {
-			caption += " · Color preview"
-		}
 		// Captions occupy one row; paths cannot change image geometry or anchors.
 		if w.layoutCaptions {
-			w.displayRows = append(w.displayRows, ansi.Truncate(caption, max(1, m.width-8), "…"))
+			w.displayRows = append(w.displayRows, entry.caption(m, max(1, m.width-8)))
 		}
 		switch {
 		case entry.rowCount() == 0:
