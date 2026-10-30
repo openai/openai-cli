@@ -192,6 +192,34 @@ func (m *audioWorkbench) openActions() tea.Cmd {
 	return m.focusSection(2)
 }
 
+func (m *audioWorkbench) updateWideAction(key string) tea.Cmd {
+	switch key {
+	case "right":
+		return m.updateMore("down")
+	case "left":
+		if m.moreChoice > 0 {
+			return m.updateMore("up")
+		}
+		fallthrough
+	case "home", "shift+tab":
+		m.modal, m.setting = "", 4
+		return m.focusSection(2)
+	case "up":
+		// Settings sit directly above the shelf. Return to their last visible field.
+		order := m.settingOrder()
+		m.modal, m.setting = "", order[len(order)-2]
+		return m.focusSection(2)
+	case "down":
+		m.modal = ""
+		return m.enterAudioFromAbove()
+	case "tab":
+		m.modal = ""
+		return m.focusSection(4)
+	default:
+		return m.updateMore(key)
+	}
+}
+
 func (m *audioWorkbench) updateMore(key string) tea.Cmd {
 	items := m.moreItems()
 	m.moreChoice = audioMenuIndex(m.moreChoice, len(items), key)

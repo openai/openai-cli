@@ -203,12 +203,39 @@ func TestAudioWaveformTimelineDoesNotInventPlayheadWithoutMeasuredAudio(t *testi
 			require.Empty(t, m.workspaceWaveformRows(size[1]), "unknown audio must reserve no waveform rows")
 			header := strings.Join(m.workspaceAudioHeader(), "\n")
 			if state == "empty" {
-				require.Contains(t, header, "Your recording will appear here.")
+				require.Contains(t, header, "No recording yet")
 			} else {
 				require.Contains(t, header, "Preview unavailable")
 			}
 		}
 	}
+}
+
+func TestAudioWaveformRulerUsesMeasuredDurationAndOnlySpareRows(t *testing.T) {
+	m := audioReviewModel(t)
+	m.Update(tea.WindowSizeMsg{Width: 133, Height: 39})
+	r := audioReviewResult("ruler", false)
+	r.analysis.Duration = 3.75
+	r.entry.Settings = m.effectiveSettings()
+	m.result = &r
+	width := m.waveformWidth()
+	require.Contains(t, ansi.Strip(m.View().Content), audioTimeRuler(width, r.seekDuration()), "roomy workbench should expose real timestamps")
+	for _, seconds := range []float64{0, 1.25, 3.75} {
+		r.position = time.Duration(seconds * float64(time.Second))
+		rows := m.workspaceWaveformRows(audioMaxWaveformHeight + 5)
+		rail, scale := rows[len(rows)-3], ansi.Strip(rows[len(rows)-2])
+		require.Contains(t, rail, "┷")
+		require.True(t, strings.HasPrefix(scale, "  00:00"))
+		require.Equal(t, 2+(width-len("00:01.875"))/2, strings.Index(scale, "00:01.875"))
+		require.True(t, strings.HasSuffix(scale, "00:03.75"))
+		require.Equal(t, 2+width, ansi.StringWidth(scale))
+		require.Empty(t, rows[len(rows)-1], "keep separation above transport")
+		tight := m.workspaceWaveformRows(audioMaxWaveformHeight + 4)
+		require.Equal(t, tight[:len(tight)-1], rows[:len(rows)-2], "the ruler cannot reduce waveform height")
+		require.NotContains(t, strings.Join(tight, "\n"), "00:03.75")
+	}
+	// Show precision for recordings shorter than the transport's millisecond display.
+	require.True(t, strings.HasSuffix(audioTimeRuler(width, 40*time.Microsecond), "00:00.00004"))
 }
 
 func TestAudioWaveformTimelineKeepsEndpointPeaksAndQuietIntervals(t *testing.T) {

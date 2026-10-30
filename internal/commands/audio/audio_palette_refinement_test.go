@@ -30,7 +30,7 @@ func TestAudioFormPaletteKeepsValuesNeutralAndSelectionVisible(t *testing.T) {
 		for _, field := range []struct{ label, value string }{
 			{"Model", m.settings.Model}, {"Format", "WAV"}, {"Speed", "1.00 x"},
 		} {
-			row := m.muted().Render(fmt.Sprintf("%-17s", field.label)) + " " + m.primaryText().Render(field.value)
+			row := m.muted().Render(fmt.Sprintf("%-9s", field.label)) + " " + m.primaryText().Render(field.value)
 			require.Contains(t, view, row, "settings need muted labels and primary values")
 			require.NotContains(t, view, m.accent().Bold(false).Render(field.value))
 		}
@@ -135,7 +135,7 @@ func TestAudioPlayerFeedbackUsesSemanticPalette(t *testing.T) {
 		audioReviewKey(m, tea.KeySpace)
 		view := m.View().Content
 		require.Contains(t, view, m.warningStyle().Render(audioNoGenerationNotice))
-		require.NotContains(t, ansi.Strip(view), "Save audio…")
+		require.Contains(t, ansi.Strip(view), "Save audio…")
 		require.NotContains(t, view, m.playbackProgressStyle().Render(audioNoGenerationNotice))
 		m.color = false
 		require.Equal(t, ansi.Strip(view), m.View().Content)
@@ -170,9 +170,15 @@ func TestAudioPlaybackActionsInheritForegroundAndSuppressBusySelection(t *testin
 				}
 				view := m.View().Content
 				if !recorded {
-					require.Contains(t, view, m.muted().Render("Your recording will appear here."))
-					require.NotContains(t, ansi.Strip(view), "Play audio")
-					require.NotContains(t, ansi.Strip(view), "Save audio…")
+					if m.framed() {
+						require.Contains(t, view, m.muted().Render("No recording yet"))
+						require.Contains(t, ansi.Strip(view), "› Save audio…")
+						require.Contains(t, view, m.muted().Render("00:00.000 / 00:00.000"))
+					} else {
+						require.Contains(t, view, m.muted().Render("Your recording will appear here."))
+						require.NotContains(t, ansi.Strip(view), "Play audio")
+						require.NotContains(t, ansi.Strip(view), "Save audio…")
+					}
 					continue
 				}
 				audioRequireTextForeground(t, view, "Play audio", lipgloss.NewStyle())

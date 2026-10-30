@@ -56,11 +56,11 @@ func TestAudioViewUsesPanelAndAlignedSettings(t *testing.T) {
 	require.True(t, strings.HasPrefix(view, "╭"))
 	require.Contains(t, strings.Split(view, "\n")[1], "Text to speech")
 	require.NotContains(t, view, "Setting        Value")
-	require.Contains(t, view, "Settings          ▸ Model gpt-4o-mini-tts  Format WAV  Speed 1.00×")
+	require.Contains(t, view, "Settings  ▸ gpt-4o-mini-tts  WAV  1.00×")
 	require.NotContains(t, view, "Model             ")
 	m.settingsExpanded = true
 	view = ansi.Strip(m.View().Content)
-	for _, row := range []string{"Model             gpt-4o-mini-tts", "Voice             Coral", "Format            WAV", "Speed             1.00 x"} {
+	for _, row := range []string{"Model     gpt-4o-mini-tts", "Voice     Coral", "Format    WAV", "Speed     1.00 x"} {
 		require.Contains(t, view, row)
 	}
 	require.Contains(t, view, "Generate speech")
@@ -74,7 +74,7 @@ func TestAudioViewUsesPanelAndAlignedSettings(t *testing.T) {
 	m.input.Blur()
 	view = ansi.Strip(m.View().Content)
 	require.Contains(t, strings.Split(view, "\n")[2], "Read this text.", "primary editor must remain visible while choosing settings")
-	require.Contains(t, view, "› Voice             Coral")
+	require.Contains(t, view, "› Voice     Coral")
 }
 
 func TestAudioViewSelectedSettingAndPrimaryActionsStayVisible(t *testing.T) {
@@ -129,7 +129,7 @@ func TestAudioComposerUsesFullWidthAndKeepsRoomAtHeightBoundary(t *testing.T) {
 			if retained {
 				labels = append(labels, "Play audio", "Save audio")
 			} else {
-				labels = append(labels, "Your recording will appear here.")
+				labels = append(labels, "No recording yet")
 			}
 			for _, label := range labels {
 				require.Contains(t, view, label)
@@ -193,15 +193,21 @@ func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 			require.Equal(t, 3, ansi.StringWidth(rows[1][:strings.Index(rows[1], "Text to speech")]))
 			require.NotContains(t, rows[1], "A clear short example.")
 			require.Contains(t, rows[2], "A clear short example.")
-			require.Equal(t, 3, ansi.StringWidth(rows[2][:strings.Index(rows[2], "A clear short example.")]))
+			require.Equal(t, 4, ansi.StringWidth(rows[2][:strings.Index(rows[2], "A clear short example.")]))
 			require.Contains(t, rows[4], "Instructions")
 			require.Equal(t, 1, strings.Count(view, "╭"), "only the workspace has an outline")
 			require.NotContains(t, view, "Setting        Value")
-			require.Contains(t, rows[6], "Voice")
-			require.Equal(t, 3, ansi.StringWidth(rows[6][:strings.Index(rows[6], "Voice")]))
-			require.Equal(t, 21, ansi.StringWidth(rows[6][:strings.Index(rows[6], "Coral")]))
-			require.Contains(t, rows[7], "Settings          ▸ ")
-			require.Contains(t, rows[7], m.settings.Model)
+			voiceRow, voiceColumn, valueColumn := 6, 3, 21
+			if m.splitComposer() {
+				voiceRow = 2
+				voiceColumn = ansi.StringWidth(rows[1][:strings.Index(rows[1], "Delivery")])
+				valueColumn = voiceColumn + 10
+			}
+			require.Contains(t, rows[voiceRow], "Voice")
+			require.Equal(t, voiceColumn, ansi.StringWidth(rows[voiceRow][:strings.Index(rows[voiceRow], "Voice")]))
+			require.Equal(t, valueColumn, ansi.StringWidth(rows[voiceRow][:strings.Index(rows[voiceRow], "Coral")]))
+			require.Contains(t, rows[voiceRow+1], "Settings")
+			require.Contains(t, rows[voiceRow+1], m.settings.Model)
 			require.NotContains(t, view, "› Text to speech")
 			require.Equal(t, focus == 0 || focus == 1, m.View().Cursor != nil)
 			if focus == 2 {
@@ -263,8 +269,13 @@ func TestAudioComposerKeepsUnicodeContinuationAndLabeledSettingsAligned(t *testi
 				for _, row := range strings.Split(view, "\n") {
 					if index := strings.Index(row, value); index >= 0 {
 						column := 21
-						if focus == 0 && strings.Contains(draft, value) {
-							column = 3
+						if strings.Contains(draft, value) {
+							if focus == 0 {
+								column = 4
+							}
+						} else if m.splitComposer() {
+							header := strings.Split(view, "\n")[1]
+							column = ansi.StringWidth(header[:strings.Index(header, "Delivery")]) + 10
 						}
 						require.Equal(t, column, ansi.StringWidth(row[:index]), "%q left its editor or value column", value)
 						found = true
@@ -335,14 +346,17 @@ func TestAudioHistoryShowsPromptInsteadOfOpaqueID(t *testing.T) {
 	require.NotContains(t, ansi.Strip(m.View().Content), "[Ctrl+O] Listen")
 }
 
-func TestAudioWidePanelActionsStayBesideDraft(t *testing.T) {
+func TestAudioWideActionSelectionKeepsDraftVisible(t *testing.T) {
 	m := audioReviewModel(t)
 	m.Update(tea.WindowSizeMsg{Width: 186, Height: 34})
 	m.input.SetValue("A short draft stays near its settings.")
 	m.focusSection(2)
 	m.setting = 4
 	audioReviewKey(m, tea.KeyRight)
-	for _, label := range []string{"History", "Preview voice", "Clear form", "View command", "Help"} {
+	for i, label := range []string{"History", "Preview voice", "Clear form", "View command", "Help"} {
+		if i > 0 {
+			audioReviewKey(m, tea.KeyRight)
+		}
 		view := ansi.Strip(m.View().Content)
 		require.Contains(t, view, m.input.Value())
 		require.Contains(t, view, "› "+label)
@@ -350,8 +364,8 @@ func TestAudioWidePanelActionsStayBesideDraft(t *testing.T) {
 		for _, row := range strings.Split(view, "\n") {
 			require.Equal(t, 185, ansi.StringWidth(row))
 		}
-		audioReviewKey(m, tea.KeyDown)
 	}
+	audioReviewKey(m, tea.KeyDown)
 	require.Equal(t, 4, m.focus)
 	require.Empty(t, m.modal)
 	audioReviewKey(m, tea.KeyUp)
@@ -369,52 +383,56 @@ func TestAudioWidePanelActionsStayBesideDraft(t *testing.T) {
 	require.Nil(t, m.result)
 }
 
-func TestAudioWideActionsAlignWithTheComposer(t *testing.T) {
+func TestAudioWideActionsStayOnOneRowAcrossSelection(t *testing.T) {
 	m := audioReviewModel(t)
 	m.settingsExpanded = true
 	m.failure.Summary = "Synthetic failure."
 	r := audioReviewResult("layout", false)
 	r.entry.Settings = m.effectiveSettings()
 	m.result = &r
-	column := func(row, label string) int {
-		t.Helper()
-		index := strings.Index(row, label)
-		require.NotEqual(t, -1, index, "%q in %q", label, row)
-		return ansi.StringWidth(row[:index])
-	}
 	for _, size := range [][2]int{{110, 24}, {137, 41}, {186, 34}} {
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-		view := ansi.Strip(m.View().Content)
-		rows := strings.Split(view, "\n")
-		heading := slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Text to speech") })
-		require.GreaterOrEqual(t, heading, 0)
-		require.Contains(t, rows[heading], "Actions")
-		require.NotContains(t, view, "F2")
-		start := column(rows[heading], "Actions")
-		require.LessOrEqual(t, start, 87, "Actions must remain beside the draft on wide terminals")
-		require.NotContains(t, rows[heading+1], "History", "leave one open row below the heading")
-		rowIndex := heading + 2
-		for _, name := range m.moreItems() {
-			if name == "View command" {
-				require.Empty(t, strings.TrimSpace(ansi.Cut(rows[rowIndex], start-2, size[0]-2)))
-				rowIndex++
+		m.modal, m.setting = "", 4
+		m.focusSection(2)
+		var baseline string
+		for i, label := range append([]string{"Generate speech"}, m.moreItems()...) {
+			if i > 0 {
+				audioReviewKey(m, tea.KeyRight)
 			}
-			row := rows[rowIndex]
-			rowIndex++
-			require.Equal(t, start, column(row, name))
-			require.Equal(t, start+16, column(row, audioActionDescriptions[name]))
+			view := ansi.Strip(m.View().Content)
+			rows := strings.Split(view, "\n")
+			at := slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Generate speech") })
+			require.NotEqual(t, -1, at)
+			shelf := rows[at]
+			require.Contains(t, shelf, "› "+label)
+			for _, action := range m.moreItems() {
+				require.Contains(t, shelf, action)
+			}
+			plain := strings.ReplaceAll(shelf, "›", " ")
+			if i == 0 {
+				baseline = plain
+			}
+			require.Equal(t, baseline, plain, "moving focus shifted the shelf")
+			require.Contains(t, view, "Play audio")
+			require.Contains(t, view, "Save audio")
+			for _, row := range rows {
+				require.Equal(t, size[0]-1, ansi.StringWidth(row))
+			}
 		}
-		require.Contains(t, view, "Play audio")
-		require.Contains(t, view, "Save audio")
-		require.Contains(t, view, "Ctrl+C Exit")
-		for _, row := range rows {
-			require.Equal(t, size[0]-1, ansi.StringWidth(row))
+		m.moreChoice = 0
+		m.note = "Playback complete."
+		withoutError := ansi.Strip(m.formActionRows()[0])
+		withError := strings.TrimPrefix(baseline, "│")
+		for _, label := range m.moreItems() {
+			require.Equal(t, strings.Index(withError, label), strings.Index(strings.ReplaceAll(withoutError, "›", " "), label))
 		}
+		m.note = m.failureNote
 	}
 	for _, size := range [][2]int{{109, 24}, {137, 23}} {
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		m.modal, m.setting = "", 4
 		view := ansi.Strip(m.View().Content)
-		require.NotContains(t, view, "Actions")
+		require.NotContains(t, view, "Preview voice")
 		require.Contains(t, view, "More actions…")
 	}
 }
@@ -430,7 +448,7 @@ func TestAudioWideComposerContainsFieldHighlightsAndValidation(t *testing.T) {
 	require.Contains(t, view, "› Voice")
 	for _, row := range strings.Split(view, "\n") {
 		if strings.Contains(row, "› Voice") {
-			require.NotContains(t, row, "…", "the focus fill must end at the composer edge")
+			require.NotContains(t, row[strings.Index(row, "› Voice"):], "…", "the focus fill must end at the delivery column edge")
 		}
 	}
 	lines := m.fieldValidationRows(1)

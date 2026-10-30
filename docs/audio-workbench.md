@@ -38,10 +38,10 @@ Returning to a compatible model restores access to the instruction draft.
 Voice choices follow the form's existing model validator.
 Changing models preserves the selected voice. An unavailable voice needs another explicit choice before generation.
 
-Generate speech is the primary action. At 110 columns and 24 rows, Actions sits beside the editor.
+Generate speech is the primary action. At 110 columns and 24 rows, Actions shares its row.
 Press Right from Generate speech or the Settings heading to enter Actions. Tab from Settings also enters Actions.
-Up and Down select an action. Enter opens it. Left returns to Generate speech.
-Down from the last action moves to Audio. Up from the waveform returns to the action you left.
+Left and Right move between actions. Enter opens the selected action. Home selects Generate. End selects the last action.
+Up returns to Settings. Down moves to Audio. Up from the waveform returns to the action you left.
 Actions contains History, Preview voice, Clear form, View command, and Help.
 On smaller terminals, select More actions and press Enter.
 View command opens a vertically scrollable Bash/zsh command.
@@ -219,19 +219,22 @@ Escape returns to the form.
 ## Layout
 
 At 60 columns and 24 rows, the draft, settings, and audio share one frame.
-Field labels start at column 4. Instructions and setting values start at column 22.
+A vertical line marks the script editor. It turns blue while you type.
+At 100 columns, Delivery sits beside the script and groups voice, model, format, and speed.
+Narrower frames place those controls below Instructions.
 Below 110 columns, Generate speech, History, and More actions share a row when space permits.
-In wider frames, Right from Generate enters the Actions list. Up and Down move through it.
-A separate column explains each action beside its name.
-One blank row separates the recording and draft actions from View command and Help.
+Wider frames show Generate speech, recording actions, View command, and Help in one row.
+The selection marker moves across this row without shifting neighboring actions.
 Help groups shortcuts by Compose, Audio, and View command. Small terminals show scrolling controls when the list exceeds the available height.
 Clear form uses amber because it resets the draft. Last error uses red when recovery details are available.
 The focused action has a selection marker. In color terminals, it also has a selected background.
 
 The Batch browser’s thin divider separates the form from the player. Its brightest cell sits at the center.
-Before generation, the player shows “Your recording will appear here.”
+Before generation, the framed player shows “No recording yet,” Play, Save, and a zero timer.
 Playback and Save shortcuts explain that speech must be generated first.
-The recording adds the timer, waveform, seek rail, and transport controls in that location.
+The recording adds a measured waveform and seek rail in that location.
+When space permits, a time ruler labels the start, midpoint, and end in minutes and seconds.
+Recordings without a measured duration show an unknown timer and retain their Save action.
 One blank row separates the recording details from the waveform when space permits.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.
 The playhead follows playback through silence. Elapsed bars and rail use green. Upcoming bars use the secondary text color.

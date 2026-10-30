@@ -348,15 +348,60 @@ func (m *audioWorkbench) View() tea.View {
 // Position the native caret from the rendered rows so disclosures and validation
 // messages can move it without duplicating the layout in a second calculation.
 func (m *audioWorkbench) formRows(compact bool) ([]string, *tea.Cursor, int) {
+	script, cursor := m.scriptRows(compact)
+	settings, settingsCursor, active := m.settingsRows()
+	if m.splitComposer() {
+		// Cursor coordinates start within each column. Only the active editor owns a caret.
+		offset := m.composerWidth() + audioColumnGap
+		right := append([]string{"  " + m.strong().Render("Delivery")}, settings...)
+		if settingsCursor != nil {
+			settingsCursor.X += offset
+			settingsCursor.Y++
+			cursor = settingsCursor
+		}
+		rows := make([]string, max(len(script), len(right)))
+		for i := range rows {
+			if i < len(script) {
+				rows[i] = ansi.Truncate(script[i], m.composerWidth(), "…")
+			}
+			if i < len(right) {
+				rows[i] += strings.Repeat(" ", offset-ansi.StringWidth(rows[i])) + right[i]
+			}
+		}
+		return rows, cursor, active + 1
+	}
+	if !compact && m.height >= 32 {
+		script = append(script, "")
+	}
+	if settingsCursor != nil {
+		settingsCursor.Y += len(script)
+		cursor = settingsCursor
+	}
+	if active < 0 {
+		active = 0
+	} else {
+		active += len(script)
+	}
+	return append(script, settings...), cursor, active
+}
+
+func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 	labelWidth := m.formLabelWidth()
 	rows := []string{"  " + m.strong().Render("Text to speech")}
 	var cursor *tea.Cursor
-	focusRow := 0
+	prefix := "  "
+	if !compact {
+		rule := m.borderStyle()
+		if m.focus == 0 && !m.busy {
+			rule = m.accent()
+		}
+		prefix = " " + rule.Render("│") + " "
+	}
 	if m.focus == 0 && !m.busy {
-		cursor = audioEditorCursor(m.input, 2, len(rows))
+		cursor = audioEditorCursor(m.input, ansi.StringWidth(prefix), len(rows))
 	}
 	for _, line := range strings.Split(m.editorView(m.input), "\n") {
-		rows = append(rows, "  "+line)
+		rows = append(rows, prefix+line)
 	}
 	validation := m.fieldValidationRows(audioFieldText)
 	rows = append(rows, validation...)
@@ -391,9 +436,14 @@ func (m *audioWorkbench) formRows(compact bool) ([]string, *tea.Cursor, int) {
 		rows = append(rows, "  "+label+" "+value)
 	}
 
-	if !compact && m.height >= 32 {
-		rows = append(rows, "")
-	}
+	return rows, cursor
+}
+
+func (m *audioWorkbench) settingsRows() ([]string, *tea.Cursor, int) {
+	labelWidth := m.settingsLabelWidth()
+	var rows []string
+	var cursor *tea.Cursor
+	focusRow := -1
 	fields := []int{1, audioSettingDisclosure}
 	if m.settingsExpanded {
 		fields = append(fields, 0, 2, 3)
@@ -406,15 +456,15 @@ func (m *audioWorkbench) formRows(compact bool) ([]string, *tea.Cursor, int) {
 		var name, value string
 		switch field {
 		case 0:
-			name, value = "Model", m.primaryText().Render(readable.Text(m.settings.Model))
+			name, value = "Model", m.primaryText().Render(audioChoiceLabel(0, m.settings.Model))
 		case 1:
-			voice := readable.Text(readable.ChoiceTitle(m.settings.Voice))
+			voice := audioHistoryCell(readable.ChoiceTitle(m.settings.Voice))
 			name, value = "Voice", m.primaryText().Render(voice)
 			if !audioSupportsVoice(m.settings.Model, m.settings.Voice) {
 				value = m.warningStyle().Render(voice + " (unavailable)")
 			}
 		case 2:
-			name, value = "Format", m.primaryText().Render(readable.Text(strings.ToUpper(m.settings.Format)))
+			name, value = "Format", m.primaryText().Render(audioChoiceLabel(2, m.settings.Format))
 		case 3:
 			name, value = "Speed", m.primaryText().Render(fmt.Sprintf("%.2f x", m.settings.Speed))
 		case audioSettingDisclosure:
@@ -429,7 +479,7 @@ func (m *audioWorkbench) formRows(compact bool) ([]string, *tea.Cursor, int) {
 			rows = append(rows, m.selected("› "+name, labelWidth+2)+" "+value)
 		} else {
 			label := m.muted().Render(fmt.Sprintf("%-*s", labelWidth, name))
-			rows = append(rows, m.choiceRow(label+" "+value, active, m.composerWidth()))
+			rows = append(rows, m.choiceRow(label+" "+value, active, m.settingsWidth()))
 		}
 		rows = append(rows, m.fieldValidationRows(field)...)
 	}
@@ -441,7 +491,11 @@ func (m *audioWorkbench) fieldValidationRows(field int) []string {
 	if message == "" {
 		return nil
 	}
-	lines := strings.Split(ansi.Wrap(message, max(1, m.composerWidth()-2), ""), "\n")
+	width := m.settingsWidth()
+	if field == audioFieldText {
+		width = m.composerWidth()
+	}
+	lines := strings.Split(ansi.Wrap(message, max(1, width-2), ""), "\n")
 	for i, line := range lines {
 		lines[i] = "  " + m.warningStyle().Render(line)
 	}
@@ -457,7 +511,30 @@ func (m *audioWorkbench) formActionRows() []string {
 		generate = m.label(m.progressView(), active)
 	}
 	if m.inlineActions() {
-		return []string{generate}
+		if !active || m.busy {
+			generate += " "
+		}
+		cells := []string{generate}
+		for index, name := range m.moreItems() {
+			selected := m.modal == "more" && index == m.moreChoice && !m.busy
+			cell := m.actionRow(m.actionName(name), selected)
+			if !selected {
+				cell += " "
+			}
+			cells = append(cells, cell)
+		}
+		// Reserve Last error so a playback failure cannot shift the other actions.
+		for _, gap := range []string{"   ", "  ", " "} {
+			row := strings.Join(cells, gap)
+			width := ansi.StringWidth(row)
+			if !m.activeFailure() && gap != " " {
+				width += len(gap) + len("Last error") + 3
+			}
+			if width <= m.audioWidth() {
+				return []string{row}
+			}
+		}
+		return []string{cells[0], strings.Join(cells[1:], " ")}
 	}
 	rows := []string{
 		generate,
@@ -686,26 +763,6 @@ func (m *audioWorkbench) actionRows(width, active int) []string {
 		description := ansi.Truncate(audioActionDescriptions[label], width-18, "…")
 		row := m.actionName(label) + strings.Repeat(" ", 16-ansi.StringWidth(label)) + m.muted().Render(description)
 		rows = append(rows, m.choiceRow(row, index == active, width))
-	}
-	return rows
-}
-
-func (m *audioWorkbench) withActionColumn(rows []string) []string {
-	left := m.composerWidth()
-	active := -1
-	if m.modal == "more" {
-		active = m.moreChoice
-	}
-	panel := []string{"  " + m.strong().Render("Actions"), ""}
-	panel = append(panel, m.actionRows(audioActionWidth, active)...)
-	for i := range max(len(rows), len(panel)) {
-		if i >= len(rows) {
-			rows = append(rows, "")
-		}
-		rows[i] = ansi.Truncate(rows[i], left, "…")
-		if i < len(panel) && panel[i] != "" {
-			rows[i] += strings.Repeat(" ", left+audioActionGap-ansi.StringWidth(rows[i])) + panel[i]
-		}
 	}
 	return rows
 }

@@ -28,7 +28,7 @@ func (m *audioWorkbench) settingsSummary(active bool) string {
 		m.muted().Render("Format") + " " + format,
 		m.muted().Render("Speed") + " " + speed,
 	}, "  ")
-	width := m.composerWidth() - m.formLabelWidth() - 5 // Label, marker, toggle, and spaces.
+	width := m.settingsWidth() - m.settingsLabelWidth() - 5 // Label, marker, toggle, and spaces.
 	if ansi.StringWidth(summary) > width {
 		rest := "  " + format + "  " + speed
 		summary = ansi.Truncate(model, max(1, width-ansi.StringWidth(rest)), "…") + rest

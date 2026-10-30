@@ -198,9 +198,6 @@ func (m *audioWorkbench) resizeEditors() {
 		widthChanged := editor.Width() != width
 		if widthChanged {
 			editor.SetWidth(width)
-			// Bubbles refreshes its shared viewport content in View. Reflow before
-			// repositioning so scrolling uses the new wrapped content length.
-			_ = editor.View()
 		}
 		height := 1
 		if (editor == &m.path || editor == &m.saveFolder) && m.modal == "save" {
@@ -229,6 +226,9 @@ func (m *audioWorkbench) resizeEditors() {
 			}
 		}
 		if widthChanged || editor.Height() != height {
+			// View refreshes the shared viewport after text changes or rewraps.
+			// Reposition against that content, including in the unfocused editor.
+			_ = editor.View()
 			// Dynamic sizing clamps the viewport against actual content rows.
 			// Reflow can change those rows even when the editor stays three rows tall.
 			// Keep the temporary display bounds out of input processing; Bubbles
@@ -278,6 +278,10 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			case audioSettingMore:
 				m.modal = "more"
 			}
+		}
+		if m.modal == "more" {
+			// Last error can disappear while playback updates the available actions.
+			m.moreChoice = min(m.moreChoice, len(m.moreItems())-1)
 		}
 	}()
 	defer func() { command = tea.Batch(command, m.reconcileRecovery()) }()
@@ -488,19 +492,12 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 		}
 		if m.inlineActions() && m.modal == "more" {
 			switch key {
-			case "down":
-				if m.moreChoice >= len(m.moreItems())-1 {
-					m.modal, m.setting = "", audioSettingMore
-					return m, m.enterAudioFromAbove()
-				}
-			case "tab", "shift+tab", "left":
+			case "ctrl+g":
 				m.modal, m.setting = "", 4
-				if key == "tab" {
-					return m, m.focusSection(4)
-				}
-				return m, m.focusSection(2)
-			case "ctrl+g", "ctrl+s", "ctrl+o":
-				m.modal, m.setting = "", 4
+			case "ctrl+s", "ctrl+o":
+				m.modal = ""
+			default:
+				return m, m.updateWideAction(key)
 			}
 		}
 		if m.modal != "" {

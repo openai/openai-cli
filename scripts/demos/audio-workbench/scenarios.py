@@ -964,8 +964,12 @@ def wide_case(ctx):
     ctx.paste(terminal, draft)
     terminal.send(b"\t\t\t")
     ctx.wait(terminal, "› History")
+    terminal.send(ctx.picker.DOWN)
+    ctx.wait(terminal, "Ctrl+G Generate")
+    terminal.send(ctx.picker.UP)
+    ctx.wait(terminal, "› History")
     for name in ("Preview voice", "Clear form", "View command", "Help"):
-        terminal.send(ctx.picker.DOWN)
+        terminal.send(b"\x1b[C")
         visible = ctx.wait(terminal, "› " + name)
         assert draft in visible, "Selecting an action hid the draft"
     ctx.mark(terminal, "wide-actions", result)

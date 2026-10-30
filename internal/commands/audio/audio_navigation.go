@@ -31,6 +31,11 @@ func (m *audioWorkbench) cycleSection(backward bool) tea.Cmd {
 		return m.focusSection(4)
 	}
 	if m.inlineActions() {
+		if m.focus == 4 && backward && m.setting == audioSettingMore {
+			m.modal = "more"
+			m.moreChoice = min(m.moreChoice, len(m.moreItems())-1)
+			return m.focusSection(2)
+		}
 		if m.focus == 2 && !backward || m.focus == 4 && backward {
 			return m.openActions()
 		}
@@ -114,7 +119,7 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 		}
 	case 2:
 		order := m.settingOrder()
-		onActionRow := m.setting >= 4 && m.setting <= audioSettingMore && len(m.formActionRows()) == 1
+		onActionRow := m.setting >= 4 && m.setting <= audioSettingMore && (m.inlineActions() || len(m.formActionRows()) == 1)
 		switch key {
 		case "left", "right":
 			if m.inlineActions() && (m.setting == 4 || m.setting == audioSettingDisclosure) {
@@ -153,7 +158,9 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			m.setting = order[0]
 		case "end":
 			if m.inlineActions() {
-				return true, m.openActions()
+				cmd := m.openActions()
+				m.moreChoice = len(m.moreItems()) - 1
+				return true, cmd
 			}
 			m.setting = audioSettingMore
 		default:
@@ -177,7 +184,7 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			} else {
 				m.waveformFocused = false
 				// Retrace a vertical move to its action. Other routes use the bottom form row.
-				if len(m.formActionRows()) != 1 {
+				if !m.inlineActions() && len(m.formActionRows()) != 1 {
 					m.setting = audioSettingMore
 				} else if m.setting < 4 || m.setting > audioSettingMore {
 					m.setting = 4

@@ -85,7 +85,12 @@ func TestAudioValidationRevealsInvalidFieldAndKeepsRecording(t *testing.T) {
 			require.Equal(t, tc.field != 1, m.settingsExpanded)
 			message := m.fieldValidation(tc.field)
 			require.NotEmpty(t, message)
-			require.Contains(t, ansi.Strip(m.View().Content), message)
+			var visible []string
+			for _, row := range m.fieldValidationRows(tc.field) {
+				require.Contains(t, ansi.Strip(m.View().Content), ansi.Strip(row))
+				visible = append(visible, strings.TrimSpace(ansi.Strip(row)))
+			}
+			require.Equal(t, message, strings.Join(visible, " "))
 			audioReviewKey(m, tea.KeyRight)
 			require.Empty(t, m.fieldValidation(tc.field))
 			require.False(t, m.activeFailure())

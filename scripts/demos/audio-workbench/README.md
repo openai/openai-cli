@@ -308,6 +308,6 @@ These tests cover partial startup, deferred interruption, continued cleanup, sou
 They do not replace the full checker run against the exact candidate binary.
 
 The `wide` case runs at 186×34. The frame leaves the last terminal column free to prevent a soft wrap.
-Tab moves focus to the Actions column. Down moves through its rows while the draft remains visible.
-The case follows Down into Audio from Help and Generate. Up restores each selection.
+Tab moves focus to the horizontal Actions row. Right moves across its actions while the draft stays visible.
+The case follows Down into Audio from History, Help, and Generate. Up restores each selection.
 It also opens Help and checks that navigation made zero speech requests.

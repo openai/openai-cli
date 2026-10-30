@@ -363,18 +363,33 @@ func TestAudioNavigationWideActionsToWaveform(t *testing.T) {
 			require.Empty(t, m.modal)
 			require.Equal(t, 4, m.setting)
 			key(tea.KeyRight)
-			key(tea.KeyEnd)
-			last := len(m.moreItems()) - 1
-			require.Equal(t, last, m.moreChoice)
-			key(tea.KeyDown)
-			require.Empty(t, m.modal)
-			require.Equal(t, 4, m.focus)
-			require.True(t, m.waveformFocused)
-			require.Contains(t, m.View().Content, "↑ Actions")
-			key(tea.KeyUp)
-			require.Equal(t, "more", m.modal)
-			require.Equal(t, last, m.moreChoice)
+			for i := range m.moreItems() {
+				if i > 0 {
+					key(tea.KeyRight)
+				}
+				require.Equal(t, i, m.moreChoice)
+				key(tea.KeyDown)
+				require.Empty(t, m.modal)
+				require.Equal(t, 4, m.focus)
+				require.True(t, m.waveformFocused)
+				require.Contains(t, m.View().Content, "↑ Actions")
+				key(tea.KeyUp)
+				require.Equal(t, "more", m.modal)
+				require.Equal(t, i, m.moreChoice)
+			}
+			key(tea.KeyRight)
+			require.Equal(t, len(m.moreItems())-1, m.moreChoice)
 			key(tea.KeyLeft)
+			require.Equal(t, len(m.moreItems())-2, m.moreChoice)
+			key(tea.KeyHome)
+			require.Equal(t, 4, m.setting)
+			key(tea.KeyEnd)
+			require.Equal(t, len(m.moreItems())-1, m.moreChoice)
+			key(tea.KeyUp)
+			require.Empty(t, m.modal)
+			require.Equal(t, audioSettingDisclosure, m.setting)
+			key(tea.KeyDown)
+			require.Equal(t, 4, m.setting)
 			key(tea.KeyDown)
 			require.Equal(t, 4, m.focus)
 			require.True(t, m.waveformFocused)
@@ -383,8 +398,38 @@ func TestAudioNavigationWideActionsToWaveform(t *testing.T) {
 			require.Empty(t, m.modal)
 			require.Equal(t, 2, m.focus)
 			require.Equal(t, 4, m.setting)
+			require.NotNil(t, m.result)
+			require.Equal(t, "Keep this draft.", m.input.Value())
 		})
 	}
+}
+
+func TestAudioWideActionsRetainSelectionAcrossAudioAndRecovery(t *testing.T) {
+	m := audioResultNavigationModel(t, 110, 24)
+	m.settingsExpanded = true
+	m.failure.Summary = "Synthetic failure."
+	m.failureNote = m.note
+	m.openActions()
+	audioReviewKey(m, tea.KeyEnd)
+	require.Equal(t, "Last error", m.moreItems()[m.moreChoice])
+	audioReviewKey(m, tea.KeyUp)
+	require.Equal(t, 3, m.setting, "Up returns to Speed when Settings is expanded")
+	m.openActions()
+	audioReviewKey(m, tea.KeyEnd)
+	m.note = "Playback completed."
+	m.Update(tea.WindowSizeMsg{Width: 110, Height: 24})
+	require.Equal(t, "Help", m.moreItems()[m.moreChoice])
+	audioNavigationKey(t, m, tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	require.Equal(t, 4, m.focus)
+	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	require.Equal(t, "more", m.modal)
+	require.Equal(t, "Help", m.moreItems()[m.moreChoice])
+	m.Update(tea.WindowSizeMsg{Width: 109, Height: 24})
+	require.Contains(t, ansi.Strip(m.View().Content), "More actions")
+	audioReviewKey(m, tea.KeyUp)
+	require.Equal(t, "View command", m.moreItems()[m.moreChoice])
+	m.Update(tea.WindowSizeMsg{Width: 110, Height: 24})
+	require.Contains(t, ansi.Strip(m.View().Content), "› View command")
 }
 
 func TestAudioNavigationHorizontalFormActions(t *testing.T) {
