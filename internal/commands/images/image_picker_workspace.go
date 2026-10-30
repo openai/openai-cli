@@ -40,7 +40,11 @@ type imagePickerWorkspace struct {
 	context                                   context.Context
 	root                                      *cli.Command
 	send                                      func(tea.Msg)
+	styleDark, styleColor                     bool
+	styleProfile                              colorprofile.Profile
 	rows, painted                             []string
+	detailTones                               map[int]imagePickerTone
+	requestFailure                            string
 	displayRows                               []string
 	layoutWidth, layoutCount, layoutSelected  int
 	messageRows                               int
@@ -224,7 +228,13 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		return nil
 	}
 	resized := width != w.width || height != w.height
-	if resized || headerChanged || w.header.Content == "" {
+	styleChanged := w.styleDark != m.dark || w.styleColor != m.color || w.styleProfile != profile
+	if styleChanged {
+		w.styleDark, w.styleColor, w.styleProfile = m.dark, m.color, profile
+		w.galleryRevision++ // Recolor cached diagnostics without changing their scroll anchor.
+	}
+	m.profile = profile
+	if resized || headerChanged || styleChanged || w.header.Content == "" {
 		view := m.View()
 		var text strings.Builder
 		_, _ = io.WriteString(&colorprofile.Writer{Forward: &text, Profile: max(profile, colorprofile.ASCII)}, view.Content)

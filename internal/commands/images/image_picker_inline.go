@@ -119,7 +119,9 @@ func (p *imagePickerInline) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case imagePickerWrapTimeout:
 		p.start()
 	case tea.ColorProfileMsg:
-		p.profile = msg.Profile
+		if p.model.color {
+			p.profile, p.model.profile = msg.Profile, msg.Profile
+		}
 	}
 	if !p.started {
 		// Ignore input queued during generation before the new draft is visible.

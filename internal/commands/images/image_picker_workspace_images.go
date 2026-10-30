@@ -12,7 +12,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
+
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/imagegallery"
 	"github.com/openai/openai-cli/internal/imageoutput"
@@ -60,16 +60,8 @@ func imagePickerPreviewRows(ctx context.Context, out *os.File, img image.Image, 
 }
 
 func (m *imagePicker) workspaceKeys(keys [][2]string, width int) string {
-	key, muted := lipgloss.NewStyle().Bold(true), lipgloss.NewStyle()
-	if m.color {
-		accent, secondary := "#3159BC", "#657087"
-		if m.dark {
-			accent, secondary = "#8AA8FF", "#A4ACC2"
-		}
-		key = key.Foreground(lipgloss.Color(accent))
-		muted = muted.Foreground(lipgloss.Color(secondary))
-	}
-	return imagePickerWorkspaceShortcutLine(keys, width, key, muted)
+	palette := m.palette()
+	return imagePickerWorkspaceShortcutLine(keys, width, m.foreground(palette.accent), m.foreground(palette.secondary))
 }
 
 func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string {
@@ -79,15 +71,23 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 	lines := make([]string, max(1, m.height))
 	entry := &w.images[w.selected]
 	title := w.imageTitle()
-	lines[0] = "    " + ansi.Truncate(title, max(0, m.width-6), "…")
+	lines[0] = "    " + m.workspaceText(ansi.Truncate(title, max(0, m.width-6), "…"), imageActive)
 	if len(lines) > 1 {
-		lines[1] = "    " + ansi.Truncate(imagePickerLine("Saved in "+imagePickerFolderLabel(filepath.Dir(entry.file.Path))), max(0, m.width-6), "…")
+		lines[1] = "    " + ansi.Truncate(m.workspaceSavedLocation(imagePickerFolderLabel(filepath.Dir(entry.file.Path))), max(0, m.width-6), "…")
 	}
 	if len(lines) > 3 {
 		if busy {
-			lines[2] = "    " + ansi.Truncate(w.progress(), max(0, m.width-6), "…")
+			lines[2] = "    " + m.workspaceText(ansi.Truncate(w.progress(), max(0, m.width-6), "…"), "active")
 		} else if m.note != "" {
-			lines[2] = "    " + ansi.Truncate(imagePickerLine(m.note), max(0, m.width-6), "…")
+			role := m.noteTone
+			note := m.note
+			if m.note == "All images saved." {
+				role = imageSuccess
+			} else if m.note == imagePickerRequestFailureNote {
+				role = imageFailure
+				note = w.requestFailureSummary()
+			}
+			lines[2] = "    " + m.workspaceText(ansi.Truncate(imagePickerLine(note), max(0, m.width-6), "…"), role)
 		}
 		rows, count, columns, native, expanded := w.expandedRows, w.expandedRowCount(), w.expandedColumns, w.expandedNativeRows > 0, true
 		if w.expandedIndex != w.selected || w.expandedSize.width != m.width || w.expandedSize.height != m.height || count == 0 {
@@ -333,15 +333,11 @@ func imagePickerPreviewColumns(bounds image.Rectangle, width, height, cw, ch int
 
 // The outline owns its cells; native graphics keep the existing content origin.
 func (m *imagePicker) workspaceImageBorder(text string) string {
-	style := lipgloss.NewStyle()
-	if m.color {
-		color := "#BAC4D8"
-		if m.dark {
-			color = "#51566B"
-		}
-		style = style.Foreground(lipgloss.Color(color))
-	}
-	return style.Render(text)
+	return m.foreground(m.palette().border).Render(text)
+}
+
+func (m *imagePicker) workspaceSavedLocation(folder string) string {
+	return m.workspaceText("Saved", imageSuccess) + m.workspaceText(" in "+imagePickerLine(folder), imageSecondary)
 }
 
 func (m *imagePicker) workspaceImageFrame(label string, width int, top bool) string {

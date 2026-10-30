@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestImagePickerWorkspaceExploreStyleKeepsFocusDistinct(t *testing.T) {
+func TestImagePickerWorkspaceBatchStyleKeepsFocusDistinct(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		m := pickerForTest(t)
 		m.width, m.height, m.workspace, m.color, m.dark = 96, 28, true, true, dark
@@ -18,14 +18,15 @@ func TestImagePickerWorkspaceExploreStyleKeepsFocusDistinct(t *testing.T) {
 		lines := strings.Split(view, "\n")
 		titleIndex, _ := pickerNavigationLine(t, view, "Create image")
 		title := lines[titleIndex]
-		require.Contains(t, title, "\x1b[1m")
-		for _, label := range []string{"Prompt", "Settings", "Command", "Ctrl+C"} {
+		require.NotContains(t, title, "\x1b[1m")
+		for _, label := range []string{"Settings", "Command", "Ctrl+C"} {
 			index, _ := pickerNavigationLine(t, view, label)
 			line := lines[index]
 			require.NotContains(t, line, "\x1b[1m", label)
 		}
-		footer := lines[len(lines)-1]
-		require.Contains(t, ansi.Strip(footer), "Ctrl+C exit · Ctrl+G generate")
+		footer := lines[len(lines)-2]
+		require.Contains(t, ansi.Strip(footer), "Ctrl+G generate")
+		require.Contains(t, ansi.Strip(footer), "Ctrl+C exit")
 		require.NotContains(t, ansi.Strip(footer), "[")
 		require.NotEqual(t, ansi.Strip(footer), footer)
 		require.NotRegexp(t, `\x1b\[(?:[0-9]+;)*48[;:]`, view, "typing must not paint a selected row")
@@ -49,8 +50,39 @@ func TestImagePickerWorkspacePromptAlignsWithTitleImage(t *testing.T) {
 			titleRow, _ := pickerNavigationLine(t, view.Content, "Create image")
 			titlePrefix, _, _ := strings.Cut(lines[titleRow], "image")
 			require.Equal(t, ansi.StringWidth(titlePrefix), view.Cursor.X)
-			require.True(t, strings.HasSuffix(ansi.Truncate(lines[view.Cursor.Y], view.Cursor.X, ""), "Prompt "))
+			prefix := ansi.Truncate(lines[view.Cursor.Y], view.Cursor.X, "")
+			require.True(t, strings.HasSuffix(strings.TrimRight(prefix, " "), "Prompt"))
 		}
+	}
+}
+
+func TestImagePickerWorkspaceTableAndPromptSurviveResize(t *testing.T) {
+	m := pickerForTest(t)
+	m.workspace, m.color, m.height = true, false, 41
+	m.settings.count = "3"
+	m.draft = []rune(strings.Repeat("界", 90) + "ab")
+	m.cursor = len(m.draft) - 1
+	for _, width := range []int{133, 50, 40, 133} {
+		m.width = width
+		view := m.View()
+		lines := strings.Split(ansi.Strip(view.Content), "\n")
+		prompt := lines[view.Cursor.Y]
+		require.True(t, strings.HasSuffix(ansi.Truncate(prompt, view.Cursor.X, ""), "a"))
+		if width == 133 {
+			require.Contains(t, prompt, "3 images per run│")
+		} else {
+			require.NotContains(t, prompt, "per run")
+		}
+		require.Contains(t, lines[view.Cursor.Y+1], "────")
+		_, columns := pickerNavigationLine(t, view.Content, "Settings")
+		_, option := pickerNavigationLine(t, view.Content, "Model")
+		col := func(line, token string) int {
+			left, _, found := strings.Cut(line, token)
+			require.True(t, found)
+			return ansi.StringWidth(left)
+		}
+		require.Equal(t, col(columns, "Settings"), col(option, "Model"))
+		require.Equal(t, col(columns, "Value"), col(option, "gpt-image-"))
 	}
 }
 
@@ -63,16 +95,17 @@ func TestImagePickerWorkspaceFooterWrapsByContent(t *testing.T) {
 			m.hasImages = images
 			for _, focus := range []string{"prompt", "options", "command", "path", "images"} {
 				m.focus, m.generating = focus, false
-				idle := m.workspaceFooter(width-6, style, style)
+				idle := m.workspaceFooter(width-8, style, style)
 				if focus == "prompt" || focus == "options" {
-					require.Contains(t, idle[0], "Ctrl+C exit · Ctrl+G generate", "width=%d focus=%s", width, focus)
+					require.Contains(t, idle[0], "Ctrl+G generate", "width=%d focus=%s", width, focus)
+					require.Contains(t, strings.Join(idle, "\n"), "Ctrl+C exit")
 				}
 				m.generating = true
-				busy := m.workspaceFooter(width-6, style, style)
+				busy := m.workspaceFooter(width-8, style, style)
 				require.Len(t, busy, len(idle))
 				require.Contains(t, busy[0], "Ctrl+C cancel generation")
 				for _, line := range append(idle, busy...) {
-					require.LessOrEqual(t, ansi.StringWidth(line), width-6)
+					require.LessOrEqual(t, ansi.StringWidth(line), width-8)
 				}
 			}
 		}
@@ -106,7 +139,9 @@ func TestImagePickerWorkspaceCommandExpandsOnlyOnFocus(t *testing.T) {
 	row, line := pickerNavigationLine(t, view, "Command")
 	require.Contains(t, line, "Command   openai images generate")
 	require.Contains(t, line, "…")
-	require.Contains(t, strings.Split(view, "\n")[row+1], "╰")
+	footer, _ := pickerNavigationLine(t, view, "Ctrl+C")
+	require.Greater(t, footer, row)
+	require.Contains(t, strings.Split(view, "\n")[footer+1], "╰")
 	require.NotContains(t, view, " of ")
 	m.focus = "command"
 	m.scrollCommand("home")

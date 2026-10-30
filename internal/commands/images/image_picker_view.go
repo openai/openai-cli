@@ -67,10 +67,8 @@ func (m *imagePicker) View() tea.View {
 	accent := selected
 	keyStyle := strong
 	border := lipgloss.NewStyle()
-	focusColor, textColor, mutedColor, borderColor := "#3159BC", "#20283B", "#657087", "#BAC4D8"
-	if m.dark {
-		focusColor, textColor, mutedColor, borderColor = "#8AA8FF", "#F2F4FA", "#A4ACC2", "#51566B"
-	}
+	palette := m.palette()
+	focusColor, textColor, mutedColor, borderColor := palette.accent, palette.selected, palette.secondary, palette.border
 	if m.color {
 		keyStyle = keyStyle.Foreground(lipgloss.Color(focusColor))
 		muted = muted.Foreground(lipgloss.Color(mutedColor))
@@ -100,7 +98,7 @@ func (m *imagePicker) View() tea.View {
 		prompt = muted.Render(prompt)
 	}
 	if m.workspace {
-		return m.workspaceView(view, prompt, strong, muted, accent, border, keyStyle)
+		return m.workspaceView(view, prompt, strong, muted, accent, keyStyle, palette)
 	}
 	roomy := height >= 16
 	commandWidth, commandHeight := m.commandDimensions()
@@ -201,6 +199,8 @@ func (m *imagePicker) View() tea.View {
 	return view
 }
 
+const imagePickerOptionLabelWidth = 14
+
 // Share choice alignment and escaping between inline and workspace forms.
 func (m *imagePicker) optionLines(rows []imagePickerRow, start, end, width int, selected, accent, muted lipgloss.Style) []string {
 	var lines []string
@@ -214,8 +214,10 @@ func (m *imagePicker) optionLines(rows []imagePickerRow, start, end, width int, 
 	for i := start; i < end; i++ {
 		row := rows[i]
 		text := row.label
+		label := row.label
 		if row.id == "choice" {
 			text = ansi.Truncate(text, choiceWidth, "…")
+			label = text
 			text += strings.Repeat(" ", choiceWidth-ansi.StringWidth(text)) + "  "
 			if row.value == m.value(m.field) {
 				text += "✓"
@@ -226,7 +228,7 @@ func (m *imagePicker) optionLines(rows []imagePickerRow, start, end, width int, 
 				text += "  " + row.detail
 			}
 		} else if row.value != "" {
-			text = fmt.Sprintf("%-14s %s", row.label, imagePickerLine(row.value))
+			text = fmt.Sprintf("%-*s %s", imagePickerOptionLabelWidth, row.label, imagePickerLine(row.value))
 		}
 		active := (!m.workspace || !m.generating) && i == m.selected && (m.focus == "options" || m.focus == "path" && m.folder.match >= 0)
 		if m.page == "path" && row.id == "" {
@@ -234,8 +236,20 @@ func (m *imagePicker) optionLines(rows []imagePickerRow, start, end, width int, 
 		}
 		text = ansi.Truncate(text, width-2, "…")
 		if active {
-			lines = append(lines, accent.Render("› ")+selected.Render(text))
+			if m.workspace {
+				label = ansi.Truncate(label, width-2, "…")
+				value := strings.TrimPrefix(text, label)
+				line := "› " + selected.Bold(m.color).Render(label) + selected.Render(value)
+				lines = append(lines, selected.Width(width).Render(line))
+			} else {
+				lines = append(lines, accent.Render("› ")+selected.Render(text))
+			}
 		} else {
+			if m.workspace && (m.page == "settings" || m.page == "more") && row.value != "" {
+				if value, found := strings.CutPrefix(text, label); found {
+					text = muted.Render(label) + value
+				}
+			}
 			lines = append(lines, "  "+text)
 		}
 	}

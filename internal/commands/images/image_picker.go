@@ -32,6 +32,7 @@ type imagePickerOptions struct {
 	initial      *imagePickerSettings
 	resuming     bool
 	initialNote  string
+	initialTone  imagePickerTone
 	workspace    *imagePickerWorkspace
 	generate     func(context.Context, *imagePickerResult) error
 	printCommand func(string) error
@@ -111,15 +112,14 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	tracked := &imagePickerOutput{File: output, cancel: cancel}
-	inline := &imagePickerInline{model: model, output: tracked, profile: colorprofile.Detect(output, os.Environ()), resuming: options.resuming}
+	inline := &imagePickerInline{model: model, output: tracked, profile: cliterminal.ColorProfile(output, os.Environ(), true), resuming: options.resuming}
 	inline.workspace, inline.generate, inline.requestContext = options.workspace, options.generate, parent
 	inline.savedSettings = initialSettings
 	inline.mouseShell = mouseShell
 	programOptions := []tea.ProgramOption{tea.WithInput(input), tea.WithOutput(tracked), tea.WithContext(ctx), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutRenderer()}
-	if os.Getenv("NO_COLOR") != "" {
-		model.color = false
-		programOptions = append(programOptions, tea.WithColorProfile(colorprofile.NoTTY))
-	}
+	model.profile = inline.profile
+	model.color = os.Getenv("NO_COLOR") == "" && os.Getenv("FORCE_COLOR") != "0"
+	programOptions = append(programOptions, tea.WithColorProfile(inline.profile))
 	program := tea.NewProgram(inline, programOptions...)
 	if inline.workspace != nil {
 		inline.workspace.send = program.Send
@@ -275,7 +275,9 @@ type imagePicker struct {
 	width, height  int
 	color          bool
 	dark           bool
+	profile        colorprofile.Profile
 	note           string
+	noteTone       imagePickerTone
 	workspace      bool
 	hasImages      bool
 	generating     bool
@@ -290,7 +292,7 @@ type imagePickerRow struct {
 func newImagePicker(options imagePickerOptions) (*imagePicker, error) {
 	m := &imagePicker{
 		settings: imagePickerSettings{prompt: options.Prompt, model: defaultSavedImageModel, size: "1024x1024", quality: "auto", background: "auto", format: "png", count: "1"},
-		page:     "settings", focus: "prompt", color: true, dark: true,
+		page:     "settings", focus: "prompt", color: true, dark: cliterminal.DarkBackground(os.Getenv("COLORFGBG")), profile: colorprofile.TrueColor,
 		draft: []rune(options.Prompt), cursor: len([]rune(options.Prompt)),
 	}
 	if options.initial != nil {
@@ -300,7 +302,7 @@ func newImagePicker(options imagePickerOptions) (*imagePicker, error) {
 		m.settings.prompt = options.Prompt
 	}
 	m.shell = options.Shell
-	m.note = options.initialNote
+	m.setNote(options.initialNote, options.initialTone)
 	return m, nil
 }
 
@@ -347,7 +349,7 @@ func (m *imagePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.focus == "prompt" {
 			m.insertPrompt(msg.Content)
 		} else {
-			m.note = "Tab to Prompt to paste text."
+			m.setNote("Tab to Prompt to paste text.", imageWarning)
 		}
 	case tea.KeyPressMsg:
 		key := msg.String()
@@ -565,14 +567,14 @@ func (m *imagePicker) apply(value string) {
 	if m.value(m.field) != value {
 		m.commandOffset = 0
 	}
-	m.note = ""
+	m.setNote("", imageSecondary)
 	s := &m.settings
 	switch m.field {
 	case "model":
 		s.model = value
 		if (s.quality == "xhigh" || s.quality == "max") && value != openai.ImageModelGPTImage2_5Sunburst && value != openai.ImageModelGPTImage2_5Flare {
 			s.quality = "auto"
-			m.note = "Quality changed to Auto for this model."
+			m.setNote("Quality changed to Auto for this model.", imageWarning)
 		}
 	case "size":
 		s.size = value
@@ -582,13 +584,13 @@ func (m *imagePicker) apply(value string) {
 		s.background = value
 		if value == "transparent" && s.format == "jpeg" {
 			s.format = "png"
-			m.note = "File type changed to PNG to keep transparency."
+			m.setNote("File type changed to PNG to keep transparency.", imageWarning)
 		}
 	case "format":
 		s.format = value
 		if value == "jpeg" && s.background == "transparent" {
 			s.background = "opaque"
-			m.note = "Background changed to Opaque for JPEG."
+			m.setNote("Background changed to Opaque for JPEG.", imageWarning)
 		}
 	case "count":
 		s.count = value
@@ -610,7 +612,7 @@ func (m *imagePicker) activate(row imagePickerRow) tea.Cmd {
 		m.page, m.selected = "more", 0
 	case "generate", "print":
 		if row.id == "print" && cliterminal.ShellQuoter(m.shell) == nil {
-			m.note = imagePickerUnsupportedShell
+			m.setNote(imagePickerUnsupportedShell, imageWarning)
 			return nil
 		}
 		if m.validPrompt() {
@@ -634,11 +636,11 @@ func (m *imagePicker) selectCurrent(field string) {
 func (m *imagePicker) validPrompt() bool {
 	switch {
 	case strings.TrimSpace(m.settings.prompt) == "":
-		m.note = "Add a prompt first."
+		m.setNote("Add a prompt first.", imageWarning)
 	case strings.ContainsRune(m.settings.prompt, 0):
-		m.note = "Remove the NUL character; shell arguments cannot contain it."
+		m.setNote("Remove the NUL character; shell arguments cannot contain it.", imageWarning)
 	case strings.HasPrefix(m.settings.prompt, `\@`):
-		m.note = `Prompts beginning with \@ cannot be represented by the request parser.`
+		m.setNote(`Prompts beginning with \@ cannot be represented by the request parser.`, imageWarning)
 	default:
 		return true
 	}
@@ -646,7 +648,7 @@ func (m *imagePicker) validPrompt() bool {
 }
 
 func (m *imagePicker) back() tea.Cmd {
-	m.note = ""
+	m.setNote("", imageSecondary)
 	switch m.page {
 	case "folder", "path":
 		return m.backFolder()
@@ -669,7 +671,7 @@ func (m *imagePicker) insertPrompt(text string) {
 	if text != "" {
 		m.commandOffset = 0
 	}
-	m.note = ""
+	m.setNote("", imageSecondary)
 }
 
 func (m *imagePicker) editPrompt(key tea.KeyPressMsg) {
@@ -703,6 +705,6 @@ func (m *imagePicker) editPrompt(key tea.KeyPressMsg) {
 	m.settings.prompt = string(m.draft)
 	if m.settings.prompt != previous {
 		m.commandOffset = 0
-		m.note = ""
+		m.setNote("", imageSecondary)
 	}
 }

@@ -23,19 +23,26 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 		w.layoutGallery(m)
 	}
 	status := ""
+	role := m.noteTone
 	if busy {
 		status = w.progress()
+		role = imageActive
 	} else if m.note != "" && m.note != "All images saved." && (m.note != imagePickerRequestFailureNote || len(w.rows) == 0) {
 		// New form notices take precedence over retained request or image-open errors.
 		status = imagePickerLine(m.note)
+		if m.note == imagePickerRequestFailureNote {
+			role = imageFailure
+		}
 	} else if w.openError && w.openErrorIndex == w.selected {
 		status = "Could not open this image."
+		role = imageFailure
 	} else if m.note == imagePickerRequestFailureNote && w.offset >= w.messageRows {
-		status = "Request failed."
+		status = w.requestFailureSummary()
+		role = imageFailure
 	}
 	lines := append([]string(nil), header...)
 	if status != "" || len(w.displayRows) > 0 {
-		lines = append(lines, "    "+ansi.Truncate(status, max(0, m.width-6), "…"))
+		lines = append(lines, "    "+m.workspaceText(ansi.Truncate(status, max(0, m.width-6), "…"), role))
 	}
 	if len(w.displayRows) > 0 {
 		frameRows := 0
@@ -54,7 +61,10 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 			if label != "~" {
 				label = filepath.Base(folder)
 			}
-			location = m.workspaceImageBorder("Saved in " + imagePickerLine(label))
+			location = m.workspaceSavedLocation(label)
+			if m.focus == "images" {
+				title = m.workspaceText(title, imageActive)
+			}
 		}
 		if len(w.images) > 0 {
 			lines = append(lines, m.workspaceImageFrame(title, m.width, true))
@@ -68,6 +78,9 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 			row := ""
 			if w.offset+i < len(w.displayRows) {
 				row = w.displayRows[w.offset+i]
+				if m.focus == "images" && w.layoutCaptions && len(w.galleryStarts) > 0 && w.offset+i == w.galleryStarts[w.selected] {
+					row = m.workspaceText("›", imageActive) + strings.TrimPrefix(row, "›")
+				}
 				if native, ok := w.nativeDisplay[w.offset+i]; ok {
 					row = w.nativeViewRow(native, len(lines))
 				}
@@ -87,6 +100,13 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 		}
 	}
 	return lines
+}
+
+func (w *imagePickerWorkspace) requestFailureSummary() string {
+	if w.requestFailure != "" {
+		return w.requestFailure
+	}
+	return imagePickerRequestFailureNote
 }
 
 func (w *imagePickerWorkspace) imageTitle() string {
@@ -117,8 +137,8 @@ func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 			w.displayRows = append(w.displayRows, strings.Split(ansi.Wrap(row, max(1, m.width-8), ""), "\n")...)
 		}
 	}
-	for _, row := range w.rows {
-		appendRow(row)
+	for i, row := range w.rows {
+		appendRow(m.workspaceText(row, w.detailTones[i]))
 	}
 	w.messageRows = len(w.displayRows)
 	w.galleryStarts = make([]int, len(w.images))
@@ -192,4 +212,6 @@ func (w *imagePickerWorkspace) clearRequestDiagnostics() {
 		w.galleryJump = true
 	}
 	w.rows = nil
+	w.detailTones = nil
+	w.requestFailure = ""
 }

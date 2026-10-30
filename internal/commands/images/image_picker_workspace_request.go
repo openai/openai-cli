@@ -11,7 +11,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-const imagePickerRequestFailureNote = "Request failed. Edit your prompt or settings before trying again."
+const imagePickerRequestFailureNote = "Couldn't create your image."
+
+// Keep semantic roles alongside the unstyled diagnostics so a theme change can repaint them.
+func (w *imagePickerWorkspace) addDetail(text string, tone imagePickerTone) {
+	if w.detailTones == nil {
+		w.detailTones = make(map[int]imagePickerTone)
+	}
+	w.detailTones[len(w.rows)] = tone
+	w.rows = append(w.rows, text)
+}
 
 func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
 	result := p.model.result
@@ -19,7 +28,7 @@ func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
 	p.selection = &result
 	p.model.result = imagePickerResult{}
 	p.model.generating, p.busy = true, true
-	p.model.note = ""
+	p.model.setNote("", imageSecondary)
 	p.workspace.clearRequestDiagnostics()
 	p.workspace.animationFrame = 0
 	p.workspace.fontNotice = false
@@ -40,7 +49,7 @@ func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
 	go func() {
 		err := p.generate(ctx, &result)
 		if err != nil && imagePickerRecoverableRequest(err) && !cliterminal.IsWriterTerminal(os.Stderr) {
-			if displayErr := writeImagePickerRequestMessage(ctx, os.Stderr, p.workspace.root, err, result.draftSaved); displayErr != nil {
+			if displayErr := writeImagePickerRequestMessage(ctx, os.Stderr, err, result.draftSaved); displayErr != nil {
 				err = displayErr
 			}
 		}
@@ -105,7 +114,9 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		draw(false)
 		return true, nil
 	case imagePickerWorkspaceRows:
-		p.workspace.rows = append(p.workspace.rows, msg.rows...)
+		for _, row := range msg.rows {
+			p.workspace.addDetail(row, imageWarning)
+		}
 		draw(false)
 		return true, nil
 	case imagePickerWorkspaceImage:
@@ -167,16 +178,24 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 				p.err = msg.err
 				return true, tea.Quit
 			}
-			message := imagePickerRequestMessage(p.workspace.root, msg.err, msg.draftSaved)
-
+			message := imagePickerRequestMessage(msg.err, msg.draftSaved)
+			heading, _, _ := strings.Cut(message, "\n")
+			p.workspace.requestFailure = imagePickerLine(heading)
 			for _, line := range strings.Split(message, "\n") {
-				p.workspace.rows = append(p.workspace.rows, imagePickerLine(line))
+				tone := imageSecondary
+				switch line {
+				case heading:
+					tone = imageFailure
+				case imagePickerUnsavedDraft:
+					tone = imageWarning
+				}
+				p.workspace.addDetail(imagePickerLine(line), tone)
 			}
 			p.workspace.offset = 0
 			p.workspace.galleryDetails = true
-			p.model.note = imagePickerRequestFailureNote
+			p.model.setNote(imagePickerRequestFailureNote, imageFailure)
 		} else {
-			p.model.note = "All images saved."
+			p.model.setNote("All images saved.", imageSuccess)
 		}
 		draw(true)
 		return true, nil
@@ -269,7 +288,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 			switch msg.String() {
 			case "o":
 				if !p.workspace.opening && len(p.workspace.images) > 0 && p.model.note != imagePickerRequestFailureNote {
-					p.model.note = ""
+					p.model.setNote("", imageSecondary)
 				}
 				return true, p.openSavedImage()
 			case "enter":

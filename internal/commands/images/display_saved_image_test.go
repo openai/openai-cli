@@ -249,6 +249,7 @@ func TestKonsoleImagePlatforms(t *testing.T) {
 			{"off", "off", "", true, nil},
 			{"pipe", "on", "", false, nil},
 			{"no color", "auto", platform.withoutColor, true, map[string]string{"NO_COLOR": "1"}},
+			{"forced off", "on", platform.withoutColor, true, map[string]string{"FORCE_COLOR": "0", "COLORTERM": "truecolor"}},
 			{"clicolor", "on", platform.withoutColor, true, map[string]string{"CLICOLOR": "0"}},
 			{"no assertion", "auto", "blocks", true, map[string]string{"OPENAI_KONSOLE_IMAGES": ""}},
 			{"no identity", "on", "blocks", true, map[string]string{"KONSOLE_VERSION": ""}},

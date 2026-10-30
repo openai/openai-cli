@@ -76,7 +76,8 @@ func TestImagePickerWorkspaceFrameSeparatesHeadingWithoutBlankLine(t *testing.T)
 	w := &imagePickerWorkspace{out: out}
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 	require.Contains(t, ansi.Strip(w.painted[0]), "╭")
-	require.Contains(t, ansi.Strip(w.painted[1]), "Create image")
+	require.Contains(t, ansi.Strip(w.painted[0]), "Create image")
+	require.Contains(t, ansi.Strip(w.painted[1]), "Prompt")
 	m.width = 80
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 	_, err = out.Seek(0, io.SeekStart)
