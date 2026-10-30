@@ -215,7 +215,7 @@ func (m *audioWorkbench) resizeEditors() {
 				if editor == &m.input {
 					limit = min(6, max(2, m.audioHeight()/7))
 				}
-				if m.result != nil && m.settingsExpanded {
+				if m.settingsExpanded {
 					limit = min(limit, max(1, (m.audioHeight()-17)/2))
 				}
 				height = audioEditorHeight(*editor, limit)

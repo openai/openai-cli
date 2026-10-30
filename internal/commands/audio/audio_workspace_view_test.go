@@ -232,6 +232,59 @@ func TestAudioWorkspaceDoesNotInventAudioBeforeGeneration(t *testing.T) {
 	}
 }
 
+func TestAudioWorkspaceAnchorsGenerationAndPlayback(t *testing.T) {
+	for _, size := range [][2]int{{60, 24}, {80, 24}, {101, 29}, {120, 32}, {133, 39}, {180, 55}} {
+		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+			m := audioReviewModel(t)
+			m.input.SetValue("Synthetic draft.")
+			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			anchors := func(status, play string) [][2]int {
+				rows := strings.Split(ansi.Strip(m.View().Content), "\n")
+				var positions [][2]int
+				for _, label := range []string{"Text to speech", "Instructions", "Voice", "Generate speech",
+					"History", m.listeningRule(), "Audio", status, play, "Save audio…", " / "} {
+					found := false
+					for y, row := range rows {
+						if before, _, ok := strings.Cut(row, label); ok {
+							positions = append(positions, [2]int{ansi.StringWidth(before), y})
+							found = true
+							break
+						}
+					}
+					require.True(t, found, "missing %q", label)
+				}
+				return positions
+			}
+			initial := anchors("○ Idle", "Play audio")
+			_, command := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+			require.NotNil(t, command)
+			require.Equal(t, initial, anchors("● Generating", "Play audio"))
+
+			r := audioReviewResult("stable-layout", false)
+			r.entry.Settings = m.effectiveSettings()
+			m.Update(audioWorkMessage{kind: "generate", result: r})
+			require.Equal(t, initial, anchors("○ Ready", "Play audio"))
+			m.result.resumable, m.playing = true, true
+			require.Equal(t, initial, anchors("● Playing", "Pause audio"))
+			m.playing = false
+			require.Equal(t, initial, anchors("○ Paused", "Resume audio"))
+			m.result.finished, m.result.resumable = true, false
+			require.Equal(t, initial, anchors("● Completed", "Replay audio"))
+
+			// The retained recording has extra metadata while a new draft generates.
+			m.lastFinished = time.Time{}
+			m.input.SetValue("Another short draft.")
+			_, command = m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+			require.NotNil(t, command)
+			require.Equal(t, initial, anchors("● Generating", "Replay audio"))
+			r.entry.Settings, r.measured = m.effectiveSettings(), false
+			m.Update(audioWorkMessage{kind: "generate", result: r})
+			require.Contains(t, m.View().Content, "Preview unavailable")
+			require.Equal(t, initial, anchors("○ Ready", "Play audio"))
+		})
+	}
+}
+
 func TestAudioEmptyRecordingAndUnknownTimingRemainDistinct(t *testing.T) {
 	for _, size := range [][2]int{{40, 12}, {60, 24}, {101, 29}} {
 		m := audioReviewModel(t)

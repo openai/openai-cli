@@ -63,25 +63,19 @@ func (m *audioWorkbench) workspaceView() tea.View {
 		}
 	}
 	controlRows := len(controls)
-	waveRows := 0
-	if m.result.hasWaveform() {
-		waveRows = 2 // One measured row and the seek rail.
-		if m.modal != "seek" {
-			if len(m.result.savedPaths) == 0 {
-				controlRows++ // Reserve the receipt before sizing the waveform.
-			}
-			// One form separator can yield to the receipt to preserve measured detail.
-			capacity := m.audioHeight() - len(rows) - len(header) - controlRows - footerRows
-			waveRows = m.waveformDetailHeight(capacity) + 1
-		}
+	if m.modal != "seek" && (m.result == nil || len(m.result.savedPaths) == 0) {
+		controlRows++ // Leave room for a save receipt before the first recording.
 	}
+	// Size the form against the same plot before, during, and after generation.
+	controlLimit := m.audioHeight() - controlRows - footerRows
+	waveRows := m.waveformDetailHeight(controlLimit-len(rows)-1) + 1
 	contentRows := 0
 	for _, row := range rows {
 		if row != "" {
 			contentRows++
 		}
 	}
-	gapBudget := max(0, m.audioHeight()-contentRows-footerRows-len(header)-controlRows-waveRows)
+	gapBudget := max(0, min(controlLimit-contentRows-1-waveRows, controlLimit-contentRows-len(header)-2))
 	var lines []string
 	for index, row := range rows {
 		if row == "" { // Editor rows retain their indentation, even when empty.
@@ -95,26 +89,31 @@ func (m *audioWorkbench) workspaceView() tea.View {
 		}
 		lines = append(lines, row)
 	}
-	budget := m.audioHeight() - len(lines) - len(header) - controlRows - footerRows
-	wave := m.workspaceWaveformRows(budget)
-	free := budget - len(wave)
-	if len(wave) > 0 && free == 0 && len(lines) > 0 && lines[len(lines)-1] == "" {
-		// On short screens, move the divider's spare row below the metadata.
+	if len(lines) > 0 && lines[len(lines)-1] == "" && controlLimit-len(lines)-1 <= waveRows {
+		// On short screens, use the divider's spare row for the recording.
 		lines = lines[:len(lines)-1]
-		free++
 	}
-	lines = append(lines, header...)
-	if len(wave) > 0 && free > 0 {
-		lines = append(lines, "")
-		free--
-	}
-	if m.height >= 36 && free > 0 {
+	if m.height >= 36 && controlLimit-len(lines)-1 > waveRows {
 		lines = append([]string{""}, lines...)
 		if cursor != nil {
 			cursor.Y++
 		}
 	}
+	// Cap the empty plot at the same height as a measured plot. Its four
+	// auxiliary rows hold the rail, time labels, and gaps around the rail.
+	// One more row separates the plot from the recording header.
+	controlRow := min(controlLimit, len(lines)+1+m.waveformDetailHeight(audioMaxWaveformHeight)+5)
+	lines = append(lines, header...)
+	budget := controlRow - len(lines)
+	if budget > m.waveformDetailHeight(budget-1)+1 {
+		lines = append(lines, "")
+		budget--
+	}
+	wave := m.workspaceWaveformRows(budget)
 	lines = append(lines, wave...)
+	for len(lines) < controlRow {
+		lines = append(lines, "")
+	}
 	if m.modal == "seek" {
 		cursor = audioEditorCursor(m.seekInput, len(audioSeekLabel), len(lines))
 	}
@@ -124,6 +123,9 @@ func (m *audioWorkbench) workspaceView() tea.View {
 
 func (m *audioWorkbench) workspaceFooter() []string {
 	if m.busy {
+		if m.framed() {
+			return []string{"  " + m.progressView()}
+		}
 		return m.formShortcutRows([2]string{"Ctrl+C", "cancel"})
 	}
 	if m.modal == "seek" {
@@ -236,23 +238,27 @@ func (m *audioWorkbench) retainedGenerationErrorRow() string {
 
 func (m *audioWorkbench) workspaceAudioHeader() []string {
 	r := m.result
+	if r == nil && !m.framed() {
+		return []string{"  " + m.emptyAudioStatus()}
+	}
+	// Reserve the longest status so a label change cannot move the lamp or nearby metadata.
+	statusColumn := 2 + m.waveformWidth() - len("Generating")
+	left := "  "
+	if m.framed() {
+		statusColumn -= ansi.StringWidth("○ ")
+		left += m.muted().Render("Audio") + strings.Repeat(" ", m.formLabelWidth()+1-len("Audio"))
+	}
+	header := func(metadata string) string {
+		return metadata + strings.Repeat(" ", statusColumn-ansi.StringWidth(metadata)) + m.playerStatus()
+	}
+	width := statusColumn - ansi.StringWidth(left) - 1
 	if r == nil {
-		if !m.framed() {
-			return []string{"  " + m.emptyAudioStatus()}
-		}
 		state := m.muted().Render("No recording yet")
 		if m.playerNotice != "" {
 			state = m.warningStyle().Render(m.playerNotice)
 		}
-		return []string{"  " + m.muted().Render("Audio") + strings.Repeat(" ", m.formLabelWidth()+1-len("Audio")) + state}
+		return []string{header(left + ansi.Truncate(state, width, "…"))}
 	}
-	status := m.playerStatus()
-	end := 2 + m.waveformWidth()
-	left := "  "
-	if m.framed() {
-		left += m.muted().Render("Audio") + strings.Repeat(" ", m.formLabelWidth()+1-len("Audio"))
-	}
-	width := end - ansi.StringWidth(left) - ansi.StringWidth(status) - 1
 	cell := func(text string, limit int) string {
 		return ansi.Truncate(strings.Join(strings.Fields(readable.Text(text)), " "), limit, "…")
 	}
@@ -265,7 +271,7 @@ func (m *audioWorkbench) workspaceAudioHeader() []string {
 	suffix := separator + format + separator + size
 	voice = ansi.Truncate(voice, max(1, width-ansi.StringWidth(suffix)), "…")
 	left += ansi.Truncate(m.primaryText().Render(voice)+m.muted().Render(suffix), width, "…")
-	lines := []string{left + strings.Repeat(" ", end-ansi.StringWidth(left)-ansi.StringWidth(status)) + status}
+	lines := []string{header(left)}
 	if issue := m.retainedGenerationErrorRow(); issue != "" {
 		lines = append(lines, issue)
 	}
@@ -333,8 +339,8 @@ func (m *audioWorkbench) workspaceWaveformRows(budget int) []string {
 		rows = append(rows, "")
 	}
 	rows = append(rows, "  "+played+anchorStyle.Render("┷")+remaining)
-	// Keep both rail gaps and the metadata gap before spending a row on time labels.
-	if spare > 3 && m.framed() {
+	// The framed view already reserved its metadata gap. Keep both rail gaps before adding the ruler.
+	if spare > 2 && m.framed() {
 		rows = append(rows, "  "+m.muted().Render(audioTimeRuler(last+1, m.result.seekDuration())))
 	}
 	if spare > 1 && m.framed() {

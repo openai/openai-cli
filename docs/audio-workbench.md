@@ -220,7 +220,7 @@ Escape returns to the form.
 
 At 60 columns and 24 rows, the draft, settings, and audio share one frame.
 A vertical line marks the script editor. It turns blue while you type.
-Wide, tall terminals reserve a few script lines before generation. Longer drafts fill that space as you type.
+Wide, tall terminals reserve a few script lines throughout generation and playback. Longer drafts fill that space as you type.
 At 100 columns, Delivery sits beside the script and groups voice, model, format, and speed.
 Narrower frames place those controls below Instructions.
 Below 110 columns, Generate speech, History, and More actions share a row when space permits.
@@ -232,12 +232,13 @@ The focused action has a selection marker. In color terminals, it also has a sel
 
 The Batch browser’s thin divider separates the form from the player. Its brightest cell sits at the center.
 Before generation, the framed player shows “No recording yet,” Play, Save, and a zero timer.
+The form and player controls keep their positions while the waveform fills the space above the controls.
 Playback and Save shortcuts explain that speech must be generated first.
 The recording adds a measured waveform and seek rail in that location.
 When space permits, a time ruler labels the start, midpoint, and end in minutes and seconds.
 Recordings without a measured duration show an unknown timer and retain their Save action.
 One blank row separates the recording details from the waveform when space permits.
-The recording status has a hollow circle at rest and a filled circle during playback and after completion.
+The status circle and label start in fixed columns. The circle fills during generation, playback, and after completion.
 Small terminals show the status text alone.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.
 The playhead follows playback through silence. Elapsed bars and rail use green. Upcoming bars use the secondary text color.

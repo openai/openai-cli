@@ -293,7 +293,51 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 		m := audioReviewModel(t)
 		m.color, m.dark = true, dark
 		require.Nil(t, m.result)
-		require.Equal(t, m.muted().Render("Ready"), m.playerStatus(), "an empty player must not claim generated audio")
+		require.Equal(t, m.muted().Render("○ Idle"), m.playerStatus(), "an empty player must not claim generated audio")
+	}
+}
+
+func TestAudioHeaderKeepsLampAndLabelInPlace(t *testing.T) {
+	for _, width := range []int{60, 80, 133} {
+		for _, color := range []bool{false, true} {
+			m := audioReviewModel(t)
+			m.color = color
+			m.Update(tea.WindowSizeMsg{Width: width, Height: 39})
+			var lampColumn, labelColumn int
+			check := func(lamp, label string) {
+				t.Helper()
+				header := ansi.Strip(m.workspaceAudioHeader()[0])
+				before, _, found := strings.Cut(header, lamp+" "+label)
+				require.True(t, found, "expected %q in %q", label, header)
+				left := ansi.StringWidth(before)
+				if lampColumn == 0 {
+					lampColumn, labelColumn = left, left+ansi.StringWidth(lamp+" ")
+				}
+				require.Equal(t, lampColumn, left)
+				require.Equal(t, labelColumn, left+ansi.StringWidth(lamp+" "))
+				require.LessOrEqual(t, ansi.StringWidth(header), 2+m.waveformWidth())
+			}
+			check("○", "Idle")
+			m.busy, m.note = true, "Working: generate"
+			check("●", "Generating")
+			m.busy = false
+			r := audioReviewResult("anchored-status", false)
+			r.entry.Settings.Voice = strings.Repeat("界", 10)
+			m.result = &r
+			check("○", "Ready")
+			m.playing = true
+			check("●", "Playing")
+			m.playing, r.resumable = false, true
+			check("○", "Paused")
+			r.resumable, r.position = false, 300*time.Millisecond
+			check("○", "Stopped")
+			r.position = r.seekDuration()
+			check("○", "At end")
+			r.finished = true
+			check("●", "Completed")
+			m.busy = true
+			check("●", "Generating")
+		}
 	}
 }
 

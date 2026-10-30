@@ -222,7 +222,7 @@ func TestAudioWaveformRulerUsesMeasuredDurationAndOnlySpareRows(t *testing.T) {
 	require.Contains(t, ansi.Strip(m.View().Content), audioTimeRuler(width, r.seekDuration()), "roomy workbench should expose real timestamps")
 	for _, seconds := range []float64{0, 1.25, 3.75} {
 		r.position = time.Duration(seconds * float64(time.Second))
-		rows := m.workspaceWaveformRows(audioMaxWaveformHeight + 5)
+		rows := m.workspaceWaveformRows(audioMaxWaveformHeight + 4)
 		rail, scale := rows[len(rows)-3], ansi.Strip(rows[len(rows)-2])
 		require.Contains(t, rail, "┷")
 		require.True(t, strings.HasPrefix(scale, "  00:00"))
@@ -230,7 +230,7 @@ func TestAudioWaveformRulerUsesMeasuredDurationAndOnlySpareRows(t *testing.T) {
 		require.True(t, strings.HasSuffix(scale, "00:03.75"))
 		require.Equal(t, 2+width, ansi.StringWidth(scale))
 		require.Empty(t, rows[len(rows)-1], "keep separation above transport")
-		tight := m.workspaceWaveformRows(audioMaxWaveformHeight + 4)
+		tight := m.workspaceWaveformRows(audioMaxWaveformHeight + 3)
 		require.Equal(t, tight[:len(tight)-1], rows[:len(rows)-2], "the ruler cannot reduce waveform height")
 		require.NotContains(t, strings.Join(tight, "\n"), "00:03.75")
 	}

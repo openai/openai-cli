@@ -182,6 +182,11 @@ func (m *audioWorkbench) editorView(editor textarea.Model) string {
 // Keep editor values in the same column as their inactive summaries.
 func (m *audioWorkbench) inlineEditorRows(name string, editor textarea.Model, active bool, labelWidth int) []string {
 	rows := strings.Split(m.editorView(editor), "\n")
+	if !active {
+		for i := range rows {
+			rows[i] = readable.Text(ansi.Strip(rows[i]))
+		}
+	}
 	label := fmt.Sprintf("%-*s", labelWidth, name)
 	label = m.muted().Render(label)
 	prefix := m.label(label, active)
@@ -405,8 +410,8 @@ func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 	}
 	validation := m.fieldValidationRows(audioFieldText)
 	spareEditorRow := m.input.LineCount() == 1 && m.input.LineInfo().Height < m.input.Height()
-	// Reserve space for writing on the idle desk. As the editor grows, it uses these rows.
-	if m.splitComposer() && m.result == nil && m.height >= 30 && len(validation) == 0 {
+	// Keep the same writing space when a recording arrives.
+	if m.splitComposer() && m.height >= 30 && len(validation) == 0 {
 		for len(rows)-1 < min(6, m.audioHeight()/7) {
 			rows = append(rows, prefix)
 			spareEditorRow = true
@@ -434,6 +439,9 @@ func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 			cursor = audioEditorCursor(instructions, labelWidth+3, len(rows))
 			rows = append(rows, m.inlineEditorRows("Instructions", instructions, true, labelWidth)...)
 		}
+	case !compact && instructions.Height() > 1:
+		// Generating moves focus to Audio. Keep multiline instructions in their existing rows.
+		rows = append(rows, m.inlineEditorRows("Instructions", instructions, false, labelWidth)...)
 	default:
 		value := readable.Text(strings.Join(strings.Fields(instructions.Value()), " "))
 		if value == "" {
@@ -514,7 +522,7 @@ func (m *audioWorkbench) formActionRows() []string {
 	active := !m.busy && m.focus == 2 && m.setting == 4
 	label := m.primaryText().Render("Generate speech") + "  " + m.keyHint("Ctrl+G", "")
 	generate := m.actionRow(label, active)
-	if m.busy {
+	if m.busy && !m.framed() {
 		generate = m.label(m.progressView(), active)
 	}
 	if m.inlineActions() {
@@ -595,24 +603,28 @@ func (m *audioWorkbench) emptyAudioStatus() string {
 	return m.muted().Render("Your recording will appear here.")
 }
 
-// Status describes the retained playback state, not whether output was audible.
+// The status follows generation and the retained player's playback state.
 func (m *audioWorkbench) playerStatus() string {
 	r := m.result
 	label, style, lamp := "Ready", m.muted(), "○"
 	switch {
+	case m.busy && m.note == "Working: generate":
+		label, style, lamp = "Generating", m.accent().Bold(false), "●"
+	case r == nil:
+		label = "Idle"
 	case m.playing:
 		label, style, lamp = "Playing", m.accent().Bold(false), "●"
-	case r != nil && r.finished:
+	case r.finished:
 		label, style, lamp = "Completed", m.playbackProgressStyle(), "●"
-	case r != nil && r.seekDuration() > 0 && r.playbackPosition() >= r.seekDuration():
+	case r.seekDuration() > 0 && r.playbackPosition() >= r.seekDuration():
 		label, style = "At end", m.warningStyle()
-	case r != nil && r.resumable:
+	case r.resumable:
 		label, style = "Paused", m.warningStyle()
-	case r != nil && r.playbackPosition() > 0:
+	case r.playbackPosition() > 0:
 		label, style = "Stopped", m.warningStyle()
 	}
 	// Small terminals keep the label alone.
-	if m.framed() && m.result != nil {
+	if m.framed() {
 		label = lamp + " " + label
 	}
 	return style.Render(label)
