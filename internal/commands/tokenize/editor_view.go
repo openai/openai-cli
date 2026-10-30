@@ -16,9 +16,7 @@ import (
 	"github.com/openai/openai-cli/internal/tokenizer"
 )
 
-func (m *tokenizerEditor) viewHeight() int { return min(18, max(0, m.height-1)) }
-func (m *tokenizerEditor) viewWidth() int  { return max(1, min(100, m.width-4)) }
-func (m *tokenizerEditor) roomy() bool     { return m.width >= 50 && m.viewHeight() >= 16 }
+func (m *tokenizerEditor) roomy() bool { return m.width >= 50 && m.viewHeight() >= 16 }
 func (m *tokenizerEditor) sourceRows() int {
 	if m.roomy() {
 		return 3
@@ -33,9 +31,10 @@ func (m *tokenizerEditor) resultRows() int {
 }
 
 type tokenizerEditorStyles struct {
-	title, muted, accent, selected, focused, border, input lipgloss.Style
-	tokenSelected                                          lipgloss.Style
-	tokens                                                 [6]lipgloss.Style
+	muted, accent, selected, focused, border, warning, failure lipgloss.Style
+	fill, edge, secondary                                      string
+	tokenSelected                                              lipgloss.Style
+	tokens                                                     [6]lipgloss.Style
 }
 
 func (m *tokenizerEditor) styles() tokenizerEditorStyles {
@@ -43,8 +42,10 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	if !m.color {
 		return s
 	}
+	warning, failure := "#885B14", "#B23A3A"
 	focus, fill, text, muted, border := "#3159BC", "#E9EFFE", "#20283B", "#657087", "#BAC4D8"
 	if m.dark {
+		warning, failure = "#E2BC79", "#E59A9A"
 		focus, fill, text, muted, border = "#8AA8FF", "#343D58", "#F2F4FA", "#A4ACC2", "#51566B"
 	}
 	palette := [6]string{"#E9F1FE", "#E7F5ED", "#FBF0D9", "#F2EAFE", "#FBE8EC", "#E4F3F5"}
@@ -54,9 +55,11 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	for i, color := range palette {
 		s.tokens[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(text)).Background(lipgloss.Color(color))
 	}
-	s.title = s.title.Bold(true)
+	s.fill, s.edge, s.secondary = fill, border, muted
+	s.warning = s.warning.Foreground(lipgloss.Color(warning))
+	s.failure = s.failure.Foreground(lipgloss.Color(failure))
 	s.muted = s.muted.Foreground(lipgloss.Color(muted))
-	s.accent = s.accent.Foreground(lipgloss.Color(focus)).Bold(true)
+	s.accent = s.accent.Foreground(lipgloss.Color(focus))
 	s.selected = s.selected.Foreground(lipgloss.Color(text)).Background(lipgloss.Color(fill))
 	s.focused = s.selected.Bold(true)
 	selectedText := "#FFFFFF"
@@ -65,12 +68,6 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	}
 	s.tokenSelected = lipgloss.NewStyle().Foreground(lipgloss.Color(selectedText)).Background(lipgloss.Color(focus))
 	s.border = s.border.Foreground(lipgloss.Color(border))
-	if m.focus == tokenizerFocusText {
-		s.border = s.border.Foreground(lipgloss.Color(focus))
-		if m.text != "" {
-			s.input = s.selected
-		}
-	}
 	return s
 }
 
@@ -85,7 +82,11 @@ func (m *tokenizerEditor) View() tea.View {
 		if ansi.StringWidth(plain) <= m.width && m.height >= 3 {
 			lines = append(lines, plain)
 		}
-		view.Content = m.fit(lines, false)
+		lines = lines[:min(len(lines), m.height)]
+		for i, line := range lines {
+			lines[i] = tokenizerClip(line, m.width)
+		}
+		view.Content = strings.Join(lines, "\n")
 		return view
 	}
 	s := m.styles()
@@ -98,86 +99,40 @@ func (m *tokenizerEditor) View() tea.View {
 		return view
 	}
 	width := m.viewWidth()
-	lines := []string{s.title.Render("Tokenizer")}
 	textLabel := "Text"
 	if len(m.lineStarts) > m.sourceRows() {
 		textLabel += fmt.Sprintf(" · %d/%d", m.lineIndex(m.cursor)+1, len(m.lineStarts))
 	}
-	if m.roomy() {
-		caption := "╭─ " + textLabel + " "
-		lines = append(lines, s.border.Render(caption+strings.Repeat("─", width-ansi.StringWidth(caption)-1)+"╮"))
-		for _, line := range m.editorLines(width-4, m.sourceRows()) {
-			input := s.input
-			if line == "" || line == tokenizerCaret(" ") {
-				input = lipgloss.NewStyle()
-			}
-			line = cliterminal.FitPrompt(line, width-4)
-			// Match the image prompt's explicit edge placement. Terminals can
-			// disagree about the cell width of complete emoji clusters.
-			row := s.border.Render("│") + input.Render(ansi.EraseCharacter(width-2)+" "+line+" ") +
-				ansi.CursorHorizontalAbsolute(width+2) + s.border.Render("│")
-			lines = append(lines, row)
-		}
-		lines = append(lines, s.border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
-	} else {
-		prefix := "  " + textLabel + " "
-		if m.focus == tokenizerFocusText {
-			prefix = "› " + textLabel + " "
-		}
-		caption := s.muted
-		if m.focus == tokenizerFocusText {
-			caption = s.accent
-		}
-		lines = append(lines, caption.Render(prefix)+m.editorLines(width-ansi.StringWidth(prefix), m.sourceRows())[0])
+	marker, caption := "  ", s.muted
+	if m.focus == tokenizerFocusText {
+		marker, caption = "› ", s.accent
 	}
-	if m.note == "" {
+	textHeading := caption.Render(marker + textLabel)
+	var lines []string
+	if m.roomy() {
+		lines = append(lines, textHeading)
+		for _, line := range m.editorLines(s, width-2, m.sourceRows()) {
+			lines = append(lines, "  "+line)
+		}
+	} else {
+		prefix := textHeading + "  "
+		line := m.editorLines(s, width-ansi.StringWidth(prefix), m.sourceRows())[0]
+		lines = append(lines, prefix+line)
+	}
+	if m.roomy() && m.note == "" {
 		lines = append(lines, "")
 	}
-	tokenLabel := "tokens"
-	if len(m.tokens) == 1 {
-		tokenLabel = "token"
+	tabs := []string{"Text", "Token IDs", "Bytes"}
+	tabs[m.tab] = "[" + tabs[m.tab] + "]"
+	if m.focus != tokenizerFocusOptions || m.option != 0 {
+		tabs[m.tab] = s.accent.Render(tabs[m.tab])
 	}
-	status := fmt.Sprintf("%d %s", len(m.tokens), tokenLabel)
-	if m.updating {
-		status = "Updating…"
-	} else if m.failed {
-		status = "Count unavailable"
-	}
-	if m.tab == 2 {
-		byteLabel := "bytes"
-		if len(m.text) == 1 {
-			byteLabel = "byte"
-		}
-		status += fmt.Sprintf(" · %d %s", len(m.text), byteLabel)
-	}
-	lines = append(lines, "  "+status)
-	viewActive := m.focus == tokenizerFocusOptions && m.option == 0
-	var tabs []string
-	for i, label := range []string{"Text", "Token IDs", "Bytes"} {
-		if m.tab == i {
-			label = "[" + label + "]"
-			if viewActive {
-				label = s.focused.Render(label)
-			}
-		}
-		tabs = append(tabs, label)
-	}
-	views := m.optionRow(s, "View", strings.Join(tabs, "  "), viewActive)
-	if ansi.StringWidth(views+"  ←→") <= width {
-		views += s.muted.Render("  ←→")
-	}
-	lines = append(lines, views)
-	encodingActive := m.focus == tokenizerFocusOptions && m.option == 1
+	lines = append(lines, m.optionRow(s, "View", strings.Join(tabs, "  "), "←→", 0))
 	model, badge := tokenizerModelLabel(m.encoding)
-	model += "  " + badge
-	if encodingActive {
-		model = s.focused.Render(model)
+	if m.focus != tokenizerFocusOptions || m.option != 1 {
+		badge = s.muted.Render(badge)
 	}
-	modelRow := m.optionRow(s, "Model", model, encodingActive)
-	if ansi.StringWidth(modelRow+"  ›") <= width {
-		modelRow += s.muted.Render("  ›")
-	}
-	lines = append(lines, modelRow)
+	lines = append(lines, m.optionRow(s, "Model", model+"  "+badge, "›", 1))
 	if m.note == "" {
 		lines = append(lines, "")
 	}
@@ -196,24 +151,52 @@ func (m *tokenizerEditor) View() tea.View {
 	}
 	lines = append(lines, m.resultLines(s, width)...)
 	if m.note != "" {
-		notes := strings.Split(ansi.Wrap(m.note, width, ""), "\n")
-		available := max(0, m.viewHeight()-len(lines)-1)
-		lines = append(lines, notes[:min(len(notes), available)]...)
+		style := s.warning
+		if m.failed {
+			style = s.failure
+		}
+		for _, line := range strings.Split(ansi.Wrap(m.note, width-2, ""), "\n") {
+			lines = append(lines, "  "+style.Render(line))
+		}
 	}
-	if m.note == "" && lines[len(lines)-1] != "" && len(lines)+1 < m.viewHeight() {
-		lines = append(lines, "")
-	}
-	lines = append(lines, s.muted.Render(m.footer()))
-	view.Content = m.fit(lines, true)
+	view.Content = m.panel(s, "Tokenizer", m.countStatus(s), lines, []string{s.shortcuts(m.footer())})
 	return view
 }
 
-func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, label, value string, active bool) string {
-	marker, caption := "  ", s.muted
-	if active {
-		marker, caption = s.accent.Render("› "), s.accent
+func (m *tokenizerEditor) countStatus(s tokenizerEditorStyles) string {
+	tokenLabel := "tokens"
+	if len(m.tokens) == 1 {
+		tokenLabel = "token"
 	}
-	return marker + caption.Render(fmt.Sprintf("%-7s", label)) + value
+	status := fmt.Sprintf("%d %s", len(m.tokens), tokenLabel)
+	style := s.muted.Bold(m.color)
+	if m.updating {
+		status, style = "Updating…", s.accent
+	} else if m.failed {
+		status, style = "Count unavailable", s.failure
+	}
+	if m.tab == 2 {
+		byteLabel := "bytes"
+		if len(m.text) == 1 {
+			byteLabel = "byte"
+		}
+		status += fmt.Sprintf(" · %d %s", len(m.text), byteLabel)
+	}
+	return style.Render(status)
+}
+
+func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, label, value, hint string, index int) string {
+	label = fmt.Sprintf("%-7s", label)
+	if ansi.StringWidth(label+value)+4+ansi.StringWidth(hint) > m.viewWidth() {
+		hint = ""
+	} else {
+		hint = "  " + hint
+	}
+	if m.focus == tokenizerFocusOptions && m.option == index {
+		line := "› " + label + value + hint
+		return s.focused.Render(line + strings.Repeat(" ", max(0, m.viewWidth()-ansi.StringWidth(line))))
+	}
+	return "  " + s.muted.Render(label) + value + s.muted.Render(hint)
 }
 
 func tokenizerModelLabel(encoding string) (string, string) {
@@ -231,12 +214,13 @@ func tokenizerModelLabel(encoding string) (string, string) {
 	}
 }
 
-func (m *tokenizerEditor) highlightRow(s tokenizerEditorStyles, value string, active bool) string {
-	value = tokenizerClip(value, m.viewWidth()-2)
-	if active {
-		return s.accent.Render("› ") + s.focused.Render(value+strings.Repeat(" ", max(0, m.viewWidth()-2-ansi.StringWidth(value))))
+func (m *tokenizerEditor) highlightRow(s tokenizerEditorStyles, label, detail string, labelWidth int, active bool) string {
+	gap := strings.Repeat(" ", max(1, labelWidth-ansi.StringWidth(label)))
+	if !active {
+		return "  " + label + gap + s.muted.Render(detail)
 	}
-	return "  " + value
+	padding := strings.Repeat(" ", max(0, m.viewWidth()-ansi.StringWidth(label+gap+detail)-2))
+	return s.selected.Render("› ") + s.focused.Render(label) + s.selected.Render(gap+detail+padding)
 }
 
 func (m *tokenizerEditor) footer() string {
@@ -291,21 +275,16 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 			}
 		}
 	}
-	lines := []string{s.title.Render(title)}
-	lines = append(lines, "")
+	status := fmt.Sprintf("%d views", len(labels))
+	if m.modal == tokenizerModalEncoding {
+		status = fmt.Sprintf("%d models", len(labels))
+	}
+	var lines []string
 	for i, label := range labels {
 		if i == current {
 			label += " ✓"
 		}
-		description := descriptions[i]
-		if i != m.choice {
-			description = s.muted.Render(description)
-		}
-		line := fmt.Sprintf("%-*s%s", labelWidth, label, description)
-		if ansi.StringWidth(line) > m.viewWidth()-2 {
-			line = label
-		}
-		lines = append(lines, m.highlightRow(s, line, i == m.choice))
+		lines = append(lines, m.highlightRow(s, label, descriptions[i], labelWidth, i == m.choice))
 		if m.modal == tokenizerModalEncoding {
 			switch encodings[i] {
 			case "o200k_base":
@@ -315,29 +294,11 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 			}
 		}
 	}
-	footer := "Ctrl+C exit · ↑↓ move · Enter select · Esc cancel"
-	lines = append(lines, "")
-	if ansi.StringWidth(footer) <= m.viewWidth() {
-		lines = append(lines, s.muted.Render(footer))
-	} else {
-		lines = append(lines, s.muted.Render("Ctrl+C exit · ↑↓ move"), s.muted.Render("Enter select · Esc cancel"))
+	footer := []string{s.shortcuts("↑↓ move · Enter select · Esc cancel · Ctrl+C exit")}
+	if ansi.StringWidth(footer[0]) > m.viewWidth() {
+		footer = []string{s.shortcuts("↑↓ move · Enter select"), s.shortcuts("Esc cancel · Ctrl+C exit")}
 	}
-	return m.fit(lines, true)
-}
-
-func (m *tokenizerEditor) fit(lines []string, inset bool) string {
-	height, width := m.viewHeight(), m.viewWidth()
-	if !inset {
-		height, width = m.height, m.width
-	}
-	lines = lines[:min(len(lines), max(0, height))]
-	for i, line := range lines {
-		lines[i] = tokenizerClip(line, max(1, width))
-		if inset {
-			lines[i] = "  " + lines[i]
-		}
-	}
-	return strings.Join(lines, "\n")
+	return m.panel(s, title, s.muted.Render(status), lines, footer)
 }
 
 // Escape presentation controls without normalizing source bytes or ZWJ clusters.
@@ -355,7 +316,7 @@ func tokenizerSourceDisplay(value string) string {
 	return display
 }
 
-func (m *tokenizerEditor) editorLines(width, count int) []string {
+func (m *tokenizerEditor) editorLines(s tokenizerEditorStyles, width, count int) []string {
 	lineIndex := m.lineIndex(m.cursor)
 	if count > 1 && lineIndex > 0 {
 		lineIndex--
@@ -373,7 +334,7 @@ func (m *tokenizerEditor) editorLines(width, count int) []string {
 		}
 		line := m.editorLine(start, end, cursor, width)
 		if m.text == "" && len(lines) == 0 {
-			line = "Type or paste text…"
+			line = s.muted.Render("Type or paste text…")
 			if m.focus == 0 {
 				line = tokenizerCaret(" ") + line
 			}
@@ -526,7 +487,7 @@ func (m *tokenizerEditor) resultLines(s tokenizerEditorStyles, width int) []stri
 func (m *tokenizerEditor) resultWindow(s tokenizerEditorStyles, width int) ([]string, int) {
 	rows := m.resultRows()
 	if len(m.tokens) == 0 {
-		label := "Type or paste text above."
+		label := "Token boundaries appear here."
 		if m.updating {
 			label = "Calculating exact tokens…"
 		} else if m.failed {
@@ -692,22 +653,26 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 	count := m.modalPageSize(total)
 	start := max(0, min(m.scroll, total-count))
 	rows, _ := m.modalRows(start, count)
-	if m.modal == tokenizerModalHelp {
-		lines := []string{s.title.Render("Tokenizer · controls")}
-		lines = append(lines, rows...)
-		lines = append(lines, s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", min(start+1, total), min(start+len(rows), total), total)))
-		lines = append(lines, s.muted.Render("↑↓ scroll · Esc back · Ctrl+C exit"))
-		return m.fit(lines, true)
+	var footer []string
+	if total > count {
+		footer = append(footer, s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", start+1, start+len(rows), total)))
 	}
-	title := "Token details"
+	if m.modal == tokenizerModalHelp {
+		footer = append(footer, s.shortcuts("↑↓ scroll · Esc back · Ctrl+C exit"))
+		return m.panel(s, "Tokenizer · controls", "", rows, footer)
+	}
+	title, status := "Token details", ""
 	if len(m.tokens) > 0 {
-		title = fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
+		status = fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
+		if ansi.StringWidth(title+"  "+status) > m.viewWidth() {
+			title = "Details"
+		}
 	}
 	model, badge := tokenizerModelLabel(m.encoding)
 	if badge != "" {
 		model += " · " + badge
 	}
-	lines := []string{s.title.Render(title), s.muted.Render(model), ""}
+	lines := []string{s.muted.Render(model)}
 	for _, row := range rows {
 		if len(row) >= tokenizerDetailLabelWidth {
 			switch strings.TrimSpace(row[:tokenizerDetailLabelWidth]) {
@@ -717,25 +682,23 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 		}
 		lines = append(lines, row)
 	}
-	lines = append(lines, "")
-	footer := "Ctrl+C exit · Esc back"
+	shortcuts := "Esc back · Ctrl+C exit"
 	if total > count {
-		lines = append(lines, s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", start+1, start+len(rows), total)))
-		footer += " · ↑↓ scroll"
+		shortcuts = "↑↓ scroll · " + shortcuts
 	}
-	lines = append(lines, s.muted.Render(footer))
-	return m.fit(lines, true)
+	footer = append(footer, s.shortcuts(shortcuts))
+	return m.panel(s, title, s.muted.Render(status), lines, footer)
 }
 
 func (m *tokenizerEditor) modalPageSize(total int) int {
-	if m.modal == tokenizerModalHelp {
-		return max(1, m.viewHeight()-3)
+	count := m.bodyHeight()
+	if m.modal == tokenizerModalDetails {
+		count-- // The model context stays visible above the rows.
 	}
-	count := max(1, m.viewHeight()-5)
 	if total > count {
-		count = max(1, count-1)
+		count-- // Show the visible range above the shortcut footer.
 	}
-	return count
+	return max(1, count)
 }
 
 const tokenizerDetailLabelWidth = 10
