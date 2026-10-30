@@ -19,6 +19,8 @@ Tab moves through Text, Instructions, Settings, then Audio. Wide terminals inclu
 Shift+Tab reverses that order.
 Up and Down move between sections at their boundaries.
 Inside an editor, arrows move through multiline and wrapped text before leaving the first or last visual row.
+When Delivery sits beside the script, Right at the end of the draft selects Settings.
+Left from Settings returns to the script at the same caret position.
 Modified arrows and active selections remain inside the editor.
 Up from Voice returns to Instructions when the model supports them.
 Down from the bottom row of the form moves to Audio. It focuses the waveform when the recording has one.
@@ -219,7 +221,8 @@ Escape returns to the form.
 ## Layout
 
 At 60 columns and 24 rows, the draft, settings, and audio share one frame.
-A vertical line marks the script editor. It turns blue while you type.
+The script aligns with its heading. The active heading uses the focus color.
+For multiline scripts, the heading shows the current line while you edit and the total line count afterward.
 Wide, tall terminals reserve a few script lines throughout generation and playback. Longer drafts fill that space as you type.
 At 100 columns, Delivery sits beside the script and groups voice, model, format, and speed.
 Narrower frames place those controls below Instructions.
@@ -238,7 +241,8 @@ The recording adds a measured waveform and seek rail in that location.
 When space permits, a time ruler labels the start, midpoint, and end in minutes and seconds.
 Recordings without a measured duration show an unknown timer and retain their Save action.
 One blank row separates the recording details from the waveform when space permits.
-The status circle and label start in fixed columns. The circle fills during generation, playback, and after completion.
+The status light and its label stay in fixed columns.
+Generation and playback light the center. Pause shows an amber double ring. Completion shows a solid green light.
 Small terminals show the status text alone.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.
 The playhead follows playback through silence. Elapsed bars and rail use green. Upcoming bars use the secondary text color.
@@ -247,8 +251,7 @@ Short bars keep their contrast. Elapsed time uses blue.
 Amber marks a paused or manually positioned playhead. The status describes its state.
 The heavier rail shows the played portion in monochrome. The final marker turns green when playback completes.
 Play starts under the first timeline marker. Save and the timer follow in the same row.
-When space permits, one blank row separates the waveform from the seek rail.
-A second spare row separates the rail from the controls.
+When space permits, two blank rows separate the waveform from the time ruler. A tick marks the midpoint label.
 When the timer needs more space, it moves above the actions and aligns with the final marker.
 Save opens the destination picker. A successful export adds its path below the actions.
 

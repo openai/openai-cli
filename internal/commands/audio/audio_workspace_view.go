@@ -159,6 +159,9 @@ func (m *audioWorkbench) workspaceFooter() []string {
 	}
 	shortcuts := [][2]string{{"Ctrl+C", "Exit"}, {nextKey, next}}
 	if m.focus == 0 || m.focus == 1 {
+		if m.splitComposer() && m.focus == 0 {
+			shortcuts = append(shortcuts, [2]string{"→", "Delivery at text end"})
+		}
 		shortcuts = append(shortcuts, [2]string{"Alt+Enter", "New line"})
 	} else if m.focus == 2 && m.setting >= 4 && m.setting <= audioSettingMore {
 		horizontal := m.inlineActions() || len(m.formActionRows()) == 1
@@ -174,6 +177,9 @@ func (m *audioWorkbench) workspaceFooter() []string {
 		}
 		shortcuts = append(shortcuts, [2]string{"Enter", action})
 	} else if m.focus == 2 && m.setting == audioSettingDisclosure {
+		if m.splitComposer() {
+			shortcuts = append(shortcuts, [2]string{"←", "Text"})
+		}
 		action := "expand"
 		if m.settingsExpanded {
 			action = "collapse"
@@ -322,35 +328,45 @@ func (m *audioWorkbench) workspaceWaveformRows(budget int) []string {
 		}
 		rows[i] = prefix + row
 	}
+	spare := budget - len(rows) - 1 // The rail needs one row.
+	var labels string
 	// The heavier played rail remains distinct when the terminal disables color.
-	played, remaining := "", ""
-	if marker > 0 {
-		played = m.elapsedWaveformStyle().Render("├" + strings.Repeat("━", marker-1))
-	}
-	if marker < last {
-		remaining = m.borderStyle().Render(strings.Repeat("─", last-marker-1) + "┤")
+	rail := []rune(strings.Repeat("━", marker) + strings.Repeat("─", last+1-marker))
+	rail[0], rail[last] = '├', '┤'
+	if spare > 2 && m.framed() {
+		var midpoint int
+		labels, midpoint = audioTimeRuler(last+1, m.result.seekDuration())
+		if midpoint >= 0 {
+			rail[midpoint] = '┬'
+			if midpoint < marker {
+				rail[midpoint] = '┯'
+			}
+		}
 	}
 	anchorStyle := m.playheadStyle()
 	if marker == last && m.result.finished && !m.playing {
 		anchorStyle = m.playbackProgressStyle()
 	}
-	spare := budget - len(rows) - 1 // The rail needs one row.
 	if spare > 0 {
 		rows = append(rows, "")
 	}
-	rows = append(rows, "  "+played+anchorStyle.Render("┷")+remaining)
-	// The framed view already reserved its metadata gap. Keep both rail gaps before adding the ruler.
-	if spare > 2 && m.framed() {
-		rows = append(rows, "  "+m.muted().Render(audioTimeRuler(last+1, m.result.seekDuration())))
+	if labels != "" {
+		// Move the ruler one row lower inside the reserved plot without shifting its controls.
+		rows = append(rows, "")
 	}
-	if spare > 1 && m.framed() {
+	played := m.elapsedWaveformStyle().Render(string(rail[:marker]))
+	remaining := m.borderStyle().Render(string(rail[marker+1:]))
+	rows = append(rows, "  "+played+anchorStyle.Render("┷")+remaining)
+	if labels != "" {
+		rows = append(rows, "  "+m.muted().Render(labels))
+	} else if spare > 1 && m.framed() {
 		rows = append(rows, "")
 	}
 	return rows
 }
 
 // Align the outer labels with the two endpoint cells and center the halfway label.
-func audioTimeRuler(width int, duration time.Duration) string {
+func audioTimeRuler(width int, duration time.Duration) (labels string, midpoint int) {
 	label := func(at time.Duration) string {
 		if duration >= time.Millisecond {
 			at = at.Truncate(time.Millisecond)
@@ -360,9 +376,9 @@ func audioTimeRuler(width int, duration time.Duration) string {
 	zero, mid, end := label(0), label(duration/2), label(duration)
 	start := (width - len(mid)) / 2
 	if mid == zero || start <= len(zero) || start+len(mid) >= width-len(end) {
-		return zero + strings.Repeat(" ", max(1, width-len(zero)-len(end))) + end
+		return zero + strings.Repeat(" ", max(1, width-len(zero)-len(end))) + end, -1
 	}
-	return zero + strings.Repeat(" ", start-len(zero)) + mid + strings.Repeat(" ", width-start-len(mid)-len(end)) + end
+	return zero + strings.Repeat(" ", start-len(zero)) + mid + strings.Repeat(" ", width-start-len(mid)-len(end)) + end, (width - 1) / 2
 }
 
 func (m *audioWorkbench) playbackVerb() string {

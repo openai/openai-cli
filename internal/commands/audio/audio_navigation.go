@@ -76,14 +76,28 @@ func (m *audioWorkbench) enterAudioFromAbove() tea.Cmd {
 	return cmd
 }
 
+// Right can cross to Delivery only after the editor runs out of text to traverse.
+func (m *audioWorkbench) canEnterDelivery() bool {
+	if !m.splitComposer() || m.focus != 0 || m.input.HasSelection() || m.input.Line() != m.input.LineCount()-1 {
+		return false
+	}
+	end := m.input
+	end.CursorEnd()
+	return m.input.Column() == end.Column()
+}
+
 // Call after busy, minimum-size, and modal guards. Editing keeps modified arrows
-// and active selections; plain arrows leave only the first or last visual row.
+// and active selections. Plain arrows leave only at an editor boundary.
 func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 	if key == "tab" || key == "shift+tab" {
 		return true, m.cycleSection(key == "shift+tab")
 	}
 	switch m.focus {
 	case 0, 1:
+		if key == "right" && m.canEnterDelivery() {
+			m.setting = audioSettingDisclosure
+			return true, m.focusSection(2)
+		}
 		if key != "up" && key != "down" {
 			return false, nil
 		}
@@ -122,6 +136,9 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 		onActionRow := m.setting >= 4 && m.setting <= audioSettingMore && (m.inlineActions() || len(m.formActionRows()) == 1)
 		switch key {
 		case "left", "right":
+			if key == "left" && m.setting == audioSettingDisclosure && m.splitComposer() {
+				return true, m.focusSection(0)
+			}
 			if m.inlineActions() && (m.setting == 4 || m.setting == audioSettingDisclosure) {
 				if key == "right" {
 					return true, m.openActions()

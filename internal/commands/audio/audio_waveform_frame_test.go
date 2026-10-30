@@ -219,23 +219,33 @@ func TestAudioWaveformRulerUsesMeasuredDurationAndOnlySpareRows(t *testing.T) {
 	r.entry.Settings = m.effectiveSettings()
 	m.result = &r
 	width := m.waveformWidth()
-	require.Contains(t, ansi.Strip(m.View().Content), audioTimeRuler(width, r.seekDuration()), "roomy workbench should expose real timestamps")
+	labels, midpoint := audioTimeRuler(width, r.seekDuration())
+	require.Contains(t, ansi.Strip(m.View().Content), labels, "roomy workbench should expose real timestamps")
 	for _, seconds := range []float64{0, 1.25, 3.75} {
 		r.position = time.Duration(seconds * float64(time.Second))
 		rows := m.workspaceWaveformRows(audioMaxWaveformHeight + 4)
-		rail, scale := rows[len(rows)-3], ansi.Strip(rows[len(rows)-2])
+		rail, scale := ansi.Strip(rows[len(rows)-2]), ansi.Strip(rows[len(rows)-1])
 		require.Contains(t, rail, "┷")
+		tick := '┬'
+		if r.position == r.seekDuration() {
+			tick = '┯'
+		}
+		require.Equal(t, tick, []rune(rail)[2+midpoint])
 		require.True(t, strings.HasPrefix(scale, "  00:00"))
 		require.Equal(t, 2+(width-len("00:01.875"))/2, strings.Index(scale, "00:01.875"))
 		require.True(t, strings.HasSuffix(scale, "00:03.75"))
 		require.Equal(t, 2+width, ansi.StringWidth(scale))
-		require.Empty(t, rows[len(rows)-1], "keep separation above transport")
+		require.Equal(t, []string{"", ""}, rows[len(rows)-4:len(rows)-2], "lower the rail and its timestamps by one row")
 		tight := m.workspaceWaveformRows(audioMaxWaveformHeight + 3)
-		require.Equal(t, tight[:len(tight)-1], rows[:len(rows)-2], "the ruler cannot reduce waveform height")
+		require.Len(t, tight, len(rows)-1)
+		require.Equal(t, tight[:len(tight)-2], rows[:len(rows)-3], "the ruler cannot reduce waveform height")
 		require.NotContains(t, strings.Join(tight, "\n"), "00:03.75")
 	}
 	// Show precision for recordings shorter than the transport's millisecond display.
-	require.True(t, strings.HasSuffix(audioTimeRuler(width, 40*time.Microsecond), "00:00.00004"))
+	short, _ := audioTimeRuler(width, 40*time.Microsecond)
+	require.True(t, strings.HasSuffix(short, "00:00.00004"))
+	_, midpoint = audioTimeRuler(width, time.Millisecond)
+	require.Equal(t, -1, midpoint, "omit the tick when its label would duplicate zero")
 }
 
 func TestAudioWaveformTimelineKeepsEndpointPeaksAndQuietIntervals(t *testing.T) {

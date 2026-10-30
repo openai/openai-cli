@@ -358,7 +358,8 @@ func (m *audioWorkbench) formRows(compact bool) ([]string, *tea.Cursor, int) {
 	if m.splitComposer() {
 		// Cursor coordinates start within each column. Only the active editor owns a caret.
 		offset := m.composerWidth() + audioColumnGap
-		right := append([]string{"  " + m.strong().Render("Delivery")}, settings...)
+		delivery := m.focus == 2 && (m.setting < 4 || m.setting == audioSettingDisclosure)
+		right := append([]string{m.composerHeading("Delivery", delivery)}, settings...)
 		if settingsCursor != nil {
 			settingsCursor.X += offset
 			settingsCursor.Y++
@@ -390,30 +391,42 @@ func (m *audioWorkbench) formRows(compact bool) ([]string, *tea.Cursor, int) {
 	return append(script, settings...), cursor, active
 }
 
+func (m *audioWorkbench) composerHeading(title string, focused bool) string {
+	style := m.strong()
+	if focused && !m.busy && m.modal == "" && m.framed() {
+		style = m.accent()
+	}
+	return "  " + style.Render(title)
+}
+
 func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 	labelWidth := m.formLabelWidth()
-	rows := []string{"  " + m.strong().Render("Text to speech")}
-	var cursor *tea.Cursor
-	prefix := "  "
-	if !compact {
-		rule := m.borderStyle()
+	heading := m.composerHeading("Text to speech", m.focus == 0 || m.focus == 1)
+	if count := m.input.LineCount(); !compact && count > 1 {
+		location := fmt.Sprintf("%d lines", count)
 		if m.focus == 0 && !m.busy {
-			rule = m.accent()
+			location = fmt.Sprintf("Line %d of %d", m.input.Line()+1, count)
 		}
-		prefix = " " + rule.Render("│") + " "
+		gap := m.composerWidth() - 2 - ansi.StringWidth(heading) - len(location)
+		if gap >= 2 {
+			heading += strings.Repeat(" ", gap) + m.muted().Render(location)
+		}
 	}
+	rows := []string{heading}
+	var cursor *tea.Cursor
+	const indent = "  "
 	if m.focus == 0 && !m.busy {
-		cursor = audioEditorCursor(m.input, ansi.StringWidth(prefix), len(rows))
+		cursor = audioEditorCursor(m.input, len(indent), len(rows))
 	}
 	for _, line := range strings.Split(m.editorView(m.input), "\n") {
-		rows = append(rows, prefix+line)
+		rows = append(rows, indent+line)
 	}
 	validation := m.fieldValidationRows(audioFieldText)
 	spareEditorRow := m.input.LineCount() == 1 && m.input.LineInfo().Height < m.input.Height()
 	// Keep the same writing space when a recording arrives.
 	if m.splitComposer() && m.height >= 30 && len(validation) == 0 {
 		for len(rows)-1 < min(6, m.audioHeight()/7) {
-			rows = append(rows, prefix)
+			rows = append(rows, indent)
 			spareEditorRow = true
 		}
 	}
@@ -609,25 +622,29 @@ func (m *audioWorkbench) playerStatus() string {
 	label, style, lamp := "Ready", m.muted(), "○"
 	switch {
 	case m.busy && m.note == "Working: generate":
-		label, style, lamp = "Generating", m.accent().Bold(false), "●"
+		label, style, lamp = "Generating", m.accent().Bold(false), "◉"
 	case r == nil:
 		label = "Idle"
 	case m.playing:
-		label, style, lamp = "Playing", m.accent().Bold(false), "●"
+		label, style, lamp = "Playing", m.accent().Bold(false), "◉"
 	case r.finished:
 		label, style, lamp = "Completed", m.playbackProgressStyle(), "●"
 	case r.seekDuration() > 0 && r.playbackPosition() >= r.seekDuration():
 		label, style = "At end", m.warningStyle()
 	case r.resumable:
-		label, style = "Paused", m.warningStyle()
+		label, style, lamp = "Paused", m.warningStyle(), "◎"
 	case r.playbackPosition() > 0:
 		label, style = "Stopped", m.warningStyle()
 	}
 	// Small terminals keep the label alone.
-	if m.framed() {
-		label = lamp + " " + label
+	if !m.framed() {
+		return style.Render(label)
 	}
-	return style.Render(label)
+	// Emphasize the active core without flashing, changing the background, or moving the label.
+	if lamp == "◉" && m.color {
+		return style.Bold(true).Render(lamp) + " " + style.Render(label)
+	}
+	return style.Render(lamp + " " + label)
 }
 
 func (m *audioWorkbench) playheadStyle() lipgloss.Style {

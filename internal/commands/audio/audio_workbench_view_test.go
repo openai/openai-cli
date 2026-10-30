@@ -181,6 +181,31 @@ func TestAudioListenShortcutOpensRetainedAudioWithoutPlaying(t *testing.T) {
 	require.Equal(t, "save", m.modal, "Listen must not dismiss a Save dialog")
 }
 
+func TestAudioScriptHeadingTracksMultilineDraftAndDeliveryFocus(t *testing.T) {
+	m := audioReviewModel(t)
+	m.color = true
+	m.Update(tea.WindowSizeMsg{Width: 133, Height: 39})
+	m.input.SetValue("First line\nLast line")
+	m.input.MoveToEnd()
+	m.focusSection(0)
+
+	rows, cursor := m.scriptRows(false)
+	require.Contains(t, rows[0], m.accent().Render("Text to speech"))
+	require.Contains(t, rows[0], "Line 2 of 2")
+	require.Equal(t, 2, cursor.Y)
+	for _, row := range rows[1:3] {
+		require.NotContains(t, ansi.Strip(row), "│")
+	}
+	require.Equal(t, "  First line", strings.TrimRight(ansi.Strip(rows[1]), " "))
+
+	m.focusSection(2)
+	view := m.View().Content
+	require.Contains(t, view, m.accent().Render("Delivery"))
+	require.Contains(t, view, m.strong().Render("Text to speech"))
+	require.Contains(t, view, "2 lines")
+	require.NotContains(t, view, "Line 2 of 2")
+}
+
 func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 	for _, width := range []int{60, 100, 186} {
 		m := audioReviewModel(t)
@@ -193,7 +218,7 @@ func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 			require.Equal(t, 3, ansi.StringWidth(rows[1][:strings.Index(rows[1], "Text to speech")]))
 			require.NotContains(t, rows[1], "A clear short example.")
 			require.Contains(t, rows[2], "A clear short example.")
-			require.Equal(t, 4, ansi.StringWidth(rows[2][:strings.Index(rows[2], "A clear short example.")]))
+			require.Equal(t, 3, ansi.StringWidth(rows[2][:strings.Index(rows[2], "A clear short example.")]))
 			directionRow := slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Instructions") })
 			require.Greater(t, directionRow, 2, "Instructions must follow the script")
 			require.Equal(t, 1, strings.Count(view, "╭"), "only the workspace has an outline")
@@ -275,7 +300,7 @@ func TestAudioComposerKeepsUnicodeContinuationAndLabeledSettingsAligned(t *testi
 						column := 21
 						if strings.Contains(draft, value) {
 							if focus == 0 {
-								column = 4
+								column = 3
 							}
 						} else if m.splitComposer() {
 							header := strings.Split(view, "\n")[1]

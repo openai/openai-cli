@@ -258,16 +258,16 @@ func TestAudioWorkspaceAnchorsGenerationAndPlayback(t *testing.T) {
 			initial := anchors("○ Idle", "Play audio")
 			_, command := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 			require.NotNil(t, command)
-			require.Equal(t, initial, anchors("● Generating", "Play audio"))
+			require.Equal(t, initial, anchors("◉ Generating", "Play audio"))
 
 			r := audioReviewResult("stable-layout", false)
 			r.entry.Settings = m.effectiveSettings()
 			m.Update(audioWorkMessage{kind: "generate", result: r})
 			require.Equal(t, initial, anchors("○ Ready", "Play audio"))
 			m.result.resumable, m.playing = true, true
-			require.Equal(t, initial, anchors("● Playing", "Pause audio"))
+			require.Equal(t, initial, anchors("◉ Playing", "Pause audio"))
 			m.playing = false
-			require.Equal(t, initial, anchors("○ Paused", "Resume audio"))
+			require.Equal(t, initial, anchors("◎ Paused", "Resume audio"))
 			m.result.finished, m.result.resumable = true, false
 			require.Equal(t, initial, anchors("● Completed", "Replay audio"))
 
@@ -276,7 +276,7 @@ func TestAudioWorkspaceAnchorsGenerationAndPlayback(t *testing.T) {
 			m.input.SetValue("Another short draft.")
 			_, command = m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 			require.NotNil(t, command)
-			require.Equal(t, initial, anchors("● Generating", "Replay audio"))
+			require.Equal(t, initial, anchors("◉ Generating", "Replay audio"))
 			r.entry.Settings, r.measured = m.effectiveSettings(), false
 			m.Update(audioWorkMessage{kind: "generate", result: r})
 			require.Contains(t, m.View().Content, "Preview unavailable")

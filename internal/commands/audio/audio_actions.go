@@ -320,23 +320,28 @@ func (m *audioWorkbench) helpRows() []string {
 	shortcut := func(key, action string) string {
 		return "  " + m.keyHint(key, "") + strings.Repeat(" ", 12-ansi.StringWidth(key)) + m.muted().Render(action)
 	}
-	return []string{
+	rows := []string{
 		"  " + m.strong().Render("Compose"),
 		shortcut("Tab", "Next section"),
 		shortcut("Ctrl+G", "Generate speech"),
 		shortcut("Alt+Enter", "Insert a new line"),
+	}
+	if m.splitComposer() {
+		rows = append(rows, shortcut("→ / ←", "End of text to Delivery and back"))
+	}
+	return append(rows,
 		"",
-		"  " + m.strong().Render("Audio"),
+		"  "+m.strong().Render("Audio"),
 		shortcut("Ctrl+O", "Focus audio"),
 		shortcut("Space", "Toggle playback"),
 		shortcut("← →", "Seek on waveform"),
 		shortcut("g", "Go to time"),
 		shortcut("Ctrl+S", "Open Save audio"),
 		"",
-		"  " + m.strong().Render("View command"),
+		"  "+m.strong().Render("View command"),
 		shortcut("c", "Copy command"),
 		shortcut("Ctrl+P", "Print command and exit"),
-	}
+	)
 }
 
 func (m *audioWorkbench) helpHeight() int {

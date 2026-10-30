@@ -32,10 +32,12 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 			if recorded {
 				positions := audioWaveformDetailPositions(t, view)
 				rows := strings.Split(view, "\n")
-				height := positions[1] - positions[0]
-				if strings.Trim(rows[positions[1]-1], " │") == "" {
-					height--
+				waveEnd := positions[1]
+				for waveEnd > positions[0] && strings.Trim(rows[waveEnd-1], " │") == "" {
+					waveEnd--
 				}
+				require.LessOrEqual(t, positions[1]-waveEnd, 2)
+				height := waveEnd - positions[0]
 				require.GreaterOrEqual(t, height, tc.minWave, "lost measured detail at %dx%d", tc.width, tc.height)
 				require.LessOrEqual(t, height, audioMaxWaveformHeight)
 				require.Equal(t, 1, height%2)

@@ -63,8 +63,7 @@ func TestAudioFormPaletteKeepsValuesNeutralAndSelectionVisible(t *testing.T) {
 		require.NotContains(t, ansi.Strip(view), "› Text to speech")
 		require.NotNil(t, m.View().Cursor)
 		audioRequireTextForeground(t, view, "Neutral draft.", lipgloss.NewStyle())
-		require.NotContains(t, view, m.accent().Bold(false).Render("Text to speech"))
-		require.Contains(t, view, m.strong().Render("Text to speech"))
+		require.Contains(t, view, m.accent().Render("Text to speech"))
 		require.NotContains(t, ansi.Strip(view), "Setting        Value")
 		m.focusSection(1)
 		audioRequireTextForeground(t, m.View().Content, "Instructions", m.muted())
@@ -274,10 +273,15 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 					style = m.warningStyle()
 				}
 				lamp := "○ "
-				if tc.playing || tc.finished {
+				if tc.finished {
 					lamp = "● "
+				} else if tc.name == "Paused" {
+					lamp = "◎ "
 				}
 				label := style.Render(lamp + tc.name)
+				if tc.playing {
+					label = style.Bold(true).Render("◉") + " " + style.Render(tc.name)
+				}
 				require.Equal(t, label, m.playerStatus())
 				view := m.View().Content
 				require.Contains(t, view, label)
@@ -319,16 +323,16 @@ func TestAudioHeaderKeepsLampAndLabelInPlace(t *testing.T) {
 			}
 			check("○", "Idle")
 			m.busy, m.note = true, "Working: generate"
-			check("●", "Generating")
+			check("◉", "Generating")
 			m.busy = false
 			r := audioReviewResult("anchored-status", false)
 			r.entry.Settings.Voice = strings.Repeat("界", 10)
 			m.result = &r
 			check("○", "Ready")
 			m.playing = true
-			check("●", "Playing")
+			check("◉", "Playing")
 			m.playing, r.resumable = false, true
-			check("○", "Paused")
+			check("◎", "Paused")
 			r.resumable, r.position = false, 300*time.Millisecond
 			check("○", "Stopped")
 			r.position = r.seekDuration()
@@ -336,7 +340,7 @@ func TestAudioHeaderKeepsLampAndLabelInPlace(t *testing.T) {
 			r.finished = true
 			check("●", "Completed")
 			m.busy = true
-			check("●", "Generating")
+			check("◉", "Generating")
 		}
 	}
 }

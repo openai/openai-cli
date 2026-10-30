@@ -93,6 +93,57 @@ func TestAudioNavigationSingleLineBoundaries(t *testing.T) {
 	}
 }
 
+func TestAudioNavigationAcrossDelivery(t *testing.T) {
+	for _, text := range []string{"", "世界\n", strings.Repeat("世界 ", 30) + "🌍"} {
+		m, editor := audioNavigationEditor(t, 0, text)
+		m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+		line, column := editor.Line(), editor.Column()
+		require.Contains(t, ansi.Strip(m.View().Content), "→ Delivery")
+		audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+		require.Equal(t, 2, m.focus)
+		require.Equal(t, audioSettingDisclosure, m.setting)
+		require.False(t, m.settingsExpanded)
+		require.Contains(t, ansi.Strip(m.View().Content), "← Text")
+		audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyLeft})
+		require.Equal(t, 0, m.focus)
+		require.True(t, editor.Focused())
+		require.Equal(t, line, editor.Line())
+		require.Equal(t, column, editor.Column())
+	}
+}
+
+func TestAudioDeliveryArrowsPreserveEditing(t *testing.T) {
+	m, editor := audioNavigationEditor(t, 0, "abc\n"+strings.Repeat("界 ", 40))
+	m.Update(tea.WindowSizeMsg{Width: 133, Height: 39})
+	editor.MoveToBegin()
+	editor.CursorEnd()
+	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	require.Equal(t, 0, m.focus, "Right must cross the newline inside the draft")
+	require.Equal(t, 1, editor.Line())
+	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	require.Equal(t, 1, editor.Column())
+	require.Contains(t, ansi.Strip(m.View().Content), "→ Delivery at text end")
+	editor.CursorEnd()
+	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModAlt})
+	require.Equal(t, 0, m.focus)
+	editor.SelectAll()
+	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	require.Equal(t, 0, m.focus)
+
+	m.focusSection(1)
+	m.instructions.CursorEnd()
+	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	require.Equal(t, 1, m.focus)
+	m.focusSection(0)
+	for _, size := range [][2]int{{99, 32}, {133, 23}} {
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		editor.MoveToEnd()
+		audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+		require.Equal(t, 0, m.focus, "stacked Delivery must not capture Right")
+		require.NotContains(t, ansi.Strip(m.View().Content), "→ Delivery")
+	}
+}
+
 func TestAudioNavigationMultilineUnicodeMovesCaretBeforeLeaving(t *testing.T) {
 	for _, focus := range []int{0, 1} {
 		for _, direction := range []rune{tea.KeyUp, tea.KeyDown} {
