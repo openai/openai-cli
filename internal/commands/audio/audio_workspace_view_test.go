@@ -22,7 +22,7 @@ func TestAudioWorkspaceActionFocusDoesNotMovePlayback(t *testing.T) {
 			view := ansi.Strip(m.View().Content)
 			var positions [2]int
 			for row, line := range strings.Split(view, "\n") {
-				for item, label := range []string{"More actions…", "Your recording will appear here."} {
+				for item, label := range []string{"More actions…", "No recording yet"} {
 					if strings.Contains(line, label) {
 						positions[item] = row
 					}
@@ -58,7 +58,7 @@ func TestAudioWorkspaceKeepsDraftAndRecordingVisibleAcrossFocus(t *testing.T) {
 				m.focusSection(focus)
 				m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 				view := ansi.Strip(m.View().Content)
-				for _, text := range []string{"Text to speech", "Editable draft.", "Instructions", "Settings", "Voice", "gpt-4o-mini-tts  WAV  1.00×", "Generate speech", "History", "More actions", "Alloy  MP3  120.6 KiB", "Recording: Retained recording.", "┠", "00:00.000 / 00:01.000", "Play audio", "Save audio…", "Saved: …", "clip.mp3"} {
+				for _, text := range []string{"Text to speech", "Editable draft.", "Instructions", "Settings", "Voice", "gpt-4o-mini-tts", "WAV", "1.00×", "Generate speech", "History", "More actions", "Alloy  MP3  120.6 KiB", "Recording: Retained recording.", "┠", "00:00.000 / 00:01.000", "Play audio", "Save audio…", "Saved: …", "clip.mp3"} {
 					require.Contains(t, view, text)
 				}
 				require.Contains(t, strings.Split(view, "\n")[1], "Text to speech")
@@ -220,15 +220,68 @@ func TestAudioWorkspaceDoesNotInventAudioBeforeGeneration(t *testing.T) {
 		m.input.SetValue("A future recording.")
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		view := ansi.Strip(m.View().Content)
-		require.Contains(t, view, "Your recording will appear here.")
+		require.Contains(t, view, "No recording yet")
 		require.NotContains(t, view, "Generate speech to create audio.")
 		require.NotContains(t, view, "┷")
 		require.NotContains(t, view, "┃")
-		require.NotContains(t, view, "00:00.000 / 00:00.000")
-		require.NotContains(t, view, "Play audio")
-		require.NotContains(t, view, "Save audio…")
+		require.Contains(t, view, "00:00.000 / 00:00.000")
+		require.Contains(t, view, "Play audio")
+		require.Contains(t, view, "Save audio…")
 		require.NotContains(t, view, "printf %s")
 		assertAudioWorkspaceBounds(t, view, size)
+	}
+}
+
+func TestAudioWorkspaceAnchorsGenerationAndPlayback(t *testing.T) {
+	for _, size := range [][2]int{{60, 24}, {80, 24}, {101, 29}, {120, 32}, {133, 39}, {180, 55}} {
+		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+			m := audioReviewModel(t)
+			m.input.SetValue("Synthetic draft.")
+			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			anchors := func(status, play string) [][2]int {
+				rows := strings.Split(ansi.Strip(m.View().Content), "\n")
+				var positions [][2]int
+				for _, label := range []string{"Text to speech", "Instructions", "Voice", "Generate speech",
+					"History", m.listeningRule(), "Audio", status, play, "Save audio…", " / "} {
+					found := false
+					for y, row := range rows {
+						if before, _, ok := strings.Cut(row, label); ok {
+							positions = append(positions, [2]int{ansi.StringWidth(before), y})
+							found = true
+							break
+						}
+					}
+					require.True(t, found, "missing %q", label)
+				}
+				return positions
+			}
+			initial := anchors("○ Idle", "Play audio")
+			_, command := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+			require.NotNil(t, command)
+			require.Equal(t, initial, anchors("● Generating", "Play audio"))
+
+			r := audioReviewResult("stable-layout", false)
+			r.entry.Settings = m.effectiveSettings()
+			m.Update(audioWorkMessage{kind: "generate", result: r})
+			require.Equal(t, initial, anchors("○ Ready", "Play audio"))
+			m.result.resumable, m.playing = true, true
+			require.Equal(t, initial, anchors("● Playing", "Pause audio"))
+			m.playing = false
+			require.Equal(t, initial, anchors("○ Paused", "Resume audio"))
+			m.result.finished, m.result.resumable = true, false
+			require.Equal(t, initial, anchors("● Completed", "Replay audio"))
+
+			// The retained recording has extra metadata while a new draft generates.
+			m.lastFinished = time.Time{}
+			m.input.SetValue("Another short draft.")
+			_, command = m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+			require.NotNil(t, command)
+			require.Equal(t, initial, anchors("● Generating", "Replay audio"))
+			r.entry.Settings, r.measured = m.effectiveSettings(), false
+			m.Update(audioWorkMessage{kind: "generate", result: r})
+			require.Contains(t, m.View().Content, "Preview unavailable")
+			require.Equal(t, initial, anchors("○ Ready", "Play audio"))
+		})
 	}
 }
 
@@ -239,8 +292,13 @@ func TestAudioEmptyRecordingAndUnknownTimingRemainDistinct(t *testing.T) {
 		m.focusSection(4)
 		m.color, m.dark = true, true
 		view := m.View().Content
-		require.NotContains(t, ansi.Strip(view), "00:00.000 / 00:00.000")
-		require.Contains(t, view, m.muted().Render("Your recording will appear here."))
+		if m.framed() {
+			require.Contains(t, view, m.muted().Render("00:00.000 / 00:00.000"))
+			require.Contains(t, view, m.muted().Render("No recording yet"))
+		} else {
+			require.NotContains(t, ansi.Strip(view), "00:00.000 / 00:00.000")
+			require.Contains(t, view, m.muted().Render("Your recording will appear here."))
+		}
 		require.NotContains(t, view, "┃")
 		r := audioReviewResult("unknown-timing", false)
 		r.measured = false
@@ -307,7 +365,7 @@ func TestAudioWorkspaceSeparatesMeasuredWaveformsOnlyWhenRoomPermits(t *testing.
 	for _, size := range [][2]int{{60, 24}, {80, 24}, {101, 29}, {101, 30}, {120, 40}} {
 		for _, state := range []string{"empty", "unmeasured", "measured"} {
 			m := audioReviewModel(t)
-			bottomLabel := "Your recording will appear here."
+			bottomLabel := "No recording yet"
 			if state != "empty" {
 				r := audioReviewResult("framed-player", false)
 				r.entry.Settings = m.effectiveSettings()
@@ -340,8 +398,8 @@ func TestAudioWorkspaceSeparatesMeasuredWaveformsOnlyWhenRoomPermits(t *testing.
 			}
 			require.Positive(t, bottom)
 			if state == "empty" {
-				require.Equal(t, -1, timing)
-				require.Equal(t, -1, actions)
+				require.Greater(t, timing, bottom)
+				require.Greater(t, actions, bottom)
 				audioReviewKey(m, tea.KeySpace)
 				require.Contains(t, ansi.Strip(m.View().Content), audioNoGenerationNotice)
 				require.Contains(t, ansi.Strip(m.View().Content), "Ctrl+G")
@@ -349,14 +407,18 @@ func TestAudioWorkspaceSeparatesMeasuredWaveformsOnlyWhenRoomPermits(t *testing.
 			}
 			require.Positive(t, timing)
 			require.Positive(t, actions)
-			beforeRail := state == "measured" && size[1] >= 29
-			afterRail := 0
-			if beforeRail && size[1] >= 30 {
-				afterRail = 1
-			}
-			require.Equal(t, afterRail, min(timing, actions)-bottom-1, "%dx%d %s", size[0], size[1], state)
+			gapRows := rows[bottom+1 : min(timing, actions)]
 			if state == "measured" {
-				require.Equal(t, beforeRail, strings.Trim(rows[bottom-1], " │") == "")
+				require.LessOrEqual(t, len(gapRows), 2, "only the ruler and one blank row may follow the rail")
+				for _, gap := range gapRows {
+					if strings.Trim(gap, " │") != "" {
+						require.Contains(t, gap, "00:00")
+						require.Contains(t, gap, "00:01")
+					}
+				}
+				if size[1] >= 36 {
+					require.Empty(t, strings.Trim(rows[bottom-1], " │"))
+				}
 				m.result.savedPaths = []string{"/synthetic/clip.wav"}
 				saved := strings.Split(ansi.Strip(m.View().Content), "\n")
 				require.Equal(t, rows[:bottom+1], saved[:bottom+1], "a receipt must preserve the measured rows and rail")
@@ -510,7 +572,8 @@ func TestAudioWorkspacePreservesBlankEditorRowsAndScopesWaveformFocus(t *testing
 	rows := strings.Split(view, "\n")
 	for index, row := range rows {
 		if strings.Contains(row, "First editor line.") {
-			require.Empty(t, strings.Trim(rows[index+1], " │"), "an intentional editor line was removed")
+			script := ansi.Cut(rows[index+1], 1, 1+m.composerWidth())
+			require.Empty(t, strings.Trim(script, " │"), "an intentional editor line was removed")
 			require.Contains(t, rows[index+2], "Last editor line.")
 		}
 	}

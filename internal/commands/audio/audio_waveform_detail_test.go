@@ -18,9 +18,9 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 	r.entry.Settings = m.effectiveSettings()
 	m.input.MoveToEnd()
 	line, column := m.input.Line(), m.input.Column()
-	for _, tc := range []struct{ width, height, wave, aboveRail, belowRail int }{
-		{60, 24, 5, 0, 0}, {80, 24, 5, 0, 0}, {101, 27, 9, 0, 0}, {101, 28, 9, 0, 0}, {101, 29, 9, 1, 0},
-		{101, 30, 9, 1, 1}, {101, 31, 9, 1, 1}, {101, 40, 13, 1, 1}, {137, 41, 13, 1, 1}, {101, 29, 9, 1, 0}, {60, 24, 5, 0, 0},
+	for _, tc := range []struct{ width, height, minWave int }{
+		{60, 24, 5}, {80, 24, 5}, {101, 27, 9}, {101, 28, 9}, {101, 29, 9},
+		{101, 30, 9}, {101, 31, 9}, {101, 40, 13}, {137, 41, 13}, {101, 29, 9}, {60, 24, 5},
 	} {
 		for _, recorded := range []bool{false, true} {
 			m.result = nil
@@ -29,23 +29,25 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 			}
 			m.Update(tea.WindowSizeMsg{Width: tc.width, Height: tc.height})
 			view := ansi.Strip(m.View().Content)
-			toolbarOffset := 1 + tc.belowRail
-			if tc.width == 60 {
-				toolbarOffset++ // Exact timing gets its own row when fixed controls would overlap.
-			}
 			if recorded {
 				positions := audioWaveformDetailPositions(t, view)
-				require.Equal(t, tc.wave+tc.aboveRail, positions[1]-positions[0], "unexpected rail position at %dx%d", tc.width, tc.height)
-				if tc.aboveRail > 0 {
-					require.Empty(t, strings.Trim(strings.Split(view, "\n")[positions[1]-1], " │"))
+				rows := strings.Split(view, "\n")
+				height := positions[1] - positions[0]
+				if strings.Trim(rows[positions[1]-1], " │") == "" {
+					height--
 				}
-				require.Equal(t, positions[1]+toolbarOffset, positions[2], "only spare rows may separate the waveform and toolbar")
+				require.GreaterOrEqual(t, height, tc.minWave, "lost measured detail at %dx%d", tc.width, tc.height)
+				require.LessOrEqual(t, height, audioMaxWaveformHeight)
+				require.Equal(t, 1, height%2)
+				toolbarOffset := positions[2] - positions[1]
+				require.Positive(t, toolbarOffset)
+				require.LessOrEqual(t, toolbarOffset, 4, "only the clock, ruler, and one gap may precede controls")
 				require.Contains(t, view, "Coral  WAV")
 				require.Contains(t, view, "00:00.000 / 00:01.000")
 			} else {
-				require.NotContains(t, view, "Play audio")
+				require.Contains(t, view, "Play audio")
 				require.NotContains(t, view, "┷")
-				require.Contains(t, view, "Your recording will appear here.")
+				require.Contains(t, view, "No recording yet")
 				require.NotContains(t, view, "┃")
 			}
 			require.Contains(t, view, m.input.Value())
@@ -88,7 +90,7 @@ func TestAudioWaveformStartsBelowItsLastMetadataRow(t *testing.T) {
 		if m.framed() {
 			require.Empty(t, strings.Trim(rows[1], " │"))
 			require.Contains(t, rows[2], "Text to speech")
-			require.Contains(t, rows[2], "Actions")
+			require.Contains(t, rows[2], "Delivery")
 		}
 	}
 }

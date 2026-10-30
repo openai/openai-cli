@@ -105,7 +105,7 @@ A private synthetic History entry supplies Result navigation without generation.
 Both cases require zero accepted or rejected fixture requests and strict cancellation cleanup.
 Settings End selects More actions. Clear is the third More action.
 Clear empties Text and Instructions without reseeding the constructor example.
-The navigation inventory contains 195 current-viewport checkpoints at each size.
+The navigation cases follow the visible action layout and enter the waveform before Play and Save.
 The navigation cases test Alt+Enter without submitting editor text.
 They leave Enter generation and the existing repeat-submit guard unchanged.
 
@@ -274,13 +274,15 @@ The Bash parent stays alive after the CLI exits.
 The checker compares native terminal modes before releasing that parent.
 It requires final cursor and bracketed-paste cleanup before the printed command.
 It compares complete command bytes against an independent synthetic request specification.
+It sends `c` through a simulated SSH session and checks the encoded terminal clipboard request against the same specification.
+Opening View command must leave the clipboard untouched. Copy must keep the workbench open.
 The expected shell command includes each continuation, indentation level, and the terminal’s original newline translation.
 The checker preserves raw output, casts, emitted bytes, process statuses, and owned-process cleanup records.
 Both sessions must make zero accepted or rejected requests and create no audio History.
 A forced harness cleanup fails the case.
 
 This case verifies public process behavior and terminal restoration.
-It does not verify actual graphical-terminal selection, clipboard bytes, fonts, or audible playback.
+The PTY captures the clipboard request. It cannot confirm a graphical terminal accepted that request or inspect the macOS pasteboard.
 The Go Bash/zsh recorder tests separately execute printed command bytes through both shells.
 Keep unavailable platforms and deferred restore/close fault injection explicit.
 
@@ -306,5 +308,6 @@ These tests cover partial startup, deferred interruption, continued cleanup, sou
 They do not replace the full checker run against the exact candidate binary.
 
 The `wide` case runs at 186×34. The frame leaves the last terminal column free to prevent a soft wrap.
-Tab moves focus to the Actions column. Down moves through its rows while the draft remains visible.
-The case opens Help, returns to Generate, and checks that navigation made zero speech requests.
+Tab moves focus to the horizontal Actions row. Right moves across its actions while the draft stays visible.
+The case follows Down into Audio from History, Help, and Generate. Up restores each selection.
+It also opens Help and checks that navigation made zero speech requests.

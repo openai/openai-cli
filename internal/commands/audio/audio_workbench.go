@@ -36,12 +36,13 @@ type audioWorkResult struct {
 	savedPaths []string
 }
 type audioWorkMessage struct {
-	kind          string
-	result        audioWorkResult
-	entries       []audiohistory.Entry
-	err           error
-	playID        uint64
-	path, entryID string
+	kind               string
+	result             audioWorkResult
+	entries            []audiohistory.Entry
+	err                error
+	playID             uint64
+	path, entryID      string
+	clipboardConfirmed bool
 }
 type audioWorkTick time.Time
 
@@ -111,12 +112,12 @@ type audioWorkbench struct {
 	waveformFocused           bool
 	recoveryParent            string
 	recoveryRestoreFocus      bool
-	infoTitle, infoText       string
 	commandToPrint            string
 	infoParent                string
 	infoOffset                int
 	commandOffset             int
 	commandCache              audioCommandCache
+	clipboard                 audioCommandClipboard
 	lastErr                   error
 	exitCode                  int
 	lastFinished              time.Time
@@ -197,9 +198,6 @@ func (m *audioWorkbench) resizeEditors() {
 		widthChanged := editor.Width() != width
 		if widthChanged {
 			editor.SetWidth(width)
-			// Bubbles refreshes its shared viewport content in View. Reflow before
-			// repositioning so scrolling uses the new wrapped content length.
-			_ = editor.View()
 		}
 		height := 1
 		if (editor == &m.path || editor == &m.saveFolder) && m.modal == "save" {
@@ -217,7 +215,7 @@ func (m *audioWorkbench) resizeEditors() {
 				if editor == &m.input {
 					limit = min(6, max(2, m.audioHeight()/7))
 				}
-				if m.result != nil && m.settingsExpanded {
+				if m.settingsExpanded {
 					limit = min(limit, max(1, (m.audioHeight()-17)/2))
 				}
 				height = audioEditorHeight(*editor, limit)
@@ -228,6 +226,9 @@ func (m *audioWorkbench) resizeEditors() {
 			}
 		}
 		if widthChanged || editor.Height() != height {
+			// View refreshes the shared viewport after text changes or rewraps.
+			// Reposition against that content, including in the unfocused editor.
+			_ = editor.View()
 			// Dynamic sizing clamps the viewport against actual content rows.
 			// Reflow can change those rows even when the editor stays three rows tall.
 			// Keep the temporary display bounds out of input processing; Bubbles
@@ -278,6 +279,10 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 				m.modal = "more"
 			}
 		}
+		if m.modal == "more" {
+			// Last error can disappear while playback updates the available actions.
+			m.moreChoice = min(m.moreChoice, len(m.moreItems())-1)
+		}
 	}()
 	defer func() { command = tea.Batch(command, m.reconcileRecovery()) }()
 	defer m.clearResolvedValidation()
@@ -299,6 +304,20 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			return m, audioTick()
 		}
 	case audioWorkMessage:
+		if msg.kind == "copy-command" {
+			m.clipboard.pending = false
+			if m.focus == audioFocusCommand && m.clipboard.notice == "Copying…" {
+				switch {
+				case msg.err != nil:
+					m.clipboard.notice = "Copy failed. Ctrl+P prints."
+				case msg.clipboardConfirmed:
+					m.clipboard.notice = "Command copied."
+				default:
+					m.clipboard.notice = "Copy requested. Ctrl+P prints."
+				}
+			}
+			return m, nil
+		}
 		if msg.kind == "play" {
 			if msg.playID != m.playID {
 				return m, nil
@@ -473,14 +492,12 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 		}
 		if m.inlineActions() && m.modal == "more" {
 			switch key {
-			case "tab", "shift+tab", "left":
+			case "ctrl+g":
 				m.modal, m.setting = "", 4
-				if key == "tab" {
-					return m, m.focusSection(4)
-				}
-				return m, m.focusSection(2)
-			case "ctrl+g", "ctrl+s", "ctrl+o":
-				m.modal, m.setting = "", 4
+			case "ctrl+s", "ctrl+o":
+				m.modal = ""
+			default:
+				return m, m.updateWideAction(key)
 			}
 		}
 		if m.modal != "" {
@@ -507,6 +524,9 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			return m, m.generate(false)
 		}
 		if m.focus == audioFocusCommand {
+			if key == "c" || key == "C" {
+				return m, m.copyCommand()
+			}
 			rows := m.commandDisplayRows()
 			m.commandOffset = audioScrollOffset(m.commandOffset, len(rows), m.commandViewportHeight(), key)
 			return m, nil
@@ -649,7 +669,7 @@ func (m *audioWorkbench) updateModal(message tea.KeyPressMsg, key string) tea.Cm
 		return nil
 	}
 	if m.modal == "info" {
-		m.infoOffset = audioScrollOffset(m.infoOffset, len(m.infoRows()), m.informationHeight(), key)
+		m.infoOffset = audioScrollOffset(m.infoOffset, len(m.helpRows()), m.helpHeight(), key)
 		return nil
 	}
 	if m.modal == "speed" {

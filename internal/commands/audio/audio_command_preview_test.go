@@ -359,7 +359,7 @@ func TestAudioCommandPrintPreservesGuardsAndCancellation(t *testing.T) {
 			require.Nil(t, model.focusCommand())
 			switch mode {
 			case "help":
-				model.openInformation("Help", "Synthetic help", "")
+				model.openHelp("")
 			case "busy":
 				model.busy = true
 			case "tiny":

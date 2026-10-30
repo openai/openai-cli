@@ -85,7 +85,12 @@ func TestAudioValidationRevealsInvalidFieldAndKeepsRecording(t *testing.T) {
 			require.Equal(t, tc.field != 1, m.settingsExpanded)
 			message := m.fieldValidation(tc.field)
 			require.NotEmpty(t, message)
-			require.Contains(t, ansi.Strip(m.View().Content), message)
+			var visible []string
+			for _, row := range m.fieldValidationRows(tc.field) {
+				require.Contains(t, ansi.Strip(m.View().Content), ansi.Strip(row))
+				visible = append(visible, strings.TrimSpace(ansi.Strip(row)))
+			}
+			require.Equal(t, message, strings.Join(visible, " "))
 			audioReviewKey(m, tea.KeyRight)
 			require.Empty(t, m.fieldValidation(tc.field))
 			require.False(t, m.activeFailure())
@@ -363,9 +368,10 @@ func TestAudioInlineSpeedRecoveryPreservesDraftAndRestoresFocus(t *testing.T) {
 					require.Equal(t, "recovery", m.modal)
 					m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 					require.Equal(t, audioSettingMore, m.setting)
-					for range audioSettingMore - 3 {
+					for step := 0; step < 3 && m.setting != 3; step++ {
 						m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 					}
+					require.Equal(t, 3, m.setting)
 				}
 				audioInlineType(m, "4.01")
 				m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -402,5 +408,59 @@ func TestAudioInlineSpeedRecoveryPreservesDraftAndRestoresFocus(t *testing.T) {
 				require.False(t, m.busy)
 			})
 		}
+	}
+}
+
+func TestAudioSettingsPickerShowsAppliedValueWhileBrowsing(t *testing.T) {
+	for _, size := range [][2]int{{133, 39}, {60, 24}, {40, 12}} {
+		for _, color := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%dx%d/color=%t", size[0], size[1], color), func(t *testing.T) {
+				m := audioInlineSettingsModel(t, size[0], size[1], 0)
+				m.color, m.dark = color, true
+				audioReviewKey(m, tea.KeyEnter)
+				audioReviewKey(m, tea.KeyDown)
+				content := m.View().Content
+				plain := ansi.Strip(content)
+				require.Contains(t, plain, "Current  gpt-4o-mini-tts")
+				require.Contains(t, plain, "› gpt-4o-mini-tts-2025-03-20")
+				require.Contains(t, strings.Join(strings.Fields(plain), " "), "Pinned snapshot with voice instructions")
+				require.Contains(t, plain, "Retirement  Jan 6, 2027")
+				if color {
+					require.Contains(t, content, m.warningStyle().Render("Retirement  Jan 6, 2027"))
+				} else {
+					require.Equal(t, plain, content)
+				}
+				rows := strings.Split(plain, "\n")
+				require.LessOrEqual(t, len(rows), size[1])
+				for _, row := range rows {
+					require.LessOrEqual(t, ansi.StringWidth(row), size[0]-1)
+				}
+				for i := 0; i < 3; i++ {
+					audioReviewKey(m, tea.KeyDown)
+				}
+				plain = ansi.Strip(m.View().Content)
+				require.Contains(t, plain, "› tts-1-1106")
+				require.Contains(t, plain, "Legacy ID (unlisted)")
+				require.NotContains(t, plain, "Retirement")
+				audioReviewKey(m, tea.KeyEscape)
+				require.Equal(t, "gpt-4o-mini-tts", m.settings.Model)
+				require.Empty(t, m.modal)
+			})
+		}
+	}
+}
+
+func TestAudioFormatPickerShowsEncodingAndPreservesAPIValue(t *testing.T) {
+	for _, size := range [][2]int{{133, 39}, {40, 12}} {
+		m := audioInlineSettingsModel(t, size[0], size[1], 2)
+		audioReviewKey(m, tea.KeyEnter)
+		audioReviewKey(m, tea.KeyDown)
+		plain := ansi.Strip(m.View().Content)
+		require.Contains(t, plain, "Current  WAV")
+		require.Contains(t, plain, "› PCM")
+		require.Contains(t, plain, "Raw samples without a header")
+		audioReviewKey(m, tea.KeyEnter)
+		require.Equal(t, "pcm", m.settings.Format)
+		require.Empty(t, m.modal)
 	}
 }

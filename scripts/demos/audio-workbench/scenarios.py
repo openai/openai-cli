@@ -1,5 +1,6 @@
 """Direct audio workbench scenarios; CaseContext owns their resources and capture state."""
 
+import base64
 import hashlib
 import json
 import os
@@ -223,10 +224,11 @@ def navigation_case(ctx):
     up, down, ss3_up, ss3_down = b"\x1b[A", b"\x1b[B", b"\x1bOA", b"\x1bOB"
     backtab = b"\x1b[Z"
     wide = terminal.initial_size[0] >= 60
+    previous_action, next_action = (b"\x1b[D", b"\x1b[C") if wide else (up, ss3_down)
     shortcuts = "  "
     chooser_hint = shortcuts.join(("Enter select", "Esc back"))
     focus = {"text": "Tab Instructions", "instructions": "› Instructions", "voice": "› Voice", "model": "› Model",
-             "settings": "› Settings", "empty-audio": "Esc back",
+             "settings": "› Settings", "empty-audio": "Ctrl+G Generate",
              "more": "› More actions…", "generate": "› Generate speech", "history": "› History",
              "play": "› Play audio", "save": "› Save audio…", "command": "Command (Bash/zsh)"}
     result["navigation_checks"] = []
@@ -276,10 +278,10 @@ def navigation_case(ctx):
     check("End selects More", "more", ctx.picker.END)
     check("More Down focuses empty Audio", "empty-audio", down)
     check("empty Audio Up restores More", "more", up)
-    check("More Up selects History", "history", up)
-    check("History Up selects Generate", "generate", up)
-    check("Generate Down selects History", "history", ss3_down)
-    check("History Down selects More", "more", down)
+    check("move from More to History", "history", previous_action)
+    check("move from History to Generate", "generate", previous_action)
+    check("move from Generate to History", "history", next_action)
+    check("move from History to More", "more", next_action)
     check("Tab More to Audio", "empty-audio", b"\t")
     check("Tab Audio to Text for long command", "text", b"\t")
     ctx.paste(terminal, "Command inspection sample. " * 180)
@@ -298,7 +300,7 @@ def navigation_case(ctx):
     check("Command Escape returns to More", "› View command", b"\x1b")
     check("More Home selects History", "history", ctx.picker.HOME)
     check("More Help is selectable", "› Help", down * 4)
-    check("Help opens locally", "Use Tab to move between sections.", b"\r")
+    check("Help opens locally", "Insert a new line", b"\r")
     check("Help End remains local", "Help", ctx.picker.END)
     check("Help Escape returns to More", "› Help", b"\x1b")
     check("More End selects Help", "› Help", ctx.picker.END)
@@ -361,7 +363,8 @@ def navigation_case(ctx):
     ctx.wait(terminal, "00:00.000 / 00:02.000")
     ctx.mark(terminal, result["case"] + "-restored-result", result)
     check("reverse Tab Result to Settings", "more", backtab)
-    check("More Down enters Play", "play", down)
+    check("More Down reaches the waveform", "←→ seek", down)
+    check("waveform Down selects Play", "play", down)
     check("Result Down selects Save", "save", ss3_down)
     check("Result Down stays on Save", "save", down)
     check("Result Left returns to Play", "play", b"\x1b[D")
@@ -381,7 +384,7 @@ def navigation_case(ctx):
     assert "Command preview" not in visible and "printf" not in visible, "Main form retained advanced command content"
     ctx.mark(terminal, result["case"] + "-complete", result)
     result["navigation_check_count"] = len(result["navigation_checks"])
-    assert result["navigation_check_count"] == 195, "Navigation inventory changed"
+    assert result["navigation_check_count"] == 196, "Navigation inventory changed"
     zero_requests()
     terminal.send(b"\x03")
     terminal.finish(130)
@@ -520,7 +523,8 @@ def print_command_case(ctx):
     on_path = programs / "openai"
     on_path.symlink_to(ctx.args.binary.resolve())
     assert os.path.samefile(on_path, ctx.args.binary), "PATH selected a different executable"
-    command_env = dict(env, AUDIO_EXPECTED_COMMAND=str(on_path), SHELL="/bin/bash")
+    # Exercise the remote clipboard path without writing to the host pasteboard.
+    command_env = dict(env, AUDIO_EXPECTED_COMMAND=str(on_path), SHELL="/bin/bash", SSH_TTY="/dev/pts/fixture")
     parent_script = ('[ "$(command -v openai)" = "$AUDIO_EXPECTED_COMMAND" ] || exit 90\n'
                      'openai audio speak\naudio_status=$?\n'
                      'printf "\\n__AUDIO_PRINT_STATUS__=%s\\n" "$audio_status"\n'
@@ -568,6 +572,14 @@ def print_command_case(ctx):
             send_and_wait(b"\r", "History")
             send_and_wait(ctx.picker.DOWN * 3, "View command")
             send_and_wait(b"\r", "Ctrl+P print/exit")
+            assert b"\x1b]52;" not in child.raw, "Opening View command changed the clipboard"
+            if action == "print":
+                child.send(b"c")
+                encoded = base64.b64encode(expected)
+                child.wait("Copy requested", timeout=remaining())
+                assert re.search(rb"\x1b\]52;c;" + re.escape(encoded) + rb"(?:\x07|\x1b\\)", child.raw), "Copy included extra bytes"
+                assert child.child.poll() is None, "Copy exited the workbench"
+                zero_requests()
             child.send(b"\r")
             ctx.drain(child, min(.2, remaining()))
             zero_requests()
@@ -839,7 +851,7 @@ def workflow_case(ctx):
     ctx.mark(terminal, "listen-shortcut", result)
     terminal.send(b"\x1b")
     ctx.wait(terminal, "Tab Instructions")
-    terminal.send(b"\t\t" + ctx.picker.END + ctx.picker.UP)
+    terminal.send(b"\t\t" + ctx.picker.END + b"\x1b[D")
     ctx.wait(terminal, "› History")
     terminal.send(b"\r")
     ctx.wait(terminal, ctx.fixture.TEXT.splitlines()[0])
@@ -952,19 +964,31 @@ def wide_case(ctx):
     ctx.paste(terminal, draft)
     terminal.send(b"\t\t\t")
     ctx.wait(terminal, "› History")
+    terminal.send(ctx.picker.DOWN)
+    ctx.wait(terminal, "Ctrl+G Generate")
+    terminal.send(ctx.picker.UP)
+    ctx.wait(terminal, "› History")
     for name in ("Preview voice", "Clear form", "View command", "Help"):
-        terminal.send(ctx.picker.DOWN)
+        terminal.send(b"\x1b[C")
         visible = ctx.wait(terminal, "› " + name)
         assert draft in visible, "Selecting an action hid the draft"
     ctx.mark(terminal, "wide-actions", result)
+    terminal.send(ctx.picker.DOWN)
+    ctx.wait(terminal, "Ctrl+G Generate")
+    terminal.send(ctx.picker.UP)
+    ctx.wait(terminal, "› Help")
     terminal.send(b"\r")
-    ctx.wait(terminal, "Up/Down, Page Up/Down")
+    ctx.wait(terminal, "Copy command")
     terminal.send(b"\x1b")
     ctx.wait(terminal, "› Help")
     ctx.mark(terminal, "wide-more", result)
     terminal.send(b"\x1b")
     visible = ctx.wait(terminal, "› Generate speech")
     assert draft in visible, "Returning from Actions lost the draft"
+    terminal.send(ctx.picker.DOWN)
+    ctx.wait(terminal, "Ctrl+G Generate")
+    terminal.send(ctx.picker.UP)
+    ctx.wait(terminal, "› Generate speech")
     terminal.send(b"\x03")
     terminal.finish(130)
     assert not server.records and not server.failures, "Wide form navigation sent a request"

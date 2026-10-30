@@ -170,24 +170,25 @@ func TestAudioCompactSeekKeepsRailAfterFailedRetry(t *testing.T) {
 	}
 }
 
-func TestAudioPlaybackStatusAlignsWithLastTimelineCell(t *testing.T) {
+func TestAudioPlaybackStatusColumnEndsAtLastTimelineCell(t *testing.T) {
 	for _, size := range [][2]int{{40, 12}, {80, 24}, {137, 41}} {
 		m := audioReviewModel(t)
 		r := audioReviewResult("timeline-status", false)
 		r.entry.Settings = m.effectiveSettings()
 		m.result, m.focus = &r, 4
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-		statusEnd, railEnd := -1, -1
+		labelStart, railEnd := -1, -1
 		for _, row := range strings.Split(ansi.Strip(m.View().Content), "\n") {
 			if before, _, found := strings.Cut(row, "Ready"); found {
-				statusEnd = ansi.StringWidth(before) + len("Ready")
+				labelStart = ansi.StringWidth(before)
 			}
 			if before, _, found := strings.Cut(row, "┤"); found {
 				railEnd = ansi.StringWidth(before) + 1
 			}
 		}
 		require.Positive(t, railEnd)
-		require.Equal(t, railEnd, statusEnd, "status must end over the final timeline tick at %dx%d", size[0], size[1])
+		require.Positive(t, labelStart)
+		require.Equal(t, railEnd, labelStart+len("Generating"), "reserve the whole status column at %dx%d", size[0], size[1])
 	}
 }
 
@@ -289,7 +290,7 @@ func TestAudioWaveformProgressTracksForwardAndBackwardSeek(t *testing.T) {
 		require.Greater(t, markerColumn(), first)
 		r.finished = true
 		require.Contains(t, m.View().Content, m.playbackProgressStyle().Render("┷"))
-		require.Contains(t, m.View().Content, m.playbackProgressStyle().Render("Completed"))
+		require.Contains(t, m.View().Content, m.playbackProgressStyle().Render("● Completed"))
 		m.color = false
 		require.NotContains(t, m.View().Content, "\x1b[38;")
 		require.Contains(t, m.View().Content, "┃")

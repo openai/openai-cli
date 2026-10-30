@@ -9,6 +9,8 @@ openai audio speak
 Type in the editor below **Text to speech**. The caret marks the insertion point as text wraps.
 Instructions and Voice stay on the form. Settings summarizes the model, format, and speed.
 Select Settings and press Enter to edit those three fields inline. Escape collapses Settings and keeps applied values.
+Model and format pickers show the applied value under Current. Arrow keys browse choices. Enter applies the highlighted choice.
+Wide terminals show descriptions beside each choice. Smaller terminals show the highlighted choice's description below the list.
 Each new form fills Instructions with the editable example: “Speak warmly and clearly.”
 The example is real text. The form sends it when the selected model supports Instructions.
 Clear form empties both editors. It does not restore the example.
@@ -18,8 +20,10 @@ Shift+Tab reverses that order.
 Up and Down move between sections at their boundaries.
 Inside an editor, arrows move through multiline and wrapped text before leaving the first or last visual row.
 Modified arrows and active selections remain inside the editor.
-Up from Voice returns to Instructions when the model supports them. Down from More actions moves to Audio.
-Home and End select the first and last settings.
+Up from Voice returns to Instructions when the model supports them.
+Down from the bottom row of the form moves to Audio. It focuses the waveform when the recording has one.
+When Generate speech, History, and More actions share a row, Left and Right move between them.
+From a setting, Home selects Voice and End moves to the final action.
 Enter opens a choice or starts generation from an editor.
 Enter on Speed accepts an exact number from 0.25 to 4. Left and Right adjust speed by 0.25.
 Alt+Enter adds a newline. Ctrl+G generates from any ordinary form section.
@@ -34,17 +38,21 @@ Returning to a compatible model restores access to the instruction draft.
 Voice choices follow the form's existing model validator.
 Changing models preserves the selected voice. An unavailable voice needs another explicit choice before generation.
 
-Generate speech is the primary action. At 110 columns and 24 rows, Actions sits beside the editor.
-Press Tab from Settings to focus Actions. Use the arrow keys to select an action. Press Enter to open it.
+Generate speech is the primary action. At 110 columns and 24 rows, Actions shares its row.
+Press Right from Generate speech or the Settings heading to enter Actions. Tab from Settings also enters Actions.
+Left and Right move between actions. Enter opens the selected action. Home selects Generate. End selects the last action.
+Up returns to Settings. Down moves to Audio. Up from the waveform returns to the action you left.
 Actions contains History, Preview voice, Clear form, View command, and Help.
 On smaller terminals, select More actions and press Enter.
 View command opens a vertically scrollable Bash/zsh command.
 Up/Down and PageUp/PageDown scroll it. Home/End select its start or end.
 Escape returns to More actions with View command selected.
 Tab focuses Audio. Shift+Tab returns to the More actions control.
-Ctrl+P prints the complete command after frame cleanup and mode restoration, then exits without generating speech.
-Copy the printed command from the terminal transcript for Bash or zsh.
-The form's wrapped preview remains available for inspection.
+Press `c` in View command to copy the complete Bash/zsh command and stay in the form.
+Copy uses the shell text, including line continuations. It excludes the title, colors, and display wrapping.
+Local macOS sessions use the system pasteboard. Other sessions request clipboard access from the terminal.
+Some terminals decline that request. Use Ctrl+P to print the command in those sessions.
+Ctrl+P prints the same command to the terminal and exits. Neither action generates speech.
 A prior failed action keeps its error and unsuccessful exit status, even when printing succeeds.
 Cancellation or cleanup failures detected before printing prevent output. Later output or closure failures still exit unsuccessfully.
 The command preserves supported project, organization, and endpoint overrides.
@@ -106,17 +114,17 @@ The CLI does not install either tool.
 Missing tools do not delete retained audio or prevent exporting its original bytes.
 Replay starts a completed recording from the beginning.
 
-The chooser includes the seven models, thirteen voices, and six formats shown in the supplied Playground screenshots.
-The API determines model access and availability.
-The `tts-1-1106` and `tts-1-hd-1106` snapshots appear in those screenshots; current public documentation does not confirm access.
+The model picker distinguishes five documented Speech model IDs from two legacy Playground IDs.
+The Speech API names `gpt-4o-mini-tts`, its March and December 2025 snapshots, `tts-1`, and `tts-1-hd`.
+OpenAI lists January 6, 2027 as their shutdown date. [Speech API reference](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create)
+The CLI also accepts `tts-1-1106` and `tts-1-hd-1106` for compatibility. The current model catalog does not list those IDs.
+Project access can vary. [TTS-1 catalog](https://developers.openai.com/api/docs/models/tts-1) · [TTS-1 HD catalog](https://developers.openai.com/api/docs/models/tts-1-hd)
 The form rejects unsupported voices for the `tts-1` family before generation.
 It keeps unsupported Instructions in the draft and omits them from requests.
 Direct flags retain their existing API behavior, including custom voices and future model IDs.
 
-As of October 9, 2026, four listed models have a January 6, 2027 shutdown date.
-They are `tts-1`, `tts-1-hd`, `gpt-4o-mini-tts-2025-03-20`, and `gpt-4o-mini-tts-2025-12-15`.
-The [deprecation notice](https://developers.openai.com/api/docs/deprecations#2026-10-01-text-to-speech-models) recommends a Realtime migration.
-That replacement uses a different workflow. This form continues to use the Speech endpoint and preserves explicit model choices.
+OpenAI recommends `gpt-realtime-2.1-mini` through the Realtime API for new integrations.
+This form uses the Speech endpoint. [Deprecation schedule](https://developers.openai.com/api/docs/deprecations#2026-10-01-text-to-speech-models)
 
 Explicit flags, piped input, and explicit output modes retain the existing direct command path:
 
@@ -211,20 +219,31 @@ Escape returns to the form.
 ## Layout
 
 At 60 columns and 24 rows, the draft, settings, and audio share one frame.
-Field labels start at column 4. Instructions and setting values start at column 22.
+A vertical line marks the script editor. It turns blue while you type.
+Wide, tall terminals reserve a few script lines throughout generation and playback. Longer drafts fill that space as you type.
+At 100 columns, Delivery sits beside the script and groups voice, model, format, and speed.
+Narrower frames place those controls below Instructions.
 Below 110 columns, Generate speech, History, and More actions share a row when space permits.
-In wider frames, Right from Generate enters the Actions list. Up and Down move through it.
-A separate column explains each action beside its name.
+Wider frames show Generate speech, recording actions, View command, and Help in one row.
+The selection marker moves across this row without shifting neighboring actions.
+Help groups shortcuts by Compose, Audio, and View command. Small terminals show scrolling controls when the list exceeds the available height.
 Clear form uses amber because it resets the draft. Last error uses red when recovery details are available.
 The focused action has a selection marker. In color terminals, it also has a selected background.
 
 The Batch browser’s thin divider separates the form from the player. Its brightest cell sits at the center.
-Before generation, the player shows “Your recording will appear here.”
+Before generation, the framed player shows “No recording yet,” Play, Save, and a zero timer.
+The form and player controls keep their positions while the waveform fills the space above the controls.
 Playback and Save shortcuts explain that speech must be generated first.
-The recording adds the timer, waveform, seek rail, and transport controls in that location.
+The recording adds a measured waveform and seek rail in that location.
+When space permits, a time ruler labels the start, midpoint, and end in minutes and seconds.
+Recordings without a measured duration show an unknown timer and retain their Save action.
 One blank row separates the recording details from the waveform when space permits.
+The status circle and label start in fixed columns. The circle fills during generation, playback, and after completion.
+Small terminals show the status text alone.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.
-The playhead follows playback through silence. Played strokes and elapsed time use blue.
+The playhead follows playback through silence. Elapsed bars and rail use green. Upcoming bars use the secondary text color.
+Long bars fade toward both tips. Their shades reflect peak heights between terminal half-cell steps.
+Short bars keep their contrast. Elapsed time uses blue.
 Amber marks a paused or manually positioned playhead. The status describes its state.
 The heavier rail shows the played portion in monochrome. The final marker turns green when playback completes.
 Play starts under the first timeline marker. Save and the timer follow in the same row.

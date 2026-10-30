@@ -37,7 +37,6 @@ func TestAudioNativeCursorTracksUnicodeEditors(t *testing.T) {
 				require.Equal(t, before.Cursor.Y, view.Cursor.Y)
 				x := 4
 				if size[0] >= 60 {
-					x = 3
 					if focus == 1 {
 						x = 21
 					}
@@ -135,7 +134,7 @@ func TestAudioNativeCursorHidesOutsideEditableFields(t *testing.T) {
 	rows := strings.Split(ansi.Strip(view.Content), "\n")
 	require.Contains(t, rows[1], "Text to speech")
 	require.Contains(t, rows[2], "Type what you want to hear…")
-	require.Equal(t, 3, view.Cursor.X, "placeholder must not move the insertion point")
+	require.Equal(t, 4, view.Cursor.X, "placeholder must not move the insertion point")
 	require.Equal(t, 2, view.Cursor.Y)
 	for _, modal := range []string{"info", "more", "choice", "history", "recovery"} {
 		m.modal = modal
@@ -162,6 +161,21 @@ func TestAudioNativeCursorHidesOutsideEditableFields(t *testing.T) {
 	m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	require.True(t, m.quit)
 	require.Nil(t, m.View().Cursor)
+}
+
+func TestAudioSpeedCaretFollowsDeliveryAcrossColumnChanges(t *testing.T) {
+	m := audioReviewModel(t)
+	m.settingsExpanded, m.setting = true, 3
+	m.focusSection(2)
+	m.beginInlineSpeed()
+	m.speedInput.SetValue("1.25")
+	m.speedInput.SetCursorColumn(2)
+	for _, width := range []int{133, 100, 99, 60, 100} {
+		m.Update(tea.WindowSizeMsg{Width: width, Height: 28})
+		view := m.View()
+		assertAudioNativeCursorBefore(t, view, "25")
+		require.Equal(t, width >= 100, strings.Contains(ansi.Strip(view.Content), "Delivery"))
+	}
 }
 
 func assertAudioNativeCursorBefore(t *testing.T, view tea.View, suffix string) {
@@ -197,7 +211,7 @@ func TestAudioNativeCursorRunnerRepaintsMovementAndRestoresOrigin(t *testing.T) 
 	moved := paint.String()
 	require.True(t, strings.HasPrefix(moved, ansi.ResetModeTextCursorEnable+ansi.RestoreCursor))
 	require.Contains(t, moved, "Text to speech", "cursor-only frames must remain complete under coalescing")
-	require.Contains(t, moved, "│  abcde")
+	require.Contains(t, moved, "│ │ abcde")
 	require.Contains(t, moved, ansi.CursorHorizontalAbsolute(m.View().Cursor.X+1)+ansi.SetCursorStyle(5))
 	inline.drawFrame(101, 29)
 	require.Equal(t, moved, paint.String())
@@ -291,7 +305,7 @@ func TestAudioNativeCursorCoalescedFramesKeepInitializedOrigin(t *testing.T) {
 	require.Contains(t, initial, ansi.SaveCursor)
 	require.True(t, strings.HasPrefix(latest, ansi.ResetModeTextCursorEnable+ansi.RestoreCursor))
 	require.Contains(t, latest, "Text to speech")
-	require.Contains(t, latest, "│  latest draft")
+	require.Contains(t, latest, "│ │ latest draft")
 	require.Contains(t, latest, ansi.CursorHorizontalAbsolute(m.View().Cursor.X+1)+ansi.SetCursorStyle(5))
 	require.NoError(t, painter.Stop())
 	require.Contains(t, inline.close(), ansi.RestoreCursor)

@@ -30,8 +30,8 @@ func TestAudioFormPaletteKeepsValuesNeutralAndSelectionVisible(t *testing.T) {
 		for _, field := range []struct{ label, value string }{
 			{"Model", m.settings.Model}, {"Format", "WAV"}, {"Speed", "1.00 x"},
 		} {
-			row := m.muted().Render(fmt.Sprintf("%-17s", field.label)) + " " + field.value
-			require.Contains(t, view, row, "ordinary settings need muted labels and neutral values")
+			row := m.muted().Render(fmt.Sprintf("%-9s", field.label)) + " " + m.primaryText().Render(field.value)
+			require.Contains(t, view, row, "settings need muted labels and primary values")
 			require.NotContains(t, view, m.accent().Bold(false).Render(field.value))
 		}
 		for _, value := range []string{m.input.Value(), m.instructions.Value()} {
@@ -135,7 +135,7 @@ func TestAudioPlayerFeedbackUsesSemanticPalette(t *testing.T) {
 		audioReviewKey(m, tea.KeySpace)
 		view := m.View().Content
 		require.Contains(t, view, m.warningStyle().Render(audioNoGenerationNotice))
-		require.NotContains(t, ansi.Strip(view), "Save audio…")
+		require.Contains(t, ansi.Strip(view), "Save audio…")
 		require.NotContains(t, view, m.playbackProgressStyle().Render(audioNoGenerationNotice))
 		m.color = false
 		require.Equal(t, ansi.Strip(view), m.View().Content)
@@ -170,9 +170,15 @@ func TestAudioPlaybackActionsInheritForegroundAndSuppressBusySelection(t *testin
 				}
 				view := m.View().Content
 				if !recorded {
-					require.Contains(t, view, m.muted().Render("Your recording will appear here."))
-					require.NotContains(t, ansi.Strip(view), "Play audio")
-					require.NotContains(t, ansi.Strip(view), "Save audio…")
+					if m.framed() {
+						require.Contains(t, view, m.muted().Render("No recording yet"))
+						require.Contains(t, ansi.Strip(view), "› Save audio…")
+						require.Contains(t, view, m.muted().Render("00:00.000 / 00:00.000"))
+					} else {
+						require.Contains(t, view, m.muted().Render("Your recording will appear here."))
+						require.NotContains(t, ansi.Strip(view), "Play audio")
+						require.NotContains(t, ansi.Strip(view), "Save audio…")
+					}
 					continue
 				}
 				audioRequireTextForeground(t, view, "Play audio", lipgloss.NewStyle())
@@ -267,20 +273,71 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 				} else if tc.held {
 					style = m.warningStyle()
 				}
-				require.Equal(t, style.Render(tc.name), m.playerStatus())
+				lamp := "○ "
+				if tc.playing || tc.finished {
+					lamp = "● "
+				}
+				label := style.Render(lamp + tc.name)
+				require.Equal(t, label, m.playerStatus())
 				view := m.View().Content
-				require.Contains(t, view, style.Render(tc.name))
+				require.Contains(t, view, label)
 				m.color = false
 				plain := m.View().Content
 				require.Contains(t, plain, tc.name)
 				require.NotContains(t, plain, "\x1b[38;")
 				require.Equal(t, ansi.Strip(view), plain)
+				m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+				require.Equal(t, tc.name, m.playerStatus(), "compact headers keep the whole label")
 			})
 		}
 		m := audioReviewModel(t)
 		m.color, m.dark = true, dark
 		require.Nil(t, m.result)
-		require.Equal(t, m.muted().Render("Ready"), m.playerStatus(), "an empty player must not claim generated audio")
+		require.Equal(t, m.muted().Render("○ Idle"), m.playerStatus(), "an empty player must not claim generated audio")
+	}
+}
+
+func TestAudioHeaderKeepsLampAndLabelInPlace(t *testing.T) {
+	for _, width := range []int{60, 80, 133} {
+		for _, color := range []bool{false, true} {
+			m := audioReviewModel(t)
+			m.color = color
+			m.Update(tea.WindowSizeMsg{Width: width, Height: 39})
+			var lampColumn, labelColumn int
+			check := func(lamp, label string) {
+				t.Helper()
+				header := ansi.Strip(m.workspaceAudioHeader()[0])
+				before, _, found := strings.Cut(header, lamp+" "+label)
+				require.True(t, found, "expected %q in %q", label, header)
+				left := ansi.StringWidth(before)
+				if lampColumn == 0 {
+					lampColumn, labelColumn = left, left+ansi.StringWidth(lamp+" ")
+				}
+				require.Equal(t, lampColumn, left)
+				require.Equal(t, labelColumn, left+ansi.StringWidth(lamp+" "))
+				require.LessOrEqual(t, ansi.StringWidth(header), 2+m.waveformWidth())
+			}
+			check("○", "Idle")
+			m.busy, m.note = true, "Working: generate"
+			check("●", "Generating")
+			m.busy = false
+			r := audioReviewResult("anchored-status", false)
+			r.entry.Settings.Voice = strings.Repeat("界", 10)
+			m.result = &r
+			check("○", "Ready")
+			m.playing = true
+			check("●", "Playing")
+			m.playing, r.resumable = false, true
+			check("○", "Paused")
+			r.resumable, r.position = false, 300*time.Millisecond
+			check("○", "Stopped")
+			r.position = r.seekDuration()
+			check("○", "At end")
+			r.finished = true
+			check("●", "Completed")
+			m.busy = true
+			check("●", "Generating")
+		}
 	}
 }
 
@@ -394,7 +451,7 @@ func audioRequireTextForeground(t *testing.T, view, text string, style lipgloss.
 	t.Fatalf("text %q is missing", text)
 }
 
-func TestAudioDesignSystemUsesGreenOnlyForCompletedPlayback(t *testing.T) {
+func TestAudioDesignSystemReservesSuccessColorForCompletedPlayback(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		green := "35;107;67"
 		if dark {
@@ -428,8 +485,12 @@ func TestAudioDesignSystemUsesGreenOnlyForCompletedPlayback(t *testing.T) {
 					require.Empty(t, greenRuns, "%s must not imply successful completion", state)
 				} else {
 					require.Len(t, greenRuns, 2)
+					status := "Completed"
+					if m.framed() {
+						status = "● Completed"
+					}
 					for _, run := range greenRuns {
-						require.Contains(t, []string{"Completed", "┷"}, run[1])
+						require.Contains(t, []string{status, "┷"}, run[1])
 					}
 				}
 				m.color = false

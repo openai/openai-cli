@@ -11,7 +11,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
-	"github.com/openai/openai-cli/internal/readable"
 )
 
 const audioInstructionsExample = "Speak warmly and clearly."
@@ -193,6 +192,34 @@ func (m *audioWorkbench) openActions() tea.Cmd {
 	return m.focusSection(2)
 }
 
+func (m *audioWorkbench) updateWideAction(key string) tea.Cmd {
+	switch key {
+	case "right":
+		return m.updateMore("down")
+	case "left":
+		if m.moreChoice > 0 {
+			return m.updateMore("up")
+		}
+		fallthrough
+	case "home", "shift+tab":
+		m.modal, m.setting = "", 4
+		return m.focusSection(2)
+	case "up":
+		// Settings sit directly above the shelf. Return to their last visible field.
+		order := m.settingOrder()
+		m.modal, m.setting = "", order[len(order)-2]
+		return m.focusSection(2)
+	case "down":
+		m.modal = ""
+		return m.enterAudioFromAbove()
+	case "tab":
+		m.modal = ""
+		return m.focusSection(4)
+	default:
+		return m.updateMore(key)
+	}
+}
+
 func (m *audioWorkbench) updateMore(key string) tea.Cmd {
 	items := m.moreItems()
 	m.moreChoice = audioMenuIndex(m.moreChoice, len(items), key)
@@ -202,7 +229,7 @@ func (m *audioWorkbench) updateMore(key string) tea.Cmd {
 	selected := items[m.moreChoice]
 	switch selected {
 	case "Help":
-		m.openInformation("Help", audioFormHelp, "more")
+		m.openHelp("more")
 	case "View command":
 		return m.focusCommand()
 	case "Last error":
@@ -285,16 +312,34 @@ func (m *audioWorkbench) reconcileRecovery() tea.Cmd {
 	return nil
 }
 
-func (m *audioWorkbench) openInformation(title, text, parent string) {
-	m.infoTitle, m.infoText, m.infoParent = title, text, parent
-	m.infoOffset, m.modal = 0, "info"
+func (m *audioWorkbench) openHelp(parent string) {
+	m.infoParent, m.infoOffset, m.modal = parent, 0, "info"
 }
 
-func (m *audioWorkbench) infoRows() []string {
-	return strings.Split(ansi.Wrap(readable.Text(m.infoText), m.audioWidth(), ""), "\n")
+func (m *audioWorkbench) helpRows() []string {
+	shortcut := func(key, action string) string {
+		return "  " + m.keyHint(key, "") + strings.Repeat(" ", 12-ansi.StringWidth(key)) + m.muted().Render(action)
+	}
+	return []string{
+		"  " + m.strong().Render("Compose"),
+		shortcut("Tab", "Next section"),
+		shortcut("Ctrl+G", "Generate speech"),
+		shortcut("Alt+Enter", "Insert a new line"),
+		"",
+		"  " + m.strong().Render("Audio"),
+		shortcut("Ctrl+O", "Focus audio"),
+		shortcut("Space", "Toggle playback"),
+		shortcut("← →", "Seek on waveform"),
+		shortcut("g", "Go to time"),
+		shortcut("Ctrl+S", "Open Save audio"),
+		"",
+		"  " + m.strong().Render("View command"),
+		shortcut("c", "Copy command"),
+		shortcut("Ctrl+P", "Print command and exit"),
+	}
 }
 
-func (m *audioWorkbench) informationHeight() int {
+func (m *audioWorkbench) helpHeight() int {
 	return max(1, m.audioHeight()-4)
 }
 
@@ -318,62 +363,18 @@ func audioScrollOffset(offset, rows, height int, key string) int {
 	return max(0, min(offset, limit))
 }
 
-func (m *audioWorkbench) informationView() tea.View {
-	rows, height := m.infoRows(), m.informationHeight()
+func (m *audioWorkbench) helpView() tea.View {
+	rows, height := m.helpRows(), m.helpHeight()
 	start := audioScrollOffset(m.infoOffset, len(rows), height, "")
-	lines := []string{m.strong().Render(m.infoTitle), ""}
+	lines := []string{"  " + m.strong().Render("Help"), ""}
 	lines = append(lines, rows[start:min(len(rows), start+height)]...)
-	footer := m.hintLine([2]string{"↑↓", "scroll"}, [2]string{"Esc", "back"})
+	footer := m.shortcutLine([2]string{"Esc", "back"})
+	if len(rows) > height {
+		footer = m.shortcutLine([2]string{"↑↓", "scroll"}, [2]string{"Esc", "back"})
+	}
 	lines = append(lines, "", footer)
 	return tea.NewView(m.fitAudio(lines, 1))
 }
-
-const audioFormHelp = `Use Tab to move between sections.
-Use Up and Down to move through fields.
-Enter chooses the highlighted action.
-
-Enter in Text or Instructions creates speech.
-Ctrl+G also creates speech.
-Ctrl+S opens Save for the current recording. Choose a destination and confirm to write the file.
-Ctrl+O focuses Audio without starting playback.
-Text, settings, and retained audio share the workspace when the terminal is at least 60 x 24.
-In smaller terminals, Tab changes the visible section.
-From Settings, Tab focuses Actions on wide terminals. On smaller terminals, choose More actions.
-Choose View command to inspect the full command.
-Up/Down, Page Up/Down, Home, and End scroll the command.
-Esc returns to the menu. Tab opens Audio. Shift+Tab returns to More actions.
-Ctrl+P prints the full command and exits the form.
-Voice stays on the form. Enter on Settings reveals Model, Format, and Speed.
-Esc collapses Settings and keeps applied values.
-Left and Right change the selected field.
-Type a Speed directly; Enter applies it and Esc cancels the edit.
-Alt+Enter adds a new line.
-
-Instructions start with an editable example.
-Older models do not send Instructions.
-Your instruction draft stays available when you change models.
-
-History stores audio, Text, Instructions, and settings locally.
-It stores only the inputs sent with each request.
-Clear removes the current draft, not History or saved files.
-
-Choose Play audio or Save audio in the result.
-Space plays the recording. Pause and Resume use the last reported position.
-When that position is unavailable, Space stops playback. S opens Save.
-Left and Right choose Play or Save.
-Up focuses the waveform. Down returns to the selected action.
-Left and Right on the waveform choose the playback start.
-Shift+Left and Shift+Right move five waveform bars.
-G or a digit opens Go to time for measured audio. Type seconds or M:SS.
-Enter applies the time. Esc cancels. Invalid input restores the current position.
-Changing the playback position stops playback. Press Space to play from the selected time.
-The marker follows FFplay's reported playback position.
-If FFplay does not report progress, the marker keeps its selected position.
-Waveform height scales to each recording. Playback volume stays unchanged.
-Save always exports the complete original recording.
-
-Esc returns from a menu or result.
-Esc from the form exits. Ctrl+C cancels and exits.`
 
 func (m *audioWorkbench) progressView() string {
 	action := map[string]string{"Working: generate": "Creating speech", "Working: history": "Opening History", "Working: open": "Opening audio", "Working: export": "Saving audio"}[m.note]

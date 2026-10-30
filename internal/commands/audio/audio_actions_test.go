@@ -71,7 +71,7 @@ func TestAudioActionsEmptyPlayerRespectsGuards(t *testing.T) {
 			case "tiny":
 				m.Update(tea.WindowSizeMsg{Width: 39, Height: 11})
 			case "info":
-				m.openInformation("Help", "Synthetic help", "")
+				m.openHelp("")
 			case "recovery":
 				m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
 			case "invalid-speed":
@@ -331,7 +331,7 @@ func TestAudioActionsNewSuccessRemovesObsoleteRecovery(t *testing.T) {
 		t.Run("parent_"+parent, func(t *testing.T) {
 			m := audioReviewModel(t)
 			if parent == "info" {
-				m.openInformation("Help", "Keep this help page.", "more")
+				m.openHelp("more")
 			} else {
 				m.modal = parent
 			}
@@ -348,11 +348,39 @@ func TestAudioActionsNewSuccessRemovesObsoleteRecovery(t *testing.T) {
 	}
 }
 
+func TestAudioHelpFitsWideScreensAndScrollsOnShortScreens(t *testing.T) {
+	for _, size := range []tea.WindowSizeMsg{{Width: 40, Height: 12}, {Width: 60, Height: 24}, {Width: 133, Height: 39}} {
+		m := audioReviewModel(t)
+		m.Update(size)
+		m.openHelp("more")
+		view := ansi.Strip(m.View().Content)
+		require.Contains(t, view, "Compose")
+		require.Contains(t, view, "Insert a new line")
+		require.Contains(t, view, "Esc back")
+		if size.Height == 12 {
+			require.Contains(t, view, "↑↓ scroll")
+			require.NotContains(t, view, "Print command and exit")
+			audioReviewKey(m, tea.KeyEnd)
+			view = ansi.Strip(m.View().Content)
+		} else {
+			require.NotContains(t, view, "↑↓ scroll")
+		}
+		require.Contains(t, view, "Copy command")
+		require.Contains(t, view, "Print command and exit")
+		require.LessOrEqual(t, len(strings.Split(view, "\n")), size.Height)
+		for _, row := range strings.Split(view, "\n") {
+			require.LessOrEqual(t, ansi.StringWidth(row), size.Width-1)
+		}
+		audioReviewKey(m, tea.KeyEscape)
+		require.Equal(t, "more", m.modal)
+	}
+}
+
 func TestAudioActionsRecoveryRestoresInterruptedInformation(t *testing.T) {
 	m := audioReviewModel(t)
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
-	original := strings.Repeat("Keep this help page.\n", 12)
-	m.openInformation("Help", original, "more")
+	m.openHelp("more")
+	original := m.helpRows()
 	for range 3 {
 		audioReviewKey(m, tea.KeyDown)
 	}
@@ -361,8 +389,8 @@ func TestAudioActionsRecoveryRestoresInterruptedInformation(t *testing.T) {
 	require.Contains(t, audioFeedbackView(t, m), "Error details")
 	audioReviewKey(m, tea.KeyEscape)
 	require.Equal(t, "info", m.modal)
-	require.Equal(t, "Help", m.infoTitle)
-	require.Equal(t, original, m.infoText)
+	require.Contains(t, ansi.Strip(m.View().Content), "Help")
+	require.Equal(t, original, m.helpRows())
 	require.Equal(t, "more", m.infoParent)
 	require.Equal(t, 3, m.infoOffset)
 }
