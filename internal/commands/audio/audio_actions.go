@@ -14,7 +14,7 @@ import (
 )
 
 const audioInstructionsExample = "Speak warmly and clearly."
-const audioCommandTitle = "Command (Bash/zsh)"
+const audioCommandTitle = "Command"
 const audioNoGenerationNotice = "Generate speech first."
 
 func (m *audioWorkbench) instructionsSupported() bool {
@@ -325,6 +325,9 @@ func (m *audioWorkbench) helpRows() []string {
 		shortcut("Tab", "Next section"),
 		shortcut("Ctrl+G", "Generate speech"),
 		shortcut("Alt+Enter", "Insert a new line"),
+	}
+	if m.studioLayout() {
+		rows = append(rows, shortcut("↑ / ↓", "First script line to Generate and back"), shortcut("Shift+Tab", "Script to Recording"))
 	}
 	if m.splitComposer() {
 		rows = append(rows, shortcut("→ / ←", "End of text to Delivery and back"))

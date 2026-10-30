@@ -2,7 +2,6 @@ package audio
 
 import (
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -111,10 +110,10 @@ func (m *audioWorkbench) workspaceView() tea.View {
 			cursor.Y++
 		}
 	}
-	// Cap the empty plot at the same height as a measured plot. Its four
-	// auxiliary rows hold the rail, time labels, and gaps around the rail.
+	// Cap the empty plot at the same height as a measured plot. Its three
+	// auxiliary rows hold the rail and one gap on each side.
 	// One more row separates the plot from the recording header.
-	controlRow := min(controlLimit, len(lines)+1+m.waveformDetailHeight(audioMaxWaveformHeight)+5)
+	controlRow := min(controlLimit, len(lines)+1+m.waveformDetailHeight(audioMaxWaveformHeight)+4)
 	lines = append(lines, header...)
 	budget := controlRow - len(lines)
 	if budget > m.waveformDetailHeight(budget-1)+1 {
@@ -169,7 +168,17 @@ func (m *audioWorkbench) workspaceFooter() []string {
 			}
 		}
 	}
-	shortcuts := [][2]string{{"Ctrl+C", "Exit"}, {nextKey, next}}
+	shortcuts := [][2]string{{nextKey, next}}
+	if m.focus == 0 {
+		if m.studioLayout() {
+			shortcuts = append(shortcuts, [2]string{"↑", "Actions at top"})
+		}
+		recording := "Audio"
+		if m.studioLayout() {
+			recording = "Recording"
+		}
+		shortcuts = append(shortcuts, [2]string{"Shift+Tab", recording})
+	}
 	if m.focus == 0 || m.focus == 1 {
 		if m.splitComposer() && m.focus == 0 {
 			shortcuts = append(shortcuts, [2]string{"→", "Delivery at text end"})
@@ -181,6 +190,9 @@ func (m *audioWorkbench) workspaceFooter() []string {
 			shortcuts = append(shortcuts, [2]string{"←→", "choose"})
 		}
 		if horizontal || m.setting == audioSettingMore {
+			if m.studioLayout() && m.setting == 4 {
+				below = "Script"
+			}
 			shortcuts = append(shortcuts, [2]string{"↓", below})
 		}
 		action := "open"
@@ -215,7 +227,7 @@ func (m *audioWorkbench) workspaceFooter() []string {
 	if m.focus == 2 && m.settingsExpanded && audioAdvancedSetting(m.setting) {
 		shortcuts = append(shortcuts, [2]string{"Esc", "Settings"})
 	}
-	shortcuts = append(shortcuts, [2]string{"Ctrl+S", "Save"})
+	shortcuts = append(shortcuts, [2]string{"Ctrl+S", "Save"}, [2]string{"Ctrl+C", "Exit"})
 	return m.formShortcutRows(shortcuts...)
 }
 
@@ -259,20 +271,16 @@ func (m *audioWorkbench) workspaceAudioHeader() []string {
 	if r == nil && !m.framed() {
 		return []string{"  " + m.emptyAudioStatus()}
 	}
-	// Reserve the longest status so a label change cannot move the lamp or nearby metadata.
+	// Reserve the longest status so labels and metadata stay in fixed columns.
 	statusColumn := 2 + m.waveformWidth() - len("Generating")
 	left := "  "
 	if m.framed() {
-		statusColumn -= ansi.StringWidth(" ○ ")
 		left += m.muted().Render("Audio") + strings.Repeat(" ", m.formLabelWidth()+1-len("Audio"))
 	}
 	header := func(metadata string) string {
 		return metadata + strings.Repeat(" ", statusColumn-ansi.StringWidth(metadata)) + m.playerStatus()
 	}
 	width := statusColumn - ansi.StringWidth(left) - 1
-	if m.framed() {
-		width++ // The lamp's left halo cell already separates the metadata.
-	}
 	if r == nil {
 		state := m.muted().Render("No recording yet")
 		if m.playerNotice != "" {
@@ -327,9 +335,8 @@ func (m *audioWorkbench) waveformRowsAtHeight(budget, height int) []string {
 	}
 	width := m.waveformWidth()
 	height = min(budget-1, height)
-	duration := m.result.seekDuration()
 	marker := -1
-	if duration > 0 {
+	if m.result.seekDuration() > 0 {
 		marker = audioWaveformMarker(width, m.selectedBoundary())
 	}
 	var rows []string
@@ -339,17 +346,11 @@ func (m *audioWorkbench) waveformRowsAtHeight(budget, height int) []string {
 		rows = make([]string, height)
 	}
 	spare := budget - height - 1
-	reserveScale := spare > 2 && m.framed()
 	if spare > 0 {
 		rows = append(rows, "")
 	}
-	if reserveScale {
-		rows = append(rows, "")
-	}
 	rows = append(rows, m.timelineRail(width, marker))
-	if reserveScale && (m.result == nil || duration > 0) {
-		rows = append(rows, "  "+m.muted().Render(audioTimeRuler(width, duration)))
-	} else if spare > 1 && m.framed() {
+	if spare > 1 && m.framed() {
 		rows = append(rows, "")
 	}
 	return rows
@@ -380,39 +381,20 @@ func (m *audioWorkbench) measuredWaveformRows(height, marker int) []string {
 }
 
 func (m *audioWorkbench) timelineRail(width, marker int) string {
-	if marker < 0 {
-		return "  " + m.borderStyle().Render("╶"+strings.Repeat("─", width-2)+"╴")
-	}
-	// The heavier played rail remains distinct when the terminal disables color.
-	var played, remaining string
-	join := "╾"
-	if marker > 0 {
-		played = m.elapsedWaveformStyle().Render("╺" + strings.Repeat("━", marker-1))
-	} else {
-		join = "╺"
-	}
-	if marker < width-1 {
-		remaining = m.borderStyle().Render(strings.Repeat("─", width-marker-2) + "╴")
-	} else {
-		join = "╸"
-	}
-	anchorStyle := m.playheadStyle()
-	if marker == width-1 && m.result.finished && !m.playing {
-		anchorStyle = m.playbackProgressStyle()
-	}
-	return "  " + played + anchorStyle.Render(join) + remaining
-}
-
-// Align each label with its timeline endpoint.
-func audioTimeRuler(width int, duration time.Duration) string {
-	label := func(at time.Duration) string {
-		if duration >= time.Millisecond {
-			at = at.Truncate(time.Millisecond)
+	if marker <= 0 {
+		start := "╶"
+		if marker == 0 {
+			start = "╺"
 		}
-		return strings.TrimSuffix(strings.TrimRight(audioSeekClock(at), "0"), ".")
+		return "  " + m.borderStyle().Render(start+strings.Repeat("─", width-2)+"╴")
 	}
-	zero, end := label(0), label(duration)
-	return zero + strings.Repeat(" ", max(1, width-len(zero)-len(end))) + end
+	// The heavier elapsed stroke stays distinct on terminals without color.
+	played := "╺" + strings.Repeat("━", marker-1)
+	if marker == width-1 {
+		return "  " + m.elapsedWaveformStyle().Render(played+"╸")
+	}
+	return "  " + m.elapsedWaveformStyle().Render(played+"╾") +
+		m.borderStyle().Render(strings.Repeat("─", width-marker-2)+"╴")
 }
 
 func (m *audioWorkbench) playbackVerb() string {

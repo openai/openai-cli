@@ -60,13 +60,13 @@ func TestAudioFormPaletteKeepsValuesNeutralAndSelectionVisible(t *testing.T) {
 		m.color = true
 		m.focusSection(0)
 		view = m.View().Content
-		require.NotContains(t, ansi.Strip(view), "› Text to speech")
+		require.Contains(t, ansi.Strip(view), "› Text to speech")
 		require.NotNil(t, m.View().Cursor)
 		audioRequireTextForeground(t, view, "Neutral draft.", lipgloss.NewStyle())
-		require.Contains(t, view, m.accent().Render("Text to speech"))
+		require.Contains(t, view, m.selected("› Text to speech", 2+len("Text to speech")))
 		require.NotContains(t, ansi.Strip(view), "Setting        Value")
 		m.focusSection(1)
-		audioRequireTextForeground(t, m.View().Content, "Instructions", m.muted())
+		require.Contains(t, m.View().Content, m.selected("› Instructions", 2+len("Instructions")))
 		audioRequireTextForeground(t, m.View().Content, "Neutral delivery.", lipgloss.NewStyle())
 	}
 }
@@ -150,7 +150,7 @@ func TestAudioPlayerFeedbackUsesSemanticPalette(t *testing.T) {
 		m.cancelInlineSpeed()
 		m.settings.Model, m.settings.Voice = "tts-1", "marin"
 		m.focusSection(0)
-		require.Contains(t, m.View().Content, m.warningStyle().Render("Marin (unavailable)"))
+		require.Contains(t, m.View().Content, m.warningStyle().Render("Marin  Unavailable"))
 	}
 }
 
@@ -272,23 +272,8 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 				} else if tc.held {
 					style = m.warningStyle()
 				}
-				lamp := "○"
-				if tc.finished {
-					lamp = "●"
-				} else if tc.name == "Paused" {
-					lamp = "◎"
-				}
-				if tc.playing {
-					lamp = "◉"
-				}
 				label := m.playerStatus()
-				require.Equal(t, " "+lamp+" "+tc.name, ansi.Strip(label))
-				if tc.name == "Ready" {
-					require.Contains(t, label, style.Render(lamp+" "+tc.name))
-				} else {
-					require.Contains(t, label, "48;2;", "the lit circle has a halo")
-					require.Contains(t, label, style.Render(tc.name))
-				}
+				require.Equal(t, style.Render(tc.name), label)
 				view := m.View().Content
 				require.Contains(t, view, label)
 				m.color = false
@@ -303,80 +288,59 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 		m := audioReviewModel(t)
 		m.color, m.dark = true, dark
 		require.Nil(t, m.result)
-		require.Equal(t, " "+m.muted().Render("○ Idle"), m.playerStatus(), "an empty player must not claim generated audio")
+		require.Equal(t, m.muted().Render("Idle"), m.playerStatus(), "an empty player must not claim generated audio")
 	}
 }
 
-func TestAudioStatusLightBreathesOnlyWhenActive(t *testing.T) {
+func TestAudioGeneratingStatusStaysSteadyAcrossTicks(t *testing.T) {
 	for _, dark := range []bool{true, false} {
 		m := audioReviewModel(t)
 		m.color, m.dark, m.busy, m.note = true, dark, true, "Working: generate"
-		low := m.playerStatus()
-		tick := audioWorkTick(time.Now())
-		for range 6 {
-			m.Update(tick)
+		status := m.accent().Bold(false).Render("Generating")
+		for range 12 {
+			require.Equal(t, status, m.playerStatus())
+			_, cmd := m.Update(audioWorkTick(time.Now()))
+			require.NotNil(t, cmd, "generation still refreshes")
 		}
-		high := m.playerStatus()
-		require.NotEqual(t, low, high)
-		require.Equal(t, ansi.Strip(low), ansi.Strip(high))
-		for range 6 {
-			m.Update(tick)
-		}
-		require.Equal(t, low, m.playerStatus())
-
-		r := audioReviewResult("glow", false)
-		r.position, r.resumable = time.Second/2, true
-		m.busy, m.result = false, &r
-		paused := m.playerStatus()
-		_, cmd := m.Update(tick)
-		require.Nil(t, cmd)
-		require.Equal(t, paused, m.playerStatus())
-		require.Contains(t, paused, "48;2;")
-		m.color = false
-		require.Equal(t, ansi.Strip(paused), m.playerStatus())
 	}
 }
 
-func TestAudioHeaderKeepsLampAndLabelInPlace(t *testing.T) {
+func TestAudioHeaderKeepsStatusInPlace(t *testing.T) {
 	for _, width := range []int{60, 80, 133} {
 		for _, color := range []bool{false, true} {
 			m := audioReviewModel(t)
 			m.color = color
 			m.Update(tea.WindowSizeMsg{Width: width, Height: 39})
-			var lampColumn, labelColumn int
-			check := func(lamp, label string) {
+			labelColumn := 2 + m.waveformWidth() - len("Generating")
+			check := func(label string) {
 				t.Helper()
 				header := ansi.Strip(m.workspaceAudioHeader()[0])
-				before, _, found := strings.Cut(header, lamp+" "+label)
+				before, _, found := strings.Cut(header, label)
 				require.True(t, found, "expected %q in %q", label, header)
-				left := ansi.StringWidth(before)
-				if lampColumn == 0 {
-					lampColumn, labelColumn = left, left+ansi.StringWidth(lamp+" ")
-				}
-				require.Equal(t, lampColumn, left)
-				require.Equal(t, labelColumn, left+ansi.StringWidth(lamp+" "))
+				require.Equal(t, labelColumn, ansi.StringWidth(before))
+				require.True(t, strings.HasSuffix(before, " "), "keep metadata separate from status")
 				require.LessOrEqual(t, ansi.StringWidth(header), 2+m.waveformWidth())
 			}
-			check("○", "Idle")
+			check("Idle")
 			m.busy, m.note = true, "Working: generate"
-			check("◉", "Generating")
+			check("Generating")
 			m.busy = false
 			r := audioReviewResult("anchored-status", false)
 			r.entry.Settings.Voice = strings.Repeat("界", 10)
 			m.result = &r
-			check("○", "Ready")
+			check("Ready")
 			m.playing = true
-			check("◉", "Playing")
+			check("Playing")
 			m.playing, r.resumable = false, true
-			check("◎", "Paused")
+			check("Paused")
 			r.resumable, r.position = false, 300*time.Millisecond
-			check("○", "Stopped")
+			check("Stopped")
 			r.position = r.seekDuration()
-			check("○", "At end")
+			check("At end")
 			r.finished = true
-			check("●", "Completed")
+			check("Completed")
 			m.busy = true
-			check("◉", "Generating")
+			check("Generating")
 		}
 	}
 }
@@ -524,10 +488,8 @@ func TestAudioDesignSystemReservesSuccessColorForCompletedPlayback(t *testing.T)
 				if state != "completed" {
 					require.Empty(t, greenRuns, "%s must not imply successful completion", state)
 				} else {
-					require.Len(t, greenRuns, 2)
-					for _, run := range greenRuns {
-						require.Contains(t, []string{"Completed", "╸"}, run[1])
-					}
+					require.Len(t, greenRuns, 1)
+					require.Equal(t, "Completed", greenRuns[0][1])
 				}
 				m.color = false
 				require.Equal(t, ansi.Strip(view), m.View().Content)

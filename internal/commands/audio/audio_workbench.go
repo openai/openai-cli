@@ -101,7 +101,6 @@ type audioWorkbench struct {
 	width, height             int
 	color, dark               bool
 	busy, quit, playing       bool
-	lampPhase                 int
 	note                      string
 	playerNotice              string
 	retainedGenerationFailure bool
@@ -151,7 +150,7 @@ func newAudioWorkbench(ctx context.Context, command *cli.Command, next cli.Actio
 		return t
 	}
 	m := &audioWorkbench{ctx: ctx, command: command, next: next, store: store, workers: &audioWorkers{}, settings: audioDefaultSettings(), color: os.Getenv("NO_COLOR") == "" && os.Getenv("FORCE_COLOR") != "0", dark: true,
-		input: newEditor("Type what you want to hear…"), instructions: newEditor("Add speaking instructions (optional)"), path: newEditor("Filename for the original audio file"), saveFolder: newEditor("Folder for saved audio"), speedInput: newEditor("1.00")}
+		input: newEditor("Type what you want to hear…"), instructions: newEditor("Add optional speaking instructions"), path: newEditor("Filename for the original audio file"), saveFolder: newEditor("Folder for saved audio"), speedInput: newEditor("1.00")}
 	m.instructions.SetValue(audioInstructionsExample)
 	m.seekInput = newEditor("Seconds or M:SS")
 	m.setting = 1 // Voice is the first visible setting.
@@ -305,8 +304,6 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 	case audioWorkTick:
 		m.capturePlaybackProgress()
 		if m.busy || m.playing {
-			// Use the existing playback clock for a slow rise and fall. The light owns no timer.
-			m.lampPhase = (m.lampPhase + 1) % 12
 			return m, audioTick()
 		}
 	case audioWorkMessage:

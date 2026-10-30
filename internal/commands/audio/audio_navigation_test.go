@@ -112,6 +112,33 @@ func TestAudioNavigationAcrossDelivery(t *testing.T) {
 	}
 }
 
+func TestAudioStudioScriptShowsWhereArrowsAndTabLead(t *testing.T) {
+	m, editor := audioNavigationEditor(t, 0, "First line\nSecond line")
+	m.Update(tea.WindowSizeMsg{Width: 133, Height: 39})
+	editor.MoveToEnd()
+	key := func(code rune) { audioNavigationKey(t, m, tea.KeyPressMsg{Code: code}) }
+	view := func() string { return ansi.Strip(m.View().Content) }
+	require.Contains(t, view(), "› Script")
+	require.Contains(t, view(), "↑ Actions at top")
+	key(tea.KeyUp)
+	require.Zero(t, m.focus)
+	require.Equal(t, 0, editor.Line(), "Up edits inside a multiline script first")
+	require.Contains(t, view(), "↑ Actions")
+	key(tea.KeyUp)
+	require.Contains(t, view(), "› Generate speech")
+	require.Contains(t, view(), "↓ Script")
+	key(tea.KeyDown)
+	require.Contains(t, view(), "› Script")
+	require.Contains(t, view(), "Shift+Tab Recording")
+	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	require.Equal(t, 4, m.focus)
+	key(tea.KeyTab)
+	require.Contains(t, view(), "› Script")
+	key(tea.KeyTab)
+	require.Contains(t, view(), "› Instructions")
+	require.NotContains(t, view(), "› Script", "only one editor has focus")
+}
+
 func TestAudioDeliveryArrowsPreserveEditing(t *testing.T) {
 	m, editor := audioNavigationEditor(t, 0, "abc\n"+strings.Repeat("界 ", 40))
 	m.Update(tea.WindowSizeMsg{Width: 133, Height: 39})
@@ -444,9 +471,8 @@ func TestAudioNavigationWideActionsToWaveform(t *testing.T) {
 			key(tea.KeyDown)
 			require.Equal(t, 4, m.setting)
 			key(tea.KeyDown)
-			require.Equal(t, 4, m.focus)
-			require.True(t, m.waveformFocused)
-			require.Contains(t, m.View().Content, "↑ Generate")
+			require.Zero(t, m.focus, "Down returns from Generate to the script beneath it")
+			require.Contains(t, m.View().Content, "↑ Actions")
 			key(tea.KeyUp)
 			require.Empty(t, m.modal)
 			require.Equal(t, 2, m.focus)

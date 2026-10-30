@@ -309,5 +309,6 @@ They do not replace the full checker run against the exact candidate binary.
 
 The `wide` case runs at 186×34. The frame leaves the last terminal column free to prevent a soft wrap.
 Tab moves focus to the horizontal Actions row. Right moves across its actions while the draft stays visible.
-The case follows Down into Audio from History, Help, and Generate. Up restores each selection.
+Down from History or Help enters Recording. Up restores the selected action.
+Down from Generate returns to Script. Up from the first script line selects Generate.
 It also opens Help and checks that navigation made zero speech requests.

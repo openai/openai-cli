@@ -140,8 +140,14 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 				return true, command
 			}
 		}
-		if key == "up" && editor.Line() == 0 && line.RowOffset == 0 && m.focus == 1 {
-			return true, m.focusSection(0)
+		if key == "up" && editor.Line() == 0 && line.RowOffset == 0 {
+			if m.focus == 1 {
+				return true, m.focusSection(0)
+			}
+			if m.studioLayout() {
+				m.setting = 4
+				return true, m.focusSection(2)
+			}
 		}
 		if key == "down" && editor.Line() == editor.LineCount()-1 && line.RowOffset == line.Height-1 {
 			if m.focus == 1 || !m.instructionsSupported() {
@@ -185,6 +191,9 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			}
 			m.setting = order[index-1]
 		case "down":
+			if m.studioLayout() && m.setting == 4 {
+				return true, m.focusSection(0)
+			}
 			index := slices.Index(order, m.setting)
 			if index == len(order)-1 || onActionRow {
 				return true, m.enterAudioFromAbove()

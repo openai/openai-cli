@@ -24,7 +24,7 @@ func TestAudioViewFramesWorkspaceAndOnlyHighlightsSelectedControls(t *testing.T)
 		for _, focus := range []int{0, 1, 2} {
 			m.focusSection(focus)
 			view := m.View().Content
-			require.Equal(t, focus == 2, background.MatchString(view))
+			require.Len(t, background.FindAllStringIndex(view, -1), 1, "only the active field gets the selection background")
 			require.Equal(t, 1, strings.Count(ansi.Strip(view), "╭"))
 			require.Contains(t, ansi.Strip(view), "│")
 		}
@@ -42,7 +42,7 @@ func TestAudioViewFramesWorkspaceAndOnlyHighlightsSelectedControls(t *testing.T)
 		require.Contains(t, ansi.Strip(view), "Filename")
 		require.Contains(t, ansi.Strip(view), audioDefaultSaveFolder)
 		require.Contains(t, ansi.Strip(view), "Full recording")
-		require.False(t, background.MatchString(view), "the editable folder uses the native caret")
+		require.Len(t, background.FindAllStringIndex(view, -1), 1, "the editable folder shows its selected label")
 		audioReviewKey(m, tea.KeyTab)
 		require.True(t, background.MatchString(m.View().Content))
 	}
@@ -105,7 +105,7 @@ func TestAudioViewEditorSizeTracksMultilineInput(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 	require.Equal(t, 1, m.input.Height())
 	require.LessOrEqual(t, m.input.Width(), 32)
-	require.NotContains(t, ansi.Strip(m.View().Content), "› Text")
+	require.Contains(t, ansi.Strip(m.View().Content), "› Text to speech")
 }
 
 func TestAudioComposerUsesFullWidthAndKeepsRoomAtHeightBoundary(t *testing.T) {
@@ -190,7 +190,7 @@ func TestAudioScriptHeadingTracksMultilineDraftAndDeliveryFocus(t *testing.T) {
 	m.focusSection(0)
 
 	rows, cursor := m.scriptRows(false)
-	require.Contains(t, rows[0], m.accent().Render("Script"))
+	require.Contains(t, rows[0], m.selected("› Script", 8))
 	require.Contains(t, rows[0], "Line 2 of 2")
 	require.Equal(t, 2, cursor.Y)
 	for _, row := range rows[1:3] {
@@ -217,9 +217,9 @@ func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 			rows := strings.Split(view, "\n")
 			require.Equal(t, 3, ansi.StringWidth(rows[1][:strings.Index(rows[1], "Text to speech")]))
 			require.NotContains(t, rows[1], "A clear short example.")
-			draftRow := 2
+			draftRow, heading := 2, 1
 			if m.studioLayout() {
-				heading := slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Script") })
+				heading = slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Script") })
 				require.Greater(t, heading, 1)
 				draftRow = heading + 1
 			}
@@ -244,7 +244,7 @@ func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 			require.Equal(t, valueColumn, ansi.StringWidth(rows[voiceRow][:strings.Index(rows[voiceRow], "Coral")]))
 			require.Contains(t, rows[voiceRow+1], "Settings")
 			require.Contains(t, rows[voiceRow+1], m.settings.Model)
-			require.NotContains(t, view, "› Text to speech")
+			require.Equal(t, focus == 0, strings.HasPrefix(strings.TrimLeft(rows[heading], "│ "), "› "))
 			require.Equal(t, focus == 0 || focus == 1, m.View().Cursor != nil)
 			if focus == 2 {
 				require.NotContains(t, view, "Alt+Enter New line")

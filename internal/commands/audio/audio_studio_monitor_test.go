@@ -16,12 +16,12 @@ func TestAudioStudioMonitorAnchorsRecordingAndTransport(t *testing.T) {
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		width := m.studioMonitorWidth()
 		const height = 18
-		render := func(light, verb string) [3][2]int {
+		render := func(status, verb string) [3][2]int {
 			rows, cursor := m.studioMonitorRows(width, height)
 			require.Len(t, rows, height)
 			require.Nil(t, cursor)
 			var positions [3][2]int
-			for i, label := range []string{light, verb, " / "} {
+			for i, label := range []string{status, verb, " / "} {
 				found := false
 				for y, row := range rows {
 					require.LessOrEqual(t, ansi.StringWidth(row), width)
@@ -36,19 +36,19 @@ func TestAudioStudioMonitorAnchorsRecordingAndTransport(t *testing.T) {
 			}
 			return positions
 		}
-		initial := render("○ Idle", "Play audio")
+		initial := render("Idle", "Play audio")
 		m.busy, m.note = true, "Working: generate"
-		require.Equal(t, initial, render("◉ Generating", "Play audio"))
+		require.Equal(t, initial, render("Generating", "Play audio"))
 		m.busy, m.note = false, ""
 		r := audioReviewResult("take", false)
 		m.result, m.focus = &r, 4
-		require.Equal(t, initial, render("○ Ready", "Play audio"))
+		require.Equal(t, initial, render("Ready", "Play audio"))
 		m.result.resumable, m.playing = true, true
-		require.Equal(t, initial, render("◉ Playing", "Pause audio"))
+		require.Equal(t, initial, render("Playing", "Pause audio"))
 		m.playing = false
-		require.Equal(t, initial, render("◎ Paused", "Resume audio"))
+		require.Equal(t, initial, render("Paused", "Resume audio"))
 		m.result.finished = true
-		require.Equal(t, initial, render("● Completed", "Replay audio"))
+		require.Equal(t, initial, render("Completed", "Replay audio"))
 
 		m.result.finished = false
 		m.waveformFocused = true
@@ -116,12 +116,12 @@ func TestAudioStudioRailStaysInPlaceAcrossRecordings(t *testing.T) {
 			}
 		}
 		require.Positive(t, rail)
-		require.Equal(t, []string{"00:00", "00:00"}, strings.Fields(idle[rail+1]))
+		require.Equal(t, 2, strings.Count(strings.Join(idle, "\n"), "00:00"), "only the clock shows time")
 		r := audioReviewResult("studio-rail", false)
 		r.position = time.Second / 2
 		m.result = &r
 		measured := render()
-		require.Equal(t, []string{"00:00", "00:01"}, strings.Fields(measured[rail+1]))
+		require.Equal(t, 1, strings.Count(strings.Join(measured, "\n"), "00:01"), "only the clock shows the duration")
 		column := audioRailMarkerColumn(t, measured[rail])
 		require.Equal(t, 2+audioWaveformMarker(width-4, m.selectedBoundary()), column)
 		wave := strings.Join(measured[:rail], "\n")
@@ -135,6 +135,6 @@ func TestAudioStudioRailStaysInPlaceAcrossRecordings(t *testing.T) {
 		r.measured = false
 		unknown := render()
 		require.Equal(t, idle[rail], unknown[rail])
-		require.Empty(t, strings.TrimSpace(unknown[rail+1]))
+		require.NotContains(t, strings.Join(unknown, "\n"), "00:00")
 	}
 }

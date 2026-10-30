@@ -20,7 +20,7 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 	line, column := m.input.Line(), m.input.Column()
 	for _, tc := range []struct{ width, height, minWave int }{
 		{60, 24, 5}, {80, 24, 5}, {101, 27, 9}, {101, 28, 9}, {101, 29, 9},
-		{101, 30, 9}, {101, 31, 9}, {101, 40, 13}, {137, 41, 13}, {101, 29, 9}, {60, 24, 5},
+		{101, 30, 9}, {101, 31, 9}, {101, 40, 13}, {137, 41, 13}, {110, 28, 7}, {133, 31, 9}, {133, 33, 9}, {101, 29, 9}, {60, 24, 5},
 	} {
 		idleRow := -1
 		for _, recorded := range []bool{false, true} {
@@ -45,7 +45,7 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 				require.Equal(t, 1, height%2)
 				toolbarOffset := positions[2] - positions[1]
 				require.Positive(t, toolbarOffset)
-				require.LessOrEqual(t, toolbarOffset, 4, "only the clock, ruler, and one gap may precede controls")
+				require.LessOrEqual(t, toolbarOffset, 3, "only the clock and one gap may precede controls")
 				require.Contains(t, view, "Coral  WAV")
 				require.Contains(t, view, "00:00.000 / 00:01.000")
 			} else {

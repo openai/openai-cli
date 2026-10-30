@@ -230,7 +230,7 @@ def navigation_case(ctx):
     focus = {"text": "Tab Instructions", "instructions": "› Instructions", "voice": "› Voice", "model": "› Model",
              "settings": "› Settings", "empty-audio": "Ctrl+G Generate",
              "more": "› More actions…", "generate": "› Generate speech", "history": "› History",
-             "play": "› Play audio", "save": "› Save audio…", "command": "Command (Bash/zsh)"}
+             "play": "› Play audio", "save": "› Save audio…", "command": "Bash/zsh"}
     result["navigation_checks"] = []
 
     def zero_requests():
@@ -993,7 +993,8 @@ def wide_case(ctx):
     visible = ctx.wait(terminal, "› Generate speech")
     assert draft in visible, "Returning from Actions lost the draft"
     terminal.send(ctx.picker.DOWN)
-    ctx.wait(terminal, "Ctrl+G Generate")
+    visible = ctx.wait(terminal, "› Script")
+    assert draft in visible, "Returning to Script lost the draft"
     terminal.send(ctx.picker.UP)
     ctx.wait(terminal, "› Generate speech")
     terminal.send(b"\x03")

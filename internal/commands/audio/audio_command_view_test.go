@@ -297,6 +297,7 @@ func TestAudioCommandInspectorAccentsOperationAndShortcuts(t *testing.T) {
 			view := m.View().Content
 			audioRequireTextForeground(t, rows, "audio speak", m.accent())
 			require.Contains(t, view, m.strong().Render(audioCommandTitle))
+			require.Contains(t, view, m.muted().Render("Bash/zsh"))
 			audioRequireTextForeground(t, view, "Ctrl+P", m.accent())
 			m.color = false
 			require.Equal(t, ansi.Strip(view), m.View().Content)

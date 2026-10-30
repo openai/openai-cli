@@ -259,32 +259,32 @@ func TestAudioWorkspaceAnchorsGenerationAndPlayback(t *testing.T) {
 				}
 				return positions
 			}
-			initial := anchors("○ Idle", "Play audio")
+			initial := anchors("Idle", "Play audio")
 			_, command := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 			require.NotNil(t, command)
-			require.Equal(t, initial, anchors("◉ Generating", "Play audio"))
+			require.Equal(t, initial, anchors("Generating", "Play audio"))
 
 			r := audioReviewResult("stable-layout", false)
 			r.entry.Settings = m.effectiveSettings()
 			m.Update(audioWorkMessage{kind: "generate", result: r})
-			require.Equal(t, initial, anchors("○ Ready", "Play audio"))
+			require.Equal(t, initial, anchors("Ready", "Play audio"))
 			m.result.resumable, m.playing = true, true
-			require.Equal(t, initial, anchors("◉ Playing", "Pause audio"))
+			require.Equal(t, initial, anchors("Playing", "Pause audio"))
 			m.playing = false
-			require.Equal(t, initial, anchors("◎ Paused", "Resume audio"))
+			require.Equal(t, initial, anchors("Paused", "Resume audio"))
 			m.result.finished, m.result.resumable = true, false
-			require.Equal(t, initial, anchors("● Completed", "Replay audio"))
+			require.Equal(t, initial, anchors("Completed", "Replay audio"))
 
 			// The retained recording has extra metadata while a new draft generates.
 			m.lastFinished = time.Time{}
 			m.input.SetValue("Another short draft.")
 			_, command = m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 			require.NotNil(t, command)
-			require.Equal(t, initial, anchors("◉ Generating", "Replay audio"))
+			require.Equal(t, initial, anchors("Generating", "Replay audio"))
 			r.entry.Settings, r.measured = m.effectiveSettings(), false
 			m.Update(audioWorkMessage{kind: "generate", result: r})
 			require.Contains(t, m.View().Content, "Preview unavailable")
-			require.Equal(t, initial, anchors("○ Ready", "Play audio"))
+			require.Equal(t, initial, anchors("Ready", "Play audio"))
 		})
 	}
 }
@@ -413,12 +413,9 @@ func TestAudioWorkspaceSeparatesMeasuredWaveformsOnlyWhenRoomPermits(t *testing.
 			require.Positive(t, actions)
 			gapRows := rows[bottom+1 : min(timing, actions)]
 			if state == "measured" {
-				require.LessOrEqual(t, len(gapRows), 2, "only the ruler and one blank row may follow the rail")
+				require.LessOrEqual(t, len(gapRows), 1, "at most one blank row may follow the rail")
 				for _, gap := range gapRows {
-					if strings.Trim(gap, " │") != "" {
-						require.Contains(t, gap, "00:00")
-						require.Contains(t, gap, "00:01")
-					}
+					require.Empty(t, strings.Trim(gap, " │"))
 				}
 				if size[1] >= 36 {
 					require.Empty(t, strings.Trim(rows[bottom-1], " │"))

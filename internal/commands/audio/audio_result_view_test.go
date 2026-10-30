@@ -269,7 +269,6 @@ func TestAudioWaveformProgressTracksForwardAndBackwardSeek(t *testing.T) {
 			view := m.View().Content
 			for _, row := range strings.Split(view, "\n") {
 				if audioIsMeasuredRail(row) {
-					require.NotContains(t, row, m.playbackProgressStyle().Render("╸"), "position alone is not completion")
 					return audioRailMarkerColumn(t, row)
 				}
 			}
@@ -287,11 +286,11 @@ func TestAudioWaveformProgressTracksForwardAndBackwardSeek(t *testing.T) {
 		m.seekResult("left")
 		require.Equal(t, start, markerColumn())
 		r.position = r.seekDuration()
-		require.Greater(t, markerColumn(), first)
+		end := markerColumn()
+		require.Greater(t, end, first)
 		r.finished = true
-		require.Contains(t, m.View().Content, m.playbackProgressStyle().Render("╸"))
+		require.Equal(t, end, markerColumn())
 		require.Contains(t, m.View().Content, m.playbackProgressStyle().Render("Completed"))
-		require.Contains(t, ansi.Strip(m.View().Content), "● Completed")
 		m.color = false
 		require.NotContains(t, m.View().Content, "\x1b[38;")
 		require.Contains(t, m.View().Content, "┃")

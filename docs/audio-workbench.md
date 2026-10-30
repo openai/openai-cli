@@ -23,7 +23,7 @@ In wide layouts, Right at the end of the draft selects Delivery's Settings row.
 Left from Settings returns to the script at the same caret position.
 Modified arrows and active selections remain inside the editor.
 Up from Voice returns to Instructions when the model supports them.
-Down from the bottom row of the form moves to Audio. It focuses the waveform when the recording has one.
+Down from the bottom row of the stacked form moves to Audio. It focuses the waveform when the recording has one.
 When Generate speech, History, and More actions share a row, Left and Right move between them.
 From a setting, Home selects Voice and End moves to the final action.
 Enter opens a choice or starts generation from an editor.
@@ -43,7 +43,8 @@ Changing models preserves the selected voice. An unavailable voice needs another
 Generate speech is the primary action. At 110 columns and 24 rows, Actions shares its row.
 Press Right from Generate speech or the Settings heading to enter Actions. Tab from Settings also enters Actions.
 Left and Right move between actions. Enter opens the selected action. Home selects Generate. End selects the last action.
-Up returns to Settings. Down moves to Audio. Up from the waveform returns to the action you left.
+In Voice studio, Up from the first script line selects Generate speech. Down from Generate returns to Script.
+Down from a secondary action enters Audio. Up from the waveform returns to the action you left.
 Actions contains History, Preview voice, Clear form, View command, and Help.
 On smaller terminals, select More actions and press Enter.
 View command shows the Bash/zsh invocation first. The JSON request follows, with one field per line.
@@ -224,7 +225,8 @@ Escape returns to the form.
 ## Layout
 
 At 60 columns and 24 rows, the draft, settings, and audio share one frame.
-The script aligns with its heading. The active heading uses the focus color.
+A selection marker identifies the active editor, including in monochrome.
+The footer names the next Tab destination. Shift+Tab from the script selects playback controls.
 For multiline scripts, the heading shows the current line while you edit and the total line count afterward.
 Wide, tall terminals reserve a few script lines throughout generation and playback. Longer drafts fill that space as you type.
 At 110 columns and 28 rows, Voice studio places the script and Delivery on the left.
@@ -244,18 +246,17 @@ Before generation, the framed player shows “No recording yet,” Play, Save, a
 The form and player controls keep their positions while the waveform fills the space above the controls.
 Playback and Save shortcuts explain that speech must be generated first.
 The idle player shows a quiet horizontal rail. Its position stays fixed as the waveform fills in.
-The heavier elapsed line joins the thinner remaining line directly below the playhead. Only the endpoints carry timestamps.
+The heavier elapsed line joins the thinner remaining line directly below the playhead. The clock below the rail shows the current time and duration.
 Recordings without a measured duration show an unknown timer and retain their Save action.
 One blank row separates the recording details from the waveform when space permits.
-The status light and its label stay in fixed columns.
-Generation and playback slowly brighten and dim the status light. Pause holds amber. Completion holds green.
-Small terminals show the status text alone.
+The playback status stays in a fixed column. Generating and Playing appear in blue.
+Paused, Stopped, and At end appear in amber. Completed appears in green. Monochrome shows the same labels.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.
 The playhead follows playback through silence. Elapsed bars and rail use green. Upcoming bars use the secondary text color.
 Long bars fade toward both tips. Their shades reflect peak heights between terminal half-cell steps.
 Short bars keep their contrast. Elapsed time uses blue.
-Amber marks a paused or manually positioned playhead. The status describes its state.
-The change in line weight stays visible in monochrome. The right endpoint turns green when playback completes.
+The playhead uses the primary text color in every playback state.
+The change in line weight stays visible in monochrome.
 The studio clock aligns with the rail’s start. Play and Save sit below it.
 The stacked view puts Play, Save, and the clock in one row when space permits.
 When the timer needs more space, it moves above the actions and aligns with the final marker.

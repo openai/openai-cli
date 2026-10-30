@@ -67,6 +67,44 @@ type audioRecordedFrames struct{ strings.Builder }
 func (p *audioRecordedFrames) Control(data string) { _, _ = p.WriteString(data) }
 func (p *audioRecordedFrames) Frame(data string)   { _, _ = p.WriteString(data) }
 
+func TestAudioInlineSeparatesAppleTerminalPromptMarks(t *testing.T) {
+	for _, program := range []string{"Apple_Terminal", "iTerm.app"} {
+		t.Run(program, func(t *testing.T) {
+			t.Setenv("TERM_PROGRAM", program)
+			m := audioReviewModel(t)
+			paint := &audioRecordedFrames{}
+			inline := &audioWorkbenchInline{model: m, painter: paint, profile: colorprofile.ASCII}
+			inline.Init()
+			inline.start()
+			paint.Reset()
+			inline.drawFrame(133, 39)
+			first := paint.String()
+			lineBreaks := 0
+			if program == "Apple_Terminal" {
+				lineBreaks = 1
+				require.True(t, strings.HasPrefix(first, ansi.ResetModeTextCursorEnable+"\r\n\r"+ansi.EraseScreenBelow))
+			}
+			require.Equal(t, lineBreaks, strings.Count(first, "\n"))
+			require.Contains(t, first, ansi.SaveCursor)
+			require.Contains(t, first, ansi.SetCursorStyle(5)+ansi.SetModeTextCursorEnable)
+
+			paint.Reset()
+			m.focusSection(2)
+			inline.drawFrame(110, 28)
+			changed := paint.String()
+			require.NotContains(t, changed, "\n")
+			require.Contains(t, changed, ansi.RestoreCursor+"\r"+ansi.EraseScreenBelow)
+			require.NotContains(t, changed, ansi.SetModeTextCursorEnable)
+			if program == "Apple_Terminal" {
+				require.True(t, strings.HasSuffix(changed, ansi.SaveCursor+ansi.CursorDown(1)))
+			} else {
+				require.True(t, strings.HasSuffix(changed, ansi.SaveCursor))
+			}
+			require.NotContains(t, first+changed, "\x1b[3J")
+		})
+	}
+}
+
 func TestAudioFramedWorkspaceFillsViewportWithoutClearingHistory(t *testing.T) {
 	for _, size := range [][2]int{{60, 24}, {101, 29}, {186, 40}} {
 		m := audioReviewModel(t)

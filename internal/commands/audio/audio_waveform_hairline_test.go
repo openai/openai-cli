@@ -124,12 +124,12 @@ func TestAudioHairlinePreservesOneRowAndCompactOutput(t *testing.T) {
 		// Its 53-cell span has 25 played and 25 future measured columns.
 		want := "  " + m.borderStyle().Render("╶") +
 			m.elapsedWaveformStyle().Render(strings.Repeat("┼", 25)) +
-			m.warningStyle().Render("┃") + m.muted().Render(strings.Repeat("┼", 25)) + m.borderStyle().Render("╴")
+			m.primaryText().Render("┃") + m.muted().Render(strings.Repeat("┼", 25)) + m.borderStyle().Render("╴")
 		require.Equal(t, audioHairlineCells(t, want), audioHairlineCells(t, m.workspaceWaveformRows(2)[0]))
 		m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 		view := m.View().Content
-		require.Contains(t, view, m.warningStyle().Render("┃"), "the compact playhead crosses the same measured centerline")
-		require.Contains(t, view, m.warningStyle().Render("╾"))
+		require.Contains(t, view, m.primaryText().Render("┃"), "the compact playhead crosses the same measured centerline")
+		require.Contains(t, view, "╾")
 		require.NotContains(t, ansi.Strip(view), "█")
 	}
 }

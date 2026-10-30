@@ -39,7 +39,7 @@ func (m *audioWorkbench) workspaceHairlineRows(wave []string, marker int, levels
 	styles := [played + shades]lipgloss.Style{
 		plain:    lipgloss.NewStyle(),
 		axis:     m.borderStyle(),
-		playhead: m.playheadStyle(),
+		playhead: m.primaryText(),
 	}
 	// Use the same perceptual blend as the section divider, without painting the background.
 	setRamp := func(start int, tip, core lipgloss.Style) {

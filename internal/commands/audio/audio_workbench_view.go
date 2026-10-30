@@ -191,8 +191,10 @@ func (m *audioWorkbench) inlineEditorRows(name string, editor textarea.Model, ac
 		}
 	}
 	label := fmt.Sprintf("%-*s", labelWidth, name)
-	label = m.muted().Render(label)
-	prefix := m.label(label, active)
+	prefix := "  " + m.muted().Render(label)
+	if active {
+		prefix = m.selected("› "+name, 2+len(name)) + strings.Repeat(" ", max(0, labelWidth-len(name)))
+	}
 	rows[0] = prefix + " " + rows[0]
 	for i := 1; i < len(rows); i++ {
 		rows[i] = strings.Repeat(" ", labelWidth+3) + rows[i]
@@ -201,7 +203,11 @@ func (m *audioWorkbench) inlineEditorRows(name string, editor textarea.Model, ac
 }
 
 func (m *audioWorkbench) plainEditorRows(name string, editor textarea.Model, active bool) []string {
-	rows := []string{m.label(m.muted().Render(name), active)}
+	heading := "  " + m.muted().Render(name)
+	if active {
+		heading = m.selected("› "+name, 2+len(name))
+	}
+	rows := []string{heading}
 	for _, line := range strings.Split(m.editorView(editor), "\n") {
 		rows = append(rows, "  "+line)
 	}
@@ -408,7 +414,10 @@ func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 	if m.studioLayout() {
 		title = "Script"
 	}
-	heading := m.composerHeading(title, m.focus == 0 || m.focus == 1)
+	heading := m.composerHeading(title, false)
+	if m.focus == 0 && !m.busy && m.modal == "" {
+		heading = m.selected("› "+title, 2+ansi.StringWidth(title))
+	}
 	if count := m.input.LineCount(); !compact && count > 1 {
 		location := fmt.Sprintf("%d lines", count)
 		if m.focus == 0 && !m.busy {
@@ -465,7 +474,7 @@ func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 	default:
 		value := readable.Text(strings.Join(strings.Fields(instructions.Value()), " "))
 		if value == "" {
-			value = m.muted().Render("(optional)")
+			value = m.muted().Render("Optional")
 		}
 		label := m.muted().Render(fmt.Sprintf("%-*s", labelWidth, "Instructions"))
 		rows = append(rows, "  "+label+" "+value)
@@ -496,7 +505,7 @@ func (m *audioWorkbench) settingsRows() ([]string, *tea.Cursor, int) {
 			voice := audioHistoryCell(readable.ChoiceTitle(m.settings.Voice))
 			name, value = "Voice", m.primaryText().Render(voice)
 			if !audioSupportsVoice(m.settings.Model, m.settings.Voice) {
-				value = m.warningStyle().Render(voice + " (unavailable)")
+				value = m.warningStyle().Render(voice + "  Unavailable")
 			}
 		case 2:
 			name, value = "Format", m.primaryText().Render(audioChoiceLabel(2, m.settings.Format))
@@ -626,52 +635,24 @@ func (m *audioWorkbench) emptyAudioStatus() string {
 // The status follows generation and the retained player's playback state.
 func (m *audioWorkbench) playerStatus() string {
 	r := m.result
-	label, style, lamp := "Ready", m.muted(), "○"
 	switch {
 	case m.busy && m.note == "Working: generate":
-		label, style, lamp = "Generating", m.accent().Bold(false), "◉"
+		return m.accent().Bold(false).Render("Generating")
 	case r == nil:
-		label = "Idle"
+		return m.muted().Render("Idle")
 	case m.playing:
-		label, style, lamp = "Playing", m.accent().Bold(false), "◉"
+		return m.accent().Bold(false).Render("Playing")
 	case r.finished:
-		label, style, lamp = "Completed", m.playbackProgressStyle(), "●"
+		return m.playbackProgressStyle().Render("Completed")
 	case r.seekDuration() > 0 && r.playbackPosition() >= r.seekDuration():
-		label, style = "At end", m.warningStyle()
+		return m.warningStyle().Render("At end")
 	case r.resumable:
-		label, style, lamp = "Paused", m.warningStyle(), "◎"
+		return m.warningStyle().Render("Paused")
 	case r.playbackPosition() > 0:
-		label, style = "Stopped", m.warningStyle()
+		return m.warningStyle().Render("Stopped")
+	default:
+		return m.muted().Render("Ready")
 	}
-	// Small terminals keep the label alone.
-	if !m.framed() {
-		return style.Render(label)
-	}
-	// The light occupies three cells. Its middle stays aligned even without color.
-	if !m.color || label == "Ready" || label == "Idle" {
-		return " " + style.Render(lamp+" "+label)
-	}
-	paper := "#F2F4FA"
-	if m.dark {
-		paper = "#20283B"
-	}
-	tones := lipgloss.Blend1D(16, lipgloss.Color(paper), style.GetForeground())
-	edge, core := 1, 4
-	if lamp == "◉" {
-		phase := min(m.lampPhase, 12-m.lampPhase)
-		edge += phase / 3
-		core += phase / 2
-	}
-	halo := lipgloss.NewStyle().Background(tones[edge]).Render(" ")
-	light := style.Bold(true).Background(tones[core]).Render(lamp)
-	return halo + light + halo + style.Render(label)
-}
-
-func (m *audioWorkbench) playheadStyle() lipgloss.Style {
-	if !m.playing && m.result != nil && !m.result.finished && m.result.playbackPosition() > 0 {
-		return m.warningStyle()
-	}
-	return m.primaryText()
 }
 
 // Preserve the filename end without splitting a display grapheme or escape.

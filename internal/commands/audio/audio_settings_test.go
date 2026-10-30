@@ -440,7 +440,7 @@ func TestAudioSettingsPickerShowsAppliedValueWhileBrowsing(t *testing.T) {
 				}
 				plain = ansi.Strip(m.View().Content)
 				require.Contains(t, plain, "› tts-1-1106")
-				require.Contains(t, plain, "Legacy ID (unlisted)")
+				require.Contains(t, plain, "Unlisted legacy ID")
 				require.NotContains(t, plain, "Retirement")
 				audioReviewKey(m, tea.KeyEscape)
 				require.Equal(t, "gpt-4o-mini-tts", m.settings.Model)

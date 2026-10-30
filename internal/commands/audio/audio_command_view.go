@@ -216,7 +216,7 @@ func (m *audioWorkbench) commandView() tea.View {
 	height := m.commandViewportHeight()
 	start := audioScrollOffset(m.commandOffset, len(rows), height, "")
 	m.commandOffset = start
-	heading := "  " + m.strong().Render(audioCommandTitle)
+	heading := "  " + m.strong().Render(audioCommandTitle) + "  " + m.muted().Render("Bash/zsh")
 	if len(rows) > height {
 		heading += m.muted().Render(fmt.Sprintf("  %d–%d/%d", start+1, min(len(rows), start+height), len(rows)))
 	}

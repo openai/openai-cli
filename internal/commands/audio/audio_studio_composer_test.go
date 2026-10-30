@@ -16,7 +16,7 @@ func TestAudioStudioComposerKeepsScriptSpaceAndDeliveryColumns(t *testing.T) {
 		require.True(t, m.studioLayout())
 		rows, _, active := m.studioComposerRows()
 		require.Equal(t, -1, active)
-		require.Equal(t, "  Script", ansi.Strip(rows[0]))
+		require.Equal(t, "› Script", ansi.Strip(rows[0]))
 		deliveryRow := -1
 		for i, row := range rows {
 			if strings.TrimSpace(ansi.Strip(row)) == "Delivery" {

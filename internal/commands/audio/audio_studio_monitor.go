@@ -11,9 +11,9 @@ import (
 func (m *audioWorkbench) studioMonitorRows(width, height int) ([]string, *tea.Cursor) {
 	rows := make([]string, height)
 	title := m.composerHeading("Recording", m.focus == 4)
-	// Keep the lamp and the start of its label in fixed columns.
-	lampColumn := width - 2 - ansi.StringWidth(" ◉ Generating")
-	rows[0] = title + strings.Repeat(" ", max(1, lampColumn-ansi.StringWidth(title))) + m.playerStatus()
+	// Keep the status aligned with the end of the timeline.
+	statusColumn := width - 2 - len("Generating")
+	rows[0] = title + strings.Repeat(" ", max(1, statusColumn-ansi.StringWidth(title))) + m.playerStatus()
 	if m.result != nil {
 		rows[1] = "  " + m.recordingMetadata(width-4)
 	} else if m.playerNotice != "" {
@@ -23,10 +23,10 @@ func (m *audioWorkbench) studioMonitorRows(width, height int) ([]string, *tea.Cu
 	// Four rows after the transport can carry a save receipt, an error with F1,
 	// and two rows identifying a retained recording when the draft changes.
 	const plotTop = 3
-	budget := min(audioMaxWaveformHeight+4, height-plotTop-6)
+	budget := min(m.waveformDetailHeight(audioMaxWaveformHeight)+3, height-plotTop-6)
 	transport := plotTop + budget
 	// Both panes reserve identical timeline geometry as the recording state changes.
-	plotHeight := m.waveformDetailHeight(budget - 4)
+	plotHeight := m.waveformDetailHeight(budget - 2)
 	copy(rows[plotTop:transport], m.waveformRowsAtHeight(budget, plotHeight))
 	if !m.result.hasWaveform() {
 		middle := plotTop + plotHeight/2

@@ -111,7 +111,7 @@ func audioChoiceDescription(setting int, value string) (detail string, retires b
 		case "tts-1-hd":
 			return "Higher audio quality", true
 		case "tts-1-1106", "tts-1-hd-1106":
-			return "Legacy ID (unlisted)", false
+			return "Unlisted legacy ID", false
 		}
 	}
 	if setting == 2 {
