@@ -93,7 +93,11 @@ func TestAudioWaveformTimelineConnectsPlayheadWithoutMovingBars(t *testing.T) {
 					}
 				}
 				require.Equal(t, before, r.analysis.Peaks)
-				require.Equal(t, m.audioWidth()-5, end-start, "both ticks must align with the content gutters")
+				paneWidth := m.audioWidth()
+				if m.studioLayout() {
+					paneWidth = m.studioMonitorWidth()
+				}
+				require.Equal(t, paneWidth-5, end-start, "both ticks must align with the content gutters")
 			})
 		}
 	}

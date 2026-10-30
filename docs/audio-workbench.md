@@ -19,7 +19,7 @@ Tab moves through Text, Instructions, Settings, then Audio. Wide terminals inclu
 Shift+Tab reverses that order.
 Up and Down move between sections at their boundaries.
 Inside an editor, arrows move through multiline and wrapped text before leaving the first or last visual row.
-When Delivery sits beside the script, Right at the end of the draft selects Settings.
+In wide layouts, Right at the end of the draft selects Delivery's Settings row.
 Left from Settings returns to the script at the same caret position.
 Modified arrows and active selections remain inside the editor.
 Up from Voice returns to Instructions when the model supports them.
@@ -224,8 +224,11 @@ At 60 columns and 24 rows, the draft, settings, and audio share one frame.
 The script aligns with its heading. The active heading uses the focus color.
 For multiline scripts, the heading shows the current line while you edit and the total line count afterward.
 Wide, tall terminals reserve a few script lines throughout generation and playback. Longer drafts fill that space as you type.
-At 100 columns, Delivery sits beside the script and groups voice, model, format, and speed.
-Narrower frames place those controls below Instructions.
+At 110 columns and 28 rows, the studio places the script and Delivery on the left.
+The recording monitor on the right keeps the waveform, playback clock, and Play and Save controls together.
+Both panes share one command strip above them. Generating a recording keeps the editor and transport in place.
+Other framed terminals use the stacked recording view. From 100 columns, that view places Delivery beside the script.
+Narrower frames place Delivery below Instructions.
 Below 110 columns, Generate speech, History, and More actions share a row when space permits.
 Wider frames show Generate speech, recording actions, View command, and Help in one row.
 The selection marker moves across this row without shifting neighboring actions.
@@ -233,7 +236,7 @@ Help groups shortcuts by Compose, Audio, and View command. Small terminals show 
 Clear form uses amber because it resets the draft. Last error uses red when recovery details are available.
 The focused action has a selection marker. In color terminals, it also has a selected background.
 
-The Batch browser’s thin divider separates the form from the player. Its brightest cell sits at the center.
+The Batch browser’s thin divider sits below the command strip in the studio. It separates the form and player in the stacked view.
 Before generation, the framed player shows “No recording yet,” Play, Save, and a zero timer.
 The form and player controls keep their positions while the waveform fills the space above the controls.
 Playback and Save shortcuts explain that speech must be generated first.

@@ -23,7 +23,11 @@ func (r *audioWorkResult) playbackPosition() time.Duration {
 }
 
 func (m *audioWorkbench) waveformWidth() int {
-	return min(math.MaxUint16, max(3, m.audioWidth()-4))
+	width := m.audioWidth()
+	if m.studioLayout() {
+		width = m.studioMonitorWidth()
+	}
+	return min(math.MaxUint16, max(3, width-4))
 }
 
 func (m *audioWorkbench) selectedBoundary() int {

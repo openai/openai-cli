@@ -87,6 +87,14 @@ func TestAudioWaveformStartsBelowItsLastMetadataRow(t *testing.T) {
 		rows := strings.Split(view, "\n")
 		wave := audioWaveformDetailPositions(t, view)[0]
 		require.GreaterOrEqual(t, wave, 2)
+		if m.studioLayout() {
+			require.Contains(t, rows[wave-2], "Coral")
+			offset := 1 + m.studioScriptWidth() + studioGutter
+			require.Empty(t, strings.TrimSpace(ansi.Cut(rows[wave-1], offset, offset+m.studioMonitorWidth())))
+			require.Contains(t, view, "Draft changed. Showing previous audio.")
+			require.Contains(t, view, "Recording: Synthetic text")
+			continue
+		}
 		require.Contains(t, rows[wave-2], "Recording: Synthetic text")
 		require.Empty(t, strings.Trim(rows[wave-1], " │"))
 		if m.framed() {

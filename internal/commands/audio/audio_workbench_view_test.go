@@ -190,7 +190,7 @@ func TestAudioScriptHeadingTracksMultilineDraftAndDeliveryFocus(t *testing.T) {
 	m.focusSection(0)
 
 	rows, cursor := m.scriptRows(false)
-	require.Contains(t, rows[0], m.accent().Render("Text to speech"))
+	require.Contains(t, rows[0], m.accent().Render("Script"))
 	require.Contains(t, rows[0], "Line 2 of 2")
 	require.Equal(t, 2, cursor.Y)
 	for _, row := range rows[1:3] {
@@ -201,7 +201,7 @@ func TestAudioScriptHeadingTracksMultilineDraftAndDeliveryFocus(t *testing.T) {
 	m.focusSection(2)
 	view := m.View().Content
 	require.Contains(t, view, m.accent().Render("Delivery"))
-	require.Contains(t, view, m.strong().Render("Text to speech"))
+	require.Contains(t, view, m.strong().Render("Script"))
 	require.Contains(t, view, "2 lines")
 	require.NotContains(t, view, "Line 2 of 2")
 }
@@ -217,14 +217,24 @@ func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 			rows := strings.Split(view, "\n")
 			require.Equal(t, 3, ansi.StringWidth(rows[1][:strings.Index(rows[1], "Text to speech")]))
 			require.NotContains(t, rows[1], "A clear short example.")
-			require.Contains(t, rows[2], "A clear short example.")
-			require.Equal(t, 3, ansi.StringWidth(rows[2][:strings.Index(rows[2], "A clear short example.")]))
+			draftRow := 2
+			if m.studioLayout() {
+				heading := slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Script") })
+				require.Greater(t, heading, 1)
+				draftRow = heading + 1
+			}
+			require.Contains(t, rows[draftRow], "A clear short example.")
+			require.Equal(t, 3, ansi.StringWidth(rows[draftRow][:strings.Index(rows[draftRow], "A clear short example.")]))
 			directionRow := slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Instructions") })
-			require.Greater(t, directionRow, 2, "Instructions must follow the script")
+			require.Greater(t, directionRow, draftRow, "Instructions must follow the script")
 			require.Equal(t, 1, strings.Count(view, "╭"), "only the workspace has an outline")
 			require.NotContains(t, view, "Setting        Value")
 			voiceRow, voiceColumn, valueColumn := 6, 3, 21
-			if m.splitComposer() {
+			if m.studioLayout() {
+				section := slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Delivery") })
+				require.Greater(t, section, directionRow)
+				voiceRow, valueColumn = section+1, voiceColumn+len("Instructions")+1
+			} else if m.splitComposer() {
 				voiceRow = 2
 				voiceColumn = ansi.StringWidth(rows[1][:strings.Index(rows[1], "Delivery")])
 				valueColumn = voiceColumn + 10

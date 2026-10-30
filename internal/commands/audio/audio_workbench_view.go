@@ -18,6 +18,9 @@ func (m *audioWorkbench) framed() bool { return m.height >= 24 && m.width >= 60 
 const audioFormLabelWidth = 17
 
 func (m *audioWorkbench) formLabelWidth() int {
+	if m.studioLayout() {
+		return len("Instructions")
+	}
 	if m.framed() {
 		return audioFormLabelWidth
 	}
@@ -331,7 +334,7 @@ func (m *audioWorkbench) View() tea.View {
 	}
 	rows = append(rows, actions...)
 	footer := m.workspaceFooter()
-	if warning := m.retainedGenerationErrorRow(); warning != "" {
+	if warning := m.retainedGenerationErrorRow(m.audioWidth()); warning != "" {
 		footer = append([]string{warning}, footer...)
 	} else if m.result == nil {
 		rows = append(rows, "  "+m.emptyAudioStatus())
@@ -401,7 +404,11 @@ func (m *audioWorkbench) composerHeading(title string, focused bool) string {
 
 func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 	labelWidth := m.formLabelWidth()
-	heading := m.composerHeading("Text to speech", m.focus == 0 || m.focus == 1)
+	title := "Text to speech"
+	if m.studioLayout() {
+		title = "Script"
+	}
+	heading := m.composerHeading(title, m.focus == 0 || m.focus == 1)
 	if count := m.input.LineCount(); !compact && count > 1 {
 		location := fmt.Sprintf("%d lines", count)
 		if m.focus == 0 && !m.busy {
@@ -424,7 +431,7 @@ func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 	validation := m.fieldValidationRows(audioFieldText)
 	spareEditorRow := m.input.LineCount() == 1 && m.input.LineInfo().Height < m.input.Height()
 	// Keep the same writing space when a recording arrives.
-	if m.splitComposer() && m.height >= 30 && len(validation) == 0 {
+	if !m.studioLayout() && m.splitComposer() && m.height >= 30 && len(validation) == 0 {
 		for len(rows)-1 < min(6, m.audioHeight()/7) {
 			rows = append(rows, indent)
 			spareEditorRow = true
@@ -432,7 +439,7 @@ func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 	}
 	rows = append(rows, validation...)
 	// A short draft already has a spare editor row before Instructions.
-	if !compact && (!spareEditorRow || len(validation) > 0) {
+	if !compact && (m.studioLayout() || !spareEditorRow || len(validation) > 0) {
 		rows = append(rows, "")
 	}
 	instructions := m.instructions

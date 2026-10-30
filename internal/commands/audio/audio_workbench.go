@@ -208,7 +208,10 @@ func (m *audioWorkbench) resizeEditors() {
 			}
 			height = min(4, max(1, editor.LineInfo().Height), max(1, m.audioHeight()-reserved))
 		}
-		if m.height >= 24 && (editor == &m.input || editor == &m.instructions) {
+		if editor == &m.input && m.studioLayout() {
+			// Reserve a fixed writing area beside the monitor, including for an empty draft.
+			height = min(8, max(3, (m.audioHeight()-12)/4))
+		} else if m.height >= 24 && (editor == &m.input || editor == &m.instructions) {
 			height = min(3, editor.LineCount())
 			if m.width >= 60 {
 				limit := 3

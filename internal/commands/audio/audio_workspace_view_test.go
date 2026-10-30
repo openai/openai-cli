@@ -241,8 +241,12 @@ func TestAudioWorkspaceAnchorsGenerationAndPlayback(t *testing.T) {
 			anchors := func(status, play string) [][2]int {
 				rows := strings.Split(ansi.Strip(m.View().Content), "\n")
 				var positions [][2]int
+				playerHeading := "Audio"
+				if m.studioLayout() {
+					playerHeading = "Recording"
+				}
 				for _, label := range []string{"Text to speech", "Instructions", "Voice", "Generate speech",
-					"History", m.listeningRule(), "Audio", status, play, "Save audio…", " / "} {
+					"History", m.listeningRule(), playerHeading, status, play, "Save audio…", " / "} {
 					found := false
 					for y, row := range rows {
 						if before, _, ok := strings.Cut(row, label); ok {
@@ -478,14 +482,19 @@ func TestAudioWorkspaceToolbarKeepsExactTimingAndBounds(t *testing.T) {
 					playStart := ansi.StringWidth(row[:strings.Index(row, "Play audio")])
 					saveStart := ansi.StringWidth(row[:strings.Index(row, "Save audio…")])
 					require.Equal(t, left+2, playStart, "the Play selection begins at the zero boundary")
-					require.Equal(t, 21, saveStart, "Save aligns with the form values (column 22)")
-					if duration < 2 && tc.shortStart >= 0 {
+					require.Equal(t, left+18, saveStart, "Save stays in the second transport column")
+					if !m.studioLayout() && duration < 2 && tc.shortStart >= 0 {
 						require.Contains(t, row, elapsed+" / "+total)
 					}
 				}
 				if strings.Contains(row, elapsed+" / "+total) {
 					timeStart := ansi.StringWidth(row[:strings.Index(row, elapsed)])
 					timeWidth := ansi.StringWidth(elapsed + " / " + total)
+					if m.studioLayout() {
+						require.Equal(t, left, timeStart, "monitor time starts at the zero boundary")
+						require.Contains(t, rows[i+1], "Play audio")
+						continue
+					}
 					wantStart := tc.shortStart
 					if duration > 2 && tc.width < 101 {
 						wantStart = -1 // These widths cannot hold the 35-cell clock beside Save.
