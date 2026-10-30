@@ -32,11 +32,16 @@ import (
 // Local diagnostics can contain rejected values, file names, and credentialed
 // URLs. Classify them into local prose; terminal escaping is not redaction.
 func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) string {
-	command := root
-	var contextual *commandError
-	if errors.As(failure, &contextual) && contextual.command != nil {
-		command = contextual.command
-	}
+	return localErrorMessageForDisplay(root, failure, false, output...)
+}
+
+// Keep human recovery separate from existing machine fallback messages.
+func readableLocalErrorMessage(root *cli.Command, failure error, output ...io.Writer) string {
+	return localErrorMessageForDisplay(root, failure, true, output...)
+}
+
+func localErrorMessageForDisplay(root *cli.Command, failure error, human bool, output ...io.Writer) string {
+	command := commandErrorContext(root, failure)
 	var timeout net.Error
 	var networkError *url.Error
 	var connectionError *net.OpError
@@ -62,11 +67,22 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	var navigationFailure *listview.PaginationError
 	var modelsListFailure *models.ListError
 	var batchFailure *batchcommands.WorkflowError
+	var limitsFailure *limitsWorkflowFailure
 	var finiteListFailure *clioutput.FiniteJSONListError
 	var webhookFailure *webhooks.WorkflowError
 	var webhookCanceled *webhooks.CreateCanceledError
 	var jsonStorageFailure *readable.JSONStreamStorageError
+	var spendResponseFailure *spendMutationResponseError
+	var spendPresentationFailure *spendMutationPresentationError
+	responseRecovery := ""
+	if human && errors.As(failure, &spendResponseFailure) {
+		responseRecovery = readableSpendMutationFailure(root, command)
+	} else if human && errors.As(failure, &spendPresentationFailure) {
+		responseRecovery = readableSpendMutationRecovery(root, command, true)
+	}
 	switch {
+	case errors.As(failure, &limitsFailure):
+		return limitsFailure.Error()
 	case errors.As(failure, &batchFailure):
 		return batchFailure.Error()
 	case errors.As(failure, &adminSetupFailure):
@@ -90,6 +106,8 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 		return utilityFailure.Error()
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
 		return "The request timed out. The API may have received it; check its status before repeating it."
+	case responseRecovery != "":
+		return responseRecovery
 	case errors.As(failure, &modelsListFailure):
 		return modelsListFailure.Error()
 	case errors.As(failure, &finiteListFailure):
@@ -157,8 +175,17 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	}
 	// Transport wrappers can contain a vetted local configuration error, such
 	// as the mTLS proxy restriction. Keep that guidance before this fallback.
+	if human && (errors.As(failure, &networkError) || errors.As(failure, &connectionError) || errors.Is(failure, io.ErrUnexpectedEOF)) {
+		if message := readableSpendMutationFailure(root, command); message != "" {
+			return message
+		}
+	}
 	if errors.As(failure, &networkError) || errors.As(failure, &connectionError) {
 		return "Could not connect to the API. Check your connection, proxy, and --base-url setting."
+	}
+	var writeFailure *clioutput.WriteError
+	if human && errors.As(failure, &writeFailure) {
+		return "Could not write command output. Check your terminal, output file, or receiving command."
 	}
 	// The usage buffer is deliberately not a fallback: it repeats raw values.
 	return "The command could not be completed. Check your arguments with --help."

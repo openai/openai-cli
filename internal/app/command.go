@@ -58,6 +58,7 @@ func ConfigureCommand(root *cli.Command) {
 	describeAgentsCommands(root)
 	configureAgentsSessionCreation(root)
 	localcommands.ConfigureSubgroups(root)
+	registerLimitsCommands(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
 	filecommands.Configure(root)
