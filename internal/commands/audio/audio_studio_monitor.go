@@ -12,7 +12,7 @@ func (m *audioWorkbench) studioMonitorRows(width, height int) ([]string, *tea.Cu
 	rows := make([]string, height)
 	title := m.composerHeading("Recording", m.focus == 4)
 	// Keep the lamp and the start of its label in fixed columns.
-	lampColumn := width - 2 - ansi.StringWidth("◉ Generating")
+	lampColumn := width - 2 - ansi.StringWidth(" ◉ Generating")
 	rows[0] = title + strings.Repeat(" ", max(1, lampColumn-ansi.StringWidth(title))) + m.playerStatus()
 	if m.result != nil {
 		rows[1] = "  " + m.recordingMetadata(width-4)
@@ -25,12 +25,11 @@ func (m *audioWorkbench) studioMonitorRows(width, height int) ([]string, *tea.Cu
 	const plotTop = 3
 	budget := min(audioMaxWaveformHeight+4, height-plotTop-6)
 	transport := plotTop + budget
-	if m.result.hasWaveform() {
-		// Reserve two rows for the inset rail and one each for the rail and scale.
-		h := m.waveformDetailHeight(budget - 4)
-		copy(rows[plotTop:transport], m.waveformRowsAtHeight(budget, h))
-	} else {
-		middle := plotTop + (budget-1)/2
+	// Both panes reserve identical timeline geometry as the recording state changes.
+	plotHeight := m.waveformDetailHeight(budget - 4)
+	copy(rows[plotTop:transport], m.waveformRowsAtHeight(budget, plotHeight))
+	if !m.result.hasWaveform() {
+		middle := plotTop + plotHeight/2
 		message := "No recording yet"
 		switch {
 		case m.result != nil:
@@ -44,7 +43,7 @@ func (m *audioWorkbench) studioMonitorRows(width, height int) ([]string, *tea.Cu
 		rows[middle] = strings.Repeat(" ", (width-len(message))/2) + m.primaryText().Render(message)
 	}
 	timing, _ := m.playerTiming()
-	rows[transport] = "  " + timing
+	rows[transport] = timing
 	rows[transport+1] = m.playerActions()
 	var cursor *tea.Cursor
 	if m.modal == "seek" {

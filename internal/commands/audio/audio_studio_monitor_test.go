@@ -94,3 +94,49 @@ func TestAudioStudioMonitorKeepsRetainedClipAndSeekCaret(t *testing.T) {
 	require.Equal(t, ansi.StringWidth(row[:end]), caret.X)
 	require.NotContains(t, strings.Join(rows, "\n"), "Saved: ")
 }
+
+func TestAudioStudioRailStaysInPlaceAcrossRecordings(t *testing.T) {
+	for _, size := range [][2]int{{110, 28}, {133, 39}} {
+		m := audioReviewModel(t)
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		width := m.studioMonitorWidth()
+		render := func() []string {
+			rows, _ := m.studioMonitorRows(width, 18)
+			for i := range rows {
+				rows[i] = ansi.Strip(rows[i])
+			}
+			return rows
+		}
+		idle := render()
+		rail := -1
+		for i, row := range idle {
+			if strings.Contains(row, "╶──") {
+				rail = i
+				break
+			}
+		}
+		require.Positive(t, rail)
+		require.Equal(t, []string{"00:00", "00:00"}, strings.Fields(idle[rail+1]))
+		r := audioReviewResult("studio-rail", false)
+		r.position = time.Second / 2
+		m.result = &r
+		measured := render()
+		require.Equal(t, []string{"00:00", "00:01"}, strings.Fields(measured[rail+1]))
+		bead := strings.Index(measured[rail], "●")
+		require.Positive(t, bead)
+		column := ansi.StringWidth(measured[rail][:bead])
+		require.Equal(t, 2+audioWaveformMarker(width-4, m.selectedBoundary()), column)
+		wave := strings.Join(measured[:rail], "\n")
+		require.Contains(t, wave, "┃")
+		require.False(t, strings.ContainsAny(wave, "╂┠┨"))
+
+		r.analysis.Peaks = nil
+		durationOnly := render()
+		require.Equal(t, measured[rail:rail+2], durationOnly[rail:rail+2])
+		require.NotContains(t, strings.Join(durationOnly, "\n"), "┃")
+		r.measured = false
+		unknown := render()
+		require.Equal(t, idle[rail], unknown[rail])
+		require.Empty(t, strings.TrimSpace(unknown[rail+1]))
+	}
+}

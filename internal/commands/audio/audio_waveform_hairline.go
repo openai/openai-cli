@@ -7,7 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-var waveformCenterline = strings.NewReplacer("·", "─", "│", "┼", "┃", "╂")
+var waveformCenterline = strings.NewReplacer("·", "─", "│", "┼")
 
 func (m *audioWorkbench) waveformInk(light, dark string) lipgloss.Style {
 	style := lipgloss.NewStyle()
@@ -62,7 +62,7 @@ func (m *audioWorkbench) workspaceHairlineRows(wave []string, marker int, levels
 			switch glyph {
 			case '─', '·', '╶', '╴':
 				role = axis
-			case '┃', '╂', '┠', '┨':
+			case '┃':
 				role = playhead
 			case '│', '╷', '╵', '┼':
 				role = upcoming

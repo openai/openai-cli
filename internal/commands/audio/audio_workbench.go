@@ -101,6 +101,7 @@ type audioWorkbench struct {
 	width, height             int
 	color, dark               bool
 	busy, quit, playing       bool
+	lampPhase                 int
 	note                      string
 	playerNotice              string
 	retainedGenerationFailure bool
@@ -304,6 +305,8 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 	case audioWorkTick:
 		m.capturePlaybackProgress()
 		if m.busy || m.playing {
+			// Use the existing playback clock for a slow rise and fall. The light owns no timer.
+			m.lampPhase = (m.lampPhase + 1) % 12
 			return m, audioTick()
 		}
 	case audioWorkMessage:
@@ -386,7 +389,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			}
 			m.result = &msg.result
 			m.playerNotice = ""
-			m.resultAction = 0
+			m.resultAction = audioPlayAction
 			m.waveformFocused = false
 			m.focusSection(4)
 			if msg.kind == "open" {
@@ -520,7 +523,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 		}
 		if key == "ctrl+s" {
 			m.focusSection(4)
-			m.waveformFocused, m.resultAction = false, 1
+			m.waveformFocused, m.resultAction = false, audioSaveAction
 			return m, m.openSave()
 		}
 		if key == "ctrl+g" {
@@ -561,10 +564,13 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 				if m.result == nil {
 					return m, m.noGenerationNotice()
 				}
+				if key == "enter" && !m.waveformFocused && m.resultAction == audioTimeAction {
+					return m, m.openSeek("")
+				}
 				if time.Since(m.lastFinished) < 750*time.Millisecond {
 					return m, nil
 				}
-				if key == "enter" && !m.waveformFocused && m.resultAction == 1 {
+				if key == "enter" && !m.waveformFocused && m.resultAction == audioSaveAction {
 					return m, m.openSave()
 				}
 				return m, m.togglePlayback()

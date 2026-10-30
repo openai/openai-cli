@@ -633,8 +633,8 @@ func TestAudioNavigationResultArrowsPreservePlayback(t *testing.T) {
 		{tea.KeyDown, 4, 0},
 		{tea.KeyDown, 4, 0},
 		{tea.KeyDown, 4, 1},
-		{tea.KeyDown, 4, 1},
-		{tea.KeyLeft, 4, 0},
+		{tea.KeyDown, 4, 2},
+		{tea.KeyLeft, 4, 1},
 	} {
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: step.key})
 		require.Equal(t, step.focus, m.focus)

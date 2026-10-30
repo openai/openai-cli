@@ -6,10 +6,29 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+const (
+	audioPlayAction = iota
+	audioSaveAction
+	audioTimeAction
+)
+
+func (m *audioWorkbench) lastPlayerAction() int {
+	if m.result.seekDuration() > 0 {
+		return audioTimeAction
+	}
+	return audioSaveAction
+}
+
 // Keep keyboard traversal in the same order as the visible form.
 func (m *audioWorkbench) focusSection(focus int) tea.Cmd {
-	if focus == 4 && (m.focus != 4 || m.result == nil) {
-		m.waveformFocused = false
+	if focus == 4 {
+		if m.focus != 4 || m.result == nil {
+			m.waveformFocused = false
+		}
+		if m.resultAction > m.lastPlayerAction() {
+			// Leaving a preview can restore a recording with no known duration.
+			m.resultAction = audioPlayAction
+		}
 	}
 	m.input.Blur()
 	m.instructions.Blur()
@@ -71,7 +90,7 @@ func (m *audioWorkbench) enterAudioFromAbove() tea.Cmd {
 	cmd := m.focusSection(4)
 	m.waveformFocused = m.result.hasWaveform()
 	if !m.waveformFocused {
-		m.resultAction = 0
+		m.resultAction = audioPlayAction
 	}
 	return cmd
 }
@@ -196,7 +215,7 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			if key == "left" {
 				step = -1
 			}
-			m.resultAction = max(0, min(1, m.resultAction+step))
+			m.resultAction = max(audioPlayAction, min(m.lastPlayerAction(), m.resultAction+step))
 		case "up":
 			if !m.waveformFocused && m.result.hasWaveform() {
 				m.waveformFocused = true
@@ -215,12 +234,13 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			if m.waveformFocused {
 				m.waveformFocused = false
 			} else {
-				m.resultAction = min(1, m.resultAction+1)
+				m.resultAction = min(m.lastPlayerAction(), m.resultAction+1)
 			}
 		case "home":
-			m.waveformFocused, m.resultAction = false, 0
+			m.waveformFocused, m.resultAction = false, audioPlayAction
 		case "end":
-			m.waveformFocused, m.resultAction = false, 1
+			// End remains the direct route to Save.
+			m.waveformFocused, m.resultAction = false, audioSaveAction
 		default:
 			return false, nil
 		}

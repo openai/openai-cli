@@ -22,6 +22,7 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 		{60, 24, 5}, {80, 24, 5}, {101, 27, 9}, {101, 28, 9}, {101, 29, 9},
 		{101, 30, 9}, {101, 31, 9}, {101, 40, 13}, {137, 41, 13}, {101, 29, 9}, {60, 24, 5},
 	} {
+		idleRow := -1
 		for _, recorded := range []bool{false, true} {
 			m.result = nil
 			if recorded {
@@ -31,6 +32,7 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 			view := ansi.Strip(m.View().Content)
 			if recorded {
 				positions := audioWaveformDetailPositions(t, view)
+				require.Equal(t, idleRow, positions[1], "generation must not move the rail at %dx%d", tc.width, tc.height)
 				rows := strings.Split(view, "\n")
 				waveEnd := positions[1]
 				for waveEnd > positions[0] && strings.Trim(rows[waveEnd-1], " │") == "" {
@@ -48,9 +50,16 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 				require.Contains(t, view, "00:00.000 / 00:01.000")
 			} else {
 				require.Contains(t, view, "Play audio")
-				require.NotContains(t, view, "┷")
+				require.NotContains(t, view, "●")
 				require.Contains(t, view, "No recording yet")
 				require.NotContains(t, view, "┃")
+				for row, line := range strings.Split(view, "\n") {
+					if strings.Contains(line, "╶─") {
+						require.Equal(t, -1, idleRow)
+						idleRow = row
+					}
+				}
+				require.Positive(t, idleRow, "the idle rail must be visible")
 			}
 			require.Contains(t, view, m.input.Value())
 			require.Contains(t, view, "Ctrl+C Exit")
@@ -171,10 +180,10 @@ func audioWaveformDetailPositions(t *testing.T, view string) [4]int {
 	positions := [4]int{-1, -1, -1, -1}
 	rows := strings.Split(view, "\n")
 	for index, row := range rows {
-		if positions[0] < 0 && strings.ContainsAny(row, "┃┠┨╂") {
+		if positions[0] < 0 && strings.Contains(row, "┃") {
 			positions[0] = index
 		}
-		if strings.Contains(row, "┷") {
+		if audioIsMeasuredRail(row) {
 			require.Equal(t, -1, positions[1], "duplicate timeline rail")
 			positions[1] = index
 		}

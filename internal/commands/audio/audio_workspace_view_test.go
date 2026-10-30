@@ -58,7 +58,7 @@ func TestAudioWorkspaceKeepsDraftAndRecordingVisibleAcrossFocus(t *testing.T) {
 				m.focusSection(focus)
 				m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 				view := ansi.Strip(m.View().Content)
-				for _, text := range []string{"Text to speech", "Editable draft.", "Instructions", "Settings", "Voice", "gpt-4o-mini-tts", "WAV", "1.00×", "Generate speech", "History", "More actions", "Alloy  MP3  120.6 KiB", "Recording: Retained recording.", "┠", "00:00.000 / 00:01.000", "Play audio", "Save audio…", "Saved: …", "clip.mp3"} {
+				for _, text := range []string{"Text to speech", "Editable draft.", "Instructions", "Settings", "Voice", "gpt-4o-mini-tts", "WAV", "1.00×", "Generate speech", "History", "More actions", "Alloy  MP3  120.6 KiB", "Recording: Retained recording.", "┃", "00:00.000 / 00:01.000", "Play audio", "Save audio…", "Saved: …", "clip.mp3"} {
 					require.Contains(t, view, text)
 				}
 				require.Contains(t, strings.Split(view, "\n")[1], "Text to speech")
@@ -222,7 +222,7 @@ func TestAudioWorkspaceDoesNotInventAudioBeforeGeneration(t *testing.T) {
 		view := ansi.Strip(m.View().Content)
 		require.Contains(t, view, "No recording yet")
 		require.NotContains(t, view, "Generate speech to create audio.")
-		require.NotContains(t, view, "┷")
+		require.NotContains(t, view, "●")
 		require.NotContains(t, view, "┃")
 		require.Contains(t, view, "00:00.000 / 00:00.000")
 		require.Contains(t, view, "Play audio")
@@ -377,7 +377,7 @@ func TestAudioWorkspaceSeparatesMeasuredWaveformsOnlyWhenRoomPermits(t *testing.
 				m.result = &r
 				bottomLabel = "Preview unavailable"
 				if r.measured {
-					bottomLabel = "┷"
+					bottomLabel = "●"
 				}
 			}
 			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
@@ -467,11 +467,11 @@ func TestAudioWorkspaceToolbarKeepsExactTimingAndBounds(t *testing.T) {
 			rows := strings.Split(view, "\n")
 			left, right := -1, -1
 			for _, row := range rows {
-				if !strings.Contains(row, "┷") {
+				if !audioIsMeasuredRail(row) {
 					continue
 				}
-				left = ansi.StringWidth(row[:strings.IndexAny(row, "├┷")])
-				right = ansi.StringWidth(row[:strings.LastIndexAny(row, "┤┷")])
+				left = ansi.StringWidth(row[:strings.IndexAny(row, "╺●")])
+				right = ansi.StringWidth(row[:strings.LastIndexAny(row, "╴●")])
 				break
 			}
 			require.Positive(t, left)
@@ -587,7 +587,7 @@ func TestAudioWorkspacePreservesBlankEditorRowsAndScopesWaveformFocus(t *testing
 		}
 	}
 	for _, row := range rows {
-		if strings.ContainsAny(row, "┃┠") {
+		if strings.Contains(row, "┃") {
 			require.NotContains(t, row, "›", "waveform must not claim Text focus")
 		}
 	}
@@ -596,7 +596,7 @@ func TestAudioWorkspacePreservesBlankEditorRowsAndScopesWaveformFocus(t *testing
 	view = ansi.Strip(m.View().Content)
 	marked := false
 	for _, row := range strings.Split(view, "\n") {
-		marked = marked || strings.Contains(row, "┠") && strings.Contains(row, "›")
+		marked = marked || strings.Contains(row, "┃") && strings.Contains(row, "›")
 	}
 	require.True(t, marked)
 	require.Contains(t, view, "←→ seek")

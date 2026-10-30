@@ -272,17 +272,23 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 				} else if tc.held {
 					style = m.warningStyle()
 				}
-				lamp := "○ "
+				lamp := "○"
 				if tc.finished {
-					lamp = "● "
+					lamp = "●"
 				} else if tc.name == "Paused" {
-					lamp = "◎ "
+					lamp = "◎"
 				}
-				label := style.Render(lamp + tc.name)
 				if tc.playing {
-					label = style.Bold(true).Render("◉") + " " + style.Render(tc.name)
+					lamp = "◉"
 				}
-				require.Equal(t, label, m.playerStatus())
+				label := m.playerStatus()
+				require.Equal(t, " "+lamp+" "+tc.name, ansi.Strip(label))
+				if tc.name == "Ready" {
+					require.Contains(t, label, style.Render(lamp+" "+tc.name))
+				} else {
+					require.Contains(t, label, "48;2;", "the lit circle has a halo")
+					require.Contains(t, label, style.Render(tc.name))
+				}
 				view := m.View().Content
 				require.Contains(t, view, label)
 				m.color = false
@@ -297,7 +303,37 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 		m := audioReviewModel(t)
 		m.color, m.dark = true, dark
 		require.Nil(t, m.result)
-		require.Equal(t, m.muted().Render("○ Idle"), m.playerStatus(), "an empty player must not claim generated audio")
+		require.Equal(t, " "+m.muted().Render("○ Idle"), m.playerStatus(), "an empty player must not claim generated audio")
+	}
+}
+
+func TestAudioStatusLightBreathesOnlyWhenActive(t *testing.T) {
+	for _, dark := range []bool{true, false} {
+		m := audioReviewModel(t)
+		m.color, m.dark, m.busy, m.note = true, dark, true, "Working: generate"
+		low := m.playerStatus()
+		tick := audioWorkTick(time.Now())
+		for range 6 {
+			m.Update(tick)
+		}
+		high := m.playerStatus()
+		require.NotEqual(t, low, high)
+		require.Equal(t, ansi.Strip(low), ansi.Strip(high))
+		for range 6 {
+			m.Update(tick)
+		}
+		require.Equal(t, low, m.playerStatus())
+
+		r := audioReviewResult("glow", false)
+		r.position, r.resumable = time.Second/2, true
+		m.busy, m.result = false, &r
+		paused := m.playerStatus()
+		_, cmd := m.Update(tick)
+		require.Nil(t, cmd)
+		require.Equal(t, paused, m.playerStatus())
+		require.Contains(t, paused, "48;2;")
+		m.color = false
+		require.Equal(t, ansi.Strip(paused), m.playerStatus())
 	}
 }
 
@@ -489,12 +525,8 @@ func TestAudioDesignSystemReservesSuccessColorForCompletedPlayback(t *testing.T)
 					require.Empty(t, greenRuns, "%s must not imply successful completion", state)
 				} else {
 					require.Len(t, greenRuns, 2)
-					status := "Completed"
-					if m.framed() {
-						status = "● Completed"
-					}
 					for _, run := range greenRuns {
-						require.Contains(t, []string{status, "┷"}, run[1])
+						require.Contains(t, []string{"Completed", "●"}, run[1])
 					}
 				}
 				m.color = false

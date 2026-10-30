@@ -263,13 +263,16 @@ func (m *audioWorkbench) workspaceAudioHeader() []string {
 	statusColumn := 2 + m.waveformWidth() - len("Generating")
 	left := "  "
 	if m.framed() {
-		statusColumn -= ansi.StringWidth("○ ")
+		statusColumn -= ansi.StringWidth(" ○ ")
 		left += m.muted().Render("Audio") + strings.Repeat(" ", m.formLabelWidth()+1-len("Audio"))
 	}
 	header := func(metadata string) string {
 		return metadata + strings.Repeat(" ", statusColumn-ansi.StringWidth(metadata)) + m.playerStatus()
 	}
 	width := statusColumn - ansi.StringWidth(left) - 1
+	if m.framed() {
+		width++ // The lamp's left halo cell already separates the metadata.
+	}
 	if r == nil {
 		state := m.muted().Render("No recording yet")
 		if m.playerNotice != "" {
@@ -313,29 +316,54 @@ func (m *audioWorkbench) waveformDetailHeight(capacity int) int {
 	return height
 }
 
-// The budget includes the lower seek rail. Empty and unavailable players have neither.
+// Duration places the bead. Only measured peaks draw bars inside the reserved plot.
 func (m *audioWorkbench) workspaceWaveformRows(budget int) []string {
 	return m.waveformRowsAtHeight(budget, m.waveformDetailHeight(budget-1))
 }
 
 func (m *audioWorkbench) waveformRowsAtHeight(budget, height int) []string {
-	if !m.result.hasWaveform() || budget < 2 {
+	if budget < 1 {
 		return nil
 	}
+	width := m.waveformWidth()
+	height = min(budget-1, height)
+	duration := m.result.seekDuration()
+	marker := -1
+	if duration > 0 {
+		marker = audioWaveformMarker(width, m.selectedBoundary())
+	}
+	var rows []string
+	if m.result.hasWaveform() && height > 0 {
+		rows = m.measuredWaveformRows(height, marker)
+	} else {
+		rows = make([]string, height)
+	}
+	spare := budget - height - 1
+	reserveScale := spare > 2 && m.framed()
+	if spare > 0 {
+		rows = append(rows, "")
+	}
+	if reserveScale {
+		rows = append(rows, "")
+	}
+	rows = append(rows, m.timelineRail(width, marker))
+	if reserveScale && (m.result == nil || duration > 0) {
+		rows = append(rows, "  "+m.muted().Render(audioTimeRuler(width, duration)))
+	} else if spare > 1 && m.framed() {
+		rows = append(rows, "")
+	}
+	return rows
+}
+
+func (m *audioWorkbench) measuredWaveformRows(height, marker int) []string {
 	boundary := m.selectedBoundary()
 	wave, levels := audioWaveformRows(m.result.analysis.Peaks, m.waveformWidth(), max(3, height), boundary, true)
 	middle := len(wave) / 2
 	// Connect the measured columns only at zero amplitude, keeping all peak tips.
 	axis := []rune(waveformCenterline.Replace(wave[middle]))
 	last := len(axis) - 1
-	marker := audioWaveformMarker(len(axis), boundary)
 	axis[0], axis[last] = '╶', '╴'
-	switch marker {
-	case 0:
-		axis[0] = '┠'
-	case last:
-		axis[last] = '┨'
-	}
+	axis[marker] = '┃'
 	wave[middle] = string(axis)
 	if height == 1 {
 		wave = wave[middle : middle+1]
@@ -348,57 +376,38 @@ func (m *audioWorkbench) waveformRowsAtHeight(budget, height int) []string {
 		}
 		rows[i] = prefix + row
 	}
-	spare := budget - len(rows) - 1 // The rail needs one row.
-	var labels string
-	// The heavier played rail remains distinct when the terminal disables color.
-	rail := []rune(strings.Repeat("━", marker) + strings.Repeat("─", last+1-marker))
-	rail[0], rail[last] = '├', '┤'
-	if spare > 2 && m.framed() {
-		var midpoint int
-		labels, midpoint = audioTimeRuler(last+1, m.result.seekDuration())
-		if midpoint >= 0 {
-			rail[midpoint] = '┬'
-			if midpoint < marker {
-				rail[midpoint] = '┯'
-			}
-		}
-	}
-	anchorStyle := m.playheadStyle()
-	if marker == last && m.result.finished && !m.playing {
-		anchorStyle = m.playbackProgressStyle()
-	}
-	if spare > 0 {
-		rows = append(rows, "")
-	}
-	if labels != "" {
-		// Move the ruler one row lower inside the reserved plot without shifting its controls.
-		rows = append(rows, "")
-	}
-	played := m.elapsedWaveformStyle().Render(string(rail[:marker]))
-	remaining := m.borderStyle().Render(string(rail[marker+1:]))
-	rows = append(rows, "  "+played+anchorStyle.Render("┷")+remaining)
-	if labels != "" {
-		rows = append(rows, "  "+m.muted().Render(labels))
-	} else if spare > 1 && m.framed() {
-		rows = append(rows, "")
-	}
 	return rows
 }
 
-// Align the outer labels with the two endpoint cells and center the halfway label.
-func audioTimeRuler(width int, duration time.Duration) (labels string, midpoint int) {
+func (m *audioWorkbench) timelineRail(width, marker int) string {
+	if marker < 0 {
+		return "  " + m.borderStyle().Render("╶"+strings.Repeat("─", width-2)+"╴")
+	}
+	// The heavier played rail remains distinct when the terminal disables color.
+	var played, remaining string
+	if marker > 0 {
+		played = m.elapsedWaveformStyle().Render("╺" + strings.Repeat("━", marker-1))
+	}
+	if marker < width-1 {
+		remaining = m.borderStyle().Render(strings.Repeat("─", width-marker-2) + "╴")
+	}
+	anchorStyle := m.playheadStyle()
+	if marker == width-1 && m.result.finished && !m.playing {
+		anchorStyle = m.playbackProgressStyle()
+	}
+	return "  " + played + anchorStyle.Render("●") + remaining
+}
+
+// Align each label with its timeline endpoint.
+func audioTimeRuler(width int, duration time.Duration) string {
 	label := func(at time.Duration) string {
 		if duration >= time.Millisecond {
 			at = at.Truncate(time.Millisecond)
 		}
 		return strings.TrimSuffix(strings.TrimRight(audioSeekClock(at), "0"), ".")
 	}
-	zero, mid, end := label(0), label(duration/2), label(duration)
-	start := (width - len(mid)) / 2
-	if mid == zero || start <= len(zero) || start+len(mid) >= width-len(end) {
-		return zero + strings.Repeat(" ", max(1, width-len(zero)-len(end))) + end, -1
-	}
-	return zero + strings.Repeat(" ", start-len(zero)) + mid + strings.Repeat(" ", width-start-len(mid)-len(end)) + end, (width - 1) / 2
+	zero, end := label(0), label(duration)
+	return zero + strings.Repeat(" ", max(1, width-len(zero)-len(end))) + end
 }
 
 func (m *audioWorkbench) playbackVerb() string {
@@ -451,9 +460,9 @@ func (m *audioWorkbench) playerActions() string {
 		play = "At end"
 	}
 	active := m.focus == 4 && !m.waveformFocused && !m.busy
-	playRow := "  " + m.playbackActionRow(play, active && m.resultAction == 0)
+	playRow := "  " + m.playbackActionRow(play, active && m.resultAction == audioPlayAction)
 	const saveWidth = 14
-	saveRow := m.playerActionRow("Save audio…", active && m.resultAction == 1, saveWidth)
+	saveRow := m.playerActionRow("Save audio…", active && m.resultAction == audioSaveAction, saveWidth)
 	columnWidth := audioFormLabelWidth + 1
 	return playRow + strings.Repeat(" ", columnWidth-ansi.StringWidth(playRow)) + saveRow
 }
@@ -472,14 +481,27 @@ func (m *audioWorkbench) savedRecordingRow(width int) string {
 func (m *audioWorkbench) playerTiming() (string, int) {
 	r := m.result
 	if r == nil {
-		return m.muted().Render("00:00.000 / 00:00.000"), 21
+		return "  " + m.muted().Render("00:00.000 / 00:00.000"), 21
 	}
-	if !r.hasWaveform() {
-		return m.muted().Render("--:--.--- / --:--.---"), 21
+	if r.seekDuration() == 0 {
+		return "  " + m.muted().Render("--:--.--- / --:--.---"), 21
 	}
 	total := audioDuration(r.analysis.Duration)
 	elapsed := m.accent().Bold(false).Render(audioDuration(r.playbackPosition().Seconds()))
 	timing := elapsed + m.borderStyle().Render(" / ") + m.muted().Render(total)
+	// Keep the clock in the same columns while selecting it.
+	innerWidth := ansi.StringWidth(timing)
+	hasGutter := innerWidth+2 <= m.waveformWidth()+4
+	selected := m.focus == 4 && !m.waveformFocused && !m.busy && m.resultAction == audioTimeAction
+	if hasGutter {
+		if selected {
+			timing = m.selected("› "+ansi.Strip(timing), innerWidth+2)
+		} else {
+			timing = "  " + timing
+		}
+	} else if selected {
+		timing = m.selected(ansi.Strip(timing), innerWidth)
+	}
 	// Reserve the widest elapsed value before playback or seeking changes it.
 	return timing, max(21, 2*ansi.StringWidth(total)+3)
 }

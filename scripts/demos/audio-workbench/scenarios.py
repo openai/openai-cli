@@ -643,19 +643,23 @@ def workflow_case(ctx):
             assert time.monotonic() < deadline, "The fake player did not receive generated audio"
             ctx.drain(terminal, .05)
 
-    def marker_column(visible):
+    def screen_rows(visible):
         # Asciinema joins soft-wrapped lines. This fixture uses single-cell text.
         width = terminal.initial_size[0]
         for event in terminal.events:
             if event[1] == "r":
                 width = int(event[2].split("x")[0])
-        rows = [line[start:start + width] for line in visible.splitlines()
+        return [line[start:start + width] for line in visible.splitlines()
                 for start in range(0, len(line), width)]
-        markers = [(index, match.start()) for index, row in enumerate(rows)
-                   if (match := re.search("[┃╂┠┨]", row))]
+
+    def marker_column(visible):
+        rows = screen_rows(visible)
+        markers = [(index, row.index("┃")) for index, row in enumerate(rows) if "┃" in row]
         assert len(markers) >= 3 and len(markers) % 2 == 1, "Missing waveform rows"
         first, column = markers[0]
         assert markers == [(first + index, column) for index in range(len(markers))], "Broken playback marker"
+        beads = [row.index("●") for row in rows if "●" in row and ("━" in row or "─" in row)]
+        assert beads == [column], "The seek rail must track the waveform playhead"
         return column
 
     def timer(milliseconds):
@@ -731,8 +735,8 @@ def workflow_case(ctx):
     visible = ctx.wait(terminal, "00:00.000 / 00:02.000")
     assert "More actions…" in visible and "Instructions" in visible, "Playback lost its editing form"
     marker_column(visible)
-    axis = next(row for row in visible.splitlines() if "┠" in row and "╴" in row)
-    span = axis.index("╴") - axis.index("┠")
+    rail = next(row for row in screen_rows(visible) if "●" in row and "╴" in row)
+    span = rail.index("╴") - rail.index("●")
     assert span > 0 and span % 2 == 0, "The waveform endpoint is off the seek grid"
     bars = span // 2
     ctx.mark(terminal, "generated-result", result)

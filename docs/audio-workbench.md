@@ -88,7 +88,8 @@ Viewing or dismissing an error never retries the request. The command retains it
 Completed results show their format and byte count.
 When analysis succeeds, they also show a waveform derived from decoded samples and duration.
 Result labels retain the original generation settings when you change the form.
-Left and Right select Play audio or Save audio. Enter performs the selected action.
+Left and Right select Play, Save, or the playback clock. The clock becomes selectable when the duration is known.
+Select the clock and press Enter to set the playback time.
 Up focuses the waveform. Down returns to the selected action.
 On the waveform, Left and Right move the playback position. Shift moves five waveform bars.
 With a measured recording focused, press G to enter a time. Typing a digit also starts time entry.
@@ -224,7 +225,7 @@ At 60 columns and 24 rows, the draft, settings, and audio share one frame.
 The script aligns with its heading. The active heading uses the focus color.
 For multiline scripts, the heading shows the current line while you edit and the total line count afterward.
 Wide, tall terminals reserve a few script lines throughout generation and playback. Longer drafts fill that space as you type.
-At 110 columns and 28 rows, the studio places the script and Delivery on the left.
+At 110 columns and 28 rows, Voice studio places the script and Delivery on the left.
 The recording monitor on the right keeps the waveform, playback clock, and Play and Save controls together.
 Both panes share one command strip above them. Generating a recording keeps the editor and transport in place.
 Other framed terminals use the stacked recording view. From 100 columns, that view places Delivery beside the script.
@@ -240,21 +241,21 @@ The Batch browser’s thin divider sits below the command strip in the studio. I
 Before generation, the framed player shows “No recording yet,” Play, Save, and a zero timer.
 The form and player controls keep their positions while the waveform fills the space above the controls.
 Playback and Save shortcuts explain that speech must be generated first.
-The recording adds a measured waveform and seek rail in that location.
-When space permits, a time ruler labels the start, midpoint, and end in minutes and seconds.
+The idle player shows a quiet horizontal rail. Its position stays fixed as the waveform fills in.
+A round bead marks the selected time. Only the start and end carry timestamps.
 Recordings without a measured duration show an unknown timer and retain their Save action.
 One blank row separates the recording details from the waveform when space permits.
 The status light and its label stay in fixed columns.
-Generation and playback light the center. Pause shows an amber double ring. Completion shows a solid green light.
+Generation and playback slowly brighten and dim the status light. Pause holds amber. Completion holds green.
 Small terminals show the status text alone.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.
 The playhead follows playback through silence. Elapsed bars and rail use green. Upcoming bars use the secondary text color.
 Long bars fade toward both tips. Their shades reflect peak heights between terminal half-cell steps.
 Short bars keep their contrast. Elapsed time uses blue.
 Amber marks a paused or manually positioned playhead. The status describes its state.
-The heavier rail shows the played portion in monochrome. The final marker turns green when playback completes.
-Play starts under the first timeline marker. Save and the timer follow in the same row.
-When space permits, two blank rows separate the waveform from the time ruler. A tick marks the midpoint label.
+The heavier rail shows the played portion in monochrome. The bead turns green when playback completes.
+The studio clock aligns with the rail’s start. Play and Save sit below it.
+The stacked view puts Play, Save, and the clock in one row when space permits.
 When the timer needs more space, it moves above the actions and aligns with the final marker.
 Save opens the destination picker. A successful export adds its path below the actions.
 

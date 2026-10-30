@@ -24,7 +24,7 @@ func (m *audioWorkbench) studioMonitorWidth() int {
 // Keep both panes and the command strip mounted as focus moves through the studio.
 func (m *audioWorkbench) studioView() tea.View {
 	title := "  " + m.strong().Render("Text to speech")
-	mode := m.muted().Render("Studio monitor") + "  "
+	mode := m.muted().Render("Voice studio") + "  "
 	title += strings.Repeat(" ", m.audioWidth()-ansi.StringWidth(title+mode)) + mode
 	rows := []string{title, ""}
 	rows = append(rows, m.formActionRows()...)

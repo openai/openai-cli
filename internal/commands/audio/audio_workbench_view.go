@@ -312,7 +312,7 @@ func (m *audioWorkbench) View() tea.View {
 		}
 		wave := m.workspaceWaveformRows(budget)
 		free := budget - len(wave)
-		if len(wave) > 0 && free > 0 && len(m.result.savedPaths) == 0 {
+		if len(wave) > 0 && free > 0 && (m.result == nil || len(m.result.savedPaths) == 0) {
 			// Keep the inline frame the same height when the save receipt appears.
 			controls = append(controls, "")
 			free--
@@ -647,11 +647,24 @@ func (m *audioWorkbench) playerStatus() string {
 	if !m.framed() {
 		return style.Render(label)
 	}
-	// Emphasize the active core without flashing, changing the background, or moving the label.
-	if lamp == "◉" && m.color {
-		return style.Bold(true).Render(lamp) + " " + style.Render(label)
+	// The light occupies three cells. Its middle stays aligned even without color.
+	if !m.color || label == "Ready" || label == "Idle" {
+		return " " + style.Render(lamp+" "+label)
 	}
-	return style.Render(lamp + " " + label)
+	paper := "#F2F4FA"
+	if m.dark {
+		paper = "#20283B"
+	}
+	tones := lipgloss.Blend1D(16, lipgloss.Color(paper), style.GetForeground())
+	edge, core := 1, 4
+	if lamp == "◉" {
+		phase := min(m.lampPhase, 12-m.lampPhase)
+		edge += phase / 3
+		core += phase / 2
+	}
+	halo := lipgloss.NewStyle().Background(tones[edge]).Render(" ")
+	light := style.Bold(true).Background(tones[core]).Render(lamp)
+	return halo + light + halo + style.Render(label)
 }
 
 func (m *audioWorkbench) playheadStyle() lipgloss.Style {
@@ -707,13 +720,18 @@ func (m *audioWorkbench) resultHintRows() []string {
 			navigation[1] = [2]string{"↑", "waveform"}
 		}
 		control := [2]string{"Space", playAction}
-		if m.resultAction == 1 && !m.waveformFocused {
-			control = [2]string{"Enter", "save"}
+		if !m.waveformFocused {
+			switch m.resultAction {
+			case audioSaveAction:
+				control = [2]string{"Enter", "save"}
+			case audioTimeAction:
+				control = [2]string{"Enter", "set time"}
+			}
 		}
 		if m.waveformFocused {
 			navigation = [][2]string{{"←→", "seek"}, above, {"↓", "controls"}}
 		}
-		if r.seekDuration() > 0 {
+		if r.seekDuration() > 0 && (m.waveformFocused || m.resultAction != audioTimeAction) {
 			navigation = append(navigation, [2]string{"G", "time"})
 		}
 		movement := m.hintLine(navigation...)
