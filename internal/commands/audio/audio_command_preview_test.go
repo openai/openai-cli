@@ -117,9 +117,9 @@ func assertAudioPreviewJSON(t *testing.T, model *audioWorkbench, input []byte) {
 	if model.instructions.Value() != "" {
 		want["instructions"] = model.instructions.Value()
 	}
-	expected, err := json.Marshal(want)
-	require.NoError(t, err)
-	require.Equal(t, expected, input, "shell changed the complete JSON bytes")
+	_, request, ok := strings.Cut(model.commandPreview(), " <<'JSON'\n")
+	require.True(t, ok)
+	require.Equal(t, strings.TrimSuffix(request, "JSON"), string(input), "shell changed the displayed JSON bytes")
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(input, &decoded))
 	require.Equal(t, want, decoded)
@@ -127,8 +127,12 @@ func assertAudioPreviewJSON(t *testing.T, model *audioWorkbench, input []byte) {
 
 func assertAudioPreviewContinuations(t *testing.T, command string) {
 	t.Helper()
-	lines := strings.Split(command, "\n")
-	require.Greater(t, len(lines), 1, "the command must use structural line continuations")
+	launcher, request, ok := strings.Cut(command, " <<'JSON'\n")
+	require.True(t, ok)
+	require.True(t, strings.HasSuffix(request, "\n}\nJSON"), "the terminator must occupy its own line")
+	require.True(t, strings.HasPrefix(request, "{\n  \"input\": "))
+	lines := strings.Split(launcher, "\n")
+	require.Greater(t, len(lines), 1)
 	for index, line := range lines {
 		if index < len(lines)-1 {
 			require.True(t, strings.HasSuffix(line, " \\"), "continuation must end line %d without trailing whitespace", index)
@@ -136,11 +140,10 @@ func assertAudioPreviewContinuations(t *testing.T, command string) {
 		if index > 0 {
 			require.True(t, strings.HasPrefix(line, "  "), "continued line %d must retain indentation", index)
 		}
-		for _, char := range line {
-			require.False(t, unicode.IsControl(char) || unicode.Is(unicode.Cf, char), "data control in copyable command")
-		}
 	}
-	require.False(t, strings.HasSuffix(command, "\n"), "the print path owns the final newline")
+	for _, char := range strings.ReplaceAll(command, "\n", "") {
+		require.False(t, unicode.IsControl(char) || unicode.Is(unicode.Cf, char), "data control in copyable command")
+	}
 }
 
 func TestAudioCommandPreviewNativeShellPreservesInputsAndRequestContext(t *testing.T) {
@@ -148,7 +151,7 @@ func TestAudioCommandPreviewNativeShellPreservesInputsAndRequestContext(t *testi
 		t.Run(shell, func(t *testing.T) {
 			binary, directory := audioPreviewExecutable(t, "openai preview's binary")
 			invocation := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
-			for _, input := range []string{"@synthetic/file.txt", `\@synthetic/file.txt`, "世界 says 'hello'\nsecond line with \\\"quoted\\\" text", "Literal \\\n$(printf injected); `printf injected` | # and trailing \\"} {
+			for _, input := range []string{"@synthetic/file.txt", `\@synthetic/file.txt`, "世界 says 'hello'\nsecond line with \\\"quoted\\\" text", "End marker\nJSON\n$(printf should-be-literal)", "Literal \\\n$(printf injected); `printf injected` | # and trailing \\"} {
 				for _, instructions := range []string{"", "Speak 'gently'\nPreserve 世界 and @literal \\@literal"} {
 					model := audioPreviewModel(t, invocation, "--project=proj synthetic's", "--organization=org-世界", "--base-url=https://example.invalid/proxy/v1")
 					model.input.SetValue(input)
@@ -175,7 +178,7 @@ func TestAudioCommandPreviewEscapesControlsWithoutChangingArguments(t *testing.T
 			invocation := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
 			project := "proj\x1b[2J\r\n\t\u202e's"
 			model := audioPreviewModel(t, invocation, "--project="+project)
-			model.settings.Model = "synthetic\x1b]52;c;fake\a"
+			model.settings.Model = "synthetic\x1b]52;c;fake\a\u0085\u00ad\U000e0001"
 			model.input.SetValue("plain\nUnicode 世界")
 			preview := model.commandPreview()
 			assertAudioPreviewContinuations(t, preview)
@@ -230,7 +233,7 @@ func TestAudioCommandPreviewSuppressesPrivateOverrides(t *testing.T) {
 		model.input.SetValue("SYNTHETIC_PRIVATE_EDITOR_TEXT")
 		preview := model.commandPreview()
 		require.Equal(t, "Command preview unavailable with private request overrides.", preview)
-		for _, private := range []string{"sk-fake", "fake-secret", "/synthetic/private", "SYNTHETIC_PRIVATE_EDITOR_TEXT", "printf", "audio speak"} {
+		for _, private := range []string{"sk-fake", "fake-secret", "/synthetic/private", "SYNTHETIC_PRIVATE_EDITOR_TEXT", "OPENAI_UNTRUSTED_STDIN", "audio speak"} {
 			require.NotContains(t, preview, private)
 		}
 	}
@@ -252,7 +255,7 @@ func TestAudioCommandPreviewFullTextAndVerticalScroll(t *testing.T) {
 	require.Equal(t, audioFocusCommand, model.focus)
 	require.Equal(t, preview, model.commandPreview(), "focusing the command changed executable bytes")
 	initial := model.View().Content
-	require.Contains(t, ansi.Strip(initial), "printf")
+	require.Contains(t, ansi.Strip(initial), "OPENAI_UNTRUSTED_STDIN")
 	require.Contains(t, ansi.Strip(initial), "Bash/zsh", "the command must identify its supported shells")
 	require.Nil(t, audioReviewKey(model, tea.KeyDown), "scrolling must never generate speech")
 	require.Positive(t, model.commandOffset)

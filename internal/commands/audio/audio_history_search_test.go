@@ -38,7 +38,7 @@ func TestAudioHistorySearchFiltersDisplayedFieldsAndKeepsSelection(t *testing.T)
 			}
 			view := m.historyView(now)
 			require.NotNil(t, view.Cursor)
-			require.Contains(t, view.Content, "History (2 of 3 recordings)")
+			require.Contains(t, view.Content, "2 of 3 recordings")
 			require.Contains(t, view.Content, "Yesterday")
 			require.NotContains(t, view.Content, "Today")
 			require.NotContains(t, view.Content, "Bell")
@@ -61,6 +61,56 @@ func TestAudioHistorySearchFiltersDisplayedFieldsAndKeepsSelection(t *testing.T)
 			require.Empty(t, m.historySearch.query)
 		})
 	}
+}
+
+func TestAudioHistorySearchByLocalCalendarDate(t *testing.T) {
+	zone, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	now := time.Date(2026, 10, 30, 0, 15, 0, 0, zone)
+	m := audioReviewModel(t)
+	for i, stamp := range []string{"2026-10-30T04:10:00Z", "2026-10-30T03:55:00Z", "2026-10-29T03:00:00Z", "2025-10-28T10:00:00Z", "2026-10-02T10:00:00Z"} {
+		entry := audioReviewResult(fmt.Sprint(i), false).entry
+		entry.Settings.Input, entry.Settings.Voice, entry.Settings.Format = "Train at the station", "coral", "wav"
+		entry.CreatedAt, err = time.Parse(time.RFC3339, stamp)
+		require.NoError(t, err)
+		m.entries = append(m.entries, entry)
+	}
+	m.entries[3].Settings.Voice = "ash"
+	unknown := audioReviewResult("unknown-date", false).entry
+	unknown.CreatedAt = time.Time{}
+	m.entries = append(m.entries, unknown)
+	for query, want := range map[string][]string{
+		"today": {"0"}, "YESTERDAY": {"1"}, "2026-10-28": {"2"},
+		"oct 28": {"2", "3"}, "Oct 28, 2025": {"3"}, "October 28 2026": {"2"},
+		"ash October 28 WAV train": {"3"}, "oct 2": {"4"}, "yesterday ash": {},
+		"2025": {"3"}, "2025-10": {"3"}, "November": {}, "Oct 28, 2024": {},
+	} {
+		t.Run(query, func(t *testing.T) {
+			m.filterHistory(query, now)
+			var ids []string
+			for _, entry := range m.visibleHistory(now) {
+				ids = append(ids, entry.ID)
+			}
+			require.ElementsMatch(t, want, ids)
+		})
+	}
+}
+
+func TestAudioHistoryRelativeSearchRefreshesAcrossDSTAndMidnight(t *testing.T) {
+	zone, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	now := time.Date(2026, 11, 1, 23, 30, 0, 0, zone)
+	m := audioReviewModel(t)
+	for i, stamp := range []string{"2026-11-01T05:30:00Z", "2026-11-01T06:30:00Z", "2026-10-31T04:10:00Z"} {
+		entry := audioReviewResult(fmt.Sprint(i), false).entry
+		entry.CreatedAt, err = time.Parse(time.RFC3339, stamp)
+		require.NoError(t, err)
+		m.entries = append(m.entries, entry)
+	}
+	m.filterHistory("yesterday", now)
+	require.Equal(t, m.entries[2:], m.visibleHistory(now))
+	// Both occurrences of 01:30 fall on the previous calendar day after midnight.
+	require.Equal(t, m.entries[:2], m.visibleHistory(now.Add(time.Hour)))
 }
 
 func TestAudioHistorySearchSafeUnicodeAndNoMatches(t *testing.T) {
@@ -109,7 +159,8 @@ func TestAudioHistorySearchOpensTheMatchingStoredRecording(t *testing.T) {
 	m.Update(audioSeekWorker(t, m.history()))
 	require.Len(t, m.entries, 2)
 	wanted := m.entries[1]
-	m.Update(tea.PasteMsg{Content: wanted.Settings.Input})
+	query := wanted.CreatedAt.Local().Format(time.DateOnly) + " " + wanted.Settings.Input
+	m.Update(tea.PasteMsg{Content: query})
 	message := audioSeekWorker(t, audioReviewKey(m, tea.KeyEnter))
 	require.NoError(t, message.err)
 	m.Update(message)

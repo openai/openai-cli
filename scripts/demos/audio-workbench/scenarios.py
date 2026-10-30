@@ -290,12 +290,12 @@ def navigation_case(ctx):
     check("open More command route", "history", b"\r")
     check("select View command", "› View command", down * 3)
     check("open Command information", "command", b"\r")
-    check("Command starts with printf", "printf")
+    check("Command starts with the protected launcher", "OPENAI_UNTRUSTED_STDIN")
     initial_command = ctx.screen(terminal)
     check("Command End scrolls", "command", ctx.picker.END)
     assert ctx.screen(terminal) != initial_command, "Command modal did not scroll through its complete command"
     check("Command Down stays at bottom", "command", down * 4)
-    check("Command Home returns to first rows", "printf", ctx.picker.HOME)
+    check("Command Home returns to first rows", "OPENAI_UNTRUSTED_STDIN", ctx.picker.HOME)
     check("Command Up stays in its modal", "command", up * 4)
     check("Command Escape returns to More", "› View command", b"\x1b")
     check("More Home selects History", "history", ctx.picker.HOME)
@@ -381,7 +381,7 @@ def navigation_case(ctx):
     check("Tab Settings to Result again", "play", b"\t")
     check("reverse Tab Result to Settings again", "more", backtab)
     visible = ctx.screen(terminal)
-    assert "Command preview" not in visible and "printf" not in visible, "Main form retained advanced command content"
+    assert "Command preview" not in visible and "OPENAI_UNTRUSTED_STDIN" not in visible, "Main form retained advanced command content"
     ctx.mark(terminal, result["case"] + "-complete", result)
     result["navigation_check_count"] = len(result["navigation_checks"])
     assert result["navigation_check_count"] == 196, "Navigation inventory changed"
@@ -535,10 +535,10 @@ def print_command_case(ctx):
     text = "A" * 60
     body = {"input": text, "instructions": ctx.fixture.DEFAULT_INSTRUCTIONS,
             "model": "gpt-4o-mini-tts", "response_format": "wav", "speed": 1, "voice": "coral"}
-    body_text = json.dumps(body, sort_keys=True, separators=(",", ":"))
-    command_rows = ("printf %s", "  '" + body_text + "' |", "  OPENAI_UNTRUSTED_STDIN=true openai",
-                    "    audio speak", "      --output speech.wav")
-    expected = " \\\n".join(command_rows).encode()
+    command_rows = ("OPENAI_UNTRUSTED_STDIN=true \\", "  openai audio speak \\",
+                    "    --output speech.wav <<'JSON'",
+                    json.dumps(body, sort_keys=True, indent=2), "JSON")
+    expected = "\n".join(command_rows).encode()
     result["commands"] = []
     result["case_deadline_seconds"] = 60
     result["coverage_limit"] = "Private PTY lifecycle and emitted bytes; no native clipboard or appearance claim."
@@ -658,8 +658,11 @@ def workflow_case(ctx):
         assert len(markers) >= 3 and len(markers) % 2 == 1, "Missing waveform rows"
         first, column = markers[0]
         assert markers == [(first + index, column) for index in range(len(markers))], "Broken playback marker"
-        beads = [row.index("●") for row in rows if "●" in row and ("━" in row or "─" in row)]
-        assert beads == [column], "The seek rail must track the waveform playhead"
+        rails = [row for row in rows if "╺" in row and ("╴" in row or "╸" in row)]
+        assert len(rails) == 1, "Expected one measured rail"
+        rail = rails[0]
+        join = next(glyph for glyph in ("╾", "╸", "╺") if glyph in rail)
+        assert rail.index(join) == column, "The seek rail must track the waveform playhead"
         return column
 
     def timer(milliseconds):
@@ -735,8 +738,8 @@ def workflow_case(ctx):
     visible = ctx.wait(terminal, "00:00.000 / 00:02.000")
     assert "More actions…" in visible and "Instructions" in visible, "Playback lost its editing form"
     marker_column(visible)
-    rail = next(row for row in screen_rows(visible) if "●" in row and "╴" in row)
-    span = rail.index("╴") - rail.index("●")
+    rail = next(row for row in screen_rows(visible) if "╺" in row and "╴" in row)
+    span = rail.index("╴") - rail.index("╺")
     assert span > 0 and span % 2 == 0, "The waveform endpoint is off the seek grid"
     bars = span // 2
     ctx.mark(terminal, "generated-result", result)

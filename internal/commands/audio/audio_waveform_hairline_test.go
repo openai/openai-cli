@@ -129,7 +129,7 @@ func TestAudioHairlinePreservesOneRowAndCompactOutput(t *testing.T) {
 		m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 		view := m.View().Content
 		require.Contains(t, view, m.warningStyle().Render("┃"), "the compact playhead crosses the same measured centerline")
-		require.Contains(t, view, m.warningStyle().Render("●"))
+		require.Contains(t, view, m.warningStyle().Render("╾"))
 		require.NotContains(t, ansi.Strip(view), "█")
 	}
 }

@@ -526,7 +526,7 @@ func TestAudioDesignSystemReservesSuccessColorForCompletedPlayback(t *testing.T)
 				} else {
 					require.Len(t, greenRuns, 2)
 					for _, run := range greenRuns {
-						require.Contains(t, []string{"Completed", "●"}, run[1])
+						require.Contains(t, []string{"Completed", "╸"}, run[1])
 					}
 				}
 				m.color = false

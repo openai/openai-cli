@@ -46,7 +46,7 @@ Left and Right move between actions. Enter opens the selected action. Home selec
 Up returns to Settings. Down moves to Audio. Up from the waveform returns to the action you left.
 Actions contains History, Preview voice, Clear form, View command, and Help.
 On smaller terminals, select More actions and press Enter.
-View command opens a vertically scrollable Bash/zsh command.
+View command shows the Bash/zsh invocation first. The JSON request follows, with one field per line.
 Up/Down and PageUp/PageDown scroll it. Home/End select its start or end.
 Escape returns to More actions with View command selected.
 Tab focuses Audio. Shift+Tab returns to the More actions control.
@@ -211,10 +211,11 @@ openai audio translate --file recording.wav --model whisper-1
 ```
 
 Speech History groups recordings by local date and shows one prompt row per recording.
-Type in History to filter by clip text, voice, or format. Search ignores letter case.
+Search History by clip text, voice, format, or local recording date. Search ignores letter case.
+Use `today`, `yesterday`, `Oct 28`, or `2026-10-28`. Combine a date with another term, such as `Oct 28 Coral`.
 Up from the first recording focuses Search. Down selects a matching recording. Enter opens it.
 Backspace removes one character. Ctrl+U clears Search.
-Roomy terminals show timestamps and selected-recording metadata.
+Roomy terminals show timestamps and details for the selected recording. Press Ctrl+L to show or hide the History folder.
 Compact terminals preserve prompt space and keep the selected recording visible.
 More actions lists secondary commands and brief descriptions when space permits.
 Escape returns to the form.
@@ -242,7 +243,7 @@ Before generation, the framed player shows “No recording yet,” Play, Save, a
 The form and player controls keep their positions while the waveform fills the space above the controls.
 Playback and Save shortcuts explain that speech must be generated first.
 The idle player shows a quiet horizontal rail. Its position stays fixed as the waveform fills in.
-A round bead marks the selected time. Only the start and end carry timestamps.
+The heavier elapsed line joins the thinner remaining line directly below the playhead. Only the endpoints carry timestamps.
 Recordings without a measured duration show an unknown timer and retain their Save action.
 One blank row separates the recording details from the waveform when space permits.
 The status light and its label stay in fixed columns.
@@ -253,7 +254,7 @@ The playhead follows playback through silence. Elapsed bars and rail use green. 
 Long bars fade toward both tips. Their shades reflect peak heights between terminal half-cell steps.
 Short bars keep their contrast. Elapsed time uses blue.
 Amber marks a paused or manually positioned playhead. The status describes its state.
-The heavier rail shows the played portion in monochrome. The bead turns green when playback completes.
+The change in line weight stays visible in monochrome. The right endpoint turns green when playback completes.
 The studio clock aligns with the rail’s start. Play and Save sit below it.
 The stacked view puts Play, Save, and the clock in one row when space permits.
 When the timer needs more space, it moves above the actions and aligns with the final marker.

@@ -149,7 +149,7 @@ func TestAudioTypedSeekEditsTheFramedTimeline(t *testing.T) {
 		audioReviewKey(m, '9')
 		view := m.View()
 		require.Contains(t, view.Content, "Text to speech")
-		require.Contains(t, view.Content, "●")
+		require.Contains(t, view.Content, "╺")
 		require.Contains(t, view.Content, "Go to time")
 		require.NotNil(t, view.Cursor)
 		rows := strings.Split(ansi.Strip(view.Content), "\n")

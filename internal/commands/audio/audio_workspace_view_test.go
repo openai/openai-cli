@@ -104,7 +104,7 @@ func TestAudioWorkspaceKeepsDraftAndRecordingVisibleAcrossFocus(t *testing.T) {
 					require.Equal(t, initial, positions, "focus must not move timing or playback controls")
 				}
 				require.NotContains(t, view, "View command")
-				require.NotContains(t, view, "printf %s")
+				require.NotContains(t, view, "OPENAI_UNTRUSTED_STDIN")
 				require.NotContains(t, view, "OPENAI_UNTRUSTED_STDIN")
 				if focus == 4 {
 					require.Contains(t, view, "› Play audio")
@@ -222,12 +222,12 @@ func TestAudioWorkspaceDoesNotInventAudioBeforeGeneration(t *testing.T) {
 		view := ansi.Strip(m.View().Content)
 		require.Contains(t, view, "No recording yet")
 		require.NotContains(t, view, "Generate speech to create audio.")
-		require.NotContains(t, view, "●")
+		require.NotContains(t, view, "╺")
 		require.NotContains(t, view, "┃")
 		require.Contains(t, view, "00:00.000 / 00:00.000")
 		require.Contains(t, view, "Play audio")
 		require.Contains(t, view, "Save audio…")
-		require.NotContains(t, view, "printf %s")
+		require.NotContains(t, view, "OPENAI_UNTRUSTED_STDIN")
 		assertAudioWorkspaceBounds(t, view, size)
 	}
 }
@@ -377,7 +377,7 @@ func TestAudioWorkspaceSeparatesMeasuredWaveformsOnlyWhenRoomPermits(t *testing.
 				m.result = &r
 				bottomLabel = "Preview unavailable"
 				if r.measured {
-					bottomLabel = "●"
+					bottomLabel = "╺"
 				}
 			}
 			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
@@ -470,8 +470,8 @@ func TestAudioWorkspaceToolbarKeepsExactTimingAndBounds(t *testing.T) {
 				if !audioIsMeasuredRail(row) {
 					continue
 				}
-				left = ansi.StringWidth(row[:strings.IndexAny(row, "╺●")])
-				right = ansi.StringWidth(row[:strings.LastIndexAny(row, "╴●")])
+				left = ansi.StringWidth(row[:strings.IndexAny(row, "╺")])
+				right = ansi.StringWidth(row[:strings.LastIndexAny(row, "╴╸")])
 				break
 			}
 			require.Positive(t, left)

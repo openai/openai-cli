@@ -50,7 +50,7 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 				require.Contains(t, view, "00:00.000 / 00:01.000")
 			} else {
 				require.Contains(t, view, "Play audio")
-				require.NotContains(t, view, "●")
+				require.NotContains(t, view, "╺")
 				require.Contains(t, view, "No recording yet")
 				require.NotContains(t, view, "┃")
 				for row, line := range strings.Split(view, "\n") {

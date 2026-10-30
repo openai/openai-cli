@@ -154,16 +154,16 @@ func TestAudioViewCommandWrapPreservesTheExecutableText(t *testing.T) {
 	for _, row := range rows {
 		require.LessOrEqual(t, ansi.StringWidth(row), m.audioWidth())
 	}
-	require.Contains(t, audioFeedbackView(t, m), "printf")
+	require.Contains(t, audioFeedbackView(t, m), "OPENAI_UNTRUSTED_STDIN")
 	audioReviewKey(m, tea.KeyEscape)
 	require.Equal(t, "more", m.modal)
 	require.Equal(t, 2, m.focus)
-	require.NotContains(t, audioFeedbackView(t, m), "printf")
+	require.NotContains(t, audioFeedbackView(t, m), "OPENAI_UNTRUSTED_STDIN")
 	audioReviewKey(m, tea.KeyEscape)
 	require.Empty(t, m.modal)
 	require.Equal(t, 2, m.focus)
 	require.Equal(t, audioSettingMore, m.setting)
-	require.NotContains(t, audioFeedbackView(t, m), "printf")
+	require.NotContains(t, audioFeedbackView(t, m), "OPENAI_UNTRUSTED_STDIN")
 }
 
 func TestAudioListenShortcutOpensRetainedAudioWithoutPlaying(t *testing.T) {

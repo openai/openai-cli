@@ -158,7 +158,7 @@ func TestAudioCompactSeekKeepsRailAfterFailedRetry(t *testing.T) {
 	audioReviewKey(m, tea.KeyUp)
 	view := ansi.Strip(m.View().Content)
 	require.True(t, m.waveformFocused)
-	for _, marker := range []string{"●", "Saved:", "F1 details", "←→ seek"} {
+	for _, marker := range []string{"╺", "Saved:", "F1 details", "←→ seek"} {
 		require.Contains(t, view, marker)
 	}
 	rows := strings.Split(view, "\n")
@@ -269,8 +269,8 @@ func TestAudioWaveformProgressTracksForwardAndBackwardSeek(t *testing.T) {
 			view := m.View().Content
 			for _, row := range strings.Split(view, "\n") {
 				if audioIsMeasuredRail(row) {
-					require.NotContains(t, row, m.playbackProgressStyle().Render("●"), "position alone is not completion")
-					return audioWaveformFrameColumn(t, row, "●")
+					require.NotContains(t, row, m.playbackProgressStyle().Render("╸"), "position alone is not completion")
+					return audioRailMarkerColumn(t, row)
 				}
 			}
 			t.Fatal("waveform progress rail missing")
@@ -289,7 +289,7 @@ func TestAudioWaveformProgressTracksForwardAndBackwardSeek(t *testing.T) {
 		r.position = r.seekDuration()
 		require.Greater(t, markerColumn(), first)
 		r.finished = true
-		require.Contains(t, m.View().Content, m.playbackProgressStyle().Render("●"))
+		require.Contains(t, m.View().Content, m.playbackProgressStyle().Render("╸"))
 		require.Contains(t, m.View().Content, m.playbackProgressStyle().Render("Completed"))
 		require.Contains(t, ansi.Strip(m.View().Content), "● Completed")
 		m.color = false

@@ -95,10 +95,10 @@ func TestAudioCommandViewPendingSpeedPreviewAndPrint(t *testing.T) {
 				display := ansi.Strip(strings.Join(m.commandDisplayRows(), ""))
 				if draft == "4.01" {
 					require.Equal(t, "Apply a valid Speed to preview the command.", display)
-					require.NotContains(t, display, "printf")
-					require.NotContains(t, display, `"speed":1`)
+					require.NotContains(t, display, "OPENAI_UNTRUSTED_STDIN")
+					require.NotContains(t, display, `"speed": 1`)
 				} else {
-					require.Contains(t, display, `"speed":1.23`)
+					require.Contains(t, display, `"speed": 1.23`)
 				}
 				require.Equal(t, float64(1), m.settings.Speed, "rendering must not commit a draft")
 				_, command := m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
@@ -121,8 +121,8 @@ func TestAudioCommandViewPendingSpeedPreviewAndPrint(t *testing.T) {
 					_, command = m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
 					require.NotNil(t, command)
 					require.True(t, m.quit)
-					require.Contains(t, m.commandToPrint, `"speed":1`)
-					require.NotContains(t, m.commandToPrint, `"speed":4.01`)
+					require.Contains(t, m.commandToPrint, `"speed": 1`)
+					require.NotContains(t, m.commandToPrint, `"speed": 4.01`)
 					return
 				}
 				require.NotNil(t, command)
@@ -131,7 +131,7 @@ func TestAudioCommandViewPendingSpeedPreviewAndPrint(t *testing.T) {
 				require.False(t, m.speedEditing)
 				require.Equal(t, 1.23, m.settings.Speed)
 				require.Equal(t, m.commandPreview(), m.commandToPrint)
-				require.Contains(t, m.commandToPrint, `"speed":1.23`)
+				require.Contains(t, m.commandToPrint, `"speed": 1.23`)
 			})
 		}
 	}
@@ -178,7 +178,7 @@ func TestAudioCommandViewPrivateOverrideNeverBecomesPrintable(t *testing.T) {
 				require.NotContains(t, audioFeedbackView(t, m), "Output: speech.")
 				display := ansi.Strip(strings.Join(m.commandDisplayRows(), ""))
 				require.Contains(t, display, "unavailable with private request overrides")
-				for _, private := range []string{"synthetic-private-command-canary", "Synthetic command body.", "printf", "audio speak"} {
+				for _, private := range []string{"synthetic-private-command-canary", "Synthetic command body.", "OPENAI_UNTRUSTED_STDIN", "audio speak"} {
 					require.NotContains(t, display, private)
 				}
 				_, command := m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
@@ -237,11 +237,11 @@ func TestAudioCommandInspectorStaysOutsideNormalTabOrder(t *testing.T) {
 			m := audioPreviewModel(t, "'/synthetic/alternate CLI/openai'")
 			m.input.SetValue("Keep this synthetic draft.")
 			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-			for _, hidden := range []string{"View command", audioCommandTitle, "printf", "/synthetic/alternate CLI/openai"} {
+			for _, hidden := range []string{"View command", audioCommandTitle, "OPENAI_UNTRUSTED_STDIN", "/synthetic/alternate CLI/openai"} {
 				require.NotContains(t, audioFeedbackView(t, m), hidden)
 			}
 			require.Nil(t, audioReviewMore(t, m, "View command"))
-			require.Contains(t, audioFeedbackView(t, m), "printf")
+			require.Contains(t, audioFeedbackView(t, m), "OPENAI_UNTRUSTED_STDIN")
 			m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 			require.Equal(t, 4, m.focus)
 			m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
@@ -259,6 +259,25 @@ func TestAudioCommandInspectorStaysOutsideNormalTabOrder(t *testing.T) {
 	}
 }
 
+func TestAudioCommandWorktreeLauncherAndWrappedContinuations(t *testing.T) {
+	launcher := "go -C /Users/example/.codex-workspaces/worktrees/tts-studio-monitor/openai-cli run ./cmd/openai"
+	m := audioPreviewModel(t, launcher)
+	raw := m.commandPreview()
+	for _, width := range []int{40, 60, 101, 133} {
+		m.Update(tea.WindowSizeMsg{Width: width, Height: 39})
+		rows := m.commandDisplayRows()
+		require.Equal(t, strings.ReplaceAll(raw, "\n", ""), strings.Join(rows, ""), "width %d", width)
+		for _, row := range rows {
+			require.NotEqual(t, "\\", strings.TrimSpace(row), "width %d", width)
+		}
+		if width == 133 {
+			require.Equal(t, "  "+launcher+" audio speak \\", rows[1])
+			require.Equal(t, "    --output speech.wav <<'JSON'", rows[2])
+			require.Equal(t, "  \"input\": \"\",", rows[4])
+		}
+	}
+}
+
 func TestAudioCommandInspectorAccentsOperationAndShortcuts(t *testing.T) {
 	for _, size := range [][2]int{{40, 12}, {101, 29}} {
 		for _, dark := range []bool{true, false} {
@@ -272,7 +291,7 @@ func TestAudioCommandInspectorAccentsOperationAndShortcuts(t *testing.T) {
 			for _, token := range []string{m.invocation, "--project=synthetic", "speech.wav"} {
 				audioRequireTextForeground(t, rows, token, lipgloss.NewStyle())
 			}
-			for _, token := range []string{"printf", "OPENAI_UNTRUSTED_STDIN=true", "--output", "\\"} {
+			for _, token := range []string{"OPENAI_UNTRUSTED_STDIN=true", "--output", "\\", "<<'JSON'", `"input":`} {
 				audioRequireTextForeground(t, rows, token, m.muted())
 			}
 			view := m.View().Content
@@ -360,7 +379,7 @@ func TestAudioCommandInspectorPreservesAdmissionAndPrivacyGuards(t *testing.T) {
 			require.False(t, m.quit)
 			if mode == "private" {
 				view := audioFeedbackView(t, m)
-				for _, omitted := range []string{"fake-private-expansion-canary", "printf", "audio speak", "Ctrl+P"} {
+				for _, omitted := range []string{"fake-private-expansion-canary", "OPENAI_UNTRUSTED_STDIN", "audio speak", "Ctrl+P"} {
 					require.NotContains(t, view, omitted)
 				}
 			}
@@ -386,15 +405,15 @@ func TestAudioCommandViewRefreshesAfterDraftSettingsHistoryAndContextChanges(t *
 	initial := assertCurrent()
 	require.Equal(t, initial, assertCurrent(), "unchanged redraw altered the command")
 	m.input.SetValue("Edited input 世界.")
-	require.Contains(t, assertCurrent(), `"input":"Edited input 世界."`)
+	require.Contains(t, assertCurrent(), `"input": "Edited input 世界."`)
 	m.instructions.SetValue("Edited instructions.")
-	require.Contains(t, assertCurrent(), `"instructions":"Edited instructions."`)
+	require.Contains(t, assertCurrent(), `"instructions": "Edited instructions."`)
 	m.settings.Voice, m.settings.Format, m.settings.Speed = "nova", "flac", 2.5
-	for _, fragment := range []string{`"voice":"nova"`, `"response_format":"flac"`, `"speed":2.5`, "speech.flac"} {
+	for _, fragment := range []string{`"voice": "nova"`, `"response_format": "flac"`, `"speed": 2.5`, "speech.flac"} {
 		require.Contains(t, assertCurrent(), fragment)
 	}
 	m.settings.Model = "tts-1"
-	require.Contains(t, assertCurrent(), `"model":"tts-1"`)
+	require.Contains(t, assertCurrent(), `"model": "tts-1"`)
 	require.NotContains(t, assertCurrent(), `"instructions":`)
 	require.Equal(t, "Edited instructions.", m.instructions.Value())
 
@@ -403,11 +422,11 @@ func TestAudioCommandViewRefreshesAfterDraftSettingsHistoryAndContextChanges(t *
 	retained.entry.Settings.Instructions = "Retained history instructions."
 	retained.entry.Settings.Speed = 1.75
 	m.Update(audioWorkMessage{kind: "open", result: retained})
-	require.Contains(t, assertCurrent(), `"input":"Retained history input."`)
-	require.Contains(t, assertCurrent(), `"instructions":"Retained history instructions."`)
-	require.Contains(t, assertCurrent(), `"speed":1.75`)
+	require.Contains(t, assertCurrent(), `"input": "Retained history input."`)
+	require.Contains(t, assertCurrent(), `"instructions": "Retained history instructions."`)
+	require.Contains(t, assertCurrent(), `"speed": 1.75`)
 	require.Nil(t, audioReviewMore(t, m, "Clear form"))
-	require.Contains(t, assertCurrent(), `"input":""`)
+	require.Contains(t, assertCurrent(), `"input": ""`)
 	require.NotContains(t, assertCurrent(), "Retained history")
 	require.NotContains(t, assertCurrent(), `"instructions":`)
 
@@ -433,7 +452,7 @@ func TestAudioCommandViewRefreshesAfterDraftSettingsHistoryAndContextChanges(t *
 	m.command = private.command
 	display := ansi.Strip(strings.Join(m.commandDisplayRows(), ""))
 	require.Contains(t, display, "unavailable with private request overrides")
-	for _, omitted := range []string{"printf", "replacement-project", "fake-private-cache-canary", "Resize this complete command"} {
+	for _, omitted := range []string{"OPENAI_UNTRUSTED_STDIN", "replacement-project", "fake-private-cache-canary", "Resize this complete command"} {
 		require.NotContains(t, display, omitted)
 	}
 	m.command = other.command

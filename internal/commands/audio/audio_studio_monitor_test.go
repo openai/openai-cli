@@ -122,9 +122,7 @@ func TestAudioStudioRailStaysInPlaceAcrossRecordings(t *testing.T) {
 		m.result = &r
 		measured := render()
 		require.Equal(t, []string{"00:00", "00:01"}, strings.Fields(measured[rail+1]))
-		bead := strings.Index(measured[rail], "●")
-		require.Positive(t, bead)
-		column := ansi.StringWidth(measured[rail][:bead])
+		column := audioRailMarkerColumn(t, measured[rail])
 		require.Equal(t, 2+audioWaveformMarker(width-4, m.selectedBoundary()), column)
 		wave := strings.Join(measured[:rail], "\n")
 		require.Contains(t, wave, "┃")

@@ -316,7 +316,7 @@ func (m *audioWorkbench) waveformDetailHeight(capacity int) int {
 	return height
 }
 
-// Duration places the bead. Only measured peaks draw bars inside the reserved plot.
+// Duration places the transition on the rail. Only measured peaks draw waveform bars.
 func (m *audioWorkbench) workspaceWaveformRows(budget int) []string {
 	return m.waveformRowsAtHeight(budget, m.waveformDetailHeight(budget-1))
 }
@@ -385,17 +385,22 @@ func (m *audioWorkbench) timelineRail(width, marker int) string {
 	}
 	// The heavier played rail remains distinct when the terminal disables color.
 	var played, remaining string
+	join := "╾"
 	if marker > 0 {
 		played = m.elapsedWaveformStyle().Render("╺" + strings.Repeat("━", marker-1))
+	} else {
+		join = "╺"
 	}
 	if marker < width-1 {
 		remaining = m.borderStyle().Render(strings.Repeat("─", width-marker-2) + "╴")
+	} else {
+		join = "╸"
 	}
 	anchorStyle := m.playheadStyle()
 	if marker == width-1 && m.result.finished && !m.playing {
 		anchorStyle = m.playbackProgressStyle()
 	}
-	return "  " + played + anchorStyle.Render("●") + remaining
+	return "  " + played + anchorStyle.Render(join) + remaining
 }
 
 // Align each label with its timeline endpoint.

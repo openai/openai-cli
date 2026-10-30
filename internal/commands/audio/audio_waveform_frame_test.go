@@ -36,7 +36,7 @@ func TestAudioWaveformTimelineConnectsPlayheadWithoutMovingBars(t *testing.T) {
 					spaced := m.workspaceWaveformRows(height + 2)
 					require.Equal(t, rows[:height], spaced[:height], "a spare row must preserve the measured detail")
 					require.Equal(t, []string{"", rows[height]}, spaced[height:], "the spare row precedes the rail")
-					marker := audioWaveformFrameColumn(t, rows[len(rows)-1], "●")
+					marker := audioRailMarkerColumn(t, rows[len(rows)-1])
 					switch step {
 					case 0:
 						start = marker
@@ -130,10 +130,10 @@ func TestAudioWaveformTimelineMovesPlayedColorAndReservesSuccessForCompletion(t 
 				}
 				rows := m.workspaceWaveformRows(4)
 				greenCells := 0
-				marker := audioWaveformFrameColumn(t, rows[len(rows)-1], "●")
+				marker := audioRailMarkerColumn(t, rows[len(rows)-1])
 				for index, row := range rows {
 					for column, cell := range audioHairlineCells(t, row) {
-						if strings.ContainsRune("│╷╵┼┃●", cell.glyph) {
+						if strings.ContainsRune("│╷╵┼┃╺╾╸", cell.glyph) {
 							require.False(t, cell.bold, "the measured strokes and playhead use regular weight")
 						}
 						switch cell.glyph {
@@ -145,16 +145,18 @@ func TestAudioWaveformTimelineMovesPlayedColorAndReservesSuccessForCompletion(t 
 						case '┃':
 							require.Equal(t, marker, column)
 							require.Equal(t, playhead, cell.foreground)
-						case '●':
-							anchor := playhead
-							if state.finished && !state.playing {
-								anchor = green
-							}
-							require.Equal(t, anchor, cell.foreground)
-						case '━', '╺':
+						case '╾', '╸', '━', '╺':
 							require.Equal(t, len(rows)-1, index)
-							require.Less(t, column, marker)
-							require.Equal(t, elapsed, cell.foreground, "the heavier rail marks elapsed time")
+							if column == marker {
+								anchor := playhead
+								if state.finished && !state.playing {
+									anchor = green
+								}
+								require.Equal(t, anchor, cell.foreground)
+							} else {
+								require.Less(t, column, marker)
+								require.Equal(t, elapsed, cell.foreground, "the heavier rail marks elapsed time")
+							}
 						case '│', '╷', '╵', '┼':
 							stroke := secondary
 							if column < marker {
@@ -165,7 +167,7 @@ func TestAudioWaveformTimelineMovesPlayedColorAndReservesSuccessForCompletion(t 
 						if cell.foreground == green {
 							greenCells++
 							require.Equal(t, len(rows)-1, index)
-							require.Equal(t, '●', cell.glyph)
+							require.Equal(t, '╸', cell.glyph)
 						}
 					}
 				}
@@ -240,7 +242,7 @@ func TestAudioDurationOnlyTimelineKeepsRailPositionAndTracksMeasuredTime(t *test
 			require.LessOrEqual(t, len(rows), budget)
 			require.Empty(t, strings.TrimSpace(strings.Join(rows[:rail], "")), "duration alone cannot draw waveform bars")
 			require.Equal(t, 2+width, ansi.StringWidth(rows[rail]))
-			require.Equal(t, 2+audioWaveformMarker(width, m.selectedBoundary()), audioWaveformFrameColumn(t, rows[rail], "●"))
+			require.Equal(t, 2+audioWaveformMarker(width, m.selectedBoundary()), audioRailMarkerColumn(t, rows[rail]))
 			if budget == audioMaxWaveformHeight+4 {
 				require.Equal(t, []string{"00:00", "00:01"}, strings.Fields(rows[rail+1]))
 			}
@@ -262,8 +264,9 @@ func TestAudioWaveformRulerUsesMeasuredDurationAndOnlySpareRows(t *testing.T) {
 		r.position = time.Duration(seconds * float64(time.Second))
 		rows := m.workspaceWaveformRows(audioMaxWaveformHeight + 4)
 		rail, scale := ansi.Strip(rows[len(rows)-2]), ansi.Strip(rows[len(rows)-1])
-		require.Contains(t, rail, "●")
-		require.Empty(t, strings.Trim(rail, " ╺━●─╴"), "the rail contains only horizontal strokes and its bead")
+		require.True(t, audioIsMeasuredRail(rail))
+		require.NotContains(t, rail, "●")
+		require.Empty(t, strings.Trim(rail, " ╺━╾╸─╴"), "the rail contains only horizontal strokes")
 		require.True(t, strings.HasPrefix(scale, "  00:00"))
 		require.Equal(t, []string{"00:00", "00:03.75"}, strings.Fields(scale), "the ruler labels only the endpoints")
 		require.True(t, strings.HasSuffix(scale, "00:03.75"))
@@ -297,11 +300,11 @@ func TestAudioWaveformTimelineKeepsEndpointPeaksAndQuietIntervals(t *testing.T) 
 		require.Equal(t, '┼', middle[span], "the final measured interval precedes the duration slot")
 		require.Equal(t, strings.Repeat("─", span-4), string(middle[4:span]), "quiet intervals remain flat between endpoint peaks")
 		if position == 0 {
-			require.Equal(t, "  ●"+strings.Repeat("─", span-2)+"╴", string(rail))
+			require.Equal(t, "  ╺"+strings.Repeat("─", span-2)+"╴", string(rail))
 			require.Equal(t, '┃', middle[2])
 			require.Equal(t, '╴', middle[span+1])
 		} else {
-			require.Equal(t, "  ╺"+strings.Repeat("━", span-2)+"●", string(rail))
+			require.Equal(t, "  ╺"+strings.Repeat("━", span-2)+"╸", string(rail))
 			require.Equal(t, '╶', middle[2])
 			require.Equal(t, '┃', middle[span+1])
 		}
@@ -318,7 +321,7 @@ func TestAudioWaveformTimelineKeepsEndpointPeaksAndQuietIntervals(t *testing.T) 
 		require.NotContains(t, row, "╷")
 		require.NotContains(t, row, "╵")
 	}
-	require.Equal(t, "  ╺"+strings.Repeat("━", span-2)+"●", rows[9], "silent audio still has its full duration")
+	require.Equal(t, "  ╺"+strings.Repeat("━", span-2)+"╸", rows[9], "silent audio still has its full duration")
 }
 
 func audioWaveformFrameColumn(t *testing.T, row, glyph string) int {
@@ -328,8 +331,19 @@ func audioWaveformFrameColumn(t *testing.T, row, glyph string) int {
 	return ansi.StringWidth(row[:strings.Index(row, glyph)])
 }
 
-// The status light can also be a solid circle. Only the timeline joins it to a rail.
+func audioRailMarkerColumn(t *testing.T, row string) int {
+	t.Helper()
+	row = ansi.Strip(row)
+	for _, glyph := range []string{"╾", "╸", "╺"} {
+		if strings.Contains(row, glyph) {
+			return audioWaveformFrameColumn(t, row, glyph)
+		}
+	}
+	t.Fatal("missing playback position on rail")
+	return -1
+}
+
 func audioIsMeasuredRail(row string) bool {
 	row = ansi.Strip(row)
-	return strings.Contains(row, "●") && strings.ContainsAny(row, "━─")
+	return strings.Contains(row, "╺") && strings.ContainsAny(row, "╴╸")
 }
