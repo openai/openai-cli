@@ -237,6 +237,8 @@ The recording adds a measured waveform and seek rail in that location.
 When space permits, a time ruler labels the start, midpoint, and end in minutes and seconds.
 Recordings without a measured duration show an unknown timer and retain their Save action.
 One blank row separates the recording details from the waveform when space permits.
+The recording status has a hollow circle at rest and a filled circle during playback and after completion.
+Small terminals show the status text alone.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.
 The playhead follows playback through silence. Elapsed bars and rail use green. Upcoming bars use the secondary text color.
 Long bars fade toward both tips. Their shades reflect peak heights between terminal half-cell steps.

@@ -289,7 +289,7 @@ func TestAudioWaveformProgressTracksForwardAndBackwardSeek(t *testing.T) {
 		require.Greater(t, markerColumn(), first)
 		r.finished = true
 		require.Contains(t, m.View().Content, m.playbackProgressStyle().Render("┷"))
-		require.Contains(t, m.View().Content, m.playbackProgressStyle().Render("Completed"))
+		require.Contains(t, m.View().Content, m.playbackProgressStyle().Render("● Completed"))
 		m.color = false
 		require.NotContains(t, m.View().Content, "\x1b[38;")
 		require.Contains(t, m.View().Content, "┃")

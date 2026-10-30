@@ -597,22 +597,25 @@ func (m *audioWorkbench) emptyAudioStatus() string {
 
 // Status describes the retained playback state, not whether output was audible.
 func (m *audioWorkbench) playerStatus() string {
-	if m.playing {
-		return m.accent().Bold(false).Render("Playing")
+	r := m.result
+	label, style, lamp := "Ready", m.muted(), "○"
+	switch {
+	case m.playing:
+		label, style, lamp = "Playing", m.accent().Bold(false), "●"
+	case r != nil && r.finished:
+		label, style, lamp = "Completed", m.playbackProgressStyle(), "●"
+	case r != nil && r.seekDuration() > 0 && r.playbackPosition() >= r.seekDuration():
+		label, style = "At end", m.warningStyle()
+	case r != nil && r.resumable:
+		label, style = "Paused", m.warningStyle()
+	case r != nil && r.playbackPosition() > 0:
+		label, style = "Stopped", m.warningStyle()
 	}
-	if m.result != nil {
-		if m.result.finished {
-			return m.playbackProgressStyle().Render("Completed")
-		}
-		if duration := m.result.seekDuration(); duration > 0 && m.result.playbackPosition() >= duration {
-			return m.warningStyle().Render("At end")
-		} else if m.result.resumable {
-			return m.warningStyle().Render("Paused")
-		} else if m.result.playbackPosition() > 0 {
-			return m.warningStyle().Render("Stopped")
-		}
+	// Small terminals keep the label alone.
+	if m.framed() && m.result != nil {
+		label = lamp + " " + label
 	}
-	return m.muted().Render("Ready")
+	return style.Render(label)
 }
 
 func (m *audioWorkbench) playheadStyle() lipgloss.Style {
