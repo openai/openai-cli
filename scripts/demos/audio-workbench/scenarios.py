@@ -366,7 +366,8 @@ def navigation_case(ctx):
     check("More Down reaches the waveform", "←→ seek", down)
     check("waveform Down selects Play", "play", down)
     check("Result Down selects Save", "save", ss3_down)
-    check("Result Down stays on Save", "save", down)
+    check("Result Down selects the clock", "Enter set time", down)
+    check("Result Left returns to Save", "save", b"\x1b[D")
     check("Result Left returns to Play", "play", b"\x1b[D")
     check("Result Up focuses waveform", "←→ seek", ss3_up)
     check("Waveform Up enters Settings More", "more", ss3_up)
@@ -384,7 +385,7 @@ def navigation_case(ctx):
     assert "Command preview" not in visible and "OPENAI_UNTRUSTED_STDIN" not in visible, "Main form retained advanced command content"
     ctx.mark(terminal, result["case"] + "-complete", result)
     result["navigation_check_count"] = len(result["navigation_checks"])
-    assert result["navigation_check_count"] == 196, "Navigation inventory changed"
+    assert result["navigation_check_count"] == 197, "Navigation inventory changed"
     zero_requests()
     terminal.send(b"\x03")
     terminal.finish(130)
