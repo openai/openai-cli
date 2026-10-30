@@ -155,7 +155,9 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			}
 			m.setting = order[index+1]
 		case "home":
-			m.setting = order[0]
+			if !m.inlineActions() || m.setting != 4 {
+				m.setting = order[0]
+			}
 		case "end":
 			if m.inlineActions() {
 				cmd := m.openActions()

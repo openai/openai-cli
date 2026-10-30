@@ -194,7 +194,8 @@ func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 			require.NotContains(t, rows[1], "A clear short example.")
 			require.Contains(t, rows[2], "A clear short example.")
 			require.Equal(t, 4, ansi.StringWidth(rows[2][:strings.Index(rows[2], "A clear short example.")]))
-			require.Contains(t, rows[4], "Instructions")
+			directionRow := slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Instructions") })
+			require.Greater(t, directionRow, 2, "Instructions must follow the script")
 			require.Equal(t, 1, strings.Count(view, "╭"), "only the workspace has an outline")
 			require.NotContains(t, view, "Setting        Value")
 			voiceRow, voiceColumn, valueColumn := 6, 3, 21
@@ -237,8 +238,11 @@ func TestAudioComposerKeepsSpaceAfterAnIntentionalNewline(t *testing.T) {
 	require.NotNil(t, view.Cursor)
 	rows := strings.Split(ansi.Strip(view.Content), "\n")
 	require.Contains(t, rows[view.Cursor.Y-1], "A draft.")
-	require.Equal(t, "", strings.TrimSpace(strings.Trim(rows[view.Cursor.Y+1], "│ ")))
-	require.Contains(t, rows[view.Cursor.Y+2], "Instructions")
+	directionRow := slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Instructions") })
+	require.Greater(t, directionRow, view.Cursor.Y+1)
+	for _, row := range rows[view.Cursor.Y+1 : directionRow] {
+		require.Empty(t, strings.Trim(ansi.Cut(row, 1, 1+m.composerWidth()), " │"))
+	}
 }
 
 func TestAudioComposerKeepsUnicodeContinuationAndLabeledSettingsAligned(t *testing.T) {

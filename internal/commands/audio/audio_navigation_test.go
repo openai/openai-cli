@@ -383,6 +383,8 @@ func TestAudioNavigationWideActionsToWaveform(t *testing.T) {
 			require.Equal(t, len(m.moreItems())-2, m.moreChoice)
 			key(tea.KeyHome)
 			require.Equal(t, 4, m.setting)
+			key(tea.KeyHome)
+			require.Equal(t, 4, m.setting, "Home stops at Generate on the action row")
 			key(tea.KeyEnd)
 			require.Equal(t, len(m.moreItems())-1, m.moreChoice)
 			key(tea.KeyUp)

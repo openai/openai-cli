@@ -404,9 +404,16 @@ func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 		rows = append(rows, prefix+line)
 	}
 	validation := m.fieldValidationRows(audioFieldText)
+	spareEditorRow := m.input.LineCount() == 1 && m.input.LineInfo().Height < m.input.Height()
+	// Reserve space for writing on the idle desk. As the editor grows, it uses these rows.
+	if m.splitComposer() && m.result == nil && m.height >= 30 && len(validation) == 0 {
+		for len(rows)-1 < min(6, m.audioHeight()/7) {
+			rows = append(rows, prefix)
+			spareEditorRow = true
+		}
+	}
 	rows = append(rows, validation...)
 	// A short draft already has a spare editor row before Instructions.
-	spareEditorRow := m.input.LineCount() == 1 && m.input.LineInfo().Height < m.input.Height()
 	if !compact && (!spareEditorRow || len(validation) > 0) {
 		rows = append(rows, "")
 	}

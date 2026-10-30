@@ -23,7 +23,7 @@ Modified arrows and active selections remain inside the editor.
 Up from Voice returns to Instructions when the model supports them.
 Down from the bottom row of the form moves to Audio. It focuses the waveform when the recording has one.
 When Generate speech, History, and More actions share a row, Left and Right move between them.
-Home and End select the first and last settings.
+From a setting, Home selects Voice and End moves to the final action.
 Enter opens a choice or starts generation from an editor.
 Enter on Speed accepts an exact number from 0.25 to 4. Left and Right adjust speed by 0.25.
 Alt+Enter adds a newline. Ctrl+G generates from any ordinary form section.
@@ -220,6 +220,7 @@ Escape returns to the form.
 
 At 60 columns and 24 rows, the draft, settings, and audio share one frame.
 A vertical line marks the script editor. It turns blue while you type.
+Wide, tall terminals reserve a few script lines before generation. Longer drafts fill that space as you type.
 At 100 columns, Delivery sits beside the script and groups voice, model, format, and speed.
 Narrower frames place those controls below Instructions.
 Below 110 columns, Generate speech, History, and More actions share a row when space permits.
