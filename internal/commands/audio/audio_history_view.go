@@ -194,7 +194,7 @@ func audioHistoryDate(created, now time.Time) string {
 	if day == now.Format("2006-01-02") {
 		return "Today"
 	}
-	if day == now.AddDate(0, 0, -1).Format("2006-01-02") {
+	if day == audioHistoryYesterday(now) {
 		return "Yesterday"
 	}
 	if created.Year() == now.Year() {

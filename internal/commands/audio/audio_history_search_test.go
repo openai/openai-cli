@@ -113,6 +113,51 @@ func TestAudioHistoryRelativeSearchRefreshesAcrossDSTAndMidnight(t *testing.T) {
 	require.Equal(t, m.entries[:2], m.visibleHistory(now.Add(time.Hour)))
 }
 
+func TestAudioHistoryYesterdayAfterSkippedMidnight(t *testing.T) {
+	zone, err := time.LoadLocation("America/Santiago")
+	require.NoError(t, err)
+	now := time.Date(2026, 9, 7, 0, 30, 0, 0, zone)
+	m := audioReviewModel(t)
+	for _, day := range []int{6, 5} {
+		entry := audioReviewResult(fmt.Sprint(day), false).entry
+		entry.CreatedAt = time.Date(2026, 9, day, 12, 0, 0, 0, zone)
+		m.entries = append(m.entries, entry)
+	}
+	m.filterHistory("yesterday", now)
+	require.Equal(t, m.entries[:1], m.visibleHistory(now))
+	require.Equal(t, "Yesterday", audioHistoryDate(m.entries[0].CreatedAt, now))
+	require.Equal(t, "Sep 5", audioHistoryDate(m.entries[1].CreatedAt, now))
+}
+
+func TestAudioHistoryMonthAndYearSearchWithText(t *testing.T) {
+	m := audioReviewModel(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	for i, fields := range [][3]string{
+		{"2026-09-10", "coral", "Sample"}, {"2025-09-12", "coral", "Sample"},
+		{"2026-09-10", "ash", "Sample"}, {"2026-10-12", "ash", "May I speak?"},
+	} {
+		entry := audioReviewResult(fmt.Sprint(i), false).entry
+		created, err := time.Parse(time.DateOnly, fields[0])
+		require.NoError(t, err)
+		entry.CreatedAt = created
+		entry.Settings.Voice, entry.Settings.Input = fields[1], fields[2]
+		m.entries = append(m.entries, entry)
+	}
+	for query, want := range map[string][]string{
+		"September coral": {"0", "1"}, "2026-09 coral": {"0"}, "Sep 2026 coral": {"0"},
+		"coral 2025": {"1"}, "May I speak": {"3"}, "Sep 2027 coral": {},
+	} {
+		t.Run(query, func(t *testing.T) {
+			m.filterHistory(query, now)
+			var ids []string
+			for _, entry := range m.visibleHistory(now) {
+				ids = append(ids, entry.ID)
+			}
+			require.ElementsMatch(t, want, ids)
+		})
+	}
+}
+
 func TestAudioHistorySearchSafeUnicodeAndNoMatches(t *testing.T) {
 	m := audioReviewModel(t)
 	m.width, m.height = 40, 12

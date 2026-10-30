@@ -33,6 +33,11 @@ func audioHistoryDay(now time.Time) time.Time {
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 }
 
+func audioHistoryYesterday(now time.Time) string {
+	// Use local calendar fields in UTC because some time zones skip midnight.
+	return time.Date(now.Year(), now.Month(), now.Day()-1, 0, 0, 0, 0, time.UTC).Format(time.DateOnly)
+}
+
 func audioHistoryClip(input string) string {
 	clip := strings.Join(strings.Fields(readable.Text(input)), " ")
 	if clip == "" {
@@ -88,26 +93,20 @@ type audioHistoryFilter struct {
 	terms  []string
 	date   string
 	layout string
+	phrase string
 }
 
 // Match calendar dates before searching the remaining words in the clip, voice, and format.
 func parseHistoryFilter(query string, now time.Time) audioHistoryFilter {
 	query = strings.ToLower(query)
 	words := strings.Fields(query)
-	if len(words) == 1 {
-		for _, layout := range []string{"2006-01", "2006", "Jan", "January"} {
-			if date, err := time.Parse(layout, words[0]); err == nil {
-				return audioHistoryFilter{date: date.Format(layout), layout: layout}
-			}
-		}
-	}
 	for i, word := range words {
 		date, layout, used := "", time.DateOnly, 1
 		switch word {
 		case "today":
 			date = now.Format(layout)
 		case "yesterday":
-			date = now.AddDate(0, 0, -1).Format(layout)
+			date = audioHistoryYesterday(now)
 		default:
 			for _, spec := range []struct {
 				words int
@@ -117,6 +116,9 @@ func parseHistoryFilter(query string, now time.Time) audioHistoryFilter {
 				{1, time.DateOnly, time.DateOnly},
 				{3, "Jan 2 2006", time.DateOnly}, {3, "January 2 2006", time.DateOnly},
 				{2, "Jan 2", "Jan 2"}, {2, "January 2", "Jan 2"},
+				{2, "Jan 2006", "2006-01"}, {2, "January 2006", "2006-01"},
+				{1, "2006-01", "2006-01"}, {1, "2006", "2006"},
+				{1, "Jan", "01"}, {1, "January", "01"},
 			} {
 				if i+spec.words > len(words) {
 					continue
@@ -132,7 +134,12 @@ func parseHistoryFilter(query string, now time.Time) audioHistoryFilter {
 			}
 		}
 		if date != "" {
-			return audioHistoryFilter{terms: append(words[:i], words[i+used:]...), date: date, layout: layout}
+			filter := audioHistoryFilter{terms: append(words[:i], words[i+used:]...), date: date, layout: layout}
+			if layout == "01" && len(filter.terms) > 0 {
+				// Keep literal clip searches such as "May I speak".
+				filter.phrase = query
+			}
+			return filter
 		}
 	}
 	// A text-only query retains phrase matching, including spaces between words.
@@ -142,7 +149,7 @@ func parseHistoryFilter(query string, now time.Time) audioHistoryFilter {
 func (f audioHistoryFilter) matches(entry audiohistory.Entry, now time.Time) bool {
 	local := entry.CreatedAt.In(now.Location())
 	if f.date != "" && (entry.CreatedAt.IsZero() || local.Format(f.layout) != f.date) {
-		return false
+		return f.phrase != "" && strings.Contains(strings.ToLower(audioHistoryClip(entry.Settings.Input)), f.phrase)
 	}
 	if len(f.terms) == 0 {
 		return true

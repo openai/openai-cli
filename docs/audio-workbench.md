@@ -212,7 +212,8 @@ openai audio translate --file recording.wav --model whisper-1
 
 Speech History groups recordings by local date and shows one prompt row per recording.
 Search History by clip text, voice, format, or local recording date. Search ignores letter case.
-Use `today`, `yesterday`, `Oct 28`, or `2026-10-28`. Combine a date with another term, such as `Oct 28 Coral`.
+Use `today`, `yesterday`, `Oct 28`, or `2026-10-28`.
+Combine a date with a voice or format, such as `Oct 28 Coral` or `Oct 2026 WAV`.
 Up from the first recording focuses Search. Down selects a matching recording. Enter opens it.
 Backspace removes one character. Ctrl+U clears Search.
 Roomy terminals show timestamps and details for the selected recording. Press Ctrl+L to show or hide the History folder.
