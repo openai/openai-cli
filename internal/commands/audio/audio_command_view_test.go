@@ -467,7 +467,7 @@ func TestAudioPlayerActionPositionsStayStableAcrossStates(t *testing.T) {
 			position := func(t *testing.T, label string) [2]int {
 				t.Helper()
 				for row, line := range strings.Split(ansi.Strip(m.View().Content), "\n") {
-					// The timing status can share the action's "At end" label.
+					// Find the transport row for the current layout.
 					if !strings.Contains(line, "Save audio") {
 						continue
 					}

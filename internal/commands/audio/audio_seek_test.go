@@ -67,6 +67,7 @@ func TestAudioTypedSeekExactTimeAndEndpoints(t *testing.T) {
 		require.False(t, m.playing)
 		require.Zero(t, m.playID)
 	}
+	require.Contains(t, ansi.Strip(m.View().Content), "● Completed")
 	require.Nil(t, audioReviewKey(m, tea.KeySpace), "selecting the endpoint must not replay the recording")
 	m.result.finished = true
 	audioReviewKey(m, 'g')

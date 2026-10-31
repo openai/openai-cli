@@ -33,6 +33,33 @@ func TestAudioHistoryGroupsDatesAndShowsMetadataOnce(t *testing.T) {
 	require.NotContains(t, view, "private-")
 }
 
+func TestAudioHistoryAccentsDateHeadingsWhenScrolling(t *testing.T) {
+	m := audioReviewModel(t)
+	m.width, m.height = 80, 24
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	for i := range 30 {
+		entry := audioReviewResult(fmt.Sprintf("clip-%d", i), false).entry
+		entry.CreatedAt = now.AddDate(0, 0, -min(i, 2))
+		m.entries = append(m.entries, entry)
+	}
+	for _, choice := range []int{0, len(m.entries) - 1} {
+		m.choice = choice
+		m.color = false
+		plain := m.historyView(now).Content
+		require.Equal(t, ansi.Strip(plain), plain)
+		for _, dark := range []bool{false, true} {
+			m.color, m.dark = true, dark
+			view := m.historyView(now).Content
+			require.Equal(t, plain, ansi.Strip(view))
+			require.Contains(t, view, m.accent().Render("Oct 28"))
+			if choice == 0 {
+				require.Contains(t, view, m.accent().Render("Today"))
+				require.Contains(t, view, m.accent().Render("Yesterday"))
+			}
+		}
+	}
+}
+
 func TestAudioHistoryKeepsEverySelectionAndFooterVisible(t *testing.T) {
 	now := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
 	for _, size := range [][2]int{{40, 12}, {60, 24}, {90, 32}, {101, 29}} {

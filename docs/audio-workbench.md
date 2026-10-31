@@ -211,7 +211,7 @@ Existing file translation keeps its input, output, and English translation behav
 openai audio translate --file recording.wav --model whisper-1
 ```
 
-Speech History groups recordings by local date and shows one prompt row per recording.
+Speech History groups recordings by local date and shows one prompt row per recording. Date headings use the theme’s blue accent.
 Search History by clip text, voice, format, or local recording date. Search ignores letter case.
 Use `today`, `yesterday`, `Oct 28`, or `2026-10-28`.
 Combine a date with a voice or format, such as `Oct 28 Coral` or `Oct 2026 WAV`.
@@ -251,7 +251,7 @@ Recordings without a measured duration show an unknown timer and retain their Sa
 One blank row separates the recording details from the waveform when space permits.
 The playback status starts with a stationary dot. Generating, Playing, Paused, Stopped, and Completed use a filled dot. Other states use an open dot.
 Generating and Playing appear in blue.
-Paused, Stopped, and At end appear in amber. Completed appears in green. Monochrome shows the same labels.
+Paused and Stopped appear in amber. Playback completion and seeking to the end both show a green Completed status. Monochrome shows the same labels.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.
 The playhead follows playback through silence. Elapsed bars and rail use green. Upcoming bars use the secondary text color.
 Long bars fade toward both tips. Their shades reflect peak heights between terminal half-cell steps.

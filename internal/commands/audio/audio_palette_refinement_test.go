@@ -256,7 +256,6 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 			{name: "Paused", dot: "●", position: 250 * time.Millisecond, held: true},
 			{name: "Playing", dot: "●", position: 250 * time.Millisecond, playing: true, active: true},
 			{name: "Completed", dot: "●", position: time.Second, finished: true, progress: true},
-			{name: "At end", dot: "○", position: time.Second, held: true},
 		} {
 			t.Run(fmt.Sprintf("%s/dark_%t", tc.name, dark), func(t *testing.T) {
 				m := audioReviewModel(t)
@@ -338,7 +337,7 @@ func TestAudioHeaderKeepsStatusInPlace(t *testing.T) {
 			r.resumable, r.position = false, 300*time.Millisecond
 			check("Stopped")
 			r.position = r.seekDuration()
-			check("At end")
+			check("Completed")
 			r.finished = true
 			check("Completed")
 			m.busy = true
@@ -487,7 +486,7 @@ func TestAudioDesignSystemReservesSuccessColorForCompletedPlayback(t *testing.T)
 				}
 				view := m.View().Content
 				greenRuns := runs.FindAllStringSubmatch(view, -1)
-				if state != "completed" {
+				if state != "completed" && state != "seek-end" {
 					require.Empty(t, greenRuns, "%s must not imply successful completion", state)
 				} else {
 					require.Len(t, greenRuns, 1)

@@ -644,10 +644,8 @@ func (m *audioWorkbench) playerStatus() string {
 		return m.muted().Render("○ Idle")
 	case m.playing:
 		return m.accent().Bold(false).Render("● Playing")
-	case r.finished:
+	case r.finished, r.seekDuration() > 0 && r.playbackPosition() >= r.seekDuration():
 		return m.playbackProgressStyle().Render("● Completed")
-	case r.seekDuration() > 0 && r.playbackPosition() >= r.seekDuration():
-		return m.warningStyle().Render("○ At end")
 	case r.resumable:
 		return m.warningStyle().Render("● Paused")
 	case r.playbackPosition() > 0:

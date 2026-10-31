@@ -105,11 +105,12 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 	}
 	budget := max(1, m.audioHeight()-len(lines)-len(footer))
 	start := max(0, selectedRow-budget+1)
+	dateStyle := m.accent()
 	// Reserve a replacement date heading when the viewport starts within a group.
 	if rows[start].entry >= 0 && budget > 1 {
 		start = max(0, selectedRow-budget+2)
 		if rows[start].entry >= 0 {
-			lines = append(lines, "  "+m.strong().Render(rows[start].date))
+			lines = append(lines, "  "+dateStyle.Render(rows[start].date))
 			budget--
 		}
 	}
@@ -119,7 +120,7 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 	}
 	for _, r := range rows[start:end] {
 		if r.entry < 0 {
-			lines = append(lines, "  "+m.strong().Render(r.date))
+			lines = append(lines, "  "+dateStyle.Render(r.date))
 			continue
 		}
 		entry := entries[r.entry]
