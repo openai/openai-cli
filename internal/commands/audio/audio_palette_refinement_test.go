@@ -273,7 +273,7 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 					style = m.warningStyle()
 				}
 				dot := "○ "
-				if tc.active || tc.progress {
+				if tc.active || tc.progress || tc.name == "Paused" {
 					dot = "● "
 				}
 				label := m.playerStatus()
