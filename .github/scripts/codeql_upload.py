@@ -238,7 +238,9 @@ def report(get, repository, repository_id, source, sleep=time.sleep):
                         "failure": "CodeQL analysis or publication failed",
                         "success": "CodeQL analysis published successfully"}
         for language in CATEGORIES:
-            get(f"repos/{repository}/statuses/{target['sha']}", payload={
+            # Keep required statuses beside the other checks on the PR head.
+            # SARIF still belongs to the verified merge revision above.
+            get(f"repos/{repository}/statuses/{run['head_sha']}", payload={
                 "context": f"CodeQL ({language})", "state": state,
                 "description": descriptions[state],
                 "target_url": f"https://github.com/{repository}/actions/runs/{run['id']}",

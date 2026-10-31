@@ -39,6 +39,7 @@ class PublisherTest(unittest.TestCase):
         self.responses["actions/runs/42/attempts/2"] = dict(self.run)
         self.target = {"sha": MERGE, "ref": "refs/pull/3/merge"}
         self.writes = []
+        self.write_routes = []
 
     def get(self, route, **kwargs):
         self.assertTrue(route.startswith("repos/test/cli/"))
@@ -47,6 +48,7 @@ class PublisherTest(unittest.TestCase):
             return {"workflow_runs": [copy.deepcopy(self.run)]}
         if "payload" in kwargs:
             self.writes.append(kwargs["payload"])
+            self.write_routes.append(route)
             return {"id": "safe-id"}
         if route == "code-scanning/sarifs/safe-id":
             return {"processing_status": "complete"}
@@ -219,11 +221,64 @@ class PublisherTest(unittest.TestCase):
         publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
         self.assertEqual([p.get("state", "sarif") for p in self.writes],
                          ["pending"] * len(publisher.CATEGORIES) + ["sarif"] * len(publisher.CATEGORIES) + ["success"] * len(publisher.CATEGORIES))
+        self.assertEqual(self.write_routes,
+                         [f"statuses/{HEAD}"] * len(publisher.CATEGORIES) +
+                         ["code-scanning/sarifs"] * len(publisher.CATEGORIES) +
+                         [f"statuses/{HEAD}"] * len(publisher.CATEGORIES))
+        for payload in self.writes:
+            if "sarif" in payload:
+                self.assertEqual(payload["commit_sha"], MERGE)
+                self.assertEqual(payload["ref"], "refs/pull/3/merge")
         self.writes.clear()
+        self.write_routes.clear()
         self.responses["actions/artifacts/1/zip"] = self.archive(extra=True)
         with self.assertRaises(RuntimeError):
             publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
         self.assertEqual([p["state"] for p in self.writes], ["pending"] * len(publisher.CATEGORIES) + ["failure"] * len(publisher.CATEGORIES))
+        self.assertEqual(self.write_routes, [f"statuses/{HEAD}"] * (2 * len(publisher.CATEGORIES)))
+
+    def test_pending_statuses_use_source_head_for_push_and_merge_queue(self):
+        for event, branch in [("push", "main"), ("push", "next"),
+                              ("merge_group", "gh-readonly-queue/main/pr-3-test"),
+                              ("merge_group", "gh-readonly-queue/next/pr-3-test")]:
+            with self.subTest(event=event, branch=branch):
+                self.setUp()
+                self.run.update(event=event, head_branch=branch, status="in_progress", conclusion=None)
+                self.responses["git/ref/heads/" + publisher.quote(branch, safe="")] = {
+                    "ref": "refs/heads/" + branch, "object": {"sha": HEAD}}
+                publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
+                self.assertEqual(self.write_routes, [f"statuses/{HEAD}"] * len(publisher.CATEGORIES))
+                self.assertEqual([p["state"] for p in self.writes], ["pending"] * len(publisher.CATEGORIES))
+
+    def test_changed_pr_head_or_base_cannot_set_statuses(self):
+        for field in ("head", "base"):
+            with self.subTest(field=field):
+                self.setUp()
+                self.pr[field]["sha"] = "d" * 40
+                with self.assertRaises(publisher.StaleRun):
+                    publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
+                self.assertEqual(self.write_routes, [])
+
+    def test_pr_head_or_base_moving_during_download_cannot_pass(self):
+        for field in ("head", "base"):
+            with self.subTest(field=field):
+                self.setUp()
+                for index, language in enumerate(publisher.CATEGORIES):
+                    self.responses[f"actions/artifacts/{index}/zip"] = self.archive(language)
+                self.responses["actions/runs/42/artifacts?per_page=100&page=1"] = {"artifacts": [
+                    dict(id=i, name=f"codeql-sarif-42-2-{lang}", expired=False)
+                    for i, lang in enumerate(publisher.CATEGORIES)]}
+
+                def get(route, **kwargs):
+                    result = self.get(route, **kwargs)
+                    if route.endswith("actions/artifacts/1/zip"):
+                        self.pr[field]["sha"] = "d" * 40
+                    return result
+
+                with self.assertRaises(publisher.StaleRun):
+                    publisher.report(get, "test/cli", 1, dict(id=42, run_attempt=2))
+                self.assertEqual(self.write_routes, [f"statuses/{HEAD}"] * len(publisher.CATEGORIES))
+                self.assertEqual([p["state"] for p in self.writes], ["pending"] * len(publisher.CATEGORIES))
 
     def test_regenerated_merge_still_requires_exact_analyzed_sha(self):
         for index, language in enumerate(publisher.CATEGORIES):
