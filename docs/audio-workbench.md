@@ -211,7 +211,7 @@ Existing file translation keeps its input, output, and English translation behav
 openai audio translate --file recording.wav --model whisper-1
 ```
 
-Speech History groups recordings by local date and shows one prompt row per recording. Date headings use the theme’s blue accent.
+Speech History groups recordings by local date and shows one prompt row per recording. Date headings use pale sky blue in dark terminals and the darker blue accent in light terminals.
 Search History by clip text, voice, format, or local recording date. Search ignores letter case.
 Use `today`, `yesterday`, `Oct 28`, or `2026-10-28`.
 Combine a date with a voice or format, such as `Oct 28 Coral` or `Oct 2026 WAV`.

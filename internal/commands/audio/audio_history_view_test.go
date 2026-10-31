@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
@@ -47,14 +48,18 @@ func TestAudioHistoryAccentsDateHeadingsWhenScrolling(t *testing.T) {
 		m.color = false
 		plain := m.historyView(now).Content
 		require.Equal(t, ansi.Strip(plain), plain)
-		for _, dark := range []bool{false, true} {
-			m.color, m.dark = true, dark
+		for _, theme := range []struct {
+			dark      bool
+			dateColor string
+		}{{false, "#3159BC"}, {true, "#A8DAFF"}} {
+			m.color, m.dark = true, theme.dark
+			heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.dateColor))
 			view := m.historyView(now).Content
 			require.Equal(t, plain, ansi.Strip(view))
-			require.Contains(t, view, m.accent().Render("Oct 28"))
+			require.Contains(t, view, heading.Render("Oct 28"))
 			if choice == 0 {
-				require.Contains(t, view, m.accent().Render("Today"))
-				require.Contains(t, view, m.accent().Render("Yesterday"))
+				require.Contains(t, view, heading.Render("Today"))
+				require.Contains(t, view, heading.Render("Yesterday"))
 			}
 		}
 	}

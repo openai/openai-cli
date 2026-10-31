@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/readable"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
@@ -106,6 +107,9 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 	budget := max(1, m.audioHeight()-len(lines)-len(footer))
 	start := max(0, selectedRow-budget+1)
 	dateStyle := m.accent()
+	if m.color && m.dark {
+		dateStyle = dateStyle.Foreground(lipgloss.Color("#A8DAFF"))
+	}
 	// Reserve a replacement date heading when the viewport starts within a group.
 	if rows[start].entry >= 0 && budget > 1 {
 		start = max(0, selectedRow-budget+2)
