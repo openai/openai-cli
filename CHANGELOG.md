@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.47.0](https://github.com/openai/openai-cli/compare/v1.46.0...v1.47.0) (2026-10-31)
+
+
+### Features
+
+* **api:** describe text formats on Responses configuration updates ([#670](https://github.com/openai/openai-cli/issues/670)) ([ddce419](https://github.com/openai/openai-cli/commit/ddce4194391036dcde13f83c9e93cd44699056b5))
+
+
+### Bug Fixes
+
+* **ci:** bind required checks to the verified merge commit ([#674](https://github.com/openai/openai-cli/issues/674)) ([8538f7d](https://github.com/openai/openai-cli/commit/8538f7dad78579276086b4efbf3f346594c0489e))
+
+
+### Chores
+
+* **api:** add agent session review and tool settings ([#673](https://github.com/openai/openai-cli/issues/673)) ([2a9f55e](https://github.com/openai/openai-cli/commit/2a9f55e26d112081c668dc6384f9552e8a0b8b67))
+
 ## [1.46.0](https://github.com/openai/openai-cli/compare/v1.45.1...v1.46.0) (2026-10-29)
 
 
