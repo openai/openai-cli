@@ -243,6 +243,7 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, tc := range []struct {
 			name     string
+			dot      string
 			position time.Duration
 			playing  bool
 			finished bool
@@ -250,12 +251,12 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 			active   bool
 			held     bool
 		}{
-			{name: "Ready"},
-			{name: "Stopped", position: 250 * time.Millisecond, held: true},
-			{name: "Paused", position: 250 * time.Millisecond, held: true},
-			{name: "Playing", position: 250 * time.Millisecond, playing: true, active: true},
-			{name: "Completed", position: time.Second, finished: true, progress: true},
-			{name: "At end", position: time.Second, held: true},
+			{name: "Ready", dot: "○"},
+			{name: "Stopped", dot: "●", position: 250 * time.Millisecond, held: true},
+			{name: "Paused", dot: "●", position: 250 * time.Millisecond, held: true},
+			{name: "Playing", dot: "●", position: 250 * time.Millisecond, playing: true, active: true},
+			{name: "Completed", dot: "●", position: time.Second, finished: true, progress: true},
+			{name: "At end", dot: "○", position: time.Second, held: true},
 		} {
 			t.Run(fmt.Sprintf("%s/dark_%t", tc.name, dark), func(t *testing.T) {
 				m := audioReviewModel(t)
@@ -272,21 +273,18 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 				} else if tc.held {
 					style = m.warningStyle()
 				}
-				dot := "○ "
-				if tc.active || tc.progress || tc.name == "Paused" {
-					dot = "● "
-				}
+				expected := tc.dot + " " + tc.name
 				label := m.playerStatus()
-				require.Equal(t, style.Render(dot+tc.name), label)
+				require.Equal(t, style.Render(expected), label)
 				view := m.View().Content
 				require.Contains(t, view, label)
 				m.color = false
 				plain := m.View().Content
-				require.Contains(t, plain, tc.name)
+				require.Contains(t, plain, expected)
 				require.NotContains(t, plain, "\x1b[38;")
 				require.Equal(t, ansi.Strip(view), plain)
 				m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
-				require.Equal(t, dot+tc.name, m.playerStatus(), "compact headers keep the dot and label")
+				require.Equal(t, expected, m.playerStatus(), "compact headers keep the dot and label")
 			})
 		}
 		m := audioReviewModel(t)

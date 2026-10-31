@@ -249,7 +249,7 @@ The idle player shows a quiet horizontal rail. Its position stays fixed as the w
 The heavier elapsed line joins the thinner remaining line directly below the playhead. The clock below the rail shows the current time and duration.
 Recordings without a measured duration show an unknown timer and retain their Save action.
 One blank row separates the recording details from the waveform when space permits.
-The playback status starts with a stationary dot. Generating, Playing, Paused, and Completed use a filled dot. Other states use an open dot.
+The playback status starts with a stationary dot. Generating, Playing, Paused, Stopped, and Completed use a filled dot. Other states use an open dot.
 Generating and Playing appear in blue.
 Paused, Stopped, and At end appear in amber. Completed appears in green. Monochrome shows the same labels.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.

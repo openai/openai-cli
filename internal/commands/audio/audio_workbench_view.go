@@ -651,7 +651,7 @@ func (m *audioWorkbench) playerStatus() string {
 	case r.resumable:
 		return m.warningStyle().Render("● Paused")
 	case r.playbackPosition() > 0:
-		return m.warningStyle().Render("○ Stopped")
+		return m.warningStyle().Render("● Stopped")
 	default:
 		return m.muted().Render("○ Ready")
 	}
