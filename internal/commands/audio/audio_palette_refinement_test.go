@@ -272,8 +272,12 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 				} else if tc.held {
 					style = m.warningStyle()
 				}
+				dot := "○ "
+				if tc.active || tc.progress {
+					dot = "● "
+				}
 				label := m.playerStatus()
-				require.Equal(t, style.Render(tc.name), label)
+				require.Equal(t, style.Render(dot+tc.name), label)
 				view := m.View().Content
 				require.Contains(t, view, label)
 				m.color = false
@@ -282,13 +286,13 @@ func TestAudioPlayerStateColorHasLiteralMeaning(t *testing.T) {
 				require.NotContains(t, plain, "\x1b[38;")
 				require.Equal(t, ansi.Strip(view), plain)
 				m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
-				require.Equal(t, tc.name, m.playerStatus(), "compact headers keep the whole label")
+				require.Equal(t, dot+tc.name, m.playerStatus(), "compact headers keep the dot and label")
 			})
 		}
 		m := audioReviewModel(t)
 		m.color, m.dark = true, dark
 		require.Nil(t, m.result)
-		require.Equal(t, m.muted().Render("Idle"), m.playerStatus(), "an empty player must not claim generated audio")
+		require.Equal(t, m.muted().Render("○ Idle"), m.playerStatus(), "an empty player must not claim generated audio")
 	}
 }
 
@@ -296,7 +300,7 @@ func TestAudioGeneratingStatusStaysSteadyAcrossTicks(t *testing.T) {
 	for _, dark := range []bool{true, false} {
 		m := audioReviewModel(t)
 		m.color, m.dark, m.busy, m.note = true, dark, true, "Working: generate"
-		status := m.accent().Bold(false).Render("Generating")
+		status := m.accent().Bold(false).Render("● Generating")
 		for range 12 {
 			require.Equal(t, status, m.playerStatus())
 			_, cmd := m.Update(audioWorkTick(time.Now()))
@@ -318,7 +322,7 @@ func TestAudioHeaderKeepsStatusInPlace(t *testing.T) {
 				before, _, found := strings.Cut(header, label)
 				require.True(t, found, "expected %q in %q", label, header)
 				require.Equal(t, labelColumn, ansi.StringWidth(before))
-				require.True(t, strings.HasSuffix(before, " "), "keep metadata separate from status")
+				require.True(t, strings.HasSuffix(before, " ○ ") || strings.HasSuffix(before, " ● "), "reserve a separate cell for the status dot")
 				require.LessOrEqual(t, ansi.StringWidth(header), 2+m.waveformWidth())
 			}
 			check("Idle")
@@ -489,7 +493,7 @@ func TestAudioDesignSystemReservesSuccessColorForCompletedPlayback(t *testing.T)
 					require.Empty(t, greenRuns, "%s must not imply successful completion", state)
 				} else {
 					require.Len(t, greenRuns, 1)
-					require.Equal(t, "Completed", greenRuns[0][1])
+					require.Equal(t, "● Completed", greenRuns[0][1])
 				}
 				m.color = false
 				require.Equal(t, ansi.Strip(view), m.View().Content)

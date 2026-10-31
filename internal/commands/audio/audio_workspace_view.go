@@ -272,7 +272,7 @@ func (m *audioWorkbench) workspaceAudioHeader() []string {
 		return []string{"  " + m.emptyAudioStatus()}
 	}
 	// Reserve the longest status so labels and metadata stay in fixed columns.
-	statusColumn := 2 + m.waveformWidth() - len("Generating")
+	statusColumn := 2 + m.waveformWidth() - audioPlayerStatusWidth
 	left := "  "
 	if m.framed() {
 		left += m.muted().Render("Audio") + strings.Repeat(" ", m.formLabelWidth()+1-len("Audio"))

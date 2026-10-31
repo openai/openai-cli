@@ -12,7 +12,7 @@ func (m *audioWorkbench) studioMonitorRows(width, height int) ([]string, *tea.Cu
 	rows := make([]string, height)
 	title := m.composerHeading("Recording", m.focus == 4)
 	// Keep the status aligned with the end of the timeline.
-	statusColumn := width - 2 - len("Generating")
+	statusColumn := width - 2 - audioPlayerStatusWidth
 	rows[0] = title + strings.Repeat(" ", max(1, statusColumn-ansi.StringWidth(title))) + m.playerStatus()
 	if m.result != nil {
 		rows[1] = "  " + m.recordingMetadata(width-4)

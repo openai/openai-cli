@@ -632,26 +632,28 @@ func (m *audioWorkbench) emptyAudioStatus() string {
 	return m.muted().Render("Your recording will appear here.")
 }
 
+const audioPlayerStatusWidth = 2 + len("Generating") // One dot and a space before the longest label.
+
 // The status follows generation and the retained player's playback state.
 func (m *audioWorkbench) playerStatus() string {
 	r := m.result
 	switch {
 	case m.busy && m.note == "Working: generate":
-		return m.accent().Bold(false).Render("Generating")
+		return m.accent().Bold(false).Render("● Generating")
 	case r == nil:
-		return m.muted().Render("Idle")
+		return m.muted().Render("○ Idle")
 	case m.playing:
-		return m.accent().Bold(false).Render("Playing")
+		return m.accent().Bold(false).Render("● Playing")
 	case r.finished:
-		return m.playbackProgressStyle().Render("Completed")
+		return m.playbackProgressStyle().Render("● Completed")
 	case r.seekDuration() > 0 && r.playbackPosition() >= r.seekDuration():
-		return m.warningStyle().Render("At end")
+		return m.warningStyle().Render("○ At end")
 	case r.resumable:
-		return m.warningStyle().Render("Paused")
+		return m.warningStyle().Render("○ Paused")
 	case r.playbackPosition() > 0:
-		return m.warningStyle().Render("Stopped")
+		return m.warningStyle().Render("○ Stopped")
 	default:
-		return m.muted().Render("Ready")
+		return m.muted().Render("○ Ready")
 	}
 }
 
