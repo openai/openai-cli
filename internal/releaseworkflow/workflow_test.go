@@ -721,6 +721,40 @@ func TestCodeQLAnalysisCannotPublish(t *testing.T) {
 	}
 }
 
+func TestCIStatusPublisherBoundary(t *testing.T) {
+	publisher := readWorkflow(t, "codeql-upload.yml").Jobs["ci-status"]
+	if publisher.If != "github.event.workflow_run.path == '.github/workflows/ci.yml' && github.event.workflow_run.event == 'pull_request'" {
+		t.Fatal("CI status publication must only consume pull request CI runs")
+	}
+	if !reflect.DeepEqual(publisher.Permissions, map[string]string{"contents": "read", "actions": "read", "pull-requests": "read", "statuses": "write"}) {
+		t.Fatalf("unexpected CI status publisher permissions: %v", publisher.Permissions)
+	}
+	_, checkout := requireStep(t, publisher, "Check out trusted publisher")
+	if checkout.Uses != checkoutAction || checkout.With["ref"] != "${{ github.workflow_sha }}" || checkout.With["persist-credentials"] != false {
+		t.Fatal("CI status publisher must only execute trusted tooling")
+	}
+	_, publish := requireStep(t, publisher, "Publish verified CI statuses")
+	if len(publisher.Steps) != 2 || publish.Run != "python3 -I .github/scripts/codeql_upload.py publish-ci" {
+		t.Fatal("CI status publisher must not execute candidate code or artifacts")
+	}
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "codeql-upload.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Concurrency struct {
+			Group  string `yaml:"group"`
+			Cancel bool   `yaml:"cancel-in-progress"`
+		} `yaml:"concurrency"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(config.Concurrency.Group, "${{ github.event.workflow_run.workflow_id }}") || config.Concurrency.Cancel {
+		t.Fatal("CI and CodeQL publishers must have separate queues without canceling active publication")
+	}
+}
+
 func TestSDKSnapshotSurvivesFailedProducerRerun(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {

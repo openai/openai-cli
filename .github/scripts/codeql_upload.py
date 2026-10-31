@@ -15,6 +15,8 @@ from urllib.parse import quote
 import zipfile
 
 WORKFLOW = ".github/workflows/codeql.yml"
+CI_WORKFLOW = ".github/workflows/ci.yml"
+SOURCE_WORKFLOW = ".github/workflows/prepare-ci-source.yml"
 CATEGORIES = {
     "actions": WORKFLOW + ":analyze/build-mode:none/language:actions",
     "go": WORKFLOW + ":analyze/build-mode:autobuild/language:go",
@@ -73,7 +75,7 @@ def current_pull_requests(get, root, run, repository_id):
     return candidates
 
 
-def destination(get, repository, repository_id, source):
+def destination(get, repository, repository_id, source, workflow=WORKFLOW):
     """Candidate metadata never selects the upload repository or destination."""
     root = f"repos/{repository}"
     run = get(f"{root}/actions/runs/{int(source['id'])}")
@@ -81,7 +83,7 @@ def destination(get, repository, repository_id, source):
         raise StaleRun("Source workflow has been rerun")
     if (run["repository"]["id"] != repository_id or
             run["repository"]["full_name"] != repository or
-            run["path"].split("@", 1)[0] != WORKFLOW or
+            run["path"].split("@", 1)[0] != workflow or
             not SHA.fullmatch(run["head_sha"])):
         raise RuntimeError("Unexpected source workflow")
     if run["event"] == "pull_request":
@@ -110,7 +112,7 @@ def destination(get, repository, repository_id, source):
         current = get(f"{root}/git/ref/heads/{quote(branch, safe='')}", missing_ok=True)
         if current["ref"] != ref or current["object"]["sha"] != sha:
             raise StaleRun("Source branch advanced")
-    runs = pages(get, f"{root}/actions/workflows/codeql.yml/runs?head_sha={run['head_sha']}&event={run['event']}", "workflow_runs")
+    runs = pages(get, f"{root}/actions/workflows/{workflow.rsplit('/', 1)[-1]}/runs?head_sha={run['head_sha']}&event={run['event']}", "workflow_runs")
     for other in runs:
         if (other["id"] <= run["id"] or other["head_branch"] != run["head_branch"] or
                 other["head_repository"]["id"] != run["head_repository"]["id"]):
@@ -153,8 +155,8 @@ def execution_time(value):
     return result
 
 
-def analysis_attempt(get, root, run, language, jobs_by_attempt):
-    """Find this language's latest execution, including partial workflow reruns."""
+def successful_job_attempt(get, root, run, name, jobs_by_attempt):
+    """Find a job's latest execution, including partial workflow reruns."""
     for attempt in range(run["run_attempt"], 0, -1):
         if attempt not in jobs_by_attempt:
             prefix = f"{root}/actions/runs/{run['id']}/attempts/{attempt}"
@@ -165,7 +167,7 @@ def analysis_attempt(get, root, run, language, jobs_by_attempt):
                                         list(pages(get, prefix + "/jobs", "jobs")))
         started_at, jobs = jobs_by_attempt[attempt]
         matches = [job for job in jobs
-                   if job["name"] == f"CodeQL analysis ({language})" and job["run_attempt"] == attempt]
+                   if job["name"] == name and job["run_attempt"] == attempt]
         if not matches:
             continue
         if len(matches) != 1:
@@ -183,6 +185,10 @@ def analysis_attempt(get, root, run, language, jobs_by_attempt):
             raise RuntimeError("Latest CodeQL language execution did not succeed")
         return attempt
     raise RuntimeError("No successful CodeQL language execution")
+
+
+def analysis_attempt(get, root, run, language, jobs_by_attempt):
+    return successful_job_attempt(get, root, run, f"CodeQL analysis ({language})", jobs_by_attempt)
 
 
 def publish(get, repository, repository_id, source, sleep=time.sleep):
@@ -238,9 +244,7 @@ def report(get, repository, repository_id, source, sleep=time.sleep):
                         "failure": "CodeQL analysis or publication failed",
                         "success": "CodeQL analysis published successfully"}
         for language in CATEGORIES:
-            # Keep required statuses beside the other checks on the PR head.
-            # SARIF still belongs to the verified merge revision above.
-            get(f"repos/{repository}/statuses/{run['head_sha']}", payload={
+            get(f"repos/{repository}/statuses/{target['sha']}", payload={
                 "context": f"CodeQL ({language})", "state": state,
                 "description": descriptions[state],
                 "target_url": f"https://github.com/{repository}/actions/runs/{run['id']}",
@@ -259,6 +263,58 @@ def report(get, repository, repository_id, source, sleep=time.sleep):
     status("success")
 
 
+def ci_source_revision(run, repository, target):
+    """GitHub records the reusable workflow revision, not a candidate receipt."""
+    # CI uses the local source workflow's default event-SHA checkout. The
+    # test_codeql_source suite guards that contract; this metadata identifies
+    # the same revision without trusting an artifact supplied by the candidate.
+    references = [entry for entry in run.get("referenced_workflows", [])
+                  if SOURCE_WORKFLOW in entry.get("path", "")]
+    expected = {"path": f"{repository}/{SOURCE_WORKFLOW}@{target['sha']}",
+                "ref": target["ref"], "sha": target["sha"]}
+    if len(references) != 1 or any(references[0].get(key) != value for key, value in expected.items()):
+        raise RuntimeError("CI source workflow does not match the current revision")
+
+
+def report_ci(get, repository, repository_id, source):
+    """Bind CI gates to the same merge revision as published CodeQL results."""
+    run, target = destination(get, repository, repository_id, source, CI_WORKFLOW)
+    if run["event"] != "pull_request":
+        raise RuntimeError("CI bridge requires a pull request run")
+    root = f"repos/{repository}"
+    names = ("build", "lint", "test")
+
+    def status(state):
+        current, current_target = destination(get, repository, repository_id, source, CI_WORKFLOW)
+        if current_target != target:
+            raise StaleRun("CI publication target changed")
+        for name in names:
+            get(f"{root}/statuses/{target['sha']}", payload={
+                "context": name, "state": state,
+                "description": "CI results for the verified source revision",
+                "target_url": f"https://github.com/{repository}/actions/runs/{run['id']}",
+            })
+
+    status("pending")
+    if run["status"] != "completed":
+        return
+    try:
+        ci_source_revision(run, repository, target)
+        jobs_by_attempt = {}
+        # A partial rerun may reuse source preparation and required jobs from
+        # earlier attempts. Bind each actual execution to GitHub's source SHA.
+        for name in ("source / prepare", *names):
+            attempt = successful_job_attempt(get, root, run, name, jobs_by_attempt)
+            execution = get(f"{root}/actions/runs/{run['id']}/attempts/{attempt}")
+            ci_source_revision(execution, repository, target)
+    except StaleRun:
+        raise
+    except Exception:
+        status("failure")
+        raise
+    status("success")
+
+
 def main():
     if sys.argv[1:] == ["record"]:
         language = os.environ["CODEQL_LANGUAGE"]
@@ -269,12 +325,13 @@ def main():
                    "run_id": int(os.environ["GITHUB_RUN_ID"]),
                    "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
         (Path(os.environ["SARIF_DIRECTORY"]) / "context.json").write_text(json.dumps(context))
-    elif sys.argv[1:] == ["publish"] and os.environ["GITHUB_EVENT_NAME"] == "workflow_run":
+    elif sys.argv[1:] in (["publish"], ["publish-ci"]) and os.environ["GITHUB_EVENT_NAME"] == "workflow_run":
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
         if event["repository"]["full_name"] != os.environ["GITHUB_REPOSITORY"]:
             raise RuntimeError("Unexpected event repository")
-        report(api, os.environ["GITHUB_REPOSITORY"], int(os.environ["GITHUB_REPOSITORY_ID"]),
-                event["workflow_run"])
+        publish_report = report_ci if sys.argv[1:] == ["publish-ci"] else report
+        publish_report(api, os.environ["GITHUB_REPOSITORY"], int(os.environ["GITHUB_REPOSITORY_ID"]),
+                       event["workflow_run"])
     else:
         raise RuntimeError("Unexpected uploader invocation")
 
