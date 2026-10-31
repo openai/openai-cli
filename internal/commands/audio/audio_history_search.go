@@ -135,8 +135,8 @@ func parseHistoryFilter(query string, now time.Time) audioHistoryFilter {
 		}
 		if date != "" {
 			filter := audioHistoryFilter{terms: append(words[:i], words[i+used:]...), date: date, layout: layout}
-			if layout == "01" && len(filter.terms) > 0 {
-				// Keep literal clip searches such as "May I speak".
+			if len(filter.terms) > 0 {
+				// A date can also be part of the recorded text, as in "meet me today".
 				filter.phrase = query
 			}
 			return filter

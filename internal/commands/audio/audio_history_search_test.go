@@ -134,7 +134,7 @@ func TestAudioHistoryMonthAndYearSearchWithText(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	for i, fields := range [][3]string{
 		{"2026-09-10", "coral", "Sample"}, {"2025-09-12", "coral", "Sample"},
-		{"2026-09-10", "ash", "Sample"}, {"2026-10-12", "ash", "May I speak?"},
+		{"2026-09-10", "ash", "Meet me today at noon"}, {"2026-10-12", "ash", "May I speak?"},
 	} {
 		entry := audioReviewResult(fmt.Sprint(i), false).entry
 		created, err := time.Parse(time.DateOnly, fields[0])
@@ -146,6 +146,7 @@ func TestAudioHistoryMonthAndYearSearchWithText(t *testing.T) {
 	for query, want := range map[string][]string{
 		"September coral": {"0", "1"}, "2026-09 coral": {"0"}, "Sep 2026 coral": {"0"},
 		"coral 2025": {"1"}, "May I speak": {"3"}, "Sep 2027 coral": {},
+		"Meet me today at noon": {"2"}, "today": {},
 	} {
 		t.Run(query, func(t *testing.T) {
 			m.filterHistory(query, now)
