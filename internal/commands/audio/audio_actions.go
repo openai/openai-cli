@@ -14,7 +14,7 @@ import (
 )
 
 const audioInstructionsExample = "Speak warmly and clearly."
-const audioCommandTitle = "Command (Bash/zsh)"
+const audioCommandTitle = "Command"
 const audioNoGenerationNotice = "Generate speech first."
 
 func (m *audioWorkbench) instructionsSupported() bool {
@@ -320,23 +320,32 @@ func (m *audioWorkbench) helpRows() []string {
 	shortcut := func(key, action string) string {
 		return "  " + m.keyHint(key, "") + strings.Repeat(" ", 12-ansi.StringWidth(key)) + m.muted().Render(action)
 	}
-	return []string{
+	rows := []string{
 		"  " + m.strong().Render("Compose"),
 		shortcut("Tab", "Next section"),
 		shortcut("Ctrl+G", "Generate speech"),
 		shortcut("Alt+Enter", "Insert a new line"),
+	}
+	if m.studioLayout() {
+		rows = append(rows, shortcut("↑ / ↓", "First script line to Generate and back"), shortcut("Shift+Tab", "Script to Recording"))
+	}
+	if m.splitComposer() {
+		rows = append(rows, shortcut("→ / ←", "End of text to Delivery and back"))
+	}
+	return append(rows,
 		"",
-		"  " + m.strong().Render("Audio"),
+		"  "+m.strong().Render("Audio"),
 		shortcut("Ctrl+O", "Focus audio"),
 		shortcut("Space", "Toggle playback"),
 		shortcut("← →", "Seek on waveform"),
-		shortcut("g", "Go to time"),
+		shortcut("g", "Set exact time"),
+		shortcut("Enter", "Edit selected clock"),
 		shortcut("Ctrl+S", "Open Save audio"),
 		"",
-		"  " + m.strong().Render("View command"),
+		"  "+m.strong().Render("View command"),
 		shortcut("c", "Copy command"),
 		shortcut("Ctrl+P", "Print command and exit"),
-	}
+	)
 }
 
 func (m *audioWorkbench) helpHeight() int {

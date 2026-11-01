@@ -116,10 +116,11 @@ func TestAudioResultNavigationActionsPreservePlayback(t *testing.T) {
 				action int
 			}{
 				{tea.KeyPressMsg{Code: tea.KeyRight}, 1},
-				{tea.KeyPressMsg{Code: tea.KeyRight}, 1},
-				{tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}, 1},
-				{tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift}, 1},
-				{tea.KeyPressMsg{Code: tea.KeyLeft}, 0},
+				{tea.KeyPressMsg{Code: tea.KeyRight}, 2},
+				{tea.KeyPressMsg{Code: tea.KeyRight}, 2},
+				{tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}, 2},
+				{tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift}, 2},
+				{tea.KeyPressMsg{Code: tea.KeyLeft}, 1},
 				{tea.KeyPressMsg{Code: tea.KeyLeft}, 0},
 				{tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift}, 0},
 				{tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}, 0},
@@ -379,7 +380,7 @@ func TestAudioResultNavigationNoColorMarksFocusedWaveform(t *testing.T) {
 				}
 			}
 			require.Len(t, focused, 1, "waveform focus needs one visible marker without color")
-			require.True(t, strings.ContainsAny(focused[0], "┃┠"), "the focus marker must appear beside the waveform")
+			require.True(t, strings.Contains(focused[0], "┃"), "the focus marker must appear beside the waveform")
 			require.Nil(t, audioReviewKey(m, tea.KeyDown))
 			require.Contains(t, m.View().Content, "› Save audio…")
 		})

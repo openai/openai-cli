@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
@@ -31,6 +32,37 @@ func TestAudioHistoryGroupsDatesAndShowsMetadataOnce(t *testing.T) {
 	require.Contains(t, view, "Enter open")
 	require.Contains(t, view, "Esc back")
 	require.NotContains(t, view, "private-")
+}
+
+func TestAudioHistoryAccentsDateHeadingsWhenScrolling(t *testing.T) {
+	m := audioReviewModel(t)
+	m.width, m.height = 80, 24
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	for i := range 30 {
+		entry := audioReviewResult(fmt.Sprintf("clip-%d", i), false).entry
+		entry.CreatedAt = now.AddDate(0, 0, -min(i, 2))
+		m.entries = append(m.entries, entry)
+	}
+	for _, choice := range []int{0, len(m.entries) - 1} {
+		m.choice = choice
+		m.color = false
+		plain := m.historyView(now).Content
+		require.Equal(t, ansi.Strip(plain), plain)
+		for _, theme := range []struct {
+			dark      bool
+			dateColor string
+		}{{false, "#3159BC"}, {true, "#A8DAFF"}} {
+			m.color, m.dark = true, theme.dark
+			heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.dateColor))
+			view := m.historyView(now).Content
+			require.Equal(t, plain, ansi.Strip(view))
+			require.Contains(t, view, heading.Render("Oct 28"))
+			if choice == 0 {
+				require.Contains(t, view, heading.Render("Today"))
+				require.Contains(t, view, heading.Render("Yesterday"))
+			}
+		}
+	}
 }
 
 func TestAudioHistoryKeepsEverySelectionAndFooterVisible(t *testing.T) {
@@ -68,19 +100,23 @@ func TestAudioHistoryTableHeadersCountAndRightInset(t *testing.T) {
 			entry.CreatedAt = time.Date(2026, 10, 27, 10, 30, 0, 0, time.UTC)
 			m.entries = []audiohistory.Entry{entry}
 			view := ansi.Strip(m.historyView(entry.CreatedAt).Content)
-			require.Contains(t, view, "History (1 recording)")
+			require.Contains(t, view, "1 recording")
+			require.Contains(t, view, "or date")
+			if size[0] >= 90 {
+				require.Contains(t, view, "Try today, Oct 28, or YYYY-MM-DD")
+			}
 			require.Contains(t, view, "Clip")
 			require.Contains(t, view, "› Short clip")
 			require.NotContains(t, view, "opaque-id")
 			if size[0] < 60 {
-				require.NotContains(t, view, "Created time")
+				require.NotContains(t, view, "Time")
 				return
 			}
-			for _, heading := range []string{"Voice", "Format", "Created time"} {
+			for _, heading := range []string{"Voice", "Format", "Time"} {
 				require.Contains(t, view, heading)
 			}
 			for _, line := range strings.Split(view, "\n") {
-				if strings.Contains(line, "10:30") || strings.Contains(line, "Created time") {
+				if strings.Contains(line, "10:30") || strings.Contains(line, "Time") {
 					require.True(t, strings.HasSuffix(line, "  │"), "time touches frame: %q", line)
 				}
 			}
@@ -117,7 +153,7 @@ func TestAudioHistoryNeverLeavesOrphanDateHeading(t *testing.T) {
 				}
 			}
 			require.Contains(t, view, fmt.Sprintf("› Recording %02d", selected))
-			require.Contains(t, view, "History: /synthetic/history")
+			require.NotContains(t, view, "/synthetic/history")
 			require.Contains(t, view, "Saved: /exports/known.wav")
 			require.Contains(t, view, "Esc back")
 		}
@@ -135,7 +171,7 @@ func TestAudioHistoryLocationsUseOnlyMatchingSessionEvidence(t *testing.T) {
 	other.savedPaths = []string{"/exports/unrelated.wav"}
 	m.result = &other
 	view := ansi.Strip(m.historyView(time.Now()).Content)
-	require.Contains(t, view, "History: /synthetic/history")
+	require.NotContains(t, view, "/synthetic/history")
 	require.NotContains(t, view, "Saved:")
 	require.NotContains(t, view, "unrelated.wav")
 	require.NotContains(t, strings.ToLower(view), "unsaved")
@@ -167,6 +203,7 @@ func TestAudioHistoryPathsAndMetadataStaySafeAndBounded(t *testing.T) {
 			entry.entry.Settings.Format = "wav\n\t\u202e"
 			entry.savedPaths = []string{"/exports/" + strings.Repeat("界", 80) + "\n\t\u202e\x1b[2J/clip.wav"}
 			m.entries, m.result = []audiohistory.Entry{entry.entry}, &entry
+			m.historySearch.showFolder = true
 			view := m.historyView(time.Now()).Content
 			plain := ansi.Strip(view)
 			require.NotContains(t, view, "\x1b[2J")
@@ -190,14 +227,22 @@ func TestAudioHistoryPathsAndMetadataStaySafeAndBounded(t *testing.T) {
 	}
 }
 
-func TestAudioHistoryEmptyViewShowsActualFolder(t *testing.T) {
+func TestAudioHistoryFolderTogglesWithoutARecording(t *testing.T) {
 	m := audioReviewModel(t)
 	m.width, m.height = 40, 12
 	m.store.Directory = "/synthetic/history"
 	view := ansi.Strip(m.historyView(time.Now()).Content)
-	require.Contains(t, view, "History (0 recordings)")
+	require.Contains(t, view, "0 recordings")
 	require.Contains(t, view, "No saved audio yet.")
+	require.NotContains(t, view, "/synthetic/history")
+	require.Contains(t, view, "Ctrl+L folder")
+	m.modal = "history"
+	m.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
+	view = ansi.Strip(m.historyView(time.Now()).Content)
 	require.Contains(t, view, "History: /synthetic/history")
+	m.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
+	view = ansi.Strip(m.historyView(time.Now()).Content)
+	require.NotContains(t, view, "/synthetic/history")
 	require.NotContains(t, view, "Saved:")
 	require.Contains(t, view, "Esc back")
 }

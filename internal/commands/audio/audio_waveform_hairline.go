@@ -7,7 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-var waveformCenterline = strings.NewReplacer("·", "─", "│", "┼", "┃", "╂")
+var waveformCenterline = strings.NewReplacer("·", "─", "│", "┼")
 
 func (m *audioWorkbench) waveformInk(light, dark string) lipgloss.Style {
 	style := lipgloss.NewStyle()
@@ -39,7 +39,7 @@ func (m *audioWorkbench) workspaceHairlineRows(wave []string, marker int, levels
 	styles := [played + shades]lipgloss.Style{
 		plain:    lipgloss.NewStyle(),
 		axis:     m.borderStyle(),
-		playhead: m.playheadStyle(),
+		playhead: m.primaryText(),
 	}
 	// Use the same perceptual blend as the section divider, without painting the background.
 	setRamp := func(start int, tip, core lipgloss.Style) {
@@ -62,7 +62,7 @@ func (m *audioWorkbench) workspaceHairlineRows(wave []string, marker int, levels
 			switch glyph {
 			case '─', '·', '╶', '╴':
 				role = axis
-			case '┃', '╂', '┠', '┨':
+			case '┃':
 				role = playhead
 			case '│', '╷', '╵', '┼':
 				role = upcoming

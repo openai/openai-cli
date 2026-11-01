@@ -19,9 +19,11 @@ Tab moves through Text, Instructions, Settings, then Audio. Wide terminals inclu
 Shift+Tab reverses that order.
 Up and Down move between sections at their boundaries.
 Inside an editor, arrows move through multiline and wrapped text before leaving the first or last visual row.
+In wide layouts, Right at the end of the draft selects Delivery's Settings row.
+Left from Settings returns to the script at the same caret position.
 Modified arrows and active selections remain inside the editor.
 Up from Voice returns to Instructions when the model supports them.
-Down from the bottom row of the form moves to Audio. It focuses the waveform when the recording has one.
+Down from the bottom row of the stacked form moves to Audio. It focuses the waveform when the recording has one.
 When Generate speech, History, and More actions share a row, Left and Right move between them.
 From a setting, Home selects Voice and End moves to the final action.
 Enter opens a choice or starts generation from an editor.
@@ -41,10 +43,11 @@ Changing models preserves the selected voice. An unavailable voice needs another
 Generate speech is the primary action. At 110 columns and 24 rows, Actions shares its row.
 Press Right from Generate speech or the Settings heading to enter Actions. Tab from Settings also enters Actions.
 Left and Right move between actions. Enter opens the selected action. Home selects Generate. End selects the last action.
-Up returns to Settings. Down moves to Audio. Up from the waveform returns to the action you left.
+In Voice studio, Up from the first script line selects Generate speech. Down from Generate returns to Script.
+Down from a secondary action enters Audio. Up from the waveform returns to the action you left.
 Actions contains History, Preview voice, Clear form, View command, and Help.
 On smaller terminals, select More actions and press Enter.
-View command opens a vertically scrollable Bash/zsh command.
+View command shows the Bash/zsh invocation first. The JSON request follows, with one field per line.
 Up/Down and PageUp/PageDown scroll it. Home/End select its start or end.
 Escape returns to More actions with View command selected.
 Tab focuses Audio. Shift+Tab returns to the More actions control.
@@ -86,7 +89,8 @@ Viewing or dismissing an error never retries the request. The command retains it
 Completed results show their format and byte count.
 When analysis succeeds, they also show a waveform derived from decoded samples and duration.
 Result labels retain the original generation settings when you change the form.
-Left and Right select Play audio or Save audio. Enter performs the selected action.
+Left and Right select Play, Save, or the playback clock. The clock becomes selectable when the duration is known.
+Select the clock and press Enter to set the playback time.
 Up focuses the waveform. Down returns to the selected action.
 On the waveform, Left and Right move the playback position. Shift moves five waveform bars.
 With a measured recording focused, press G to enter a time. Typing a digit also starts time entry.
@@ -207,11 +211,13 @@ Existing file translation keeps its input, output, and English translation behav
 openai audio translate --file recording.wav --model whisper-1
 ```
 
-Speech History groups recordings by local date and shows one prompt row per recording.
-Type in History to filter by clip text, voice, or format. Search ignores letter case.
+Speech History groups recordings by local date and shows one prompt row per recording. Date headings use pale sky blue in dark terminals and the darker blue accent in light terminals.
+Search History by clip text, voice, format, or local recording date. Search ignores letter case.
+Use `today`, `yesterday`, `Oct 28`, or `2026-10-28`.
+Combine a date with a voice or format, such as `Oct 28 Coral` or `Oct 2026 WAV`.
 Up from the first recording focuses Search. Down selects a matching recording. Enter opens it.
 Backspace removes one character. Ctrl+U clears Search.
-Roomy terminals show timestamps and selected-recording metadata.
+Roomy terminals show timestamps and details for the selected recording. Press Ctrl+L to show or hide the History folder.
 Compact terminals preserve prompt space and keep the selected recording visible.
 More actions lists secondary commands and brief descriptions when space permits.
 Escape returns to the form.
@@ -219,10 +225,15 @@ Escape returns to the form.
 ## Layout
 
 At 60 columns and 24 rows, the draft, settings, and audio share one frame.
-A vertical line marks the script editor. It turns blue while you type.
+A selection marker identifies the active editor, including in monochrome.
+The footer names the next Tab destination. Shift+Tab from the script selects playback controls.
+For multiline scripts, the heading shows the current line while you edit and the total line count afterward.
 Wide, tall terminals reserve a few script lines throughout generation and playback. Longer drafts fill that space as you type.
-At 100 columns, Delivery sits beside the script and groups voice, model, format, and speed.
-Narrower frames place those controls below Instructions.
+At 110 columns and 28 rows, Voice studio places the script and Delivery on the left.
+The recording monitor on the right keeps the waveform, playback clock, and Play and Save controls together.
+Both panes share one command strip above them. Generating a recording keeps the editor and transport in place.
+Other framed terminals use the stacked recording view. From 100 columns, that view places Delivery beside the script.
+Narrower frames place Delivery below Instructions.
 Below 110 columns, Generate speech, History, and More actions share a row when space permits.
 Wider frames show Generate speech, recording actions, View command, and Help in one row.
 The selection marker moves across this row without shifting neighboring actions.
@@ -230,25 +241,25 @@ Help groups shortcuts by Compose, Audio, and View command. Small terminals show 
 Clear form uses amber because it resets the draft. Last error uses red when recovery details are available.
 The focused action has a selection marker. In color terminals, it also has a selected background.
 
-The Batch browser’s thin divider separates the form from the player. Its brightest cell sits at the center.
+The Batch browser’s thin divider sits below the command strip in the studio. It separates the form and player in the stacked view.
 Before generation, the framed player shows “No recording yet,” Play, Save, and a zero timer.
 The form and player controls keep their positions while the waveform fills the space above the controls.
 Playback and Save shortcuts explain that speech must be generated first.
-The recording adds a measured waveform and seek rail in that location.
-When space permits, a time ruler labels the start, midpoint, and end in minutes and seconds.
+The idle player shows a quiet horizontal rail. Its position stays fixed as the waveform fills in.
+The heavier elapsed line joins the thinner remaining line directly below the playhead. The clock below the rail shows the current time and duration.
 Recordings without a measured duration show an unknown timer and retain their Save action.
 One blank row separates the recording details from the waveform when space permits.
-The status circle and label start in fixed columns. The circle fills during generation, playback, and after completion.
-Small terminals show the status text alone.
+The playback status starts with a stationary dot. Generating, Playing, Paused, Stopped, and Completed use a filled dot. Other states use an open dot.
+Generating and Playing appear in blue.
+Paused and Stopped appear in amber. Playback completion and seeking to the end both show a green Completed status. Monochrome shows the same labels.
 Measured audio uses a continuous centerline and a seek rail with exact endpoints.
 The playhead follows playback through silence. Elapsed bars and rail use green. Upcoming bars use the secondary text color.
 Long bars fade toward both tips. Their shades reflect peak heights between terminal half-cell steps.
 Short bars keep their contrast. Elapsed time uses blue.
-Amber marks a paused or manually positioned playhead. The status describes its state.
-The heavier rail shows the played portion in monochrome. The final marker turns green when playback completes.
-Play starts under the first timeline marker. Save and the timer follow in the same row.
-When space permits, one blank row separates the waveform from the seek rail.
-A second spare row separates the rail from the controls.
+The playhead uses the primary text color in every playback state.
+The change in line weight stays visible in monochrome.
+The studio clock aligns with the rail’s start. Play and Save sit below it.
+The stacked view puts Play, Save, and the clock in one row when space permits.
 When the timer needs more space, it moves above the actions and aligns with the final marker.
 Save opens the destination picker. A successful export adds its path below the actions.
 

@@ -18,6 +18,9 @@ func (m *audioWorkbench) framed() bool { return m.height >= 24 && m.width >= 60 
 const audioFormLabelWidth = 17
 
 func (m *audioWorkbench) formLabelWidth() int {
+	if m.studioLayout() {
+		return len("Instructions")
+	}
 	if m.framed() {
 		return audioFormLabelWidth
 	}
@@ -188,8 +191,10 @@ func (m *audioWorkbench) inlineEditorRows(name string, editor textarea.Model, ac
 		}
 	}
 	label := fmt.Sprintf("%-*s", labelWidth, name)
-	label = m.muted().Render(label)
-	prefix := m.label(label, active)
+	prefix := "  " + m.muted().Render(label)
+	if active {
+		prefix = m.selected("› "+name, 2+len(name)) + strings.Repeat(" ", max(0, labelWidth-len(name)))
+	}
 	rows[0] = prefix + " " + rows[0]
 	for i := 1; i < len(rows); i++ {
 		rows[i] = strings.Repeat(" ", labelWidth+3) + rows[i]
@@ -198,7 +203,11 @@ func (m *audioWorkbench) inlineEditorRows(name string, editor textarea.Model, ac
 }
 
 func (m *audioWorkbench) plainEditorRows(name string, editor textarea.Model, active bool) []string {
-	rows := []string{m.label(m.muted().Render(name), active)}
+	heading := "  " + m.muted().Render(name)
+	if active {
+		heading = m.selected("› "+name, 2+len(name))
+	}
+	rows := []string{heading}
 	for _, line := range strings.Split(m.editorView(editor), "\n") {
 		rows = append(rows, "  "+line)
 	}
@@ -309,7 +318,7 @@ func (m *audioWorkbench) View() tea.View {
 		}
 		wave := m.workspaceWaveformRows(budget)
 		free := budget - len(wave)
-		if len(wave) > 0 && free > 0 && len(m.result.savedPaths) == 0 {
+		if len(wave) > 0 && free > 0 && (m.result == nil || len(m.result.savedPaths) == 0) {
 			// Keep the inline frame the same height when the save receipt appears.
 			controls = append(controls, "")
 			free--
@@ -331,7 +340,7 @@ func (m *audioWorkbench) View() tea.View {
 	}
 	rows = append(rows, actions...)
 	footer := m.workspaceFooter()
-	if warning := m.retainedGenerationErrorRow(); warning != "" {
+	if warning := m.retainedGenerationErrorRow(m.audioWidth()); warning != "" {
 		footer = append([]string{warning}, footer...)
 	} else if m.result == nil {
 		rows = append(rows, "  "+m.emptyAudioStatus())
@@ -358,7 +367,8 @@ func (m *audioWorkbench) formRows(compact bool) ([]string, *tea.Cursor, int) {
 	if m.splitComposer() {
 		// Cursor coordinates start within each column. Only the active editor owns a caret.
 		offset := m.composerWidth() + audioColumnGap
-		right := append([]string{"  " + m.strong().Render("Delivery")}, settings...)
+		delivery := m.focus == 2 && (m.setting < 4 || m.setting == audioSettingDisclosure)
+		right := append([]string{m.composerHeading("Delivery", delivery)}, settings...)
 		if settingsCursor != nil {
 			settingsCursor.X += offset
 			settingsCursor.Y++
@@ -390,36 +400,55 @@ func (m *audioWorkbench) formRows(compact bool) ([]string, *tea.Cursor, int) {
 	return append(script, settings...), cursor, active
 }
 
+func (m *audioWorkbench) composerHeading(title string, focused bool) string {
+	style := m.strong()
+	if focused && !m.busy && m.modal == "" && m.framed() {
+		style = m.accent()
+	}
+	return "  " + style.Render(title)
+}
+
 func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 	labelWidth := m.formLabelWidth()
-	rows := []string{"  " + m.strong().Render("Text to speech")}
-	var cursor *tea.Cursor
-	prefix := "  "
-	if !compact {
-		rule := m.borderStyle()
-		if m.focus == 0 && !m.busy {
-			rule = m.accent()
-		}
-		prefix = " " + rule.Render("│") + " "
+	title := "Text to speech"
+	if m.studioLayout() {
+		title = "Script"
 	}
+	heading := m.composerHeading(title, false)
+	if m.focus == 0 && !m.busy && m.modal == "" {
+		heading = m.selected("› "+title, 2+ansi.StringWidth(title))
+	}
+	if count := m.input.LineCount(); !compact && count > 1 {
+		location := fmt.Sprintf("%d lines", count)
+		if m.focus == 0 && !m.busy {
+			location = fmt.Sprintf("Line %d of %d", m.input.Line()+1, count)
+		}
+		gap := m.composerWidth() - 2 - ansi.StringWidth(heading) - len(location)
+		if gap >= 2 {
+			heading += strings.Repeat(" ", gap) + m.muted().Render(location)
+		}
+	}
+	rows := []string{heading}
+	var cursor *tea.Cursor
+	const indent = "  "
 	if m.focus == 0 && !m.busy {
-		cursor = audioEditorCursor(m.input, ansi.StringWidth(prefix), len(rows))
+		cursor = audioEditorCursor(m.input, len(indent), len(rows))
 	}
 	for _, line := range strings.Split(m.editorView(m.input), "\n") {
-		rows = append(rows, prefix+line)
+		rows = append(rows, indent+line)
 	}
 	validation := m.fieldValidationRows(audioFieldText)
 	spareEditorRow := m.input.LineCount() == 1 && m.input.LineInfo().Height < m.input.Height()
 	// Keep the same writing space when a recording arrives.
-	if m.splitComposer() && m.height >= 30 && len(validation) == 0 {
+	if !m.studioLayout() && m.splitComposer() && m.height >= 30 && len(validation) == 0 {
 		for len(rows)-1 < min(6, m.audioHeight()/7) {
-			rows = append(rows, prefix)
+			rows = append(rows, indent)
 			spareEditorRow = true
 		}
 	}
 	rows = append(rows, validation...)
 	// A short draft already has a spare editor row before Instructions.
-	if !compact && (!spareEditorRow || len(validation) > 0) {
+	if !compact && (m.studioLayout() || !spareEditorRow || len(validation) > 0) {
 		rows = append(rows, "")
 	}
 	instructions := m.instructions
@@ -445,7 +474,7 @@ func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 	default:
 		value := readable.Text(strings.Join(strings.Fields(instructions.Value()), " "))
 		if value == "" {
-			value = m.muted().Render("(optional)")
+			value = m.muted().Render("Optional")
 		}
 		label := m.muted().Render(fmt.Sprintf("%-*s", labelWidth, "Instructions"))
 		rows = append(rows, "  "+label+" "+value)
@@ -476,7 +505,7 @@ func (m *audioWorkbench) settingsRows() ([]string, *tea.Cursor, int) {
 			voice := audioHistoryCell(readable.ChoiceTitle(m.settings.Voice))
 			name, value = "Voice", m.primaryText().Render(voice)
 			if !audioSupportsVoice(m.settings.Model, m.settings.Voice) {
-				value = m.warningStyle().Render(voice + " (unavailable)")
+				value = m.warningStyle().Render(voice + "  Unavailable")
 			}
 		case 2:
 			name, value = "Format", m.primaryText().Render(audioChoiceLabel(2, m.settings.Format))
@@ -603,38 +632,27 @@ func (m *audioWorkbench) emptyAudioStatus() string {
 	return m.muted().Render("Your recording will appear here.")
 }
 
+const audioPlayerStatusWidth = 2 + len("Generating") // One dot and a space before the longest label.
+
 // The status follows generation and the retained player's playback state.
 func (m *audioWorkbench) playerStatus() string {
 	r := m.result
-	label, style, lamp := "Ready", m.muted(), "○"
 	switch {
 	case m.busy && m.note == "Working: generate":
-		label, style, lamp = "Generating", m.accent().Bold(false), "●"
+		return m.accent().Bold(false).Render("● Generating")
 	case r == nil:
-		label = "Idle"
+		return m.muted().Render("○ Idle")
 	case m.playing:
-		label, style, lamp = "Playing", m.accent().Bold(false), "●"
-	case r.finished:
-		label, style, lamp = "Completed", m.playbackProgressStyle(), "●"
-	case r.seekDuration() > 0 && r.playbackPosition() >= r.seekDuration():
-		label, style = "At end", m.warningStyle()
+		return m.accent().Bold(false).Render("● Playing")
+	case r.finished, r.seekDuration() > 0 && r.playbackPosition() >= r.seekDuration():
+		return m.playbackProgressStyle().Render("● Completed")
 	case r.resumable:
-		label, style = "Paused", m.warningStyle()
+		return m.warningStyle().Render("● Paused")
 	case r.playbackPosition() > 0:
-		label, style = "Stopped", m.warningStyle()
+		return m.warningStyle().Render("● Stopped")
+	default:
+		return m.muted().Render("○ Ready")
 	}
-	// Small terminals keep the label alone.
-	if m.framed() {
-		label = lamp + " " + label
-	}
-	return style.Render(label)
-}
-
-func (m *audioWorkbench) playheadStyle() lipgloss.Style {
-	if !m.playing && m.result != nil && !m.result.finished && m.result.playbackPosition() > 0 {
-		return m.warningStyle()
-	}
-	return m.primaryText()
 }
 
 // Preserve the filename end without splitting a display grapheme or escape.
@@ -683,13 +701,18 @@ func (m *audioWorkbench) resultHintRows() []string {
 			navigation[1] = [2]string{"↑", "waveform"}
 		}
 		control := [2]string{"Space", playAction}
-		if m.resultAction == 1 && !m.waveformFocused {
-			control = [2]string{"Enter", "save"}
+		if !m.waveformFocused {
+			switch m.resultAction {
+			case audioSaveAction:
+				control = [2]string{"Enter", "save"}
+			case audioTimeAction:
+				control = [2]string{"Enter", "set time"}
+			}
 		}
 		if m.waveformFocused {
 			navigation = [][2]string{{"←→", "seek"}, above, {"↓", "controls"}}
 		}
-		if r.seekDuration() > 0 {
+		if r.seekDuration() > 0 && (m.waveformFocused || m.resultAction != audioTimeAction) {
 			navigation = append(navigation, [2]string{"G", "time"})
 		}
 		movement := m.hintLine(navigation...)

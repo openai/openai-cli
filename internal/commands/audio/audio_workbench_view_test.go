@@ -24,7 +24,7 @@ func TestAudioViewFramesWorkspaceAndOnlyHighlightsSelectedControls(t *testing.T)
 		for _, focus := range []int{0, 1, 2} {
 			m.focusSection(focus)
 			view := m.View().Content
-			require.Equal(t, focus == 2, background.MatchString(view))
+			require.Len(t, background.FindAllStringIndex(view, -1), 1, "only the active field gets the selection background")
 			require.Equal(t, 1, strings.Count(ansi.Strip(view), "╭"))
 			require.Contains(t, ansi.Strip(view), "│")
 		}
@@ -42,7 +42,7 @@ func TestAudioViewFramesWorkspaceAndOnlyHighlightsSelectedControls(t *testing.T)
 		require.Contains(t, ansi.Strip(view), "Filename")
 		require.Contains(t, ansi.Strip(view), audioDefaultSaveFolder)
 		require.Contains(t, ansi.Strip(view), "Full recording")
-		require.False(t, background.MatchString(view), "the editable folder uses the native caret")
+		require.Len(t, background.FindAllStringIndex(view, -1), 1, "the editable folder shows its selected label")
 		audioReviewKey(m, tea.KeyTab)
 		require.True(t, background.MatchString(m.View().Content))
 	}
@@ -105,7 +105,7 @@ func TestAudioViewEditorSizeTracksMultilineInput(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 	require.Equal(t, 1, m.input.Height())
 	require.LessOrEqual(t, m.input.Width(), 32)
-	require.NotContains(t, ansi.Strip(m.View().Content), "› Text")
+	require.Contains(t, ansi.Strip(m.View().Content), "› Text to speech")
 }
 
 func TestAudioComposerUsesFullWidthAndKeepsRoomAtHeightBoundary(t *testing.T) {
@@ -154,16 +154,16 @@ func TestAudioViewCommandWrapPreservesTheExecutableText(t *testing.T) {
 	for _, row := range rows {
 		require.LessOrEqual(t, ansi.StringWidth(row), m.audioWidth())
 	}
-	require.Contains(t, audioFeedbackView(t, m), "printf")
+	require.Contains(t, audioFeedbackView(t, m), "OPENAI_UNTRUSTED_STDIN")
 	audioReviewKey(m, tea.KeyEscape)
 	require.Equal(t, "more", m.modal)
 	require.Equal(t, 2, m.focus)
-	require.NotContains(t, audioFeedbackView(t, m), "printf")
+	require.NotContains(t, audioFeedbackView(t, m), "OPENAI_UNTRUSTED_STDIN")
 	audioReviewKey(m, tea.KeyEscape)
 	require.Empty(t, m.modal)
 	require.Equal(t, 2, m.focus)
 	require.Equal(t, audioSettingMore, m.setting)
-	require.NotContains(t, audioFeedbackView(t, m), "printf")
+	require.NotContains(t, audioFeedbackView(t, m), "OPENAI_UNTRUSTED_STDIN")
 }
 
 func TestAudioListenShortcutOpensRetainedAudioWithoutPlaying(t *testing.T) {
@@ -181,6 +181,31 @@ func TestAudioListenShortcutOpensRetainedAudioWithoutPlaying(t *testing.T) {
 	require.Equal(t, "save", m.modal, "Listen must not dismiss a Save dialog")
 }
 
+func TestAudioScriptHeadingTracksMultilineDraftAndDeliveryFocus(t *testing.T) {
+	m := audioReviewModel(t)
+	m.color = true
+	m.Update(tea.WindowSizeMsg{Width: 133, Height: 39})
+	m.input.SetValue("First line\nLast line")
+	m.input.MoveToEnd()
+	m.focusSection(0)
+
+	rows, cursor := m.scriptRows(false)
+	require.Contains(t, rows[0], m.selected("› Script", 8))
+	require.Contains(t, rows[0], "Line 2 of 2")
+	require.Equal(t, 2, cursor.Y)
+	for _, row := range rows[1:3] {
+		require.NotContains(t, ansi.Strip(row), "│")
+	}
+	require.Equal(t, "  First line", strings.TrimRight(ansi.Strip(rows[1]), " "))
+
+	m.focusSection(2)
+	view := m.View().Content
+	require.Contains(t, view, m.accent().Render("Delivery"))
+	require.Contains(t, view, m.strong().Render("Script"))
+	require.Contains(t, view, "2 lines")
+	require.NotContains(t, view, "Line 2 of 2")
+}
+
 func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 	for _, width := range []int{60, 100, 186} {
 		m := audioReviewModel(t)
@@ -192,14 +217,24 @@ func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 			rows := strings.Split(view, "\n")
 			require.Equal(t, 3, ansi.StringWidth(rows[1][:strings.Index(rows[1], "Text to speech")]))
 			require.NotContains(t, rows[1], "A clear short example.")
-			require.Contains(t, rows[2], "A clear short example.")
-			require.Equal(t, 4, ansi.StringWidth(rows[2][:strings.Index(rows[2], "A clear short example.")]))
+			draftRow, heading := 2, 1
+			if m.studioLayout() {
+				heading = slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Script") })
+				require.Greater(t, heading, 1)
+				draftRow = heading + 1
+			}
+			require.Contains(t, rows[draftRow], "A clear short example.")
+			require.Equal(t, 3, ansi.StringWidth(rows[draftRow][:strings.Index(rows[draftRow], "A clear short example.")]))
 			directionRow := slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Instructions") })
-			require.Greater(t, directionRow, 2, "Instructions must follow the script")
+			require.Greater(t, directionRow, draftRow, "Instructions must follow the script")
 			require.Equal(t, 1, strings.Count(view, "╭"), "only the workspace has an outline")
 			require.NotContains(t, view, "Setting        Value")
 			voiceRow, voiceColumn, valueColumn := 6, 3, 21
-			if m.splitComposer() {
+			if m.studioLayout() {
+				section := slices.IndexFunc(rows, func(row string) bool { return strings.Contains(row, "Delivery") })
+				require.Greater(t, section, directionRow)
+				voiceRow, valueColumn = section+1, voiceColumn+len("Instructions")+1
+			} else if m.splitComposer() {
 				voiceRow = 2
 				voiceColumn = ansi.StringWidth(rows[1][:strings.Index(rows[1], "Delivery")])
 				valueColumn = voiceColumn + 10
@@ -209,7 +244,7 @@ func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 			require.Equal(t, valueColumn, ansi.StringWidth(rows[voiceRow][:strings.Index(rows[voiceRow], "Coral")]))
 			require.Contains(t, rows[voiceRow+1], "Settings")
 			require.Contains(t, rows[voiceRow+1], m.settings.Model)
-			require.NotContains(t, view, "› Text to speech")
+			require.Equal(t, focus == 0, strings.HasPrefix(strings.TrimLeft(rows[heading], "│ "), "› "))
 			require.Equal(t, focus == 0 || focus == 1, m.View().Cursor != nil)
 			if focus == 2 {
 				require.NotContains(t, view, "Alt+Enter New line")
@@ -275,7 +310,7 @@ func TestAudioComposerKeepsUnicodeContinuationAndLabeledSettingsAligned(t *testi
 						column := 21
 						if strings.Contains(draft, value) {
 							if focus == 0 {
-								column = 4
+								column = 3
 							}
 						} else if m.splitComposer() {
 							header := strings.Split(view, "\n")[1]

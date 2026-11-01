@@ -152,6 +152,7 @@ type audioWorkbenchInline struct {
 	profile                           colorprofile.Profile
 	cancel                            context.CancelFunc
 	started, modesActive, restoreWrap bool
+	appleTerminal                     bool
 	content                           string
 	cursor                            *tea.Cursor
 	cursorOutput                      *audioCursorOutput
@@ -162,6 +163,7 @@ type audioWorkbenchInline struct {
 
 func (p *audioWorkbenchInline) Init() tea.Cmd {
 	p.modesActive = true
+	p.appleTerminal = os.Getenv("TERM_PROGRAM") == "Apple_Terminal"
 	query := ansi.ResetModeTextCursorEnable + ansi.SetModeBracketedPaste + ansi.RequestModeAutoWrap
 	if p.model.color {
 		query += ansi.RequestBackgroundColor
@@ -192,7 +194,7 @@ func (p *audioWorkbenchInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	// Read current geometry before acting on keys. A queued resize notification
 	// must not let a hidden Generate control submit from a smaller terminal.
-	if _, key := message.(tea.KeyPressMsg); key {
+	if key, ok := message.(tea.KeyPressMsg); ok {
 		w, h, err := term.GetSize(p.output.Fd())
 		if err != nil {
 			p.err = errors.New("could not read terminal size")
@@ -200,6 +202,13 @@ func (p *audioWorkbenchInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if w != p.model.width || h != p.model.height {
 			p.model.Update(tea.WindowSizeMsg{Width: w, Height: h})
+		}
+		if p.appleTerminal {
+			switch key.String() {
+			case "enter", "tab", "shift+tab", "ctrl+c", "ctrl+d":
+				// Terminal.app can mark the cursor row even if the key leaves the view unchanged.
+				p.content = ""
+			}
 		}
 	}
 	_, cmd := p.model.Update(message)
@@ -246,6 +255,9 @@ func (p *audioWorkbenchInline) drawFrame(w, h int) {
 	frame := ansi.ResetModeTextCursorEnable
 	if p.anchored {
 		frame += ansi.RestoreCursor
+	} else if p.appleTerminal && content != "" {
+		// Start a new logical line after the shell's marked command.
+		frame += "\r\n"
 	}
 	frame += cliterminal.InlineFrame(content, w) + ansi.SaveCursor
 	if view.Cursor != nil {
@@ -254,6 +266,9 @@ func (p *audioWorkbenchInline) drawFrame(w, h int) {
 		}
 		frame += ansi.CursorHorizontalAbsolute(view.Cursor.X+1) + ansi.SetCursorStyle(5) + ansi.SetModeTextCursorEnable
 		p.cursorStyled = true
+	} else if p.appleTerminal && strings.Contains(content, "\n") {
+		// The next erase preserves marks on its first row. Park the hidden cursor one row below it.
+		frame += ansi.CursorDown(1)
 	}
 	if p.anchored {
 		p.painter.Frame(frame)

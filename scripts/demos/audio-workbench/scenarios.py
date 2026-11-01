@@ -230,7 +230,7 @@ def navigation_case(ctx):
     focus = {"text": "Tab Instructions", "instructions": "› Instructions", "voice": "› Voice", "model": "› Model",
              "settings": "› Settings", "empty-audio": "Ctrl+G Generate",
              "more": "› More actions…", "generate": "› Generate speech", "history": "› History",
-             "play": "› Play audio", "save": "› Save audio…", "command": "Command (Bash/zsh)"}
+             "play": "› Play audio", "save": "› Save audio…", "command": "Bash/zsh"}
     result["navigation_checks"] = []
 
     def zero_requests():
@@ -290,12 +290,12 @@ def navigation_case(ctx):
     check("open More command route", "history", b"\r")
     check("select View command", "› View command", down * 3)
     check("open Command information", "command", b"\r")
-    check("Command starts with printf", "printf")
+    check("Command starts with the protected launcher", "OPENAI_UNTRUSTED_STDIN")
     initial_command = ctx.screen(terminal)
     check("Command End scrolls", "command", ctx.picker.END)
     assert ctx.screen(terminal) != initial_command, "Command modal did not scroll through its complete command"
     check("Command Down stays at bottom", "command", down * 4)
-    check("Command Home returns to first rows", "printf", ctx.picker.HOME)
+    check("Command Home returns to first rows", "OPENAI_UNTRUSTED_STDIN", ctx.picker.HOME)
     check("Command Up stays in its modal", "command", up * 4)
     check("Command Escape returns to More", "› View command", b"\x1b")
     check("More Home selects History", "history", ctx.picker.HOME)
@@ -366,7 +366,8 @@ def navigation_case(ctx):
     check("More Down reaches the waveform", "←→ seek", down)
     check("waveform Down selects Play", "play", down)
     check("Result Down selects Save", "save", ss3_down)
-    check("Result Down stays on Save", "save", down)
+    check("Result Down selects the clock", "Enter set time", down)
+    check("Result Left returns to Save", "save", b"\x1b[D")
     check("Result Left returns to Play", "play", b"\x1b[D")
     check("Result Up focuses waveform", "←→ seek", ss3_up)
     check("Waveform Up enters Settings More", "more", ss3_up)
@@ -381,10 +382,10 @@ def navigation_case(ctx):
     check("Tab Settings to Result again", "play", b"\t")
     check("reverse Tab Result to Settings again", "more", backtab)
     visible = ctx.screen(terminal)
-    assert "Command preview" not in visible and "printf" not in visible, "Main form retained advanced command content"
+    assert "Command preview" not in visible and "OPENAI_UNTRUSTED_STDIN" not in visible, "Main form retained advanced command content"
     ctx.mark(terminal, result["case"] + "-complete", result)
     result["navigation_check_count"] = len(result["navigation_checks"])
-    assert result["navigation_check_count"] == 196, "Navigation inventory changed"
+    assert result["navigation_check_count"] == 197, "Navigation inventory changed"
     zero_requests()
     terminal.send(b"\x03")
     terminal.finish(130)
@@ -535,10 +536,10 @@ def print_command_case(ctx):
     text = "A" * 60
     body = {"input": text, "instructions": ctx.fixture.DEFAULT_INSTRUCTIONS,
             "model": "gpt-4o-mini-tts", "response_format": "wav", "speed": 1, "voice": "coral"}
-    body_text = json.dumps(body, sort_keys=True, separators=(",", ":"))
-    command_rows = ("printf %s", "  '" + body_text + "' |", "  OPENAI_UNTRUSTED_STDIN=true openai",
-                    "    audio speak", "      --output speech.wav")
-    expected = " \\\n".join(command_rows).encode()
+    command_rows = ("OPENAI_UNTRUSTED_STDIN=true \\", "  openai audio speak \\",
+                    "    --output speech.wav <<'JSON'",
+                    json.dumps(body, sort_keys=True, indent=2), "JSON")
+    expected = "\n".join(command_rows).encode()
     result["commands"] = []
     result["case_deadline_seconds"] = 60
     result["coverage_limit"] = "Private PTY lifecycle and emitted bytes; no native clipboard or appearance claim."
@@ -643,19 +644,26 @@ def workflow_case(ctx):
             assert time.monotonic() < deadline, "The fake player did not receive generated audio"
             ctx.drain(terminal, .05)
 
-    def marker_column(visible):
+    def screen_rows(visible):
         # Asciinema joins soft-wrapped lines. This fixture uses single-cell text.
         width = terminal.initial_size[0]
         for event in terminal.events:
             if event[1] == "r":
                 width = int(event[2].split("x")[0])
-        rows = [line[start:start + width] for line in visible.splitlines()
+        return [line[start:start + width] for line in visible.splitlines()
                 for start in range(0, len(line), width)]
-        markers = [(index, match.start()) for index, row in enumerate(rows)
-                   if (match := re.search("[┃╂┠┨]", row))]
+
+    def marker_column(visible):
+        rows = screen_rows(visible)
+        markers = [(index, row.index("┃")) for index, row in enumerate(rows) if "┃" in row]
         assert len(markers) >= 3 and len(markers) % 2 == 1, "Missing waveform rows"
         first, column = markers[0]
         assert markers == [(first + index, column) for index in range(len(markers))], "Broken playback marker"
+        rails = [row for row in rows if "╺" in row and ("╴" in row or "╸" in row)]
+        assert len(rails) == 1, "Expected one measured rail"
+        rail = rails[0]
+        join = next(glyph for glyph in ("╾", "╸", "╺") if glyph in rail)
+        assert rail.index(join) == column, "The seek rail must track the waveform playhead"
         return column
 
     def timer(milliseconds):
@@ -731,8 +739,8 @@ def workflow_case(ctx):
     visible = ctx.wait(terminal, "00:00.000 / 00:02.000")
     assert "More actions…" in visible and "Instructions" in visible, "Playback lost its editing form"
     marker_column(visible)
-    axis = next(row for row in visible.splitlines() if "┠" in row and "╴" in row)
-    span = axis.index("╴") - axis.index("┠")
+    rail = next(row for row in screen_rows(visible) if "╺" in row and "╴" in row)
+    span = rail.index("╴") - rail.index("╺")
     assert span > 0 and span % 2 == 0, "The waveform endpoint is off the seek grid"
     bars = span // 2
     ctx.mark(terminal, "generated-result", result)
@@ -986,7 +994,8 @@ def wide_case(ctx):
     visible = ctx.wait(terminal, "› Generate speech")
     assert draft in visible, "Returning from Actions lost the draft"
     terminal.send(ctx.picker.DOWN)
-    ctx.wait(terminal, "Ctrl+G Generate")
+    visible = ctx.wait(terminal, "› Script")
+    assert draft in visible, "Returning to Script lost the draft"
     terminal.send(ctx.picker.UP)
     ctx.wait(terminal, "› Generate speech")
     terminal.send(b"\x03")

@@ -150,7 +150,7 @@ func newAudioWorkbench(ctx context.Context, command *cli.Command, next cli.Actio
 		return t
 	}
 	m := &audioWorkbench{ctx: ctx, command: command, next: next, store: store, workers: &audioWorkers{}, settings: audioDefaultSettings(), color: os.Getenv("NO_COLOR") == "" && os.Getenv("FORCE_COLOR") != "0", dark: true,
-		input: newEditor("Type what you want to hear…"), instructions: newEditor("Add speaking instructions (optional)"), path: newEditor("Filename for the original audio file"), saveFolder: newEditor("Folder for saved audio"), speedInput: newEditor("1.00")}
+		input: newEditor("Type what you want to hear…"), instructions: newEditor("Add optional speaking instructions"), path: newEditor("Filename for the original audio file"), saveFolder: newEditor("Folder for saved audio"), speedInput: newEditor("1.00")}
 	m.instructions.SetValue(audioInstructionsExample)
 	m.seekInput = newEditor("Seconds or M:SS")
 	m.setting = 1 // Voice is the first visible setting.
@@ -208,7 +208,10 @@ func (m *audioWorkbench) resizeEditors() {
 			}
 			height = min(4, max(1, editor.LineInfo().Height), max(1, m.audioHeight()-reserved))
 		}
-		if m.height >= 24 && (editor == &m.input || editor == &m.instructions) {
+		if editor == &m.input && m.studioLayout() {
+			// Reserve a fixed writing area beside the monitor, including for an empty draft.
+			height = min(8, max(3, (m.audioHeight()-12)/4))
+		} else if m.height >= 24 && (editor == &m.input || editor == &m.instructions) {
 			height = min(3, editor.LineCount())
 			if m.width >= 60 {
 				limit := 3
@@ -383,7 +386,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			}
 			m.result = &msg.result
 			m.playerNotice = ""
-			m.resultAction = 0
+			m.resultAction = audioPlayAction
 			m.waveformFocused = false
 			m.focusSection(4)
 			if msg.kind == "open" {
@@ -517,7 +520,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 		}
 		if key == "ctrl+s" {
 			m.focusSection(4)
-			m.waveformFocused, m.resultAction = false, 1
+			m.waveformFocused, m.resultAction = false, audioSaveAction
 			return m, m.openSave()
 		}
 		if key == "ctrl+g" {
@@ -558,10 +561,13 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 				if m.result == nil {
 					return m, m.noGenerationNotice()
 				}
+				if key == "enter" && !m.waveformFocused && m.resultAction == audioTimeAction {
+					return m, m.openSeek("")
+				}
 				if time.Since(m.lastFinished) < 750*time.Millisecond {
 					return m, nil
 				}
-				if key == "enter" && !m.waveformFocused && m.resultAction == 1 {
+				if key == "enter" && !m.waveformFocused && m.resultAction == audioSaveAction {
 					return m, m.openSave()
 				}
 				return m, m.togglePlayback()

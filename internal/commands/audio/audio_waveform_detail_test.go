@@ -20,8 +20,9 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 	line, column := m.input.Line(), m.input.Column()
 	for _, tc := range []struct{ width, height, minWave int }{
 		{60, 24, 5}, {80, 24, 5}, {101, 27, 9}, {101, 28, 9}, {101, 29, 9},
-		{101, 30, 9}, {101, 31, 9}, {101, 40, 13}, {137, 41, 13}, {101, 29, 9}, {60, 24, 5},
+		{101, 30, 9}, {101, 31, 9}, {101, 40, 13}, {137, 41, 13}, {110, 28, 7}, {133, 31, 9}, {133, 33, 9}, {101, 29, 9}, {60, 24, 5},
 	} {
+		idleRow := -1
 		for _, recorded := range []bool{false, true} {
 			m.result = nil
 			if recorded {
@@ -31,24 +32,34 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 			view := ansi.Strip(m.View().Content)
 			if recorded {
 				positions := audioWaveformDetailPositions(t, view)
+				require.Equal(t, idleRow, positions[1], "generation must not move the rail at %dx%d", tc.width, tc.height)
 				rows := strings.Split(view, "\n")
-				height := positions[1] - positions[0]
-				if strings.Trim(rows[positions[1]-1], " │") == "" {
-					height--
+				waveEnd := positions[1]
+				for waveEnd > positions[0] && strings.Trim(rows[waveEnd-1], " │") == "" {
+					waveEnd--
 				}
+				require.LessOrEqual(t, positions[1]-waveEnd, 2)
+				height := waveEnd - positions[0]
 				require.GreaterOrEqual(t, height, tc.minWave, "lost measured detail at %dx%d", tc.width, tc.height)
 				require.LessOrEqual(t, height, audioMaxWaveformHeight)
 				require.Equal(t, 1, height%2)
 				toolbarOffset := positions[2] - positions[1]
 				require.Positive(t, toolbarOffset)
-				require.LessOrEqual(t, toolbarOffset, 4, "only the clock, ruler, and one gap may precede controls")
+				require.LessOrEqual(t, toolbarOffset, 3, "only the clock and one gap may precede controls")
 				require.Contains(t, view, "Coral  WAV")
 				require.Contains(t, view, "00:00.000 / 00:01.000")
 			} else {
 				require.Contains(t, view, "Play audio")
-				require.NotContains(t, view, "┷")
+				require.NotContains(t, view, "╺")
 				require.Contains(t, view, "No recording yet")
 				require.NotContains(t, view, "┃")
+				for row, line := range strings.Split(view, "\n") {
+					if strings.Contains(line, "╶─") {
+						require.Equal(t, -1, idleRow)
+						idleRow = row
+					}
+				}
+				require.Positive(t, idleRow, "the idle rail must be visible")
 			}
 			require.Contains(t, view, m.input.Value())
 			require.Contains(t, view, "Ctrl+C Exit")
@@ -85,6 +96,14 @@ func TestAudioWaveformStartsBelowItsLastMetadataRow(t *testing.T) {
 		rows := strings.Split(view, "\n")
 		wave := audioWaveformDetailPositions(t, view)[0]
 		require.GreaterOrEqual(t, wave, 2)
+		if m.studioLayout() {
+			require.Contains(t, rows[wave-2], "Coral")
+			offset := 1 + m.studioScriptWidth() + studioGutter
+			require.Empty(t, strings.TrimSpace(ansi.Cut(rows[wave-1], offset, offset+m.studioMonitorWidth())))
+			require.Contains(t, view, "Draft changed. Showing previous audio.")
+			require.Contains(t, view, "Recording: Synthetic text")
+			continue
+		}
 		require.Contains(t, rows[wave-2], "Recording: Synthetic text")
 		require.Empty(t, strings.Trim(rows[wave-1], " │"))
 		if m.framed() {
@@ -161,10 +180,10 @@ func audioWaveformDetailPositions(t *testing.T, view string) [4]int {
 	positions := [4]int{-1, -1, -1, -1}
 	rows := strings.Split(view, "\n")
 	for index, row := range rows {
-		if positions[0] < 0 && strings.ContainsAny(row, "┃┠┨╂") {
+		if positions[0] < 0 && strings.Contains(row, "┃") {
 			positions[0] = index
 		}
-		if strings.Contains(row, "┷") {
+		if audioIsMeasuredRail(row) {
 			require.Equal(t, -1, positions[1], "duplicate timeline rail")
 			positions[1] = index
 		}

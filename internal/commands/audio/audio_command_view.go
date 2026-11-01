@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf16"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/openai/openai-cli/internal/audiohistory"
@@ -13,7 +15,7 @@ import (
 )
 
 const audioFocusCommand = 3
-const audioShellContinuation = "\\\n"
+const audioCommandContinuation = " \\"
 
 type audioCommandRole uint8
 
@@ -41,18 +43,53 @@ func (m *audioWorkbench) commandParts(s audiohistory.Settings, requestArgs []str
 	if s.Instructions != "" {
 		body["instructions"] = s.Instructions
 	}
-	data, _ := json.Marshal(body)
+	data, _ := json.MarshalIndent(body, "", "  ")
 	parts := []audioCommandPart{
-		{"printf %s ", commandSyntax}, {audioShellContinuation, commandSyntax},
-		{"  " + audioShellQuote(string(data)), commandValue}, {" | ", commandSyntax}, {audioShellContinuation, commandSyntax},
-		{"  OPENAI_UNTRUSTED_STDIN=true ", commandSyntax}, {m.invocation, commandValue},
+		{"OPENAI_UNTRUSTED_STDIN=true \\", commandSyntax}, {"\n", commandSyntax},
+		{"  " + m.invocation, commandValue},
 	}
 	for _, arg := range requestArgs {
-		parts = append(parts, audioCommandPart{" ", commandValue}, audioCommandPart{audioShellContinuation, commandSyntax}, audioCommandPart{"    " + audioShellQuote(arg), commandValue})
+		parts = append(parts, audioCommandPart{" " + audioShellQuote(arg), commandValue})
 	}
-	return append(parts, audioCommandPart{" ", commandValue}, audioCommandPart{audioShellContinuation, commandSyntax},
-		audioCommandPart{"    audio speak ", commandOperation}, audioCommandPart{audioShellContinuation, commandSyntax},
-		audioCommandPart{"      --output ", commandSyntax}, audioCommandPart{"speech." + s.Format, commandValue})
+	parts = append(parts, audioCommandPart{" audio speak", commandOperation}, audioCommandPart{audioCommandContinuation, commandSyntax},
+		audioCommandPart{"\n", commandSyntax}, audioCommandPart{"    --output ", commandSyntax},
+		audioCommandPart{"speech." + s.Format, commandValue}, audioCommandPart{" <<'JSON'", commandSyntax})
+
+	// JSON strings escape embedded newlines. Only the final delimiter can end the quoted here-document.
+	for line := range strings.SplitSeq(string(data), "\n") {
+		parts = append(parts, audioCommandPart{"\n", commandSyntax})
+		key, value, ok := strings.Cut(line, ": ")
+		if !ok {
+			parts = append(parts, audioCommandPart{line, commandSyntax})
+			continue
+		}
+		parts = append(parts, audioCommandPart{key + ": ", commandSyntax}, audioCommandPart{audioTerminalJSON(value), commandValue})
+	}
+	return append(parts, audioCommandPart{"\n", commandSyntax}, audioCommandPart{"JSON", commandSyntax})
+}
+
+// encoding/json already escapes C0 controls. Also escape C1 and invisible format controls for terminal output.
+func audioTerminalJSON(value string) string {
+	var safe strings.Builder
+	start := 0
+	for i, r := range value {
+		if !unicode.IsControl(r) && !unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		safe.WriteString(value[start:i])
+		if r <= 0xffff {
+			fmt.Fprintf(&safe, `\u%04x`, r)
+		} else {
+			high, low := utf16.EncodeRune(r)
+			fmt.Fprintf(&safe, `\u%04x\u%04x`, high, low)
+		}
+		start = i + len(string(r))
+	}
+	if start == 0 {
+		return value
+	}
+	safe.WriteString(value[start:])
+	return safe.String()
 }
 
 // The clipboard, printed command, and preview all use the same admission checks.
@@ -107,9 +144,15 @@ func (m *audioWorkbench) commandDisplayRows() []string {
 	}
 	rows, used := []string{""}, 0
 	for _, part := range m.commandParts(s, args) {
-		continuation := part.role == commandSyntax && part.text == audioShellContinuation
-		if continuation {
-			part.text = "\\"
+		if part.role == commandSyntax && part.text == "\n" {
+			rows = append(rows, "")
+			used = 0
+			continue
+		}
+		// Wrap the operation and its continuation together so a backslash never floats on a separate row.
+		if part.role == commandOperation && used > 0 && used+len(part.text)+len(audioCommandContinuation) > width {
+			rows = append(rows, "")
+			used = 0
 		}
 		text := readable.Text(part.text)
 		var chunk strings.Builder
@@ -136,10 +179,6 @@ func (m *audioWorkbench) commandDisplayRows() []string {
 			text = text[consumed:]
 		}
 		flush()
-		if continuation {
-			rows = append(rows, "")
-			used = 0
-		}
 	}
 	*c = audioCommandCache{settings: s, request: key, invocation: m.invocation, width: width, color: m.color, dark: m.dark, valid: true, rows: rows}
 	return rows
@@ -177,7 +216,7 @@ func (m *audioWorkbench) commandView() tea.View {
 	height := m.commandViewportHeight()
 	start := audioScrollOffset(m.commandOffset, len(rows), height, "")
 	m.commandOffset = start
-	heading := "  " + m.strong().Render(audioCommandTitle)
+	heading := "  " + m.strong().Render(audioCommandTitle) + "  " + m.muted().Render("Bash/zsh")
 	if len(rows) > height {
 		heading += m.muted().Render(fmt.Sprintf("  %d–%d/%d", start+1, min(len(rows), start+height), len(rows)))
 	}
