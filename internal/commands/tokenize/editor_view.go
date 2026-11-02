@@ -246,7 +246,9 @@ func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width, index int, l
 		labelStyle = s.selected
 		secondary = s.muted.Inherit(s.selected)
 		markerStyle := s.focused
-		if index == 1 {
+		if index == 0 {
+			active = s.selected.Bold(true)
+		} else {
 			active = s.accent.Inherit(s.selected).Bold(m.color)
 			markerStyle = active
 		}
@@ -308,7 +310,7 @@ func (m *tokenizerEditor) highlightRow(s tokenizerEditorStyles, label, detail st
 }
 
 func (m *tokenizerEditor) footer() string {
-	footer := "Ctrl+C exit · ↑↓ move · Enter select"
+	footer := "Ctrl+C exit · ↑↓ move · Enter open"
 	switch m.focus {
 	case tokenizerFocusText:
 		footer = "Ctrl+C exit · Tab options"
@@ -333,7 +335,7 @@ func (m *tokenizerEditor) footer() string {
 		}
 	case tokenizerFocusOptions:
 		if m.option == 0 {
-			footer = "Ctrl+C exit · ←→ view · Enter select"
+			footer = "Ctrl+C exit · ←→ view"
 			if ansi.StringWidth(footer+" · ↑↓ move") <= m.viewWidth() {
 				footer += " · ↑↓ move"
 			}
@@ -390,9 +392,9 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 			lines = append(lines, "  "+s.muted.Render(related))
 		}
 	}
-	footer := []string{s.shortcuts("↑↓ move · Enter select · Esc cancel · Ctrl+C exit")}
+	footer := []string{s.shortcuts("↑↓ move · Enter apply · Esc cancel · Ctrl+C exit")}
 	if ansi.StringWidth(footer[0]) > m.viewWidth() {
-		footer = []string{s.shortcuts("↑↓ move · Enter select"), s.shortcuts("Esc cancel · Ctrl+C exit")}
+		footer = []string{s.shortcuts("↑↓ move · Enter apply"), s.shortcuts("Esc cancel · Ctrl+C exit")}
 	}
 	return m.panel(s, title, s.muted.Render(status+"  ✓ applied"), lines, footer)
 }

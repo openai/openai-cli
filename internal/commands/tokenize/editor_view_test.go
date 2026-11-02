@@ -342,7 +342,7 @@ func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
 			}{
 				{tokenizerFocusText, 0, "\x1b[7m \x1b[27m", "↓ options"},
 				{tokenizerFocusOptions, 0, "› View", "←→ view"},
-				{tokenizerFocusOptions, 1, "› Model", "Enter select"},
+				{tokenizerFocusOptions, 1, "› Model", "Enter open"},
 				{tokenizerFocusResults, 0, "› Token ", "Enter details"},
 			} {
 				m := tokenizerEditorExample()
@@ -362,6 +362,9 @@ func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
 				}
 				require.Contains(t, view, state.marker)
 				require.Contains(t, view, state.hint)
+				if state.focus == tokenizerFocusOptions && state.option == 0 {
+					require.NotContains(t, m.footer(), "Enter")
+				}
 				require.Contains(t, view, "Ctrl+C exit")
 			}
 		}
@@ -399,11 +402,7 @@ func TestTokenizerEditorFocusFillStaysInActiveRegion(t *testing.T) {
 									paint.WriteString(fill[1])
 								}
 								require.True(t, strings.HasPrefix(paint.String(), "› "+[]string{"View", "Model"}[state.option]))
-								filledWidth := m.viewWidth()
-								if state.option == 0 {
-									filledWidth -= len([]string{"[Text]", "[Token IDs]", "[Bytes]"}[tab])
-								}
-								require.Equal(t, filledWidth, ansi.StringWidth(paint.String()), "only the active View label keeps the terminal background")
+								require.Equal(t, m.viewWidth(), ansi.StringWidth(paint.String()), "focus fills the complete settings row")
 							} else {
 								require.Empty(t, fills)
 							}
@@ -480,7 +479,6 @@ func TestTokenizerEditorSettingsFocusStopsAtStudioDivider(t *testing.T) {
 				require.Contains(t, ansi.Strip(row), "› "+[]string{"View", "Model"}[option])
 				require.Contains(t, ansi.Strip(row), value)
 				require.NotContains(t, rows[1-option], "48;2;")
-				require.Contains(t, rows[0], "\x1b[1m[Token IDs]\x1b[m")
 				require.Contains(t, m.View().Content, row+" "+ansi.CursorHorizontalAbsolute(m.sourceWidth()+4),
 					"the complete setting precedes the unpainted divider gutter")
 				if !m.color {
@@ -509,11 +507,25 @@ func TestTokenizerEditorSettingsFocusStopsAtStudioDivider(t *testing.T) {
 
 func TestTokenizerEditorActiveViewKeepsLabelColumns(t *testing.T) {
 	m := testTokenizerEditor()
-	for _, color := range []bool{false, true} {
-		m.color = color
+	bold := regexp.MustCompile(`\x1b\[1(?:;[0-9;]+)?m([^\x1b]*)`)
+	for _, theme := range []struct {
+		color, dark bool
+		selected    string
+	}{
+		{true, true, "\x1b[1;38;2;242;244;250;48;2;52;61;88m"},
+		{true, false, "\x1b[1;38;2;32;40;59;48;2;233;239;254m"},
+		{false, false, "\x1b[1m"},
+	} {
+		m.color, m.dark = theme.color, theme.dark
 		styles := m.styles()
-		for _, focus := range []int{tokenizerFocusText, tokenizerFocusOptions} {
-			m.focus = focus
+		for _, state := range []struct{ focus, option int }{
+			{tokenizerFocusText, 0}, {tokenizerFocusOptions, 0}, {tokenizerFocusOptions, 1}, {tokenizerFocusResults, 0},
+		} {
+			m.focus, m.option = state.focus, state.option
+			active := "\x1b[1m"
+			if state.focus == tokenizerFocusOptions && state.option == 0 {
+				active = theme.selected
+			}
 			for tab, label := range []string{"Text", "Token IDs", "Bytes"} {
 				m.tab = tab
 				for _, width := range []int{36, 60} {
@@ -523,7 +535,10 @@ func TestTokenizerEditorActiveViewKeepsLabelColumns(t *testing.T) {
 					require.Equal(t, 1, strings.Count(plain, "]"))
 					aligned := strings.NewReplacer("[", " ", "]", " ").Replace(plain)
 					require.Equal(t, "View   Text  Token IDs  Bytes   ←→", aligned)
-					require.Contains(t, row, "\x1b[1m["+label+"]\x1b[m")
+					require.Contains(t, row, active+"["+label+"]\x1b[m")
+					for _, run := range bold.FindAllStringSubmatch(row, -1) {
+						require.Contains(t, []string{"› ", "[" + label + "]"}, run[1])
+					}
 				}
 			}
 		}
@@ -1063,10 +1078,10 @@ func TestTokenizerEditorStudioAndCompactLayout(t *testing.T) {
 			require.Contains(t, rows[header+1], "────")
 			require.Contains(t, rows[footer], "Ctrl+C exit")
 			if studio {
-				junction := m.sourceWidth() + 3
-				require.Equal(t, '┬', []rune(rows[header+1])[junction])
+				require.Equal(t, "│ "+strings.Repeat("─", m.viewWidth())+" │", rows[header+1])
+				dividerColumn := m.sourceWidth() + 3
 				for _, row := range rows[header+2 : footer-1] {
-					require.Equal(t, '│', []rune(row)[junction])
+					require.Equal(t, '╎', []rune(row)[dividerColumn])
 				}
 				require.Equal(t, "│"+strings.Repeat(" ", m.viewWidth()+2)+"│", rows[footer-1])
 				require.Contains(t, rows[footer], "Shift+←→ cursor")

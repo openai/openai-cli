@@ -100,15 +100,7 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 			ruleWidth, ruleEnd = max(0, width-statusWidth-1), " "+status
 		}
 	}
-	divider := func(w int) string { return terminal.SectionDivider(w, m.color, s.fill, s.edge, s.secondary) }
-	var ruleLine string
-	if m.studioLayout() && m.modal == tokenizerModalNone {
-		junction := m.sourceWidth() + 1
-		ruleLine = divider(junction) + s.border.Render("┬") + divider(ruleWidth-junction-1)
-	} else {
-		ruleLine = divider(ruleWidth)
-	}
-	lines := []string{header, ruleLine + ruleEnd}
+	lines := []string{header, terminal.SectionDivider(ruleWidth, m.color, s.fill, s.edge, s.secondary) + ruleEnd}
 	limit := max(0, m.bodyHeight()+1-len(footer))
 	lines = append(lines, body[:min(limit, len(body))]...)
 	lines = append(lines, footer...)

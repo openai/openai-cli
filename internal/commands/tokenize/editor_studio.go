@@ -36,7 +36,7 @@ func (m *tokenizerEditor) studioView(s tokenizerEditorStyles) string {
 		}
 		// Pin the seam when a terminal draws a visible emoji narrower than its measured cells.
 		rows[i] = line + strings.Repeat(" ", max(0, leftWidth-tokenizerSourceWidth(line))+1) +
-			ansi.CursorHorizontalAbsolute(leftWidth+4) + s.border.Render("│") + " "
+			ansi.CursorHorizontalAbsolute(leftWidth+4) + s.border.Render("╎") + " "
 		if i < len(right) {
 			rows[i] += right[i]
 		}
