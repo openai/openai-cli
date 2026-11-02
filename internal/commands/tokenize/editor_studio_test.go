@@ -78,9 +78,34 @@ func TestTokenizerStudioIdentifiesSelectedTrailingSpaces(t *testing.T) {
 	details, _ := m.modalRows(0, 20)
 	require.Contains(t, details, `Text      "         "  9 spaces`)
 	require.Contains(t, details, "Token ID  983")
-	require.Contains(t, details, "Bytes     9 · offset 29")
+	require.Contains(t, details, "Starts    After 29 bytes")
+	require.Contains(t, details, "Size      9 bytes")
 	require.Contains(t, details, "Hex       20 20 20 20 20 20 20 20 20")
 	require.Equal(t, source, m.text)
+}
+
+func TestTokenizerStudioSummarizesSelectedSpaceByView(t *testing.T) {
+	m := testTokenizerEditor()
+	m.width, m.height, m.color = 120, 30, true
+	m.insert("We caught the last train today. ")
+	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{
+		{2167, 2}, {18341, 9}, {290, 13}, {2174, 18},
+		{8513, 24}, {4044, 30}, {13, 31}, {220, 32},
+	}})
+	for tab := range 3 {
+		m.tab = tab
+		view := ansi.Strip(m.View().Content)
+		require.Contains(t, view, "Token 8 of 8  1 space")
+		require.Equal(t, tab == 1, strings.Contains(view, "This encoding uses ID 220"))
+		require.Equal(t, tab == 2, strings.Contains(view, "Starts after 31 bytes"))
+		require.Equal(t, tab == 2, strings.Contains(view, "Uses 1 byte"))
+	}
+
+	m.modal = tokenizerModalDetails
+	details := ansi.Strip(m.View().Content)
+	for _, field := range []string{`Text      " "  1 space`, "Token ID  220", "Starts    After 31 bytes", "Size      1 byte", "Hex       20"} {
+		require.Contains(t, details, field)
+	}
 }
 
 func TestTokenizerSpaceLabelDescribesOnlyBlankSeparators(t *testing.T) {
@@ -148,20 +173,19 @@ func TestTokenizerStudioOmitsByteCountsUntilTokensAreReady(t *testing.T) {
 		t.Helper()
 		rows := m.studioResults(m.styles(), m.resultWidth())
 		require.Len(t, rows, 1)
-		require.Equal(t, count, strings.TrimSpace(rows[0]))
+		require.Equal(t, count, strings.TrimSpace(ansi.Strip(rows[0])))
 	}
 	check("0 tokens")
 	m.insert("é")
 	check("Tokens")
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{{ID: 1, EndByte: 2}}})
 	rows := m.studioResults(m.styles(), m.resultWidth())
-	require.Len(t, rows, 5)
-	require.Equal(t, "1 token", strings.TrimSpace(rows[0]))
-	require.Contains(t, rows[1], "é")
-	require.Contains(t, rows[2], "Bytes per token")
+	require.Len(t, rows, 4)
+	require.Equal(t, "1 token", strings.TrimSpace(ansi.Strip(rows[0])))
+	require.Contains(t, ansi.Strip(rows[1]), "é")
+	require.Contains(t, ansi.Strip(rows[2]), "Bytes per token")
 	require.Contains(t, rows[2], m.styles().tokenSelected.Render("2"))
-	require.Contains(t, rows[3], "Token 1 of 1  “é”")
-	require.Contains(t, rows[4], "ID 1  Byte offset 0  Length 2 B")
+	require.Contains(t, ansi.Strip(rows[3]), "Token 1 of 1  “é”")
 
 	m.insert("x")
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision})
@@ -182,11 +206,10 @@ func TestTokenizerStudioKeepsLongByteMetadataWithinPane(t *testing.T) {
 	for _, row := range rows {
 		require.LessOrEqual(t, tokenizerSourceWidth(row), width)
 	}
-	text := strings.Join(rows, "\n")
-	require.Contains(t, text, "2 tokens · 1048576 bytes")
-	require.Contains(t, text, "ID 4294967295")
-	require.Contains(t, text, "Byte offset 100000")
-	require.Contains(t, text, "Length 948576 B")
+	text := ansi.Strip(strings.Join(rows, "\n"))
+	require.Contains(t, text, "2 tokens  1048576 bytes")
+	require.Contains(t, text, "Starts after 100000 bytes")
+	require.Contains(t, text, "Uses 948576 bytes")
 	require.Equal(t, []string{"Bytes", "per", "token", "100000", "948576"}, strings.Fields(ansi.Strip(rows[2])))
 	require.Contains(t, rows[2], m.styles().tokenSelected.Render("948576"))
 
@@ -210,11 +233,11 @@ func TestTokenizerStudioShowsLastByteCountAtMinimumSize(t *testing.T) {
 		view := ansi.Strip(frame)
 		require.Contains(t, view, "Bytes per token")
 		require.Contains(t, frame, m.styles().tokenSelected.Render("1"))
-		require.Contains(t, view, "Token 1002 of 1002 · partial UTF-8")
+		require.Contains(t, view, "Token 1002 of 1002 (partial UTF-8)")
 		require.Contains(t, view, "0xa9")
-		require.Contains(t, view, "ID 4294967295")
-		require.Contains(t, view, "Byte offset 1001")
-		require.Contains(t, view, "Length 1 B")
+		require.Equal(t, tab == 1, strings.Contains(view, "This encoding uses ID 4294967295"))
+		require.Equal(t, tab == 2, strings.Contains(view, "Starts after 1001 bytes"))
+		require.Equal(t, tab == 2, strings.Contains(view, "Uses 1 byte"))
 		require.Contains(t, view, "Ctrl+C exit")
 		for _, row := range strings.Split(view, "\n") {
 			require.Less(t, ansi.StringWidth(row), m.width)

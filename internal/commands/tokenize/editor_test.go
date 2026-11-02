@@ -308,7 +308,11 @@ func TestTokenizerEditorSwitchingViewsDoesNotRecompute(t *testing.T) {
 	m := testTokenizerEditor()
 	m.insert("ab")
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{{ID: 1, EndByte: 1}, {ID: 2, EndByte: 2}}})
-	m.focus, m.selected = tokenizerFocusOptions, 1
+	m.focus, m.option = tokenizerFocusText, 1 // The last visit to settings ended on Model.
+	require.Nil(t, tokenizerEditorKey(m, tea.KeyTab))
+	require.Equal(t, tokenizerFocusOptions, m.focus)
+	require.Zero(t, m.option, "Tab from Text returns to View")
+	m.selected = 1
 	revision := m.revision
 	for i := 0; i < 9; i++ {
 		require.Nil(t, tokenizerEditorKey(m, tea.KeyRight))

@@ -258,12 +258,6 @@ func (p *tokenizerEditorInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			p.restoreWrap = msg.Value == ansi.ModeReset
 			p.start()
-		} else if msg.Mode == ansi.ModeAltScreenSaveCursor && p.started &&
-			(msg.Value == ansi.ModeSet || msg.Value == ansi.ModePermanentlySet) {
-			// Some terminals keep the shell's cursor row on the alternate screen.
-			// Home only after confirmation so a disabled switch cannot erase shell history.
-			p.painter.Control(ansi.CursorHomePosition)
-			p.width = 0 // Redraw even if the first frame was already visible.
 		}
 	case tokenizerEditorWrapTimeout:
 		p.start()
@@ -287,7 +281,7 @@ func (p *tokenizerEditorInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	// Show the first editor frame once its encoding can count the first keystroke.
 	// Input and cancellation stay active while the initial vocabulary loads.
 	_, ready := p.prepared[p.model.encoding]
-	if p.started && (p.content != "" || ready || len(p.model.text) > tokenizerInlineBytes) {
+	if p.started && !p.model.quit && (p.content != "" || ready || len(p.model.text) > tokenizerInlineBytes) {
 		p.draw()
 	}
 	return p, cmd
@@ -328,8 +322,7 @@ func (p *tokenizerEditorInline) start() {
 		return
 	}
 	p.started = true
-	// Keep shell prompt marks and scrollback on the original terminal screen.
-	p.painter.Control(ansi.SetModeAltScreenSaveCursor + ansi.RequestModeAltScreenSaveCursor + ansi.SetModeAutoWrap)
+	p.painter.Control(ansi.SetModeAutoWrap)
 }
 
 func (p *tokenizerEditorInline) draw() {
@@ -339,6 +332,10 @@ func (p *tokenizerEditorInline) draw() {
 		p.fail()
 		return
 	}
+	p.drawFrame(width, height)
+}
+
+func (p *tokenizerEditorInline) drawFrame(width, height int) {
 	p.model.width, p.model.height = width, height
 	var converted strings.Builder
 	_, _ = io.WriteString(&colorprofile.Writer{Forward: &converted, Profile: max(p.profile, colorprofile.ASCII)}, p.model.View().Content)
@@ -356,8 +353,8 @@ func (p *tokenizerEditorInline) close() string {
 	}
 	// Cancel a partial escape sequence before restoring visible terminal modes.
 	cleanup := "\x18\x1b\\" + ansi.ResetStyle
-	if p.started {
-		cleanup += "\r" + ansi.EraseScreenBelow + ansi.ResetModeAltScreenSaveCursor
+	if p.width > 0 {
+		cleanup += "\r" + ansi.EraseScreenBelow
 	}
 	cleanup += ansi.ResetModeBracketedPaste + ansi.SetModeTextCursorEnable
 	if p.restoreWrap {

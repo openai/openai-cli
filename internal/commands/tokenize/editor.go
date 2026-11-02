@@ -166,6 +166,9 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				direction = -1
 			}
 			m.focus = (m.focus + direction + 3) % 3
+			if previousFocus == tokenizerFocusText && m.focus == tokenizerFocusOptions {
+				m.option = 0 // Tab from Text always lands on the visible View selector.
+			}
 			return m, nil
 		case "esc":
 			m.focus, m.option, m.note = tokenizerFocusText, 0, ""

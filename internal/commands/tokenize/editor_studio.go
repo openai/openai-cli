@@ -66,7 +66,7 @@ func (m *tokenizerEditor) studioResults(s tokenizerEditorStyles, width int) []st
 	position := fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
 	valid := utf8.ValidString(piece)
 	if !valid {
-		position += " · partial UTF-8"
+		position += " (partial UTF-8)"
 	}
 	heading := s.heading(position, m.focus == tokenizerFocusResults)
 	available := width - ansi.StringWidth(heading) - 2
@@ -86,14 +86,19 @@ func (m *tokenizerEditor) studioResults(s tokenizerEditorStyles, width int) []st
 		}
 	}
 	rows = append(rows, heading+"  "+value)
-	id := s.muted.Render("ID ") + strconv.FormatUint(uint64(m.tokens[m.selected].ID), 10)
-	offset := s.muted.Render("Byte offset ") + strconv.Itoa(start)
-	length := s.muted.Render("Length ") + strconv.Itoa(end-start) + " B"
-	meta := "  " + id + "  " + offset
-	if ansi.StringWidth(meta+"  "+length) > width {
-		return append(rows, meta, "  "+length)
+	switch m.tab {
+	case 1:
+		id := strconv.FormatUint(uint64(m.tokens[m.selected].ID), 10)
+		rows = append(rows, "  "+s.muted.Render("This encoding uses ID ")+id)
+	case 2:
+		location := "  " + s.muted.Render("Starts after ") + tokenizerByteSize(start)
+		size := s.muted.Render("Uses ") + tokenizerByteSize(end-start)
+		if ansi.StringWidth(location+"  "+size) > width {
+			return append(rows, location, "  "+size)
+		}
+		rows = append(rows, location+"  "+size)
 	}
-	return append(rows, meta+"  "+length)
+	return rows
 }
 
 // Show exact lengths for a contiguous part of the visible token strip.

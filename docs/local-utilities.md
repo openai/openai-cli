@@ -14,24 +14,15 @@ The recovery guide below includes a failure-safe JSON export recipe.
 openai tokenizer
 ```
 
-A capable terminal opens the live editor with the same theme as image generation.
+The live editor opens below the shell command. Earlier output stays in the terminal's scrollback.
 Type or paste text to see its exact token count.
 The editor supports up to 1 MiB of UTF-8 input.
 
-- Press Tab to focus the visible View control.
-- Press Left or Right on View to switch Text, Token IDs, and Bytes immediately.
-- Press Enter on View to open the view chooser.
-- Press Down to select the Model row.
-- Press Enter on Model to open its chooser.
-- Press Up or Down in a chooser to highlight a choice.
-- Press Enter to apply that choice.
-- Press Escape to cancel a chooser and return to text.
-- Press Tab from options to focus the tokens.
-- Press Left or Right in the tokens to select a token.
-- Press Up from the tokens to return to Model settings.
-- Press Enter on a token to inspect its ID, byte offsets, and every byte.
-- Press F1 for all controls and script examples.
-- Press Ctrl+C to exit.
+Press Tab while editing to focus View. Use Left or Right to switch between Text, Token IDs, and Bytes.
+Tab again moves to the tokens. Use Left or Right to select one. Press Enter to inspect it.
+Outside the text field, `v` opens View, `m` opens Model, `d` opens Details, and `?` opens Help.
+In a chooser, use Up or Down to highlight a choice. Enter applies it, and Escape cancels it.
+Ctrl+C closes the panel and returns to the shell.
 
 Enter inserts a newline while editing text.
 Down opens options from any column on the last line.
@@ -43,7 +34,7 @@ Ctrl+Left and Ctrl+Right move between words separated by whitespace.
 When lines exceed the visible text area, the Text label shows the current line and total lines.
 The editor keeps the complete draft even when only part is visible.
 The highlighted token follows the text cursor without recalculating tokens.
-Its stronger fill and underline make space-only tokens visible too.
+The highlight follows the selected token. A label identifies tokens that contain only spaces.
 The cursor highlights the character at its position without inserting a gap between letters.
 At a token boundary, the highlight selects the token on the right. At the end, it selects the last token.
 Tokens can split a Unicode character; cursor movement still follows complete graphemes.
@@ -58,8 +49,10 @@ An arrow beside the token position identifies keyboard focus in the results.
 The Bytes view adds the input byte count; full hexadecimal details remain available through Enter.
 Details quotes text to make leading spaces and escaped characters visible.
 Its subtitle shows the selected model family and its Default or Legacy label.
-Text and token ID share one group. Byte count, starting offset, and hexadecimal bytes share another.
-Byte offsets start at zero. Exact encoding names remain available in script output and `tokenizer encodings`.
+In Details, Token ID identifies the token in the selected encoding.
+Starts tells you how many input bytes precede the token. Size tells you how many UTF-8 bytes the token contains.
+For example, the default encoding assigns ID 220 to a single space. That space uses one byte, hexadecimal `20`.
+Exact encoding names remain available in script output and `tokenizer encodings`.
 Scrolling controls appear when the complete details exceed the visible panel.
 Text and Token IDs are the primary reading views. Bytes supports exact-byte inspection and debugging.
 Ctrl+U removes text before the cursor, matching the image prompt editor.

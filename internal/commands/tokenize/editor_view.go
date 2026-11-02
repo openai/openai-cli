@@ -127,7 +127,7 @@ func (m *tokenizerEditor) View() tea.View {
 		fragment, _, _ := m.fragment(m.selected)
 		spaceLabel = tokenizerSpaceLabel(fragment)
 		if !utf8.ValidString(fragment) {
-			position += " · partial UTF-8"
+			position += " (partial UTF-8)"
 		}
 	}
 	results := trimEmptyRows(m.resultLines(s, width))
@@ -162,7 +162,7 @@ func (s tokenizerEditorStyles) heading(label string, active bool) string {
 func (m *tokenizerEditor) textRows(s tokenizerEditorStyles, width int) []string {
 	textLabel := "Text"
 	if len(m.lineStarts) > m.sourceRows() {
-		textLabel += fmt.Sprintf(" · %d/%d", m.lineIndex(m.cursor)+1, len(m.lineStarts))
+		textLabel += fmt.Sprintf(" %d/%d", m.lineIndex(m.cursor)+1, len(m.lineStarts))
 	}
 	textHeading := s.heading(textLabel, m.focus == tokenizerFocusText)
 	prefix := textHeading + strings.Repeat(" ", max(1, 7-ansi.StringWidth(textLabel)))
@@ -223,16 +223,19 @@ func (m *tokenizerEditor) countStatus(s tokenizerEditorStyles) string {
 		counts = append(counts, fmt.Sprintf("%d %s", len(m.tokens), label))
 	}
 	if m.tab == 2 {
-		byteLabel := "bytes"
-		if len(m.text) == 1 {
-			byteLabel = "byte"
-		}
-		counts = append(counts, fmt.Sprintf("%d %s", len(m.text), byteLabel))
+		counts = append(counts, tokenizerByteSize(len(m.text)))
 	}
 	if len(counts) == 0 {
 		return ""
 	}
-	return style.Render(strings.Join(counts, " · "))
+	return style.Render(strings.Join(counts, "  "))
+}
+
+func tokenizerByteSize(n int) string {
+	if n == 1 {
+		return "1 byte"
+	}
+	return strconv.Itoa(n) + " bytes"
 }
 
 func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width, index int, label string, values []string, current int, hint string) string {
@@ -247,6 +250,8 @@ func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width, index int, l
 		active = active.Bold(m.color && index == 1)
 	} else if index == 1 {
 		active = lipgloss.NewStyle()
+	} else if m.color {
+		active, secondary = s.tokenSelected, lipgloss.NewStyle()
 	}
 	for i, value := range values {
 		style := secondary
@@ -256,7 +261,9 @@ func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width, index int, l
 		values[i] = style.Render(value)
 	}
 	row := marker + labelStyle.Render(fmt.Sprintf("%-7s", label)) + strings.Join(values, secondary.Render("  "))
-	if ansi.StringWidth(row+"  "+hint) <= width {
+	if index == 0 && m.focus == tokenizerFocusText && ansi.StringWidth(row+"  Tab then "+hint) <= width {
+		row += "  " + s.accent.Render("Tab") + s.muted.Render(" then ") + s.accent.Render(hint)
+	} else if ansi.StringWidth(row+"  "+hint) <= width {
 		hintStyle := secondary
 		if index == 0 {
 			hintStyle = s.accent.Inherit(secondary)
@@ -331,7 +338,7 @@ func (m *tokenizerEditor) footer() string {
 func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 	title := "Choose view"
 	labels := []string{"Text", "Token IDs", "Bytes"}
-	descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hex bytes"}
+	descriptions := []string{"Text in each token", "Number per token", "UTF-8 bytes in hex"}
 	labelWidth := 14
 	current := m.tab
 	var encodings []string
@@ -360,13 +367,13 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 		if m.modal == tokenizerModalEncoding {
 			switch encodings[i] {
 			case "o200k_base":
-				related = "GPT-4o / 4.1 / 4.5 · o4-mini"
+				related = "GPT-4o / 4.1 / 4.5, o4-mini"
 			case "cl100k_base":
 				related = "Original GPT-4 / Turbo"
 			}
 		}
-		if related != "" && 2+labelWidth+ansi.StringWidth(description+" · "+related) <= m.viewWidth() {
-			description, related = description+" · "+related, ""
+		if related != "" && 2+labelWidth+ansi.StringWidth(description+"  "+related) <= m.viewWidth() {
+			description, related = description+"  "+related, ""
 		}
 		lines = append(lines, m.highlightRow(s, label, description, labelWidth, i == m.choice))
 		if related != "" {
@@ -377,7 +384,7 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 	if ansi.StringWidth(footer[0]) > m.viewWidth() {
 		footer = []string{s.shortcuts("↑↓ move · Enter select"), s.shortcuts("Esc cancel · Ctrl+C exit")}
 	}
-	return m.panel(s, title, s.muted.Render(status+" · ✓ applied"), lines, footer)
+	return m.panel(s, title, s.muted.Render(status+"  ✓ applied"), lines, footer)
 }
 
 // Escape presentation controls without normalizing source bytes or ZWJ clusters.
@@ -708,52 +715,18 @@ var tokenizerEditorHelp = []struct {
 	shortcuts bool
 	items     [][2]string
 }{
-	{"Studio shortcuts", true, [][2]string{
-		{"Tab from Text", "Enable v, m, d, and ?."},
-		{"v", "Choose a view."},
-		{"m", "Choose a model family."},
-		{"d", "Inspect the selected token."},
-		{"?", "Open Help."},
-		{"Tab / Shift+Tab", "Switch between Text, options, and Tokens."},
-		{"Esc", "Return to Text from the main screen."},
-		{"Ctrl+C", "Exit the tokenizer."},
+	{"Controls", true, [][2]string{
+		{"Tab", "Cycle through Text, View, and Tokens."},
+		{"← →", "Change the view or select a token."},
+		{"v / m / d", "Outside Text, open View, Model, or Details."},
+		{"Enter", "Add a line in Text or open the selection."},
 	}},
-	{"Edit text", true, [][2]string{
-		{"Enter", "Insert a newline."},
-		{"← → ↑ ↓", "Move the cursor. The selected token follows."},
-		{"↓ on last line", "Move to options."},
-		{"Home / End", "Go to the start or end of the line."},
-		{"Ctrl+Home/End", "Go to the start or end of the text."},
-		{"Ctrl+Left/Right", "Skip words separated by whitespace."},
-		{"PgUp / PgDn", "Move by one visible text page."},
-		{"Backspace/Delete", "Remove a complete grapheme."},
-		{"Ctrl+U", "Remove text before the cursor."},
-	}},
-	{"View and model", true, [][2]string{
-		{"↑ ↓", "Move between options."},
-		{"← → on View", "Switch Text, Token IDs, or Bytes without retokenizing."},
-		{"Enter", "Open the chooser. Use ↑ ↓ to move."},
-		{"Enter / Esc", "Apply or cancel the highlighted choice."},
-	}},
-	{"Inspect tokens", true, [][2]string{
-		{"← →", "Select a token."},
-		{"Home / End", "Select the first or last token."},
-		{"PgUp / PgDn", "Move by one token page."},
-		{"Enter", "Open the fragment, token ID, and exact bytes."},
-		{"↑", "Return to the Model row."},
-	}},
-	{"How counting works", false, [][2]string{
-		{"Local input", "Type or paste up to 1 MiB of UTF-8 text. The editor never saves it."},
-		{"Model", "Each family selects a vocabulary and splitting rules."},
-		{"Counting", "Editing replaces pending work. Long unbroken text can take time."},
-		{"Special tokens", "Their spellings count as ordinary text."},
-		{"Partial UTF-8", "The Text view shows hex when a token contains only part of a character."},
-		{"Scope", "Counts exclude request structure and multimodal input."},
-	}},
-	{"Command examples", false, [][2]string{
-		{"Count", "openai tokenizer count\n--text \"Hello, world!\""},
-		{"Inspect", "openai tokenizer inspect\n--file prompt.txt"},
-		{"JSON", "Add --format json to count or inspect."},
+	{"Views and details", false, [][2]string{
+		{"Text", "The text in each token."},
+		{"Token IDs", "The number this encoding assigns to each token."},
+		{"Bytes", "Each token's UTF-8 bytes in hex."},
+		{"Starts", "Bytes before this token (0 for the first)."},
+		{"Size", "Number of UTF-8 bytes in the token."},
 	}},
 }
 
@@ -767,7 +740,11 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 		pageRange = s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", start+1, start+len(rows), total))
 	}
 	if m.modal == tokenizerModalHelp {
-		return m.panel(s, "Tokenizer · controls", pageRange, rows, []string{s.shortcuts("↑↓ scroll · Esc back · Ctrl+C exit")})
+		footer := "Esc back · Ctrl+C exit"
+		if total > count {
+			footer = "↑↓ scroll · " + footer
+		}
+		return m.panel(s, "Tokenizer help", pageRange, rows, []string{s.shortcuts(footer)})
 	}
 	title := "Token details"
 	if len(m.tokens) > 0 {
@@ -775,12 +752,12 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 	}
 	model, badge := tokenizerModelLabel(m.encoding)
 	if badge != "" {
-		model += " · " + badge
+		model += "  " + badge
 	}
 	for i, row := range rows {
 		if len(row) >= tokenizerDetailLabelWidth {
 			switch strings.TrimSpace(row[:tokenizerDetailLabelWidth]) {
-			case "Text", "Token ID", "Bytes", "Hex", "":
+			case "Text", "Token ID", "Starts", "Size", "Hex", "":
 				rows[i] = s.muted.Render(row[:tokenizerDetailLabelWidth]) + row[tokenizerDetailLabelWidth:]
 			}
 		}
@@ -818,26 +795,20 @@ func (m *tokenizerEditor) modalRows(start, count int) ([]string, int) {
 	}
 	if m.modal == tokenizerModalHelp {
 		s := m.styles()
-		const keyWidth = 18
-		indent := strings.Repeat(" ", keyWidth)
-		executable := readable.Text(m.invocation) + " tokenizer"
-		for i, section := range tokenizerEditorHelp {
-			if i > 0 {
-				emit("")
-			}
+		for _, section := range tokenizerEditorHelp {
 			emit(s.accent.Bold(m.color).Render(section.title))
 			label := s.muted
 			if section.shortcuts {
 				label = s.accent
 			}
+			keyWidth := 0
 			for _, item := range section.items {
-				key, description := item[0], strings.ReplaceAll(item[1], "openai tokenizer", executable)
-				// Keep flag names together when a narrow example spans multiple rows.
-				if singleLine := strings.ReplaceAll(description, "\n", " "); ansi.StringWidth(singleLine) <= width-keyWidth {
-					description = singleLine
-				}
-				prefix := label.Render(key) + strings.Repeat(" ", max(1, keyWidth-ansi.StringWidth(key)))
-				for _, line := range strings.Split(ansi.Wrap(description, max(1, width-keyWidth), ""), "\n") {
+				keyWidth = max(keyWidth, ansi.StringWidth(item[0])+2)
+			}
+			indent := strings.Repeat(" ", keyWidth)
+			for _, item := range section.items {
+				prefix := label.Render(item[0]) + strings.Repeat(" ", keyWidth-ansi.StringWidth(item[0]))
+				for _, line := range strings.Split(ansi.Wrap(item[1], width-keyWidth, ""), "\n") {
 					emit(prefix + line)
 					prefix = indent
 				}
@@ -899,7 +870,8 @@ func (m *tokenizerEditor) modalRows(start, count int) ([]string, int) {
 		field("Text", "partial UTF-8; see Hex.")
 	}
 	field("Token ID", strconv.FormatUint(uint64(m.tokens[m.selected].ID), 10))
-	field("Bytes", fmt.Sprintf("%d · offset %d", end-begin, begin))
+	field("Starts", "After "+tokenizerByteSize(begin))
+	field("Size", tokenizerByteSize(end-begin))
 	perRow := max(1, (valueWidth+1)/3)
 	hexRows := (len(fragment) + perRow - 1) / perRow
 	// Unseen hexadecimal rows need only arithmetic, not formatted strings.

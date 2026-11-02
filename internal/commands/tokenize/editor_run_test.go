@@ -126,8 +126,7 @@ func TestTokenizerEditorFormatRecoveryDistinguishesScriptCommands(t *testing.T) 
 	}
 }
 
-func TestTokenizerEditorRestoresTerminalScreenAndModes(t *testing.T) {
-	const enter, leave = "\x1b[?1049h", "\x1b[?1049l"
+func TestTokenizerEditorRestoresInlineModes(t *testing.T) {
 	wrapEnabled := tea.ModeReportMsg{Mode: ansi.ModeAutoWrap, Value: ansi.ModeSet}
 	wrapDisabled := tea.ModeReportMsg{Mode: ansi.ModeAutoWrap, Value: ansi.ModeReset}
 	wrapUnavailable := tea.ModeReportMsg{Mode: ansi.ModeAutoWrap, Value: ansi.ModePermanentlyReset}
@@ -135,7 +134,7 @@ func TestTokenizerEditorRestoresTerminalScreenAndModes(t *testing.T) {
 	for _, test := range []struct {
 		name                       string
 		messages                   []tea.Msg
-		entered, restoreWrap, fail bool
+		started, restoreWrap, fail bool
 	}{
 		{"closed before first reply", nil, false, false, false},
 		{"wrapping unavailable", []tea.Msg{wrapUnavailable}, false, false, true},
@@ -146,57 +145,48 @@ func TestTokenizerEditorRestoresTerminalScreenAndModes(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			paint := &tokenizerRecordedFrames{}
 			inline := &tokenizerEditorInline{model: newTokenizerEditor(), painter: paint}
-			_ = inline.Init()
+			inline.Init()
 			for _, msg := range test.messages {
 				inline.Update(msg)
 			}
 			require.Equal(t, test.fail, inline.err != nil)
 			before, cleanup := paint.String(), inline.close()
 			require.Empty(t, inline.close(), "restore modes only once")
-			for _, control := range []string{ansi.ResetModeBracketedPaste, ansi.SetModeTextCursorEnable} {
-				require.Equal(t, 1, strings.Count(cleanup, control))
-			}
+			require.Equal(t, test.started, strings.Contains(before, ansi.SetModeAutoWrap))
 			require.Equal(t, test.restoreWrap, strings.Contains(cleanup, ansi.ResetModeAutoWrap))
-			require.NotContains(t, before, leave)
-			require.NotContains(t, cleanup, enter)
-			if !test.entered {
-				require.NotContains(t, before, enter)
-				require.NotContains(t, cleanup, leave)
-				require.NotContains(t, cleanup, ansi.EraseScreenBelow)
-				return
-			}
-			require.Equal(t, 1, strings.Count(before, enter))
-			require.Equal(t, 1, strings.Count(cleanup, leave))
-			original, _, _ := strings.Cut(before, enter)
-			require.NotContains(t, original, ansi.EraseScreenBelow, "do not clear the shell before entry")
-			_, restored, _ := strings.Cut(cleanup, leave)
-			require.NotContains(t, restored, ansi.EraseScreenBelow, "keep the original screen intact")
+			require.Contains(t, cleanup, ansi.ResetModeBracketedPaste)
+			require.Contains(t, cleanup, ansi.SetModeTextCursorEnable)
+			require.NotContains(t, before+cleanup, ansi.EraseScreenBelow, "no frame owns any terminal rows yet")
 		})
 	}
 }
 
-func TestTokenizerEditorHomesOnlyAfterConfirmedScreenSwitch(t *testing.T) {
-	for _, active := range []ansi.ModeSetting{ansi.ModeSet, ansi.ModePermanentlySet} {
-		paint := &tokenizerRecordedFrames{}
-		inline := &tokenizerEditorInline{model: newTokenizerEditor(), painter: paint, width: 80}
-		report := func(value ansi.ModeSetting) {
-			inline.Update(tea.ModeReportMsg{Mode: ansi.ModeAltScreenSaveCursor, Value: value})
-		}
-		inline.Init()
-		report(active) // An unsolicited reply cannot establish ownership of the screen.
-		require.NotContains(t, paint.String(), ansi.CursorHomePosition)
-		require.NotContains(t, paint.String(), ansi.RequestModeAltScreenSaveCursor)
-		inline.Update(tokenizerEditorWrapTimeout{})
-		require.Contains(t, paint.String(), ansi.SetModeAltScreenSaveCursor+ansi.RequestModeAltScreenSaveCursor)
-		require.NotContains(t, paint.String(), ansi.CursorHomePosition, "no reply leaves the shell cursor alone")
-		for _, inactive := range []ansi.ModeSetting{ansi.ModeNotRecognized, ansi.ModeReset, ansi.ModePermanentlyReset} {
-			report(inactive)
-			require.Equal(t, 80, inline.width)
-			require.NotContains(t, paint.String(), ansi.CursorHomePosition)
-		}
-		report(active)
-		require.Equal(t, 1, strings.Count(paint.String(), ansi.CursorHomePosition))
-		require.Zero(t, inline.width, "invalidate the previous frame size after moving the cursor")
+func TestTokenizerEditorRepaintsFromInlineAnchorOnResize(t *testing.T) {
+	paint := &tokenizerRecordedFrames{}
+	inline := &tokenizerEditorInline{model: newTokenizerEditor(), painter: paint}
+	inline.Init()
+	inline.Update(tokenizerEditorWrapTimeout{})
+	inline.Update(tea.ModeReportMsg{Mode: ansi.ModeAltScreenSaveCursor, Value: ansi.ModeSet})
+
+	for _, size := range [][2]int{{120, 30}, {60, 18}, {100, 25}} {
+		width, height := size[0], size[1]
+		start := paint.Len()
+		inline.drawFrame(width, height)
+		frame := paint.String()[start:]
+		require.Contains(t, frame, "Tokenizer")
+		require.True(t, strings.HasPrefix(frame, "\r"+ansi.EraseScreenBelow))
+		rows := strings.Count(inline.content, "\n") + 1
+		require.Less(t, rows, height, "leave room above the panel")
+		require.True(t, strings.HasSuffix(frame, "\r"+ansi.CursorUp(rows-1)), "return to the panel's first row")
+	}
+
+	cleanup := inline.close()
+	require.Contains(t, cleanup, "\r"+ansi.EraseScreenBelow)
+	require.Contains(t, cleanup, ansi.SetModeTextCursorEnable)
+	all := paint.String() + cleanup
+	for _, control := range []string{ansi.SetModeAltScreenSaveCursor, ansi.RequestModeAltScreenSaveCursor,
+		ansi.ResetModeAltScreenSaveCursor, ansi.CursorHomePosition, "\x1b[2J", "\x1b[3J"} {
+		require.NotContains(t, all, control, "keep shell content above the panel")
 	}
 }
 

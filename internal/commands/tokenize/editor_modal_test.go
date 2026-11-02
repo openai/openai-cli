@@ -30,10 +30,11 @@ func TestTokenizerEditorViewsShareSelectionAndExactDetails(t *testing.T) {
 		details := m.View().Content
 		require.Contains(t, details, "Token 3 of 4")
 		require.Contains(t, details, "Token ID  1917")
-		require.Contains(t, details, "GPT-4 / GPT-3.5 · Legacy")
+		require.Contains(t, details, "GPT-4 / GPT-3.5  Legacy")
 		require.NotContains(t, details, "Encoding")
 		require.NotContains(t, details, "cl100k_base")
-		require.Contains(t, details, "Bytes     6 · offset 6")
+		require.Contains(t, details, "Starts    After 6 bytes")
+		require.Contains(t, details, "Size      6 bytes")
 		require.Contains(t, details, `Text      " world"`)
 		require.Contains(t, details, "Hex       20 77 6f 72 6c 64")
 		tokenizerEditorKey(m, tea.KeyEscape)
@@ -135,7 +136,7 @@ func TestTokenizerEditorModalEndCanScrollBack(t *testing.T) {
 				rows := strings.Split(frame, "\n")
 				begin := 2 // Header and divider in the compact layout.
 				if modal == tokenizerModalDetails {
-					require.Contains(t, strings.Join(rows[:begin], "\n"), "GPT-5.x & o1/o3 · Default")
+					require.Contains(t, strings.Join(rows[:begin], "\n"), "GPT-5.x & o1/o3  Default")
 				}
 				body = rows[begin : begin+last-first+1]
 				expected, _ := m.modalRows(first-1, last-first+1)
@@ -170,9 +171,9 @@ func TestTokenizerEditorModalEndCanScrollBack(t *testing.T) {
 }
 
 func TestTokenizerEditorHelpGroupsAndWorkspaceShortcuts(t *testing.T) {
-	for _, width := range []int{40, 133} {
+	for _, size := range [][2]int{{40, 12}, {120, 30}} {
 		m := testTokenizerEditor()
-		m.width, m.height, m.invocation = width, 39, "local-openai"
+		m.width, m.height = size[0], size[1]
 		tokenizerEditorKey(m, tea.KeyTab)
 		m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
 		require.Equal(t, tokenizerModalHelp, m.modal)
@@ -182,15 +183,31 @@ func TestTokenizerEditorHelpGroupsAndWorkspaceShortcuts(t *testing.T) {
 			require.LessOrEqual(t, ansi.StringWidth(row), m.viewWidth())
 		}
 		help := strings.Join(strings.Fields(ansi.Strip(strings.Join(rows, "\n"))), " ")
-		for _, heading := range []string{"Studio shortcuts", "Edit text", "View and model", "Inspect tokens", "How counting works", "Command examples"} {
-			require.Contains(t, help, heading)
-		}
-		for _, shortcut := range []string{"Tab from Text Enable v, m, d, and ?.", "v Choose a view.", "m Choose a model family.", "d Inspect the selected token.", "? Open Help."} {
-			require.Contains(t, help, shortcut)
+		for _, text := range []string{
+			"Controls", "Views and details",
+			"Tab Cycle through Text, View, and Tokens.",
+			"← → Change the view or select a token.",
+			"v / m / d Outside Text, open View, Model, or Details.",
+			"Enter Add a line in Text or open the selection.",
+			"Token IDs The number this encoding assigns to each token.",
+			"Bytes Each token's UTF-8 bytes in hex.",
+			"Starts Bytes before this token (0 for the first).",
+			"Size Number of UTF-8 bytes in the token.",
+		} {
+			require.Contains(t, help, text)
 		}
 		require.NotRegexp(t, `\bF[1-4]\b`, help)
-		require.Contains(t, help, `local-openai tokenizer count --text "Hello, world!"`)
-		require.Contains(t, help, "local-openai tokenizer inspect --file prompt.txt")
+		view := ansi.Strip(m.View().Content)
+		require.Contains(t, view, "Tokenizer help")
+		require.Contains(t, view, "Esc back  Ctrl+C exit")
+		require.NotContains(t, help+view, "·")
+		require.NotContains(t, help+view, "•")
+		if m.width == 120 {
+			require.Len(t, rows, 11)
+			require.NotContains(t, view, "scroll", "wide Help fits without scrolling")
+		} else {
+			require.Contains(t, view, "↑↓ scroll")
+		}
 	}
 }
 
@@ -204,17 +221,18 @@ func TestTokenizerEditorDetailsCompactLayout(t *testing.T) {
 				view := m.View().Content
 				plain := ansi.Strip(view)
 				lines := strings.Split(plain, "\n")
-				expectedHeight := 7 // Header, divider, four fields, and footer.
+				expectedHeight := 8 // Header, divider, five fields, and footer.
 				if m.framed() {
 					expectedHeight += 2
 				}
 				require.Len(t, lines, expectedHeight)
 				header := strings.Join(lines[:3], "\n")
 				require.Contains(t, header, "Token 3 of 4")
-				require.Contains(t, header, "GPT-4 / GPT-3.5 · Legacy")
+				require.Contains(t, header, "GPT-4 / GPT-3.5  Legacy")
 				require.Contains(t, plain, `Text      " world"`)
 				require.Contains(t, plain, "Token ID  1917")
-				require.Contains(t, plain, "Bytes     6 · offset 6")
+				require.Contains(t, plain, "Starts    After 6 bytes")
+				require.Contains(t, plain, "Size      6 bytes")
 				require.Contains(t, plain, "Hex       20 77 6f 72 6c 64")
 				require.Contains(t, plain, "Esc back")
 				require.Contains(t, plain, "Ctrl+C exit")
@@ -236,10 +254,10 @@ func TestTokenizerEditorDetailsCompactLayout(t *testing.T) {
 
 func TestTokenizerEditorDetailsModelContextAcrossViews(t *testing.T) {
 	for _, model := range []struct{ encoding, label string }{
-		{"o200k_base", "GPT-5.x & o1/o3 · Default"},
-		{"cl100k_base", "GPT-4 / GPT-3.5 · Legacy"},
-		{"r50k_base", "GPT-3 · Legacy"},
-		{"p50k_base", "Codex · Legacy"},
+		{"o200k_base", "GPT-5.x & o1/o3  Default"},
+		{"cl100k_base", "GPT-4 / GPT-3.5  Legacy"},
+		{"r50k_base", "GPT-3  Legacy"},
+		{"p50k_base", "Codex  Legacy"},
 	} {
 		for tab := 0; tab < 3; tab++ {
 			for _, width := range []int{40, 80} {
@@ -254,7 +272,7 @@ func TestTokenizerEditorDetailsModelContextAcrossViews(t *testing.T) {
 					view := m.View().Content
 					plain := ansi.Strip(view)
 					require.Contains(t, plain, "Token 1 of 1")
-					for _, field := range []string{model.label, `Text      "\n"`, "Token ID  198", "Bytes     1 · offset 0", "Hex       0a", "Esc back", "Ctrl+C exit"} {
+					for _, field := range []string{model.label, `Text      "\n"`, "Token ID  198", "Starts    After 0 bytes", "Size      1 byte", "Hex       0a", "Esc back", "Ctrl+C exit"} {
 						require.Contains(t, plain, field)
 					}
 					require.NotContains(t, view, "Encoding")
@@ -300,7 +318,8 @@ func TestTokenizerEditorDetailsQuoteExactText(t *testing.T) {
 }
 
 func TestTokenizerEditorDetailsOverflowBoundaryAndResize(t *testing.T) {
-	for _, size := range []int{36, 37} {
+	// At 40 columns, 27 bytes fill three hex rows. The next byte starts a fourth.
+	for _, size := range []int{27, 28} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			m := testTokenizerEditor()
 			m.width, m.height, m.focus, m.modal = 40, 12, tokenizerFocusResults, tokenizerModalDetails
@@ -309,7 +328,7 @@ func TestTokenizerEditorDetailsOverflowBoundaryAndResize(t *testing.T) {
 			revision := m.revision
 			view := m.View().Content
 			require.Len(t, strings.Split(view, "\n"), 11)
-			if size == 36 {
+			if size == 27 {
 				require.NotContains(t, view, "Rows ")
 				require.NotContains(t, view, "scroll")
 			} else {
@@ -317,6 +336,9 @@ func TestTokenizerEditorDetailsOverflowBoundaryAndResize(t *testing.T) {
 				require.Contains(t, view, "↑↓ scroll  Esc back  Ctrl+C exit")
 			}
 			tokenizerEditorKey(m, tea.KeyEnd)
+			if size == 28 {
+				require.Contains(t, m.View().Content, "Rows 3–9 of 9")
+			}
 			m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 			view = m.View().Content
 			require.NotContains(t, view, "Rows ")
@@ -360,7 +382,7 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 				m.color, m.dark = theme != "NO_COLOR", theme != "light"
 				title, status, current := "Choose view", "3 views", "Token IDs ✓"
 				choices := []string{"Text", "Token IDs", "Bytes"}
-				descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hex bytes"}
+				descriptions := []string{"Text in each token", "Number per token", "UTF-8 bytes in hex"}
 				if modal == tokenizerModalEncoding {
 					title, status, current = "Choose model", "4 models", "GPT-4 / GPT-3.5 ✓"
 					choices = []string{"GPT-5.x & o1/o3", "GPT-4 / GPT-3.5", "GPT-3", "Codex"}
@@ -376,7 +398,7 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 						require.Len(t, strings.Split(plain, "\n"), len(choices)+5, "one row per choice inside the panel")
 					}
 					if modal == tokenizerModalEncoding {
-						require.Contains(t, plain, "GPT-4o / 4.1 / 4.5 · o4-mini")
+						require.Contains(t, plain, "GPT-4o / 4.1 / 4.5, o4-mini")
 						require.Contains(t, plain, "Original GPT-4 / Turbo")
 					}
 					require.Contains(t, plain, "› "+label)
