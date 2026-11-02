@@ -46,7 +46,7 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 			}
 			location = w.savedLocation(m)
 			if m.focus == "images" {
-				start := w.galleryStarts[w.selected]
+				start := w.galleryStart(w.selected)
 				if len(w.images) > 1 && w.layoutCaptions && start >= w.offset && start < w.offset+w.viewportRows {
 					focusRow = start
 				} else {
@@ -115,10 +115,19 @@ func (w *imagePickerWorkspace) ensureGallery(m *imagePicker, captions bool) {
 		w.longNotice, w.longNoticeTone = notice, m.noteTone
 		w.galleryRevision++
 	}
-	if w.layoutWidth != width || w.layoutCaptions != captions || w.layoutCount != len(w.rows) || w.layoutSelected != w.selected || w.layoutRevision != w.galleryRevision || w.galleryJump || w.galleryDetails {
+	first, end := w.visibleImages(m)
+	if first != w.galleryFirst || end-first != len(w.galleryStarts) || w.layoutWidth != width || w.layoutCaptions != captions || w.layoutCount != len(w.rows) || w.layoutSelected != w.selected || w.layoutRevision != w.galleryRevision || w.galleryJump || w.galleryDetails {
 		w.layoutCaptions = captions
 		w.layoutGallery(m)
 	}
+}
+
+// The wide pane pages horizontally. The stacked gallery scrolls through every image.
+func (w *imagePickerWorkspace) visibleImages(m *imagePicker) (first, end int) {
+	if _, wide := imageStudioLayout(m.width, m.height); wide && len(w.images) > 0 {
+		return w.selected, w.selected + 1
+	}
+	return 0, len(w.images)
 }
 
 func (w *imagePickerWorkspace) inlineStatus(m *imagePicker, busy bool) string {
@@ -153,7 +162,7 @@ func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 	anchor, relative := -1, 0
 	if len(w.galleryStarts) > 0 && w.offset >= w.galleryStarts[0] {
 		anchor = w.galleryImageAt(w.offset)
-		relative = w.offset - w.galleryStarts[anchor]
+		relative = w.offset - w.galleryStart(anchor)
 	}
 	first := w.layoutWidth == 0
 	w.displayRows = nil
@@ -182,12 +191,15 @@ func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 		appendDetail(row, w.detailTones[i])
 	}
 	w.messageRows = len(w.displayRows)
-	w.galleryStarts = make([]int, len(w.images))
-	for i, entry := range w.images {
-		if i == 0 && w.messageRows > 0 {
+	firstImage, end := w.visibleImages(m)
+	w.galleryFirst = firstImage
+	w.galleryStarts = make([]int, 0, end-firstImage)
+	for i := firstImage; i < end; i++ {
+		entry := &w.images[i]
+		if i == firstImage && w.messageRows > 0 {
 			appendRow("")
 		}
-		w.galleryStarts[i] = len(w.displayRows)
+		w.galleryStarts = append(w.galleryStarts, len(w.displayRows))
 		// Captions occupy one row; paths cannot change image geometry or anchors.
 		if w.layoutCaptions {
 			w.displayRows = append(w.displayRows, entry.caption(m, width))
@@ -213,8 +225,11 @@ func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 		w.offset = 0
 	case len(w.images) > 0 && (first || w.galleryJump):
 		w.offset = w.galleryOffset(w.selected, w.images[w.selected].inlineOffset)
-	case anchor >= 0 && anchor < len(w.galleryStarts):
+	case anchor >= firstImage && anchor < end:
 		w.offset = w.galleryOffset(anchor, relative)
+	case anchor >= 0 && len(w.images) > 0:
+		// A wide pane can hide the stacked viewport's former top image.
+		w.offset = w.galleryOffset(w.selected, w.images[w.selected].inlineOffset)
 	}
 	w.galleryJump, w.galleryDetails = false, false
 	w.layoutWidth, w.layoutCount, w.layoutSelected, w.layoutRevision = width, len(w.rows), w.selected, w.galleryRevision
@@ -228,15 +243,19 @@ func (w *imagePickerWorkspace) galleryImageAt(offset int) int {
 		}
 		index = i
 	}
-	return index
+	return w.galleryFirst + index
+}
+
+func (w *imagePickerWorkspace) galleryStart(index int) int {
+	return w.galleryStarts[index-w.galleryFirst]
 }
 
 func (w *imagePickerWorkspace) galleryOffset(index, relative int) int {
 	end := len(w.displayRows)
-	if index+1 < len(w.galleryStarts) {
-		end = w.galleryStarts[index+1]
+	if index+1 < w.galleryFirst+len(w.galleryStarts) {
+		end = w.galleryStart(index + 1)
 	}
-	start := w.galleryStarts[index]
+	start := w.galleryStart(index)
 	return start + max(0, min(relative, max(0, end-start-1)))
 }
 

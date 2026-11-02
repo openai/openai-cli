@@ -48,6 +48,7 @@ type imagePickerWorkspace struct {
 	layoutWidth, layoutCount, layoutSelected  int
 	messageRows                               int
 	galleryStarts                             []int
+	galleryFirst, requestFirstImage           int
 	galleryRevision, layoutRevision           uint64
 	studio                                    *imageStudioChrome
 	longNotice                                string
@@ -199,12 +200,12 @@ func (w *imagePickerWorkspace) scroll(delta int) {
 	if delta != 0 && w.offset != before && len(w.galleryStarts) > 0 && w.offset >= w.galleryStarts[0] {
 		w.selected = w.galleryImageAt(w.offset + w.viewportRows/2)
 		if w.offset == limit {
-			w.selected = len(w.images) - 1
+			w.selected = w.galleryFirst + len(w.galleryStarts) - 1
 		}
 		if w.offset == 0 {
-			w.selected = 0
+			w.selected = w.galleryFirst
 		}
-		w.images[w.selected].inlineOffset = max(0, w.offset-w.galleryStarts[w.selected])
+		w.images[w.selected].inlineOffset = max(0, w.offset-w.galleryStart(w.selected))
 	}
 }
 

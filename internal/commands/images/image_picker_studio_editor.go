@@ -77,9 +77,9 @@ func (m *imagePicker) studioMoveRow(g imageStudioGeometry, delta int) {
 
 func (m *imagePicker) studioHeading(label string, active bool) string {
 	if !active {
-		return "  " + lipgloss.NewStyle().Bold(m.color).Render(label)
+		return "  " + m.workspaceText(label, imageSecondary)
 	}
-	return m.workspaceText("›", imageActive) + " " + m.studioSelection().Bold(m.color).Render(label)
+	return m.workspaceText("› "+label, imageActive)
 }
 
 func (m *imagePicker) studioSelection() lipgloss.Style {
@@ -159,7 +159,10 @@ func (m *imagePicker) studioActions(width int) string {
 			return "  " + m.workspaceText(text, imageSecondary)
 		}
 		if m.focus == "actions" && m.studioAction == index {
-			return m.studioHeading(text, true)
+			return m.workspaceText("›", imageActive) + " " + m.studioSelection().Bold(m.color).Render(text)
+		}
+		if index == 1 {
+			return "  " + m.workspaceText(text, imageSecondary)
 		}
 		return "  " + text
 	}
@@ -170,17 +173,24 @@ func (m *imagePicker) studioActions(width int) string {
 	return ansi.Truncate(line, width, "…")
 }
 
-func (m *imagePicker) studioHints(g imageStudioGeometry) string {
+func (m *imagePicker) studioHints(g imageStudioGeometry, multiple, scrollable bool) string {
 	keys := [][2]string{{"Ctrl+C", "Exit"}}
+	if m.generating {
+		keys[0][1] = "Cancel"
+	}
 	switch {
+	case m.focus == "images":
+		keys = append(keys, [2]string{"Esc", "Prompt"})
+		if multiple {
+			keys = append(keys, [2]string{"←→", "Images"})
+		}
+		if scrollable {
+			keys = append(keys, [2]string{"↑↓", "Scroll"})
+		}
+		keys = append(keys, [2]string{"Enter", "Expand"}, [2]string{"O", "Open file"})
 	case m.generating:
-		keys = [][2]string{{"Ctrl+C", "Cancel"}}
 		if m.hasImages {
-			if m.focus == "images" {
-				keys = append(keys, [2]string{"Esc", "Prompt"}, [2]string{"←→", "Images"}, [2]string{"↑↓", "Scroll"}, [2]string{"O", "Open"})
-			} else {
-				keys = append(keys, [2]string{"Tab", "Images"})
-			}
+			keys = append(keys, [2]string{"Tab", "Images"})
 		}
 	case m.folder.busy == "submit" || m.folder.busy == "select":
 		keys = append(keys, [2]string{"Esc", "Cancel"})
@@ -192,8 +202,6 @@ func (m *imagePicker) studioHints(g imageStudioGeometry) string {
 		keys = append(keys, [2]string{"Alt+Enter", "New line"})
 	case m.focus == "actions":
 		keys = append(keys, [2]string{"←→", "Actions"}, [2]string{"Enter", "Select"}, [2]string{"↓", "Prompt"})
-	case m.focus == "images":
-		keys = append(keys, [2]string{"Esc", "Prompt"}, [2]string{"←→", "Images"}, [2]string{"↑↓", "Scroll"}, [2]string{"Enter", "Expand"}, [2]string{"O", "Open"})
 	case m.focus == "path":
 		keys = append(keys, [2]string{"Tab", "Complete"}, [2]string{"Esc", "Back"})
 	case m.focus == "command":

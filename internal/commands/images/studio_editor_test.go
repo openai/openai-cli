@@ -57,7 +57,7 @@ func TestStudioActionsInspectOrSubmit(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 75, Height: 24})
 	require.Equal(t, "prompt", m.focus)
 	m.Update(tea.WindowSizeMsg{Width: 133, Height: 39})
-	require.Contains(t, m.studioHints(g), "Tab settings")
+	require.Contains(t, m.studioHints(g, false, false), "Tab settings")
 	pickerKey(m, tea.KeyUp)
 	pickerKey(m, tea.KeyEnter)
 	require.NotEmpty(t, m.result.Args)
@@ -124,8 +124,8 @@ func TestStudioPromptWrapAndCaret(t *testing.T) {
 	m.generating, m.focus = true, "prompt"
 	require.Nil(t, m.View().Cursor)
 	require.NotContains(t, m.studioActions(m.width-8), "Ctrl+G")
-	require.NotContains(t, m.studioHints(g), "generate")
-	require.Contains(t, m.studioHints(g), "cancel")
+	require.NotContains(t, m.studioHints(g, false, false), "generate")
+	require.Contains(t, m.studioHints(g, false, false), "cancel")
 }
 
 func TestStudioFolderEditorHidesUnavailableActions(t *testing.T) {

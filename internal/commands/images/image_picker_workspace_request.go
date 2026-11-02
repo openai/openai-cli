@@ -30,6 +30,7 @@ func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
 	p.model.generating, p.busy = true, true
 	p.model.setNote("", imageSecondary)
 	p.workspace.clearRequestDiagnostics()
+	p.workspace.requestFirstImage = len(p.workspace.images)
 	p.workspace.animationFrame = 0
 	p.workspace.fontNotice = false
 	p.workspace.stage, p.workspace.since = clioutput.LoadingWaiting, time.Now()
@@ -122,6 +123,10 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 	case imagePickerWorkspaceImage:
 		w := p.workspace
 		follow := len(w.images) == 0 || (p.model.focus != "images" && !w.expanded && w.offset >= max(0, len(w.displayRows)-w.viewportRows))
+		if _, wide := imageStudioLayout(p.model.width, p.model.height); wide {
+			// Open the first result of this request. Leave later results to the arrows.
+			follow = len(w.images) == w.requestFirstImage && p.model.focus != "images" && !w.expanded
+		}
 		w.appendImage(msg)
 		p.model.hasImages = true
 		if follow {
@@ -207,28 +212,16 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 			p.requestCancel()
 		}
 	case tea.MouseWheelMsg:
-		if p.workspace.expanded {
-			if msg.Button == tea.MouseWheelUp {
-				p.workspace.scrollExpanded(-3)
-			}
-			if msg.Button == tea.MouseWheelDown {
-				p.workspace.scrollExpanded(3)
-			}
-			draw(false)
-			return true, nil
-		}
-		y := msg.Y - p.workspace.origin
-		g, studio := imageStudioLayout(p.workspace.width, p.workspace.height)
-		inside := !studio || msg.X >= g.previewX-2 && msg.X < g.previewX+g.previewWidth
-		if inside && p.workspace.originKnown && y >= p.workspace.bodyStart && y < p.workspace.bodyEnd {
-			if msg.Button == tea.MouseWheelUp {
-				p.workspace.scroll(-3)
-			} else if msg.Button == tea.MouseWheelDown {
-				p.workspace.scroll(3)
-			}
-
+		if p.galleryWheel(msg) {
 			draw(false)
 		}
+		return true, nil
+	case tea.MouseClickMsg:
+		if p.studioClick(msg) {
+			draw(true)
+		}
+		return true, nil
+	case tea.MouseReleaseMsg:
 		return true, nil
 	case tea.KeyPressMsg:
 		if !p.workspace.expanded {
@@ -245,6 +238,10 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 				p.requestCancel()
 			}
 			return false, nil
+		}
+		if (msg.String() == "o" || msg.String() == "O") && (p.workspace.expanded || p.model.focus == "images") {
+			p.openSelectedImage()
+			return true, nil
 		}
 		if p.workspace.expanded {
 			w := p.workspace
@@ -288,11 +285,6 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		if p.model.focus == "images" {
 			switch msg.String() {
-			case "o":
-				if !p.workspace.opening && len(p.workspace.images) > 0 && p.model.note != imagePickerRequestFailureNote {
-					p.model.setNote("", imageSecondary)
-				}
-				return true, p.openSavedImage()
 			case "enter":
 				now := time.Now()
 				if now.Before(p.workspace.viewAfter) {

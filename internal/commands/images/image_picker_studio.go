@@ -4,12 +4,21 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
 // Keep the action strip, editor, and shortcuts stationary as images arrive.
-const imageStudioBodyY = 2
+const (
+	imageStudioBodyY  = 3
+	studioPrevButton  = " ←  "
+	studioNextButton  = "  → "
+	studioPagerWidth  = 8 // Each arrow owns four terminal cells.
+	studioExpandLabel = "Expand"
+	studioOpenLabel   = "Open file"
+	studioActionGap   = "  "
+)
 
 type imageStudioGeometry struct {
 	frameWidth, editorWidth, editorRows, previewX, previewWidth, previewRows int
@@ -29,13 +38,15 @@ func imageStudioLayout(width, height int) (imageStudioGeometry, bool) {
 
 // Cached decorations never contain image payloads. Spinner ticks can reuse them.
 type imageStudioChrome struct {
-	prefixes                                                             []string
-	editorLines                                                          int
-	top, toolbar, suffix, footer, bottom, emptyLabel, command, promptArg string
+	scrollable                                                                    bool
+	prefixes                                                                      []string
+	editorLines                                                                   int
+	top, toolbar, divider, suffix, footer, bottom, emptyLabel, command, promptArg string
 }
 
 func (w *imagePickerWorkspace) studioChrome(m *imagePicker, g imageStudioGeometry) *imageStudioChrome {
-	if w.studio != nil {
+	scrollable := len(w.displayRows) > g.previewRows
+	if w.studio != nil && w.studio.scrollable == scrollable {
 		return w.studio
 	}
 	border := m.workspaceImageBorder("│")
@@ -44,9 +55,15 @@ func (w *imagePickerWorkspace) studioChrome(m *imagePicker, g imageStudioGeometr
 	width := g.frameWidth - 8
 	title := lipgloss.NewStyle().Bold(m.color).Render("Create image")
 	toolbar := "  " + title + "  " + m.studioActions(width-ansi.StringWidth(title)-4)
+	palette := m.palette()
+	rule := cliterminal.SectionDivider(width, m.color && m.profile == colorprofile.TrueColor, palette.fill, palette.border, palette.secondary)
+	if m.profile != colorprofile.TrueColor {
+		rule = m.workspaceImageBorder(rule)
+	}
 	chrome := &imageStudioChrome{
-		top: m.workspaceImageFrame("", g.frameWidth, true), toolbar: toolbar,
-		suffix: suffix, footer: frameRow("  " + m.studioHints(g)),
+		scrollable: scrollable,
+		top:        m.workspaceImageFrame("", g.frameWidth, true), toolbar: toolbar, divider: frameRow(rule),
+		suffix: suffix, footer: frameRow("  " + m.studioHints(g, len(w.images) > 1, scrollable)),
 		bottom:     m.workspaceImageFrame("", g.frameWidth, false),
 		emptyLabel: m.workspaceText("Command preview", imageSecondary),
 	}
@@ -81,8 +98,8 @@ func (w *imagePickerWorkspace) studioChrome(m *imagePicker, g imageStudioGeometr
 }
 
 func (w *imagePickerWorkspace) studioView(m *imagePicker, g imageStudioGeometry, busy bool) []string {
-	c := w.studioChrome(m, g)
 	w.ensureGallery(m, true)
+	c := w.studioChrome(m, g)
 	w.top, w.bodyStart = imageStudioBodyY, imageStudioBodyY
 	w.viewportRows = min(len(w.displayRows), g.previewRows)
 	w.scroll(0)
@@ -98,7 +115,7 @@ func (w *imagePickerWorkspace) studioView(m *imagePicker, g imageStudioGeometry,
 			top = m.workspaceImageFrame(status, g.frameWidth, true)
 		}
 	}
-	lines := []string{top, m.workspaceImageRow(toolbar, g.frameWidth, false)}
+	lines := []string{top, m.workspaceImageRow(toolbar, g.frameWidth, false), c.divider}
 	var right []string
 	if w.viewportRows == 0 && m.focus != "command" {
 		right = []string{c.emptyLabel, c.command}
@@ -107,18 +124,22 @@ func (w *imagePickerWorkspace) studioView(m *imagePicker, g imageStudioGeometry,
 		}
 	}
 	receipt := ""
+	captionRow := -1
 	rightRows := max(w.viewportRows, len(right))
 	if len(w.images) > 0 {
 		receipt = w.savedLocation(m)
+		if !m.galleryModal() {
+			actions := m.workspaceText(studioExpandLabel, imageActive) + studioActionGap + m.workspaceText(studioOpenLabel, imageActive)
+			receipt = studioRowEnds(receipt, actions, g.previewWidth)
+		}
+		captionRow = w.galleryStart(w.selected) - w.offset
 		rightRows++
 	}
 	focusRow := -1
 	if m.focus == "images" && w.viewportRows > 0 {
 		focusRow = 0
-		if len(w.galleryStarts) > 0 {
-			if caption := w.galleryStarts[w.selected] - w.offset; caption >= 0 && caption < w.viewportRows {
-				focusRow = caption
-			}
+		if captionRow >= 0 && captionRow < w.viewportRows {
+			focusRow = captionRow
 		}
 	}
 	for i := range max(c.editorLines, rightRows) {
@@ -135,6 +156,17 @@ func (w *imagePickerWorkspace) studioView(m *imagePicker, g imageStudioGeometry,
 				continue
 			}
 			row = w.displayRows[at]
+			if i == captionRow && len(w.images) > 1 && !m.galleryModal() {
+				prev, next := "    ", "    "
+				if w.selected > 0 {
+					prev = m.workspaceText(studioPrevButton, imageActive)
+				}
+				if w.selected+1 < len(w.images) {
+					next = m.workspaceText(studioNextButton, imageActive)
+				}
+				file := w.images[w.selected].caption(m, g.previewWidth-studioPagerWidth-1)
+				row = studioRowEnds(file, prev+next, g.previewWidth)
+			}
 		case i < len(right):
 			row = right[i]
 		case i == w.viewportRows:
@@ -143,4 +175,11 @@ func (w *imagePickerWorkspace) studioView(m *imagePicker, g imageStudioGeometry,
 		lines = append(lines, prefix+ansi.Truncate(row, g.previewWidth, "…")+c.suffix)
 	}
 	return append(lines, c.footer, c.bottom)
+}
+
+// Reserve the same trailing cells for the visible controls and their mouse targets.
+func studioRowEnds(label, controls string, width int) string {
+	available := width - ansi.StringWidth(controls)
+	label = ansi.Truncate(label, available-1, "…")
+	return label + strings.Repeat(" ", available-ansi.StringWidth(label)) + controls
 }

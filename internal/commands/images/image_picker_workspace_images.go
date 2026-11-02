@@ -69,7 +69,7 @@ func (m *imagePicker) workspaceKeys(keys [][2]string, width int) string {
 
 func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string {
 	if m.width < 40 || m.height < 12 {
-		return []string{"  Enlarge the terminal.", "    " + m.workspaceKeys([][2]string{{"Esc", "Back"}}, max(0, m.width-6)), "    " + m.workspaceKeys([][2]string{{"Ctrl+C", "Quit"}}, max(0, m.width-6))}[:min(3, max(0, m.height))]
+		return []string{"  Enlarge the terminal.", "    " + m.workspaceKeys([][2]string{{"Esc", "Back"}, {"O", "Open"}}, max(0, m.width-6)), "    " + m.workspaceKeys([][2]string{{"Ctrl+C", "Quit"}}, max(0, m.width-6))}[:min(3, max(0, m.height))]
 	}
 	lines := make([]string, max(1, m.height))
 	entry := &w.images[w.selected]
@@ -80,6 +80,8 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 	if len(lines) > 3 {
 		if busy {
 			lines[2] = "    " + ansi.Truncate(w.progress(m), max(0, m.width-6), "…")
+		} else if w.openError && w.openErrorIndex == w.selected {
+			lines[2] = "    " + m.workspaceText("Could not open this image.", imageFailure)
 		} else if m.note != "" {
 			role := m.noteTone
 			note := m.note
@@ -121,7 +123,7 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 	if busy {
 		quit = "Cancel"
 	}
-	lines[len(lines)-1] = "    " + m.workspaceKeys([][2]string{{"Esc", "Back"}, {"Ctrl+C", quit}, {"←→", "Images"}, {"↑↓", "Scroll"}}, max(0, m.width-6))
+	lines[len(lines)-1] = "    " + m.workspaceKeys([][2]string{{"Esc", "Back"}, {"O", "Open"}, {"Ctrl+C", quit}, {"←→", "Images"}, {"↑↓", "Scroll"}}, max(0, m.width-6))
 	return lines
 }
 
@@ -266,7 +268,7 @@ func (p *imagePickerInline) expandImages() {
 		return
 	}
 	w.expanded = true
-	p.prepareExpanded()
+	// The next draw prepares the selected image using the expanded frame geometry.
 }
 
 func (p *imagePickerInline) closeExpanded() {
@@ -294,6 +296,7 @@ func (w *imagePickerWorkspace) selectImage(delta int) {
 		return
 	}
 	w.selected = selected
+	w.requestFirstImage = -1 // Keep an explicit selection made while the next batch is pending.
 	if !w.expanded {
 		w.galleryJump = true
 	}
@@ -568,11 +571,12 @@ func (w *imagePickerWorkspace) inlineResizeIndex(size interactiveImageSize) int 
 	if needs(w.selected) {
 		return w.selected
 	}
-	for i, start := range w.galleryStarts {
+	for local, start := range w.galleryStarts {
 		end := len(w.displayRows)
-		if i+1 < len(w.galleryStarts) {
-			end = w.galleryStarts[i+1]
+		if local+1 < len(w.galleryStarts) {
+			end = w.galleryStarts[local+1]
 		}
+		i := w.galleryFirst + local
 		if start < w.offset+w.viewportRows && end > w.offset && needs(i) {
 			return i
 		}

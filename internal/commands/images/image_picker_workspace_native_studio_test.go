@@ -84,7 +84,7 @@ func TestImageStudioCleanupUsesPreviousKittyColumn(t *testing.T) {
 func TestImageStudioWheelOnlyScrollsGallery(t *testing.T) {
 	m, w := browserForTest(t, 133, 39)
 	for range 6 {
-		rows := make([]string, 12)
+		rows := make([]string, 24)
 		for i := range rows {
 			rows[i] = "sample row"
 		}

@@ -30,11 +30,12 @@ func TestImageStudioKeepsDraftAndControlsBesideOutput(t *testing.T) {
 		require.True(t, strings.HasSuffix(ansi.Truncate(draft[cursor.Y], cursor.X, ""), "mountain"))
 		require.Contains(t, draft[imageStudioBodyY], "Prompt")
 		require.Contains(t, draft[imageStudioBodyY], "Command preview")
-		require.LessOrEqual(t, len(draft), 14, "one prompt line and seven settings should determine the frame height")
+		require.LessOrEqual(t, len(draft), 15, "one divider, one prompt line and seven settings should determine the frame height")
+		require.Contains(t, draft[imageStudioBodyY-1], strings.Repeat("─", 30))
 		require.Contains(t, strings.Join(draft, "\n"), "--prompt 'mountain lake'")
 		w.since = time.Now()
 		running := render(true)
-		require.Contains(t, running[imageStudioBodyY-1], "Generating image")
+		require.Contains(t, running[1], "Generating image")
 		require.Nil(t, w.header.Cursor)
 		w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: "/synthetic/album/lake.png"}, rows: []string{"synthetic pixels"}})
 		m.hasImages = true
@@ -67,13 +68,15 @@ func TestImageStudioBreakpointKeepsGalleryAnchor(t *testing.T) {
 		w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: name + ".png"}, rows: strings.Split(strings.Repeat(name+"\n", 40), "\n")})
 	}
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-	w.scroll(48)
-	anchor := w.offset - w.galleryStarts[1]
+	w.selectImage(1)
+	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
+	w.scroll(6)
+	anchor := w.offset - w.galleryStart(1)
 	require.Greater(t, anchor, 0)
 	for _, size := range [][2]int{{110, 27}, {109, 28}, {110, 28}} {
 		m.width, m.height = size[0], size[1]
 		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-		require.Equal(t, anchor, w.offset-w.galleryStarts[1])
+		require.Equal(t, anchor, w.offset-w.galleryStart(1))
 		require.Equal(t, "B", w.displayRows[w.offset])
 	}
 }
@@ -85,11 +88,28 @@ func TestImageStudioFitsLandscapeFontPreview(t *testing.T) {
 	w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: "/sample/album/lake.png"},
 		protocol: "font", rows: rows, columns: 32})
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-	require.Equal(t, 16, len(w.painted)) // Two header rows, filename, ten image rows, receipt, controls, border.
+	require.Equal(t, 17, len(w.painted)) // Header, divider, filename, ten image rows, receipt, controls, border.
 	require.LessOrEqual(t, g.frameWidth, 100)
 	require.Contains(t, w.painted[w.bodyEnd-1], rows[9])
 	require.Contains(t, w.painted[w.bodyEnd], "Saved in album")
 	require.Contains(t, w.painted[w.bodyEnd+1], "Ctrl+C")
+}
+
+func TestImageStudioCarouselKeepsControlsBesideLongFilenames(t *testing.T) {
+	m, w := browserForTest(t, 120, 30)
+	m.color = false
+	for _, suffix := range []string{"-one.png", "-two.png", "-three.png"} {
+		w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: "/album/" + strings.Repeat("山", 30) + suffix}, rows: []string{"pixels"}})
+	}
+	for i, tail := range []string{"-one.png", "-two.png", "-three.png"} {
+		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+		caption := ansi.Strip(w.painted[w.bodyStart])
+		require.Contains(t, caption, tail)
+		require.Equal(t, i > 0, strings.Contains(caption, "←"))
+		require.Equal(t, i < 2, strings.Contains(caption, "→"))
+		require.Contains(t, ansi.Strip(w.painted[w.bodyEnd]), "Expand  Open file")
+		w.selectImage(1)
+	}
 }
 
 func TestImageStudioShowsRecoveryInstructionsWithoutClipping(t *testing.T) {
