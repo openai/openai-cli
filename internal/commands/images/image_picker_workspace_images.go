@@ -29,6 +29,7 @@ type imagePickerWorkspaceImage struct {
 	nativeRows           int
 	columns              int
 	offset, inlineOffset int
+	preparedRows         int // Last row budget used for an inline encode. Font normalization can round up one row.
 	unavailableSize      *interactiveImageSize
 }
 
@@ -362,6 +363,29 @@ func imagePickerPreviewColumns(bounds image.Rectangle, width, height, cw, ch int
 	return savedImagePreviewColumns(bounds, width-7, height, cw, ch)
 }
 
+// The stacked gallery reserves eight columns for margins and borders. The studio
+// already excludes those cells from its preview width.
+func imagePickerInlinePreviewWidth(size interactiveImageSize) int {
+	if g, ok := imageStudioLayout(size.width, size.height); ok {
+		return g.previewWidth
+	}
+	return max(1, size.width-8)
+}
+
+func imagePickerInlinePreviewColumns(bounds image.Rectangle, size interactiveImageSize, protocol string) int {
+	if g, ok := imageStudioLayout(size.width, size.height); ok {
+		// Keep the caption and a complete image together whenever they fit.
+		rows := max(1, g.previewRows-1)
+		columns := savedImagePreviewColumns(bounds, g.previewWidth+1, rows+2, size.cellWidth, size.cellHeight)
+		if protocol == "font" {
+			return terminalimage.FontPreviewColumns(bounds, columns, rows+2)
+		}
+		return columns
+	}
+	form := imagePicker{height: size.height, workspace: true}
+	return imagePickerPreviewColumns(bounds, size.width, max(3, size.height-form.viewHeight()-2), size.cellWidth, size.cellHeight)
+}
+
 // The outline owns its cells; native graphics keep the existing content origin.
 func (m *imagePicker) workspaceImageBorder(text string) string {
 	return m.foreground(m.palette().border).Render(text)
@@ -483,6 +507,10 @@ func (w *imagePickerWorkspace) replaceImageRows(result imagePickerExpandedRows) 
 		return
 	}
 	entry.unavailableSize = nil
+	if !w.previewReload {
+		g, _ := imageStudioLayout(result.size.width, result.size.height)
+		entry.preparedRows = g.previewRows
+	}
 	entry.rows, entry.columns, entry.protocol = result.rows, result.columns, result.protocol
 	entry.nativeRows = 0
 	if imagePickerNativeRows(result.rows) {
@@ -502,8 +530,7 @@ func imagePickerPrepareResize(ctx context.Context, out *os.File, entry imagePick
 		viewport.height--   // The picker adds a file caption above the viewer.
 		columns := interactiveImageColumns(img, viewport)
 		if !expanded {
-			form := imagePicker{height: size.height, workspace: true}
-			columns = imagePickerPreviewColumns(img.Bounds(), size.width, max(3, size.height-form.viewHeight()-2), size.cellWidth, size.cellHeight)
+			columns = imagePickerInlinePreviewColumns(img.Bounds(), size, entry.protocol)
 		}
 		if entry.protocol == "font" {
 			columns = terminalimage.FontPreviewColumns(img.Bounds(), columns, max(1, size.height-4))
@@ -530,7 +557,13 @@ func (w *imagePickerWorkspace) inlineResizeIndex(size interactiveImageSize) int 
 		if entry.unavailableSize != nil {
 			return *entry.unavailableSize != size
 		}
-		return entry.columns > max(1, size.width-8) && entry.rowCount() > 0
+		if entry.columns <= 0 || entry.rowCount() == 0 {
+			return false
+		}
+		if g, ok := imageStudioLayout(size.width, size.height); ok && entry.rowCount() > g.previewRows-1 && entry.preparedRows != g.previewRows {
+			return true
+		}
+		return entry.columns > imagePickerInlinePreviewWidth(size)
 	}
 	if needs(w.selected) {
 		return w.selected

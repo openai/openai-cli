@@ -57,6 +57,9 @@ func (m *imagePicker) View() tea.View {
 		view.Content = m.fit([]string{"Resize to at least 40 x 12.", "Esc prompt · Ctrl+C quit"}, m.width, height)
 		return view
 	}
+	if g, wide := imageStudioLayout(m.width, m.height); m.workspace && wide {
+		return m.studioForm(g)
+	}
 	width := min(m.width-4, 100)
 	if m.workspace {
 		width = m.width - 4
@@ -441,6 +444,9 @@ func (m *imagePicker) commandLines(width int) []string {
 
 func (m *imagePicker) commandDimensions() (width, height int) {
 	if m.workspace {
+		if g, wide := imageStudioLayout(m.width, m.height); wide {
+			return g.editorWidth - 2, g.editorRows - 1
+		}
 		width = max(1, m.width-8)
 		height = 1
 		if m.viewHeight() >= 12 {
@@ -460,6 +466,15 @@ func (m *imagePicker) commandDimensions() (width, height int) {
 }
 
 func (m *imagePicker) clampCommandOffset() {
+	if m.focus == "actions" {
+		if _, wide := imageStudioLayout(m.width, m.height); !wide {
+			m.focus, m.studioAction = "prompt", 0
+		}
+	}
+	if m.commandOffset <= 0 {
+		m.commandOffset = 0
+		return
+	}
 	width, height := m.commandDimensions()
 	m.commandOffset = max(0, min(m.commandOffset, len(m.commandLines(width))-height))
 }

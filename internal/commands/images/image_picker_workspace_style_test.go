@@ -39,7 +39,7 @@ func TestImagePickerWorkspaceBatchStyleKeepsFocusDistinct(t *testing.T) {
 }
 
 func TestImagePickerWorkspacePromptAlignsWithTitleImage(t *testing.T) {
-	for _, width := range []int{40, 49, 80, 96, 240} {
+	for _, width := range []int{40, 49, 80, 96, 109} {
 		m := pickerForTest(t)
 		m.width, m.height, m.workspace = width, 28, true
 		for _, prompt := range []string{"", "abc", "界e\u0301🙂"} {
@@ -62,13 +62,13 @@ func TestImagePickerWorkspaceTableAndPromptSurviveResize(t *testing.T) {
 	m.settings.count = "3"
 	m.draft = []rune(strings.Repeat("界", 90) + "ab")
 	m.cursor = len(m.draft) - 1
-	for _, width := range []int{133, 50, 40, 133} {
+	for _, width := range []int{109, 50, 40, 109} {
 		m.width = width
 		view := m.View()
 		lines := strings.Split(ansi.Strip(view.Content), "\n")
 		prompt := lines[view.Cursor.Y]
 		require.True(t, strings.HasSuffix(ansi.Truncate(prompt, view.Cursor.X, ""), "a"))
-		if width == 133 {
+		if width == 109 {
 			require.Contains(t, prompt, "3 images per run│")
 		} else {
 			require.NotContains(t, prompt, "per run")
@@ -153,7 +153,7 @@ func TestImagePickerWorkspaceCommandExpandsOnlyOnFocus(t *testing.T) {
 }
 
 func TestImagePickerWorkspaceFormFramePreservesContentAndControls(t *testing.T) {
-	for _, width := range []int{40, 49, 80, 90, 96, 240} {
+	for _, width := range []int{40, 49, 80, 90, 96, 109} {
 		m := pickerForTest(t)
 		m.width, m.height, m.workspace, m.color = width, 40, true, false
 		view := m.View()

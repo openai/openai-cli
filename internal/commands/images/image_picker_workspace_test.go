@@ -17,7 +17,7 @@ import (
 )
 
 func TestImagePickerWorkspaceCompactFormKeepsGeometryDuringGeneration(t *testing.T) {
-	for _, size := range [][2]int{{40, 12}, {49, 24}, {80, 24}, {96, 28}, {140, 40}} {
+	for _, size := range [][2]int{{40, 12}, {49, 24}, {80, 24}, {96, 28}, {109, 40}} {
 		m := pickerForTest(t)
 		m.width, m.height, m.workspace = size[0], size[1], true
 		for _, focus := range []string{"prompt", "options", "command"} {
@@ -108,7 +108,7 @@ func TestImagePickerWorkspaceCompactChoicesRemainAccessible(t *testing.T) {
 }
 
 func TestImagePickerWorkspaceFolderPathRetainsCursorAndControls(t *testing.T) {
-	for _, size := range [][2]int{{40, 12}, {80, 24}, {140, 40}} {
+	for _, size := range [][2]int{{40, 12}, {80, 24}, {109, 40}} {
 		m := pickerForTest(t)
 		m.width, m.height, m.workspace = size[0], size[1], true
 		m.page, m.focus = "path", "path"
@@ -230,7 +230,7 @@ func TestImagePickerWorkspaceRequestCompletionKeepsCancellationStatus(t *testing
 
 func TestImagePickerWorkspaceSeparatesSectionsWithoutCommandPadding(t *testing.T) {
 	m := pickerForTest(t)
-	m.width, m.height, m.workspace = 240, 60, true
+	m.width, m.height, m.workspace = 109, 60, true
 	text := ansi.Strip(m.View().Content)
 	lines := strings.Split(text, "\n")
 	command, _ := pickerNavigationLine(t, text, "Command")
@@ -281,7 +281,7 @@ func TestImagePickerWorkspaceShowsAllSettingsWhileTyping(t *testing.T) {
 }
 
 func TestImagePickerWorkspaceInlinePromptKeepsNativeCursor(t *testing.T) {
-	for _, size := range [][2]int{{40, 12}, {96, 28}, {240, 40}} {
+	for _, size := range [][2]int{{40, 12}, {96, 28}, {109, 40}} {
 		m := pickerForTest(t)
 		m.width, m.height, m.workspace, m.focus = size[0], size[1], true, "prompt"
 		m.settings.prompt = "abcdef"

@@ -100,7 +100,14 @@ func TestImagePickerWorkspaceWrappedTextRetainsEveryBoundaryByte(t *testing.T) {
 		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 		var reconstructed strings.Builder
 		for _, row := range w.painted[w.bodyStart:w.bodyEnd] {
-			reconstructed.WriteString(strings.TrimPrefix(ansi.Strip(row), "    "))
+			text := ansi.Strip(row)
+			if _, studio := imageStudioLayout(m.width, m.height); studio {
+				_, text, _ = strings.Cut(strings.TrimPrefix(text, "  │ "), "│  ")
+				text = strings.TrimSuffix(text, "│")
+			} else {
+				text = strings.TrimPrefix(text, "    ")
+			}
+			reconstructed.WriteString(text)
 		}
 		require.Equal(t, original, reconstructed.String())
 	}

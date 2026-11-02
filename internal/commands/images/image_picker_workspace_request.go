@@ -218,7 +218,9 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		y := msg.Y - p.workspace.origin
-		if p.workspace.originKnown && y >= p.workspace.bodyStart && y < p.workspace.bodyEnd {
+		g, studio := imageStudioLayout(p.workspace.width, p.workspace.height)
+		inside := !studio || msg.X >= g.previewX-2 && msg.X < g.previewX+g.previewWidth
+		if inside && p.workspace.originKnown && y >= p.workspace.bodyStart && y < p.workspace.bodyEnd {
 			if msg.Button == tea.MouseWheelUp {
 				p.workspace.scroll(-3)
 			} else if msg.Button == tea.MouseWheelDown {

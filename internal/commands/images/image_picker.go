@@ -263,6 +263,7 @@ type imagePicker struct {
 	page, field    string
 	shell          string
 	focus          string
+	studioAction   int
 	returnPage     string
 	returnSelected int
 	draft          []rune
@@ -394,6 +395,11 @@ func (m *imagePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// At very small sizes, only returning to the prompt or quitting is safe.
 		if m.width < 40 || m.height < 12 {
 			return m, nil
+		}
+		if g, wide := imageStudioLayout(m.width, m.height); m.workspace && wide {
+			if handled, cmd := m.studioKey(key, g); handled {
+				return m, cmd
+			}
 		}
 		switch key {
 		case "ctrl+g":
