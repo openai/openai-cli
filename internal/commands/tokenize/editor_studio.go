@@ -108,35 +108,59 @@ func (m *tokenizerEditor) tokenSizeChart(s tokenizerEditorStyles, width int) []s
 	if len(m.tokens) == 0 {
 		return nil
 	}
-	capacity := width - 4 // Two inset cells and two visible selection brackets.
+	// Each bar has one cell and a neighboring gap. Reserve the final gap for a bracket.
+	capacity := max(1, (width-3)/2)
 	start := m.selected / capacity * capacity
 	end := min(start+capacity, len(m.tokens))
-	peak := 0
-	for i := start; i < end; i++ {
-		_, begin, limit := m.fragment(i)
-		peak = max(peak, limit-begin)
+	lengths := make([]int, end-start)
+	peak, digitWidth := 0, 0
+	for i := range lengths {
+		_, begin, limit := m.fragment(start + i)
+		lengths[i] = limit - begin
+		peak = max(peak, lengths[i])
+		digitWidth += len(strconv.Itoa(lengths[i]))
+	}
+
+	const label = "Bytes per token"
+	scale := fmt.Sprintf("%d B max", peak)
+	if len(lengths) < len(m.tokens) {
+		span := strconv.Itoa(start + 1)
+		if end > start+1 {
+			span += "–" + strconv.Itoa(end)
+		}
+		scale = span + " · " + scale
+	}
+	plotWidth := 2*len(lengths) + 1
+	available := width - 2 - len(label) - 2 - ansi.StringWidth(scale)
+	inline := plotWidth <= available
+	if !inline {
+		available = width - 2
+	}
+	showValues := plotWidth+digitWidth <= available
+
+	selected := m.selected - start
+	gaps := []byte(strings.Repeat(" ", len(lengths)+1))
+	if !m.color {
+		gaps[selected], gaps[selected+1] = '[', ']'
 	}
 	var bars strings.Builder
 	levels := []rune(" ▁▂▃▄▅▆▇█")
-	for i := start; i < end; i++ {
-		_, begin, limit := m.fragment(i)
-		level := max(1, ((limit-begin)*8+peak/2)/peak)
+	for i, length := range lengths {
+		level := max(1, (length*8+peak/2)/peak)
 		bar := string(levels[level])
-		if i == m.selected {
-			bar = s.focused.Render("[" + bar + "]")
-		} else {
-			bar = s.muted.Render(bar)
+		if showValues {
+			bar += strconv.Itoa(length)
 		}
-		bars.WriteString(bar)
+		style := s.muted
+		if i == selected {
+			style = s.accent
+		}
+		bars.WriteByte(gaps[i])
+		bars.WriteString(style.Render(bar))
 	}
-	label := "Bytes per token"
-	span := strconv.Itoa(start + 1)
-	if end > start+1 {
-		span += "–" + strconv.Itoa(end)
-	}
-	scale := fmt.Sprintf("%s · %d B max", span, peak)
-	if ansi.StringWidth(bars.String())+ansi.StringWidth(label+scale)+6 <= width {
-		return []string{"  " + s.muted.Render(label) + "  " + bars.String() + "  " + s.muted.Render(scale)}
+	bars.WriteByte(gaps[len(lengths)])
+	if inline {
+		return []string{"  " + s.muted.Render(label) + " " + bars.String() + " " + s.muted.Render(scale)}
 	}
 	return []string{"  " + s.muted.Render(label+"  "+scale), "  " + bars.String()}
 }

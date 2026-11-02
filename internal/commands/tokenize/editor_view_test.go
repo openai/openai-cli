@@ -345,7 +345,7 @@ func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
 				m.focus, m.option = state.focus, state.option
 				view := m.View().Content
 				for _, rendition := range regexp.MustCompile(`\x1b\[[0-9;:]*m`).FindAllString(view, -1) {
-					require.Contains(t, []string{"\x1b[7m", "\x1b[27m", "\x1b[4;7m", "\x1b[24;27m"}, rendition, "NO_COLOR retains functional monochrome cues")
+					require.Contains(t, []string{"\x1b[7m", "\x1b[27m", "\x1b[4m", "\x1b[24m", "\x1b[4;7m", "\x1b[24;27m"}, rendition, "NO_COLOR retains functional monochrome cues")
 				}
 				options := "[Text]  Token IDs  Bytes"
 				require.Contains(t, view, "View   "+options)
@@ -392,8 +392,8 @@ func TestTokenizerEditorFocusFillStaysInActiveRegion(t *testing.T) {
 									require.Contains(t, fill[0], fillColor)
 									paint.WriteString(fill[1])
 								}
-								label := []string{"View", "Model"}[state.option]
-								require.Equal(t, "› "+label, strings.TrimSpace(paint.String()), "only the focused label receives the selection fill")
+								require.True(t, strings.HasPrefix(paint.String(), "› "+[]string{"View", "Model"}[state.option]))
+								require.Equal(t, m.viewWidth(), ansi.StringWidth(paint.String()), "fill the focused settings row through its right edge")
 							} else {
 								require.Empty(t, fills)
 							}
@@ -460,6 +460,70 @@ func TestTokenizerEditorRowsShareAlignedGuttersAndValues(t *testing.T) {
 			require.Equal(t, column(options), column("Hello, world!"))
 			require.Contains(t, strings.Join(rows, "\n"), "Token 3 of 4  9906 11 1917 0")
 			require.Greater(t, column("4 tokens"), column("Tokenizer"))
+		}
+	}
+}
+
+func TestTokenizerEditorSettingsFocusStopsAtStudioDivider(t *testing.T) {
+	for _, theme := range []struct {
+		name, blue, muted, fill string
+	}{
+		{"dark", "138;168;255", "164;172;194", "52;61;88"},
+		{"light", "49;89;188", "101;112;135", "233;239;254"},
+		{"monochrome", "", "", ""},
+	} {
+		t.Run(theme.name, func(t *testing.T) {
+			m := tokenizerEditorExample()
+			m.width, m.height, m.tab, m.focus = 96, 16, 1, tokenizerFocusOptions
+			m.color, m.dark = theme.name != "monochrome", theme.name == "dark"
+			for option, value := range []string{"[Token IDs]", "GPT-4 / GPT-3.5"} {
+				m.option = option
+				rows := m.settingsRows(m.styles(), m.sourceWidth())
+				row := rows[option]
+				require.Equal(t, m.sourceWidth(), ansi.StringWidth(row))
+				require.Contains(t, ansi.Strip(row), "› "+[]string{"View", "Model"}[option])
+				require.Contains(t, ansi.Strip(row), value)
+				require.NotContains(t, rows[1-option], "48;2;")
+				require.Contains(t, m.View().Content, row+" "+ansi.CursorHorizontalAbsolute(m.sourceWidth()+4),
+					"the complete setting precedes the unpainted divider gutter")
+				if !m.color {
+					require.Equal(t, ansi.Strip(row), row)
+					continue
+				}
+				highlight := "\x1b[1;38;2;" + theme.blue + ";48;2;" + theme.fill + "m"
+				quiet := "\x1b[38;2;" + theme.muted + ";48;2;" + theme.fill + "m"
+				require.Contains(t, row, highlight+"› ")
+				require.Contains(t, row, highlight+value)
+				if option == 0 {
+					require.Contains(t, row, quiet+"Text")
+					require.Contains(t, row, quiet+"Bytes")
+					require.Contains(t, row, quiet+"  ←→")
+				} else {
+					require.Contains(t, row, quiet+"Legacy")
+					require.Contains(t, row, quiet+"  ›")
+				}
+			}
+		})
+	}
+}
+
+func TestTokenizerEditorSettingsUnderlineOnlyTheInspectedOccurrence(t *testing.T) {
+	m := testTokenizerEditor()
+	m.insert("f f f")
+	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{
+		{ID: 69, EndByte: 1}, {ID: 285, EndByte: 3}, {ID: 285, EndByte: 5},
+	}})
+	m.focus, m.tab = tokenizerFocusOptions, 1
+	for _, color := range []bool{false, true} {
+		m.color = color
+		for _, selected := range []int{1, 2} {
+			m.selected = selected
+			strip := strings.Join(m.resultLines(m.styles(), 62), "")
+			before, after, marked := strings.Cut(strip, "\x1b[4m285\x1b[24m")
+			require.True(t, marked)
+			require.Equal(t, selected-1, strings.Count(ansi.Strip(before), "285"))
+			require.Equal(t, 2-selected, strings.Count(ansi.Strip(after), "285"))
+			require.NotContains(t, before+after, "\x1b[4m")
 		}
 	}
 }
@@ -588,7 +652,7 @@ func TestTokenizerEditorNumericSegmentsUseUnwrappedSeparation(t *testing.T) {
 	}})
 	for tab, want := range map[int]string{1: "  10 20 30 40", 2: "  61  62  63  64"} {
 		m.tab = tab
-		require.Equal(t, want, strings.Join(m.resultLines(m.styles(), m.viewWidth()), ""))
+		require.Equal(t, want, ansi.Strip(strings.Join(m.resultLines(m.styles(), m.viewWidth()), "")))
 	}
 }
 
@@ -761,7 +825,8 @@ func TestTokenizerEditorTokenPaletteStaysStableAcrossViewsAndPages(t *testing.T)
 			}
 		}
 		m.color = false
-		require.NotRegexp(t, `\x1b\[[0-9;:]*m`, strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n"))
+		monochrome := strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")
+		require.Equal(t, []string{"\x1b[4m", "\x1b[24m"}, regexp.MustCompile(`\x1b\[[0-9;:]*m`).FindAllString(monochrome, -1))
 	}
 }
 

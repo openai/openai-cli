@@ -169,19 +169,13 @@ func (m *tokenizerEditor) textRows(s tokenizerEditorStyles, width int) []string 
 }
 
 func (m *tokenizerEditor) settingsRows(s tokenizerEditorStyles, width int) []string {
-	var lines []string
 	tabs := []string{"Text", "Token IDs", "Bytes"}
 	tabs[m.tab] = "[" + tabs[m.tab] + "]"
-	if m.focus != tokenizerFocusOptions || m.option != 0 {
-		tabs[m.tab] = s.accent.Render(tabs[m.tab])
-	}
-	lines = append(lines, m.optionRow(s, width, "View", strings.Join(tabs, "  "), "←→", 0))
 	model, badge := tokenizerModelLabel(m.encoding)
-	if m.focus != tokenizerFocusOptions || m.option != 1 {
-		badge = s.muted.Render(badge)
+	return []string{
+		m.optionRow(s, width, 0, "View", tabs, m.tab, "←→"),
+		m.optionRow(s, width, 1, "Model", []string{model, badge}, 0, "›"),
 	}
-	lines = append(lines, m.optionRow(s, width, "Model", model+"  "+badge, "›", 1))
-	return lines
 }
 
 func (m *tokenizerEditor) noteRows(s tokenizerEditorStyles, width int) []string {
@@ -220,14 +214,33 @@ func (m *tokenizerEditor) countStatus(s tokenizerEditorStyles) string {
 	return style.Render(status)
 }
 
-func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width int, label, value, hint string, index int) string {
-	gap := strings.Repeat(" ", max(1, 7-ansi.StringWidth(label)))
-	if ansi.StringWidth(label+gap+value)+4+ansi.StringWidth(hint) > width {
-		hint = ""
-	} else {
-		hint = "  " + hint
+func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width, index int, label string, values []string, current int, hint string) string {
+	focused := m.focus == tokenizerFocusOptions && m.option == index
+	labelStyle, secondary, active := s.muted, s.muted, s.accent
+	marker := "  "
+	if focused {
+		labelStyle = s.selected
+		secondary = s.muted.Inherit(s.selected)
+		active = s.accent.Inherit(s.selected).Bold(m.color)
+		marker = active.Render("› ")
+	} else if index == 1 {
+		active = lipgloss.NewStyle()
 	}
-	return s.heading(label, m.focus == tokenizerFocusOptions && m.option == index) + gap + value + s.muted.Render(hint)
+	for i, value := range values {
+		style := secondary
+		if i == current {
+			style = active
+		}
+		values[i] = style.Render(value)
+	}
+	row := marker + labelStyle.Render(fmt.Sprintf("%-7s", label)) + strings.Join(values, secondary.Render("  "))
+	if ansi.StringWidth(row+"  "+hint) <= width {
+		row += secondary.Render("  " + hint)
+	}
+	if focused {
+		row += s.selected.Render(strings.Repeat(" ", max(0, width-ansi.StringWidth(row))))
+	}
+	return row
 }
 
 func tokenizerModelLabel(encoding string) (string, string) {
@@ -547,18 +560,21 @@ func (m *tokenizerEditor) resultWindow(s tokenizerEditorStyles, width int) ([]st
 		if lines[row] == "" {
 			lines[row] = "  "
 		}
-		active := m.focus == tokenizerFocusText || m.focus == tokenizerFocusResults
-		if active && index == m.selected && !m.updating && !m.failed {
-			if m.color {
+		style := s.tokens[index%len(s.tokens)]
+		if index == m.selected && !m.updating && !m.failed {
+			switch {
+			case m.focus == tokenizerFocusOptions:
+				// Keep the inspected token identifiable while the keyboard operates a setting.
+				label = "\x1b[4m" + label + "\x1b[24m"
+			case m.color:
+				style = s.tokenSelected
 				// Keep the whole grapheme span together, including whitespace.
-				label = s.tokenSelected.Render("\x1b[1;4m" + label + "\x1b[22;24m")
-			} else {
+				label = "\x1b[1;4m" + label + "\x1b[22;24m"
+			default:
 				label = "\x1b[4;7m" + label + "\x1b[24;27m"
 			}
-		} else {
-			label = s.tokens[index%len(s.tokens)].Render(label)
 		}
-		lines[row] += strings.Repeat(" ", gap) + label
+		lines[row] += strings.Repeat(" ", gap) + style.Render(label)
 	})
 	return lines, end - start
 }
