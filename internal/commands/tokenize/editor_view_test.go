@@ -511,12 +511,12 @@ func TestTokenizerEditorActiveViewKeepsLabelColumns(t *testing.T) {
 	m := testTokenizerEditor()
 	bold := regexp.MustCompile(`\x1b\[1(?:;[0-9;]+)?m([^\x1b]*)`)
 	for _, theme := range []struct {
-		color, dark bool
-		selected    string
+		color, dark     bool
+		active, focused string
 	}{
-		{true, true, "\x1b[1;38;2;138;168;255;48;2;52;61;88m"},
-		{true, false, "\x1b[1;38;2;49;89;188;48;2;233;239;254m"},
-		{false, false, "\x1b[1m"},
+		{true, true, "\x1b[1;38;2;138;168;255m", "\x1b[1;38;2;138;168;255;48;2;52;61;88m"},
+		{true, false, "\x1b[1;38;2;49;89;188m", "\x1b[1;38;2;49;89;188;48;2;233;239;254m"},
+		{false, false, "\x1b[1m", "\x1b[1m"},
 	} {
 		m.color, m.dark = theme.color, theme.dark
 		styles := m.styles()
@@ -524,9 +524,9 @@ func TestTokenizerEditorActiveViewKeepsLabelColumns(t *testing.T) {
 			{tokenizerFocusText, 0}, {tokenizerFocusOptions, 0}, {tokenizerFocusOptions, 1}, {tokenizerFocusResults, 0},
 		} {
 			m.focus, m.option = state.focus, state.option
-			active := "\x1b[1m"
+			active := theme.active
 			if state.focus == tokenizerFocusOptions && state.option == 0 {
-				active = theme.selected
+				active = theme.focused
 			}
 			for tab, label := range []string{"Text", "Token IDs", "Bytes"} {
 				m.tab = tab

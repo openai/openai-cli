@@ -239,7 +239,7 @@ func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width, index int, l
 	labelStyle, secondary, active := s.muted, s.muted, lipgloss.NewStyle()
 	if index == 0 {
 		secondary = lipgloss.NewStyle()
-		active = active.Bold(true)
+		active = s.accent.Bold(true)
 	}
 	marker := "  "
 	if focused {
