@@ -9,9 +9,26 @@ import (
 
 func (m *tokenizerEditor) framed() bool { return m.width >= 50 && m.height >= 16 }
 
+func (m *tokenizerEditor) studioLayout() bool { return m.width >= 110 && m.height >= 28 }
+
+func (m *tokenizerEditor) showActions() bool {
+	return m.modal == tokenizerModalNone && m.width >= 68 && m.height >= 20
+}
+
 // The inline painter reserves the final terminal column and row for wrapping.
-func (m *tokenizerEditor) viewHeight() int { return min(18, max(0, m.height-1)) }
+func (m *tokenizerEditor) viewHeight() int {
+	if m.studioLayout() {
+		return min(34, m.height-1)
+	}
+	if m.showActions() {
+		return min(20, m.height-1)
+	}
+	return min(18, max(0, m.height-1))
+}
 func (m *tokenizerEditor) viewWidth() int {
+	if m.studioLayout() {
+		return min(140, m.width-5)
+	}
 	if m.framed() {
 		return max(1, min(100, m.width-5))
 	}
@@ -23,6 +40,12 @@ func (m *tokenizerEditor) bodyHeight() int {
 	rows := m.viewHeight() - 3
 	if m.framed() {
 		rows -= 2
+	}
+	if m.showActions() {
+		rows-- // The action strip precedes the divider.
+	}
+	if m.studioLayout() && m.modal == tokenizerModalNone {
+		rows -= 2 // Space above the action strip and below the divider.
 	}
 	return max(0, rows)
 }
@@ -53,10 +76,26 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 			ruleWidth, ruleEnd = max(0, width-statusWidth-1), " "+status
 		}
 	}
-	lines := []string{header, terminal.SectionDivider(ruleWidth, m.color, s.fill, s.edge, s.secondary) + ruleEnd}
+	lines := []string{header}
+	if m.showActions() {
+		if m.studioLayout() {
+			lines = append(lines, "")
+		}
+		details := "Token details " + s.accent.Render("F4")
+		if len(m.tokens) == 0 {
+			details = s.muted.Render("Token details F4")
+		}
+		lines = append(lines, "Choose view "+s.accent.Render("F2")+"    Choose model "+s.accent.Render("F3")+
+			"    "+details+"    Help "+s.accent.Render("F1"))
+	}
+	lines = append(lines, terminal.SectionDivider(ruleWidth, m.color, s.fill, s.edge, s.secondary)+ruleEnd)
+	if m.studioLayout() && m.modal == tokenizerModalNone {
+		lines = append(lines, "")
+	}
+	headerRows := len(lines)
 	limit := max(0, m.bodyHeight()+1-len(footer))
 	lines = append(lines, body[:min(limit, len(body))]...)
-	for len(lines) < 2+limit {
+	for len(lines) < headerRows+limit {
 		lines = append(lines, "")
 	}
 	lines = append(lines, footer...)

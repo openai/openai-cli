@@ -51,6 +51,7 @@ type tokenizerEditor struct {
 	encoding          string
 	invocation        string
 	option, choice    int
+	choiceCancelFocus int
 	focus, tab, modal int
 	selected, scroll  int
 	tokenStart        int
@@ -163,6 +164,15 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch key {
+		case "f2":
+			m.openChoice(0, tokenizerFocusOptions)
+			return m, nil
+		case "f3":
+			m.openChoice(1, tokenizerFocusOptions)
+			return m, nil
+		case "f4":
+			m.openDetails()
+			return m, nil
 		case "tab", "shift+tab":
 			direction := 1
 			if key == "shift+tab" {
@@ -210,10 +220,10 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				} else if key == "left" {
 					m.focus = tokenizerFocusText
 				} else {
-					m.openChoice()
+					m.openChoice(m.option, tokenizerFocusText)
 				}
 			case "enter":
-				m.openChoice()
+				m.openChoice(m.option, tokenizerFocusText)
 			}
 		case tokenizerFocusResults:
 			switch key {
@@ -226,16 +236,14 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			case "pgup":
 				m.selected -= m.previousPageSize()
 			case "pgdown":
-				_, count := m.resultWindow(m.styles(), m.viewWidth())
+				_, count := m.resultWindow(m.styles(), m.resultWidth())
 				m.selected += max(1, count)
 			case "home":
 				m.selected = 0
 			case "end":
 				m.selected = len(m.tokens) - 1
 			case "enter":
-				if len(m.tokens) > 0 {
-					m.modal, m.scroll = tokenizerModalDetails, 0
-				}
+				m.openDetails()
 			case "r":
 				if m.failed {
 					return m, m.changed()
@@ -248,7 +256,14 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *tokenizerEditor) openChoice() {
+func (m *tokenizerEditor) openDetails() {
+	if len(m.tokens) > 0 {
+		m.focus, m.modal, m.scroll = tokenizerFocusResults, tokenizerModalDetails, 0
+	}
+}
+
+func (m *tokenizerEditor) openChoice(option, cancelFocus int) {
+	m.focus, m.option, m.choiceCancelFocus = tokenizerFocusOptions, option, cancelFocus
 	m.modal, m.choice = tokenizerModalView, m.tab
 	if m.option == 1 {
 		m.modal, m.choice = tokenizerModalEncoding, 0
@@ -278,7 +293,10 @@ func (m *tokenizerEditor) updateChoice(key string) tea.Cmd {
 	case "end":
 		m.choice = last
 	case "esc":
-		m.modal, m.focus, m.option = tokenizerModalNone, tokenizerFocusText, 0
+		m.modal, m.focus = tokenizerModalNone, m.choiceCancelFocus
+		if m.focus == tokenizerFocusText {
+			m.option = 0
+		}
 	case "left", "f1":
 		m.modal = tokenizerModalNone
 	case "tab", "shift+tab":

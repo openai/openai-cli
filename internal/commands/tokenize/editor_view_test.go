@@ -41,7 +41,11 @@ func TestTokenizerEditorViewFitsEverySupportedSizeAndFocus(t *testing.T) {
 				require.Contains(t, view.Content, "Token IDs")
 				require.Contains(t, view.Content, "Bytes")
 				require.Contains(t, view.Content, "Token 3 of 4")
-				require.NotContains(t, view.Content, "ID 1917")
+				if size[0] >= 110 && size[1] >= 28 {
+					require.Contains(t, view.Content, "1917")
+				} else {
+					require.NotContains(t, view.Content, "ID 1917")
+				}
 				require.NotContains(t, view.Content, "[6, 12)")
 				require.Contains(t, view.Content, "Ctrl+C exit")
 				require.Contains(t, view.Content, "Model  GPT-4 / GPT-3.5  Legacy")
@@ -386,13 +390,15 @@ func TestTokenizerEditorFocusFillStaysInActiveRegion(t *testing.T) {
 									require.Contains(t, fill[0], fillColor)
 									paint.WriteString(fill[1])
 								}
-								require.Contains(t, paint.String(), "› ")
-								require.Equal(t, m.viewWidth(), ansi.StringWidth(paint.String()), "the highlight spans the option row")
+								label := []string{"View", "Model"}[state.option]
+								require.Equal(t, "› "+label, strings.TrimSpace(paint.String()), "only the focused label receives the selection fill")
 							} else {
 								require.Empty(t, fills)
 							}
 						case strings.Contains(plain, "Token 3 of 4"):
-							require.Empty(t, fills, "selection caption must not form a second highlighted row")
+							if state.focus != tokenizerFocusResults {
+								require.Empty(t, fills, "the unfocused results heading has no selection fill")
+							}
 						}
 						if !m.roomy() && state.focus != tokenizerFocusText && strings.HasPrefix(strings.TrimSpace(plain), "Text ") {
 							focusColor := "38;2;49;89;188"
@@ -928,8 +934,8 @@ func TestTokenizerEditorEmojiEndCursorSurvivesInlinePainter(t *testing.T) {
 	}
 }
 
-func TestTokenizerEditorBatchPanelAndCompactLayout(t *testing.T) {
-	for _, size := range [][2]int{{40, 12}, {49, 24}, {80, 15}, {50, 16}, {80, 24}, {120, 30}} {
+func TestTokenizerEditorStudioAndCompactLayout(t *testing.T) {
+	for _, size := range [][2]int{{40, 12}, {49, 24}, {80, 15}, {50, 16}, {80, 24}, {109, 28}, {110, 27}, {110, 28}, {120, 30}} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
 			m := testTokenizerEditor()
 			m.width, m.height = size[0], size[1]
@@ -953,8 +959,24 @@ func TestTokenizerEditorBatchPanelAndCompactLayout(t *testing.T) {
 				require.NotContains(t, view, "╭")
 				require.NotContains(t, view, "│")
 			}
-			require.Regexp(t, `Tokenizer\s+0 tokens`, rows[header])
-			require.Contains(t, rows[header+1], "────")
+			studio := size[0] >= 110 && size[1] >= 28
+			if studio {
+				require.Regexp(t, `Tokenizer\s+Token studio`, rows[header])
+				require.Contains(t, view, "0 tokens")
+			} else {
+				require.Regexp(t, `Tokenizer\s+0 tokens`, rows[header])
+			}
+			rule := header + 1
+			if size[0] >= 68 && size[1] >= 20 {
+				if studio {
+					rule++
+				}
+				for _, key := range []string{"F1", "F2", "F3", "F4"} {
+					require.Contains(t, rows[rule], key)
+				}
+				rule++
+			}
+			require.Contains(t, rows[rule], "────")
 			require.Contains(t, rows[footer], "Ctrl+C exit")
 			if framed {
 				require.Empty(t, strings.Trim(rows[footer-1], " │"))
@@ -980,7 +1002,9 @@ func TestTokenizerEditorBatchPaletteForBorderAndShortcuts(t *testing.T) {
 		require.Regexp(t, "38;2;"+muted+`mexit\x1b\[`, footer)
 		require.Regexp(t, "38;2;"+muted+`mType or paste text…\x1b\[`, m.View().Content)
 		for _, row := range rows {
-			require.NotContains(t, row, "48;2;", "no selection fills the empty editor")
+			if strings.Contains(row, "48;2;") {
+				require.Contains(t, ansi.Strip(row), "› Text", "only the active label receives the focus fill")
+			}
 		}
 	}
 }

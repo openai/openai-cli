@@ -408,18 +408,18 @@ func TestTokenizerEditorTinyTerminalPreservesDraft(t *testing.T) {
 }
 
 func TestTokenizerEditorPageKeysMoveByVisibleTokens(t *testing.T) {
-	for _, size := range [][2]int{{80, 24}, {40, 12}} {
+	for _, size := range [][2]int{{133, 39}, {110, 28}, {80, 24}, {40, 12}} {
 		m := testTokenizerEditor()
 		m.width, m.height, m.focus = size[0], size[1], tokenizerFocusResults
-		m.insert(strings.Repeat("a", 256))
-		tokens := make([]tokenizerPreviewToken, 256)
+		m.insert(strings.Repeat("a", 2048))
+		tokens := make([]tokenizerPreviewToken, len(m.text))
 		for i := range tokens {
 			tokens[i] = tokenizerPreviewToken{ID: uint32(i), EndByte: uint32(i + 1)}
 		}
 		m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
 		for tab := 0; tab < 3; tab++ {
 			m.tab, m.selected = tab, 0
-			_, visible := m.resultWindow(m.styles(), m.viewWidth())
+			_, visible := m.resultWindow(m.styles(), m.resultWidth())
 			require.Greater(t, visible, m.resultRows())
 			require.Less(t, visible, len(tokens), "the fixture must exceed one visible page")
 			tokenizerEditorKey(m, tea.KeyPgDown)
@@ -579,6 +579,64 @@ func TestTokenizerEditorViewChooserPreservesResultAndSelection(t *testing.T) {
 	tokenizerEditorKey(m, tea.KeyLeft)
 	require.Equal(t, selected-1, m.selected)
 	require.Equal(t, 2, m.tab, "token navigation must not change views")
+}
+
+func TestTokenizerEditorWorkspaceShortcuts(t *testing.T) {
+	for _, focus := range []int{tokenizerFocusText, tokenizerFocusOptions, tokenizerFocusResults} {
+		m := tokenizerEditorExample()
+		m.focus, m.tab = focus, 2
+		revision, selected := m.revision, m.selected
+
+		tokenizerEditorKey(m, tea.KeyF2)
+		require.Equal(t, tokenizerModalView, m.modal)
+		require.Equal(t, m.tab, m.choice)
+		tokenizerEditorKey(m, tea.KeyF4)
+		require.Equal(t, tokenizerModalView, m.modal, "workspace shortcuts only act on the main screen")
+		tokenizerEditorKey(m, tea.KeyUp)
+		tokenizerEditorKey(m, tea.KeyEscape)
+		require.Equal(t, tokenizerFocusOptions, m.focus)
+		require.Zero(t, m.option)
+		require.Equal(t, 2, m.tab, "cancel keeps the active view")
+
+		m.focus = focus
+		tokenizerEditorKey(m, tea.KeyF3)
+		require.Equal(t, tokenizerModalEncoding, m.modal)
+		require.Equal(t, m.encoding, tokenizer.SupportedEncodings()[m.choice])
+		tokenizerEditorKey(m, tea.KeyHome)
+		tokenizerEditorKey(m, tea.KeyEscape)
+		require.Equal(t, tokenizerFocusOptions, m.focus)
+		require.Equal(t, 1, m.option)
+		require.Equal(t, "cl100k_base", m.encoding)
+
+		m.focus = focus
+		tokenizerEditorKey(m, tea.KeyF4)
+		require.Equal(t, tokenizerModalDetails, m.modal)
+		require.Contains(t, m.View().Content, "1917")
+		tokenizerEditorKey(m, tea.KeyEscape)
+		require.Equal(t, tokenizerModalNone, m.modal)
+		require.Equal(t, tokenizerFocusResults, m.focus)
+		require.Equal(t, selected, m.selected)
+		require.Equal(t, revision, m.revision)
+		require.Equal(t, "Hello, world!", m.text)
+	}
+}
+
+func TestTokenizerEditorDetailsShortcutRequiresCurrentTokens(t *testing.T) {
+	m := testTokenizerEditor()
+	for _, state := range []string{"empty", "pending", "failed"} {
+		switch state {
+		case "pending":
+			m.insert("pending")
+		case "failed":
+			m.Update(tokenizerEditorResultMsg{Revision: m.revision, Err: errors.New("synthetic failure")})
+		}
+		for _, focus := range []int{tokenizerFocusText, tokenizerFocusOptions, tokenizerFocusResults} {
+			m.focus = focus
+			require.Nil(t, tokenizerEditorKey(m, tea.KeyF4))
+			require.Equal(t, tokenizerModalNone, m.modal, state)
+			require.Equal(t, focus, m.focus, state)
+		}
+	}
 }
 
 func TestTokenizerEditorCaretSelectsContainingTokenWithoutRecomputing(t *testing.T) {

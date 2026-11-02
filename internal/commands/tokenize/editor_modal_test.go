@@ -170,6 +170,29 @@ func TestTokenizerEditorModalEndCanScrollBack(t *testing.T) {
 	}
 }
 
+func TestTokenizerEditorHelpGroupsAndWorkspaceShortcuts(t *testing.T) {
+	for _, width := range []int{40, 133} {
+		m := testTokenizerEditor()
+		m.width, m.height, m.invocation = width, 39, "local-openai"
+		tokenizerEditorKey(m, tea.KeyF1)
+		require.Equal(t, tokenizerModalHelp, m.modal)
+		rows, total := m.modalRows(0, 400)
+		require.Len(t, rows, total)
+		for _, row := range rows {
+			require.LessOrEqual(t, ansi.StringWidth(row), m.viewWidth())
+		}
+		help := strings.Join(strings.Fields(ansi.Strip(strings.Join(rows, "\n"))), " ")
+		for _, heading := range []string{"Studio shortcuts", "Edit text", "View and model", "Inspect tokens", "How counting works", "Command examples"} {
+			require.Contains(t, help, heading)
+		}
+		for _, shortcut := range []string{"F1 Open Help.", "F2 Choose a view.", "F3 Choose a model family.", "F4 Inspect the selected token."} {
+			require.Contains(t, help, shortcut)
+		}
+		require.Contains(t, help, `local-openai tokenizer count --text "Hello, world!"`)
+		require.Contains(t, help, "local-openai tokenizer inspect --file prompt.txt")
+	}
+}
+
 func TestTokenizerEditorDetailsCompactLayout(t *testing.T) {
 	for _, size := range [][2]int{{40, 12}, {80, 24}} {
 		for _, color := range []bool{false, true} {
@@ -184,6 +207,7 @@ func TestTokenizerEditorDetailsCompactLayout(t *testing.T) {
 				require.Contains(t, plain, "GPT-4 / GPT-3.5 · Legacy")
 				require.Contains(t, plain, `Text      " world"`)
 				require.Contains(t, plain, "Token ID  1917")
+				require.Contains(t, plain, "Source bytes")
 				require.Contains(t, plain, "Bytes     6 · offset 6")
 				require.Contains(t, plain, "Hex       20 77 6f 72 6c 64")
 				require.Contains(t, plain, "Esc back")
@@ -322,7 +346,7 @@ func TestTokenizerEditorDetailsLargeTokenAllocationsStayBounded(t *testing.T) {
 }
 
 func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.T) {
-	for _, size := range [][2]int{{80, 24}, {40, 12}} {
+	for _, size := range [][2]int{{133, 39}, {80, 24}, {50, 16}, {40, 12}} {
 		for _, theme := range []string{"light", "dark", "NO_COLOR"} {
 			for _, modal := range []int{tokenizerModalView, tokenizerModalEncoding} {
 				m := tokenizerEditorExample()
@@ -341,6 +365,7 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 					view := m.View().Content
 					plain := ansi.Strip(view)
 					require.Regexp(t, regexp.QuoteMeta(title)+` +`+regexp.QuoteMeta(status), plain)
+					require.Contains(t, plain, "Applied  "+strings.TrimSuffix(current, " ✓"))
 					if modal == tokenizerModalEncoding {
 						require.Contains(t, plain, "GPT-4o / 4.1 / 4.5 · o4-mini")
 						require.Contains(t, plain, "Original GPT-4 / Turbo")
