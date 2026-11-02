@@ -21,7 +21,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/gjson v1.20.0
 	github.com/tidwall/pretty v1.2.2
-	github.com/tiktoken-go/tokenizer v0.8.1
+	github.com/tiktoken-go/tokenizer v0.10.0
 	github.com/urfave/cli-docs/v3 v3.1.0
 	github.com/urfave/cli/v3 v3.14.0
 	golang.org/x/image v0.47.0
