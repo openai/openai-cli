@@ -68,8 +68,18 @@ func (m *imagePicker) workspaceKeys(keys [][2]string, width int) string {
 }
 
 func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string {
+	exit := [2]string{"Ctrl+C", "Quit"}
+	if busy {
+		exit[1] = "Cancel"
+	}
+	keys := [][2]string{{"Esc", "Back"}, {"O", "Open"}}
+	width := max(0, m.width-6)
 	if m.width < 40 || m.height < 12 {
-		return []string{"  Enlarge the terminal.", "    " + m.workspaceKeys([][2]string{{"Esc", "Back"}, {"O", "Open"}}, max(0, m.width-6)), "    " + m.workspaceKeys([][2]string{{"Ctrl+C", "Quit"}}, max(0, m.width-6))}[:min(3, max(0, m.height))]
+		return []string{"  Enlarge the terminal.", "    " + m.workspaceKeys(keys, width), "    " + m.workspaceKeys([][2]string{exit}, width)}[:min(3, max(0, m.height))]
+	}
+	keys = append(keys, exit)
+	if len(w.images) > 1 {
+		keys = append(keys, [2]string{"←→", "Images"})
 	}
 	lines := make([]string, max(1, m.height))
 	entry := &w.images[w.selected]
@@ -103,6 +113,9 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 			count = len(rows)
 		}
 		available := max(0, len(lines)-4)
+		if count > available {
+			keys = append(keys, [2]string{"↑↓", "Scroll"})
+		}
 		offset := max(0, min(entry.offset, max(0, count-available)))
 		for i := 0; i < available && offset+i < count; i++ {
 			row := ""
@@ -119,11 +132,7 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 			lines[i+3] = "    " + row
 		}
 	}
-	quit := "Quit"
-	if busy {
-		quit = "Cancel"
-	}
-	lines[len(lines)-1] = "    " + m.workspaceKeys([][2]string{{"Esc", "Back"}, {"O", "Open"}, {"Ctrl+C", quit}, {"←→", "Images"}, {"↑↓", "Scroll"}}, max(0, m.width-6))
+	lines[len(lines)-1] = "    " + m.workspaceKeys(keys, width)
 	return lines
 }
 

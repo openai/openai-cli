@@ -155,6 +155,10 @@ func TestImagePickerWorkspaceExpandedShowsRequestOutcome(t *testing.T) {
 		require.Equal(t, "    "+note, lines[2])
 		require.Contains(t, lines[3], "retained image")
 		require.Contains(t, lines[len(lines)-1], "Esc back")
+		require.NotContains(t, lines[len(lines)-1], "scroll")
+		require.NotContains(t, lines[len(lines)-1], "images")
 	}
 	require.Contains(t, w.expandedView(m, true)[2], "Generating image")
+	m.height = 8
+	require.Contains(t, w.expandedView(m, true)[2], "Ctrl+C cancel")
 }
