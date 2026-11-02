@@ -1,92 +1,104 @@
 package tokenize
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
-func TestTokenSizeChartUsesByteLengthsAndAbsoluteTokenNumbers(t *testing.T) {
+func TestTokenByteCountsKeepSelectedAndNeighboringValuesAligned(t *testing.T) {
 	m := testTokenizerEditor()
-	const width = 44 // Twenty bars with fixed gaps and a two-cell inset.
-	m.insert(strings.Repeat("x", 40) + "aébb")
-	for i, r := range m.text {
-		m.tokens = append(m.tokens, tokenizerPreviewToken{EndByte: uint32(i + utf8.RuneLen(r))})
-	}
-	m.selected = 41
-	rows := m.tokenSizeChart(m.styles(), width)
-	require.Equal(t, []string{"  Bytes per token  ▄[█]▄ ▄  41–44 · 2 B max"}, rows)
-	m.tab = 2
-	require.Equal(t, rows, m.tokenSizeChart(m.styles(), width))
-
-	m.selected = 0
-	rows = m.tokenSizeChart(m.styles(), width)
-	require.Contains(t, rows[0], "1–20 · 1 B max")
-	require.Equal(t, 43, ansi.StringWidth(rows[1]))
-	require.Equal(t, "  [█]"+strings.Repeat("█ ", 19), rows[1])
-}
-
-func TestTokenSizeChartKeepsSelectionAndExactLengthsInFixedColumns(t *testing.T) {
-	m := testTokenizerEditor()
-	// Nine mixed lengths reproduce the short chart from the terminal capture.
-	m.insert("ffdafasf asfasdfasf")
-	for _, end := range []uint32{2, 5, 7, 8, 11, 14, 16, 18, 19} {
+	m.insert("adsfasdffasdfff")
+	for _, end := range []uint32{3, 6, 7, 9, 12, 15} {
 		m.tokens = append(m.tokens, tokenizerPreviewToken{EndByte: end})
 	}
-	const plain = "  Bytes per token  ▅2 █3 ▅2 ▃1 █3 █3 ▅2 ▅2 ▃1  3 B max"
+	want := []string{"3", "3", "1", "2", "3", "3"}
 	for _, theme := range []string{"dark", "light", "monochrome"} {
 		t.Run(theme, func(t *testing.T) {
 			m.color, m.dark = theme != "monochrome", theme == "dark"
-			s := m.styles()
-			for i, bar := range strings.Fields("▅2 █3 ▅2 ▃1 █3 █3 ▅2 ▅2 ▃1") {
+			styles := m.styles()
+			var aligned string
+			for i, length := range want {
 				m.selected = i
-				rows := m.tokenSizeChart(s, 61)
-				require.Len(t, rows, 1)
-				row := rows[0]
-				wantColumn := len("  Bytes per token  ") + 3*i
-				if m.color {
-					require.Equal(t, plain, ansi.Strip(row))
-					before, _, found := strings.Cut(row, s.accent.Render(bar))
-					require.True(t, found)
-					require.Equal(t, wantColumn, ansi.StringWidth(before))
-					require.NotContains(t, row, "48;")
-				} else {
-					before, _, found := strings.Cut(row, "["+bar+"]")
-					require.True(t, found)
-					require.Equal(t, wantColumn, ansi.StringWidth(before)+1)
-					require.Equal(t, plain, strings.NewReplacer("[", " ", "]", " ").Replace(row))
+				row := m.tokenByteCounts(styles, 49, 0, len(m.tokens))
+				plain := ansi.Strip(row)
+				counts, found := strings.CutPrefix(strings.TrimSpace(plain), "Bytes per token")
+				require.True(t, found)
+				require.NotContains(t, plain, "\n")
+				selected := "[" + length + "]"
+				wantCounts := append([]string(nil), want...)
+				wantCounts[i] = selected
+				require.Equal(t, wantCounts, strings.Fields(counts))
+				withoutBrackets := strings.TrimRight(strings.NewReplacer("[", " ", "]", " ").Replace(plain), " ")
+				if i == 0 {
+					aligned = withoutBrackets
 				}
-				require.LessOrEqual(t, ansi.StringWidth(row), 61)
+				require.Equal(t, aligned, withoutBrackets)
+				require.LessOrEqual(t, ansi.StringWidth(row), 49)
+				if m.color {
+					require.Contains(t, row, styles.accent.Bold(true).Render(selected))
+				} else {
+					require.Equal(t, plain, row)
+				}
 			}
 		})
 	}
 }
 
-func TestTokenSizeChartPreservesCompactHeightForEighteenTokens(t *testing.T) {
+func TestTokenByteCountsWindowKeepsSelectedValueAndNeighbors(t *testing.T) {
 	m := testTokenizerEditor()
-	m.width, m.height = 133, 39
-	m.insert(strings.Repeat("x", 18))
-	for i := range len(m.text) {
-		m.tokens = append(m.tokens, tokenizerPreviewToken{EndByte: uint32(i + 1)})
+	const count = 99
+	var draft strings.Builder
+	var tokens []tokenizerPreviewToken
+	for size := 1; size <= count; size++ {
+		draft.WriteString(strings.Repeat("x", size))
+		tokens = append(tokens, tokenizerPreviewToken{ID: uint32(1000000000 + size), EndByte: uint32(draft.Len())})
 	}
-	for _, color := range []bool{true, false} {
-		m.color = color
-		for i := range m.tokens {
-			m.selected = i
-			rows := m.tokenSizeChart(m.styles(), m.resultWidth())
-			require.Len(t, rows, 1)
-			require.Contains(t, rows[0], "1 B max")
-			require.NotContains(t, rows[0], "1–18")
-			require.Equal(t, 18, strings.Count(rows[0], "█"))
-			require.LessOrEqual(t, ansi.StringWidth(rows[0]), m.resultWidth())
+	m.insert(draft.String())
+	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
+	digits := regexp.MustCompile(`[0-9]+`)
+	for _, width := range []int{49, 61, 73} {
+		for tab := range 3 {
+			m.tab = tab
+			for _, selected := range []int{0, 1, count / 2, count - 2, count - 1} {
+				m.selected = selected
+				for _, color := range []bool{false, true} {
+					m.color = color
+					start := m.resultStart(width)
+					row := m.tokenByteCounts(m.styles(), width, start, m.resultEnd(start, width))
+					plain := strings.TrimSpace(ansi.Strip(row))
+					values, found := strings.CutPrefix(plain, "Bytes per token")
+					require.True(t, found)
+					require.NotContains(t, values, "\n")
+					require.Contains(t, values, "["+strconv.Itoa(selected+1)+"]")
+					visible := digits.FindAllString(values, -1)
+					require.Greater(t, len(visible), 1)
+					first, err := strconv.Atoi(visible[0])
+					require.NoError(t, err)
+					for i, value := range visible {
+						require.Equal(t, strconv.Itoa(first+i), value, "byte counts stay contiguous")
+					}
+					values = strings.TrimSpace(values)
+					require.Equal(t, first > 1, strings.HasPrefix(values, "…"))
+					require.Equal(t, first+len(visible)-1 < count, strings.HasSuffix(values, "…"))
+					require.LessOrEqual(t, ansi.StringWidth(row), width)
+					if tab == 1 {
+						ids := strings.Fields(ansi.Strip(strings.Join(m.resultLines(m.styles(), width), "\n")))
+						for i := range visible {
+							require.Contains(t, ids, strconv.Itoa(1000000000+first+i), "each byte count belongs to a displayed ID")
+						}
+					}
+				}
+			}
 		}
 	}
 }
 
-func TestTokenizerStudioOmitsChartUntilTokensAreReady(t *testing.T) {
+func TestTokenizerStudioOmitsByteCountsUntilTokensAreReady(t *testing.T) {
 	m := testTokenizerEditor()
 	m.width, m.height = 110, 28
 	check := func(state string) {
@@ -107,8 +119,7 @@ func TestTokenizerStudioOmitsChartUntilTokensAreReady(t *testing.T) {
 	require.Contains(t, rows[0], "● Ready")
 	require.Contains(t, rows[1], "é")
 	require.Contains(t, rows[2], "Bytes per token")
-	require.Contains(t, rows[2], "[█2]")
-	require.Contains(t, rows[2], "2 B max")
+	require.Contains(t, rows[2], "[2]")
 	require.Contains(t, rows[3], "Token 1 of 1  “é”")
 	require.Contains(t, rows[4], "ID 1  Byte offset 0  Length 2 B")
 
@@ -135,10 +146,14 @@ func TestTokenizerStudioKeepsLongByteMetadataWithinPane(t *testing.T) {
 	require.Contains(t, text, "ID 4294967295")
 	require.Contains(t, text, "Byte offset 100000")
 	require.Contains(t, text, "Length 948576 B")
-	require.Contains(t, text, "948576 B max")
+	require.Equal(t, []string{"Bytes", "per", "token", "100000", "[948576]"}, strings.Fields(rows[2]))
+
+	m.tokens = []tokenizerPreviewToken{{EndByte: 1 << 20}}
+	m.selected = 0
+	require.Contains(t, m.tokenByteCounts(m.styles(), width, 0, 1), "[1048576]")
 }
 
-func TestTokenizerStudioShowsLastChartPageAtMinimumSize(t *testing.T) {
+func TestTokenizerStudioShowsLastByteCountAtMinimumSize(t *testing.T) {
 	m := testTokenizerEditor()
 	m.width, m.height = 96, 16
 	m.insert(strings.Repeat("a", 1000) + "é")
@@ -150,8 +165,8 @@ func TestTokenizerStudioShowsLastChartPageAtMinimumSize(t *testing.T) {
 	for tab := range 3 {
 		m.tab = tab
 		view := ansi.Strip(m.View().Content)
-		require.Contains(t, view, "[█1]")
-		require.Contains(t, view, "· 1 B max")
+		require.Contains(t, view, "Bytes per token")
+		require.Contains(t, view, "[1]")
 		require.Contains(t, view, "Token 1002 of 1002 · partial UTF-8")
 		require.Contains(t, view, "0xa9")
 		require.Contains(t, view, "ID 4294967295")

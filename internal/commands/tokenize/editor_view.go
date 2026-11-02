@@ -30,8 +30,8 @@ func (m *tokenizerEditor) sourceRows() int {
 }
 func (m *tokenizerEditor) resultRows() int {
 	if m.studioLayout() {
-		// Leave room for wrapped counts, chart labels and selected-token details.
-		return min(4, max(1, m.bodyHeight()-8))
+		// Reserve a status row, a byte-count row and up to four rows of selected-token details.
+		return min(4, max(1, m.bodyHeight()-6))
 	}
 	if m.roomy() {
 		return 2
@@ -551,7 +551,13 @@ func (m *tokenizerEditor) resultWindow(s tokenizerEditorStyles, width int) ([]st
 		return lines, 0
 	}
 	start := m.resultStart(width)
-	lines := make([]string, rows)
+	lines, end := m.tokenStrip(s, width, start)
+	return lines, end - start
+}
+
+// Return the painted strip and its exclusive ending token index.
+func (m *tokenizerEditor) tokenStrip(s tokenizerEditorStyles, width, start int) ([]string, int) {
+	lines := make([]string, m.resultRows())
 	lines[0] = "  "
 	if start > 0 {
 		lines[0] = "… "
@@ -576,7 +582,7 @@ func (m *tokenizerEditor) resultWindow(s tokenizerEditorStyles, width int) ([]st
 		}
 		lines[row] += strings.Repeat(" ", gap) + style.Render(label)
 	})
-	return lines, end - start
+	return lines, end
 }
 
 func (m *tokenizerEditor) keepSelectionVisible() {

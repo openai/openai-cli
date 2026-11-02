@@ -72,8 +72,10 @@ func (m *tokenizerEditor) studioResults(s tokenizerEditorStyles, width int) []st
 	if len(m.tokens) == 0 {
 		return rows
 	}
-	rows = append(rows, trimEmptyRows(m.resultLines(s, width))...)
-	rows = append(rows, m.tokenSizeChart(s, width)...)
+	startToken := m.resultStart(width)
+	strip, endToken := m.tokenStrip(s, width, startToken)
+	rows = append(rows, trimEmptyRows(strip)...)
+	rows = append(rows, m.tokenByteCounts(s, width, startToken, endToken))
 
 	piece, start, end := m.fragment(m.selected)
 	position := fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
@@ -103,64 +105,55 @@ func (m *tokenizerEditor) studioResults(s tokenizerEditorStyles, width int) []st
 	return append(rows, meta+"  "+length)
 }
 
-// Round lengths to eighths of the page maximum, with one level for any positive length.
-func (m *tokenizerEditor) tokenSizeChart(s tokenizerEditorStyles, width int) []string {
-	if len(m.tokens) == 0 {
-		return nil
-	}
-	// Each bar has one cell and a neighboring gap. Reserve the final gap for a bracket.
-	capacity := max(1, (width-3)/2)
-	start := m.selected / capacity * capacity
-	end := min(start+capacity, len(m.tokens))
-	lengths := make([]int, end-start)
-	peak, digitWidth := 0, 0
-	for i := range lengths {
-		_, begin, limit := m.fragment(start + i)
-		lengths[i] = limit - begin
-		peak = max(peak, lengths[i])
-		digitWidth += len(strconv.Itoa(lengths[i]))
-	}
-
+// Show exact lengths for a contiguous part of the visible token strip.
+func (m *tokenizerEditor) tokenByteCounts(s tokenizerEditorStyles, width, first, end int) string {
 	const label = "Bytes per token"
-	scale := fmt.Sprintf("%d B max", peak)
-	if len(lengths) < len(m.tokens) {
-		span := strconv.Itoa(start + 1)
-		if end > start+1 {
-			span += "–" + strconv.Itoa(end)
-		}
-		scale = span + " · " + scale
+	values := make([]string, end-first)
+	cells := 0
+	for i := range values {
+		_, startByte, endByte := m.fragment(first + i)
+		values[i] = strconv.Itoa(endByte - startByte)
+		cells += len(values[i]) + 2 // The two spaces around each count also hold its selection brackets.
 	}
-	plotWidth := 2*len(lengths) + 1
-	available := width - 2 - len(label) - 2 - ansi.StringWidth(scale)
-	inline := plotWidth <= available
-	if !inline {
-		available = width - 2
-	}
-	showValues := plotWidth+digitWidth <= available
 
-	selected := m.selected - start
-	gaps := []byte(strings.Repeat(" ", len(lengths)+1))
-	if !m.color {
-		gaps[selected], gaps[selected+1] = '[', ']'
-	}
-	var bars strings.Builder
-	levels := []rune(" ▁▂▃▄▅▆▇█")
-	for i, length := range lengths {
-		level := max(1, (length*8+peak/2)/peak)
-		bar := string(levels[level])
-		if showValues {
-			bar += strconv.Itoa(length)
+	// Keep the inspected token in view. Trim the more distant edge when the row is full.
+	available := width - len(label) - 3 // Two inset cells and a space after the label.
+	for len(values) > 1 {
+		needed := cells
+		if first > 0 {
+			needed += 2 // Leading ellipsis and space.
 		}
-		style := s.muted
-		if i == selected {
-			style = s.accent
+		if end < len(m.tokens) {
+			needed += 2 // Trailing space and ellipsis.
 		}
-		bars.WriteByte(gaps[i])
-		bars.WriteString(style.Render(bar))
+		if needed <= available {
+			break
+		}
+		if m.selected-first >= end-1-m.selected {
+			cells -= len(values[0]) + 2
+			values = values[1:]
+			first++
+		} else {
+			cells -= len(values[len(values)-1]) + 2
+			values = values[:len(values)-1]
+			end--
+		}
 	}
-	bars.WriteByte(gaps[len(lengths)])
-	if inline {
-		return []string{"  " + s.muted.Render(label) + " " + bars.String() + " " + s.muted.Render(scale)}
+
+	var row strings.Builder
+	row.WriteString("  " + s.muted.Render(label) + " ")
+	if first > 0 {
+		row.WriteString(s.muted.Render("… "))
 	}
-	return []string{"  " + s.muted.Render(label+"  "+scale), "  " + bars.String()}
+	for i, value := range values {
+		if first+i == m.selected {
+			row.WriteString(s.accent.Bold(m.color).Render("[" + value + "]"))
+		} else {
+			row.WriteString(" " + value + " ")
+		}
+	}
+	if end < len(m.tokens) {
+		row.WriteString(s.muted.Render(" …"))
+	}
+	return row.String()
 }
