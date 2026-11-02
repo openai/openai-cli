@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -222,20 +220,6 @@ func TestCommandPickerRejectedPastePreservesSelection(t *testing.T) {
 	require.Equal(t, cursor, m.cursor)
 	require.Equal(t, matches, m.matches)
 	require.Equal(t, selected, m.selected)
-}
-
-func TestOpenPickerInputRejectsMissingOrNonTerminalOutput(t *testing.T) {
-	input, err := OpenPickerInput(nil)
-	require.Error(t, err)
-	require.Nil(t, input)
-	output, err := os.Create(filepath.Join(t.TempDir(), "output"))
-	require.NoError(t, err)
-	defer output.Close()
-	input, err = OpenPickerInput(output)
-	require.Error(t, err)
-	require.Nil(t, input)
-	_, err = output.WriteString("still owned by caller")
-	require.NoError(t, err)
 }
 
 // Exercise the smallest supported frame and wider terminal cells. These

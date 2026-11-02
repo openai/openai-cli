@@ -28,10 +28,17 @@ func handleTokenizerEditor(ctx context.Context, command *cli.Command) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	view := command.Name == "view"
 	if command.Args().Present() {
+		if view {
+			return &localcommands.LocalError{Message: "Tokenizer view reads standard input. Pipe UTF-8 text into the command or redirect a file."}
+		}
 		return &localcommands.LocalError{Message: "Tokenizer takes no positional input. Open the editor without arguments, or use tokenizer count --text TEXT."}
 	}
 	format, err := tokenizerOutputFormat(command)
+	if view && (err != nil || format != "auto") {
+		return &localcommands.LocalError{Message: "Tokenizer view requires --format auto without --transform or --raw-output. Use tokenizer count or tokenizer inspect for script output."}
+	}
 	if err != nil {
 		return &localcommands.LocalError{Message: "The tokenizer editor supports --format auto or text. For JSON, use tokenizer count or inspect. --transform and --raw-output are unsupported."}
 	}
@@ -45,16 +52,34 @@ func handleTokenizerEditor(ctx context.Context, command *cli.Command) error {
 	if invocation == "" {
 		invocation = "openai"
 	}
-	if input == nil || output == nil || !term.IsTerminal(input.Fd()) ||
-		!cliterminal.AutomaticPresentation(format, term.IsTerminal(output.Fd()), os.Getenv) {
+	terminalInput := input != nil && term.IsTerminal(input.Fd())
+	display := output != nil && cliterminal.AutomaticPresentation(format, term.IsTerminal(output.Fd()), os.Getenv)
+	if view && !display {
+		return &localcommands.LocalError{Message: "Tokenizer view requires interactive terminal output in automatic mode. Use tokenizer count or tokenizer inspect for scripts."}
+	}
+	if !view && (!display || !terminalInput) {
 		_, err := fmt.Fprintf(clioutput.Writer{Context: ctx, Sink: root.Writer},
 			"Tokenizer\n\nOpen the live editor with terminal input and output:\n  %s tokenizer\n\n"+
-				"Commands\n  count      Count exact plain-text tokens\n  inspect    Show token IDs and byte boundaries\n"+
+				"Commands\n  view       Explore piped text in the editor\n  count      Count exact plain-text tokens\n  inspect    Show token IDs and byte boundaries\n"+
 				"  encodings  List available encodings\n  licenses   Show bundled notices\n\n"+
-				"Pipe UTF-8 text into either command:\n  echo hello | %[1]s tokenizer count --transform token_count\n  echo hello | %[1]s tokenizer inspect --format json\n", readable.Text(invocation))
+				"Explore a Git diff in the editor\n  git diff | %[1]s tokenizer view\n\n"+
+				"Pipe UTF-8 text into a script command\n  echo hello | %[1]s tokenizer count --transform token_count\n  echo hello | %[1]s tokenizer inspect --format json\n", readable.Text(invocation))
 		return tokenizerOutputFailure(err)
 	}
-	code, err := runTokenizerEditor(ctx, input, output, invocation)
+	var draft string
+	if !terminalInput {
+		// Prove the display can supply a keyboard before consuming the producer.
+		input, err = cliterminal.OpenInputFromOutput(output)
+		if err != nil {
+			return &localcommands.LocalError{Message: "Tokenizer view needs a readable terminal for keyboard input. Use tokenizer inspect for script output.", Cause: err}
+		}
+		defer input.Close()
+		draft, err = readTokenizerInput(ctx, command)
+		if err != nil {
+			return err
+		}
+	}
+	code, err := runTokenizerEditor(ctx, input, output, invocation, draft)
 	if err != nil {
 		return &localcommands.LocalError{Message: "Could not display the tokenizer editor. Use tokenizer count or tokenizer inspect with --text or --file.", Cause: err}
 	}
@@ -64,7 +89,7 @@ func handleTokenizerEditor(ctx context.Context, command *cli.Command) error {
 	return nil
 }
 
-func runTokenizerEditor(parent context.Context, input, output *os.File, invocation string) (code int, err error) {
+func runTokenizerEditor(parent context.Context, input, output *os.File, invocation, draft string) (code int, err error) {
 	if err := parent.Err(); err != nil {
 		return 0, err
 	}
@@ -114,6 +139,13 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	defer painter.Stop()
 	model := newTokenizerEditor()
 	model.width, model.height = width, height
+	if draft != "" {
+		model.insert(draft)
+		model.cursor, model.focus = 0, tokenizerFocusResults
+		if len(draft) > tokenizerInlineBytes {
+			worker.Replace(model.revision, draft, model.encoding)
+		}
+	}
 	model.dark = cliterminal.DarkBackground(os.Getenv("COLORFGBG"))
 	if invocation != "" {
 		model.invocation = invocation

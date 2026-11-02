@@ -18,6 +18,18 @@ The live editor opens below the shell command. Earlier output stays in the termi
 Type or paste text to see its exact token count.
 The editor supports up to 1 MiB of UTF-8 input.
 
+Use `tokenizer view` to open a command’s output or a file in the same editor.
+
+```sh
+git diff | openai tokenizer view
+openai tokenizer view < draft.txt
+```
+
+The editor reads the complete UTF-8 input, including trailing newlines.
+When the producer finishes, the editor selects the first token. Page Down shows the next page.
+The terminal supplies the keyboard controls. Tab moves from Tokens to Text for editing.
+Empty input opens an empty draft. For output that another command can read, use `count` or `inspect`.
+
 Apple Terminal can draw brackets at both ends of the shell command.
 Choose **View > Hide Marks** to hide them.
 For one launch, submit the command with Shift+Command+Return. [Apple Terminal shortcuts](https://support.apple.com/guide/terminal/trmlshtcts/mac)
@@ -87,7 +99,8 @@ If computation fails, edit the text or press `r` while Tokens has focus.
 The draft remains available until you exit; the CLI never saves it.
 
 The editor requires terminal input and output, automatic format, and at least 40 columns by 12 rows.
-Pipes, CI, `TERM=dumb`, and explicit text format receive command guidance without consuming stdin.
+Bare `openai tokenizer` prints guidance for pipes, CI, `TERM=dumb`, and explicit text format without consuming stdin.
+`tokenizer view` requires interactive terminal output in automatic mode.
 `NO_COLOR` retains keyboard controls and visible focus markers.
 It retains the monochrome cursor and selected-token styling while suppressing token colors.
 Use `count` or `inspect` for JSON output and scripts.

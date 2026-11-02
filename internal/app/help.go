@@ -202,7 +202,7 @@ func setCompleteHelpContent(command *cli.Command, content clihelp.Content) {
 // descriptions, examples, and restrictions. Unrelated custom guides stay intact.
 func configureLocalHelpContent(root *cli.Command) {
 	localOutput := "Local output supports --format auto, text, or json. It does not support --transform or --raw-output."
-	for _, path := range [][]string{{"codex"}, {"tokenizer"}, {"tokenizer", "count"}, {"tokenizer", "inspect"}, {"tokenizer", "encodings"}, {"tokenizer", "licenses"}} {
+	for _, path := range [][]string{{"codex"}, {"tokenizer"}, {"tokenizer", "view"}, {"tokenizer", "count"}, {"tokenizer", "inspect"}, {"tokenizer", "encodings"}, {"tokenizer", "licenses"}} {
 		command := root
 		for _, name := range path {
 			command = command.Command(name)
@@ -224,8 +224,11 @@ func configureLocalHelpContent(root *cli.Command) {
 		case "tokenizer":
 			command.Metadata["help-optional-command"] = true
 			content.GlobalOptionsNote = "The editor supports --format auto or text. For JSON, use tokenizer count or inspect. --transform and --raw-output are unsupported."
-			content.Description = "Opens the live editor in a terminal. Use count or inspect for scripts.\n\n" + content.Description
+			content.Description = "Opens the live editor in a terminal. Pipe text into tokenizer view to explore it. Use count or inspect for scripts.\n\n" + content.Description
 			content.Examples = []clihelp.Example{{Description: "Open the live tokenizer editor:", Command: "tokenizer"}}
+		case "tokenizer view":
+			content.GlobalOptionsNote = "The editor requires --format auto and an interactive terminal. Use tokenizer count or inspect for script output."
+			content.Examples = []clihelp.Example{{Description: "Explore a UTF-8 file in Bash or zsh", Command: "tokenizer view < draft.txt"}}
 		case "tokenizer count", "tokenizer inspect":
 			content.Examples = []clihelp.Example{{Description: "Tokenize literal text:", Command: strings.Join(path, " ") + ` --text "Hello, world!"`}}
 			if command.Name == "count" {

@@ -40,6 +40,10 @@ Opens the live editor in a terminal. Use count or inspect for scripts.
 		Metadata:           map[string]any{localcommands.LocalUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools"},
 		Action:             handleTokenizerEditor,
 		Commands: []*cli.Command{
+			{Name: "view", Usage: "Open piped text in the tokenizer editor", HideHelpCommand: true,
+				Description: "Read up to 1 MiB of UTF-8 text from a pipe or redirected file. " +
+					"When input ends, the editor selects the first token. With terminal input, it opens an empty draft.",
+				Action: handleTokenizerEditor},
 			tokenizerInputCommand("count", false), tokenizerInputCommand("inspect", true),
 			{Name: "encodings", Usage: "List the embedded tokenizer encodings", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp, Action: handleTokenizerEncodings},
 			{Name: "licenses", Usage: "Print the bundled tokenizer license notices", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp, Action: handleTokenizerLicenses},
