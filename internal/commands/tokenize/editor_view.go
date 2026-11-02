@@ -159,14 +159,22 @@ func (s tokenizerEditorStyles) heading(label string, active bool) string {
 	return "  " + s.muted.Render(label)
 }
 
-func (m *tokenizerEditor) textRows(s tokenizerEditorStyles, width int) []string {
-	textLabel := "Text"
-	if len(m.lineStarts) > m.sourceRows() {
-		textLabel += fmt.Sprintf(" %d/%d", m.lineIndex(m.cursor)+1, len(m.lineStarts))
+func (m *tokenizerEditor) sourceLabel() (string, int) {
+	total := len(m.lineStarts)
+	if total <= m.sourceRows() {
+		return "Text", 9
 	}
-	textHeading := s.heading(textLabel, m.focus == tokenizerFocusText)
-	prefix := textHeading + strings.Repeat(" ", max(1, 7-ansi.StringWidth(textLabel)))
-	indent := ansi.StringWidth(prefix)
+	label := fmt.Sprintf("Text %d/%d", m.lineIndex(m.cursor)+1, total)
+	if !m.studioLayout() {
+		return label, len(label) + 3
+	}
+	// Reserve both line numbers at their widest so paging keeps the same wrap.
+	return label, 3 + len("Text /") + 2*len(strconv.Itoa(total))
+}
+
+func (m *tokenizerEditor) textRows(s tokenizerEditorStyles, width int) []string {
+	label, indent := m.sourceLabel()
+	prefix := s.heading(label, m.focus == tokenizerFocusText) + strings.Repeat(" ", indent-2-len(label))
 	sourceLines := m.editorLines
 	if m.studioLayout() {
 		sourceLines = m.studioSourceLines
@@ -316,19 +324,29 @@ func (m *tokenizerEditor) footer() string {
 	switch m.focus {
 	case tokenizerFocusText:
 		footer = "Ctrl+C exit · Tab options"
-		if m.lineEnd(m.cursor) == len(m.text) {
-			footer = "Ctrl+C exit · ↓ options · Tab switch"
+		lastLine := m.lineEnd(m.cursor) == len(m.text)
+		if lastLine {
+			footer = "Ctrl+C exit · ↓ options"
 		}
-		if len(m.lineStarts) > m.sourceRows() && ansi.StringWidth(footer+" · PgUp/PgDn") <= m.viewWidth() {
+		if m.sourceOverflows() {
 			footer += " · PgUp/PgDn"
+		}
+		if lastLine && ansi.StringWidth(footer+" · Tab switch") <= m.viewWidth() {
+			footer += " · Tab switch"
 		}
 	case tokenizerFocusResults:
 		footer = "Ctrl+C exit"
 		if m.failed {
 			footer += " · r retry"
 		} else if len(m.tokens) > 0 {
-			footer += " · ←→ token · Enter details"
-			if ansi.StringWidth(footer) > m.viewWidth() {
+			footer += " · ←→ token"
+			pages := m.resultEnd(0, m.resultWidth()) < len(m.tokens)
+			if pages {
+				footer += " · PgUp/PgDn"
+			}
+			if ansi.StringWidth(footer+" · Enter details") <= m.viewWidth() {
+				footer += " · Enter details"
+			} else if !pages {
 				footer = "Ctrl+C exit · ←→ · Enter details"
 			}
 		}
@@ -651,10 +669,14 @@ func (m *tokenizerEditor) resultStart(width int) int {
 	if m.selected < m.resultEnd(start, width) {
 		return start
 	}
-	// Search only the preceding visible window, not the skipped token prefix.
-	start = m.selected
-	for previous := start - 1; previous >= 0; previous-- {
-		if m.resultEnd(previous, width) <= m.selected {
+	return m.resultStartIncluding(m.selected, width)
+}
+
+// Search only the preceding visible window, even when jumping to the last token.
+func (m *tokenizerEditor) resultStartIncluding(last, width int) int {
+	start := last
+	for previous := last - 1; previous >= 0; previous-- {
+		if m.resultEnd(previous, width) <= last {
 			break
 		}
 		start = previous
@@ -707,17 +729,27 @@ func (m *tokenizerEditor) tokenSegment(index, width int) string {
 	return tokenizerFragmentLabel(fragment, max(1, width-2))
 }
 
-func (m *tokenizerEditor) previousPageSize() int {
-	start := m.selected
-	// Use the rendered window's budget, including its continuation marker.
-	// The scan stops within one preceding viewport, even for large sequences.
-	for previous := m.selected - 1; previous >= 0; previous-- {
-		if m.resultEnd(previous, m.resultWidth()) < m.selected {
-			break
+func (m *tokenizerEditor) pageResults(forward bool) {
+	width := m.resultWidth()
+	start := m.resultStart(width)
+	if forward {
+		end := m.resultEnd(start, width)
+		if end == len(m.tokens) {
+			m.selected = max(0, end-1)
+			return
 		}
-		start = previous
+		m.priorPageStart, start = start, end
+	} else {
+		// Several starts can lead to the same boundary. Prefer the page we just left.
+		previous := m.priorPageStart
+		m.priorPageStart = 0
+		if previous < start && m.resultEnd(previous, width) == start {
+			start = previous
+		} else {
+			start = m.resultStartIncluding(max(0, start-1), width)
+		}
 	}
-	return max(1, m.selected-start)
+	m.selected, m.tokenStart = start, start
 }
 
 func tokenizerClip(text string, width int) string {
@@ -732,6 +764,7 @@ var tokenizerEditorHelp = []struct {
 	{"Controls", true, [][2]string{
 		{"Tab", "Cycle through Text, View, and Tokens."},
 		{"← →", "Switch views. In Tokens, select a token."},
+		{"PgUp/PgDn", "Page through text, tokens, or dialog rows."},
 		{"Shift+← →", "Move the text cursor one character."},
 		{"v / m / d", "Outside Text, open View, Model, or Details."},
 		{"Enter", "Add a line in Text or open the selection."},
@@ -751,15 +784,17 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 	start := max(0, min(m.scroll, total-count))
 	rows, _ := m.modalRows(start, count)
 	pageRange := ""
+	shortcuts := "Esc back · Ctrl+C exit"
 	if total > count {
 		pageRange = s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", start+1, start+len(rows), total))
+		scroll := "↑↓ scroll"
+		if ansi.StringWidth(scroll+" · PgUp/PgDn · "+shortcuts) <= m.viewWidth() {
+			scroll += " · PgUp/PgDn"
+		}
+		shortcuts = scroll + " · " + shortcuts
 	}
 	if m.modal == tokenizerModalHelp {
-		footer := "Esc back · Ctrl+C exit"
-		if total > count {
-			footer = "↑↓ scroll · " + footer
-		}
-		return m.panel(s, "Tokenizer help", pageRange, rows, []string{s.shortcuts(footer)})
+		return m.panel(s, "Tokenizer help", pageRange, rows, []string{s.shortcuts(shortcuts)})
 	}
 	title := "Token details"
 	if len(m.tokens) > 0 {
@@ -778,10 +813,8 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 		}
 	}
 	var footer []string
-	shortcuts := "Esc back · Ctrl+C exit"
 	if total > count {
 		footer = append(footer, pageRange)
-		shortcuts = "↑↓ scroll · " + shortcuts
 	}
 	footer = append(footer, s.shortcuts(shortcuts))
 	return m.panel(s, title, s.muted.Render(model), rows, footer)

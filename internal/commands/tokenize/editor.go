@@ -39,6 +39,7 @@ type tokenizerEditor struct {
 	cursor            int
 	boundaries        []int
 	lineStarts        []int
+	sourcePage        studioSourcePage
 	encoding          string
 	invocation        string
 	option, choice    int
@@ -46,6 +47,7 @@ type tokenizerEditor struct {
 	focus, tab, modal int
 	selected, scroll  int
 	tokenStart        int
+	priorPageStart    int
 	width, height     int
 	color, dark       bool
 	revision          uint64
@@ -222,11 +224,8 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.selected--
 			case "right":
 				m.selected++
-			case "pgup":
-				m.selected -= m.previousPageSize()
-			case "pgdown":
-				_, count := m.resultWindow(m.styles(), m.resultWidth())
-				m.selected += max(1, count)
+			case "pgup", "pgdown":
+				m.pageResults(key == "pgdown")
 			case "home":
 				m.selected = 0
 			case "end":
@@ -430,9 +429,9 @@ func (m *tokenizerEditor) edit(msg tea.KeyPressMsg) {
 	case "down":
 		m.moveLine(1)
 	case "pgup":
-		m.moveLine(-m.sourceRows())
+		m.moveSourcePage(-1)
 	case "pgdown":
-		m.moveLine(m.sourceRows())
+		m.moveSourcePage(1)
 	case "ctrl+u":
 		if m.cursor > 0 {
 			m.text, m.cursor = m.text[m.cursor:], 0

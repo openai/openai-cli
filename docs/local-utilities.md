@@ -18,6 +18,10 @@ The live editor opens below the shell command. Earlier output stays in the termi
 Type or paste text to see its exact token count.
 The editor supports up to 1 MiB of UTF-8 input.
 
+Apple Terminal can draw brackets at both ends of the shell command.
+Choose **View > Hide Marks** to hide them.
+For one launch, submit the command with Shift+Command+Return. [Apple Terminal shortcuts](https://support.apple.com/guide/terminal/trmlshtcts/mac)
+
 Press Left or Right while typing to switch between Text, Token IDs, and Bytes.
 Shift+Left and Shift+Right move the text cursor by one character.
 Tab moves from Text to View. A second Tab focuses the tokens.
@@ -33,6 +37,7 @@ On earlier lines, Down moves the text cursor. Up moves to the previous text line
 Home and End move to the current line's boundaries.
 Ctrl+Home and Ctrl+End jump to the beginning and end of the complete draft.
 Page Up and Page Down move by one visible text page and keep focus in Text.
+Wide terminals count wrapped text rows when paging.
 Ctrl+Left and Ctrl+Right move between words separated by whitespace.
 When lines exceed the visible text area, the Text label shows the current line and total lines.
 The editor keeps the complete draft even when only part is visible.
@@ -57,6 +62,11 @@ Starts tells you how many input bytes precede the token. Size tells you how many
 For example, the default encoding assigns ID 220 to a single space. That space uses one byte, hexadecimal `20`.
 Exact encoding names remain available in script output and `tokenizer encodings`.
 Scrolling controls appear when the complete details exceed the visible panel.
+With Tokens focused, Page Down selects the first token beyond the visible page.
+Page Up shows the preceding tokens. Home and End select the first and last token.
+Each page holds as many tokens as the current view and terminal size allow.
+In Help and Details, the same page keys scroll the visible rows.
+On a Mac laptop, Fn+Up sends Page Up and Fn+Down sends Page Down. [Mac keyboard shortcuts](https://support.apple.com/en-us/102650)
 Text and Token IDs are the primary reading views. Bytes supports exact-byte inspection and debugging.
 Ctrl+U removes text before the cursor, matching the image prompt editor.
 Paste preserves whitespace, line endings, and Unicode normalization.

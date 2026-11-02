@@ -70,7 +70,7 @@ func TestTokenizerEditorTextPositionAppearsOnlyOnOverflow(t *testing.T) {
 			} else {
 				require.NotRegexp(t, `Text \d+/\d+`, frame)
 			}
-			require.Equal(t, overflowing && size[0] == 80, strings.Contains(frame, "PgUp/PgDn"))
+			require.Equal(t, overflowing, strings.Contains(frame, "PgUp/PgDn"))
 			require.Contains(t, frame, "Ctrl+C exit")
 			require.Contains(t, frame, "↓ options")
 			require.LessOrEqual(t, len(strings.Split(frame, "\n")), m.viewHeight())
@@ -216,8 +216,8 @@ func TestTokenizerEditorPageUpFitsContinuationAndFirstPage(t *testing.T) {
 	}
 	tokenizerEditorKey(m, tea.KeyEnd)
 	assertPage(89, 11)
-	for _, selected := range []int{88, 77} {
-		before := m.selected
+	for _, selected := range []int{78, 67} {
+		before := m.tokenStart
 		tokenizerEditorKey(m, tea.KeyPgUp)
 		require.Equal(t, 11, before-m.selected, "the fixed gutter leaves room for eleven two-digit IDs")
 		require.Equal(t, selected, m.selected)
@@ -229,13 +229,14 @@ func TestTokenizerEditorPageUpFitsContinuationAndFirstPage(t *testing.T) {
 		tokenizerEditorKey(m, tea.KeyRight)
 	}
 	tokenizerEditorKey(m, tea.KeyPgUp)
-	require.Equal(t, 11, m.selected)
-	assertPage(11, 11)
+	require.Equal(t, 1, m.selected)
+	assertPage(1, 11)
 	tokenizerEditorKey(m, tea.KeyPgUp)
 	require.Zero(t, m.selected, "first and continuation pages share the same fixed gutter")
 	assertPage(0, 11)
 	tokenizerEditorKey(m, tea.KeyPgDown)
 	require.Equal(t, 11, m.selected)
+	assertPage(11, 11)
 	tokenizerEditorKey(m, tea.KeyPgUp)
 	require.Zero(t, m.selected)
 	assertPage(0, 11)
@@ -251,6 +252,7 @@ func TestTokenizerEditorCompactResultHintsRemainComplete(t *testing.T) {
 	require.Contains(t, view, "←→")
 	require.Contains(t, view, "Enter details")
 	require.Contains(t, view, "Ctrl+C exit")
+	require.NotContains(t, view, "PgUp/PgDn", "all tokens fit")
 	require.NotContains(t, view, "details…")
 }
 

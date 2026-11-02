@@ -440,29 +440,91 @@ func TestTokenizerEditorTinyTerminalPreservesDraft(t *testing.T) {
 }
 
 func TestTokenizerEditorPageKeysMoveByVisibleTokens(t *testing.T) {
+	var draft strings.Builder
+	var tokens []tokenizerPreviewToken
+	for i := range 180 {
+		fragment, id := "x", uint32(i%10)
+		if i%60 >= 30 {
+			fragment, id = " International", uint32(1000000000+i)
+		}
+		draft.WriteString(fragment)
+		tokens = append(tokens, tokenizerPreviewToken{ID: id, EndByte: uint32(draft.Len())})
+	}
 	for _, size := range [][2]int{{133, 39}, {110, 28}, {80, 24}, {40, 12}} {
 		m := testTokenizerEditor()
 		m.width, m.height, m.focus = size[0], size[1], tokenizerFocusResults
-		m.insert(strings.Repeat("a", 2048))
-		tokens := make([]tokenizerPreviewToken, len(m.text))
-		for i := range tokens {
-			tokens[i] = tokenizerPreviewToken{ID: uint32(i), EndByte: uint32(i + 1)}
-		}
+		m.insert(draft.String())
 		m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
 		for tab := 0; tab < 3; tab++ {
-			m.tab, m.selected = tab, 0
-			_, visible := m.resultWindow(m.styles(), m.resultWidth())
-			require.Greater(t, visible, m.resultRows())
-			require.Less(t, visible, len(tokens), "the fixture must exceed one visible page")
+			m.tab = tab
+			tokenizerEditorKey(m, tea.KeyHome)
+			width := m.resultWidth()
+			require.Contains(t, m.footer(), "PgUp/PgDn")
+			for {
+				first := m.resultStart(width)
+				_, visible := m.resultWindow(m.styles(), width)
+				end := first + visible
+				if end == len(tokens) {
+					break
+				}
+				if visible > 1 {
+					tokenizerEditorKey(m, tea.KeyRight)
+					require.Equal(t, first, m.resultStart(width), "single-token inspection keeps this page")
+				}
+				tokenizerEditorKey(m, tea.KeyPgDown)
+				require.Equal(t, end, m.selected, "select the first unseen token")
+				require.Equal(t, end, m.resultStart(width), "show adjacent pages with no skipped tokens")
+			}
+			lastPage := m.resultStart(width)
+			require.Positive(t, lastPage, "the fixture must exceed one page")
 			tokenizerEditorKey(m, tea.KeyPgDown)
-			require.Equal(t, visible, m.selected)
-			tokenizerEditorKey(m, tea.KeyEnd)
-			step := m.previousPageSize()
-			require.Greater(t, step, m.resultRows())
-			tokenizerEditorKey(m, tea.KeyPgUp)
-			require.Equal(t, len(tokens)-1-step, m.selected)
+			require.Equal(t, lastPage, m.resultStart(width), "keep the final partial page")
+			require.Equal(t, len(tokens)-1, m.selected)
+			for m.tokenStart > 0 {
+				first := m.tokenStart
+				tokenizerEditorKey(m, tea.KeyPgUp)
+				require.Less(t, m.tokenStart, first)
+				require.Equal(t, m.tokenStart, m.selected)
+				require.GreaterOrEqual(t, m.resultEnd(m.tokenStart, width), first, "keep the preceding token visible")
+			}
+			require.Equal(t, draft.String(), m.text)
 		}
 	}
+}
+
+func TestTokenizerEditorPageUpRestoresPreviousTokenPage(t *testing.T) {
+	m := testTokenizerEditor()
+	m.width, m.height, m.focus = 40, 12, tokenizerFocusResults
+	var draft strings.Builder
+	var tokens []tokenizerPreviewToken
+	for i := range 10 {
+		fragment := " administration"
+		if i == 2 {
+			fragment = " b"
+		}
+		draft.WriteString(fragment)
+		tokens = append(tokens, tokenizerPreviewToken{EndByte: uint32(draft.Len())})
+	}
+	m.insert(draft.String())
+	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
+	checkPage := func(key rune, first, end int) {
+		t.Helper()
+		tokenizerEditorKey(m, key)
+		require.Equal(t, first, m.selected)
+		require.Equal(t, first, m.resultStart(m.resultWidth()))
+		require.Equal(t, end, m.resultEnd(first, m.resultWidth()))
+	}
+	checkPage(tea.KeyHome, 0, 3)
+	checkPage(tea.KeyPgDown, 3, 5)
+	checkPage(tea.KeyPgDown, 5, 7)
+	checkPage(tea.KeyPgUp, 3, 5) // Backfilling would also fit the short third token.
+
+	checkPage(tea.KeyPgDown, 5, 7)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tokenizerEditorKey(m, tea.KeyPgUp)
+	require.Zero(t, m.selected, "the stored page no longer ends at this boundary after resizing")
+	tokenizerEditorKey(m, tea.KeyEnd)
+	require.Equal(t, len(tokens)-1, m.selected)
 }
 
 func TestTokenizerEditorPickerNavigation(t *testing.T) {
