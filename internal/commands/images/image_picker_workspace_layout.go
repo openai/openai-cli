@@ -101,8 +101,8 @@ func (w *imagePickerWorkspace) ensureGallery(m *imagePicker, captions bool) {
 	// A path error can exceed even the full-width notice line. Keep every
 	// character reachable with the same paging controls as request details.
 	notice := ""
-	if _, wide := imageStudioLayout(m.width, m.height); wide && !m.generating && len(m.note) > 0 {
-		if text := imagePickerLine(m.note); ansi.StringWidth(text) > m.width-10 {
+	if g, wide := imageStudioLayout(m.width, m.height); wide && !m.generating && len(m.note) > 0 {
+		if text := imagePickerLine(m.note); ansi.StringWidth(text) > g.frameWidth-10 {
 			notice = text
 		}
 	}

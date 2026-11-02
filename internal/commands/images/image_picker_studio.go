@@ -9,26 +9,29 @@ import (
 )
 
 // Keep the action strip, editor, and shortcuts stationary as images arrive.
-const imageStudioBodyY = 5
+const imageStudioBodyY = 2
 
 type imageStudioGeometry struct {
-	editorWidth, editorRows, previewX, previewWidth, previewRows int
+	frameWidth, editorWidth, editorRows, previewX, previewWidth, previewRows int
 }
 
 func imageStudioLayout(width, height int) (imageStudioGeometry, bool) {
 	if width < 110 || height < 28 {
 		return imageStudioGeometry{}, false
 	}
-	editor := min(70, (width-10)*45/100)
+	// Keep the inline workspace at a reading width. The expanded viewer owns the terminal.
+	width = min(width, 100)
+	editor := 44
 	x := 4 + editor + 1 + 3 // editor, gutter, divider and two-cell inset
-	return imageStudioGeometry{editorWidth: editor, editorRows: 17, previewX: x,
+	return imageStudioGeometry{frameWidth: width, editorWidth: editor, editorRows: 17, previewX: x,
 		previewWidth: width - x - 4, previewRows: 16}, true
 }
 
 // Cached decorations never contain image payloads. Spinner ticks can reuse them.
 type imageStudioChrome struct {
-	top, prefixes                                          []string
-	suffix, footer, bottom, emptyLabel, command, promptArg string
+	prefixes                                                             []string
+	editorLines                                                          int
+	top, toolbar, suffix, footer, bottom, emptyLabel, command, promptArg string
 }
 
 func (w *imagePickerWorkspace) studioChrome(m *imagePicker, g imageStudioGeometry) *imageStudioChrome {
@@ -36,22 +39,19 @@ func (w *imagePickerWorkspace) studioChrome(m *imagePicker, g imageStudioGeometr
 		return w.studio
 	}
 	border := m.workspaceImageBorder("│")
-	suffix := ansi.CursorHorizontalAbsolute(m.width-2) + border
+	suffix := ansi.CursorHorizontalAbsolute(g.frameWidth-2) + border
 	frameRow := func(text string) string { return "  " + border + " " + text + suffix }
-	width := m.width - 8
+	width := g.frameWidth - 8
 	title := lipgloss.NewStyle().Bold(m.color).Render("Create image")
-	badge := m.workspaceText("Image studio", imageSecondary)
+	toolbar := "  " + title + "  " + m.studioActions(width-ansi.StringWidth(title)-4)
 	chrome := &imageStudioChrome{
-		top: []string{m.workspaceImageFrame("", m.width, true),
-			frameRow("  " + title + strings.Repeat(" ", width-2-ansi.StringWidth(title+badge)) + badge),
-			frameRow(m.studioActions(width)),
-			frameRow("  " + m.workspaceImageBorder(strings.Repeat("─", width-2))),
-			frameRow("")},
+		top: m.workspaceImageFrame("", g.frameWidth, true), toolbar: toolbar,
 		suffix: suffix, footer: frameRow("  " + m.studioHints(g)),
-		bottom:     m.workspaceImageFrame("", m.width, false),
+		bottom:     m.workspaceImageFrame("", g.frameWidth, false),
 		emptyLabel: m.workspaceText("Command preview", imageSecondary),
 	}
 	left := strings.Split(w.header.Content, "\n")
+	chrome.editorLines = len(left)
 	for i := range g.editorRows {
 		line := ""
 		if i < len(left) {
@@ -83,61 +83,64 @@ func (w *imagePickerWorkspace) studioChrome(m *imagePicker, g imageStudioGeometr
 func (w *imagePickerWorkspace) studioView(m *imagePicker, g imageStudioGeometry, busy bool) []string {
 	c := w.studioChrome(m, g)
 	w.ensureGallery(m, true)
-	w.top = imageStudioBodyY
+	w.top, w.bodyStart = imageStudioBodyY, imageStudioBodyY
 	w.viewportRows = min(len(w.displayRows), g.previewRows)
 	w.scroll(0)
-	w.bodyStart = imageStudioBodyY + 1
 	w.bodyEnd = w.bodyStart + w.viewportRows
-	status := w.inlineStatus(m, busy)
-	if status == "" && len(w.images) == 0 && len(w.displayRows) == 0 {
-		status = m.workspaceText("○ Idle", imageSecondary)
+
+	top, toolbar := c.top, c.toolbar
+	if status := w.inlineStatus(m, busy); status != "" && w.longNotice == "" {
+		space := g.frameWidth - 8 - ansi.StringWidth(toolbar+status)
+		if space >= 2 {
+			toolbar += strings.Repeat(" ", space) + status
+		} else {
+			// Keep the full notice above the controls. Longer notices are paged in the gallery.
+			top = m.workspaceImageFrame(status, g.frameWidth, true)
+		}
 	}
-	title := lipgloss.NewStyle().Bold(m.color).Render("Preview")
-	captionFocus := m.focus == "images" && len(w.images) > 1 && w.galleryStarts[w.selected] >= w.offset && w.galleryStarts[w.selected] < w.offset+w.viewportRows
-	if m.focus == "images" && !captionFocus {
-		title = m.workspaceText("› ", imageActive) + title
+	lines := []string{top, m.workspaceImageRow(toolbar, g.frameWidth, false)}
+	var right []string
+	if w.viewportRows == 0 && m.focus != "command" {
+		right = []string{c.emptyLabel, c.command}
+		if c.promptArg != "" {
+			right = append(right, c.promptArg)
+		}
 	}
-	lines := append([]string(nil), c.top...)
-	if w.longNotice != "" {
-		status = "" // The scrollable gallery contains the full notice.
-	} else if ansi.StringWidth(status)+ansi.StringWidth(title)+1 > g.previewWidth {
-		lines[imageStudioBodyY-1] = m.workspaceImageRow("  "+status, m.width, false)
-		status = ""
+	receipt := ""
+	rightRows := max(w.viewportRows, len(right))
+	if len(w.images) > 0 {
+		receipt = w.savedLocation(m)
+		rightRows++
 	}
-	heading := title + strings.Repeat(" ", max(1, g.previewWidth-ansi.StringWidth(title+status))) + status
-	for i, prefix := range c.prefixes {
+	focusRow := -1
+	if m.focus == "images" && w.viewportRows > 0 {
+		focusRow = 0
+		if len(w.galleryStarts) > 0 {
+			if caption := w.galleryStarts[w.selected] - w.offset; caption >= 0 && caption < w.viewportRows {
+				focusRow = caption
+			}
+		}
+	}
+	for i := range max(c.editorLines, rightRows) {
+		prefix := c.prefixes[i]
+		if i == focusRow {
+			prefix = strings.TrimSuffix(prefix, "  ") + m.workspaceText("› ", imageActive)
+		}
 		row := ""
-		at := w.offset + i - 1
 		switch {
-		case i == 0:
-			row = heading
-		case i <= w.viewportRows:
+		case i < w.viewportRows:
+			at := w.offset + i
 			if native, ok := w.nativeDisplay[at]; ok {
 				lines = append(lines, w.studioNativeRow(native, len(lines), prefix, c.suffix))
 				continue
 			}
 			row = w.displayRows[at]
-			if captionFocus && at == w.galleryStarts[w.selected] {
-				prefix = strings.TrimSuffix(prefix, "  ") + m.workspaceText("› ", imageActive)
-			}
-		case len(w.displayRows) == 0 && m.focus == "command" && i == 2:
-			row = m.workspaceText("No images yet.", imageSecondary)
-		case len(w.displayRows) == 0 && m.focus != "command":
-			switch i {
-			case 2:
-				row = c.emptyLabel
-			case 3:
-				row = c.command
-			case 4:
-				row = c.promptArg
-			}
+		case i < len(right):
+			row = right[i]
+		case i == w.viewportRows:
+			row = receipt
 		}
 		lines = append(lines, prefix+ansi.Truncate(row, g.previewWidth, "…")+c.suffix)
 	}
-	receipt := ""
-	if len(w.images) > 0 {
-		receipt = w.savedLocation(m)
-	}
-	lines = append(lines, "  "+m.workspaceImageBorder("│")+ansi.CursorHorizontalAbsolute(g.previewX+1)+ansi.Truncate(receipt, g.previewWidth, "…")+c.suffix, c.footer, c.bottom)
-	return lines
+	return append(lines, c.footer, c.bottom)
 }

@@ -8,6 +8,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestStudioEditorUsesOnlyVisibleRows(t *testing.T) {
+	m := pickerForTest(t)
+	m.width, m.height, m.workspace, m.focus = 110, 28, true, "prompt"
+	m.settings.outputDir = ""
+	for _, text := range []string{"", "a lake", "a lake\n", "a\nb\nc", "a\nb\nc\nd"} {
+		m.draft, m.settings.prompt = []rune(text), text
+		m.cursor = len(m.draft)
+		view := m.View()
+		rows := strings.Split(view.Content, "\n")
+		promptRows := min(studioDraftRows, 1+strings.Count(text, "\n"))
+		require.NotNil(t, view.Cursor)
+		require.Equal(t, imageStudioBodyY+promptRows, view.Cursor.Y, text)
+		require.Contains(t, rows[1+promptRows], "Settings", text)
+		require.Contains(t, rows[len(rows)-1], "More options", text)
+		require.Contains(t, view.Content, "~/Downloads/gpt-images/")
+		require.NotContains(t, view.Content, "(Default)")
+	}
+	require.Empty(t, m.settings.outputDir)
+	m.settings.outputDir = "/work/art (Default)"
+	require.Contains(t, m.View().Content, "/work/art (Default)")
+}
+
 func TestStudioActionsInspectOrSubmit(t *testing.T) {
 	m := pickerForTest(t)
 	m.width, m.height, m.workspace, m.hasImages = 133, 39, true, true

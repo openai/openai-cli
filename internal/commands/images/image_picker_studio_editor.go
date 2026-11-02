@@ -107,12 +107,10 @@ func (m *imagePicker) studioForm(g imageStudioGeometry) tea.View {
 		active := m.focus == "prompt" && !m.generating
 		rows = append(rows, m.studioHeading("Prompt", active))
 		draft, row, col := m.studioDraft(width - 3) // Leave a real cell for the caret at line end.
-		first := max(0, min(row-1, len(draft)-studioDraftRows))
-		for i := range studioDraftRows {
-			line := ""
-			if j := first + i; j < len(draft) {
-				line = imagePickerLine(string(m.draft[draft[j].start:draft[j].end]))
-			}
+		visible := min(studioDraftRows, len(draft))
+		first := max(0, min(row-1, len(draft)-visible))
+		for i, bounds := range draft[first : first+visible] {
+			line := imagePickerLine(string(m.draft[bounds.start:bounds.end]))
 			if i == 0 && len(m.draft) == 0 {
 				line = m.workspaceText("Describe your image…", imageSecondary)
 			}
@@ -136,10 +134,14 @@ func (m *imagePicker) studioForm(g imageStudioGeometry) tea.View {
 		}
 		options := m.rows()
 		begin, end := m.optionWindow(len(options), max(1, g.editorRows-len(rows)))
+		if m.settings.outputDir == "" {
+			for i := begin; i < end; i++ {
+				if options[i].id == "folder" {
+					options[i].value = strings.TrimSuffix(options[i].value, " (Default)")
+				}
+			}
+		}
 		rows = append(rows, m.optionLines(options, begin, end, width, m.studioSelection(), m.foreground(m.palette().accent), m.foreground(m.palette().secondary))...)
-	}
-	for len(rows) < g.editorRows {
-		rows = append(rows, "")
 	}
 	view.Content = strings.Join(rows, "\n")
 	return view
@@ -150,7 +152,7 @@ func (m *imagePicker) studioActions(width int) string {
 		// The folder editor owns the keyboard until the user accepts or cancels.
 		return ""
 	}
-	generate, command := "Generate image", "View command"
+	generate, command := "Generate", "View command"
 	disabled := m.generating || m.folder.busy == "submit" || m.folder.busy == "select"
 	label := func(text string, index int) string {
 		if disabled {
@@ -161,9 +163,9 @@ func (m *imagePicker) studioActions(width int) string {
 		}
 		return "  " + text
 	}
-	line := label(generate, 0) + "  " + m.workspaceText("Ctrl+G", imageActive) + "    " + label(command, 1)
+	line := label(generate, 0) + "  " + m.workspaceText("Ctrl+G", imageActive) + "  " + label(command, 1)
 	if disabled {
-		line = label(generate, 0) + strings.Repeat(" ", len("  Ctrl+G    ")) + label(command, 1)
+		line = label(generate, 0) + strings.Repeat(" ", len("  Ctrl+G  ")) + label(command, 1)
 	}
 	return ansi.Truncate(line, width, "…")
 }
@@ -202,7 +204,7 @@ func (m *imagePicker) studioHints(g imageStudioGeometry) string {
 	default:
 		keys = append(keys, [2]string{"↑↓", "Choose"}, [2]string{"Enter", "Select"}, [2]string{"Esc", "Prompt"})
 	}
-	return m.workspaceKeys(keys, m.width-8)
+	return m.workspaceKeys(keys, g.frameWidth-8)
 }
 
 func (m *imagePicker) studioKey(key string, g imageStudioGeometry) (bool, tea.Cmd) {

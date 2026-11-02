@@ -29,11 +29,12 @@ func TestImageStudioKeepsDraftAndControlsBesideOutput(t *testing.T) {
 		require.NotNil(t, cursor)
 		require.True(t, strings.HasSuffix(ansi.Truncate(draft[cursor.Y], cursor.X, ""), "mountain"))
 		require.Contains(t, draft[imageStudioBodyY], "Prompt")
-		require.Contains(t, draft[imageStudioBodyY], "Preview")
+		require.Contains(t, draft[imageStudioBodyY], "Command preview")
+		require.LessOrEqual(t, len(draft), 14, "one prompt line and seven settings should determine the frame height")
 		require.Contains(t, strings.Join(draft, "\n"), "--prompt 'mountain lake'")
 		w.since = time.Now()
 		running := render(true)
-		require.Contains(t, running[imageStudioBodyY], "Generating image")
+		require.Contains(t, running[imageStudioBodyY-1], "Generating image")
 		require.Nil(t, w.header.Cursor)
 		w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: "/synthetic/album/lake.png"}, rows: []string{"synthetic pixels"}})
 		m.hasImages = true
@@ -44,7 +45,7 @@ func TestImageStudioKeepsDraftAndControlsBesideOutput(t *testing.T) {
 		require.Equal(t, cursor, w.header.Cursor)
 		for _, frame := range [][]string{running, complete, repeat} {
 			require.Len(t, frame, len(draft))
-			for _, label := range []string{"Create image", "Generate image", "Settings", "Save to", "Ctrl+C"} {
+			for _, label := range []string{"Create image", "Generate", "Settings", "Save to", "Ctrl+C"} {
 				before, _ := pickerNavigationLine(t, strings.Join(draft, "\n"), label)
 				after, _ := pickerNavigationLine(t, strings.Join(frame, "\n"), label)
 				require.Equal(t, before, after, label)
@@ -53,7 +54,7 @@ func TestImageStudioKeepsDraftAndControlsBesideOutput(t *testing.T) {
 		for _, frame := range [][]string{complete, repeat} {
 			require.Contains(t, frame[w.bodyStart], "lake.png")
 			require.Contains(t, frame[w.bodyStart+1], "synthetic pixels")
-			require.Contains(t, strings.Join(frame, "\n"), "Saved in album")
+			require.Contains(t, frame[w.bodyStart+2], "Saved in album", "place the receipt next to the pixels")
 			require.NotContains(t, strings.Join(frame, "\n"), "/synthetic/")
 		}
 		require.LessOrEqual(t, len(complete), m.height)
@@ -77,12 +78,26 @@ func TestImageStudioBreakpointKeepsGalleryAnchor(t *testing.T) {
 	}
 }
 
+func TestImageStudioFitsLandscapeFontPreview(t *testing.T) {
+	m, w := browserForTest(t, 133, 39)
+	g, _ := imageStudioLayout(m.width, m.height)
+	rows := strings.Split(strings.Repeat(strings.Repeat("x", 32)+"\n", 9)+strings.Repeat("x", 32), "\n")
+	w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: "/sample/album/lake.png"},
+		protocol: "font", rows: rows, columns: 32})
+	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+	require.Equal(t, 16, len(w.painted)) // Two header rows, filename, ten image rows, receipt, controls, border.
+	require.LessOrEqual(t, g.frameWidth, 100)
+	require.Contains(t, w.painted[w.bodyEnd-1], rows[9])
+	require.Contains(t, w.painted[w.bodyEnd], "Saved in album")
+	require.Contains(t, w.painted[w.bodyEnd+1], "Ctrl+C")
+}
+
 func TestImageStudioShowsRecoveryInstructionsWithoutClipping(t *testing.T) {
 	m, w := browserForTest(t, 110, 28)
 	w.appendImage(imagePickerWorkspaceImage{rows: []string{"original pixels"}})
 	m.setNote("Remove the NUL character; shell arguments cannot contain it.", imageWarning)
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-	require.Contains(t, ansi.Strip(w.painted[imageStudioBodyY-1]), m.note)
+	require.Contains(t, ansi.Strip(strings.Join(w.painted[:imageStudioBodyY], "\n")), m.note)
 	require.Contains(t, strings.Join(w.painted, "\n"), "original pixels")
 
 	m.setNote(strings.Repeat("abcdefghijklmnop", 90)+" final recovery step", imageWarning)
@@ -92,6 +107,7 @@ func TestImageStudioShowsRecoveryInstructionsWithoutClipping(t *testing.T) {
 	start := w.offset
 	w.scroll(w.viewportRows)
 	require.Greater(t, w.offset, start)
+	w.scroll(len(w.displayRows))
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	require.Contains(t, strings.Join(w.painted, "\n"), "final recovery step")
 }
