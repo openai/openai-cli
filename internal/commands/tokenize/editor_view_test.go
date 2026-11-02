@@ -294,6 +294,7 @@ func TestTokenizerEditorRendersControlsWithoutExecutingThem(t *testing.T) {
 		view := m.View().Content
 		view = strings.ReplaceAll(view, ansi.CursorHorizontalAbsolute(m.viewWidth()+4), "")
 		view = strings.ReplaceAll(view, "\x1b[1m[Text]\x1b[m", "Text")
+		view = strings.ReplaceAll(view, "\x1b[1mText ✓\x1b[m", "Text ✓")
 		view = strings.NewReplacer("\x1b[7m", "", "\x1b[27m", "", "\x1b[m", "").Replace(view)
 		require.NotContains(t, view, "\x1b")
 		require.NotContains(t, view, "\x00")
@@ -489,7 +490,8 @@ func TestTokenizerEditorSettingsFocusStopsAtStudioDivider(t *testing.T) {
 				quiet := "\x1b[38;2;" + theme.muted + ";48;2;" + theme.fill + "m"
 				if option == 0 {
 					require.Contains(t, row, m.styles().focused.Render("› "))
-					require.Equal(t, 1, strings.Count(row, "38;2;"+theme.blue), "only the arrows use blue")
+					require.Contains(t, row, highlight+"[Token IDs]")
+					require.Equal(t, 2, strings.Count(row, "38;2;"+theme.blue), "only the active choice and arrows use blue")
 					require.Contains(t, row, quiet+" Text ")
 					require.Contains(t, row, quiet+" Bytes ")
 					require.Contains(t, row, "\x1b[38;2;"+theme.blue+";48;2;"+theme.fill+"m  ←→")
@@ -512,8 +514,8 @@ func TestTokenizerEditorActiveViewKeepsLabelColumns(t *testing.T) {
 		color, dark bool
 		selected    string
 	}{
-		{true, true, "\x1b[1;38;2;242;244;250;48;2;52;61;88m"},
-		{true, false, "\x1b[1;38;2;32;40;59;48;2;233;239;254m"},
+		{true, true, "\x1b[1;38;2;138;168;255;48;2;52;61;88m"},
+		{true, false, "\x1b[1;38;2;49;89;188;48;2;233;239;254m"},
 		{false, false, "\x1b[1m"},
 	} {
 		m.color, m.dark = theme.color, theme.dark
@@ -1066,25 +1068,26 @@ func TestTokenizerEditorStudioAndCompactLayout(t *testing.T) {
 			require.Contains(t, rows[header], "Tokenizer")
 			if studio {
 				require.NotContains(t, rows[header], "0 tokens")
-				require.Contains(t, rows[header+2], "0 tokens")
-				require.NotRegexp(t, `Tokens +0 tokens`, rows[header+2])
+				require.Contains(t, rows[header+1], "0 tokens")
+				require.NotRegexp(t, `Tokens +0 tokens`, rows[header+1])
 				m.focus = tokenizerFocusResults
 				require.Contains(t, ansi.Strip(m.View().Content), "› 0 tokens")
+				require.NotContains(t, m.footer(), "Enter details")
+				require.NotContains(t, m.footer(), "←→ token")
 			} else {
 				require.Contains(t, rows[header], "0 tokens")
 			}
 			require.Contains(t, rows[header], "Tab then ")
 			require.Contains(t, rows[header], "? Help")
-			require.Contains(t, rows[header+1], "────")
+			require.Contains(t, rows[header+1], "› Text")
 			require.Contains(t, rows[footer], "Ctrl+C exit")
+			require.NotContains(t, rows[footer], "Shift+")
 			if studio {
-				require.Equal(t, "│ "+strings.Repeat("─", m.viewWidth())+" │", rows[header+1])
 				dividerColumn := m.sourceWidth() + 3
-				for _, row := range rows[header+2 : footer-1] {
+				for _, row := range rows[header+1 : footer-1] {
 					require.Equal(t, '╎', []rune(row)[dividerColumn])
 				}
 				require.Equal(t, "│"+strings.Repeat(" ", m.viewWidth()+2)+"│", rows[footer-1])
-				require.Contains(t, rows[footer], "Shift+←→ cursor")
 			} else {
 				require.NotEmpty(t, strings.Trim(rows[footer-1], " │"))
 			}
@@ -1108,7 +1111,7 @@ func TestTokenizerEditorBatchPaletteForBorderAndShortcuts(t *testing.T) {
 		for _, key := range []string{"Tab", "m", "?"} {
 			require.Contains(t, header, "38;2;"+focus+"m"+key+"\x1b[")
 		}
-		require.Contains(t, header, "38;2;"+muted+"md Details\x1b[")
+		require.NotContains(t, ansi.Strip(header), "Details")
 		footer := rows[len(rows)-2]
 		require.Regexp(t, "38;2;"+focus+`mCtrl\+C\x1b\[`, footer)
 		require.Regexp(t, "38;2;"+muted+`mexit\x1b\[`, footer)
@@ -1170,7 +1173,7 @@ func TestTokenizerEditorCompactBytesViewRetainsLongStatus(t *testing.T) {
 			rows := strings.Split(view, "\n")
 			require.Contains(t, rows[0], "Tokenizer")
 			require.Contains(t, rows[0], "Tab then ? Help")
-			require.Contains(t, rows[1], status)
+			require.Equal(t, status, strings.TrimSpace(rows[1]))
 			require.Contains(t, view, "Model")
 			if state == "failed" {
 				require.Contains(t, view, "press r")

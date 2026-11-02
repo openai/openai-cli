@@ -245,11 +245,9 @@ func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width, index int, l
 	if focused {
 		labelStyle = s.selected
 		secondary = s.muted.Inherit(s.selected)
+		active = s.accent.Inherit(s.selected).Bold(index == 0 || m.color)
 		markerStyle := s.focused
-		if index == 0 {
-			active = s.selected.Bold(true)
-		} else {
-			active = s.accent.Inherit(s.selected).Bold(m.color)
+		if index == 1 {
 			markerStyle = active
 		}
 		marker = markerStyle.Render("› ")
@@ -306,7 +304,11 @@ func (m *tokenizerEditor) highlightRow(s tokenizerEditorStyles, label, detail st
 		return "  " + label + gap + s.muted.Render(detail)
 	}
 	padding := strings.Repeat(" ", max(0, m.viewWidth()-ansi.StringWidth(label+gap+detail)-2))
-	return s.selected.Render("› ") + s.focused.Render(label) + s.selected.Render(gap+detail+padding)
+	focused := s.focused
+	if m.modal == tokenizerModalView {
+		focused = s.accent.Inherit(s.selected).Bold(true)
+	}
+	return s.selected.Render("› ") + focused.Render(label) + s.selected.Render(gap+detail+padding)
 }
 
 func (m *tokenizerEditor) footer() string {
@@ -317,18 +319,18 @@ func (m *tokenizerEditor) footer() string {
 		if m.lineEnd(m.cursor) == len(m.text) {
 			footer = "Ctrl+C exit · ↓ options · Tab switch"
 		}
-		if ansi.StringWidth(footer+" · Shift+←→ cursor") <= m.viewWidth() {
-			footer += " · Shift+←→ cursor"
-		}
 		if len(m.lineStarts) > m.sourceRows() && ansi.StringWidth(footer+" · PgUp/PgDn") <= m.viewWidth() {
 			footer += " · PgUp/PgDn"
 		}
 	case tokenizerFocusResults:
-		footer = "Ctrl+C exit · ←→ token · Enter details"
+		footer = "Ctrl+C exit"
 		if m.failed {
-			footer = "Ctrl+C exit · r retry"
-		} else if ansi.StringWidth(footer) > m.viewWidth() {
-			footer = "Ctrl+C exit · ←→ · Enter details"
+			footer += " · r retry"
+		} else if len(m.tokens) > 0 {
+			footer += " · ←→ token · Enter details"
+			if ansi.StringWidth(footer) > m.viewWidth() {
+				footer = "Ctrl+C exit · ←→ · Enter details"
+			}
 		}
 		if ansi.StringWidth(footer+" · ↑ settings") <= m.viewWidth() {
 			footer += " · ↑ settings"

@@ -39,9 +39,12 @@ func (m *tokenizerEditor) viewWidth() int {
 	return max(1, min(100, m.width-4))
 }
 
-// Body rows exclude the header, divider, and one footer row.
+// Reserve the title and footer. Dialogs also separate the title from their rows.
 func (m *tokenizerEditor) bodyHeight() int {
-	rows := m.viewHeight() - 3
+	rows := m.viewHeight() - 2
+	if m.modal != tokenizerModalNone {
+		rows--
+	}
 	if m.framed() {
 		rows -= 2
 	}
@@ -71,11 +74,11 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 			view = "" // The View row already shows the direct arrow shortcut.
 		}
 		help := s.accent.Render("?") + " Help"
-		details := s.accent.Render("d") + " Details"
-		if len(m.tokens) == 0 {
-			details = s.muted.Render("d Details")
+		actions := prefix + view + s.accent.Render("m") + " Model  "
+		if len(m.tokens) > 0 {
+			actions += s.accent.Render("d") + " Details  "
 		}
-		actions := prefix + view + s.accent.Render("m") + " Model  " + details + "  " + help
+		actions += help
 		available := width - ansi.StringWidth(title)
 		if status != "" {
 			available -= ansi.StringWidth(status) + 2
@@ -85,24 +88,35 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 		}
 		gap := available - ansi.StringWidth(actions)
 		if gap < 2 {
-			// Keep Help on the header and let the count use the divider below.
+			// Keep Help on the header and put the count on the next row.
 			gap = width - ansi.StringWidth(title+actions)
 		}
 		header += strings.Repeat(" ", gap) + actions
 	}
-	ruleWidth, ruleEnd := width, ""
+	overflow := ""
 	if status != "" {
 		statusWidth := ansi.StringWidth(status)
 		if gap := width - ansi.StringWidth(header) - statusWidth; gap > 0 {
 			header += strings.Repeat(" ", gap) + status
 		} else {
-			// Keep both counts in compact Bytes view without consuming a body row.
-			ruleWidth, ruleEnd = max(0, width-statusWidth-1), " "+status
+			overflow = status
 		}
 	}
-	lines := []string{header, terminal.SectionDivider(ruleWidth, m.color, s.fill, s.edge, s.secondary) + ruleEnd}
-	limit := max(0, m.bodyHeight()+1-len(footer))
-	lines = append(lines, body[:min(limit, len(body))]...)
+	lines := []string{header}
+	limit := m.bodyHeight() + 1 - len(footer)
+	showRule := m.modal != tokenizerModalNone
+	if showRule {
+		suffix := ""
+		if overflow != "" {
+			suffix = " " + overflow + " " + s.border.Render("─")
+		}
+		ruleWidth := width - ansi.StringWidth(suffix)
+		lines = append(lines, terminal.SectionDivider(ruleWidth, m.color, s.fill, s.edge, s.secondary)+suffix)
+	} else if overflow != "" {
+		lines = append(lines, strings.Repeat(" ", max(0, width-ansi.StringWidth(overflow)))+overflow)
+		limit--
+	}
+	lines = append(lines, body[:min(max(0, limit), len(body))]...)
 	lines = append(lines, footer...)
 	if !m.framed() {
 		for i, line := range lines {
@@ -113,7 +127,11 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 	edge := s.border.Render("│")
 	rule := strings.Repeat("─", width+2)
 	frame := []string{s.border.Render("╭" + rule + "╮")}
-	for _, line := range lines {
+	for i, line := range lines {
+		if i == 1 && showRule {
+			frame = append(frame, s.border.Render("├─")+line+s.border.Render("─┤"))
+			continue
+		}
 		line = tokenizerClip(line, width)
 		padding := strings.Repeat(" ", max(0, width-tokenizerSourceWidth(line)))
 		// Pin the right edge even when the terminal draws a ZWJ cluster narrower than the painter.

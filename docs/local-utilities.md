@@ -22,7 +22,8 @@ Press Left or Right while typing to switch between Text, Token IDs, and Bytes.
 Shift+Left and Shift+Right move the text cursor by one character.
 Tab moves from Text to View. A second Tab focuses the tokens.
 Use Left or Right there to select a token. Press Enter to inspect it.
-Outside the text field, `v` opens View, `m` opens Model, `d` opens Details, and `?` opens Help.
+Outside the text field, `v` opens View, `m` opens Model, and `?` opens Help.
+When tokens are available, `d` opens Details for the selected token.
 In a chooser, use Up or Down to highlight a choice. Enter applies it, and Escape cancels it.
 Ctrl+C closes the panel and returns to the shell.
 

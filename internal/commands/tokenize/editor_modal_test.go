@@ -273,6 +273,11 @@ func TestTokenizerEditorDetailsModelContextAcrossViews(t *testing.T) {
 					view := m.View().Content
 					plain := ansi.Strip(view)
 					require.Contains(t, plain, "Token 1 of 1")
+					if width == 40 && model.encoding == "o200k_base" {
+						rule := strings.TrimSpace(strings.Split(plain, "\n")[1])
+						require.Regexp(t, "^─+ "+regexp.QuoteMeta(model.label)+" ─$", rule)
+						require.Equal(t, m.viewWidth(), ansi.StringWidth(rule))
+					}
 					for _, field := range []string{model.label, `Text      "\n"`, "Token ID  198", "Starts    After 0 bytes", "Size      1 byte", "Hex       0a", "Esc back", "Ctrl+C exit"} {
 						require.Contains(t, plain, field)
 					}
@@ -376,11 +381,15 @@ func TestTokenizerEditorDetailsLargeTokenAllocationsStayBounded(t *testing.T) {
 
 func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.T) {
 	for _, size := range [][2]int{{133, 39}, {80, 24}, {50, 16}, {40, 12}} {
-		for _, theme := range []string{"light", "dark", "NO_COLOR"} {
+		for _, theme := range []struct{ name, viewFocus string }{
+			{"light", "\x1b[1;38;2;49;89;188;48;2;233;239;254m"},
+			{"dark", "\x1b[1;38;2;138;168;255;48;2;52;61;88m"},
+			{"NO_COLOR", "\x1b[1m"},
+		} {
 			for _, modal := range []int{tokenizerModalView, tokenizerModalEncoding} {
 				m := tokenizerEditorExample()
 				m.width, m.height, m.modal, m.tab = size[0], size[1], modal, 1
-				m.color, m.dark = theme != "NO_COLOR", theme != "light"
+				m.color, m.dark = theme.name != "NO_COLOR", theme.name != "light"
 				title, status, current := "Choose view", "3 views", "Token IDs ✓"
 				choices := []string{"Text", "Token IDs", "Bytes"}
 				descriptions := []string{"Text in each token", "Number per token", "UTF-8 bytes in hex"}
@@ -395,6 +404,10 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 					plain := ansi.Strip(view)
 					require.Regexp(t, regexp.QuoteMeta(title)+` +`+regexp.QuoteMeta(status), plain)
 					require.Contains(t, plain, "✓ applied")
+					if m.framed() {
+						rows := strings.Split(plain, "\n")
+						require.Equal(t, "├"+strings.Repeat("─", m.viewWidth()+2)+"┤", rows[2])
+					}
 					if size[0] >= 80 {
 						require.Len(t, strings.Split(plain, "\n"), len(choices)+5, "one row per choice inside the panel")
 					}
@@ -442,7 +455,18 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 					for _, line := range strings.Split(view, "\n") {
 						require.Less(t, ansi.StringWidth(line), m.width)
 					}
-					if !m.color {
+					if modal == tokenizerModalView {
+						focused := label
+						if current == label+" ✓" {
+							focused = current
+						}
+						highlight := theme.viewFocus + focused + "\x1b[m"
+						require.Contains(t, view, highlight)
+						require.Equal(t, 1, strings.Count(view, theme.viewFocus))
+						if !m.color {
+							require.NotRegexp(t, `\x1b\[[0-9;:]*m`, strings.Replace(view, highlight, focused, 1))
+						}
+					} else if !m.color {
 						require.NotRegexp(t, `\x1b\[[0-9;:]*m`, view)
 					} else {
 						require.Regexp(t, `\x1b\[1(?:;[0-9:]+)*m`+regexp.QuoteMeta(label), view,
