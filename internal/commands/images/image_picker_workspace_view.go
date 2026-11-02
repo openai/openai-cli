@@ -167,12 +167,18 @@ func (m *imagePicker) workspaceCommandLines(width int, text, muted, accent lipgl
 func (m *imagePicker) workspaceFooter(width int, key, muted lipgloss.Style) []string {
 	primary := [][2]string{{"Ctrl+C", "Exit"}}
 	secondary := [][2]string{{"Ctrl+G", "Generate"}}
+	draftRows := 0
 	switch m.focus {
 	case "prompt":
 		secondary = append(secondary, [2]string{"Tab", "Settings"})
 		secondary = append(secondary, [2]string{"Alt+Enter", "New line"})
+		if m.hasImages {
+			// A shorter hint must not shrink the form when the first image arrives.
+			draftRows = len(imagePickerWorkspaceShortcutRows(append(primary, secondary...), width, key, muted))
+			secondary[len(secondary)-1] = [2]string{"Shift+Tab", "Images"}
+		}
 	case "images":
-		secondary = [][2]string{{"Esc", "Prompt"}, {"←→", "Images"}, {"↑↓", "Scroll"}, {"O", "Open"}}
+		secondary = [][2]string{{"Esc", "Prompt"}, {"↑↓", "Scroll"}, {"Enter", "Expand"}, {"O", "Open"}}
 	case "command":
 		secondary = [][2]string{{"Esc", "Prompt"}}
 		commandWidth, commandHeight := m.commandDimensions()
@@ -189,14 +195,14 @@ func (m *imagePicker) workspaceFooter(width int, key, muted lipgloss.Style) []st
 	rows := imagePickerWorkspaceShortcutRows(append(primary, secondary...), width, key, muted)
 	controls := [][2]string{{"Ctrl+C", "Cancel generation"}}
 	if m.focus == "images" {
-		controls = append(controls, [2]string{"Esc", "Prompt"}, [2]string{"←→", "Images"}, [2]string{"↑↓", "Scroll"}, [2]string{"O", "Open"})
+		controls = append(controls, secondary...)
 	} else {
 		controls = append(controls, [2]string{"Tab", "Images"})
 	}
 	busy := imagePickerWorkspaceShortcutRows(controls, width, key, muted)
 	// The first arriving image enables navigation. Reserve that space before
 	// submission, without advertising image navigation before results exist.
-	count := max(len(rows), len(busy))
+	count := max(len(rows), len(busy), draftRows)
 	if m.generating {
 		if m.hasImages {
 			rows = busy

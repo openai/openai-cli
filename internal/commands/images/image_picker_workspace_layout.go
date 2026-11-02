@@ -168,11 +168,18 @@ func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 			w.displayRows = append(w.displayRows, strings.Split(ansi.Wrap(row, width, ""), "\n")...)
 		}
 	}
+	// Each physical row can repaint on its own. Apply its tone after wrapping
+	// so a border reset or scroll cannot change the next row's color.
+	appendDetail := func(text string, tone imagePickerTone) {
+		for line := range strings.SplitSeq(ansi.Wrap(text, width, ""), "\n") {
+			w.displayRows = append(w.displayRows, m.workspaceText(line, tone))
+		}
+	}
 	if w.longNotice != "" {
-		appendRow(m.workspaceText(w.longNotice, w.longNoticeTone))
+		appendDetail(w.longNotice, w.longNoticeTone)
 	}
 	for i, row := range w.rows {
-		appendRow(m.workspaceText(row, w.detailTones[i]))
+		appendDetail(row, w.detailTones[i])
 	}
 	w.messageRows = len(w.displayRows)
 	w.galleryStarts = make([]int, len(w.images))

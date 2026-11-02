@@ -95,3 +95,45 @@ func TestImageStudioShowsRecoveryInstructionsWithoutClipping(t *testing.T) {
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	require.Contains(t, strings.Join(w.painted, "\n"), "final recovery step")
 }
+
+func TestImageStudioWrappedGuidanceKeepsItsTone(t *testing.T) {
+	m, w := browserForTest(t, 110, 28)
+	m.color, m.dark = true, true
+	w.rows = []string{strings.Repeat("Try again. ", 14) + "Reopen Images."}
+	require.NoError(t, w.draw(m, colorprofile.TrueColor, false, true))
+	require.Greater(t, w.messageRows, 1)
+	for _, row := range w.displayRows[:w.messageRows] {
+		require.Equal(t, m.workspaceText(ansi.Strip(row), imageSecondary), row)
+	}
+}
+
+func TestImageStudioCompactGalleryShowsHowToExpand(t *testing.T) {
+	m, w := browserForTest(t, 80, 24)
+	m.focus = "prompt"
+	w.appendImage(imagePickerWorkspaceImage{rows: []string{"sample"}})
+	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+	require.Contains(t, strings.Join(w.painted, "\n"), "Shift+Tab images")
+	m.focus = "images"
+	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+	require.Contains(t, strings.Join(w.painted, "\n"), "Enter expand")
+}
+
+func TestImageStudioCompactHintsKeepFormHeightAtWrapBoundary(t *testing.T) {
+	for _, width := range []int{68, 69} {
+		m, w := browserForTest(t, width, 26)
+		m.hasImages, m.focus = false, "prompt"
+		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+		formRows := w.top
+		m.generating = true
+		require.NoError(t, w.draw(m, colorprofile.ASCII, true, true))
+		require.Equal(t, formRows, w.top)
+		w.appendImage(imagePickerWorkspaceImage{rows: []string{"sample"}})
+		m.hasImages = true
+		require.NoError(t, w.draw(m, colorprofile.ASCII, true, true))
+		require.Equal(t, formRows, w.top)
+		m.generating = false
+		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+		require.Equal(t, formRows, w.top)
+		require.Contains(t, strings.Join(w.painted, "\n"), "Shift+Tab images")
+	}
+}
