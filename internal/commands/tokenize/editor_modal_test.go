@@ -173,7 +173,8 @@ func TestTokenizerEditorHelpGroupsAndWorkspaceShortcuts(t *testing.T) {
 	for _, width := range []int{40, 133} {
 		m := testTokenizerEditor()
 		m.width, m.height, m.invocation = width, 39, "local-openai"
-		tokenizerEditorKey(m, tea.KeyF1)
+		tokenizerEditorKey(m, tea.KeyTab)
+		m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
 		require.Equal(t, tokenizerModalHelp, m.modal)
 		rows, total := m.modalRows(0, 400)
 		require.Len(t, rows, total)
@@ -184,9 +185,10 @@ func TestTokenizerEditorHelpGroupsAndWorkspaceShortcuts(t *testing.T) {
 		for _, heading := range []string{"Studio shortcuts", "Edit text", "View and model", "Inspect tokens", "How counting works", "Command examples"} {
 			require.Contains(t, help, heading)
 		}
-		for _, shortcut := range []string{"F1 Open Help.", "F2 Choose a view.", "F3 Choose a model family.", "F4 Inspect the selected token."} {
+		for _, shortcut := range []string{"Tab from Text Enable v, m, d, and ?.", "v Choose a view.", "m Choose a model family.", "d Inspect the selected token.", "? Open Help."} {
 			require.Contains(t, help, shortcut)
 		}
+		require.NotRegexp(t, `\bF[1-4]\b`, help)
 		require.Contains(t, help, `local-openai tokenizer count --text "Hello, world!"`)
 		require.Contains(t, help, "local-openai tokenizer inspect --file prompt.txt")
 	}

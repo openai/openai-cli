@@ -143,20 +143,23 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateModal(key)
 			return m, nil
 		}
-		if key == "f1" || m.focus != tokenizerFocusText && key == "?" {
+		// Printable shortcuts operate only after focus leaves the text editor.
+		shortcuts := m.focus != tokenizerFocusText && msg.Mod&(tea.ModCtrl|tea.ModMeta|tea.ModSuper|tea.ModHyper) == 0
+		switch {
+		case key == "f1" || shortcuts && key == "?":
 			m.modal, m.scroll = tokenizerModalHelp, 0
+			return m, nil
+		case key == "f2" || shortcuts && key == "v":
+			m.openChoice(0, tokenizerFocusOptions)
+			return m, nil
+		case key == "f3" || shortcuts && key == "m":
+			m.openChoice(1, tokenizerFocusOptions)
+			return m, nil
+		case key == "f4" || shortcuts && key == "d":
+			m.openDetails()
 			return m, nil
 		}
 		switch key {
-		case "f2":
-			m.openChoice(0, tokenizerFocusOptions)
-			return m, nil
-		case "f3":
-			m.openChoice(1, tokenizerFocusOptions)
-			return m, nil
-		case "f4":
-			m.openDetails()
-			return m, nil
 		case "tab", "shift+tab":
 			direction := 1
 			if key == "shift+tab" {

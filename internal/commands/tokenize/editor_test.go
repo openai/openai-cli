@@ -370,10 +370,11 @@ func TestTokenizerEditorEveryEditCreatesANewRevision(t *testing.T) {
 
 func TestTokenizerEditorControlsDoNotConsumeOrdinaryText(t *testing.T) {
 	m := testTokenizerEditor()
-	for _, text := range []string{"q", "?", "r", "1", "2", "3"} {
+	for _, text := range []string{"q", "?", "r", "1", "2", "3", "v", "m", "d"} {
 		m.Update(tea.KeyPressMsg{Code: rune(text[0]), Text: text})
 	}
-	require.Equal(t, "q?r123", m.text)
+	m.Update(tea.PasteMsg{Content: "vmd?"})
+	require.Equal(t, "q?r123vmdvmd?", m.text)
 	require.False(t, m.quit)
 	require.Zero(t, m.modal)
 	tokenizerEditorKey(m, tea.KeyTab)
@@ -588,6 +589,26 @@ func TestTokenizerEditorViewChooserPreservesResultAndSelection(t *testing.T) {
 	require.Equal(t, 2, m.tab, "token navigation must not change views")
 }
 
+func TestTokenizerEditorLetterShortcutsFromOptionsAndResults(t *testing.T) {
+	for _, tabs := range []int{1, 2} {
+		for key, modal := range map[rune]int{'v': tokenizerModalView, 'm': tokenizerModalEncoding, 'd': tokenizerModalDetails, '?': tokenizerModalHelp} {
+			m := tokenizerEditorExample()
+			revision, selected := m.revision, m.selected
+			for range tabs {
+				tokenizerEditorKey(m, tea.KeyTab)
+			}
+			m.Update(tea.KeyPressMsg{Code: key, Text: string(key)})
+			require.Equal(t, modal, m.modal, "shortcut %c after %d tabs", key, tabs)
+			m.Update(tea.KeyPressMsg{Code: 'm', Text: "m"})
+			require.Equal(t, modal, m.modal, "shortcuts only apply to the main screen")
+			tokenizerEditorKey(m, tea.KeyEscape)
+			require.Equal(t, tokenizerModalNone, m.modal)
+			require.Equal(t, revision, m.revision)
+			require.Equal(t, selected, m.selected)
+		}
+	}
+}
+
 func TestTokenizerEditorWorkspaceShortcuts(t *testing.T) {
 	for _, focus := range []int{tokenizerFocusText, tokenizerFocusOptions, tokenizerFocusResults} {
 		m := tokenizerEditorExample()
@@ -642,6 +663,11 @@ func TestTokenizerEditorDetailsShortcutRequiresCurrentTokens(t *testing.T) {
 			require.Nil(t, tokenizerEditorKey(m, tea.KeyF4))
 			require.Equal(t, tokenizerModalNone, m.modal, state)
 			require.Equal(t, focus, m.focus, state)
+			if focus != tokenizerFocusText {
+				m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+				require.Equal(t, tokenizerModalNone, m.modal, state)
+				require.Equal(t, focus, m.focus, state)
+			}
 		}
 	}
 }

@@ -49,6 +49,7 @@ type tokenizerEditorStyles struct {
 func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	s := tokenizerEditorStyles{}
 	if !m.color {
+		s.tokenSelected = lipgloss.NewStyle().Reverse(true)
 		return s
 	}
 	warning, failure := "#885B14", "#B23A3A"
@@ -71,11 +72,7 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	s.accent = s.accent.Foreground(lipgloss.Color(focus))
 	s.selected = s.selected.Foreground(lipgloss.Color(text)).Background(lipgloss.Color(fill))
 	s.focused = s.selected.Bold(true)
-	selectedText := "#FFFFFF"
-	if m.dark {
-		selectedText = "#101318"
-	}
-	s.tokenSelected = lipgloss.NewStyle().Foreground(lipgloss.Color(selectedText)).Background(lipgloss.Color(focus))
+	s.tokenSelected = s.accent.Inherit(s.selected)
 	s.border = s.border.Foreground(lipgloss.Color(border))
 	return s
 }
@@ -169,7 +166,10 @@ func (m *tokenizerEditor) textRows(s tokenizerEditorStyles, width int) []string 
 
 func (m *tokenizerEditor) settingsRows(s tokenizerEditorStyles, width int) []string {
 	tabs := []string{"Text", "Token IDs", "Bytes"}
-	tabs[m.tab] = "[" + tabs[m.tab] + "]"
+	if !m.color {
+		// Reverse only the active view so all three labels keep their columns.
+		tabs[m.tab] = "\x1b[7m" + tabs[m.tab] + "\x1b[27m"
+	}
 	model, badge := tokenizerModelLabel(m.encoding)
 	return []string{
 		m.optionRow(s, width, 0, "View", tabs, m.tab, "←→"),
@@ -224,8 +224,9 @@ func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width, index int, l
 	if focused {
 		labelStyle = s.selected
 		secondary = s.muted.Inherit(s.selected)
-		active = s.accent.Inherit(s.selected).Bold(m.color)
-		marker = active.Render("› ")
+		active = s.accent.Inherit(s.selected)
+		marker = active.Bold(m.color).Render("› ")
+		active = active.Bold(m.color && index == 1)
 	} else if index == 1 {
 		active = lipgloss.NewStyle()
 	}
@@ -566,17 +567,7 @@ func (m *tokenizerEditor) tokenStrip(s tokenizerEditorStyles, width, start int) 
 		}
 		style := s.tokens[index%len(s.tokens)]
 		if index == m.selected && !m.updating && !m.failed {
-			switch {
-			case m.focus == tokenizerFocusOptions:
-				// Keep the inspected token identifiable while the keyboard operates a setting.
-				label = "\x1b[4m" + label + "\x1b[24m"
-			case m.color:
-				style = s.tokenSelected
-				// Keep the whole grapheme span together, including whitespace.
-				label = "\x1b[1;4m" + label + "\x1b[22;24m"
-			default:
-				label = "\x1b[4;7m" + label + "\x1b[24;27m"
-			}
+			style = s.tokenSelected
 		}
 		lines[row] += strings.Repeat(" ", gap) + style.Render(label)
 	})
@@ -678,10 +669,11 @@ var tokenizerEditorHelp = []struct {
 	items     [][2]string
 }{
 	{"Studio shortcuts", true, [][2]string{
-		{"F1", "Open Help."},
-		{"F2", "Choose a view."},
-		{"F3", "Choose a model family."},
-		{"F4", "Inspect the selected token."},
+		{"Tab from Text", "Enable v, m, d, and ?."},
+		{"v", "Choose a view."},
+		{"m", "Choose a model family."},
+		{"d", "Inspect the selected token."},
+		{"?", "Open Help."},
 		{"Tab / Shift+Tab", "Switch between Text, options, and Tokens."},
 		{"Esc", "Return to Text from the main screen."},
 		{"Ctrl+C", "Exit the tokenizer."},

@@ -259,6 +259,12 @@ func (p *tokenizerEditorInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			p.restoreWrap = msg.Value == ansi.ModeReset
 			p.start()
+		} else if msg.Mode == ansi.ModeAltScreenSaveCursor && p.started &&
+			(msg.Value == ansi.ModeSet || msg.Value == ansi.ModePermanentlySet) {
+			// Some terminals keep the shell's cursor row on the alternate screen.
+			// Home only after confirmation so a disabled switch cannot erase shell history.
+			p.painter.Control(ansi.CursorHomePosition)
+			p.width = 0 // Redraw even if the first frame was already visible.
 		}
 	case tokenizerEditorWrapTimeout:
 		p.start()
@@ -323,7 +329,8 @@ func (p *tokenizerEditorInline) start() {
 		return
 	}
 	p.started = true
-	p.painter.Control(ansi.SetModeAutoWrap)
+	// Keep shell prompt marks and scrollback on the original terminal screen.
+	p.painter.Control(ansi.SetModeAltScreenSaveCursor + ansi.RequestModeAltScreenSaveCursor + ansi.SetModeAutoWrap)
 }
 
 func (p *tokenizerEditorInline) draw() {
@@ -351,7 +358,7 @@ func (p *tokenizerEditorInline) close() string {
 	// Cancel a partial escape sequence before restoring visible terminal modes.
 	cleanup := "\x18\x1b\\" + ansi.ResetStyle
 	if p.started {
-		cleanup += "\r" + ansi.EraseScreenBelow
+		cleanup += "\r" + ansi.EraseScreenBelow + ansi.ResetModeAltScreenSaveCursor
 	}
 	cleanup += ansi.ResetModeBracketedPaste + ansi.SetModeTextCursorEnable
 	if p.restoreWrap {

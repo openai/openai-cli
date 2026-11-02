@@ -98,7 +98,7 @@ func (m *tokenizerEditor) tokenByteCounts(s tokenizerEditorStyles, width, first,
 	for i := range values {
 		_, startByte, endByte := m.fragment(first + i)
 		values[i] = strconv.Itoa(endByte - startByte)
-		cells += len(values[i]) + 2 // The two spaces around each count also hold its selection brackets.
+		cells += len(values[i]) + 2 // Each count has one space on either side.
 	}
 
 	// Keep the inspected token in view. Trim the more distant edge when the row is full.
@@ -132,10 +132,9 @@ func (m *tokenizerEditor) tokenByteCounts(s tokenizerEditorStyles, width, first,
 	}
 	for i, value := range values {
 		if first+i == m.selected {
-			row.WriteString(s.accent.Bold(m.color).Render("[" + value + "]"))
-		} else {
-			row.WriteString(" " + value + " ")
+			value = s.tokenSelected.Render(value)
 		}
+		row.WriteString(" " + value + " ")
 	}
 	if end < len(m.tokens) {
 		row.WriteString(s.muted.Render(" …"))

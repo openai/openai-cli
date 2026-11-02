@@ -126,26 +126,77 @@ func TestTokenizerEditorFormatRecoveryDistinguishesScriptCommands(t *testing.T) 
 	}
 }
 
-func TestTokenizerEditorModesRestoreOnEarlyExit(t *testing.T) {
-	for _, started := range []bool{false, true} {
-		for _, restoreWrap := range []bool{false, true} {
+func TestTokenizerEditorRestoresTerminalScreenAndModes(t *testing.T) {
+	const enter, leave = "\x1b[?1049h", "\x1b[?1049l"
+	wrapEnabled := tea.ModeReportMsg{Mode: ansi.ModeAutoWrap, Value: ansi.ModeSet}
+	wrapDisabled := tea.ModeReportMsg{Mode: ansi.ModeAutoWrap, Value: ansi.ModeReset}
+	wrapUnavailable := tea.ModeReportMsg{Mode: ansi.ModeAutoWrap, Value: ansi.ModePermanentlyReset}
+	inputError := tokenizerEditorInputErrorMsg{err: errors.New("synthetic input error")}
+	for _, test := range []struct {
+		name                       string
+		messages                   []tea.Msg
+		entered, restoreWrap, fail bool
+	}{
+		{"closed before first reply", nil, false, false, false},
+		{"wrapping unavailable", []tea.Msg{wrapUnavailable}, false, false, true},
+		{"normal wrapping", []tea.Msg{wrapEnabled, tokenizerEditorWrapTimeout{}}, true, false, false},
+		{"wrapping initially disabled", []tea.Msg{wrapDisabled}, true, true, false},
+		{"input error after timeout", []tea.Msg{tokenizerEditorWrapTimeout{}, inputError}, true, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			paint := &tokenizerRecordedFrames{}
 			inline := &tokenizerEditorInline{model: newTokenizerEditor(), painter: paint}
 			_ = inline.Init()
-			inline.started, inline.restoreWrap = started, restoreWrap
-			data := []byte(paint.String() + inline.close() + inline.close())
+			for _, msg := range test.messages {
+				inline.Update(msg)
+			}
+			require.Equal(t, test.fail, inline.err != nil)
+			before, cleanup := paint.String(), inline.close()
+			require.Empty(t, inline.close(), "restore modes only once")
 			for _, control := range []string{ansi.ResetModeBracketedPaste, ansi.SetModeTextCursorEnable} {
-				if bytes.Count(data, []byte(control)) != 1 {
-					t.Fatalf("cleanup did not restore %q exactly once", control)
-				}
+				require.Equal(t, 1, strings.Count(cleanup, control))
 			}
-			if strings.Contains(string(data), ansi.ResetModeAutoWrap) != restoreWrap {
-				t.Fatal("cleanup changed initial wrapping state")
+			require.Equal(t, test.restoreWrap, strings.Contains(cleanup, ansi.ResetModeAutoWrap))
+			require.NotContains(t, before, leave)
+			require.NotContains(t, cleanup, enter)
+			if !test.entered {
+				require.NotContains(t, before, enter)
+				require.NotContains(t, cleanup, leave)
+				require.NotContains(t, cleanup, ansi.EraseScreenBelow)
+				return
 			}
-			if strings.Contains(string(data), ansi.EraseScreenBelow) != started {
-				t.Fatal("cleanup cleared before the first frame")
-			}
+			require.Equal(t, 1, strings.Count(before, enter))
+			require.Equal(t, 1, strings.Count(cleanup, leave))
+			original, _, _ := strings.Cut(before, enter)
+			require.NotContains(t, original, ansi.EraseScreenBelow, "do not clear the shell before entry")
+			_, restored, _ := strings.Cut(cleanup, leave)
+			require.NotContains(t, restored, ansi.EraseScreenBelow, "keep the original screen intact")
+		})
+	}
+}
+
+func TestTokenizerEditorHomesOnlyAfterConfirmedScreenSwitch(t *testing.T) {
+	for _, active := range []ansi.ModeSetting{ansi.ModeSet, ansi.ModePermanentlySet} {
+		paint := &tokenizerRecordedFrames{}
+		inline := &tokenizerEditorInline{model: newTokenizerEditor(), painter: paint, width: 80}
+		report := func(value ansi.ModeSetting) {
+			inline.Update(tea.ModeReportMsg{Mode: ansi.ModeAltScreenSaveCursor, Value: value})
 		}
+		inline.Init()
+		report(active) // An unsolicited reply cannot establish ownership of the screen.
+		require.NotContains(t, paint.String(), ansi.CursorHomePosition)
+		require.NotContains(t, paint.String(), ansi.RequestModeAltScreenSaveCursor)
+		inline.Update(tokenizerEditorWrapTimeout{})
+		require.Contains(t, paint.String(), ansi.SetModeAltScreenSaveCursor+ansi.RequestModeAltScreenSaveCursor)
+		require.NotContains(t, paint.String(), ansi.CursorHomePosition, "no reply leaves the shell cursor alone")
+		for _, inactive := range []ansi.ModeSetting{ansi.ModeNotRecognized, ansi.ModeReset, ansi.ModePermanentlyReset} {
+			report(inactive)
+			require.Equal(t, 80, inline.width)
+			require.NotContains(t, paint.String(), ansi.CursorHomePosition)
+		}
+		report(active)
+		require.Equal(t, 1, strings.Count(paint.String(), ansi.CursorHomePosition))
+		require.Zero(t, inline.width, "invalidate the previous frame size after moving the cursor")
 	}
 }
 

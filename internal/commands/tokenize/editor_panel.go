@@ -19,16 +19,12 @@ func trimEmptyRows(rows []string) []string {
 
 func (m *tokenizerEditor) studioLayout() bool { return m.width >= 96 && m.height >= 16 }
 
-func (m *tokenizerEditor) showActions() bool {
-	return m.modal == tokenizerModalNone && m.width >= 68
-}
-
 // The inline painter reserves the final terminal column and row for wrapping.
 func (m *tokenizerEditor) viewHeight() int {
 	if m.studioLayout() {
 		return min(34, m.height-1)
 	}
-	if m.showActions() {
+	if m.modal == tokenizerModalNone && m.width >= 68 {
 		return min(20, m.height-1)
 	}
 	return min(18, max(0, m.height-1))
@@ -68,20 +64,30 @@ func (s tokenizerEditorStyles) shortcuts(hints string) string {
 func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, body, footer []string) string {
 	width := m.viewWidth()
 	header := title
-	if m.showActions() {
-		details := s.accent.Render("F4") + " Details"
+	if m.modal == tokenizerModalNone {
+		prefix := ""
+		if m.focus == tokenizerFocusText {
+			prefix = s.accent.Render("Tab") + s.muted.Render(" then ")
+		}
+		help := s.accent.Render("?") + " Help"
+		details := s.accent.Render("d") + " Details"
 		if len(m.tokens) == 0 {
-			details = s.muted.Render("F4 Details")
+			details = s.muted.Render("d Details")
 		}
-		actions := s.accent.Render("F2") + " View  " + s.accent.Render("F3") + " Model  " +
-			details + "  " + s.accent.Render("F1") + " Help"
-		gap := width - ansi.StringWidth(title+actions+status)
+		actions := prefix + s.accent.Render("v") + " View  " + s.accent.Render("m") + " Model  " + details + "  " + help
+		available := width - ansi.StringWidth(title)
 		if status != "" {
-			gap -= 2
+			available -= ansi.StringWidth(status) + 2
 		}
-		if gap >= 2 {
-			header += strings.Repeat(" ", gap) + actions
+		if ansi.StringWidth(actions)+2 > available {
+			actions = prefix + help
 		}
+		gap := available - ansi.StringWidth(actions)
+		if gap < 2 {
+			// Keep Help on the header and let the count use the divider below.
+			gap = width - ansi.StringWidth(title+actions)
+		}
+		header += strings.Repeat(" ", gap) + actions
 	}
 	ruleWidth, ruleEnd := width, ""
 	if status != "" {

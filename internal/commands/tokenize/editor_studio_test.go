@@ -17,33 +17,25 @@ func TestTokenByteCountsKeepSelectedAndNeighboringValuesAligned(t *testing.T) {
 		m.tokens = append(m.tokens, tokenizerPreviewToken{EndByte: end})
 	}
 	want := []string{"3", "3", "1", "2", "3", "3"}
-	for _, theme := range []string{"dark", "light", "monochrome"} {
-		t.Run(theme, func(t *testing.T) {
-			m.color, m.dark = theme != "monochrome", theme == "dark"
+	for _, theme := range []struct{ name, selected string }{
+		{"dark", "\x1b[38;2;138;168;255;48;2;52;61;88m"},
+		{"light", "\x1b[38;2;49;89;188;48;2;233;239;254m"},
+		{"monochrome", "\x1b[7m"},
+	} {
+		t.Run(theme.name, func(t *testing.T) {
+			m.color, m.dark = theme.name != "monochrome", theme.name == "dark"
 			styles := m.styles()
-			var aligned string
 			for i, length := range want {
 				m.selected = i
 				row := m.tokenByteCounts(styles, 49, 0, len(m.tokens))
-				plain := ansi.Strip(row)
-				counts, found := strings.CutPrefix(strings.TrimSpace(plain), "Bytes per token")
+				require.Equal(t, "  Bytes per token  "+strings.Join(want, "  ")+" ", ansi.Strip(row))
+				before, _, found := strings.Cut(row, theme.selected+length)
 				require.True(t, found)
-				require.NotContains(t, plain, "\n")
-				selected := "[" + length + "]"
-				wantCounts := append([]string(nil), want...)
-				wantCounts[i] = selected
-				require.Equal(t, wantCounts, strings.Fields(counts))
-				withoutBrackets := strings.TrimRight(strings.NewReplacer("[", " ", "]", " ").Replace(plain), " ")
-				if i == 0 {
-					aligned = withoutBrackets
-				}
-				require.Equal(t, aligned, withoutBrackets)
-				require.LessOrEqual(t, ansi.StringWidth(row), 49)
-				if m.color {
-					require.Contains(t, row, styles.accent.Bold(true).Render(selected))
-				} else {
-					require.Equal(t, plain, row)
-				}
+				require.Equal(t, len("  Bytes per token  ")+3*i, ansi.StringWidth(before))
+				require.Equal(t, 1, strings.Count(row, theme.selected))
+				wantStyled := append([]string(nil), want...)
+				wantStyled[i] = styles.tokenSelected.Render(length)
+				require.Equal(t, "  "+styles.muted.Render("Bytes per token")+"  "+strings.Join(wantStyled, "  ")+" ", row)
 			}
 		})
 	}
@@ -74,7 +66,7 @@ func TestTokenByteCountsWindowKeepsSelectedValueAndNeighbors(t *testing.T) {
 					values, found := strings.CutPrefix(plain, "Bytes per token")
 					require.True(t, found)
 					require.NotContains(t, values, "\n")
-					require.Contains(t, values, "["+strconv.Itoa(selected+1)+"]")
+					require.Contains(t, row, m.styles().tokenSelected.Render(strconv.Itoa(selected+1)))
 					visible := digits.FindAllString(values, -1)
 					require.Greater(t, len(visible), 1)
 					first, err := strconv.Atoi(visible[0])
@@ -116,7 +108,7 @@ func TestTokenizerStudioOmitsByteCountsUntilTokensAreReady(t *testing.T) {
 	require.Equal(t, "1 token", strings.TrimSpace(rows[0]))
 	require.Contains(t, rows[1], "é")
 	require.Contains(t, rows[2], "Bytes per token")
-	require.Contains(t, rows[2], "[2]")
+	require.Contains(t, rows[2], m.styles().tokenSelected.Render("2"))
 	require.Contains(t, rows[3], "Token 1 of 1  “é”")
 	require.Contains(t, rows[4], "ID 1  Byte offset 0  Length 2 B")
 
@@ -144,11 +136,12 @@ func TestTokenizerStudioKeepsLongByteMetadataWithinPane(t *testing.T) {
 	require.Contains(t, text, "ID 4294967295")
 	require.Contains(t, text, "Byte offset 100000")
 	require.Contains(t, text, "Length 948576 B")
-	require.Equal(t, []string{"Bytes", "per", "token", "100000", "[948576]"}, strings.Fields(rows[2]))
+	require.Equal(t, []string{"Bytes", "per", "token", "100000", "948576"}, strings.Fields(ansi.Strip(rows[2])))
+	require.Contains(t, rows[2], m.styles().tokenSelected.Render("948576"))
 
 	m.tokens = []tokenizerPreviewToken{{EndByte: 1 << 20}}
 	m.selected = 0
-	require.Contains(t, m.tokenByteCounts(m.styles(), width, 0, 1), "[1048576]")
+	require.Contains(t, m.tokenByteCounts(m.styles(), width, 0, 1), m.styles().tokenSelected.Render("1048576"))
 }
 
 func TestTokenizerStudioShowsLastByteCountAtMinimumSize(t *testing.T) {
@@ -162,9 +155,10 @@ func TestTokenizerStudioShowsLastByteCountAtMinimumSize(t *testing.T) {
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
 	for tab := range 3 {
 		m.tab = tab
-		view := ansi.Strip(m.View().Content)
+		frame := m.View().Content
+		view := ansi.Strip(frame)
 		require.Contains(t, view, "Bytes per token")
-		require.Contains(t, view, "[1]")
+		require.Contains(t, frame, m.styles().tokenSelected.Render("1"))
 		require.Contains(t, view, "Token 1002 of 1002 · partial UTF-8")
 		require.Contains(t, view, "0xa9")
 		require.Contains(t, view, "ID 4294967295")

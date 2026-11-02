@@ -36,8 +36,7 @@ func TestTokenizerEditorViewFitsEverySupportedSizeAndFocus(t *testing.T) {
 				require.False(t, view.AltScreen)
 				require.Contains(t, view.Content, "4 tokens")
 				require.NotContains(t, view.Content, "13 bytes")
-				options := "[Text]  Token IDs  Bytes"
-				require.Contains(t, view.Content, "View   "+options)
+				require.Contains(t, ansi.Strip(view.Content), "View   Text  Token IDs  Bytes")
 				require.Contains(t, view.Content, "Token IDs")
 				require.Contains(t, view.Content, "Bytes")
 				require.Contains(t, view.Content, "Token 3 of 4")
@@ -147,7 +146,7 @@ func TestTokenizerEditorCompactSelectionIsAlwaysVisible(t *testing.T) {
 		m.selected = i
 		for tab := 0; tab < 3; tab++ {
 			m.tab = tab
-			require.Contains(t, strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n"), "\x1b[4;7m")
+			require.Contains(t, strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n"), "\x1b[7m")
 			require.Contains(t, m.View().Content, "› Token ")
 		}
 	}
@@ -216,7 +215,7 @@ func TestTokenizerEditorPageUpFitsContinuationAndFirstPage(t *testing.T) {
 			require.Equal(t, fmt.Sprint(tokens[first+i].ID), id)
 		}
 		require.Contains(t, frame, fmt.Sprintf("Token %d of 100", m.selected+1))
-		require.Contains(t, results, fmt.Sprintf("\x1b[4;7m%d\x1b[24;27m", tokens[m.selected].ID))
+		require.Contains(t, results, fmt.Sprintf("\x1b[7m%d\x1b[m", tokens[m.selected].ID))
 		require.Contains(t, frame, "› Token ")
 	}
 	tokenizerEditorKey(m, tea.KeyEnd)
@@ -298,7 +297,7 @@ func TestTokenizerEditorRendersControlsWithoutExecutingThem(t *testing.T) {
 		m.modal = modal
 		view := m.View().Content
 		view = strings.ReplaceAll(view, ansi.CursorHorizontalAbsolute(m.viewWidth()+4), "")
-		view = strings.NewReplacer("\x1b[7m", "", "\x1b[27m", "", "\x1b[4;7m", "", "\x1b[24;27m", "").Replace(view)
+		view = strings.NewReplacer("\x1b[7m", "", "\x1b[27m", "", "\x1b[m", "").Replace(view)
 		require.NotContains(t, view, "\x1b")
 		require.NotContains(t, view, "\x00")
 		require.NotContains(t, view, "\r")
@@ -354,9 +353,9 @@ func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
 				m.focus, m.option = state.focus, state.option
 				view := m.View().Content
 				for _, rendition := range regexp.MustCompile(`\x1b\[[0-9;:]*m`).FindAllString(view, -1) {
-					require.Contains(t, []string{"\x1b[7m", "\x1b[27m", "\x1b[4m", "\x1b[24m", "\x1b[4;7m", "\x1b[24;27m"}, rendition, "NO_COLOR retains functional monochrome cues")
+					require.Contains(t, []string{"\x1b[7m", "\x1b[27m", "\x1b[m"}, rendition, "NO_COLOR retains functional monochrome cues")
 				}
-				options := "[Text]  Token IDs  Bytes"
+				options := "\x1b[7mText\x1b[27m  Token IDs  Bytes"
 				require.Contains(t, view, "View   "+options)
 				require.Contains(t, view, "Model  GPT-4 / GPT-3.5  Legacy")
 				if m.focus == tokenizerFocusResults {
@@ -422,22 +421,8 @@ func TestTokenizerEditorFocusFillStaysInActiveRegion(t *testing.T) {
 						}
 					}
 					chips := strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")
-					focusFill := "48;2;49;89;188"
-					if dark {
-						focusFill = "48;2;138;168;255"
-					}
-					var fills [][]string
-					for _, fill := range background.FindAllStringSubmatch(chips, -1) {
-						if strings.Contains(fill[0], focusFill) {
-							fills = append(fills, fill)
-						}
-					}
-					if state.focus == tokenizerFocusResults || state.focus == tokenizerFocusText {
-						require.Len(t, fills, 1, "the selected token receives the contrasting fill")
-						require.Contains(t, chips, "\x1b[1;4m")
-					} else {
-						require.Empty(t, fills)
-					}
+					label := m.tokenSegment(m.selected, m.viewWidth())
+					require.Equal(t, 1, strings.Count(chips, m.styles().tokenSelected.Render(label)))
 					require.NotContains(t, ansi.Strip(chips), "›", "keyboard focus belongs in the heading")
 				}
 			}
@@ -464,7 +449,7 @@ func TestTokenizerEditorRowsShareAlignedGuttersAndValues(t *testing.T) {
 			for _, label := range []string{"Text   Hello, world!", "Model  GPT-4 / GPT-3.5  Legacy", "Token 3 of 4"} {
 				require.Equal(t, gutter, column(label), label)
 			}
-			options := "Text  [Token IDs]  Bytes"
+			options := "Text  Token IDs  Bytes"
 			require.Equal(t, column(options), column("GPT-4 / GPT-3.5  Legacy"))
 			require.Equal(t, column(options), column("Hello, world!"))
 			require.Contains(t, strings.Join(rows, "\n"), "Token 3 of 4  9906 11 1917 0")
@@ -485,7 +470,7 @@ func TestTokenizerEditorSettingsFocusStopsAtStudioDivider(t *testing.T) {
 			m := tokenizerEditorExample()
 			m.width, m.height, m.tab, m.focus = 96, 16, 1, tokenizerFocusOptions
 			m.color, m.dark = theme.name != "monochrome", theme.name == "dark"
-			for option, value := range []string{"[Token IDs]", "GPT-4 / GPT-3.5"} {
+			for option, value := range []string{"Token IDs", "GPT-4 / GPT-3.5"} {
 				m.option = option
 				rows := m.settingsRows(m.styles(), m.sourceWidth())
 				row := rows[option]
@@ -496,18 +481,20 @@ func TestTokenizerEditorSettingsFocusStopsAtStudioDivider(t *testing.T) {
 				require.Contains(t, m.View().Content, row+" "+ansi.CursorHorizontalAbsolute(m.sourceWidth()+4),
 					"the complete setting precedes the unpainted divider gutter")
 				if !m.color {
-					require.Equal(t, ansi.Strip(row), row)
+					require.Contains(t, rows[0], "\x1b[7mToken IDs\x1b[27m")
+					require.Equal(t, ansi.Strip(rows[1]), rows[1])
 					continue
 				}
 				highlight := "\x1b[1;38;2;" + theme.blue + ";48;2;" + theme.fill + "m"
 				quiet := "\x1b[38;2;" + theme.muted + ";48;2;" + theme.fill + "m"
 				require.Contains(t, row, highlight+"› ")
-				require.Contains(t, row, highlight+value)
 				if option == 0 {
+					require.Contains(t, row, "\x1b[38;2;"+theme.blue+";48;2;"+theme.fill+"m"+value)
 					require.Contains(t, row, quiet+"Text")
 					require.Contains(t, row, quiet+"Bytes")
 					require.Contains(t, row, "\x1b[38;2;"+theme.blue+";48;2;"+theme.fill+"m  ←→")
 				} else {
+					require.Contains(t, row, highlight+value)
 					require.Contains(t, rows[0], "\x1b[38;2;"+theme.blue+"m  ←→")
 					require.Contains(t, row, quiet+"Legacy")
 					require.Contains(t, row, quiet+"  ›")
@@ -517,7 +504,32 @@ func TestTokenizerEditorSettingsFocusStopsAtStudioDivider(t *testing.T) {
 	}
 }
 
-func TestTokenizerEditorSettingsUnderlineOnlyTheInspectedOccurrence(t *testing.T) {
+func TestTokenizerEditorActiveViewKeepsLabelColumns(t *testing.T) {
+	m := testTokenizerEditor()
+	for _, color := range []bool{false, true} {
+		m.color = color
+		styles := m.styles()
+		for _, focus := range []int{tokenizerFocusText, tokenizerFocusOptions} {
+			m.focus = focus
+			for tab, label := range []string{"Text", "Token IDs", "Bytes"} {
+				m.tab = tab
+				row := m.settingsRows(styles, 36)[0]
+				require.Contains(t, ansi.Strip(row), "View   Text  Token IDs  Bytes")
+				want := "\x1b[7m" + label + "\x1b[27m"
+				if color {
+					active := styles.accent
+					if focus == tokenizerFocusOptions {
+						active = active.Inherit(styles.selected)
+					}
+					want = active.Render(label)
+				}
+				require.Contains(t, row, want)
+			}
+		}
+	}
+}
+
+func TestTokenizerEditorSettingsHighlightOnlyTheInspectedOccurrence(t *testing.T) {
 	m := testTokenizerEditor()
 	m.insert("f f f")
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{
@@ -529,11 +541,12 @@ func TestTokenizerEditorSettingsUnderlineOnlyTheInspectedOccurrence(t *testing.T
 		for _, selected := range []int{1, 2} {
 			m.selected = selected
 			strip := strings.Join(m.resultLines(m.styles(), 62), "")
-			before, after, marked := strings.Cut(strip, "\x1b[4m285\x1b[24m")
+			marker := m.styles().tokenSelected.Render("285")
+			before, after, marked := strings.Cut(strip, marker)
 			require.True(t, marked)
 			require.Equal(t, selected-1, strings.Count(ansi.Strip(before), "285"))
 			require.Equal(t, 2-selected, strings.Count(ansi.Strip(after), "285"))
-			require.NotContains(t, before+after, "\x1b[4m")
+			require.NotContains(t, before+after, marker)
 		}
 	}
 }
@@ -596,14 +609,11 @@ func TestTokenizerEditorSelectedSegmentDoesNotClaimKeyboardFocus(t *testing.T) {
 			rows := strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")
 			require.Contains(t, ansi.Strip(rows), "9906 11 1917 0")
 			require.NotContains(t, rows, "›", "linked selection must not claim keyboard focus")
-			selected := m.styles().tokenSelected.Render("\x1b[1;4m1917\x1b[22;24m")
-			if !color {
-				selected = "\x1b[4;7m1917\x1b[24;27m"
-			}
+			selected := m.styles().tokenSelected.Render("1917")
 			require.Contains(t, rows, selected)
 			m.focus = tokenizerFocusOptions
 			rows = strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")
-			require.NotContains(t, rows, selected)
+			require.Contains(t, rows, selected)
 			require.NotContains(t, rows, "›")
 			m.focus, m.updating = tokenizerFocusText, true
 			require.NotContains(t, strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n"), selected)
@@ -641,14 +651,7 @@ func TestTokenizerEditorContinuousTextPreservesLiteralSegments(t *testing.T) {
 						result := strings.Join(rows, "")
 						require.Equal(t, len(pieces), count)
 						require.Equal(t, "  "+source, ansi.Strip(result), "only the fixed gutter may precede the exact source")
-						if focus == tokenizerFocusOptions {
-							continue
-						}
-						selectedText := "\x1b[4;7m" + piece + "\x1b[24;27m"
-						if color {
-							selectedText = m.styles().tokenSelected.Render("\x1b[1;4m" + piece + "\x1b[22;24m")
-							require.Contains(t, selectedText, "\x1b[1;4m"+piece+"\x1b[22;24m")
-						}
+						selectedText := m.styles().tokenSelected.Render(piece)
 						require.Contains(t, result, selectedText, "selection must cover the complete token, including spaces")
 					}
 				}
@@ -678,7 +681,7 @@ func TestTokenizerEditorSingleTokenResultsKeepFocusHeading(t *testing.T) {
 	m.focus = tokenizerFocusResults
 	view := m.View().Content
 	require.Contains(t, view, "› Token 1 of 1")
-	require.Contains(t, view, "\x1b[4;7m  \x1b[24;27m")
+	require.Contains(t, view, "\x1b[7m  \x1b[m")
 	require.Contains(t, view, "Ctrl+C exit")
 	require.LessOrEqual(t, len(strings.Split(view, "\n")), m.viewHeight())
 }
@@ -699,7 +702,7 @@ func TestTokenizerEditorZeroWidthTokenWindowsRemainBounded(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	require.Equal(t, 5, count, "zero-width fragments must occupy visible escape cells")
 	require.Contains(t, strings.Join(rows, ""), `\u200d`)
-	require.Contains(t, strings.Join(rows, ""), "\x1b[4;7m")
+	require.Contains(t, strings.Join(rows, ""), "\x1b[7m")
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256<<10))
 	for _, row := range rows {
 		require.LessOrEqual(t, tokenizerSourceWidth(row), m.viewWidth())
@@ -725,10 +728,7 @@ func TestTokenizerEditorContinuousEmojiUsesPainterWidths(t *testing.T) {
 				for _, row := range rows {
 					require.LessOrEqual(t, tokenizerSourceWidth(row), m.viewWidth())
 					frame := cliterminal.InlineFrame("  "+row, m.width)
-					cue := "\x1b[4;7m" + cluster + "\x1b[24;27m"
-					if color {
-						cue = "\x1b[1;4m" + cluster + "\x1b[22;24m"
-					}
+					cue := m.styles().tokenSelected.Render(cluster)
 					require.Contains(t, frame, cue, "ANSI must surround the complete grapheme")
 				}
 			}
@@ -811,6 +811,7 @@ func TestTokenizerEditorTokenPaletteStaysStableAcrossViewsAndPages(t *testing.T)
 			tokens[i] = tokenizerPreviewToken{ID: uint32(100 + i), EndByte: uint32((i + 1) * 5)}
 		}
 		m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
+		m.selected = 7
 		var original []string
 		for tab := 0; tab < 3; tab++ {
 			m.tab = tab
@@ -827,7 +828,7 @@ func TestTokenizerEditorTokenPaletteStaysStableAcrossViewsAndPages(t *testing.T)
 				require.Equal(t, original, colors)
 			}
 			require.Equal(t, colors[0], colors[6])
-			require.Equal(t, colors[1], colors[7])
+			require.NotEqual(t, colors[1], colors[7], "the inspected token uses the selection fill")
 			if tab != 1 { // All eight short IDs fit; text and byte groups require a viewport.
 				m.width, m.height, m.selected, m.tokenStart = 40, 12, 7, 6
 				lines = strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")
@@ -835,12 +836,12 @@ func TestTokenizerEditorTokenPaletteStaysStableAcrossViewsAndPages(t *testing.T)
 				require.Len(t, matches, 2)
 				require.Equal(t, original[6], matches[0][1])
 				require.Equal(t, original[7], matches[1][1])
-				m.width, m.height, m.selected, m.tokenStart = 80, 24, 0, 0
+				m.width, m.height, m.selected, m.tokenStart = 80, 24, 7, 0
 			}
 		}
 		m.color = false
 		monochrome := strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")
-		require.Equal(t, []string{"\x1b[4m", "\x1b[24m"}, regexp.MustCompile(`\x1b\[[0-9;:]*m`).FindAllString(monochrome, -1))
+		require.Equal(t, []string{"\x1b[7m", "\x1b[m"}, regexp.MustCompile(`\x1b\[[0-9;:]*m`).FindAllString(monochrome, -1))
 	}
 }
 
@@ -860,7 +861,7 @@ func TestTokenizerEditorMainViewShowsModelNamesWithoutRedundantHints(t *testing.
 			require.Contains(t, view, "Model  "+choice.label+"  "+choice.badge)
 			require.Contains(t, view, "1 token")
 			require.Contains(t, view, "he")
-			require.Contains(t, m.View().Content, "\x1b[4;7mhe\x1b[24;27m")
+			require.Contains(t, m.View().Content, "\x1b[7mhe\x1b[m")
 			require.NotContains(t, view, choice.encoding)
 			require.NotContains(t, view, "Token 1 of 1")
 			require.NotContains(t, view, "F1 help")
@@ -971,7 +972,7 @@ func TestTokenizerEditorLargeTokenJumpUsesBoundedWindow(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	require.Equal(t, len(tokens)-1, m.selected)
 	require.Contains(t, frame, "Token 1048576 of 1048576")
-	require.Contains(t, frame, "\x1b[4;7m1048575\x1b[24;27m")
+	require.Contains(t, frame, "\x1b[7m1048575\x1b[m")
 	require.Contains(t, frame, "› Token 1048576 of 1048576")
 	require.Less(t, len(frame), 4096)
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256<<10), "jumping must not format the skipped tokens")
@@ -1055,11 +1056,8 @@ func TestTokenizerEditorStudioAndCompactLayout(t *testing.T) {
 			} else {
 				require.Contains(t, rows[header], "0 tokens")
 			}
-			if size[0] >= 68 {
-				for _, key := range []string{"F2 View", "F3 Model", "F4 Details", "F1 Help"} {
-					require.Contains(t, rows[header], key)
-				}
-			}
+			require.Contains(t, rows[header], "Tab then ")
+			require.Contains(t, rows[header], "? Help")
 			require.Contains(t, rows[header+1], "────")
 			require.Contains(t, rows[footer], "Ctrl+C exit")
 			require.NotEmpty(t, strings.Trim(rows[footer-1], " │"), "footer follows the last content row")
@@ -1079,6 +1077,11 @@ func TestTokenizerEditorBatchPaletteForBorderAndShortcuts(t *testing.T) {
 		}
 		rows := strings.Split(m.View().Content, "\n")
 		require.Contains(t, rows[0], "38;2;"+border)
+		header := rows[1]
+		for _, key := range []string{"Tab", "v", "m", "?"} {
+			require.Contains(t, header, "38;2;"+focus+"m"+key+"\x1b[")
+		}
+		require.Contains(t, header, "38;2;"+muted+"md Details\x1b[")
 		footer := rows[len(rows)-2]
 		require.Regexp(t, "38;2;"+focus+`mCtrl\+C\x1b\[`, footer)
 		require.Regexp(t, "38;2;"+muted+`mexit\x1b\[`, footer)
@@ -1087,6 +1090,32 @@ func TestTokenizerEditorBatchPaletteForBorderAndShortcuts(t *testing.T) {
 			if strings.Contains(row, "48;2;") {
 				require.Contains(t, ansi.Strip(row), "› Text", "only the active label receives the focus fill")
 			}
+		}
+	}
+}
+
+func TestTokenizerEditorHeaderShortcutsFollowKeyboardFocus(t *testing.T) {
+	for _, width := range []int{40, 80, 120} {
+		m := tokenizerEditorExample()
+		m.width, m.height = width, 16
+		for _, focus := range []int{tokenizerFocusText, tokenizerFocusOptions, tokenizerFocusResults} {
+			m.focus = focus
+			rows := strings.Split(ansi.Strip(m.View().Content), "\n")
+			header := rows[0]
+			if m.framed() {
+				header = rows[1]
+			}
+			shortcuts := "v View  m Model  d Details  ? Help"
+			if width == 40 {
+				shortcuts = "? Help"
+			}
+			if focus == tokenizerFocusText {
+				shortcuts = "Tab then " + shortcuts
+			} else {
+				require.NotContains(t, header, "Tab then")
+			}
+			require.Contains(t, header, shortcuts)
+			require.NotRegexp(t, `\bF[1-4]\b`, header)
 		}
 	}
 }
@@ -1112,6 +1141,7 @@ func TestTokenizerEditorCompactBytesViewRetainsLongStatus(t *testing.T) {
 			view := ansi.Strip(m.View().Content)
 			rows := strings.Split(view, "\n")
 			require.Contains(t, rows[0], "Tokenizer")
+			require.Contains(t, rows[0], "Tab then ? Help")
 			require.Contains(t, rows[1], status)
 			require.Contains(t, view, "Model")
 			if state == "failed" {
