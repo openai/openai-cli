@@ -18,8 +18,10 @@ The live editor opens below the shell command. Earlier output stays in the termi
 Type or paste text to see its exact token count.
 The editor supports up to 1 MiB of UTF-8 input.
 
-Press Tab while editing to focus View. Use Left or Right to switch between Text, Token IDs, and Bytes.
-Tab again moves to the tokens. Use Left or Right to select one. Press Enter to inspect it.
+Press Left or Right while typing to switch between Text, Token IDs, and Bytes.
+Shift+Left and Shift+Right move the text cursor by one character.
+Tab moves from Text to View. A second Tab focuses the tokens.
+Use Left or Right there to select a token. Press Enter to inspect it.
 Outside the text field, `v` opens View, `m` opens Model, `d` opens Details, and `?` opens Help.
 In a chooser, use Up or Down to highlight a choice. Enter applies it, and Escape cancels it.
 Ctrl+C closes the panel and returns to the shell.

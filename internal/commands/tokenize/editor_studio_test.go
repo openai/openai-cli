@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -55,10 +56,8 @@ func TestTokenizerStudioIdentifiesSelectedTrailingSpaces(t *testing.T) {
 	}
 	tokens[8].ID = 983
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
-	for _, theme := range []struct{ name, blue string }{
-		{"dark", "169;201;237"}, {"light", "62;96;136"}, {"monochrome", ""},
-	} {
-		m.dark, m.color = theme.name == "dark", theme.name != "monochrome"
+	for _, theme := range []string{"dark", "light", "monochrome"} {
+		m.dark, m.color = theme == "dark", theme != "monochrome"
 		s := m.styles()
 		rows := m.studioResults(s, m.resultWidth())
 		require.Equal(t, source, strings.TrimPrefix(ansi.Strip(rows[1]), "  "))
@@ -67,8 +66,8 @@ func TestTokenizerStudioIdentifiesSelectedTrailingSpaces(t *testing.T) {
 		require.Contains(t, rows[3], s.tokenSelected.Render("9 spaces"))
 		require.Equal(t, "Token 9 of 9  9 spaces", strings.TrimSpace(ansi.Strip(rows[3])))
 		if m.color {
-			require.Contains(t, rows[2], "\x1b[38;2;"+theme.blue+"m3", "first token uses the blue family")
-			require.Contains(t, rows[2], "\x1b[38;2;"+theme.blue+"m5", "seventh token repeats that family")
+			require.Contains(t, rows[2], s.byteCounts[0].Render("3"))
+			require.Contains(t, rows[2], s.byteCounts[0].Render("5"), "seventh token repeats the first color")
 			require.Equal(t, 1, strings.Count(rows[2], "48;2;"), "only the selected count uses a background")
 		}
 	}
@@ -82,6 +81,24 @@ func TestTokenizerStudioIdentifiesSelectedTrailingSpaces(t *testing.T) {
 	require.Contains(t, details, "Size      9 bytes")
 	require.Contains(t, details, "Hex       20 20 20 20 20 20 20 20 20")
 	require.Equal(t, source, m.text)
+}
+
+func TestTokenizerPaletteKeepsAdjacentTokensDistinct(t *testing.T) {
+	m := testTokenizerEditor()
+	m.color = true
+	for _, dark := range []bool{true, false} {
+		m.dark = dark
+		s := m.styles()
+		for i, token := range s.tokens {
+			require.Equal(t, token.GetForeground(), s.byteCounts[i].GetForeground())
+			for _, profile := range []colorprofile.Profile{colorprofile.TrueColor, colorprofile.ANSI256, colorprofile.ANSI} {
+				previous := s.tokens[(i+len(s.tokens)-1)%len(s.tokens)]
+				require.NotEqual(t, profile.Convert(previous.GetBackground()), profile.Convert(token.GetBackground()), "adjacent tokens need distinct fills")
+				require.NotEqual(t, profile.Convert(previous.GetForeground()), profile.Convert(token.GetForeground()), "adjacent byte counts need distinct ink")
+				require.NotEqual(t, profile.Convert(s.tokenSelected.GetBackground()), profile.Convert(token.GetBackground()), "reserve the selection fill")
+			}
+		}
+	}
 }
 
 func TestTokenizerStudioSummarizesSelectedSpaceByView(t *testing.T) {

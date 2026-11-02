@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -14,10 +15,12 @@ func TestTokenizerStudioSourceWrapsWithoutChangingDraft(t *testing.T) {
 	m.insert(source)
 	rows := m.studioSourceLines(m.styles(), 6, 6)
 	require.Equal(t, []string{"hello,", " world", "", "界e\u0301" + tokenizerSourceDisplay("\r"), `\tx!` + tokenizerCaret(" "), ""}, rows)
-	m.cursor = len("hello,")
+	m.cursor = len("hello")
+	tokenizerEditorModifiedKey(m, tea.KeyRight, tea.ModShift)
 	rows = m.studioSourceLines(m.styles(), 6, 6)
 	require.Equal(t, tokenizerCaret(" ")+"world", rows[1])
-	m.cursor = len("hello, world\n\n界")
+	m.cursor = len("hello, world\n\n界e\u0301")
+	tokenizerEditorModifiedKey(m, tea.KeyLeft, tea.ModShift)
 	rows = m.studioSourceLines(m.styles(), 6, 6)
 	require.Contains(t, rows[3], tokenizerCaret("e\u0301"), "the caret covers the entire combining cluster")
 	require.Equal(t, source, m.text)

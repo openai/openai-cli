@@ -19,7 +19,11 @@ func testTokenizerEditor() *tokenizerEditor {
 }
 
 func tokenizerEditorKey(m *tokenizerEditor, code rune) tea.Cmd {
-	_, cmd := m.Update(tea.KeyPressMsg{Code: code})
+	return tokenizerEditorModifiedKey(m, code, 0)
+}
+
+func tokenizerEditorModifiedKey(m *tokenizerEditor, code rune, mod tea.KeyMod) tea.Cmd {
+	_, cmd := m.Update(tea.KeyPressMsg{Code: code, Mod: mod})
 	return cmd
 }
 
@@ -57,9 +61,9 @@ func TestTokenizerEditorMovesAndDeletesCompleteGraphemes(t *testing.T) {
 		t.Run(cluster, func(t *testing.T) {
 			m := testTokenizerEditor()
 			m.insert("a" + cluster + "z")
-			tokenizerEditorKey(m, tea.KeyLeft)
+			tokenizerEditorModifiedKey(m, tea.KeyLeft, tea.ModShift)
 			require.Equal(t, 1+len(cluster), m.cursor)
-			tokenizerEditorKey(m, tea.KeyLeft)
+			tokenizerEditorModifiedKey(m, tea.KeyLeft, tea.ModShift)
 			require.Equal(t, 1, m.cursor)
 			tokenizerEditorKey(m, tea.KeyDelete)
 			require.Equal(t, "az", m.text)
@@ -155,7 +159,7 @@ func TestTokenizerEditorTextDocumentAndPageNavigation(t *testing.T) {
 		require.Nil(t, cmd)
 		require.Zero(t, m.cursor)
 		require.Zero(t, m.selected)
-		tokenizerEditorKey(m, tea.KeyRight)
+		tokenizerEditorModifiedKey(m, tea.KeyRight, tea.ModShift)
 		require.Nil(t, tokenizerEditorKey(m, tea.KeyPgDown))
 		if size[0] == 80 {
 			require.Equal(t, len("ab\r\nαβγ\n\n👩‍💻"), m.cursor)
@@ -221,7 +225,7 @@ func TestTokenizerEditorMultilineCursorAndEnter(t *testing.T) {
 	m := testTokenizerEditor()
 	m.insert("ab\r\nαβ\nxyz")
 	tokenizerEditorKey(m, tea.KeyHome)
-	tokenizerEditorKey(m, tea.KeyRight)
+	tokenizerEditorModifiedKey(m, tea.KeyRight, tea.ModShift)
 	require.Equal(t, len("ab\r\nαβ\nx"), m.cursor)
 	tokenizerEditorKey(m, tea.KeyUp)
 	require.Equal(t, len("ab\r\nα"), m.cursor)
@@ -306,20 +310,36 @@ func TestTokenizerEditorFailureRecoveryKeepsDraft(t *testing.T) {
 
 func TestTokenizerEditorSwitchingViewsDoesNotRecompute(t *testing.T) {
 	m := testTokenizerEditor()
-	m.insert("ab")
-	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{{ID: 1, EndByte: 1}, {ID: 2, EndByte: 2}}})
-	m.focus, m.option = tokenizerFocusText, 1 // The last visit to settings ended on Model.
-	require.Nil(t, tokenizerEditorKey(m, tea.KeyTab))
-	require.Equal(t, tokenizerFocusOptions, m.focus)
-	require.Zero(t, m.option, "Tab from Text returns to View")
-	m.selected = 1
+	m.insert("abc")
+	tokens := []tokenizerPreviewToken{{ID: 1, EndByte: 1}, {ID: 2, EndByte: 2}, {ID: 3, EndByte: 3}}
+	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
+	m.option = 1 // The last visit to settings ended on Model.
+	tokenizerEditorKey(m, tea.KeyHome)
+	tokenizerEditorModifiedKey(m, tea.KeyRight, tea.ModShift)
+	require.Equal(t, 1, m.cursor)
+	require.Equal(t, 1, m.selected)
 	revision := m.revision
-	for i := 0; i < 9; i++ {
-		require.Nil(t, tokenizerEditorKey(m, tea.KeyRight))
-		require.Equal(t, (i+1)%3, m.tab)
-		require.Equal(t, 1, m.selected)
-		require.Equal(t, revision, m.revision)
-		require.Equal(t, "ab", m.text)
+	for _, focus := range []int{tokenizerFocusText, tokenizerFocusOptions} {
+		if focus == tokenizerFocusOptions {
+			require.Nil(t, tokenizerEditorKey(m, tea.KeyTab))
+			require.Zero(t, m.option, "Tab from Text returns to View")
+		}
+		for _, step := range []struct {
+			key rune
+			tab int
+		}{
+			{tea.KeyLeft, 2}, {tea.KeyRight, 0}, {tea.KeyRight, 1}, {tea.KeyRight, 2}, {tea.KeyRight, 0},
+		} {
+			require.Nil(t, tokenizerEditorKey(m, step.key))
+			require.Equal(t, step.tab, m.tab)
+			require.Equal(t, focus, m.focus)
+			require.Equal(t, 1, m.selected)
+			require.Equal(t, 1, m.cursor)
+			require.Equal(t, revision, m.revision)
+			require.Same(t, &tokens[0], &m.tokens[0])
+			require.False(t, m.updating)
+			require.Equal(t, "abc", m.text)
+		}
 	}
 }
 
@@ -685,13 +705,14 @@ func TestTokenizerEditorCaretSelectsContainingTokenWithoutRecomputing(t *testing
 	revision := m.revision
 	for _, step := range []struct {
 		key              rune
+		mod              tea.KeyMod
 		cursor, selected int
 	}{
-		{tea.KeyHome, 0, 0}, {tea.KeyRight, 1, 0}, {tea.KeyRight, 2, 1},
-		{tea.KeyRight, 3, 1}, {tea.KeyRight, 4, 2}, {tea.KeyRight, 5, 2},
-		{tea.KeyRight, 6, 2}, {tea.KeyLeft, 5, 2}, {tea.KeyHome, 0, 0}, {tea.KeyEnd, 6, 2},
+		{tea.KeyHome, 0, 0, 0}, {tea.KeyRight, tea.ModShift, 1, 0}, {tea.KeyRight, tea.ModShift, 2, 1},
+		{tea.KeyRight, tea.ModShift, 3, 1}, {tea.KeyRight, tea.ModShift, 4, 2}, {tea.KeyRight, tea.ModShift, 5, 2},
+		{tea.KeyRight, tea.ModShift, 6, 2}, {tea.KeyLeft, tea.ModShift, 5, 2}, {tea.KeyHome, 0, 0, 0}, {tea.KeyEnd, 0, 6, 2},
 	} {
-		require.Nil(t, tokenizerEditorKey(m, step.key))
+		require.Nil(t, tokenizerEditorModifiedKey(m, step.key, step.mod))
 		require.Equal(t, step.cursor, m.cursor)
 		require.Equal(t, step.selected, m.selected)
 		require.Equal(t, revision, m.revision)
@@ -713,17 +734,17 @@ func TestTokenizerEditorCaretKeepsGraphemesAndSplitUTF8Boundaries(t *testing.T) 
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
 	positions := []int{len("Aé👩‍💻e\u0301\r\n"), len("Aé👩‍💻e\u0301"), len("Aé👩‍💻"), len("Aé"), 1, 0}
 	for _, position := range positions {
-		require.Nil(t, tokenizerEditorKey(m, tea.KeyLeft))
+		require.Nil(t, tokenizerEditorModifiedKey(m, tea.KeyLeft, tea.ModShift))
 		require.Equal(t, position, m.cursor)
 		require.Equal(t, position, m.selected, "each fragment is one byte; the caret selects the following byte")
 		require.Contains(t, m.boundaries, m.cursor)
 	}
 	for i := len(positions) - 2; i >= 0; i-- {
-		require.Nil(t, tokenizerEditorKey(m, tea.KeyRight))
+		require.Nil(t, tokenizerEditorModifiedKey(m, tea.KeyRight, tea.ModShift))
 		require.Equal(t, positions[i], m.cursor)
 		require.Equal(t, positions[i], m.selected)
 	}
-	tokenizerEditorKey(m, tea.KeyRight)
+	tokenizerEditorModifiedKey(m, tea.KeyRight, tea.ModShift)
 	require.Equal(t, len(source), m.cursor)
 	require.Equal(t, len(tokens)-1, m.selected)
 	require.Equal(t, source, m.text)
@@ -734,10 +755,10 @@ func TestTokenizerEditorCaretKeepsGraphemesAndSplitUTF8Boundaries(t *testing.T) 
 		{ID: 1, EndByte: 1}, {ID: 2, EndByte: 4},
 	}})
 	require.Equal(t, 1, emoji.selected)
-	tokenizerEditorKey(emoji, tea.KeyLeft)
+	tokenizerEditorModifiedKey(emoji, tea.KeyLeft, tea.ModShift)
 	require.Zero(t, emoji.cursor)
 	require.Zero(t, emoji.selected)
-	tokenizerEditorKey(emoji, tea.KeyRight)
+	tokenizerEditorModifiedKey(emoji, tea.KeyRight, tea.ModShift)
 	require.Equal(t, 4, emoji.cursor)
 	require.Equal(t, 1, emoji.selected, "EOF keeps the final split fragment accessible")
 }
@@ -753,13 +774,14 @@ func TestTokenizerEditorCaretTracksMultilineMovement(t *testing.T) {
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
 	for _, step := range []struct {
 		key    rune
+		mod    tea.KeyMod
 		cursor int
 	}{
-		{tea.KeyHome, len("ab\r\nαβ\n")}, {tea.KeyRight, len("ab\r\nαβ\nx")},
-		{tea.KeyUp, len("ab\r\nα")}, {tea.KeyUp, 1},
-		{tea.KeyEnd, 2}, {tea.KeyDown, len("ab\r\nαβ")},
+		{tea.KeyHome, 0, len("ab\r\nαβ\n")}, {tea.KeyRight, tea.ModShift, len("ab\r\nαβ\nx")},
+		{tea.KeyUp, 0, len("ab\r\nα")}, {tea.KeyUp, 0, 1},
+		{tea.KeyEnd, 0, 2}, {tea.KeyDown, 0, len("ab\r\nαβ")},
 	} {
-		require.Nil(t, tokenizerEditorKey(m, step.key))
+		require.Nil(t, tokenizerEditorModifiedKey(m, step.key, step.mod))
 		require.Equal(t, step.cursor, m.cursor)
 		require.Equal(t, step.cursor, m.selected)
 		require.Contains(t, m.boundaries, m.cursor)
@@ -817,7 +839,7 @@ func TestTokenizerEditorCaretIgnoresStaleResultsAndClearsInvalidSelection(t *tes
 	m.insert("abcdef")
 	old := m.revision
 	for range 3 {
-		tokenizerEditorKey(m, tea.KeyLeft)
+		tokenizerEditorModifiedKey(m, tea.KeyLeft, tea.ModShift)
 	}
 	m.Update(tokenizerEditorResultMsg{Revision: old, Tokens: []tokenizerPreviewToken{
 		{ID: 1, EndByte: 2}, {ID: 2, EndByte: 4}, {ID: 3, EndByte: 6},

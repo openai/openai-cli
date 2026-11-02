@@ -186,7 +186,8 @@ func TestTokenizerEditorHelpGroupsAndWorkspaceShortcuts(t *testing.T) {
 		for _, text := range []string{
 			"Controls", "Views and details",
 			"Tab Cycle through Text, View, and Tokens.",
-			"← → Change the view or select a token.",
+			"← → Switch views. In Tokens, select a token.",
+			"Shift+← → Move the text cursor one character.",
 			"v / m / d Outside Text, open View, Model, or Details.",
 			"Enter Add a line in Text or open the selection.",
 			"Token IDs The number this encoding assigns to each token.",
@@ -203,7 +204,7 @@ func TestTokenizerEditorHelpGroupsAndWorkspaceShortcuts(t *testing.T) {
 		require.NotContains(t, help+view, "·")
 		require.NotContains(t, help+view, "•")
 		if m.width == 120 {
-			require.Len(t, rows, 11)
+			require.Len(t, rows, 12)
 			require.NotContains(t, view, "scroll", "wide Help fits without scrolling")
 		} else {
 			require.Contains(t, view, "↑↓ scroll")

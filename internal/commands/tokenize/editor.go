@@ -174,6 +174,16 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.focus, m.option, m.note = tokenizerFocusText, 0, ""
 			return m, nil
 		}
+		onView := m.focus == tokenizerFocusOptions && m.option == 0
+		if (m.focus == tokenizerFocusText || onView) && (key == "left" || key == "right") {
+			direction := 1
+			if key == "left" {
+				direction = -1
+			}
+			m.tab = (m.tab + direction + 3) % 3
+			m.keepSelectionVisible()
+			return m, nil
+		}
 		switch m.focus {
 		case tokenizerFocusText:
 			if key == "down" && m.lineEnd(m.cursor) == len(m.text) {
@@ -199,20 +209,9 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.option = 0
 			case "end":
 				m.option = 1
-			case "left", "right":
-				if m.option == 0 {
-					direction := 1
-					if key == "left" {
-						direction = -1
-					}
-					m.tab = (m.tab + direction + 3) % 3
-					m.keepSelectionVisible()
-				} else if key == "left" {
-					m.focus = tokenizerFocusText
-				} else {
-					m.openChoice(m.option, tokenizerFocusText)
-				}
-			case "enter":
+			case "left":
+				m.focus = tokenizerFocusText
+			case "right", "enter":
 				m.openChoice(m.option, tokenizerFocusText)
 			}
 		case tokenizerFocusResults:
@@ -410,9 +409,9 @@ func (m *tokenizerEditor) edit(msg tea.KeyPressMsg) {
 	switch msg.String() {
 	case "enter", "alt+enter":
 		m.insert("\n")
-	case "left":
+	case "shift+left":
 		m.cursor = m.boundaries[max(0, index-1)]
-	case "right":
+	case "shift+right":
 		m.cursor = m.boundaries[min(len(m.boundaries)-1, index+1)]
 	case "home", "ctrl+a":
 		m.cursor = m.lineStarts[m.lineIndex(m.cursor)]

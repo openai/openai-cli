@@ -59,20 +59,20 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 		warning, failure = "#E2BC79", "#E59A9A"
 		focus, fill, text, muted, border = "#8AA8FF", "#343D58", "#F2F4FA", "#A4ACC2", "#51566B"
 	}
-	// Pair each token background with a legible byte-count foreground of the same hue.
+	// Alternate cool and warm fills. Each token shares its ink with its byte count.
 	palette := [6][2]string{
-		{"#E9F1FE", "#3E6088"}, {"#E7F5ED", "#2F684E"}, {"#FBF0D9", "#775B23"},
-		{"#F2EAFE", "#6A4C89"}, {"#FBE8EC", "#864956"}, {"#E4F3F5", "#2B646A"},
+		{"#C6ECE9", "#17615C"}, {"#FADCC8", "#884B2B"}, {"#E2D9F7", "#61478B"},
+		{"#F4E4AE", "#71551B"}, {"#D9E9BF", "#2E592C"}, {"#E7BFD3", "#793245"},
 	}
 	if m.dark {
 		palette = [6][2]string{
-			{"#263D57", "#A9C9ED"}, {"#26483F", "#A4D3BC"}, {"#51452C", "#E7C88F"},
-			{"#423454", "#CDB2E5"}, {"#503438", "#E5ADB8"}, {"#294852", "#A2D4D9"},
+			{"#285154", "#A1E5DF"}, {"#75472C", "#FFD5AE"}, {"#563D79", "#DCC7FA"},
+			{"#674F29", "#EEDB9A"}, {"#295B2D", "#D6E7AD"}, {"#763D59", "#F7C6D8"},
 		}
 	}
 	for i, pair := range palette {
-		s.tokens[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(text)).Background(lipgloss.Color(pair[0]))
 		s.byteCounts[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(pair[1]))
+		s.tokens[i] = s.byteCounts[i].Background(lipgloss.Color(pair[0]))
 	}
 	s.fill, s.edge, s.secondary = fill, border, muted
 	s.warning = s.warning.Foreground(lipgloss.Color(warning))
@@ -184,10 +184,6 @@ func (m *tokenizerEditor) textRows(s tokenizerEditorStyles, width int) []string 
 
 func (m *tokenizerEditor) settingsRows(s tokenizerEditorStyles, width int) []string {
 	tabs := []string{"Text", "Token IDs", "Bytes"}
-	if !m.color {
-		// Reverse only the active view so all three labels keep their columns.
-		tabs[m.tab] = "\x1b[7m" + tabs[m.tab] + "\x1b[27m"
-	}
 	model, badge := tokenizerModelLabel(m.encoding)
 	return []string{
 		m.optionRow(s, width, 0, "View", tabs, m.tab, "←→"),
@@ -240,30 +236,41 @@ func tokenizerByteSize(n int) string {
 
 func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width, index int, label string, values []string, current int, hint string) string {
 	focused := m.focus == tokenizerFocusOptions && m.option == index
-	labelStyle, secondary, active := s.muted, s.muted, s.accent
+	labelStyle, secondary, active := s.muted, s.muted, lipgloss.NewStyle()
+	if index == 0 {
+		secondary = lipgloss.NewStyle()
+		active = active.Bold(true)
+	}
 	marker := "  "
 	if focused {
 		labelStyle = s.selected
 		secondary = s.muted.Inherit(s.selected)
-		active = s.accent.Inherit(s.selected)
-		marker = active.Bold(m.color).Render("› ")
-		active = active.Bold(m.color && index == 1)
-	} else if index == 1 {
-		active = lipgloss.NewStyle()
-	} else if m.color {
-		active, secondary = s.tokenSelected, lipgloss.NewStyle()
+		markerStyle := s.focused
+		if index == 1 {
+			active = s.accent.Inherit(s.selected).Bold(m.color)
+			markerStyle = active
+		}
+		marker = markerStyle.Render("› ")
+	}
+	labelWidth, gap := 7, "  "
+	if index == 0 {
+		// Each View reserves its brackets, including the first cell before Text.
+		labelWidth, gap = 6, ""
 	}
 	for i, value := range values {
 		style := secondary
 		if i == current {
 			style = active
+			if index == 0 {
+				value = "[" + value + "]"
+			}
+		} else if index == 0 {
+			value = " " + value + " "
 		}
 		values[i] = style.Render(value)
 	}
-	row := marker + labelStyle.Render(fmt.Sprintf("%-7s", label)) + strings.Join(values, secondary.Render("  "))
-	if index == 0 && m.focus == tokenizerFocusText && ansi.StringWidth(row+"  Tab then "+hint) <= width {
-		row += "  " + s.accent.Render("Tab") + s.muted.Render(" then ") + s.accent.Render(hint)
-	} else if ansi.StringWidth(row+"  "+hint) <= width {
+	row := marker + labelStyle.Render(fmt.Sprintf("%-*s", labelWidth, label)) + strings.Join(values, secondary.Render(gap))
+	if ansi.StringWidth(row+"  "+hint) <= width {
 		hintStyle := secondary
 		if index == 0 {
 			hintStyle = s.accent.Inherit(secondary)
@@ -307,6 +314,9 @@ func (m *tokenizerEditor) footer() string {
 		footer = "Ctrl+C exit · Tab options"
 		if m.lineEnd(m.cursor) == len(m.text) {
 			footer = "Ctrl+C exit · ↓ options · Tab switch"
+		}
+		if ansi.StringWidth(footer+" · Shift+←→ cursor") <= m.viewWidth() {
+			footer += " · Shift+←→ cursor"
 		}
 		if len(m.lineStarts) > m.sourceRows() && ansi.StringWidth(footer+" · PgUp/PgDn") <= m.viewWidth() {
 			footer += " · PgUp/PgDn"
@@ -717,7 +727,8 @@ var tokenizerEditorHelp = []struct {
 }{
 	{"Controls", true, [][2]string{
 		{"Tab", "Cycle through Text, View, and Tokens."},
-		{"← →", "Change the view or select a token."},
+		{"← →", "Switch views. In Tokens, select a token."},
+		{"Shift+← →", "Move the text cursor one character."},
 		{"v / m / d", "Outside Text, open View, Model, or Details."},
 		{"Enter", "Add a line in Text or open the selection."},
 	}},

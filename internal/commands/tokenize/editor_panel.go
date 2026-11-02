@@ -65,16 +65,17 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 	width := m.viewWidth()
 	header := title
 	if m.modal == tokenizerModalNone {
-		prefix := ""
+		prefix, view := "", s.accent.Render("v")+" View  "
 		if m.focus == tokenizerFocusText {
 			prefix = s.accent.Render("Tab") + s.muted.Render(" then ")
+			view = "" // The View row already shows the direct arrow shortcut.
 		}
 		help := s.accent.Render("?") + " Help"
 		details := s.accent.Render("d") + " Details"
 		if len(m.tokens) == 0 {
 			details = s.muted.Render("d Details")
 		}
-		actions := prefix + s.accent.Render("v") + " View  " + s.accent.Render("m") + " Model  " + details + "  " + help
+		actions := prefix + view + s.accent.Render("m") + " Model  " + details + "  " + help
 		available := width - ansi.StringWidth(title)
 		if status != "" {
 			available -= ansi.StringWidth(status) + 2
@@ -99,7 +100,15 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 			ruleWidth, ruleEnd = max(0, width-statusWidth-1), " "+status
 		}
 	}
-	lines := []string{header, terminal.SectionDivider(ruleWidth, m.color, s.fill, s.edge, s.secondary) + ruleEnd}
+	divider := func(w int) string { return terminal.SectionDivider(w, m.color, s.fill, s.edge, s.secondary) }
+	var ruleLine string
+	if m.studioLayout() && m.modal == tokenizerModalNone {
+		junction := m.sourceWidth() + 1
+		ruleLine = divider(junction) + s.border.Render("┬") + divider(ruleWidth-junction-1)
+	} else {
+		ruleLine = divider(ruleWidth)
+	}
+	lines := []string{header, ruleLine + ruleEnd}
 	limit := max(0, m.bodyHeight()+1-len(footer))
 	lines = append(lines, body[:min(limit, len(body))]...)
 	lines = append(lines, footer...)
