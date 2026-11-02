@@ -14,6 +14,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestTokenizerEditorDialogsShareMainDivider(t *testing.T) {
+	for _, width := range []int{50, 120} {
+		m := tokenizerEditorExample()
+		m.width, m.height, m.color = width, 24, true
+		divider := strings.Split(m.View().Content, "\n")[2]
+		for _, modal := range []int{tokenizerModalView, tokenizerModalEncoding, tokenizerModalDetails, tokenizerModalHelp} {
+			m.modal = modal
+			require.Equal(t, divider, strings.Split(m.View().Content, "\n")[2])
+		}
+	}
+}
+
 func TestTokenizerEditorViewsShareSelectionAndExactDetails(t *testing.T) {
 	m := tokenizerEditorExample()
 	m.focus = tokenizerFocusResults
@@ -275,7 +287,7 @@ func TestTokenizerEditorDetailsModelContextAcrossViews(t *testing.T) {
 					require.Contains(t, plain, "Token 1 of 1")
 					if width == 40 && model.encoding == "o200k_base" {
 						rule := strings.TrimSpace(strings.Split(plain, "\n")[1])
-						require.Regexp(t, "^─+ "+regexp.QuoteMeta(model.label)+" ─$", rule)
+						require.Regexp(t, "^─+ "+regexp.QuoteMeta(model.label)+"$", rule)
 						require.Equal(t, m.viewWidth(), ansi.StringWidth(rule))
 					}
 					for _, field := range []string{model.label, `Text      "\n"`, "Token ID  198", "Starts    After 0 bytes", "Size      1 byte", "Hex       0a", "Esc back", "Ctrl+C exit"} {
@@ -404,10 +416,6 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 					plain := ansi.Strip(view)
 					require.Regexp(t, regexp.QuoteMeta(title)+` +`+regexp.QuoteMeta(status), plain)
 					require.Contains(t, plain, "✓ applied")
-					if m.framed() {
-						rows := strings.Split(plain, "\n")
-						require.Equal(t, "├"+strings.Repeat("─", m.viewWidth()+2)+"┤", rows[2])
-					}
 					if size[0] >= 80 {
 						require.Len(t, strings.Split(plain, "\n"), len(choices)+5, "one row per choice inside the panel")
 					}

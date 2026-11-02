@@ -1088,14 +1088,12 @@ func TestTokenizerEditorStudioAndCompactLayout(t *testing.T) {
 			require.Contains(t, rows[header+2], "› Text")
 			require.Contains(t, rows[footer], "Ctrl+C exit")
 			require.NotContains(t, rows[footer], "Shift+")
+			require.NotEmpty(t, strings.Trim(rows[footer-1], " │╎"), "controls follow the last content row")
 			if studio {
 				dividerColumn := m.sourceWidth() + 3
-				for _, row := range rows[header+2 : footer-1] {
+				for _, row := range rows[header+2 : footer] {
 					require.Equal(t, '╎', []rune(row)[dividerColumn])
 				}
-				require.Equal(t, "│"+strings.Repeat(" ", m.viewWidth()+2)+"│", rows[footer-1])
-			} else {
-				require.NotEmpty(t, strings.Trim(rows[footer-1], " │"))
 			}
 			require.Contains(t, view, "› Text")
 			require.Contains(t, view, "Type or paste text")

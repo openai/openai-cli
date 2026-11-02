@@ -97,9 +97,6 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 			header += strings.Repeat(" ", gap) + status
 		} else {
 			ruleSuffix = " " + status
-			if m.modal != tokenizerModalNone {
-				ruleSuffix += " " + s.border.Render("─")
-			}
 		}
 	}
 	ruleWidth := width - ansi.StringWidth(ruleSuffix)
@@ -116,11 +113,7 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 	edge := s.border.Render("│")
 	rule := strings.Repeat("─", width+2)
 	frame := []string{s.border.Render("╭" + rule + "╮")}
-	for i, line := range lines {
-		if i == 1 && m.modal != tokenizerModalNone {
-			frame = append(frame, s.border.Render("├─")+line+s.border.Render("─┤"))
-			continue
-		}
+	for _, line := range lines {
 		line = tokenizerClip(line, width)
 		padding := strings.Repeat(" ", max(0, width-tokenizerSourceWidth(line)))
 		// Pin the right edge even when the terminal draws a ZWJ cluster narrower than the painter.

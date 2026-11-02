@@ -41,9 +41,6 @@ func (m *tokenizerEditor) studioView(s tokenizerEditorStyles) string {
 			rows[i] += right[i]
 		}
 	}
-	if len(rows) < m.bodyHeight() {
-		rows = append(rows, "")
-	}
 	return m.panel(s, "Tokenizer", "", rows, []string{s.shortcuts(m.footer())})
 }
 
