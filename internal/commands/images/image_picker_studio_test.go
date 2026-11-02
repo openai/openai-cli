@@ -102,14 +102,19 @@ func TestImageStudioShowsRecoveryInstructionsWithoutClipping(t *testing.T) {
 
 	m.setNote(strings.Repeat("abcdefghijklmnop", 90)+" final recovery step", imageWarning)
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-	text := strings.Join(w.displayRows[:w.messageRows], "")
-	require.Contains(t, text, "final recovery step")
+	// Wrapping may put the last three words on different terminal rows.
+	words := strings.Fields(strings.Join(w.displayRows[:w.messageRows], " "))
+	require.GreaterOrEqual(t, len(words), 3)
+	require.Equal(t, []string{"final", "recovery", "step"}, words[len(words)-3:])
 	start := w.offset
 	w.scroll(w.viewportRows)
 	require.Greater(t, w.offset, start)
 	w.scroll(len(w.displayRows))
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
-	require.Contains(t, strings.Join(w.painted, "\n"), "final recovery step")
+	require.LessOrEqual(t, w.messageRows, w.offset+w.viewportRows)
+	for at := w.offset; at < w.messageRows; at++ {
+		require.Contains(t, w.painted[w.bodyStart+at-w.offset], w.displayRows[at])
+	}
 }
 
 func TestImageStudioWrappedGuidanceKeepsItsTone(t *testing.T) {
