@@ -1068,8 +1068,8 @@ func TestTokenizerEditorStudioAndCompactLayout(t *testing.T) {
 			require.Contains(t, rows[header], "Tokenizer")
 			if studio {
 				require.NotContains(t, rows[header], "0 tokens")
-				require.Contains(t, rows[header+1], "0 tokens")
-				require.NotRegexp(t, `Tokens +0 tokens`, rows[header+1])
+				require.Contains(t, rows[header+2], "0 tokens")
+				require.NotRegexp(t, `Tokens +0 tokens`, rows[header+2])
 				m.focus = tokenizerFocusResults
 				require.Contains(t, ansi.Strip(m.View().Content), "› 0 tokens")
 				require.NotContains(t, m.footer(), "Enter details")
@@ -1079,12 +1079,18 @@ func TestTokenizerEditorStudioAndCompactLayout(t *testing.T) {
 			}
 			require.Contains(t, rows[header], "Tab then ")
 			require.Contains(t, rows[header], "? Help")
-			require.Contains(t, rows[header+1], "› Text")
+			rule := strings.Repeat("─", m.viewWidth())
+			if framed {
+				require.Equal(t, "│ "+rule+" │", rows[header+1])
+			} else {
+				require.Equal(t, "  "+rule, rows[header+1])
+			}
+			require.Contains(t, rows[header+2], "› Text")
 			require.Contains(t, rows[footer], "Ctrl+C exit")
 			require.NotContains(t, rows[footer], "Shift+")
 			if studio {
 				dividerColumn := m.sourceWidth() + 3
-				for _, row := range rows[header+1 : footer-1] {
+				for _, row := range rows[header+2 : footer-1] {
 					require.Equal(t, '╎', []rune(row)[dividerColumn])
 				}
 				require.Equal(t, "│"+strings.Repeat(" ", m.viewWidth()+2)+"│", rows[footer-1])
@@ -1173,7 +1179,8 @@ func TestTokenizerEditorCompactBytesViewRetainsLongStatus(t *testing.T) {
 			rows := strings.Split(view, "\n")
 			require.Contains(t, rows[0], "Tokenizer")
 			require.Contains(t, rows[0], "Tab then ? Help")
-			require.Equal(t, status, strings.TrimSpace(rows[1]))
+			rule := strings.Repeat("─", m.viewWidth()-ansi.StringWidth(status)-1)
+			require.Equal(t, "  "+rule+" "+status, rows[1])
 			require.Contains(t, view, "Model")
 			if state == "failed" {
 				require.Contains(t, view, "press r")

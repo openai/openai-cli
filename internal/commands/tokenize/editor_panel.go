@@ -39,12 +39,9 @@ func (m *tokenizerEditor) viewWidth() int {
 	return max(1, min(100, m.width-4))
 }
 
-// Reserve the title and footer. Dialogs also separate the title from their rows.
+// Reserve the title, divider, and one footer row.
 func (m *tokenizerEditor) bodyHeight() int {
-	rows := m.viewHeight() - 2
-	if m.modal != tokenizerModalNone {
-		rows--
-	}
+	rows := m.viewHeight() - 3
 	if m.framed() {
 		rows -= 2
 	}
@@ -93,30 +90,22 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 		}
 		header += strings.Repeat(" ", gap) + actions
 	}
-	overflow := ""
+	ruleSuffix := ""
 	if status != "" {
 		statusWidth := ansi.StringWidth(status)
 		if gap := width - ansi.StringWidth(header) - statusWidth; gap > 0 {
 			header += strings.Repeat(" ", gap) + status
 		} else {
-			overflow = status
+			ruleSuffix = " " + status
+			if m.modal != tokenizerModalNone {
+				ruleSuffix += " " + s.border.Render("─")
+			}
 		}
 	}
-	lines := []string{header}
-	limit := m.bodyHeight() + 1 - len(footer)
-	showRule := m.modal != tokenizerModalNone
-	if showRule {
-		suffix := ""
-		if overflow != "" {
-			suffix = " " + overflow + " " + s.border.Render("─")
-		}
-		ruleWidth := width - ansi.StringWidth(suffix)
-		lines = append(lines, terminal.SectionDivider(ruleWidth, m.color, s.fill, s.edge, s.secondary)+suffix)
-	} else if overflow != "" {
-		lines = append(lines, strings.Repeat(" ", max(0, width-ansi.StringWidth(overflow)))+overflow)
-		limit--
-	}
-	lines = append(lines, body[:min(max(0, limit), len(body))]...)
+	ruleWidth := width - ansi.StringWidth(ruleSuffix)
+	lines := []string{header, terminal.SectionDivider(ruleWidth, m.color, s.fill, s.edge, s.secondary) + ruleSuffix}
+	limit := max(0, m.bodyHeight()+1-len(footer))
+	lines = append(lines, body[:min(limit, len(body))]...)
 	lines = append(lines, footer...)
 	if !m.framed() {
 		for i, line := range lines {
@@ -128,7 +117,7 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 	rule := strings.Repeat("─", width+2)
 	frame := []string{s.border.Render("╭" + rule + "╮")}
 	for i, line := range lines {
-		if i == 1 && showRule {
+		if i == 1 && m.modal != tokenizerModalNone {
 			frame = append(frame, s.border.Render("├─")+line+s.border.Render("─┤"))
 			continue
 		}
