@@ -96,7 +96,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	delete(root.Metadata, "help-selected-command")
 	if root.Command("help") == nil {
 		root.Commands = append(root.Commands, &cli.Command{
-			Name: "help", Usage: "Get help: help [command...]", HideHelpCommand: true,
+			Name: "help", Usage: "Get command help or see help piping for shell examples", HideHelpCommand: true,
 			Metadata:           map[string]any{"help-command-section": "Help", "help-command-rank": 100000, "help-topic-command": true},
 			CustomHelpTemplate: `{{call (index .Root.Metadata "complete-help")}}`,
 			Flags:              []cli.Flag{&cli.BoolFlag{Name: "all", Usage: "Use help without --all", HideDefault: true, Hidden: true}},
@@ -112,7 +112,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 					cli.HelpPrinter(command.Root().Writer, setupHelp, command)
 					return nil
 				},
-			}},
+			}, pipingGuide()},
 		})
 		requestSetup := root.Before
 		root.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {

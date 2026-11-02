@@ -180,6 +180,12 @@ func knownLocalError(command *cli.Command, message string, output ...io.Writer) 
 		"cannot follow HTTP 308 redirect: streamed multipart uploads are not replayable",
 		"stdin has already been read by another parameter; it can only be read once",
 		"multiple request parameters use stdin; select only one stdin consumer",
+		"--request-file requires one JSON or YAML object",
+		"cannot read --request-file input",
+		"--request-file - and a request parameter both use stdin",
+		"use a regular --request-file when a request parameter reads stdin",
+		"invalid request parameters in --request-file",
+		"to read a field from stdin, use a named --request-file and pass the field explicitly with @-",
 		"cannot read from stdin: stdin is already being used for the request body",
 		"cannot read from stdin: stdin was already consumed by piped YAML/JSON input",
 		"Setup help takes no additional arguments.",
@@ -234,6 +240,9 @@ func knownLocalError(command *cli.Command, message string, output ...io.Writer) 
 		if rest, ok := strings.CutPrefix(tail, " for flag -"); ok {
 			name, reason, found := strings.Cut(rest, ": ")
 			if flag := declaredErrorFlag(command, name); found && flag != "" {
+				if flag == "--request-file" && reason == "can't duplicate this flag" {
+					return parserErrorGuidance(command, "Specify --request-file only once.", output...)
+				}
 				if flag == "--base-url" && (reason == flag+requestconfig.BaseURLHTTPSRequired || reason == flag+requestconfig.BaseURLHostRequired) {
 					return parserErrorGuidance(command, reason+".", output...)
 				}

@@ -104,7 +104,17 @@ func FlagOptions(
 	}
 
 	stdinConsumedByPipe := false
-	if bodyType != ApplicationOctetStream && !ignoreStdin && explicitStdin == 0 && cliinput.IsPiped(os.Stdin) {
+	supportsRequestFile, _ := cmd.Metadata[requestFileCapability].(bool)
+	hasRequestFile := supportsRequestFile && cmd.IsSet("request-file")
+	if hasRequestFile {
+		object, err := readRequestFile(cmd.String("request-file"), stdin, explicitStdin)
+		if err != nil {
+			return nil, err
+		}
+		if err := mergeRequestObject(cmd, object, &requestContents, stdinSecurity, bodyType != EmptyBody); err != nil {
+			return nil, errors.New("invalid request parameters in --request-file")
+		}
+	} else if bodyType != ApplicationOctetStream && !ignoreStdin && explicitStdin == 0 && cliinput.IsPiped(os.Stdin) {
 		stdinConsumedByPipe, err = ReadPipedInput(cmd, stdin, &requestContents, stdinSecurity, bodyType != EmptyBody)
 		if err != nil {
 			return nil, err
@@ -146,8 +156,12 @@ func FlagOptions(
 	if err := WrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
 		return nil, err
 	}
-	if _, err := StdinConsumers(requestContents, ignoreStdin); err != nil {
+	resolvedStdin, err := StdinConsumers(requestContents, ignoreStdin)
+	if err != nil {
 		return nil, err
+	}
+	if hasRequestFile && explicitStdin == 0 && resolvedStdin > 0 {
+		return nil, errors.New("to read a field from stdin, use a named --request-file and pass the field explicitly with @-")
 	}
 
 	// Determine stdin availability for FileInput params that use "-".

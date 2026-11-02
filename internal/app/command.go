@@ -57,6 +57,14 @@ func ConfigureCommand(root *cli.Command) {
 	webhooks.Configure(root, webhookCommandOptions())
 	describeAgentsCommands(root)
 	configureAgentsSessionCreation(root)
+	// Configure both generated resources before compatibility routes clone their flags.
+	for _, name := range []string{"responses", "chat:completions"} {
+		if resource := root.Command(name); resource != nil {
+			if create := resource.Command("create"); create != nil {
+				requestconfig.EnableRequestFile(create)
+			}
+		}
+	}
 	localcommands.ConfigureSubgroups(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)

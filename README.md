@@ -205,6 +205,10 @@ openai files upload report.txt --purpose user_data
 openai responses create --model gpt-5.5 --input @prompt.txt
 ```
 
+For a complete request, `responses create` and `chat completions create` accept `--request-file request.json`.
+Use `--request-file -` to wait for a pipeline, including delayed producers.
+Run `openai help piping` for tokenizer, upload, and script examples.
+
 Use `OPENAI_UNTRUSTED_STDIN=1` when piping JSON or YAML from an untrusted source
 so input cannot cause local file reads. In that mode, provide upload paths
 explicitly as flags. See [file arguments and encoding](docs/cli-reference.md#passing-files-as-arguments)
