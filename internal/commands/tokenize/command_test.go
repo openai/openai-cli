@@ -238,13 +238,47 @@ func TestTokenizerFormatsAndNoInputCommands(t *testing.T) {
 			}
 		}
 	}
-	for _, args := range [][]string{{"--format", "explore"}, {"--format", "yaml"}, {"--format", "jsonl"}, {"--transform", "token_count"}, {"--raw-output"}} {
+	for _, args := range [][]string{{"--format", "explore"}, {"--format", "yaml"}, {"--format", "jsonl"}} {
 		var out bytes.Buffer
 		root := tokenizerTestRoot(tokenizerRejectReader{}, &out)
 		argv := append([]string{"openai"}, args...)
 		err := root.Run(t.Context(), append(argv, "tokenizer", "count"))
 		if err == nil || out.Len() != 0 {
 			t.Fatalf("unsupported output accepted: %v; %s", err, out.String())
+		}
+	}
+}
+
+func TestTokenizerCountExtractsFieldsFromPipedInput(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		flags []string
+		want  string
+	}{
+		{"", []string{"--transform", "token_count"}, "0\n"},
+		{"Hello, world!", []string{"--transform", "token_count"}, "4\n"},
+		{"é\r\n", []string{"--transform", "input_bytes"}, "4\n"},
+		{"!", []string{"--transform", "encoding"}, "\"o200k_base\"\n"},
+		{"!", []string{"--transform", "encoding", "--raw-output"}, "o200k_base\n"},
+	} {
+		var out bytes.Buffer
+		root := tokenizerTestRoot(strings.NewReader(tc.input), &out)
+		args := append([]string{"openai", "tokenizer", "count"}, tc.flags...)
+		if err := root.Run(t.Context(), args); err != nil || out.String() != tc.want {
+			t.Fatalf("flags %v: got %q, error %v; want %q", tc.flags, out.String(), err, tc.want)
+		}
+	}
+
+	for _, flags := range [][]string{{"--transform", "missing"}, {"--raw-output"}} {
+		var out bytes.Buffer
+		root := tokenizerTestRoot(strings.NewReader("!"), &out)
+		if err := root.Run(t.Context(), append([]string{"openai", "tokenizer", "count"}, flags...)); err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]any
+		want := map[string]any{"encoding": "o200k_base", "input_bytes": float64(1), "token_count": float64(1)}
+		if err := json.Unmarshal(out.Bytes(), &fields); err != nil || !reflect.DeepEqual(fields, want) {
+			t.Fatalf("flags %v lost the count record: %s", flags, out.String())
 		}
 	}
 }
@@ -267,6 +301,10 @@ func TestTokenizerTerminalFragmentsAreEscaped(t *testing.T) {
 
 func TestTokenizerWriteFailureAndCancellation(t *testing.T) {
 	failure := errors.New("private synthetic sink failure")
+	count := tokenizerTestRoot(strings.NewReader("hello"), tokenizerFailureWriter{failure})
+	if err := count.Run(t.Context(), []string{"openai", "tokenizer", "count", "--transform", "token_count"}); !errors.Is(err, failure) {
+		t.Fatalf("extracted count lost the output failure: %v", err)
+	}
 	for _, format := range []string{"text", "json"} {
 		root := tokenizerTestRoot(tokenizerRejectReader{}, tokenizerFailureWriter{failure})
 		err := root.Run(t.Context(), []string{"openai", "--format", format, "tokenizer", "inspect", "--text", "Hello"})

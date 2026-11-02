@@ -70,14 +70,20 @@ func (m *tokenizerEditor) studioResults(s tokenizerEditorStyles, width int) []st
 	}
 	heading := s.heading(position, m.focus == tokenizerFocusResults)
 	available := width - ansi.StringWidth(heading) - 2
+	spaces := tokenizerSpaceLabel(piece)
 	// Very long token numbers can leave too little space for a meaningful fragment.
-	if available < 8 {
+	if available < max(8, len(spaces)) {
 		rows = append(rows, heading)
 		heading, available = "", width-2
 	}
-	value := tokenizerFragmentLabel(piece, available-2)
-	if valid {
-		value = "“" + value + "”"
+	var value string
+	if spaces != "" {
+		value = s.tokenSelected.Render(spaces)
+	} else {
+		value = tokenizerFragmentLabel(piece, available-2)
+		if valid {
+			value = "“" + value + "”"
+		}
 	}
 	rows = append(rows, heading+"  "+value)
 	id := s.muted.Render("ID ") + strconv.FormatUint(uint64(m.tokens[m.selected].ID), 10)
@@ -131,10 +137,12 @@ func (m *tokenizerEditor) tokenByteCounts(s tokenizerEditorStyles, width, first,
 		row.WriteString(s.muted.Render("… "))
 	}
 	for i, value := range values {
-		if first+i == m.selected {
-			value = s.tokenSelected.Render(value)
+		index := first + i
+		style := s.byteCounts[index%len(s.byteCounts)]
+		if index == m.selected {
+			style = s.tokenSelected
 		}
-		row.WriteString(" " + value + " ")
+		row.WriteString(" " + style.Render(value) + " ")
 	}
 	if end < len(m.tokens) {
 		row.WriteString(s.muted.Render(" …"))

@@ -34,10 +34,61 @@ func TestTokenByteCountsKeepSelectedAndNeighboringValuesAligned(t *testing.T) {
 				require.Equal(t, len("  Bytes per token  ")+3*i, ansi.StringWidth(before))
 				require.Equal(t, 1, strings.Count(row, theme.selected))
 				wantStyled := append([]string(nil), want...)
+				for j, count := range wantStyled {
+					wantStyled[j] = styles.byteCounts[j].Render(count)
+				}
 				wantStyled[i] = styles.tokenSelected.Render(length)
 				require.Equal(t, "  "+styles.muted.Render("Bytes per token")+"  "+strings.Join(wantStyled, "  ")+" ", row)
 			}
 		})
+	}
+}
+
+func TestTokenizerStudioIdentifiesSelectedTrailingSpaces(t *testing.T) {
+	m := testTokenizerEditor()
+	m.width, m.height = 120, 30
+	source := "how are you im doing so well!         "
+	m.insert(source)
+	var tokens []tokenizerPreviewToken
+	for _, end := range []uint32{3, 7, 11, 14, 20, 23, 28, 29, 38} {
+		tokens = append(tokens, tokenizerPreviewToken{EndByte: end})
+	}
+	tokens[8].ID = 983
+	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
+	for _, theme := range []struct{ name, blue string }{
+		{"dark", "169;201;237"}, {"light", "62;96;136"}, {"monochrome", ""},
+	} {
+		m.dark, m.color = theme.name == "dark", theme.name != "monochrome"
+		s := m.styles()
+		rows := m.studioResults(s, m.resultWidth())
+		require.Equal(t, source, strings.TrimPrefix(ansi.Strip(rows[1]), "  "))
+		require.Contains(t, rows[1], s.tokenSelected.Render("         "))
+		require.Contains(t, rows[2], s.tokenSelected.Render("9"))
+		require.Contains(t, rows[3], s.tokenSelected.Render("9 spaces"))
+		require.Equal(t, "Token 9 of 9  9 spaces", strings.TrimSpace(ansi.Strip(rows[3])))
+		if m.color {
+			require.Contains(t, rows[2], "\x1b[38;2;"+theme.blue+"m3", "first token uses the blue family")
+			require.Contains(t, rows[2], "\x1b[38;2;"+theme.blue+"m5", "seventh token repeats that family")
+			require.Equal(t, 1, strings.Count(rows[2], "48;2;"), "only the selected count uses a background")
+		}
+	}
+	m.width, m.height = 40, 12
+	require.Contains(t, ansi.Strip(m.View().Content), "Token 9 of 9  9 spaces")
+	m.modal = tokenizerModalDetails
+	details, _ := m.modalRows(0, 20)
+	require.Contains(t, details, `Text      "         "  9 spaces`)
+	require.Contains(t, details, "Token ID  983")
+	require.Contains(t, details, "Bytes     9 · offset 29")
+	require.Contains(t, details, "Hex       20 20 20 20 20 20 20 20 20")
+	require.Equal(t, source, m.text)
+}
+
+func TestTokenizerSpaceLabelDescribesOnlyBlankSeparators(t *testing.T) {
+	for fragment, label := range map[string]string{
+		" ": "1 space", "\u00a0": "1 Unicode space", " \u3000": "2 Unicode spaces",
+		" leading": "", "tab\t": "", "\r\n": "", "": "",
+	} {
+		require.Equal(t, label, tokenizerSpaceLabel(fragment))
 	}
 }
 

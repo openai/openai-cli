@@ -228,6 +228,10 @@ func configureLocalHelpContent(root *cli.Command) {
 			content.Examples = []clihelp.Example{{Description: "Open the live tokenizer editor:", Command: "tokenizer"}}
 		case "tokenizer count", "tokenizer inspect":
 			content.Examples = []clihelp.Example{{Description: "Tokenize literal text:", Command: strings.Join(path, " ") + ` --text "Hello, world!"`}}
+			if command.Name == "count" {
+				content.GlobalOptionsNote = "Count supports --format auto, text, or json. Use --transform to select token_count, input_bytes, or encoding. Use --raw-output for unquoted strings."
+				content.Examples = append(content.Examples, clihelp.Example{Description: "Print only the token count:", Command: `tokenizer count --text "Hello, world!" --transform token_count`})
+			}
 			labels, _ := command.Metadata["help-flag-labels"].([]clihelp.FlagLabel)
 			command.Metadata["help-flag-labels"] = append(labels, clihelp.FlagLabel{Owner: command, Names: []string{"encoding"}, Label: "ENCODING"})
 		}

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -43,7 +44,7 @@ type tokenizerEditorStyles struct {
 	muted, accent, selected, focused, border, warning, failure lipgloss.Style
 	fill, edge, secondary                                      string
 	tokenSelected                                              lipgloss.Style
-	tokens                                                     [6]lipgloss.Style
+	tokens, byteCounts                                         [6]lipgloss.Style
 }
 
 func (m *tokenizerEditor) styles() tokenizerEditorStyles {
@@ -58,12 +59,20 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 		warning, failure = "#E2BC79", "#E59A9A"
 		focus, fill, text, muted, border = "#8AA8FF", "#343D58", "#F2F4FA", "#A4ACC2", "#51566B"
 	}
-	palette := [6]string{"#E9F1FE", "#E7F5ED", "#FBF0D9", "#F2EAFE", "#FBE8EC", "#E4F3F5"}
-	if m.dark {
-		palette = [6]string{"#263D57", "#26483F", "#51452C", "#423454", "#503438", "#294852"}
+	// Pair each token background with a legible byte-count foreground of the same hue.
+	palette := [6][2]string{
+		{"#E9F1FE", "#3E6088"}, {"#E7F5ED", "#2F684E"}, {"#FBF0D9", "#775B23"},
+		{"#F2EAFE", "#6A4C89"}, {"#FBE8EC", "#864956"}, {"#E4F3F5", "#2B646A"},
 	}
-	for i, color := range palette {
-		s.tokens[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(text)).Background(lipgloss.Color(color))
+	if m.dark {
+		palette = [6][2]string{
+			{"#263D57", "#A9C9ED"}, {"#26483F", "#A4D3BC"}, {"#51452C", "#E7C88F"},
+			{"#423454", "#CDB2E5"}, {"#503438", "#E5ADB8"}, {"#294852", "#A2D4D9"},
+		}
+	}
+	for i, pair := range palette {
+		s.tokens[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(text)).Background(lipgloss.Color(pair[0]))
+		s.byteCounts[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(pair[1]))
 	}
 	s.fill, s.edge, s.secondary = fill, border, muted
 	s.warning = s.warning.Foreground(lipgloss.Color(warning))
@@ -112,16 +121,25 @@ func (m *tokenizerEditor) View() tea.View {
 	lines := m.textRows(s, width)
 	lines = append(lines, m.settingsRows(s, width)...)
 	position := "Tokens"
+	spaceLabel := ""
 	if len(m.tokens) > 0 {
 		position = fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
 		fragment, _, _ := m.fragment(m.selected)
+		spaceLabel = tokenizerSpaceLabel(fragment)
 		if !utf8.ValidString(fragment) {
 			position += " · partial UTF-8"
 		}
 	}
 	results := trimEmptyRows(m.resultLines(s, width))
-	if m.focus == tokenizerFocusResults || len(m.tokens) != 1 {
+	if m.focus == tokenizerFocusResults || len(m.tokens) != 1 || spaceLabel != "" {
 		heading := s.heading(position, m.focus == tokenizerFocusResults)
+		if spaceLabel != "" {
+			if ansi.StringWidth(heading)+2+len(spaceLabel) > width {
+				lines = append(lines, heading)
+				heading = ""
+			}
+			heading += "  " + s.tokenSelected.Render(spaceLabel)
+		}
 		if len(results) == 1 && tokenizerSourceWidth(heading+results[0]) <= width {
 			results[0] = heading + results[0]
 		} else {
@@ -522,6 +540,28 @@ func tokenizerFragmentLabel(fragment string, width int) string {
 	return tokenizerSegmentClip(label, width)
 }
 
+// Space separators are blank in the strip. Tabs and newlines already have visible escapes.
+func tokenizerSpaceLabel(fragment string) string {
+	count := 0
+	for _, r := range fragment {
+		if r != ' ' && !unicode.Is(unicode.Zs, r) {
+			return ""
+		}
+		count++
+	}
+	if count == 0 {
+		return ""
+	}
+	unit := "space"
+	if count != len(fragment) {
+		unit = "Unicode space"
+	}
+	if count != 1 {
+		unit += "s"
+	}
+	return strconv.Itoa(count) + " " + unit
+}
+
 func tokenizerSegmentClip(label string, width int) string {
 	if tokenizerSourceWidth(label) <= width {
 		return label
@@ -851,6 +891,9 @@ func (m *tokenizerEditor) modalRows(start, count int) ([]string, int) {
 			write(string(quoted[1 : len(quoted)-1]))
 		}
 		write(`"`)
+		if spaces := tokenizerSpaceLabel(fragment); spaces != "" {
+			write("  " + spaces)
+		}
 		flush()
 	} else {
 		field("Text", "partial UTF-8; see Hex.")

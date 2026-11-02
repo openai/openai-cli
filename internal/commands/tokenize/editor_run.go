@@ -51,8 +51,7 @@ func handleTokenizerEditor(ctx context.Context, command *cli.Command) error {
 			"Tokenizer\n\nOpen the live editor with terminal input and output:\n  %s tokenizer\n\n"+
 				"Commands\n  count      Count exact plain-text tokens\n  inspect    Show token IDs and byte boundaries\n"+
 				"  encodings  List available encodings\n  licenses   Show bundled notices\n\n"+
-				"For count or inspect, use --text, --file, or piped input.\n"+
-				"Use --format json for structured results. Add --help for examples.\n", readable.Text(invocation))
+				"Pipe UTF-8 text into either command:\n  echo hello | %[1]s tokenizer count --transform token_count\n  echo hello | %[1]s tokenizer inspect --format json\n", readable.Text(invocation))
 		return tokenizerOutputFailure(err)
 	}
 	code, err := runTokenizerEditor(ctx, input, output, invocation)

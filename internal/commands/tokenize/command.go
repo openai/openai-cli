@@ -18,6 +18,7 @@ import (
 	clioutput "github.com/openai/openai-cli/internal/output"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/tokenizer"
+	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -84,7 +85,7 @@ func tokenizerOutputFormat(command *cli.Command) (string, error) {
 		return "", &localcommands.LocalError{Message: "Tokenizer commands take no positional arguments. Use --text or --file for input."}
 	}
 	root := command.Root()
-	if root.IsSet("transform") || root.IsSet("raw-output") {
+	if command.Name != "count" && (root.IsSet("transform") || root.IsSet("raw-output")) {
 		return "", &localcommands.LocalError{Message: "Tokenizer output does not support --transform or --raw-output. Use --format text or json."}
 	}
 	format := strings.ToLower(root.String("format"))
@@ -121,7 +122,9 @@ func handleTokenizer(ctx context.Context, command *cli.Command, inspect bool) er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return tokenizerOutputFailure(writeTokenizerResult(ctx, command.Root().Writer, result, inspect, format == "json"))
+	root := command.Root()
+	options := clioutput.FormatOptions{Format: format, Transform: root.String("transform"), RawOutput: root.Bool("raw-output")}
+	return tokenizerOutputFailure(writeTokenizerResult(ctx, root.Writer, result, inspect, options))
 }
 
 func tokenizerOutputFailure(err error) error {
@@ -225,10 +228,26 @@ type tokenizerToken struct {
 	Text      *string `json:"text,omitempty"`
 }
 
-func writeTokenizerResult(ctx context.Context, writer io.Writer, result tokenizer.Result, inspect, asJSON bool) error {
-	out := bufio.NewWriterSize(clioutput.Writer{Context: ctx, Sink: writer}, 32*1024)
+func writeTokenizerResult(ctx context.Context, writer io.Writer, result tokenizer.Result, inspect bool, options clioutput.FormatOptions) error {
+	sink := clioutput.Writer{Context: ctx, Sink: writer}
+	asJSON := options.Format == "json"
+	extract := options.Transform != "" || options.RawOutput
+	var header string
+	if asJSON || extract {
+		header = fmt.Sprintf(`{"encoding":%q,"input_bytes":%d,"token_count":%d`, result.Encoding, result.InputBytes, result.TokenCount)
+	}
+	if extract {
+		// Only count accepts extraction. Inspect streams its token records below.
+		data, err := clioutput.FormatJSON(gjson.Parse(header+"}"), options, writer, cliterminal.IsWriterTerminal(writer))
+		if err != nil {
+			return err
+		}
+		_, err = sink.Write(data)
+		return err
+	}
+	out := bufio.NewWriterSize(sink, 32*1024)
 	if asJSON {
-		if _, err := fmt.Fprintf(out, `{"encoding":%q,"input_bytes":%d,"token_count":%d`, result.Encoding, result.InputBytes, result.TokenCount); err != nil {
+		if _, err := out.WriteString(header); err != nil {
 			return err
 		}
 		if inspect {
