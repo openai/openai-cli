@@ -25,14 +25,10 @@ func (m *tokenizerEditor) resultWidth() int {
 func (m *tokenizerEditor) studioView(s tokenizerEditorStyles) string {
 	leftWidth, rightWidth := m.sourceWidth(), m.resultWidth()
 	left := m.textRows(s, leftWidth)
-	left = append(left, "", "  "+s.muted.Bold(m.color).Render("Settings"))
 	left = append(left, m.settingsRows(s, leftWidth)...)
-	if m.note != "" {
-		left = append(left, "")
-		left = append(left, m.noteRows(s, leftWidth)...)
-	}
+	left = append(left, m.noteRows(s, leftWidth)...)
 	right := m.studioResults(s, rightWidth)
-	rows := make([]string, m.bodyHeight())
+	rows := make([]string, min(m.bodyHeight(), max(len(left), len(right))))
 	for i := range rows {
 		line := ""
 		if i < len(left) {
@@ -45,94 +41,102 @@ func (m *tokenizerEditor) studioView(s tokenizerEditorStyles) string {
 			rows[i] += right[i]
 		}
 	}
-	return m.panel(s, "Tokenizer", s.muted.Render("Token studio"), rows, []string{s.shortcuts(m.footer())})
+	return m.panel(s, "Tokenizer", "", rows, []string{s.shortcuts(m.footer())})
 }
 
 func (m *tokenizerEditor) studioResults(s tokenizerEditorStyles, width int) []string {
 	state := s.muted.Render("○ Empty")
+	count := m.countStatus(s)
 	switch {
 	case m.updating:
 		state = s.accent.Render("● Updating")
+		count = s.muted.Render("Tokens")
+		if m.tab == 2 {
+			unit := "bytes"
+			if len(m.text) == 1 {
+				unit = "byte"
+			}
+			count = s.muted.Render(fmt.Sprintf("%d %s", len(m.text), unit))
+		}
 	case m.failed:
 		state = s.failure.Render("● Failed")
 	case len(m.tokens) > 0:
 		state = s.ready.Render("● Ready")
 	}
-	title := s.muted.Bold(m.color).Render("Tokens")
-	if m.focus == tokenizerFocusResults {
-		title = s.accent.Bold(m.color).Render("Tokens")
+	header := "  " + count
+	if m.focus == tokenizerFocusResults && len(m.tokens) == 0 {
+		header = s.heading(ansi.Strip(count), true)
 	}
-	// Keep the status light in the same cell for every state.
-	rows := []string{"  " + title + strings.Repeat(" ", width-2-ansi.StringWidth(title)-10) + state,
-		"  " + m.countStatus(s), ""}
-	rows = append(rows, m.resultLines(s, width)...)
-	rows = append(rows, "")
-	rows = append(rows, m.tokenSizeChart(s, width)...)
-	rows = append(rows, "")
+	// Reserve the longest status label so the light stays in the same column.
+	rows := []string{header + strings.Repeat(" ", max(1, width-10-ansi.StringWidth(header))) + state}
 	if len(m.tokens) == 0 {
-		return append(rows, s.heading("Selected token", m.focus == tokenizerFocusResults))
+		return rows
 	}
+	rows = append(rows, trimEmptyRows(m.resultLines(s, width))...)
+	rows = append(rows, m.tokenSizeChart(s, width)...)
+
 	piece, start, end := m.fragment(m.selected)
 	position := fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
-	if !utf8.ValidString(piece) {
+	valid := utf8.ValidString(piece)
+	if !valid {
 		position += " · partial UTF-8"
 	}
-	rows = append(rows, s.heading(position, m.focus == tokenizerFocusResults))
-	value := tokenizerFragmentLabel(piece, width-17)
-	if utf8.ValidString(piece) {
+	heading := s.heading(position, m.focus == tokenizerFocusResults)
+	available := width - ansi.StringWidth(heading) - 2
+	// Very long token numbers can leave too little space for a meaningful fragment.
+	if available < 8 {
+		rows = append(rows, heading)
+		heading, available = "", width-2
+	}
+	value := tokenizerFragmentLabel(piece, available-2)
+	if valid {
 		value = "“" + value + "”"
 	}
-	return append(rows, "  "+s.muted.Render("Text         ")+value,
-		"  "+s.muted.Render("Token ID     ")+strconv.FormatUint(uint64(m.tokens[m.selected].ID), 10),
-		"  "+s.muted.Render("Byte offset  ")+strconv.Itoa(start)+"    "+s.muted.Render("Byte length  ")+strconv.Itoa(end-start))
+	rows = append(rows, heading+"  "+value)
+	id := s.muted.Render("ID ") + strconv.FormatUint(uint64(m.tokens[m.selected].ID), 10)
+	offset := s.muted.Render("Byte offset ") + strconv.Itoa(start)
+	length := s.muted.Render("Length ") + strconv.Itoa(end-start) + " B"
+	meta := "  " + id + "  " + offset
+	if ansi.StringWidth(meta+"  "+length) > width {
+		return append(rows, meta, "  "+length)
+	}
+	return append(rows, meta+"  "+length)
 }
 
-// Each bar is one token's exact byte length, scaled to the largest token on this page.
-// The selected token and chart pages stay aligned in every display mode.
+// Round lengths to eighths of the page maximum, with one level for any positive length.
 func (m *tokenizerEditor) tokenSizeChart(s tokenizerEditorStyles, width int) []string {
-	const height = 3
-	width -= 4 // Match the body gutter on both sides.
-	title := s.muted.Render("Bytes per token")
 	if len(m.tokens) == 0 {
-		return []string{"  " + title, "", "", "", "  " + s.border.Render(strings.Repeat("─", width)), ""}
+		return nil
 	}
-	capacity := (width + 1) / 2
+	capacity := width - 4 // Two inset cells and two visible selection brackets.
 	start := m.selected / capacity * capacity
 	end := min(start+capacity, len(m.tokens))
-	lengths := make([]int, end-start)
 	peak := 0
-	for i := range lengths {
-		_, begin, limit := m.fragment(start + i)
-		lengths[i] = limit - begin
-		peak = max(peak, lengths[i])
+	for i := start; i < end; i++ {
+		_, begin, limit := m.fragment(i)
+		peak = max(peak, limit-begin)
 	}
-	maxLabel := fmt.Sprintf("%d B max", peak)
-	rows := []string{"  " + title + strings.Repeat(" ", width-ansi.StringWidth(title)-len(maxLabel)) + s.muted.Render(maxLabel)}
+	var bars strings.Builder
 	levels := []rune(" ▁▂▃▄▅▆▇█")
-	plot := make([]strings.Builder, height)
-	previous, marker := -1, 0
-	for i, length := range lengths {
-		x := i * (width - 1) / max(1, len(lengths)-1)
-		style := s.muted
-		if start+i == m.selected {
-			style, marker = s.accent, x
+	for i := start; i < end; i++ {
+		_, begin, limit := m.fragment(i)
+		level := max(1, ((limit-begin)*8+peak/2)/peak)
+		bar := string(levels[level])
+		if i == m.selected {
+			bar = s.focused.Render("[" + bar + "]")
+		} else {
+			bar = s.muted.Render(bar)
 		}
-		units := max(1, (length*height*8+peak/2)/peak)
-		for row := range plot {
-			plot[row].WriteString(strings.Repeat(" ", x-previous-1))
-			level := min(8, max(0, units-(height-row-1)*8))
-			plot[row].WriteString(style.Render(string(levels[level])))
-		}
-		previous = x
+		bars.WriteString(bar)
 	}
-	for i := range plot {
-		rows = append(rows, "  "+plot[i].String())
+	label := "Bytes per token"
+	span := strconv.Itoa(start + 1)
+	if end > start+1 {
+		span += "–" + strconv.Itoa(end)
 	}
-	rail := s.accent.Render(strings.Repeat("━", marker)+"●") + s.border.Render(strings.Repeat("─", width-marker-1))
-	first, last := strconv.Itoa(start+1), strconv.Itoa(end)
-	axis := first
-	if start+1 < end {
-		axis += strings.Repeat(" ", width-len(first)-len(last)) + last
+	scale := fmt.Sprintf("%s · %d B max", span, peak)
+	if ansi.StringWidth(bars.String())+ansi.StringWidth(label+scale)+6 <= width {
+		return []string{"  " + s.muted.Render(label) + "  " + bars.String() + "  " + s.muted.Render(scale)}
 	}
-	return append(rows, "  "+rail, "  "+s.muted.Render(axis))
+	return []string{"  " + s.muted.Render(label+"  "+scale), "  " + bars.String()}
 }

@@ -16,7 +16,9 @@ import (
 	"github.com/openai/openai-cli/internal/tokenizer"
 )
 
-func (m *tokenizerEditor) roomy() bool { return m.width >= 50 && m.viewHeight() >= 16 }
+func (m *tokenizerEditor) roomy() bool {
+	return m.studioLayout() || m.width >= 50 && m.viewHeight() >= 16
+}
 func (m *tokenizerEditor) sourceRows() int {
 	if m.studioLayout() {
 		return min(8, m.bodyHeight()/3)
@@ -28,7 +30,8 @@ func (m *tokenizerEditor) sourceRows() int {
 }
 func (m *tokenizerEditor) resultRows() int {
 	if m.studioLayout() {
-		return 4
+		// Leave room for wrapped counts, chart labels and selected-token details.
+		return min(4, max(1, m.bodyHeight()-8))
 	}
 	if m.roomy() {
 		return 2
@@ -111,13 +114,7 @@ func (m *tokenizerEditor) View() tea.View {
 	}
 	width := m.viewWidth()
 	lines := m.textRows(s, width)
-	if m.roomy() && m.note == "" {
-		lines = append(lines, "")
-	}
 	lines = append(lines, m.settingsRows(s, width)...)
-	if m.note == "" {
-		lines = append(lines, "")
-	}
 	position := "Tokens"
 	if len(m.tokens) > 0 {
 		position = fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
@@ -126,12 +123,16 @@ func (m *tokenizerEditor) View() tea.View {
 			position += " · partial UTF-8"
 		}
 	}
-	if m.focus == tokenizerFocusResults {
-		lines = append(lines, s.heading(position, true))
-	} else if len(m.tokens) != 1 {
-		lines = append(lines, "  "+s.muted.Render(position))
+	results := trimEmptyRows(m.resultLines(s, width))
+	if m.focus == tokenizerFocusResults || len(m.tokens) != 1 {
+		heading := s.heading(position, m.focus == tokenizerFocusResults)
+		if len(results) == 1 && tokenizerSourceWidth(heading+results[0]) <= width {
+			results[0] = heading + results[0]
+		} else {
+			lines = append(lines, heading)
+		}
 	}
-	lines = append(lines, m.resultLines(s, width)...)
+	lines = append(lines, results...)
 	lines = append(lines, m.noteRows(s, width)...)
 	view.Content = m.panel(s, "Tokenizer", m.countStatus(s), lines, []string{s.shortcuts(m.footer())})
 	return view
@@ -150,20 +151,19 @@ func (m *tokenizerEditor) textRows(s tokenizerEditorStyles, width int) []string 
 		textLabel += fmt.Sprintf(" · %d/%d", m.lineIndex(m.cursor)+1, len(m.lineStarts))
 	}
 	textHeading := s.heading(textLabel, m.focus == tokenizerFocusText)
-	var lines []string
-	if m.roomy() {
-		lines = append(lines, textHeading)
-		sourceLines := m.editorLines
-		if m.studioLayout() {
-			sourceLines = m.studioSourceLines
+	prefix := textHeading + strings.Repeat(" ", max(1, 7-ansi.StringWidth(textLabel)))
+	indent := ansi.StringWidth(prefix)
+	sourceLines := m.editorLines
+	if m.studioLayout() {
+		sourceLines = m.studioSourceLines
+	}
+	lines := trimEmptyRows(sourceLines(s, width-indent, m.sourceRows()))
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = prefix + line
+		} else {
+			lines[i] = strings.Repeat(" ", indent) + line
 		}
-		for _, line := range sourceLines(s, width-2, m.sourceRows()) {
-			lines = append(lines, "  "+line)
-		}
-	} else {
-		prefix := textHeading + "  "
-		line := m.editorLines(s, width-ansi.StringWidth(prefix), m.sourceRows())[0]
-		lines = append(lines, prefix+line)
 	}
 	return lines
 }
@@ -289,7 +289,6 @@ func (m *tokenizerEditor) footer() string {
 
 func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 	title := "Choose view"
-	column, detailColumn := "View", "Displays"
 	labels := []string{"Text", "Token IDs", "Bytes"}
 	descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hex bytes"}
 	labelWidth := 14
@@ -297,7 +296,6 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 	var encodings []string
 	if m.modal == tokenizerModalEncoding {
 		title, labelWidth = "Choose model", 22
-		column, detailColumn = "Model family", "Vocabulary"
 		encodings = tokenizer.SupportedEncodings()
 		labels, descriptions = make([]string, len(encodings)), make([]string, len(encodings))
 		current = 0
@@ -312,29 +310,33 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 	if m.modal == tokenizerModalEncoding {
 		status = fmt.Sprintf("%d models", len(labels))
 	}
-	lines := []string{s.muted.Render("Applied  ") + labels[current]}
-	if m.framed() {
-		lines = append(lines, "", s.muted.Render(fmt.Sprintf("  %-*s%s", labelWidth, column, detailColumn)))
-	}
+	var lines []string
 	for i, label := range labels {
 		if i == current {
 			label += " ✓"
 		}
-		lines = append(lines, m.highlightRow(s, label, descriptions[i], labelWidth, i == m.choice))
+		description, related := descriptions[i], ""
 		if m.modal == tokenizerModalEncoding {
 			switch encodings[i] {
 			case "o200k_base":
-				lines = append(lines, "  "+s.muted.Render("GPT-4o / 4.1 / 4.5 · o4-mini"))
+				related = "GPT-4o / 4.1 / 4.5 · o4-mini"
 			case "cl100k_base":
-				lines = append(lines, "  "+s.muted.Render("Original GPT-4 / Turbo"))
+				related = "Original GPT-4 / Turbo"
 			}
+		}
+		if related != "" && 2+labelWidth+ansi.StringWidth(description+" · "+related) <= m.viewWidth() {
+			description, related = description+" · "+related, ""
+		}
+		lines = append(lines, m.highlightRow(s, label, description, labelWidth, i == m.choice))
+		if related != "" {
+			lines = append(lines, "  "+s.muted.Render(related))
 		}
 	}
 	footer := []string{s.shortcuts("↑↓ move · Enter select · Esc cancel · Ctrl+C exit")}
 	if ansi.StringWidth(footer[0]) > m.viewWidth() {
 		footer = []string{s.shortcuts("↑↓ move · Enter select"), s.shortcuts("Esc cancel · Ctrl+C exit")}
 	}
-	return m.panel(s, title, s.muted.Render(status), lines, footer)
+	return m.panel(s, title, s.muted.Render(status+" · ✓ applied"), lines, footer)
 }
 
 // Escape presentation controls without normalizing source bytes or ZWJ clusters.
@@ -708,51 +710,42 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 	count := m.modalPageSize(total)
 	start := max(0, min(m.scroll, total-count))
 	rows, _ := m.modalRows(start, count)
-	var footer []string
+	pageRange := ""
 	if total > count {
-		footer = append(footer, s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", start+1, start+len(rows), total)))
+		pageRange = s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", start+1, start+len(rows), total))
 	}
 	if m.modal == tokenizerModalHelp {
-		footer = append(footer, s.shortcuts("↑↓ scroll · Esc back · Ctrl+C exit"))
-		return m.panel(s, "Tokenizer · controls", s.muted.Render("Help"), rows, footer)
+		return m.panel(s, "Tokenizer · controls", pageRange, rows, []string{s.shortcuts("↑↓ scroll · Esc back · Ctrl+C exit")})
 	}
-	title, status := "Token details", ""
+	title := "Token details"
 	if len(m.tokens) > 0 {
-		status = fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
-		if ansi.StringWidth(title+"  "+status) > m.viewWidth() {
-			title = "Details"
-		}
+		title = fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
 	}
 	model, badge := tokenizerModelLabel(m.encoding)
 	if badge != "" {
 		model += " · " + badge
 	}
-	lines := []string{s.muted.Render("Model     ") + model}
-	for _, row := range rows {
-		if row == "Source bytes" {
-			row = s.accent.Render(row)
-		} else if len(row) >= tokenizerDetailLabelWidth {
+	for i, row := range rows {
+		if len(row) >= tokenizerDetailLabelWidth {
 			switch strings.TrimSpace(row[:tokenizerDetailLabelWidth]) {
 			case "Text", "Token ID", "Bytes", "Hex", "":
-				row = s.muted.Render(row[:tokenizerDetailLabelWidth]) + row[tokenizerDetailLabelWidth:]
+				rows[i] = s.muted.Render(row[:tokenizerDetailLabelWidth]) + row[tokenizerDetailLabelWidth:]
 			}
 		}
-		lines = append(lines, row)
 	}
+	var footer []string
 	shortcuts := "Esc back · Ctrl+C exit"
 	if total > count {
+		footer = append(footer, pageRange)
 		shortcuts = "↑↓ scroll · " + shortcuts
 	}
 	footer = append(footer, s.shortcuts(shortcuts))
-	return m.panel(s, title, s.muted.Render(status), lines, footer)
+	return m.panel(s, title, s.muted.Render(model), rows, footer)
 }
 
 func (m *tokenizerEditor) modalPageSize(total int) int {
 	count := m.bodyHeight()
-	if m.modal == tokenizerModalDetails {
-		count-- // The model context stays visible above the rows.
-	}
-	if total > count {
+	if m.modal == tokenizerModalDetails && total > count {
 		count-- // Show the visible range above the shortcut footer.
 	}
 	return max(1, count)
@@ -851,7 +844,6 @@ func (m *tokenizerEditor) modalRows(start, count int) ([]string, int) {
 		field("Text", "partial UTF-8; see Hex.")
 	}
 	field("Token ID", strconv.FormatUint(uint64(m.tokens[m.selected].ID), 10))
-	emit("Source bytes")
 	field("Bytes", fmt.Sprintf("%d · offset %d", end-begin, begin))
 	perRow := max(1, (valueWidth+1)/3)
 	hexRows := (len(fragment) + perRow - 1) / perRow
