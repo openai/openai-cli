@@ -26,17 +26,14 @@ func tokenizerEditorKey(m *tokenizerEditor, code rune) tea.Cmd {
 func TestTokenizerEditorPreservesPastedBytes(t *testing.T) {
 	m := testTokenizerEditor()
 	source := "\ufeffa\r\nb\t\x00\x1b[31m e\u0301 👩‍💻\n"
+	previous := m.revision
 	_, cmd := m.Update(tea.PasteMsg{Content: source})
-	require.NotNil(t, cmd)
+	require.Nil(t, cmd)
 	require.Equal(t, source, m.text)
 	require.Equal(t, len(source), m.cursor)
 	require.True(t, m.updating)
-	_, cmd = m.Update(tokenizerEditorDebounceMsg{revision: m.revision})
-	require.NotNil(t, cmd)
-	request := cmd().(tokenizerEditorRequestMsg)
-	require.Equal(t, source, request.Text)
-	require.Equal(t, "o200k_base", request.Encoding)
-	require.Equal(t, m.revision, request.Revision)
+	require.Equal(t, "o200k_base", m.encoding)
+	require.Greater(t, m.revision, previous)
 }
 
 func TestTokenizerEditorRejectsPasteWithoutChangingDraft(t *testing.T) {
@@ -265,10 +262,9 @@ func TestTokenizerEditorIgnoresStaleWorkAndClearsOldCounts(t *testing.T) {
 	m.Update(tokenizerEditorResultMsg{Revision: old, Tokens: []tokenizerPreviewToken{{ID: 1, EndByte: 3}}})
 	require.Len(t, m.tokens, 1)
 	m.insert(" two")
+	require.Greater(t, m.revision, old)
 	require.Empty(t, m.tokens)
 	require.True(t, m.updating)
-	_, cmd := m.Update(tokenizerEditorDebounceMsg{revision: old})
-	require.NotNil(t, cmd)
 	m.Update(tokenizerEditorResultMsg{Revision: old, Tokens: []tokenizerPreviewToken{{ID: 2, EndByte: 3}}})
 	require.Empty(t, m.tokens)
 	require.True(t, m.updating)
@@ -294,7 +290,6 @@ func TestTokenizerEditorRejectsBadResultBoundaries(t *testing.T) {
 func TestTokenizerEditorFailureRecoveryKeepsDraft(t *testing.T) {
 	m := testTokenizerEditor()
 	m.insert("private text")
-	m.Update(tokenizerEditorDebounceMsg{revision: m.revision})
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Err: errors.New("secret failure")})
 	require.Equal(t, "private text", m.text)
 	require.True(t, m.failed)
@@ -302,9 +297,11 @@ func TestTokenizerEditorFailureRecoveryKeepsDraft(t *testing.T) {
 	m.focus = tokenizerFocusResults
 	previous := m.revision
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
-	require.NotNil(t, cmd)
+	require.Nil(t, cmd)
 	require.Greater(t, m.revision, previous)
 	require.True(t, m.updating)
+	require.False(t, m.failed)
+	require.Equal(t, "private text", m.text)
 }
 
 func TestTokenizerEditorSwitchingViewsDoesNotRecompute(t *testing.T) {
@@ -326,7 +323,7 @@ func TestTokenizerEditorEncodingRequiresExplicitSelection(t *testing.T) {
 	m := testTokenizerEditor()
 	m.insert("ab")
 	m.focus, m.option = tokenizerFocusOptions, 1
-	m.debouncing = false
+	before := m.revision
 	tokenizerEditorKey(m, tea.KeyEnter)
 	require.Equal(t, tokenizerModalEncoding, m.modal)
 	tokenizerEditorKey(m, tea.KeyDown)
@@ -334,31 +331,41 @@ func TestTokenizerEditorEncodingRequiresExplicitSelection(t *testing.T) {
 	tokenizerEditorKey(m, tea.KeyEscape)
 	require.Equal(t, "o200k_base", m.encoding)
 	require.Equal(t, tokenizerFocusText, m.focus)
+	require.Equal(t, before, m.revision)
 	m.focus, m.option = tokenizerFocusOptions, 1
 	tokenizerEditorKey(m, tea.KeyEnter)
 	require.Zero(t, m.choice, "cancel must not preserve an unconfirmed choice")
 	tokenizerEditorKey(m, tea.KeyDown)
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	require.NotNil(t, cmd)
+	require.Nil(t, cmd)
 	require.Equal(t, "cl100k_base", m.encoding)
 	require.True(t, m.updating)
+	require.Greater(t, m.revision, before)
 }
 
-func TestTokenizerEditorKeepsOnlyOneDebounce(t *testing.T) {
+func TestTokenizerEditorEveryEditCreatesANewRevision(t *testing.T) {
 	m := testTokenizerEditor()
-	require.NotNil(t, m.insert("a"))
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	require.Nil(t, cmd)
 	first := m.revision
-	for i := 0; i < 100; i++ {
-		require.Nil(t, m.insert("a"))
+	require.Positive(t, first)
+	for _, edit := range []tea.Msg{
+		tea.KeyPressMsg{Code: 'b', Text: "b"},
+		tea.KeyPressMsg{Code: tea.KeyBackspace},
+		tea.PasteMsg{Content: "c"},
+		tea.KeyPressMsg{Code: tea.KeyBackspace},
+	} {
+		before := m.revision
+		_, cmd = m.Update(edit)
+		require.Nil(t, cmd)
+		require.Greater(t, m.revision, before)
+		require.True(t, m.updating)
+		require.Empty(t, m.tokens)
 	}
-	_, cmd := m.Update(tokenizerEditorDebounceMsg{revision: first})
-	require.NotNil(t, cmd)
-	require.True(t, m.debouncing)
-	_, cmd = m.Update(tokenizerEditorDebounceMsg{revision: m.revision})
-	require.NotNil(t, cmd)
-	request := cmd().(tokenizerEditorRequestMsg)
-	require.Equal(t, m.text, request.Text)
-	require.False(t, m.debouncing)
+	require.Equal(t, "a", m.text)
+	m.Update(tokenizerEditorResultMsg{Revision: first, Tokens: []tokenizerPreviewToken{{ID: 1, EndByte: 1}}})
+	require.Empty(t, m.tokens, "matching text must not accept an earlier revision")
+	require.True(t, m.updating)
 }
 
 func TestTokenizerEditorControlsDoNotConsumeOrdinaryText(t *testing.T) {

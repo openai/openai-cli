@@ -101,22 +101,19 @@ func TestTokenByteCountsWindowKeepsSelectedValueAndNeighbors(t *testing.T) {
 func TestTokenizerStudioOmitsByteCountsUntilTokensAreReady(t *testing.T) {
 	m := testTokenizerEditor()
 	m.width, m.height = 110, 28
-	check := func(state string) {
+	check := func(count string) {
 		t.Helper()
 		rows := m.studioResults(m.styles(), m.resultWidth())
 		require.Len(t, rows, 1)
-		require.Contains(t, rows[0], state)
-		require.NotContains(t, rows[0], "Bytes per token")
+		require.Equal(t, count, strings.TrimSpace(rows[0]))
 	}
-	check("○ Empty")
+	check("0 tokens")
 	m.insert("é")
-	check("● Updating")
+	check("Tokens")
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{{ID: 1, EndByte: 2}}})
 	rows := m.studioResults(m.styles(), m.resultWidth())
 	require.Len(t, rows, 5)
-	require.Contains(t, rows[0], "1 token")
-	require.NotContains(t, rows[0], "Tokens  1 token")
-	require.Contains(t, rows[0], "● Ready")
+	require.Equal(t, "1 token", strings.TrimSpace(rows[0]))
 	require.Contains(t, rows[1], "é")
 	require.Contains(t, rows[2], "Bytes per token")
 	require.Contains(t, rows[2], "[2]")
@@ -125,7 +122,8 @@ func TestTokenizerStudioOmitsByteCountsUntilTokensAreReady(t *testing.T) {
 
 	m.insert("x")
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision})
-	check("● Failed")
+	check("Count unavailable")
+	require.Contains(t, m.View().Content, "press r")
 }
 
 func TestTokenizerStudioKeepsLongByteMetadataWithinPane(t *testing.T) {

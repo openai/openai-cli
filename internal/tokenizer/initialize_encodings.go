@@ -63,6 +63,16 @@ func loadEncoding(name string) (*textEncoding, error) {
 	return nil, errors.New(unsupportedEncodingMessage)
 }
 
+// Prepare initializes the cached vocabulary and BPE engine for an encoding.
+// Encode initializes them on demand when Prepare has not run.
+func Prepare(encoding string) error {
+	enc, err := loadEncoding(encoding)
+	if err != nil {
+		return err
+	}
+	return enc.prepareBPE()
+}
+
 func (c *encodingCache) load(name string) (*textEncoding, error) {
 	c.once.Do(func() { c.value, c.err = initializeEncoding(name) })
 	return c.value, c.err
@@ -119,10 +129,10 @@ func initializeEncoding(name string) (*textEncoding, error) {
 	return &textEncoding{split: split, ranks: ranks, fragments: fragments}, nil
 }
 
-func (e *textEncoding) encodePiece(piece string) ([]int, error) {
+func (e *textEncoding) prepareBPE() error {
 	e.bpeOnce.Do(func() {
-		// The outer matcher already chose one complete reference pre-tokenizer
-		// piece. The maintained library performs BPE without splitting it again.
+		// The outer matcher passes complete pre-tokenizer pieces. The BPE engine
+		// merges each piece without splitting it again.
 		core, err := bpe.NewCoreBPE(e.ranks, map[string]int{}, `(?s:\A.+\z)`)
 		if err != nil {
 			e.bpeErr = err
@@ -130,8 +140,12 @@ func (e *textEncoding) encodePiece(piece string) ([]int, error) {
 		}
 		e.bpe = bpe.NewTiktoken(core, nil, nil)
 	})
-	if e.bpeErr != nil {
-		return nil, e.bpeErr
+	return e.bpeErr
+}
+
+func (e *textEncoding) encodePiece(piece string) ([]int, error) {
+	if err := e.prepareBPE(); err != nil {
+		return nil, err
 	}
 	// Ordinary encoding never activates special markers, loaders, or downloads.
 	return e.bpe.EncodeOrdinary(piece), nil

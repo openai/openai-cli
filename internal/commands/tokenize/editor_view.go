@@ -30,7 +30,7 @@ func (m *tokenizerEditor) sourceRows() int {
 }
 func (m *tokenizerEditor) resultRows() int {
 	if m.studioLayout() {
-		// Reserve a status row, a byte-count row and up to four rows of selected-token details.
+		// Reserve a count row, a byte-count row and up to four rows of selected-token details.
 		return min(4, max(1, m.bodyHeight()-6))
 	}
 	if m.roomy() {
@@ -40,10 +40,10 @@ func (m *tokenizerEditor) resultRows() int {
 }
 
 type tokenizerEditorStyles struct {
-	muted, accent, selected, focused, border, warning, failure, ready lipgloss.Style
-	fill, edge, secondary                                             string
-	tokenSelected                                                     lipgloss.Style
-	tokens                                                            [6]lipgloss.Style
+	muted, accent, selected, focused, border, warning, failure lipgloss.Style
+	fill, edge, secondary                                      string
+	tokenSelected                                              lipgloss.Style
+	tokens                                                     [6]lipgloss.Style
 }
 
 func (m *tokenizerEditor) styles() tokenizerEditorStyles {
@@ -51,10 +51,10 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	if !m.color {
 		return s
 	}
-	warning, failure, ready := "#885B14", "#B23A3A", "#236B43"
+	warning, failure := "#885B14", "#B23A3A"
 	focus, fill, text, muted, border := "#3159BC", "#E9EFFE", "#20283B", "#657087", "#BAC4D8"
 	if m.dark {
-		warning, failure, ready = "#E2BC79", "#E59A9A", "#8DC9A0"
+		warning, failure = "#E2BC79", "#E59A9A"
 		focus, fill, text, muted, border = "#8AA8FF", "#343D58", "#F2F4FA", "#A4ACC2", "#51566B"
 	}
 	palette := [6]string{"#E9F1FE", "#E7F5ED", "#FBF0D9", "#F2EAFE", "#FBE8EC", "#E4F3F5"}
@@ -65,7 +65,6 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 		s.tokens[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(text)).Background(lipgloss.Color(color))
 	}
 	s.fill, s.edge, s.secondary = fill, border, muted
-	s.ready = s.ready.Foreground(lipgloss.Color(ready))
 	s.warning = s.warning.Foreground(lipgloss.Color(warning))
 	s.failure = s.failure.Foreground(lipgloss.Color(failure))
 	s.muted = s.muted.Foreground(lipgloss.Color(muted))
@@ -193,25 +192,29 @@ func (m *tokenizerEditor) noteRows(s tokenizerEditorStyles, width int) []string 
 }
 
 func (m *tokenizerEditor) countStatus(s tokenizerEditorStyles) string {
-	tokenLabel := "tokens"
-	if len(m.tokens) == 1 {
-		tokenLabel = "token"
-	}
-	status := fmt.Sprintf("%d %s", len(m.tokens), tokenLabel)
+	var counts []string
 	style := s.muted.Bold(m.color)
-	if m.updating {
-		status, style = "Updating…", s.accent
-	} else if m.failed {
-		status, style = "Count unavailable", s.failure
+	if m.failed {
+		counts = append(counts, "Count unavailable")
+		style = s.failure
+	} else if !m.updating {
+		label := "tokens"
+		if len(m.tokens) == 1 {
+			label = "token"
+		}
+		counts = append(counts, fmt.Sprintf("%d %s", len(m.tokens), label))
 	}
 	if m.tab == 2 {
 		byteLabel := "bytes"
 		if len(m.text) == 1 {
 			byteLabel = "byte"
 		}
-		status += fmt.Sprintf(" · %d %s", len(m.text), byteLabel)
+		counts = append(counts, fmt.Sprintf("%d %s", len(m.text), byteLabel))
 	}
-	return style.Render(status)
+	if len(counts) == 0 {
+		return ""
+	}
+	return style.Render(strings.Join(counts, " · "))
 }
 
 func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width, index int, label string, values []string, current int, hint string) string {
@@ -235,7 +238,11 @@ func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width, index int, l
 	}
 	row := marker + labelStyle.Render(fmt.Sprintf("%-7s", label)) + strings.Join(values, secondary.Render("  "))
 	if ansi.StringWidth(row+"  "+hint) <= width {
-		row += secondary.Render("  " + hint)
+		hintStyle := secondary
+		if index == 0 {
+			hintStyle = s.accent.Inherit(secondary)
+		}
+		row += hintStyle.Render("  " + hint)
 	}
 	if focused {
 		row += s.selected.Render(strings.Repeat(" ", max(0, width-ansi.StringWidth(row))))
@@ -280,7 +287,9 @@ func (m *tokenizerEditor) footer() string {
 		}
 	case tokenizerFocusResults:
 		footer = "Ctrl+C exit · ←→ token · Enter details"
-		if ansi.StringWidth(footer) > m.viewWidth() {
+		if m.failed {
+			footer = "Ctrl+C exit · r retry"
+		} else if ansi.StringWidth(footer) > m.viewWidth() {
 			footer = "Ctrl+C exit · ←→ · Enter details"
 		}
 		if ansi.StringWidth(footer+" · ↑ settings") <= m.viewWidth() {
@@ -536,19 +545,8 @@ func (m *tokenizerEditor) resultLines(s tokenizerEditorStyles, width int) []stri
 }
 
 func (m *tokenizerEditor) resultWindow(s tokenizerEditorStyles, width int) ([]string, int) {
-	rows := m.resultRows()
 	if len(m.tokens) == 0 {
-		label := "Token boundaries appear here."
-		if m.updating {
-			label = "Calculating exact tokens…"
-		} else if m.failed {
-			label = "Edit text or press r here to retry."
-		}
-		lines := []string{"  " + s.muted.Render(tokenizerClip(label, width-2))}
-		for len(lines) < rows {
-			lines = append(lines, "")
-		}
-		return lines, 0
+		return nil, 0
 	}
 	start := m.resultStart(width)
 	lines, end := m.tokenStrip(s, width, start)

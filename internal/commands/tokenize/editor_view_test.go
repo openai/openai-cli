@@ -108,21 +108,22 @@ func TestTokenizerEditorByteCountAppearsOnlyInBytesView(t *testing.T) {
 				m := tokenizerEditorExample()
 				m.tab = tab
 				status := "4 tokens"
-				if state != "ready" {
+				m.updating, m.failed = state == "updating", state == "failed"
+				if m.updating || m.failed {
 					m.tokens = nil
-					m.updating, m.failed = state == "updating", state == "failed"
-					status = "Updating…"
-					if m.failed {
-						status = "Count unavailable"
-					}
+					status = ""
 				}
-				view := m.View().Content
+				if m.failed {
+					status = "Count unavailable"
+				}
 				if tab == 2 {
-					require.Contains(t, view, status+" · 13 bytes")
-				} else {
-					require.Contains(t, view, status)
-					require.NotContains(t, view, "13 bytes")
+					if status != "" {
+						status += " · "
+					}
+					status += "13 bytes"
 				}
+				require.Equal(t, status, m.countStatus(m.styles()))
+				require.Equal(t, tab == 2, strings.Contains(m.View().Content, "13 bytes"))
 			})
 		}
 	}
@@ -319,13 +320,21 @@ func TestTokenizerEditorRenderingBoundsLongCombiningCluster(t *testing.T) {
 	}
 }
 
-func TestTokenizerEditorUpdatingNeverShowsOldCount(t *testing.T) {
+func TestTokenizerEditorPendingPasteOmitsIndicatorsAndStaleCounts(t *testing.T) {
 	m := tokenizerEditorExample()
-	m.insert("new")
-	view := m.View().Content
-	require.Contains(t, view, "Updating")
-	require.NotContains(t, view, "4 tokens")
-	require.NotContains(t, view, "ID 1917")
+	m.insert(strings.Repeat("a", 100000))
+	for _, width := range []int{40, 96} {
+		m.width = width
+		for tab := range 3 {
+			m.tab = tab
+			view := ansi.Strip(m.View().Content)
+			for _, text := range []string{"Updating", "Calculating", "Ready", "Empty", "0 tokens", "4 tokens", "ID 1917"} {
+				require.NotContains(t, view, text)
+			}
+			require.Equal(t, tab == 2, strings.Contains(view, "100013 bytes"))
+			require.Contains(t, view, "Ctrl+C")
+		}
+	}
 }
 
 func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
@@ -497,8 +506,9 @@ func TestTokenizerEditorSettingsFocusStopsAtStudioDivider(t *testing.T) {
 				if option == 0 {
 					require.Contains(t, row, quiet+"Text")
 					require.Contains(t, row, quiet+"Bytes")
-					require.Contains(t, row, quiet+"  ←→")
+					require.Contains(t, row, "\x1b[38;2;"+theme.blue+";48;2;"+theme.fill+"m  ←→")
 				} else {
+					require.Contains(t, rows[0], "\x1b[38;2;"+theme.blue+"m  ←→")
 					require.Contains(t, row, quiet+"Legacy")
 					require.Contains(t, row, quiet+"  ›")
 				}
@@ -564,6 +574,10 @@ func TestTokenizerEditorEmptyResultsRetainFocusMarker(t *testing.T) {
 			}
 			if state == "failed" {
 				m.Update(tokenizerEditorResultMsg{Revision: m.revision, Err: errors.New("synthetic failure")})
+				m.Update(tokenizerInputPasteErrorMsg{message: "Paste interrupted."})
+				footer := m.styles().shortcuts(m.footer())
+				require.Contains(t, footer, "r retry", "retry remains available after another notice")
+				require.Contains(t, m.View().Content, footer, "the complete retry footer must fit")
 			}
 			view := m.View().Content
 			require.Contains(t, view, "› Tokens")

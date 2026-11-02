@@ -45,30 +45,15 @@ func (m *tokenizerEditor) studioView(s tokenizerEditorStyles) string {
 }
 
 func (m *tokenizerEditor) studioResults(s tokenizerEditorStyles, width int) []string {
-	state := s.muted.Render("○ Empty")
 	count := m.countStatus(s)
-	switch {
-	case m.updating:
-		state = s.accent.Render("● Updating")
+	if count == "" {
 		count = s.muted.Render("Tokens")
-		if m.tab == 2 {
-			unit := "bytes"
-			if len(m.text) == 1 {
-				unit = "byte"
-			}
-			count = s.muted.Render(fmt.Sprintf("%d %s", len(m.text), unit))
-		}
-	case m.failed:
-		state = s.failure.Render("● Failed")
-	case len(m.tokens) > 0:
-		state = s.ready.Render("● Ready")
 	}
 	header := "  " + count
 	if m.focus == tokenizerFocusResults && len(m.tokens) == 0 {
 		header = s.heading(ansi.Strip(count), true)
 	}
-	// Reserve the longest status label so the light stays in the same column.
-	rows := []string{header + strings.Repeat(" ", max(1, width-10-ansi.StringWidth(header))) + state}
+	rows := []string{header}
 	if len(m.tokens) == 0 {
 		return rows
 	}

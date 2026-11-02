@@ -20,6 +20,7 @@ import (
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
+	"github.com/openai/openai-cli/internal/tokenizer"
 	"github.com/urfave/cli/v3"
 )
 
@@ -189,6 +190,14 @@ type tokenizerEditorSizeErrorMsg struct{}
 type tokenizerEditorWrapTimeout struct{}
 type tokenizerEditorInputErrorMsg struct{ err error }
 
+type tokenizerEncodingPrepared struct {
+	encoding string
+	err      error
+}
+
+// Bound synchronous BPE work, including a single unbroken word. Larger drafts use the cancellable child.
+const tokenizerInlineBytes = 4 << 10
+
 // Reuse the image picker's frame layout while keeping terminal backpressure
 // outside the model and retaining the tokenizer's exact input bytes.
 type tokenizerEditorInline struct {
@@ -200,6 +209,8 @@ type tokenizerEditorInline struct {
 	fail                              context.CancelFunc
 	profile                           colorprofile.Profile
 	started, modesActive, restoreWrap bool
+	preparing                         bool
+	prepared                          map[string]error
 	content                           string
 	width, height                     int
 	err                               error
@@ -212,13 +223,27 @@ func (p *tokenizerEditorInline) Init() tea.Cmd {
 		query += ansi.RequestBackgroundColor
 	}
 	p.painter.Control(query)
-	return tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg { return tokenizerEditorWrapTimeout{} })
+	wrap := tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg { return tokenizerEditorWrapTimeout{} })
+	return tea.Batch(wrap, p.prepareEncoding())
+}
+
+// Warm at most one encoding at a time while the editor continues to accept input.
+func (p *tokenizerEditorInline) prepareEncoding() tea.Cmd {
+	if p.preparing {
+		return nil
+	}
+	p.preparing = true
+	encoding := p.model.encoding
+	return func() tea.Msg {
+		return tokenizerEncodingPrepared{encoding, tokenizer.Prepare(encoding)}
+	}
 }
 
 func (p *tokenizerEditorInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if p.input != nil {
 		message = p.input.Resolve(message)
 	}
+	warmed := false
 	switch msg := message.(type) {
 	case tokenizerEditorInputErrorMsg:
 		p.err = msg.err
@@ -239,21 +264,56 @@ func (p *tokenizerEditorInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		p.start()
 	case tea.ColorProfileMsg:
 		p.profile = msg.Profile
-	case tokenizerEditorRequestMsg:
-		if msg.Revision == p.model.revision && p.model.updating && !p.model.quit {
-			p.worker.Replace(msg.Revision, msg.Text, msg.Encoding)
+	case tokenizerEncodingPrepared:
+		p.preparing = false
+		if p.prepared == nil {
+			p.prepared = make(map[string]error)
 		}
-		return p, nil
+		p.prepared[msg.encoding] = msg.err
+		warmed = true
 	}
 	revision := p.model.revision
 	_, cmd := p.model.Update(message)
-	if revision != p.model.revision || p.model.quit {
+	if p.model.quit {
 		p.worker.Cancel()
+	} else if revision != p.model.revision || warmed && len(p.model.text) <= tokenizerInlineBytes {
+		cmd = p.refreshPreview()
 	}
-	if p.started {
+	// Show the first editor frame once its encoding can count the first keystroke.
+	// Input and cancellation stay active while the initial vocabulary loads.
+	_, ready := p.prepared[p.model.encoding]
+	if p.started && (p.content != "" || ready || len(p.model.text) > tokenizerInlineBytes) {
 		p.draw()
 	}
 	return p, cmd
+}
+
+func (p *tokenizerEditorInline) refreshPreview() tea.Cmd {
+	m := p.model
+	if len(m.text) > tokenizerInlineBytes {
+		p.worker.Replace(m.revision, m.text, m.encoding)
+		return nil
+	}
+	p.worker.Cancel()
+	err, ready := p.prepared[m.encoding]
+	if !ready {
+		return p.prepareEncoding()
+	}
+	if m.updating {
+		preview := tokenizerEditorResultMsg{Revision: m.revision, Err: err}
+		if err == nil {
+			result, err := tokenizer.Encode(m.text, m.encoding, true)
+			preview.Err = err
+			var end uint32
+			preview.Tokens = make([]tokenizerPreviewToken, len(result.IDs))
+			for i, id := range result.IDs {
+				end += uint32(len(result.Fragments[i]))
+				preview.Tokens[i] = tokenizerPreviewToken{ID: uint32(id), EndByte: end}
+			}
+		}
+		m.Update(preview)
+	}
+	return nil
 }
 
 func (p *tokenizerEditorInline) View() tea.View { return tea.NewView("") }
