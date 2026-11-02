@@ -86,7 +86,10 @@ func writeImageFontReserved(ctx context.Context, out io.Writer, img image.Image,
 	// Each tab retains its own immutable glyph assignments. Reusing the same
 	// font slot would replace images already visible in that tab's scrollback.
 	session := sha256.Sum256([]byte(sessionID + "\x00" + tty))
-	directory := filepath.Join(cache, "openai", "image-terminal", fmt.Sprintf("%x", session[:16]))
+	directory, err := fontGalleryDirectory(cache, fmt.Sprintf("%x", session[:16]))
+	if err != nil {
+		return &FontError{err}
+	}
 	services := fontServices{imagefontmac.Snapshot, imagefontmac.Source, imagefontmac.Register, imagefontmac.Preserve, imagefontmac.Restore, imagefontmac.InspectProfile}
 	adopted, err := displayImageFontForSession(ctx, out, img, columns, directory, tty, func() fontViewport { return readFontViewport(file.Fd()) }, services, reserveGlyphs)
 	if err != nil {
@@ -99,6 +102,28 @@ func writeImageFontReserved(ctx context.Context, out io.Writer, img image.Image,
 		_ = cleanupClosedFontGalleries(ctx, directory, tty)
 	}
 	return nil
+}
+
+// CoreText keeps the registration URL after the renderer exits. If a temporary
+// home links its application cache to a persistent cache, register the target
+// path. Leave gallery paths below that anchor to imagegallery's private checks.
+func fontGalleryDirectory(cache, session string) (string, error) {
+	anchor := filepath.Join(cache, "openai")
+	info, err := os.Lstat(anchor)
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	if info != nil && info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(anchor)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(cache, target)
+		}
+		anchor = target
+	}
+	return filepath.Join(anchor, "image-terminal", session), nil
 }
 
 // Reconnect only the exact active font; fresh sessions retain their own gallery.
