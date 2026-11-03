@@ -68,6 +68,7 @@ func imagePickerWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 				if err != nil {
 					return err
 				}
+				ctx = context.WithValue(ctx, imagePickerDiagnosticOutputKey{}, reporter)
 			}
 			workspaceCtx, closeWorkspaceOutput := terminalimage.PrepareNativeImageOutput(ctx, out)
 			defer func() { resultErr = errors.Join(resultErr, closeWorkspaceOutput()) }()

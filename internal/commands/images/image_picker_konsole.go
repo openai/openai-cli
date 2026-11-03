@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
+	"os"
 	"strings"
 	"time"
 
@@ -13,6 +15,22 @@ import (
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/urfave/cli/v3"
 )
+
+type imagePickerDiagnosticOutputKey struct{}
+type imagePickerDiagnosticWriter struct{ output *cliterminal.Output }
+
+func (w imagePickerDiagnosticWriter) Write(data []byte) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	return w.output.WriteContext(ctx, data)
+}
+
+func imagePickerDiagnostics(ctx context.Context) io.Writer {
+	if output, _ := ctx.Value(imagePickerDiagnosticOutputKey{}).(*cliterminal.Output); output != nil {
+		return imagePickerDiagnosticWriter{output}
+	}
+	return os.Stderr
+}
 
 // A quiet cancellation must not hide a joined restoration or output failure.
 // Keep the complete cause available to the shared diagnostic presenter.

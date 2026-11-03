@@ -2,6 +2,7 @@ package images
 
 import (
 	"context"
+	"errors"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"os"
@@ -40,8 +41,8 @@ func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
 	go func() {
 		err := p.generate(ctx, &result)
 		if err != nil && imagePickerRecoverableRequest(err) && !cliterminal.IsWriterTerminal(os.Stderr) {
-			if displayErr := writeImagePickerRequestMessage(ctx, os.Stderr, p.workspace.root, err, result.draftSaved); displayErr != nil {
-				err = displayErr
+			if displayErr := writeImagePickerRequestMessage(ctx, imagePickerDiagnostics(ctx), p.workspace.root, err, result.draftSaved); displayErr != nil {
+				err = errors.Join(err, displayErr)
 			}
 		}
 		p.requestErr = err
