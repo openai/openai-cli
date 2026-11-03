@@ -381,8 +381,10 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 				continue
 			}
 			child := findChild(cmd, arg)
-			if helpTopics && cmd == root && arg == "setup" {
-				child = findChild(help, arg)
+			if helpTopics && cmd == root {
+				if guide := findChild(help, arg); guide != nil {
+					child = guide
+				}
 			}
 			if helpTopics && arg == "help" {
 				child = nil

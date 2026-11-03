@@ -13,6 +13,7 @@ import (
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commandsuggest"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -144,7 +145,7 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 			return exploreFailure("Recent command suggestions are unavailable or invalid. Run a CLI help command and retry.", 2, err)
 		}
 	}
-	input, err := commandsuggest.OpenPickerInput(os.Stderr)
+	input, err := terminal.OpenInputFromOutput(os.Stderr)
 	if err != nil {
 		return exploreFailure("Could not open the terminal for command search.", 2, err)
 	}
