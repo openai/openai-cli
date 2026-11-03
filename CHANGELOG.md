@@ -3,6 +3,11 @@
 ## [1.47.1](https://github.com/openai/openai-cli/compare/v1.47.0...v1.47.1) (2026-11-03)
 
 
+### Features
+
+* Add Voice studio and date search for text-to-speech. ([#676](https://github.com/openai/openai-cli/pull/676)) ([d4420d1](https://github.com/openai/openai-cli/commit/d4420d17))
+
+
 ### Chores
 
 * **api:** update Live Responses delegation API reference ([#680](https://github.com/openai/openai-cli/issues/680)) ([c51f9d8](https://github.com/openai/openai-cli/commit/c51f9d83bfe371c76880ff741e7c1b30d523f52b))
