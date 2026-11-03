@@ -16,7 +16,7 @@
 
 ## Installation
 
-One `openai` executable includes all OpenAI API commands.
+One `openai` executable includes all commands in this CLI.
 
 <a id="installing-with-homebrew"></a>
 
@@ -37,7 +37,7 @@ brew install --cask openai/tools/openai
 For a Mac without Homebrew, choose the [macOS ZIP](docs/installation.md#installing-a-prebuilt-binary).
 Developers can also [install with Go](docs/installation.md#installing-with-go).
 
-**Already installed?** [Upgrade Homebrew](docs/installation.md#installing-with-homebrew) or [enable automatic updates](docs/automatic-updates.md).
+**Already installed?** [Upgrade the Homebrew cask](docs/installation.md#installing-with-homebrew) or [enable automatic updates](docs/automatic-updates.md).
 
 <!-- x-release-please-end -->
 
@@ -69,9 +69,7 @@ For scripts, supply `OPENAI_API_KEY` through your environment or secret manager.
 ### Send a request
 
 ```sh
-openai responses create \
-  --model gpt-5.5 \
-  --input "Say this is a test"
+openai responses create --model gpt-5.5 --input "Say this is a test"
 ```
 
 ### Generate an image and save it locally
@@ -102,8 +100,7 @@ Submit a JSONL request file, then wait for the batch and download its results:
 
 ```sh
 openai files upload requests.jsonl --purpose batch
-openai batches create --input-file-id file-example \
-  --endpoint /v1/responses --completion-window 24h
+openai batches create --input-file-id file-example --endpoint /v1/responses --completion-window 24h
 openai batches wait batch_example --output-dir ./results
 ```
 
@@ -148,10 +145,7 @@ Admin endpoints use `OPENAI_ADMIN_KEY`, a separate
 For example, retrieve one day of organization usage:
 
 ```sh
-openai admin organization usage completions \
-  --start-time 1735689600 \
-  --end-time 1735776000 \
-  --bucket-width 1d
+openai admin organization usage completions --start-time 1735689600 --end-time 1735776000 --bucket-width 1d
 ```
 
 ### Output and errors
