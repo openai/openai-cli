@@ -9,7 +9,8 @@ fail() {
 }
 
 [ "$#" -eq 0 ] || fail 'Usage: sh ./install.sh'
-case $(uname -s) in
+system=$(uname -s)
+case $system in
     Darwin|Linux) ;;
     *) fail 'This installer supports macOS and Linux.' ;;
 esac
@@ -20,16 +21,36 @@ case ${HOME:-} in
     *) fail 'Set HOME to your absolute home directory.' ;;
 esac
 
+# Darwin ACLs can grant write access independently of the mode bits.
+safe_acl() {
+    [ "$system" = Darwin ] || return 0
+    listing=$(LC_ALL=C /bin/ls -ldBne "$1") || return 1
+    [ -n "$listing" ] || return 1
+    printf '%s\n' "$listing" | LC_ALL=C /usr/bin/awk '
+        NR == 1 { has_acl = ($1 ~ /[+]$/); next }
+        $1 !~ /^[0-9]+:$/ || (NF != 4 && !(NF == 5 && $3 == "inherited")) { exit 1 }
+        $(NF-1) == "deny" { next }
+        $(NF-1) != "allow" { exit 1 }
+        {
+            count = split($NF, rights, ",")
+            for (i = 1; i <= count; i++)
+                if (rights[i] !~ /^(read|list|search|execute|readattr|readextattr|readsecurity|synchronize|file_inherit|directory_inherit|limit_inherit|only_inherit)$/)
+                    exit 1
+        }
+        END { if (has_acl && NR == 1) exit 1 }
+    '
+}
+
 # find does not follow links. Check each directory before entering it.
 safe_directory() {
-    [ -n "$(find "$1" -prune -type d -user "$uid" ! -perm -020 ! -perm -002 -print)" ]
+    [ -n "$(find "$1" -prune -type d -user "$uid" ! -perm -020 ! -perm -002 -print)" ] && safe_acl "$1"
 }
 
 CDPATH=
 cd -P "$(dirname "$0")"
 safe_directory . || fail 'Extract the archive into a directory only you can modify.'
-[ -n "$(find ./openai -prune -type f -user "$uid" -links 1 ! -perm -020 ! -perm -002 -size +0 -print)" ] ||
-    fail 'Extract the archive before running install.sh beside its openai binary.'
+[ -n "$(find ./openai -prune -type f -user "$uid" -links 1 ! -perm -020 ! -perm -002 -size +0 -print)" ] && safe_acl ./openai ||
+    fail 'Extract a fresh archive in a private directory. Its openai executable must belong to you and reject writes from others.'
 # Pin the checked file before leaving this directory. cp retains macOS quarantine.
 exec 3< ./openai
 

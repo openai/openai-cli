@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -38,6 +39,52 @@ func TestArchiveInstall(t *testing.T) {
 			t.Fatalf("root install: err=%v output=%q", err, output)
 		}
 		return
+	}
+
+	if runtime.GOOS == "darwin" {
+		for _, tc := range []struct {
+			target string
+			option string
+			acl    string
+			safe   bool
+		}{
+			{"archive", "+a", "allow delete_child", false},
+			{"home", "+a", "allow add_file", false},
+			{"dedicated", "+a", "allow add_subdirectory,directory_inherit,only_inherit", false},
+			{"bin", "+a", "allow writesecurity", false},
+			{"source", "+a", "allow chown", false},
+			{"source", "+ai", "allow write", false},
+			{"source", "+a", "deny readsecurity", false},
+			{"home", "+a", "deny delete", true},
+			{"bin", "+a", "allow list,search,readattr,file_inherit,directory_inherit", true},
+			{"source", "+ai", "allow read,execute,readattr,readextattr,readsecurity", true},
+		} {
+			t.Run("macOS ACL/"+tc.target+" "+tc.acl, func(t *testing.T) {
+				home := t.TempDir()
+				dedicated := filepath.Join(home, ".openai")
+				bin := filepath.Join(dedicated, "bin")
+				if err := os.MkdirAll(bin, 0700); err != nil {
+					t.Fatal(err)
+				}
+				target := map[string]string{"archive": archive, "source": binary, "home": home, "dedicated": dedicated, "bin": bin}[tc.target]
+				if output, err := exec.Command("/bin/chmod", tc.option, "group:everyone "+tc.acl, target).CombinedOutput(); err != nil {
+					t.Fatalf("add ACL: %v: %s", err, output)
+				}
+				t.Cleanup(func() {
+					if output, err := exec.Command("/bin/chmod", "-N", target).CombinedOutput(); err != nil {
+						t.Errorf("remove ACL: %v: %s", err, output)
+					}
+				})
+				output, err := run(home, path).CombinedOutput()
+				if (err == nil) != tc.safe {
+					t.Fatalf("install: %v: %s", err, output)
+				}
+				_, err = os.Lstat(filepath.Join(bin, "openai"))
+				if tc.safe && err != nil || !tc.safe && !os.IsNotExist(err) {
+					t.Fatalf("installed file: %v", err)
+				}
+			})
+		}
 	}
 
 	t.Run("concurrent installs and repeat", func(t *testing.T) {
