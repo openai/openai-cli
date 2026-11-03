@@ -26,15 +26,27 @@ One `openai` executable includes all commands in this CLI.
 
 <a id="installing-with-homebrew"></a>
 
-**macOS with Homebrew**. Paste this command into your terminal.
+**macOS with Homebrew and zsh**. Paste this block once to install the CLI with automatic updates.
 
-```sh
-brew install --cask openai/tools/openai
+```zsh
+brew update &&
+brew install --cask openai/tools/openai &&
+if [[ -f "$(brew --prefix)/bin/openai-enable-updates.zsh" ]]; then
+  source "$(brew --prefix)/bin/openai-enable-updates.zsh"
+else
+  printf 'This cask has no automatic updates yet. Use "%s/bin/openai" for now.\n' "$(brew --prefix)" >&2
+  false
+fi
 ```
+
+Use the same block if you already installed the CLI with Homebrew.
+It selects the CLI in this terminal and future zsh sessions. The CLI updates itself during interactive use.
+For other shells or updates through Homebrew, use the [Homebrew instructions](docs/installation.md#installing-with-homebrew).
 
 <a id="installing-a-prebuilt-binary"></a>
 
 **Linux**. Install the [package for your distribution](docs/installation.md#linux).
+For automatic updates, use the [release archive instructions](docs/automatic-updates.md#from-an-extracted-archive).
 
 **Windows**. Extract the [Windows ZIP](docs/installation.md#windows). Run `.\openai.exe --help` from the extracted directory.
 
@@ -42,9 +54,6 @@ brew install --cask openai/tools/openai
 
 For a Mac without Homebrew, choose the [macOS ZIP](docs/installation.md#installing-a-prebuilt-binary).
 Developers can also [install with Go](docs/installation.md#installing-with-go).
-
-**Want automatic updates?** [Enable them once on macOS or Linux](docs/automatic-updates.md#install-from-a-release-archive).
-To keep Homebrew in charge, [upgrade the cask](docs/installation.md#installing-with-homebrew).
 
 <!-- x-release-please-end -->
 

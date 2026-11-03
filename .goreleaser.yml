@@ -115,7 +115,8 @@ homebrew_casks:
       - "openai-enable-updates.zsh"
     caveats: |
       Run openai help setup to get started.
-      Homebrew manages this installation. To enable automatic updates in zsh, run:
+      The README installation block enables automatic updates in zsh.
+      If you ran brew install on its own, you can enable them with:
         source "$(brew --prefix)/bin/openai-enable-updates.zsh"
       After setup, eligible interactive API commands check for updates automatically.
     completions:

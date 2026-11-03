@@ -427,7 +427,26 @@ prefix=$(dirname "$(dirname "$0")")
 case $1 in
     --caskroom) echo "$prefix/Caskroom/openai" ;;
     --prefix) echo "$prefix" ;;
+    update)
+        [ "$#" -eq 1 ] || exit 71
+        echo update >> "$HOME/brew.log"
+        [ "${BREW_FAIL:-}" != update ] || exit 39
+        if [ "${BREW_FAIL:-}" = old-tap ]; then version=1.0.0; else version=1.2.3; fi
+        echo "$version" > "$prefix/tap-version" ;;
     install)
+        if [ "$2" = --cask ]; then
+            [ "$#" -eq 3 ] && [ "$3" = openai/tools/openai ] || exit 71
+            echo cask >> "$HOME/brew.log"
+            [ "${BREW_FAIL:-}" != install ] || exit 40
+            version=$(cat "$prefix/tap-version") || exit 71
+            release="$prefix/Caskroom/openai/$version"
+            mkdir -p "$release" && cp "$BREW_RELEASE_FIXTURE/"* "$release/" || exit 71
+            for name in openai openai-enable-updates.zsh; do
+                [ -f "$release/$name" ] || continue
+                ln -sf "$release/$name" "$prefix/bin/$name" || exit 71
+            done
+            exit 0
+        fi
         [ "$2" = gh ] || exit 71
         echo gh >> "$HOME/brew.log"
         [ "${BREW_RC:-0}" -eq 0 ] || exit "$BREW_RC"
@@ -439,6 +458,9 @@ esac
 		if err := os.WriteFile(brew, []byte(brewScript), 0755); err != nil {
 			t.Fatal(err)
 		}
+		t.Run("README installation", func(t *testing.T) {
+			testHomebrewReadmeInstall(t, zsh, source, brewScript)
+		})
 		for _, kind := range []string{"normal", "hashed", "external gh", "missing gh", "old gh", "shadowed gh", "alias", "function", "failed brew", "missing sibling", "linked sibling", "wrong release link"} {
 			t.Run(kind, func(t *testing.T) {
 				home := privateInstallDirectory(t)
@@ -610,6 +632,110 @@ fi
 	}
 	if out, err := run(privateInstallDirectory(t)); err == nil || !strings.Contains(out, "only you can modify") {
 		t.Fatalf("group-writable source: %v %s", err, out)
+	}
+}
+
+func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
+	readme, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, start, ok := strings.Cut(string(readme), "\n```zsh\n")
+	block, _, closed := strings.Cut(start, "\n```")
+	if !ok || !closed {
+		t.Fatal("missing zsh installation block")
+	}
+	for _, tc := range []struct {
+		name, failure, calls string
+		exitCode             int
+	}{
+		{"fresh without GitHub CLI", "", "update\ncask\ngh\n", 0},
+		{"old cask and earlier Go binary", "", "update\ncask\n", 0},
+		{"failed update", "update", "update\n", 39},
+		{"failed install", "install", "update\ncask\n", 40},
+		{"tap still offers a cask without setup", "old-tap", "update\ncask\n", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := privateInstallDirectory(t)
+			prefix := filepath.Join(home, "brew prefix")
+			bin := filepath.Join(prefix, "bin")
+			if err := os.MkdirAll(bin, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(bin, "brew"), []byte(brewScript), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.name != "fresh without GitHub CLI" {
+				if err := os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\necho ready\n"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			available := release
+			if tc.failure == "old-tap" {
+				available = privateInstallDirectory(t)
+				if err := os.WriteFile(filepath.Join(available, "openai"), []byte("#!/bin/sh\necho 'openai version 1.0.0'\n"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			profile := "# personal settings\n"
+			preflight := ""
+			if tc.name == "old cask and earlier Go binary" {
+				goBin := filepath.Join(home, "go", "bin")
+				oldCask := filepath.Join(prefix, "Caskroom", "openai", "1.0.0")
+				for _, dir := range []string{goBin, oldCask} {
+					if err := os.MkdirAll(dir, 0755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(dir, "openai"), []byte("#!/bin/sh\necho old\n"), 0755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.Symlink(filepath.Join(oldCask, "openai"), filepath.Join(bin, "openai")); err != nil {
+					t.Fatal(err)
+				}
+				profile += "export PATH=\"$HOME/go/bin:$PATH\"\n"
+				preflight = "[[ $(command -v openai) == \"$HOME/go/bin/openai\" && $(openai --version) == old ]] || exit 90\n"
+			}
+			profilePath := filepath.Join(home, ".zshrc")
+			if err := os.WriteFile(profilePath, []byte(profile), 0600); err != nil {
+				t.Fatal(err)
+			}
+			run := func(script string) ([]byte, error) {
+				cmd := exec.Command(zsh, "-d", "-i", "-c", script)
+				cmd.Env = []string{"HOME=" + home, "PATH=" + bin + ":/usr/bin:/bin", "BREW_RELEASE_FIXTURE=" + available, "BREW_FAIL=" + tc.failure}
+				return cmd.CombinedOutput()
+			}
+			const checkSelected = `[[ $(command -v openai) == "$HOME/.openai/bin/openai" && $(openai --version) == 'openai version 1.2.3' ]]`
+			out, err := run(preflight + block + "\nrc=$?\n(( rc == 0 )) || exit $rc\n" + checkSelected)
+			if calls, readErr := os.ReadFile(filepath.Join(home, "brew.log")); readErr != nil || string(calls) != tc.calls {
+				t.Fatalf("brew calls %q: %v; install output: %s", calls, readErr, out)
+			}
+			if tc.failure != "" {
+				exit, ok := err.(*exec.ExitError)
+				if !ok || exit.ExitCode() != tc.exitCode {
+					t.Fatalf("failed %s: %v: %s", tc.failure, err, out)
+				}
+				if actual, err := os.ReadFile(profilePath); err != nil || string(actual) != profile {
+					t.Fatalf("changed profile after failure: %q: %v", actual, err)
+				}
+				if tc.failure == "old-tap" {
+					caskCLI := filepath.Join(bin, "openai")
+					if !strings.Contains(string(out), `"`+caskCLI+`"`) {
+						t.Fatalf("missing quoted cask executable in guidance: %s", out)
+					}
+					if version, err := exec.Command(caskCLI, "--version").Output(); err != nil || string(version) != "openai version 1.0.0\n" {
+						t.Fatalf("cask executable: %v: %s", err, version)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("paste: %v: %s", err, out)
+			}
+			if out, err := run(checkSelected); err != nil {
+				t.Fatalf("fresh zsh: %v: %s", err, out)
+			}
+		})
 	}
 }
 

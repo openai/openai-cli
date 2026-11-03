@@ -8,13 +8,8 @@ On macOS or Linux, the official release executable can update itself. GitHub CLI
 
 ### Set up automatic updates with Homebrew on macOS
 
-Install the CLI with Homebrew if you have not already.
-
-```sh
-brew install --cask openai/tools/openai
-```
-
-In zsh, enable automatic updates with one command.
+The [macOS installation block](../README.md#installation) installs the CLI and enables automatic updates in one paste.
+If you already have a Homebrew cask containing the helper, you can run the helper directly in zsh.
 
 ```zsh
 source "$(brew --prefix)/bin/openai-enable-updates.zsh"
@@ -23,7 +18,7 @@ source "$(brew --prefix)/bin/openai-enable-updates.zsh"
 The helper checks for shell conflicts and selects the verified copy in this terminal.
 It uses the GitHub CLI on your PATH when it supports update verification. Otherwise, it asks Homebrew to install or upgrade GitHub CLI.
 It also adds the selection to your zsh startup file. Homebrew continues to own its separate copy.
-For temporary selection or other shells, use an extracted archive below.
+For other shells or a linked zsh startup file, use the [archive instructions](#from-an-extracted-archive).
 
 If the helper is missing, refresh the tap and upgrade the cask explicitly.
 
@@ -36,15 +31,25 @@ You can keep using the Homebrew CLI while waiting for the tap.
 
 ### From an extracted archive
 
-1. Download and extract your platform archive from [GitHub Releases](https://github.com/openai/openai-cli/releases/latest).
-2. In the extracted directory, paste this command into Bash or zsh.
+1. Install a compatible [GitHub CLI](https://cli.github.com/).
+2. Download your platform archive from the newest [stable release with downloads](https://github.com/openai/openai-cli/releases).
+3. Extract the archive.
+
+In zsh, paste this block from the extracted directory. It selects the CLI in current and future terminals.
+
+```zsh
+sh ./install.sh --require-gh --zsh "${ZDOTDIR:-$HOME}" &&
+export PATH="$HOME/.openai/bin:$PATH"
+```
+
+For Bash or a linked zsh startup file, paste this command instead. It selects the CLI in this terminal.
 
 ```sh
-sh ./install.sh && export PATH="$HOME/.openai/bin:$PATH"
+sh ./install.sh --require-gh && export PATH="$HOME/.openai/bin:$PATH"
 ```
 
 The installer reports the installed version and where it put the executable.
-If GitHub CLI is missing, install it using the instruction shown. See which [interactive commands check for updates](#eligible-invocations).
+See which [interactive commands check for updates](#eligible-invocations).
 An alias or function can take precedence. Use `"$HOME/.openai/bin/openai"` directly in that case.
 
 ### Keep this selection in a new terminal
