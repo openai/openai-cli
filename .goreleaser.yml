@@ -42,6 +42,8 @@ archives:
     files:
       - completions/*
       - man/*/*
+      - install.sh
+      - openai-enable-updates.zsh
   - id: macos-archive
     ids: [macos]
     name_template: '{{ .ProjectName }}_{{ .Version }}_macos_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
@@ -49,6 +51,8 @@ archives:
     files:
       - completions/*
       - man/*/*
+      - install.sh
+      - openai-enable-updates.zsh
   - id: windows-archive
     ids: [windows]
     name_template: '{{ .ProjectName }}_{{ .Version }}_windows_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
@@ -108,6 +112,13 @@ homebrew_casks:
     license: Apache-2.0
     binaries:
       - "openai"
+      - "openai-enable-updates.zsh"
+    caveats: |
+      Run openai help setup to get started.
+      The README installation block enables automatic updates in zsh.
+      If you ran brew install on its own, you can enable them with:
+        source "$(brew --prefix)/bin/openai-enable-updates.zsh"
+      After setup, eligible interactive API commands check for updates automatically.
     completions:
       bash: "completions/openai.bash"
       zsh: "completions/openai.zsh"

@@ -205,6 +205,10 @@ func TestAutomaticUpdateAuthenticatedPreparation(t *testing.T) {
 			// This fixture validates invocation policy only. The review packet
 			// separately records real gh verification of an official archive.
 			script := "#!/bin/sh\nset -eu\ntest -z \"${OPENAI_API_KEY-}${GH_TOKEN-}${GH_DEBUG-}\"\ntest \"$1 $2\" = 'attestation verify'\ntest \"$4\" = --bundle\ntest \"$6 $7\" = '--hostname github.com'\ntest \"$8 $9\" = '--repo openai/openai-cli'\ntest \"${10}\" = --cert-identity\ntest \"${11}\" = '" + workflowIdentity + "'\ntest \"${12} ${13}\" = '--source-ref refs/heads/main'\ntest \"${14} ${15} ${16}\" = '--deny-self-hosted-runners --format json'\n"
+			// gh selects the bundle parser from the filename extension.
+			script += `test "${5##*.}" = jsonl
+grep -Fxq '{"synthetic":true}' "$5"
+`
 			if scenario == "verifier_failure" {
 				script += "exit 1\n"
 			} else if scenario == "oversized_output" {
@@ -332,6 +336,29 @@ func TestAutomaticUpdateVerifierCapabilities(t *testing.T) {
 				t.Fatalf("capability check = %v, missing %q", err, missing)
 			}
 		})
+	}
+}
+
+func TestArchiveVerifierStatus(t *testing.T) {
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	t.Setenv("GH_TOKEN", "synthetic-token")
+	t.Setenv("OPENAI_API_KEY", "synthetic-key")
+	if got := archiveVerifierStatus(); got != "missing" {
+		t.Fatalf("absent gh: %q", got)
+	}
+	gh := filepath.Join(bin, "gh")
+	script := "#!/bin/sh\ntest -z \"${GH_TOKEN-}${OPENAI_API_KEY-}\" || exit 9\n[ \"$*\" = 'attestation verify --help' ] || exit 9\n"
+	for _, tc := range []struct{ output, want string }{
+		{"old gh", "unavailable"},
+		{"--bundle --hostname --repo --cert-identity --source-ref --deny-self-hosted-runners --format", "ready"},
+	} {
+		if err := os.WriteFile(gh, []byte(script+"echo '"+tc.output+"'\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if got := archiveVerifierStatus(); got != tc.want {
+			t.Fatalf("status %q, want %q", got, tc.want)
+		}
 	}
 }
 

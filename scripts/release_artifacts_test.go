@@ -130,8 +130,19 @@ func TestLocalReleasePreflight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	installer, err := os.ReadFile("../install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, err := os.ReadFile("../openai-enable-updates.zsh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	root := t.TempDir()
 	files := map[string]string{
+		"install.sh":                          string(installer),
+		"openai-enable-updates.zsh":           string(selection),
 		".gitignore":                          string(ignore),
 		"scripts/generate-release-artifacts":  string(generator),
 		"go.mod":                              "module example.com/local-release\n\ngo 1.25.0\n",
@@ -172,6 +183,8 @@ archives:
     files:
       - completions/*
       - man/*/*
+      - install.sh
+      - openai-enable-updates.zsh
 `,
 	}
 	for name, contents := range files {
@@ -208,6 +221,8 @@ archives:
 		t.Fatalf("documented local artifact preparation failed: %v; output:\n%s", err, output)
 	}
 	expected := readReleaseSupportFiles(t, root)
+	expected["install.sh"] = installer
+	expected["openai-enable-updates.zsh"] = selection
 	release := func() *exec.Cmd {
 		command := exec.Command(goreleaser, "release", "--clean")
 		command.Dir = root
@@ -467,8 +482,12 @@ func TestGoReleaserPreservesArtifactsWithoutApplicationHooks(t *testing.T) {
 		t.Fatalf("release archives = %d, want Linux, macOS, and Windows", len(config.Archives))
 	}
 	for _, archive := range config.Archives {
-		if !slices.Equal(archive.Files, []string{"completions/*", "man/*/*"}) {
-			t.Errorf("archive %q files = %v, want existing completion and man-page paths", archive.ID, archive.Files)
+		want := []string{"completions/*", "man/*/*"}
+		if archive.ID == "linux-archive" || archive.ID == "macos-archive" {
+			want = append(want, "install.sh", "openai-enable-updates.zsh")
+		}
+		if !slices.Equal(archive.Files, want) {
+			t.Errorf("archive %q files = %v, want %v", archive.ID, archive.Files, want)
 		}
 	}
 	if len(config.Notarize.MacOS) != 1 {
@@ -478,6 +497,10 @@ func TestGoReleaserPreservesArtifactsWithoutApplicationHooks(t *testing.T) {
 		t.Fatal("Homebrew cask publishing configuration was removed")
 	}
 	cask := config.HomebrewCasks[0]
+	if !slices.Equal(cask.Binaries, []string{"openai", "openai-enable-updates.zsh"}) ||
+		!strings.Contains(cask.Caveats, `source "$(brew --prefix)/bin/openai-enable-updates.zsh"`) {
+		t.Errorf("Homebrew setup command or instructions missing: %v %s", cask.Binaries, cask.Caveats)
+	}
 	if len(cask.Hooks.Pre) != 0 || len(cask.Hooks.Post) != 0 {
 		t.Fatal("Homebrew cask must leave picker setup to the existing first-run path")
 	}
@@ -636,6 +659,8 @@ type goReleaserConfig struct {
 		MacOS []any `yaml:"macos"`
 	} `yaml:"notarize"`
 	HomebrewCasks []struct {
+		Binaries   []string `yaml:"binaries"`
+		Caveats    string   `yaml:"caveats"`
 		Repository struct {
 			Name  string `yaml:"name"`
 			Token string `yaml:"token"`

@@ -2,7 +2,8 @@
 
 ## Installing with Homebrew
 
-On a Mac with Homebrew, paste this command to install the CLI and print its cask version.
+For automatic updates in zsh, paste the [macOS installation block](../README.md#installation).
+If you prefer to manage updates through Homebrew, install the cask directly.
 
 ```sh
 brew install --cask openai/tools/openai && brew list --cask --versions openai
@@ -106,10 +107,8 @@ command -v openai
 The last command shows which executable, alias, or function your shell selects. If an alias or function wins, use the verified executable directly.
 On Windows, run `.\openai.exe --version` in the extracted directory. Add that directory to your user `Path` and check `where.exe openai`.
 
-**Want automatic updates?** On macOS or Linux, place the official release binary at `$HOME/.openai/bin/openai`.
-The updater requires a compatible GitHub CLI (`gh`) and interactive launches.
-See [automatic updates](automatic-updates.md) for permissions, version pins, and opt-outs.
-Homebrew and Go manage their own installations.
+**Want automatic updates?** Follow the [archive setup for your shell](automatic-updates.md#from-an-extracted-archive).
+On a Mac with Homebrew and zsh, the [recommended installation](../README.md#installation) handles setup in one paste.
 
 ## Installing with Go
 

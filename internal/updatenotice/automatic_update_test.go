@@ -315,6 +315,13 @@ func TestAutomaticUpdateDiscoveryThrottleAndLock(t *testing.T) {
 	if err := <-finished; err == nil {
 		t.Fatal("interrupted preparation succeeded")
 	}
+	// An interrupted worker can leave a partial bundle under either name.
+	bundles := []string{"bundle", "bundle.jsonl"}
+	for _, name := range bundles {
+		if err := os.WriteFile(filepath.Join(i.stateDirectory(), name), []byte("partial"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	d.beforePrepare = nil
 	w.now = w.now.Add(automaticInterval - time.Second)
 	if err := w.run(context.Background()); err != nil {
@@ -329,6 +336,11 @@ func TestAutomaticUpdateDiscoveryThrottleAndLock(t *testing.T) {
 	}
 	if d.selectCalls != 2 {
 		t.Fatal("did not retry at four hours")
+	}
+	for _, name := range bundles {
+		if _, err := os.Lstat(filepath.Join(i.stateDirectory(), name)); !os.IsNotExist(err) {
+			t.Fatalf("stale %s survived retry: %v", name, err)
+		}
 	}
 }
 

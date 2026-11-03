@@ -22,28 +22,46 @@
 
 ## Installation
 
-One `openai` executable includes all commands in this CLI.
+[macOS](#macos) · [Linux](#linux) · [Windows](#windows)
 
 <a id="installing-with-homebrew"></a>
 
-**macOS with Homebrew**. Paste this command into your terminal.
+### macOS
 
-```sh
-brew install --cask openai/tools/openai
+With Homebrew and zsh, paste both lines together in Terminal. This installs the CLI and enables automatic updates.
+
+```zsh
+brew update && brew install --cask openai/tools/openai &&
+source "$(brew --prefix)/bin/openai-enable-updates.zsh"
 ```
+
+Use the same paste for an older Homebrew installation. [When automatic updates run](docs/automatic-updates.md#eligible-invocations).
+
+<details>
+<summary>Terminal says “no such file” for the update helper</summary>
+
+Your Homebrew package lacks the setup helper. You can use the installed CLI now, even if another copy comes first.
+
+```zsh
+"$(brew --prefix)/bin/openai" --help
+```
+
+Repeat the installation once Homebrew offers a version with the helper. [Check the installed CLI version](docs/installation.md#installing-with-homebrew).
+
+</details>
+
+Using another shell? [Install with Homebrew](docs/installation.md#installing-with-homebrew). Without Homebrew, use the [macOS ZIP](docs/installation.md#installing-a-prebuilt-binary).
 
 <a id="installing-a-prebuilt-binary"></a>
 
-**Linux**. Install the [package for your distribution](docs/installation.md#linux).
+### Linux
 
-**Windows**. Extract the [Windows ZIP](docs/installation.md#windows). Run `.\openai.exe --help` from the extracted directory.
+For automatic updates, [install the release archive](docs/automatic-updates.md#from-an-extracted-archive). It requires GitHub CLI (`gh`).
+If you prefer a Debian or RPM package, [install it with your package manager](docs/installation.md#linux). Upgrade it manually.
 
-<a id="installing-with-go"></a>
+### Windows
 
-For a Mac without Homebrew, choose the [macOS ZIP](docs/installation.md#installing-a-prebuilt-binary).
-Developers can also [install with Go](docs/installation.md#installing-with-go).
-
-**Already installed?** [Upgrade the Homebrew cask](docs/installation.md#installing-with-homebrew) or [enable automatic updates](docs/automatic-updates.md).
+[Install the Windows ZIP](docs/installation.md#windows). To upgrade, download and extract a newer ZIP.
 
 <!-- x-release-please-end -->
 
@@ -252,6 +270,10 @@ In PowerShell, press Enter after `openai images generate` to open the picker.
 > as infrastructure as code.
 
 ## Development
+
+<a id="installing-with-go"></a>
+
+To install from source, follow the [Go installation instructions](docs/installation.md#installing-with-go).
 
 `scripts/run` is a development helper for running the CLI from a cloned checkout:
 
