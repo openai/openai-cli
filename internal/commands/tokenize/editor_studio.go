@@ -108,11 +108,11 @@ func (m *tokenizerEditor) tokenByteCounts(s tokenizerEditorStyles, width, first,
 	for i := range values {
 		_, startByte, endByte := m.fragment(first + i)
 		values[i] = strconv.Itoa(endByte - startByte)
-		cells += len(values[i]) + 2 // Each count has one space on either side.
+		cells += 1 + len(values[i]) // Each count follows one space.
 	}
 
 	// Keep the inspected token in view. Trim the more distant edge when the row is full.
-	available := width - len(label) - 3 // Two inset cells and a space after the label.
+	available := width - len(label) - 2 // Two inset cells.
 	for len(values) > 1 {
 		needed := cells
 		if first > 0 {
@@ -125,20 +125,20 @@ func (m *tokenizerEditor) tokenByteCounts(s tokenizerEditorStyles, width, first,
 			break
 		}
 		if m.selected-first >= end-1-m.selected {
-			cells -= len(values[0]) + 2
+			cells -= 1 + len(values[0])
 			values = values[1:]
 			first++
 		} else {
-			cells -= len(values[len(values)-1]) + 2
+			cells -= 1 + len(values[len(values)-1])
 			values = values[:len(values)-1]
 			end--
 		}
 	}
 
 	var row strings.Builder
-	row.WriteString("  " + s.muted.Render(label) + " ")
+	row.WriteString("  " + s.muted.Render(label))
 	if first > 0 {
-		row.WriteString(s.muted.Render("… "))
+		row.WriteString(s.muted.Render(" …"))
 	}
 	for i, value := range values {
 		index := first + i
@@ -146,7 +146,7 @@ func (m *tokenizerEditor) tokenByteCounts(s tokenizerEditorStyles, width, first,
 		if index == m.selected {
 			style = s.tokenSelected
 		}
-		row.WriteString(" " + style.Render(value) + " ")
+		row.WriteString(" " + style.Render(value))
 	}
 	if end < len(m.tokens) {
 		row.WriteString(s.muted.Render(" …"))

@@ -693,13 +693,24 @@ func TestTokenizerEditorContinuousTextPreservesLiteralSegments(t *testing.T) {
 func TestTokenizerEditorNumericSegmentsUseUnwrappedSeparation(t *testing.T) {
 	m := testTokenizerEditor()
 	m.focus = tokenizerFocusOptions
-	m.insert("abcd")
+	m.insert("abcde")
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{
-		{ID: 10, EndByte: 1}, {ID: 20, EndByte: 2}, {ID: 30, EndByte: 3}, {ID: 40, EndByte: 4},
+		{ID: 10, EndByte: 2}, {ID: 20, EndByte: 3}, {ID: 30, EndByte: 4}, {ID: 40, EndByte: 5},
 	}})
-	for tab, want := range map[int]string{1: "  10 20 30 40", 2: "  61  62  63  64"} {
-		m.tab = tab
-		require.Equal(t, want, ansi.Strip(strings.Join(m.resultLines(m.styles(), m.viewWidth()), "")))
+	for _, tc := range []struct {
+		tab   int
+		color bool
+		want  string
+	}{
+		{1, false, "  10 20 30 40"},
+		{2, true, "  61 62 63 64 65"},
+		{2, false, "  61 62│63│64│65"},
+	} {
+		m.tab, m.color = tc.tab, tc.color
+		width := ansi.StringWidth(tc.want)
+		rows, end := m.tokenStrip(m.styles(), width, 0)
+		require.Equal(t, tc.want, ansi.Strip(rows[0]))
+		require.Equal(t, len(m.tokens), end)
 	}
 }
 

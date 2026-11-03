@@ -654,6 +654,10 @@ func (m *tokenizerEditor) tokenStrip(s tokenizerEditorStyles, width, start int) 
 	if start > 0 {
 		lines[0] = "… "
 	}
+	separator := " "
+	if m.tab == 2 && !m.color {
+		separator = "│" // Uncolored byte pairs still need a visible token boundary.
+	}
 	end := m.walkResultSegments(start, width, func(index, row, gap int, label string) {
 		if lines[row] == "" {
 			lines[row] = "  "
@@ -670,7 +674,7 @@ func (m *tokenizerEditor) tokenStrip(s tokenizerEditorStyles, width, start int) 
 				}
 			}
 		}
-		lines[row] += strings.Repeat(" ", gap) + style.Render(label)
+		lines[row] += strings.Repeat(separator, gap) + style.Render(label)
 	})
 	return lines, end
 }
@@ -717,8 +721,8 @@ func (m *tokenizerEditor) walkResultSegments(start, width int, visit func(index,
 		label := m.tokenSegment(index, width)
 		cells := tokenizerSourceWidth(label)
 		gap := 0
-		if used > 2 {
-			gap = m.tab // Text joins directly; IDs use one space, Bytes uses two.
+		if used > 2 && m.tab != 0 {
+			gap = 1
 		}
 		if used > 2 && used+gap+cells > width {
 			row++

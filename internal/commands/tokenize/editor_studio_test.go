@@ -29,17 +29,17 @@ func TestTokenByteCountsKeepSelectedAndNeighboringValuesAligned(t *testing.T) {
 			for i, length := range want {
 				m.selected = i
 				row := m.tokenByteCounts(styles, 49, 0, len(m.tokens))
-				require.Equal(t, "  Bytes per token  "+strings.Join(want, "  ")+" ", ansi.Strip(row))
+				require.Equal(t, "  Bytes per token "+strings.Join(want, " "), ansi.Strip(row))
 				before, _, found := strings.Cut(row, theme.selected+length)
 				require.True(t, found)
-				require.Equal(t, len("  Bytes per token  ")+3*i, ansi.StringWidth(before))
+				require.Equal(t, len("  Bytes per token ")+2*i, ansi.StringWidth(before))
 				require.Equal(t, 1, strings.Count(row, theme.selected))
 				wantStyled := append([]string(nil), want...)
 				for j, count := range wantStyled {
 					wantStyled[j] = styles.byteCounts[j].Render(count)
 				}
 				wantStyled[i] = styles.tokenSelected.Render(length)
-				require.Equal(t, "  "+styles.muted.Render("Bytes per token")+"  "+strings.Join(wantStyled, "  ")+" ", row)
+				require.Equal(t, "  "+styles.muted.Render("Bytes per token")+" "+strings.Join(wantStyled, " "), row)
 			}
 		})
 	}
