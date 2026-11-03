@@ -12,6 +12,12 @@
   </p>
 </div>
 
+<p align="center">
+  <img src="./assets/openai-cli.png" alt="OpenAI CLI terminal showing commands for images, files, batches, and JSON output" width="80%">
+</p>
+
+> Looking for the coding agent? Use [Codex CLI](https://developers.openai.com/codex/cli).
+
 <!-- x-release-please-start-version -->
 
 ## Installation
@@ -58,12 +64,6 @@ openai help setup
 
 On Windows, use `.\openai.exe` from the extracted directory.
 For scripts, supply `OPENAI_API_KEY` through your environment or secret manager. [Create an API key](https://platform.openai.com/settings/organization/api-keys)
-
-<p align="center">
-  <img src="./assets/openai-cli.png" alt="OpenAI CLI terminal showing commands for images, files, batches, and JSON output" width="80%">
-</p>
-
-> Looking for the coding agent? Use [Codex CLI](https://developers.openai.com/codex/cli).
 
 ## Things to try
 
