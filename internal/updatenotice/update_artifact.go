@@ -292,7 +292,7 @@ func updateEnvironment() []string {
 // Keep this package's existing notice behavior for installations whose owner
 // must perform upgrades. Pins suppress conflicting manual notices as well.
 func CheckOrUpdate(ctx context.Context, current string) string {
-	if message, managed := Automatic(ctx, current); managed {
+	if message, managed := automatic(ctx, current, true); managed {
 		return message
 	}
 	if strings.TrimSpace(os.Getenv("OPENAI_CLI_VERSION_PIN")) != "" {

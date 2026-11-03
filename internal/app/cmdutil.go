@@ -366,6 +366,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 			if err != nil {
 				return err
 			}
+			recordDefaultAPIResponse(opts)
 			if omitted {
 				return writeOutputHint(opts, clioutput.ResourceSummaryHint)
 			}

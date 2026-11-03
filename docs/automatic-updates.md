@@ -8,50 +8,30 @@ On macOS or Linux, the official release executable can update itself. GitHub CLI
 
 ### Set up automatic updates with Homebrew on macOS
 
-Choose this route if you want the CLI to manage future upgrades.
-Homebrew downloads the matching archive and checks its cask checksum. This avoids installing another Homebrew cask.
-The block installs `gh` and selects the self-managed executable in this terminal.
-In zsh, it also adds that selection to your interactive startup file. Choose the extracted-archive steps to keep setup temporary.
+Install the CLI with Homebrew if you have not already.
 
 ```sh
-if sh -eu <<'SETUP'
-  brew update
-  brew fetch --cask openai/tools/openai
-  archive=$(brew --cache --cask openai/tools/openai)
-  work=$(mktemp -d)
-  trap 'rm -f "$work/install.sh" "$work/openai"; rmdir "$work"' EXIT
-  if ! unzip -q "$archive" openai install.sh -d "$work"; then
-    printf '%s\n' 'Setup needs a release archive containing openai and install.sh.' >&2
-    exit 1
-  fi
-  brew install gh
-  sh "$work/install.sh" --require-gh
-SETUP
-then
-  export PATH="$HOME/.openai/bin:$PATH"
-  if [ -n "${ZSH_VERSION:-}" ]; then
-    profile="${ZDOTDIR:-$HOME}/.zshrc"
-    path_line='export PATH="$HOME/.openai/bin:$PATH"'
-    if [ -L "$profile" ] || { [ -e "$profile" ] && [ ! -f "$profile" ]; }; then
-      printf '%s\n' 'CLI installed. Add the PATH export to your chosen zsh startup file.' >&2
-      false
-    else
-      grep -Fqx "$path_line" "$profile" 2>/dev/null || printf '\n%s\n' "$path_line" >> "$profile"
-    fi
-  fi &&
-  if [ "$(command -v openai)" = "$HOME/.openai/bin/openai" ]; then
-    command -v openai
-  else
-    printf '%s\n' 'CLI installed. Your shell selects another command. Use "$HOME/.openai/bin/openai" directly.' >&2
-    false
-  fi
-else
-  false
-fi
+brew install --cask openai/tools/openai
 ```
 
-The installer needs a compatible `gh` before enrolling through this route. Fix the reported prerequisite and retry.
-If the tap still supplies an older archive, use a [completed release](https://github.com/openai/openai-cli/releases) that contains the helper.
+In zsh, enable automatic updates with one command.
+
+```zsh
+source "$(brew --prefix)/bin/openai-enable-updates.zsh"
+```
+
+The helper checks for shell conflicts, installs GitHub CLI, and selects the verified copy in this terminal.
+It also adds the selection to your zsh startup file. Homebrew continues to own its separate copy.
+For temporary selection or other shells, use an extracted archive below.
+
+If the helper is missing, refresh the tap and upgrade the cask explicitly.
+
+```sh
+brew update && brew upgrade --cask openai/tools/openai
+```
+
+Retry the setup command. If the tap still provides an older cask, choose a release containing the helper below.
+You can keep using the Homebrew CLI while waiting for the tap.
 
 ### From an extracted archive
 
@@ -63,7 +43,7 @@ sh ./install.sh && export PATH="$HOME/.openai/bin:$PATH"
 ```
 
 The installer reports the installed version and where it put the executable.
-If GitHub CLI is missing, install it using the instruction shown. Bare interactive `openai` launches handle future updates.
+If GitHub CLI is missing, install it using the instruction shown. See which [interactive commands check for updates](#eligible-invocations).
 An alias or function can take precedence. Use `"$HOME/.openai/bin/openai"` directly in that case.
 
 ### Keep this selection in a new terminal
@@ -77,7 +57,7 @@ For zsh, put this line in your interactive startup file (`${ZDOTDIR:-$HOME}/.zsh
 export PATH="$HOME/.openai/bin:$PATH"
 ```
 
-For Bash, add the same export to your interactive startup file. The installer itself never edits shell profiles.
+For Bash, add the same export to your interactive startup file. Only the explicit `--zsh` option edits a profile.
 
 ### Older installations and interrupted setup
 
@@ -85,7 +65,8 @@ An older archive without the helper can run directly as `./openai`. Homebrew can
 Released versions 1.46.0 and 1.47.0 can fail to verify future updates with GitHub CLI.
 To enroll, download a release containing the corrected updater and `install.sh`.
 
-The helper stops if `$HOME/.openai/bin/openai` already exists.
+The helper preserves any existing `$HOME/.openai/bin/openai`.
+Repeated Homebrew setup can select an identical, safely owned copy. A different copy needs your decision.
 If you previously installed your own executable there, verify it and move it to a new backup path before running setup.
 Keep that backup until the new executable works. For a package-owned file, use that package's upgrade method.
 A forced stop can leave a private `.openai-install.*` staging directory. Remove that directory only after all installers exit.
@@ -105,7 +86,7 @@ GitHub CLI verifies existing GitHub artifact provenance. The updater downloads p
 It supplies those bundles to `gh attestation verify`. It does not install GitHub CLI or request login.
 Verification requires `--bundle`, `--cert-identity`, `--source-ref`, and `--deny-self-hosted-runners` support.
 The detached helper checks required options before downloading an update.
-If GitHub CLI lacks support, later eligible invocations retain manual update notices.
+If GitHub CLI lacks support, bare interactive `openai` can show a manual update notice.
 Capability checks retry at most every four hours, so upgrading GitHub CLI can restore automatic updates.
 
 Homebrew, Linux packages, Go installations, unknown locations, and development builds remain outside automatic installation.
@@ -117,23 +98,24 @@ Do not copy a development build into your normal installation to enable automati
 
 ## Eligible invocations
 
-Only successful, bare `openai` invocations qualify. Stdin, stdout, and stderr must all be terminals.
-CI environments and `TERM=dumb` do not qualify. Color overrides cannot enable updates in scripts.
+An enrolled installation checks after bare `openai` or a successful API command that prints one default text response.
+For example, an ordinary `openai responses create` can start a check. The command prints only its normal output.
 
-Explicit help, flags, commands, completion, redirected streams, pipes, structured output, and quiet invocations perform no updater work.
-Interactive command screens also perform no updater work. The updater never changes an ongoing session.
+Stdin, stdout, and stderr must all be terminals. CI environments and `TERM=dumb` disable checks.
+Explicit help, completion, quiet mode, selected output formats, extracted fields, and file saves skip checks.
+Streams, lists, local commands, and interactive screens also skip checks. Color overrides cannot enable updates in scripts.
 
-The first eligible invocation starts a silent, detached helper after help finishes.
+The first eligible invocation starts a silent, detached helper after the command finishes.
 The helper discovers the latest stable release, at most once every four hours, including failed attempts.
 Published, non-prerelease releases qualify immediately after their publishing workflow succeeds and artifact provenance becomes available.
 Four hours limits discovery frequency. It does not impose a release-age wait or a staged rollout.
 
 The helper downloads and authenticates the exact selected archive. It then prepares the replacement without changing the installed executable.
-A later eligible invocation starts activation after its help finishes. That invocation still executes its original binary.
+A later eligible invocation starts activation after the command finishes. That invocation still executes its original binary.
 Activation checks the selected release again for withdrawal or replacement. This exact-release validation does not discover another release.
 Failed activation checks retry at most every four hours. The helper exits within approximately two minutes.
 
-The next eligible invocation executing the activated binary shows this plain-text line below successful help:
+The next bare `openai` invocation that runs the activated binary prints a confirmation below help.
 
 ```text
 Updated to vX.Y.Z.

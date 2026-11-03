@@ -31,6 +31,8 @@ type updateState struct {
 	Starting            int64           `json:"starting"`
 	Pending             *preparedUpdate `json:"pending,omitempty"`
 	Applied             string          `json:"applied,omitempty"`
+	AppliedCommit       string          `json:"applied_commit,omitempty"`
+	AppliedHash         string          `json:"applied_hash,omitempty"`
 	Announced           bool            `json:"announced"`
 	VerifierUnavailable bool            `json:"verifier_unavailable,omitempty"`
 }
@@ -81,6 +83,13 @@ func loadUpdateState(cache *noticeCache, now time.Time) (updateState, error) {
 		if !p.Release.valid() || !validDigest(p.BinaryHash) || !validDigest(p.PreviousHash) {
 			return state, errCache
 		}
+		// Older receipts kept the installed artifact's identity in Pending.
+		if state.Applied == p.Release.Version && state.AppliedCommit == "" && state.AppliedHash == "" {
+			state.AppliedCommit, state.AppliedHash = p.Release.Commit, p.BinaryHash
+		}
+	}
+	if (state.AppliedHash != "" || state.AppliedCommit != "") && (!validDigest(state.AppliedHash) || !validCommit(state.AppliedCommit)) {
+		return state, errCache
 	}
 	return state, nil
 }
@@ -89,9 +98,18 @@ func due(now time.Time, checked int64) bool {
 	return checked == 0 || now.Sub(time.Unix(checked, 0)) >= automaticInterval
 }
 
-// Automatic runs only after successful bare terminal help. It never performs
-// network requests or waits for a worker. Unsupported installations keep notices.
-func Automatic(ctx context.Context, current string) (string, bool) {
+// UpdateSilently schedules only managed updates. Ordinary API commands never
+// fall back to release notices or consume the next bare-help confirmation.
+func UpdateSilently(ctx context.Context, current string) {
+	automatic(ctx, current, false)
+}
+
+// automatic starts detached work without waiting for network requests.
+func automatic(ctx context.Context, current string, announce bool) (string, bool) {
+	pin, enabled := updatePolicy(os.Getenv)
+	if !enabled || ctx.Err() != nil {
+		return "", false
+	}
 	installation, err := managedInstallation(current)
 	if err != nil {
 		return "", false
@@ -99,13 +117,6 @@ func Automatic(ctx context.Context, current string) (string, bool) {
 	defer installation.close()
 	if _, err := exec.LookPath("gh"); err != nil {
 		return "", false
-	}
-	pin, enabled := updatePolicy(os.Getenv)
-	if !enabled {
-		return "", false
-	}
-	if ctx.Err() != nil {
-		return "", true
 	}
 	cache, err := openCache(ctx, installation.stateDirectory())
 	if err != nil {
@@ -118,9 +129,9 @@ func Automatic(ctx context.Context, current string) (string, bool) {
 		return "", true
 	}
 	message := ""
-	if state.Applied == current && !state.Announced && (pin == "" || pin == current) && state.Pending != nil && state.Pending.Release.Commit == releaseCommit {
+	if announce && state.Applied == current && !state.Announced && (pin == "" || pin == current) && state.AppliedCommit == releaseCommit {
 		digest, err := installation.digest(ctx)
-		if err != nil || digest != state.Pending.BinaryHash {
+		if err != nil || digest != state.AppliedHash {
 			cache.close()
 			return "", true
 		}
@@ -151,6 +162,12 @@ func Automatic(ctx context.Context, current string) (string, bool) {
 
 // RunUpdateHelper handles the private installer probe and detached update worker.
 func RunUpdateHelper(argv []string) bool {
+	if len(argv) == 4 && argv[1] == "__openai_archive_zsh_profile" && os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") == "1" {
+		if enableZshPath(argv[2], argv[3]) {
+			fmt.Fprintln(os.Stdout, "ready")
+		}
+		return true
+	}
 	if len(argv) == 2 && argv[1] == "__openai_archive_verifier" && os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") == "1" {
 		fmt.Fprintln(os.Stdout, archiveVerifierStatus())
 		return true
@@ -314,6 +331,7 @@ func (worker updateWorker) activate(ctx context.Context, cache *noticeCache, sta
 	// Commit the receipt first. A crash before rename cannot announce success:
 	// only an executing binary with the new release version consumes it.
 	state.Applied, state.Announced = pending.Release.Version, false
+	state.AppliedCommit, state.AppliedHash = pending.Release.Commit, pending.BinaryHash
 	if err := cache.saveState(state); err != nil {
 		return err
 	}
@@ -327,7 +345,11 @@ func (worker updateWorker) activate(ctx context.Context, cache *noticeCache, sta
 }
 
 func discardPreparedUpdate(cache *noticeCache, state updateState) {
-	state.Pending, state.Applied = nil, ""
+	if state.Pending.Release.Version == state.Applied {
+		// A failed rename may have written a receipt for this staged release.
+		state.Applied, state.AppliedHash, state.AppliedCommit = "", "", ""
+	}
+	state.Pending = nil
 	if cache.saveState(state) == nil {
 		_ = removeUpdateFile(cache, "next")
 	}

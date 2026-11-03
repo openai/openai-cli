@@ -9,10 +9,12 @@ fail() {
 }
 
 require_gh=false
+if [ "${1:-}" = --require-gh ]; then require_gh=true; shift; fi
+zsh_dir=
 case $#:${1:-} in
     0:) ;;
-    1:--require-gh) require_gh=true ;;
-    *) fail 'Usage: sh ./install.sh [--require-gh]' ;;
+    2:--zsh) zsh_dir=$2; [ -n "$zsh_dir" ] || fail 'Supply the directory containing .zshrc.' ;;
+    *) fail 'Usage: install.sh [--require-gh] [--zsh DIRECTORY]' ;;
 esac
 system=$(uname -s)
 case $system in
@@ -61,6 +63,37 @@ exec 3< ./openai
 
 cd -P "$HOME"
 safe_directory . || fail 'Your home directory must belong to you and reject writes from other users.'
+# Keep setup inside checked directories. Capture the profile identity before installing.
+zsh_profile_identity() (
+    cd -P "$HOME" || exit 1
+    case $zsh_dir in
+        "$HOME") remaining= ;;
+        "$HOME"/*) remaining=${zsh_dir#"$HOME"/} ;;
+        *) fail 'For zsh settings outside your home directory, add the PATH export yourself.' ;;
+    esac
+    while [ -n "$remaining" ]; do
+        part=${remaining%%/*}
+        case $part in ''|.|..) fail 'Supply a direct path to your zsh settings directory.' ;; esac
+        safe_directory "./$part" || fail 'Your zsh settings directory must reject symbolic links and writes from others.'
+        cd -P "./$part" || exit 1
+        case $remaining in */*) remaining=${remaining#*/} ;; *) remaining= ;; esac
+    done
+    # The device and inode refer to the checked directory and regular file.
+    # The installed CLI compares them to its open descriptors before appending.
+    if [ "$system" = Darwin ]; then set -- -f '%d:%i'; else set -- -c '%d:%i'; fi
+    dir_id=$(stat "$@" .) || exit 1
+    file_id=new
+    if [ -e .zshrc ] || [ -L .zshrc ]; then
+        file_id=$(stat "$@" ./.zshrc) || exit 1
+        [ -n "$(find ./.zshrc -prune -type f -user "$uid" -links 1 ! -perm -020 ! -perm -002 -print)" ] &&
+            safe_acl ./.zshrc && [ -w ./.zshrc ] ||
+            fail 'For a linked, shared, or read-only .zshrc, add the PATH export yourself.'
+    else
+        [ -w . ] || fail 'Cannot create .zshrc.'
+    fi
+    printf '%s/%s\n' "$dir_id" "$file_id"
+)
+if [ -n "$zsh_dir" ]; then profile_id=$(zsh_profile_identity); fi
 for directory in .openai bin; do
     if [ ! -d "$directory" ]; then
         mkdir "$directory" 2>/dev/null || [ -d "$directory" ] || fail 'Cannot create the installation directory.'
@@ -72,6 +105,7 @@ clean_stage() {
     rm -f "$1/openai" "$1/.archive-install"
     rmdir "$1" 2>/dev/null || [ ! -d "$1" ]
 }
+existing=false
 if [ -e openai ] || [ -L openai ]; then
     # Recover a kill between link and unlink. Only remove our marked staging
     # link to this exact regular file. Never remove the installed name.
@@ -83,7 +117,13 @@ if [ -e openai ] || [ -L openai ]; then
             clean_stage "$previous"
         done
     fi
-    fail 'An entry already exists at $HOME/.openai/bin/openai. Use its existing update method or select another installation.'
+    if [ -n "$zsh_dir" ] &&
+       [ -n "$(find ./openai -prune -type f -user "$uid" -links 1 ! -perm -020 ! -perm -002 -print)" ] &&
+       [ -x ./openai ] && safe_acl ./openai; then
+        existing=true
+    else
+        fail 'An entry already exists at $HOME/.openai/bin/openai. Use its existing update method or select another installation.'
+    fi
 fi
 
 stage=$(mktemp -d .openai-install.XXXXXXXX)
@@ -93,6 +133,9 @@ trap 'exit 1' HUP INT TERM
 cp /dev/fd/3 "$stage/openai"
 exec 3<&-
 chmod 700 "$stage/openai"
+if [ "$existing" = true ]; then
+    cmp -s "$stage/openai" openai || fail 'A different executable already exists at $HOME/.openai/bin/openai. Keep its existing update method.'
+fi
 version=$(env -i HOME="$HOME" PATH=/usr/bin:/bin "$stage/openai" --version) ||
     fail 'This binary could not run. Download the archive for your operating system and processor.'
 release=${version#"openai version "}
@@ -119,16 +162,34 @@ if [ "$readiness" != ready ] && [ "$require_gh" = true ]; then
     fail "Automatic update verification is unavailable. $advice Then rerun this installer."
 fi
 # Link the finished file into this directory. An occupied name always wins.
-ln "$stage/openai" . || fail 'Could not install openai. Check whether another installation already exists.'
+if [ "$existing" = false ]; then
+    ln "$stage/openai" . || fail 'Could not install openai. Check whether another installation already exists.'
+fi
+check_destination() {
+    if [ "$existing" = false ]; then
+        [ ! -L openai ] && [ openai -ef "$stage/openai" ]
+    else
+        [ -n "$(find ./openai -prune -type f -user "$uid" -links 1 ! -perm -020 ! -perm -002 -print)" ] &&
+            safe_acl ./openai && cmp -s "$stage/openai" ./openai
+    fi
+}
+check_destination || fail 'The installed executable changed. Check which copy you want before enabling updates.'
+if [ -n "$zsh_dir" ]; then
+    selected_cli=$(pwd -P)/$stage/openai
+    profile_result=$(cd -P "$zsh_dir" && env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 \
+        "$selected_cli" __openai_archive_zsh_profile "$zsh_dir" "$profile_id") || profile_result=
+    [ "$profile_result" = ready ] || fail 'The CLI is installed. Check your zsh profile and rerun setup.'
+    check_destination || fail 'The installed executable changed during setup. Check the selected copy.'
+fi
 clean_stage "$stage"
 trap - EXIT
 printf 'Installed OpenAI CLI %s at $HOME/.openai/bin/openai.\n' "$release"
-if [ "$(command -v openai || :)" != "$HOME/.openai/bin/openai" ]; then
+if [ -z "$zsh_dir" ] && [ "$(command -v openai || :)" != "$HOME/.openai/bin/openai" ]; then
     printf '%s\n' 'Select it in this shell: export PATH="$HOME/.openai/bin:$PATH"'
 fi
 printf '%s\n' "$advice"
 if [ "$readiness" = ready ]; then
-    printf '%s\n' 'Run openai without arguments in a terminal to check for automatic updates.'
+    printf '%s\n' 'The CLI checks for updates after eligible interactive API requests or bare openai.'
 else
-    printf '%s\n' 'The CLI is installed. After fixing gh, run openai without arguments in a terminal.'
+    printf '%s\n' 'The CLI is installed. After fixing gh, use openai in a terminal to resume update checks.'
 fi

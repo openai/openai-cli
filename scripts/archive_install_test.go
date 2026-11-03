@@ -9,12 +9,24 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/openai/openai-cli/internal/updatenotice"
 )
 
 const archiveBinary = "#!/bin/sh\n[ \"$1\" = --version ] || exit 2\necho 'openai version 1.2.3'\n"
 
+// Go's temporary test directories can inherit a group-writable developer umask.
+func privateInstallDirectory(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestArchiveInstall(t *testing.T) {
-	archive := t.TempDir()
+	archive := privateInstallDirectory(t)
 	installer, err := os.ReadFile("../install.sh")
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +46,7 @@ func TestArchiveInstall(t *testing.T) {
 	}
 	path := os.Getenv("PATH")
 	if os.Geteuid() == 0 {
-		output, err := run(t.TempDir(), path).CombinedOutput()
+		output, err := run(privateInstallDirectory(t), path).CombinedOutput()
 		if err == nil || !strings.Contains(string(output), "without sudo") {
 			t.Fatalf("root install: err=%v output=%q", err, output)
 		}
@@ -48,12 +60,12 @@ func TestArchiveInstall(t *testing.T) {
 			}
 		})
 		t.Run("verifier selected after setup", func(t *testing.T) {
-			home := t.TempDir()
+			home := privateInstallDirectory(t)
 			managed := filepath.Join(home, ".openai", "bin")
 			if err := os.MkdirAll(managed, 0700); err != nil {
 				t.Fatal(err)
 			}
-			oldPath := t.TempDir()
+			oldPath := privateInstallDirectory(t)
 			for name, body := range map[string]string{
 				filepath.Join(oldPath, "gh"): "#!/bin/sh\necho ready\n",
 				filepath.Join(managed, "gh"): "#!/bin/sh\necho unavailable\n",
@@ -82,7 +94,7 @@ func TestArchiveInstall(t *testing.T) {
 				if err := os.WriteFile(binary, []byte(staged), 0700); err != nil {
 					t.Fatal(err)
 				}
-				home := t.TempDir()
+				home := privateInstallDirectory(t)
 				strict := run(home, path)
 				strict.Args = append(strict.Args, "--require-gh")
 				output, err := strict.CombinedOutput()
@@ -107,6 +119,8 @@ func TestArchiveInstall(t *testing.T) {
 		}
 	})
 
+	t.Run("Homebrew opt in", testHomebrewOptIn)
+
 	if runtime.GOOS == "darwin" {
 
 		for _, tc := range []struct {
@@ -127,7 +141,7 @@ func TestArchiveInstall(t *testing.T) {
 			{"source", "+ai", "allow read,execute,readattr,readextattr,readsecurity", true},
 		} {
 			t.Run("macOS ACL/"+tc.target+" "+tc.acl, func(t *testing.T) {
-				home := t.TempDir()
+				home := privateInstallDirectory(t)
 				dedicated := filepath.Join(home, ".openai")
 				bin := filepath.Join(dedicated, "bin")
 				if err := os.MkdirAll(bin, 0700); err != nil {
@@ -155,7 +169,7 @@ func TestArchiveInstall(t *testing.T) {
 	}
 
 	t.Run("concurrent installs and repeat", func(t *testing.T) {
-		home := filepath.Join(t.TempDir(), "home with spaces")
+		home := filepath.Join(privateInstallDirectory(t), "home with spaces")
 		if err := os.Mkdir(home, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -185,8 +199,8 @@ func TestArchiveInstall(t *testing.T) {
 	})
 
 	t.Run("copy interruption", func(t *testing.T) {
-		home := t.TempDir()
-		shim := t.TempDir()
+		home := privateInstallDirectory(t)
+		shim := privateInstallDirectory(t)
 		failCopy := "#!/bin/sh\nprintf partial > \"$2\"\nkill -TERM \"$PPID\"\n"
 		if err := os.WriteFile(filepath.Join(shim, "cp"), []byte(failCopy), 0700); err != nil {
 			t.Fatal(err)
@@ -206,7 +220,7 @@ func TestArchiveInstall(t *testing.T) {
 
 	for _, scenario := range []string{"symlink parent", "writable parent", "directory target", "dangling target", "linked target"} {
 		t.Run(scenario, func(t *testing.T) {
-			home, outside := t.TempDir(), t.TempDir()
+			home, outside := privateInstallDirectory(t), privateInstallDirectory(t)
 			dedicated := filepath.Join(home, ".openai")
 			dest := filepath.Join(dedicated, "bin", "openai")
 			sentinel := filepath.Join(outside, "sentinel")
@@ -245,7 +259,7 @@ func TestArchiveInstall(t *testing.T) {
 		})
 	}
 	t.Run("linked source", func(t *testing.T) {
-		home := t.TempDir()
+		home := privateInstallDirectory(t)
 		if err := os.Link(binary, filepath.Join(archive, "backup")); err != nil {
 			t.Fatal(err)
 		}
@@ -257,7 +271,7 @@ func TestArchiveInstall(t *testing.T) {
 		}
 	})
 	t.Run("unusable binary", func(t *testing.T) {
-		home := t.TempDir()
+		home := privateInstallDirectory(t)
 		if err := os.WriteFile(binary, []byte("MZ\x00invalid platform\n"), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -272,12 +286,12 @@ func TestArchiveInstall(t *testing.T) {
 		}
 	})
 	t.Run("source directory replacement", func(t *testing.T) {
-		shim := t.TempDir()
+		shim := privateInstallDirectory(t)
 		replace := "#!/bin/sh\nmv \"$ARCHIVE_DIR\" \"$ARCHIVE_DIR.moved\" || exit 1\nmkdir \"$ARCHIVE_DIR\" || exit 1\nprintf wrong > \"$ARCHIVE_DIR/openai\"\nexec /bin/cp \"$@\"\n"
 		if err := os.WriteFile(filepath.Join(shim, "cp"), []byte(replace), 0700); err != nil {
 			t.Fatal(err)
 		}
-		cmd := run(t.TempDir(), shim+":"+path)
+		cmd := run(privateInstallDirectory(t), shim+":"+path)
 		cmd.Env = append(cmd.Env, "ARCHIVE_DIR="+archive)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -295,7 +309,7 @@ func TestArchiveInstall(t *testing.T) {
 		}
 	})
 	t.Run("killed after link", func(t *testing.T) {
-		home, shim := t.TempDir(), t.TempDir()
+		home, shim := privateInstallDirectory(t), privateInstallDirectory(t)
 		interrupt := "#!/bin/sh\n/bin/ln \"$@\" || exit 1\nkill -KILL \"$PPID\"\n"
 		if err := os.WriteFile(filepath.Join(shim, "ln"), []byte(interrupt), 0700); err != nil {
 			t.Fatal(err)
@@ -316,4 +330,245 @@ func TestArchiveInstall(t *testing.T) {
 			t.Fatalf("staging link survived recovery: %v, %v", entries, err)
 		}
 	})
+}
+
+func testHomebrewOptIn(t *testing.T) {
+	prefix := privateInstallDirectory(t)
+	source := filepath.Join(prefix, "Caskroom", "openai", "1.2.3")
+	bin := filepath.Join(prefix, "bin")
+	for _, dir := range []string{source, bin} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	installer, err := os.ReadFile("../install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const name = "openai-enable-updates.zsh"
+	selection, err := os.ReadFile("../" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(bin, name)
+	if err := os.Symlink("../Caskroom/openai/1.2.3/"+name, helper); err != nil {
+		t.Fatal(err)
+	}
+	// The fixture supplies a synthetic release version and verifier. Its profile
+	// operation executes the production handler inside this native test binary.
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := "'" + strings.ReplaceAll(self, "'", "'\\''") + "'"
+	ready := []byte("#!/bin/sh\ncase $1 in --version) echo 'openai version 1.2.3';; __openai_archive_verifier) command -v gh >/dev/null && gh || echo missing;; __openai_archive_zsh_profile) exec " + command + " -test.run '^TestArchiveProfileProcess$' -- \"$2\" \"$3\";; esac\n")
+	for path, data := range map[string][]byte{
+		filepath.Join(source, name):         selection,
+		filepath.Join(source, "install.sh"): installer,
+		filepath.Join(source, "openai"):     ready,
+		filepath.Join(bin, "openai"):        []byte("#!/bin/sh\nexit 9\n"),
+	} {
+		if err := os.WriteFile(path, data, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := func(home string, args ...string) (string, error) {
+		t.Helper()
+		c := exec.Command("sh", append([]string{filepath.Join(source, "install.sh"), "--require-gh"}, args...)...)
+		c.Env = []string{"HOME=" + home, "PATH=" + bin + ":/usr/bin:/bin"}
+		out, err := c.CombinedOutput()
+		return string(out), err
+	}
+	home := privateInstallDirectory(t)
+	profileDir := filepath.Join(home, "my zsh")
+	profile := filepath.Join(profileDir, ".zshrc")
+	if err := os.Mkdir(profileDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(profile, []byte("# personal settings"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(home, "--zsh", profileDir); err == nil || !strings.Contains(out, "verification is unavailable") {
+		t.Fatalf("missing verifier: %v %s", err, out)
+	}
+	if data, err := os.ReadFile(profile); err != nil || string(data) != "# personal settings" {
+		t.Fatalf("profile changed after missing verifier: %q %v", data, err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\necho ready\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if out, err := run(home, "--zsh", profileDir); err != nil {
+			t.Fatalf("enable attempt %d: %v %s", i, err, out)
+		}
+	}
+	if data, err := os.ReadFile(profile); err != nil || string(data) != "# personal settings\nexport PATH=\"$HOME/.openai/bin:$PATH\"\n" {
+		t.Fatalf("profile after repeat: %q %v", data, err)
+	}
+	target := filepath.Join(home, ".openai", "bin", "openai")
+	if data, err := os.ReadFile(target); err != nil || string(data) != string(ready) {
+		t.Fatalf("wrong executable: %q %v", data, err)
+	}
+	if zsh, err := exec.LookPath("zsh"); err == nil {
+		c := exec.Command(zsh, "-d", "-i", "-c", "command -v openai")
+		c.Env = []string{"HOME=" + home, "ZDOTDIR=" + profileDir, "PATH=" + bin + ":/usr/bin:/bin"}
+		if out, err := c.Output(); err != nil || strings.TrimSpace(string(out)) != target {
+			t.Fatalf("fresh zsh selects %q: %v", out, err)
+		}
+	}
+	t.Run("source in the caller", func(t *testing.T) {
+		zsh, err := exec.LookPath("zsh")
+		if err != nil {
+			t.Skip("zsh unavailable")
+		}
+		brew := filepath.Join(bin, "brew")
+		if err := os.WriteFile(brew, []byte("#!/bin/sh\ncase $1 in --caskroom) printf '%s/Caskroom/openai\\n' \"$(dirname \"$(dirname \"$0\")\")\";; --prefix) dirname \"$(dirname \"$0\")\";; install) [ \"$2\" = gh ] || exit 71; echo gh >> \"$HOME/brew.log\"; exit \"${BREW_RC:-0}\";; *) exit 72;; esac\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		for _, kind := range []string{"normal", "hashed", "alias", "function", "failed brew", "missing sibling", "linked sibling", "wrong release link"} {
+			t.Run(kind, func(t *testing.T) {
+				home := privateInstallDirectory(t)
+				switch kind {
+				case "missing sibling", "linked sibling":
+					path := filepath.Join(source, "install.sh")
+					if err := os.Rename(path, path+".saved"); err != nil {
+						t.Fatal(err)
+					}
+					if kind == "linked sibling" {
+						if err := os.Symlink(path+".saved", path); err != nil {
+							t.Fatal(err)
+						}
+					}
+					t.Cleanup(func() {
+						if err := os.Rename(path+".saved", path); err != nil {
+							t.Error(err)
+						}
+					})
+				case "wrong release link":
+					other := privateInstallDirectory(t)
+					for _, f := range []string{name, "install.sh"} {
+						data, err := os.ReadFile(filepath.Join(source, f))
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := os.WriteFile(filepath.Join(other, f), data, 0755); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := os.Rename(helper, helper+".saved"); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(filepath.Join(other, name), helper); err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() {
+						if err := os.Rename(helper+".saved", helper); err != nil {
+							t.Error(err)
+						}
+					})
+				}
+				shell := `
+setopt noclobber
+before=$PWD
+if [[ $KIND == hashed ]]; then
+    export PATH="$HOME/.openai/bin:$PATH"
+    hash openai="$HOME/stale"
+fi
+initial=$PATH
+hash keep="$HOME/keep"
+entry=preserve
+ZDOTDIR="$HOME/my zsh"
+mkdir "$ZDOTDIR" || exit 91
+case $KIND in
+    alias) alias openai=false ;;
+    function) openai() { return 81; } ;;
+    'failed brew') export BREW_RC=39 ;;
+esac
+source "$(brew --prefix)/bin/openai-enable-updates.zsh"
+rc=$?
+[[ $before == "$PWD" && $entry == preserve && -o noclobber ]] || exit 92
+[[ $commands[keep] == "$HOME/keep" ]] || [[ $initial != "$PATH" ]] || exit 98
+if [[ $KIND == normal || $KIND == hashed ]]; then
+    (( rc == 0 )) && [[ $(whence openai) == "$HOME/.openai/bin/openai" ]] || exit 93
+    selected=$PATH
+    source "$(brew --prefix)/bin/openai-enable-updates.zsh" || exit 94
+    [[ $selected == "$PATH" ]] || exit 95
+else
+    (( rc != 0 )) && [[ $initial == "$PATH" && ! -e "$ZDOTDIR/.zshrc" && ! -e "$HOME/.openai/bin/openai" ]] || exit 96
+    [[ $KIND == 'failed brew' || ! -e "$HOME/brew.log" ]] || exit 97
+fi
+`
+				cmd := exec.Command(zsh, "-f", "-c", shell)
+				cmd.Env = []string{"HOME=" + home, "PATH=" + bin + ":/usr/bin:/bin", "KIND=" + kind}
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("caller: %v: %s", err, out)
+				}
+			})
+		}
+	})
+
+	for _, kind := range []string{"linked profile", "hard-linked profile", "shared profile", "linked directory", "occupied destination"} {
+		t.Run(kind, func(t *testing.T) {
+			home := privateInstallDirectory(t)
+			sentinel := filepath.Join(privateInstallDirectory(t), "original")
+			if err := os.WriteFile(sentinel, []byte("preserve"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			dir := home
+			profile := filepath.Join(home, ".zshrc")
+			dest := filepath.Join(home, ".openai", "bin", "openai")
+			var err error
+			switch kind {
+			case "linked profile":
+				err = os.Symlink(sentinel, profile)
+			case "hard-linked profile":
+				err = os.Link(sentinel, profile)
+			case "shared profile":
+				if err = os.WriteFile(profile, []byte("preserve"), 0600); err == nil {
+					err = os.Chmod(profile, 0660)
+				}
+			case "linked directory":
+				dir = filepath.Join(home, "zsh")
+				err = os.Symlink(filepath.Dir(sentinel), dir)
+			case "occupied destination":
+				if err = os.MkdirAll(filepath.Dir(dest), 0700); err == nil {
+					err = os.WriteFile(dest, []byte("preserve"), 0700)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out, err := run(home, "--zsh", dir); err == nil {
+				t.Fatalf("unexpected success: %s", out)
+			}
+			if data, err := os.ReadFile(sentinel); err != nil || string(data) != "preserve" {
+				t.Fatalf("sentinel changed: %q %v", data, err)
+			}
+			if kind == "occupied destination" {
+				if data, err := os.ReadFile(dest); err != nil || string(data) != "preserve" {
+					t.Fatalf("changed occupied destination: %q %v", data, err)
+				}
+				if _, err := os.Lstat(profile); !os.IsNotExist(err) {
+					t.Fatalf("profile appeared after failure: %v", err)
+				}
+			} else if _, err := os.Lstat(dest); !os.IsNotExist(err) {
+				t.Fatalf("published with unsafe profile: %v", err)
+			}
+		})
+	}
+	if err := os.Chmod(source, 0770); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(privateInstallDirectory(t)); err == nil || !strings.Contains(out, "only you can modify") {
+		t.Fatalf("group-writable source: %v %s", err, out)
+	}
+}
+
+// TestArchiveProfileProcess runs as a subprocess of the executable fixture.
+func TestArchiveProfileProcess(t *testing.T) {
+	if len(os.Args) < 4 || os.Args[len(os.Args)-3] != "--" || os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") != "1" {
+		t.Skip("archive fixture subprocess only")
+	}
+	updatenotice.RunUpdateHelper([]string{"openai", "__openai_archive_zsh_profile", os.Args[len(os.Args)-2], os.Args[len(os.Args)-1]})
+	os.Exit(0)
 }
