@@ -455,7 +455,7 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 						}
 					}
 					require.GreaterOrEqual(t, descriptionColumn, 0)
-					require.Contains(t, plain, "↑↓ move")
+					require.Contains(t, plain, "↑↓ choose")
 					require.Contains(t, plain, "Enter apply")
 					require.Contains(t, plain, "Esc cancel")
 					require.Contains(t, plain, "Ctrl+C exit")

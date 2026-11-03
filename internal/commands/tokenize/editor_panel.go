@@ -48,19 +48,6 @@ func (m *tokenizerEditor) bodyHeight() int {
 	return max(0, rows)
 }
 
-func (s tokenizerEditorStyles) shortcuts(hints string) string {
-	var pairs []string
-	for _, hint := range strings.Split(hints, " · ") {
-		key, action, _ := strings.Cut(hint, " ")
-		pair := s.accent.Render(key)
-		if action != "" {
-			pair += " " + s.muted.Render(action)
-		}
-		pairs = append(pairs, pair)
-	}
-	return strings.Join(pairs, "  ")
-}
-
 func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, body, footer []string) string {
 	width := m.viewWidth()
 	header := title
@@ -101,6 +88,10 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 	}
 	ruleWidth := width - ansi.StringWidth(ruleSuffix)
 	lines := []string{header, terminal.SectionDivider(ruleWidth, m.color, s.fill, s.edge, s.secondary) + ruleSuffix}
+	// Keep the editor content and recovery instructions visible before adding a second shortcut row.
+	if m.modal == tokenizerModalNone && len(body) >= m.bodyHeight() && len(footer) == 2 {
+		footer = footer[1:]
+	}
 	limit := max(0, m.bodyHeight()+1-len(footer))
 	lines = append(lines, body[:min(limit, len(body))]...)
 	lines = append(lines, footer...)

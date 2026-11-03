@@ -162,7 +162,7 @@ func (m *tokenizerEditor) View() tea.View {
 	}
 	lines = append(lines, results...)
 	lines = append(lines, m.noteRows(s, width)...)
-	view.Content = m.panel(s, "Tokenizer", m.countStatus(s), lines, []string{s.shortcuts(m.footer())})
+	view.Content = m.panel(s, "Tokenizer", m.countStatus(s), lines, m.footer(s))
 	return view
 }
 
@@ -337,58 +337,6 @@ func (m *tokenizerEditor) highlightRow(s tokenizerEditorStyles, label, detail st
 	return s.selected.Render("› ") + focused.Render(label) + s.selected.Render(gap+detail+padding)
 }
 
-func (m *tokenizerEditor) footer() string {
-	footer := "Ctrl+C exit · ↑↓ move · Enter open"
-	switch m.focus {
-	case tokenizerFocusText:
-		footer = "Ctrl+C exit · Tab tokens"
-		lastLine := m.lineEnd(m.cursor) == len(m.text)
-		if m.sourceOverflows() {
-			footer += " · PgUp/PgDn"
-		}
-		if ansi.StringWidth(footer+" · Shift+Tab settings") <= m.viewWidth() {
-			footer += " · Shift+Tab settings"
-		} else if lastLine && ansi.StringWidth(footer+" · ↓ options") <= m.viewWidth() {
-			footer += " · ↓ options"
-		}
-	case tokenizerFocusResults:
-		footer = "Ctrl+C exit · Tab edit"
-		if m.failed {
-			footer += " · r retry"
-		} else if len(m.tokens) > 0 {
-			footer += " · ←→ token"
-			width := m.resultWidth()
-			if m.walkResultSegments(0, width, 1, nil) < len(m.tokens) {
-				footer += " · ↑↓ row"
-			}
-			pages := m.resultEnd(0, width) < len(m.tokens)
-			if pages {
-				footer += " · PgUp/PgDn"
-				if ansi.StringWidth(footer) > m.viewWidth() {
-					footer = "Ctrl+C exit · Tab edit · ↔↕ · PgUp/PgDn"
-				}
-			}
-			if ansi.StringWidth(footer+" · Enter details") <= m.viewWidth() {
-				footer += " · Enter details"
-			}
-		}
-		if ansi.StringWidth(footer+" · Shift+Tab settings") <= m.viewWidth() {
-			footer += " · Shift+Tab settings"
-		}
-	case tokenizerFocusOptions:
-		footer = "Ctrl+C exit · Tab tokens"
-		if m.option == 0 {
-			footer += " · ←→ view"
-		} else {
-			footer += " · Enter open"
-		}
-		if ansi.StringWidth(footer+" · ↑↓ move") <= m.viewWidth() {
-			footer += " · ↑↓ move"
-		}
-	}
-	return footer
-}
-
 func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 	title := "Choose view"
 	labels := []string{"Text", "Token IDs", "Bytes"}
@@ -434,10 +382,7 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 			lines = append(lines, "  "+s.muted.Render(related))
 		}
 	}
-	footer := []string{s.shortcuts("↑↓ move · Enter apply · Esc cancel · Ctrl+C exit")}
-	if ansi.StringWidth(footer[0]) > m.viewWidth() {
-		footer = []string{s.shortcuts("↑↓ move · Enter apply"), s.shortcuts("Esc cancel · Ctrl+C exit")}
-	}
+	footer := s.shortcutFooter(m.viewWidth(), []string{"↑↓ choose", "Enter apply"}, []string{"Esc cancel"})
 	return m.panel(s, title, s.muted.Render(status+"  ✓ applied"), lines, footer)
 }
 
@@ -793,17 +738,18 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 	start := max(0, min(m.scroll, total-count))
 	rows, _ := m.modalRows(start, count)
 	pageRange := ""
-	shortcuts := "Esc back · Ctrl+C exit"
+	var navigation []string
 	if total > count {
 		pageRange = s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", start+1, start+len(rows), total))
-		scroll := "↑↓ scroll"
-		if ansi.StringWidth(scroll+" · PgUp/PgDn · "+shortcuts) <= m.viewWidth() {
-			scroll += " · PgUp/PgDn"
+		navigation = []string{"↑↓ scroll"}
+		// Scrolling dialogs reserve one footer row for controls.
+		if shortcutWidth([]string{"↑↓ scroll", tokenizerPageHint, "Esc back", tokenizerExitHint}) <= m.viewWidth() {
+			navigation = append(navigation, tokenizerPageHint)
 		}
-		shortcuts = scroll + " · " + shortcuts
 	}
+	controls := s.shortcutFooter(m.viewWidth(), navigation, []string{"Esc back"})
 	if m.modal == tokenizerModalHelp {
-		return m.panel(s, "Tokenizer help", pageRange, rows, []string{s.shortcuts(shortcuts)})
+		return m.panel(s, "Tokenizer help", pageRange, rows, controls)
 	}
 	title := "Token details"
 	if len(m.tokens) > 0 {
@@ -825,7 +771,7 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 	if total > count {
 		footer = append(footer, pageRange)
 	}
-	footer = append(footer, s.shortcuts(shortcuts))
+	footer = append(footer, controls...)
 	return m.panel(s, title, s.muted.Render(model), rows, footer)
 }
 

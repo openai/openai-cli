@@ -72,7 +72,7 @@ func TestTokenizerEditorTextPositionAppearsOnlyOnOverflow(t *testing.T) {
 			}
 			require.Equal(t, overflowing, strings.Contains(frame, "PgUp/PgDn"))
 			require.Contains(t, frame, "Ctrl+C exit")
-			require.Contains(t, frame, "Tab tokens")
+			require.Contains(t, frame, "Tab inspect tokens")
 			require.LessOrEqual(t, len(strings.Split(frame, "\n")), m.viewHeight())
 			for _, row := range strings.Split(frame, "\n") {
 				require.Less(t, ansi.StringWidth(row), m.width)
@@ -92,7 +92,7 @@ func TestTokenizerEditorMaximumNewlineInputKeepsCaretAndFooter(t *testing.T) {
 	require.Contains(t, frame, "Text 1048577/1048577")
 	require.Equal(t, " ", tokenizerCursorCell(t, view))
 	require.Contains(t, frame, "Ctrl+C exit")
-	require.Contains(t, frame, "Tab tokens")
+	require.Contains(t, frame, "Tab inspect tokens")
 	require.LessOrEqual(t, len(strings.Split(frame, "\n")), m.viewHeight())
 	require.Equal(t, source, m.text)
 }
@@ -341,9 +341,9 @@ func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
 				focus, option int
 				marker, hint  string
 			}{
-				{tokenizerFocusText, 0, "› Text", "Tab tokens"},
-				{tokenizerFocusOptions, 0, "› View", "←→ view"},
-				{tokenizerFocusOptions, 1, "› Model", "Enter open"},
+				{tokenizerFocusText, 0, "› Text", "Tab inspect tokens"},
+				{tokenizerFocusOptions, 0, "› View", "←→ change view"},
+				{tokenizerFocusOptions, 1, "› Model", "Enter choose model"},
 				{tokenizerFocusResults, 0, "› Token ", "Tab edit"},
 			} {
 				m := tokenizerEditorExample()
@@ -366,7 +366,7 @@ func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
 				require.Contains(t, view, state.marker)
 				require.Contains(t, view, state.hint)
 				if state.focus == tokenizerFocusOptions && state.option == 0 {
-					require.NotContains(t, m.footer(), "Enter")
+					require.NotContains(t, strings.Join(m.footer(m.styles()), " "), "Enter")
 				}
 				require.Contains(t, view, "Ctrl+C exit")
 			}
@@ -608,9 +608,11 @@ func TestTokenizerEditorEmptyResultsRetainFocusMarker(t *testing.T) {
 			if state == "failed" {
 				m.Update(tokenizerEditorResultMsg{Revision: m.revision, Err: errors.New("synthetic failure")})
 				m.Update(tokenizerInputPasteErrorMsg{message: "Paste interrupted."})
-				footer := m.styles().shortcuts(m.footer())
-				require.Contains(t, footer, "r retry", "retry remains available after another notice")
-				require.Contains(t, m.View().Content, footer, "the complete retry footer must fit")
+				footer := m.footer(m.styles())
+				require.Contains(t, strings.Join(footer, " "), "r retry", "retry remains available after another notice")
+				for _, row := range footer {
+					require.Contains(t, m.View().Content, row, "the complete retry footer must fit")
+				}
 			}
 			view := m.View().Content
 			require.Contains(t, view, "› Tokens")
@@ -931,7 +933,7 @@ func TestTokenizerEditorMainViewShowsModelNamesWithoutRedundantHints(t *testing.
 			require.NotContains(t, view, "Token 1 of 1")
 			require.NotContains(t, view, "F1 help")
 			require.NotContains(t, view, "Enter newline")
-			require.Contains(t, view, "Tab tokens")
+			require.Contains(t, view, "Tab inspect tokens")
 		}
 	}
 }
@@ -971,6 +973,19 @@ func TestTokenizerEditorCompactErrorsKeepCompleteRecovery(t *testing.T) {
 	// An unrelated successful computation must not erase rejection guidance.
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{{ID: 1, EndByte: 4}}})
 	require.Contains(t, m.View().Content, "unchanged")
+}
+
+func TestTokenizerEditorCompactShortcutsLeaveRoomForPasteRecovery(t *testing.T) {
+	m := tokenizerEditorExample()
+	m.width, m.height, m.tab = 40, 12, 2
+	message := "Paste interrupted. Your text is unchanged; paste the complete text again."
+	m.Update(tokenizerInputPasteErrorMsg{message: message})
+	for _, focus := range []int{tokenizerFocusText, tokenizerFocusResults, tokenizerFocusOptions} {
+		m.focus = focus
+		frame := strings.Join(strings.Fields(ansi.Strip(m.View().Content)), " ")
+		require.Contains(t, frame, message)
+		require.Contains(t, frame, "Ctrl+C exit")
+	}
 }
 
 func TestTokenizerEditorRecoveryMessagesRemainCompleteAcrossFocus(t *testing.T) {
@@ -1120,8 +1135,8 @@ func TestTokenizerEditorStudioAndCompactLayout(t *testing.T) {
 				require.NotRegexp(t, `Tokens +0 tokens`, rows[header+2])
 				m.focus = tokenizerFocusResults
 				require.Contains(t, ansi.Strip(m.View().Content), "› 0 tokens")
-				require.NotContains(t, m.footer(), "Enter details")
-				require.NotContains(t, m.footer(), "←→ token")
+				require.NotContains(t, strings.Join(m.footer(m.styles()), " "), "Enter open details")
+				require.NotContains(t, strings.Join(m.footer(m.styles()), " "), "←→ select token")
 			} else {
 				require.Contains(t, rows[header], "0 tokens")
 			}

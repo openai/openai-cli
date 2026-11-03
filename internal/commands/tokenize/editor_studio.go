@@ -40,7 +40,7 @@ func (m *tokenizerEditor) studioView(s tokenizerEditorStyles, left []string) str
 			rows[i] += right[i]
 		}
 	}
-	return m.panel(s, "Tokenizer", "", rows, []string{s.shortcuts(m.footer())})
+	return m.panel(s, "Tokenizer", "", rows, m.footer(s))
 }
 
 func (m *tokenizerEditor) studioResults(s tokenizerEditorStyles, width int) []string {
