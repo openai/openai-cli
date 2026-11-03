@@ -103,8 +103,8 @@ case $version in
     "openai version "*.*.*) ;;
     *) fail 'The archive binary did not report an OpenAI CLI release version.' ;;
 esac
-# Ask the staged CLI to run the same local capability check as its updater.
-readiness=$(env -i HOME="$HOME" PATH="$PATH" OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_archive_verifier 2>/dev/null) || readiness=unavailable
+# Check the verifier that the documented PATH will select after installation.
+readiness=$(env -i HOME="$HOME" PATH="$HOME/.openai/bin:$PATH" OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_archive_verifier 2>/dev/null) || readiness=unavailable
 case $readiness in
     ready) advice='GitHub CLI supports update verification.' ;;
     missing)

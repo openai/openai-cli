@@ -47,6 +47,31 @@ func TestArchiveInstall(t *testing.T) {
 				t.Error(err)
 			}
 		})
+		t.Run("verifier selected after setup", func(t *testing.T) {
+			home := t.TempDir()
+			managed := filepath.Join(home, ".openai", "bin")
+			if err := os.MkdirAll(managed, 0700); err != nil {
+				t.Fatal(err)
+			}
+			oldPath := t.TempDir()
+			for name, body := range map[string]string{
+				filepath.Join(oldPath, "gh"): "#!/bin/sh\necho ready\n",
+				filepath.Join(managed, "gh"): "#!/bin/sh\necho unavailable\n",
+				binary:                       "#!/bin/sh\ncase $1 in --version) echo 'openai version 1.2.3';; __openai_archive_verifier) gh;; esac\n",
+			} {
+				if err := os.WriteFile(name, []byte(body), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := run(home, oldPath+":"+path)
+			cmd.Args = append(cmd.Args, "--require-gh")
+			if output, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(output), "verification is unavailable") {
+				t.Fatalf("installer accepted the previous PATH: %v: %s", err, output)
+			}
+			if _, err := os.Lstat(filepath.Join(managed, "openai")); !os.IsNotExist(err) {
+				t.Fatalf("installed before verification: %v", err)
+			}
+		})
 		for _, tc := range []struct{ readiness, hint string }{
 			{"missing", "Install GitHub CLI"},
 			{"unavailable", "Update GitHub CLI"},
@@ -83,6 +108,7 @@ func TestArchiveInstall(t *testing.T) {
 	})
 
 	if runtime.GOOS == "darwin" {
+
 		for _, tc := range []struct {
 			target string
 			option string
