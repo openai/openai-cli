@@ -16,14 +16,53 @@
   <img src="./assets/openai-cli.png" alt="OpenAI CLI terminal showing commands for images, files, batches, and JSON output" width="80%">
 </p>
 
-Call the OpenAI REST API from your terminal or shell scripts. Generate images, upload
-files, submit batches, and inspect API results without writing an application.
+> Looking for the coding agent? Use [Codex CLI](https://developers.openai.com/codex/cli).
 
-> [!NOTE]
-> **OpenAI CLI or Codex CLI?** Use `openai` when you want to call a specific API
-> or put API operations in a script. Use [Codex CLI](https://developers.openai.com/codex/cli)
-> (`codex`) when you want a coding agent to work on a project: read and edit code,
-> run commands, and help implement or debug a change.
+<!-- x-release-please-start-version -->
+
+## Installation
+
+One `openai` executable includes all commands in this CLI.
+
+<a id="installing-with-homebrew"></a>
+
+**macOS with Homebrew**. Paste this command into your terminal.
+
+```sh
+brew install --cask openai/tools/openai
+```
+
+<a id="installing-a-prebuilt-binary"></a>
+
+**Linux**. Install the [package for your distribution](docs/installation.md#linux).
+
+**Windows**. Extract the [Windows ZIP](docs/installation.md#windows). Run `.\openai.exe --help` from the extracted directory.
+
+<a id="installing-with-go"></a>
+
+For a Mac without Homebrew, choose the [macOS ZIP](docs/installation.md#installing-a-prebuilt-binary).
+Developers can also [install with Go](docs/installation.md#installing-with-go).
+
+**Already installed?** [Upgrade the Homebrew cask](docs/installation.md#installing-with-homebrew) or [enable automatic updates](docs/automatic-updates.md).
+
+<!-- x-release-please-end -->
+
+## Authentication
+
+Check the installation without an API key.
+
+```sh
+openai --help
+```
+
+To make API requests, follow the instructions this command prints for your shell.
+
+```sh
+openai help setup
+```
+
+On Windows, use `.\openai.exe` from the extracted directory.
+For scripts, supply `OPENAI_API_KEY` through your environment or secret manager. [Create an API key](https://platform.openai.com/settings/organization/api-keys)
 
 ## Use the CLI from a coding agent
 
@@ -56,8 +95,11 @@ Start a new agent session in the target project. For example, ask “Upload requ
 
 ## Things to try
 
-These examples use an API key; see [installation](#installation) and
-[authentication](#authentication) below.
+### Send a request
+
+```sh
+openai responses create --model gpt-5.5 --input "Say this is a test"
+```
 
 ### Generate an image and save it locally
 
@@ -87,8 +129,7 @@ Submit a JSONL request file, then wait for the batch and download its results:
 
 ```sh
 openai files upload requests.jsonl --purpose batch
-openai batches create --input-file-id file-example \
-  --endpoint /v1/responses --completion-window 24h
+openai batches create --input-file-id file-example --endpoint /v1/responses --completion-window 24h
 openai batches wait batch_example --output-dir ./results
 ```
 
@@ -105,80 +146,6 @@ openai files list --format json > files.json
 Choose `--format json` for a JSON document or `--format jsonl` for records.
 The default output is readable text, **even in pipes**. The first example uses
 [jq](https://jqlang.org/).
-
-<!-- x-release-please-start-version -->
-
-## Installation
-
-### Installing a prebuilt binary
-
-Download the archive for your operating system and architecture from
-[GitHub Releases](https://github.com/openai/openai-cli/releases/latest).
-Binaries are available for macOS, Linux, and Windows. Extract the archive and
-place `openai` (`openai.exe` on Windows) in a directory on your `PATH`.
-
-### Installing with Homebrew
-
-```sh
-brew install openai/tools/openai
-```
-
-### Installing with Go
-
-Requires [Go 1.26 or later](https://go.dev/doc/install).
-
-```sh
-go install 'github.com/openai/openai-cli/cmd/openai@latest'
-```
-
-Once you have run `go install`, the binary is placed in your Go bin directory:
-
-- **Default location**: `$HOME/go/bin` (or `$GOPATH/bin` if GOPATH is set)
-- **Check your path**: Run `go env GOPATH` to see the base directory
-
-If commands aren't found after installation, add the Go bin directory to your PATH:
-
-```sh
-# Add to your shell profile (.zshrc, .bashrc, etc.)
-export PATH="$PATH:$(go env GOPATH)/bin"
-```
-
-<!-- x-release-please-end -->
-
-Supported self-managed release installations prepare automatic updates during eligible interactive runs.
-Package-manager and Go installations retain update notices and their existing installation ownership.
-Set `OPENAI_CLI_NO_AUTO_UPDATE=1` to disable automatic installation, or `OPENAI_CLI_NO_UPDATE_CHECK=1` to disable all update checks.
-See [automatic updates](docs/automatic-updates.md) for installation requirements, exact-version pins, and activation behavior.
-
-## Authentication
-
-Run the setup guide to enter your API key safely:
-
-```sh
-openai help setup
-```
-
-For scripts, supply `OPENAI_API_KEY` through your environment or secret manager.
-Create a key in [API settings](https://platform.openai.com/settings/organization/api-keys).
-
-Try a request:
-
-```sh
-openai responses create \
-  --model gpt-5.5 \
-  --input "Say this is a test"
-```
-
-Admin endpoints use `OPENAI_ADMIN_KEY`, a separate
-[admin API key](https://platform.openai.com/settings/organization/admin-keys).
-For example, retrieve one day of organization usage:
-
-```sh
-openai admin organization usage completions \
-  --start-time 1735689600 \
-  --end-time 1735776000 \
-  --bucket-width 1d
-```
 
 ## Usage
 
@@ -199,6 +166,16 @@ openai admin organization --help
 `openai help COMMAND` and `openai COMMAND --help` show the same page.
 Existing colon-separated commands, such as `openai admin:organization:usage completions`,
 also work.
+
+### Admin requests
+
+Admin endpoints use `OPENAI_ADMIN_KEY`, a separate
+[admin API key](https://platform.openai.com/settings/organization/admin-keys).
+For example, retrieve one day of organization usage:
+
+```sh
+openai admin organization usage completions --start-time 1735689600 --end-time 1735776000 --bucket-width 1d
+```
 
 ### Output and errors
 

@@ -14,7 +14,7 @@ import (
 
 const (
 	installationURL = "https://github.com/openai/openai-cli#installation"
-	brewGuidance    = "brew upgrade --cask openai/tools/openai"
+	brewGuidance    = "brew update && brew upgrade --cask openai/tools/openai"
 	goGuidance      = "go install github.com/openai/openai-cli/cmd/openai@latest"
 	manualGuidance  = installationURL
 )
