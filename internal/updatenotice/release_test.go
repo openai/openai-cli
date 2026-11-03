@@ -330,6 +330,31 @@ func TestLatestReleaseRejectsUntrustedMetadata(t *testing.T) {
 	}
 }
 
+func TestHomebrewReleaseRejectsUnexpectedMetadata(t *testing.T) {
+	for name, body := range map[string]string{
+		"GitHub tag":       releaseBody("v2.0.0"),
+		"wrong cask":       strings.Replace(caskBody("2.0.0"), `cask "openai"`, `cask "another"`, 1),
+		"duplicate":        strings.Replace(caskBody("2.0.0"), "  binary", "  version \"1.0.0\"\n  binary", 1),
+		"truncated":        strings.TrimSuffix(caskBody("2.0.0"), "end\n"),
+		"nonliteral":       strings.Replace(caskBody("2.0.0"), `"2.0.0"`, "get_version", 1),
+		"missing version":  "cask \"openai\" do\n  binary \"openai\"\nend\n",
+		"prerelease":       caskBody("2.0.0-rc.1"),
+		"leading zero":     caskBody("02.0.0"),
+		"unexpected v":     caskBody("v2.0.0"),
+		"control sequence": caskBody("2.0.0\x1b[1m"),
+		"oversized":        caskBody("2.0.0") + strings.Repeat(" ", maxReleaseBytes),
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return response(body), nil
+			})}
+			if version := latestHomebrewRelease(t.Context(), client); version != "" {
+				t.Fatalf("reported cask version %q", version)
+			}
+		})
+	}
+}
+
 func TestLatestReleaseDoesNotFollowRedirects(t *testing.T) {
 	client := releaseClient()
 	calls := 0

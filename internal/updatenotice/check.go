@@ -69,6 +69,14 @@ func check(ctx context.Context, current, directory string, now time.Time, client
 	}
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
+	command := guidance(current)
+	latest := latestRelease
+	if command == brewGuidance {
+		// Older versions cached GitHub tags, which can precede cask publication.
+		// Use a separate private directory for the tap's version and throttle.
+		directory += "-homebrew"
+		latest = latestHomebrewRelease
+	}
 	cache, err := openCache(ctx, directory)
 	if err != nil {
 		return ""
@@ -84,7 +92,7 @@ func check(ctx context.Context, current, directory string, now time.Time, client
 		if cache.save(state) != nil || ctx.Err() != nil {
 			return ""
 		}
-		state.Latest = latestRelease(ctx, client)
+		state.Latest = latest(ctx, client)
 		if state.Latest == "" || ctx.Err() != nil {
 			return ""
 		}
@@ -98,18 +106,14 @@ func check(ctx context.Context, current, directory string, now time.Time, client
 	if state.Notified != 0 && now.Sub(time.Unix(state.Notified, 0)) < noticeInterval {
 		return ""
 	}
-	command := guidanceForRelease(guidance(current), state.Latest)
+	command = guidanceForRelease(command, state.Latest)
 	state.Notified = now.Unix()
 	if ctx.Err() != nil || cache.save(state) != nil {
 		return ""
 	}
-	if command == brewGuidance {
-		const next = ". Once in Homebrew, run " + brewGuidance
-		release := "GitHub v" + state.Latest
-		if len(release)+len(next) > 80 {
-			release = "New on GitHub"
-		}
-		return release + next
+	notice := "Update to " + state.Latest + ": " + command
+	if command == brewGuidance && len(notice) > 80 {
+		return "Update available: " + command
 	}
-	return "Update to " + state.Latest + ": " + command
+	return notice
 }
