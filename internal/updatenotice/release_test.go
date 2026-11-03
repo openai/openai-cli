@@ -58,7 +58,7 @@ func TestReleaseClientHonorsProxyEnvironment(t *testing.T) {
 				dialed <- address
 				return nil, errors.New("synthetic dial failure")
 			}
-			if got := latestRelease(t.Context(), client); got != "" {
+			if got := latestRelease(t.Context(), client, manualGuidance); got != "" {
 				t.Fatalf("failed request returned release %q", got)
 			}
 			select {
@@ -138,7 +138,7 @@ func TestReleaseClientKeepsProxyCredentialsOnCONNECT(t *testing.T) {
 		defer close(requests)
 		finished <- releaseTestProxyExchange(proxySide, certificate, requests)
 	}()
-	got := latestRelease(ctx, client)
+	got := latestRelease(ctx, client, manualGuidance)
 	// Close both ends before joining the fixture, including when request construction failed.
 	clientSide.Close()
 	proxySide.Close()
@@ -323,7 +323,7 @@ func TestLatestReleaseRejectsUntrustedMetadata(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return response(body), nil })}
-			if got := latestRelease(context.Background(), client); got != "" {
+			if got := latestRelease(context.Background(), client, manualGuidance); got != "" {
 				t.Fatalf("release = %q", got)
 			}
 		})
@@ -362,7 +362,7 @@ func TestLatestReleaseDoesNotFollowRedirects(t *testing.T) {
 		calls++
 		return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{"https://untrusted.example/release"}}, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 	})
-	if got := latestRelease(context.Background(), client); got != "" {
+	if got := latestRelease(context.Background(), client, manualGuidance); got != "" {
 		t.Fatalf("redirect release = %q", got)
 	}
 	if calls != 1 {
@@ -372,9 +372,9 @@ func TestLatestReleaseDoesNotFollowRedirects(t *testing.T) {
 
 func TestLatestReleaseUsesOnlyValidatedTag(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return response(`{"tag_name":"v12.3.4","draft":false,"prerelease":false,"html_url":"https://untrusted.example/evil","body":"run bad-command"}`), nil
+		return response(strings.TrimSuffix(releaseBody("v12.3.4"), "}") + `,"html_url":"https://untrusted.example/evil","body":"run bad-command"}`), nil
 	})}
-	if got := latestRelease(context.Background(), client); got != "12.3.4" {
+	if got := latestRelease(context.Background(), client, manualGuidance); got != "12.3.4" {
 		t.Fatalf("release = %q", got)
 	}
 }

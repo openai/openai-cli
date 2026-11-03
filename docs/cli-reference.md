@@ -177,7 +177,7 @@ When that cask has a newer version, the notice gives `brew update && brew upgrad
 Go commands require a verified binary, an available Go command, and an explicit matching `GOBIN`.
 Custom `GOOS` or `GOARCH` settings select the installation guide instead.
 Go upgrades to major version 2 or later also select the installation guide.
-Unknown installations receive the installation-guide link instead.
+For installations that need the guide, the CLI waits for GitHub to publish a matching archive for the running platform.
 Package-manager and Go installations retain their existing installation ownership.
 
 Other installations check public GitHub release metadata. Both checks run without API credentials, at most once daily.

@@ -102,9 +102,9 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 		return mainDispatchResult{result.Code, result.Stdout, result.Stderr}
 	}
 	message := "Updated to v" + app.Version + "."
-	noticeDirectory := filepath.Join(home, "cache", "openai-cli", "update-notice")
+	noticeDirectory := filepath.Join(home, "cache", "openai-cli", "update-notice-archive-"+runtime.GOOS+"-"+runtime.GOARCH)
 	if runtime.GOOS == "darwin" {
-		noticeDirectory = filepath.Join(home, "Library", "Caches", "openai-cli", "update-notice")
+		noticeDirectory = filepath.Join(home, "Library", "Caches", "openai-cli", "update-notice-archive-"+runtime.GOOS+"-"+runtime.GOARCH)
 	}
 	if err := os.MkdirAll(noticeDirectory, 0700); err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 		writeState()
 		first := run("", nil)
 		second := run("", nil)
-		if first.code != 0 || second.code != 0 || first.stdout != second.stdout {
+		if first.code != 0 || second.code != 0 || !sameUpdatePTYOutput(first.stdout, second.stdout) {
 			t.Fatal("updater changed help or exit status")
 		}
 		if strings.TrimSpace(first.stderr) != message || strings.Contains(second.stderr, "Updated to") {

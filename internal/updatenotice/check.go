@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -70,14 +71,7 @@ func check(ctx context.Context, current, directory string, now time.Time, client
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
 	command := guidance(current)
-	latest := latestRelease
-	if command == brewGuidance {
-		// Older versions cached GitHub tags, which can precede cask publication.
-		// Use a separate private directory for the tap's version and throttle.
-		directory += "-homebrew"
-		latest = latestHomebrewRelease
-	}
-	cache, err := openCache(ctx, directory)
+	cache, err := openCache(ctx, noticeDirectory(directory, command))
 	if err != nil {
 		return ""
 	}
@@ -92,7 +86,11 @@ func check(ctx context.Context, current, directory string, now time.Time, client
 		if cache.save(state) != nil || ctx.Err() != nil {
 			return ""
 		}
-		state.Latest = latest(ctx, client)
+		if command == brewGuidance {
+			state.Latest = latestHomebrewRelease(ctx, client)
+		} else {
+			state.Latest = latestRelease(ctx, client, command)
+		}
 		if state.Latest == "" || ctx.Err() != nil {
 			return ""
 		}
@@ -116,4 +114,17 @@ func check(ctx context.Context, current, directory string, now time.Time, client
 		return "Update available: " + command
 	}
 	return notice
+}
+
+// Older shared caches contain a tag without evidence of a downloadable archive.
+// Go installations can use the source tag for v0/v1, but need an archive for later majors.
+func noticeDirectory(base, command string) string {
+	if command == brewGuidance {
+		return base + "-homebrew"
+	}
+	channel := "archive"
+	if command == goGuidance {
+		channel = "go"
+	}
+	return base + "-" + channel + "-" + runtime.GOOS + "-" + runtime.GOARCH
 }
