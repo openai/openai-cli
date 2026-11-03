@@ -90,9 +90,12 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 			lines[2] = "    " + ansi.Truncate(imagePickerLine(m.note), max(0, m.width-6), "…")
 		}
 		rows, count, columns, native, expanded := w.expandedRows, w.expandedRowCount(), w.expandedColumns, w.expandedNativeRows > 0, true
-		if w.expandedIndex != w.selected || w.expandedSize.width != m.width || w.expandedSize.height != m.height || count == 0 {
+		if w.expandedIndex != w.selected || w.expandedSize.width != m.width || w.expandedSize.height != m.height || count == 0 || w.konsole && w.expandedSize != w.konsoleViewport {
 			rows = entry.rows
 			count, columns, native, expanded = entry.rowCount(), entry.columns, entry.nativeRows > 0, false
+			if w.konsole && entry.protocol != "" {
+				rows, count, native = []string{"Preparing preview…"}, 1, false
+			}
 		}
 		if count == 0 {
 			rows = []string{"Preview disabled or unavailable. The saved file is unchanged."}
@@ -174,6 +177,11 @@ func (p *imagePickerInline) prepareExpanded() {
 		}
 	}
 	entry := w.images[index]
+	if w.konsole && expanded && entry.protocol != "" {
+		// This copy belongs to the temporary view. Keep the saved entry's
+		// automatic-preview protocol, including disabled previews, unchanged.
+		entry.protocol = "iterm-konsole"
+	}
 	if w.previewPending && w.previewIndex == index && w.previewSize == size && w.previewExpanded == expanded && w.previewReload == reload && w.previewColumns == columns {
 		return
 	}
@@ -194,16 +202,32 @@ func (p *imagePickerInline) prepareExpanded() {
 	ctx, cancel := context.WithCancel(parent)
 	w.previewCancel = cancel
 	w.previewWorkers.Add(1)
+	if w.previewGate == nil {
+		w.previewGate = make(chan struct{}, 1)
+	}
+	gate := w.previewGate
 	prepare := w.prepareRows
 	if prepare == nil {
 		prepare = imagePickerPreviewRows
 	}
 	go func() {
+		select {
+		case gate <- struct{}{}:
+		case <-ctx.Done():
+			w.previewWorkers.Done()
+			return
+		}
+		if ctx.Err() != nil {
+			<-gate
+			w.previewWorkers.Done()
+			return
+		}
 		var releaseFont func()
 		if entry.protocol == "font" {
 			var err error
 			releaseFont, err = w.acquireFontPreview(ctx)
 			if err != nil {
+				<-gate
 				w.previewWorkers.Done()
 				return
 			}
@@ -218,6 +242,7 @@ func (p *imagePickerInline) prepareExpanded() {
 		if releaseFont != nil {
 			releaseFont()
 		}
+		<-gate
 		if failure != nil {
 			w.previewErrorMu.Lock()
 			w.previewError = errors.Join(w.previewError, failure)

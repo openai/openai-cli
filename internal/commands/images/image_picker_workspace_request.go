@@ -141,7 +141,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 				w.expandedNativeRows, w.expandedRows = len(msg.rows), nil
 			}
 			w.discardNativeGeometry(msg.index, true, msg.columns, w.expandedNativeRows)
-			if msg.protocol != "" {
+			if msg.protocol != "" && !w.konsole {
 				w.images[msg.index].protocol = msg.protocol
 			}
 			if w.expanded {

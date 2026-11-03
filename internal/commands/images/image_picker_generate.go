@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -39,7 +40,14 @@ func imagePickerWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 		}
 		// Keep the executable binding through initial input and every request.
 		// Each native writer still finishes before the picker reads input again.
-		ctx, closeOutput := prepareNativeImageOutput(ctx, command)
+		var closeOutput func() error
+		if interactiveImageEligible(true, true, os.Getenv, runtime.GOOS) {
+			// Bind before any nested writer so group signals leave a helper
+			// available to restore the temporary screen and terminal modes.
+			ctx, closeOutput = terminalimage.PrepareInteractiveImageOutput(ctx, out)
+		} else {
+			ctx, closeOutput = prepareNativeImageOutput(ctx, command)
+		}
 		defer func() {
 			resultErr = errors.Join(resultErr, closeOutput())
 		}()

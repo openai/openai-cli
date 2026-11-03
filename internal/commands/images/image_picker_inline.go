@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
+	"github.com/openai/openai-cli/internal/terminalimage"
 )
 
 // imagePickerInline keeps one transient logical line below the shell transcript.
@@ -266,7 +267,17 @@ func (p *imagePickerInline) close() {
 	if p.restoreWrap {
 		cleanup += ansi.ResetModeAutoWrap
 	}
-	_, _ = io.WriteString(p.output, cleanup)
+	if p.workspace != nil && p.workspace.konsole {
+		parent := p.workspace.context
+		if parent == nil {
+			parent = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 250*time.Millisecond)
+		p.err = errors.Join(p.err, imagePickerDisplayFailure(terminalimage.WriteControl(ctx, p.workspace.out, cleanup)))
+		cancel()
+	} else {
+		_, _ = io.WriteString(p.output, cleanup)
+	}
 	p.started, p.modesActive = false, false
 	p.anchored, p.cursorStyled, p.cursor = false, false, nil
 }
