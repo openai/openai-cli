@@ -30,7 +30,8 @@ func TestMainPipingHelp(t *testing.T) {
 		for _, example := range []string{
 			"printf hello | openai tokenizer view",
 			"printf hello | openai tokenizer inspect --format json",
-			"printf hello | openai tokenizer count --transform token_count",
+			"printf hello | openai tokenizer count -n",
+			"count --transform input_bytes",
 			"openai responses create --model MODEL --input @- < prompt.txt",
 			"openai files create --purpose user_data --file - < notes.txt",
 			"chat completions create",

@@ -13,9 +13,10 @@ Examples use Bash or Zsh.
 TOKENIZER
    Pipe UTF-8 text into view to open the editor in your terminal.
        {{suggestFor . (printf "printf hello | %s tokenizer view" $run) "bash" "zsh"}}
-   For scripts, inspect writes JSON and count can print just the token count.
+   Use count -n for the token count or count --transform input_bytes for bytes.
+       {{suggestFor . (printf "printf hello | %s tokenizer count -n" $run) "bash" "zsh"}}
+   Use inspect --format json for token IDs and byte boundaries.
        {{suggestFor . (printf "printf hello | %s tokenizer inspect --format json" $run) "bash" "zsh"}}
-       {{suggestFor . (printf "printf hello | %s tokenizer count --transform token_count" $run) "bash" "zsh"}}
 
 API REQUESTS
    Use @- for one text field, or --file - for an upload that accepts stdin.

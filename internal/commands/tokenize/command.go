@@ -62,7 +62,7 @@ func tokenizerInputCommand(name string, inspect bool) *cli.Command {
   {{$bin}} tokenizer {{.Name}} --text "Hello, world!"
 
 ` + cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp
-	return &cli.Command{
+	cmd := &cli.Command{
 		Name: name, Usage: usage, HideHelpCommand: true,
 		CustomHelpTemplate: help,
 		Metadata:           map[string]any{"local-help-full": help},
@@ -82,6 +82,12 @@ func tokenizerInputCommand(name string, inspect bool) *cli.Command {
 			return handleTokenizer(ctx, command, inspect)
 		},
 	}
+	if !inspect {
+		cmd.Flags = append(cmd.Flags, &cli.BoolFlag{
+			Name: "number", Aliases: []string{"n"}, Usage: "Print only the token count", OnlyOnce: true,
+		})
+	}
+	return cmd
 }
 
 func tokenizerOutputFormat(command *cli.Command) (string, error) {
@@ -109,6 +115,14 @@ func handleTokenizer(ctx context.Context, command *cli.Command, inspect bool) er
 	if err != nil {
 		return err
 	}
+	root := command.Root()
+	options := clioutput.FormatOptions{Format: format, Transform: root.String("transform"), RawOutput: root.Bool("raw-output")}
+	if !inspect && command.Bool("number") {
+		if root.IsSet("transform") && options.Transform != "token_count" {
+			return &localcommands.LocalError{Message: "Choose --number or a different --transform field."}
+		}
+		options.Transform = "token_count"
+	}
 	encoding := command.String("encoding")
 	if !tokenizer.IsSupportedEncoding(encoding) {
 		return &localcommands.LocalError{Message: "Choose a tokenizer encoding: " + strings.Join(tokenizer.SupportedEncodings(), ", ") + ". Model names are not encodings."}
@@ -126,8 +140,6 @@ func handleTokenizer(ctx context.Context, command *cli.Command, inspect bool) er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	root := command.Root()
-	options := clioutput.FormatOptions{Format: format, Transform: root.String("transform"), RawOutput: root.Bool("raw-output")}
 	return tokenizerOutputFailure(writeTokenizerResult(ctx, root.Writer, result, inspect, options))
 }
 

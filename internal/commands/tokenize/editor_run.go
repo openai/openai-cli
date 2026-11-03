@@ -66,7 +66,7 @@ func handleTokenizerEditor(ctx context.Context, command *cli.Command) error {
 				"Commands\n  view       Explore piped text in the editor\n  count      Count exact plain-text tokens\n  inspect    Show token IDs and byte boundaries\n"+
 				"  encodings  List available encodings\n  licenses   Show bundled notices\n\n"+
 				"Explore a Git diff in the editor\n  git diff | %[1]s tokenizer view\n\n"+
-				"Pipe UTF-8 text into a script command\n  echo hello | %[1]s tokenizer count --transform token_count\n  echo hello | %[1]s tokenizer inspect --format json\n", readable.Text(invocation))
+				"Pipe UTF-8 text into a script command\n  echo hello | %[1]s tokenizer count -n\n  echo hello | %[1]s tokenizer inspect --format json\n", readable.Text(invocation))
 		return tokenizerOutputFailure(err)
 	}
 	var draft string

@@ -117,7 +117,7 @@ openai tokenizer inspect --text "Hi!" --encoding cl100k_base
 openai tokenizer count --text "    return value" --encoding p50k_base
 openai tokenizer count --file prompt.txt
 printf 'Hello, world!' | openai tokenizer count
-printf 'Hello, world!' | openai tokenizer count --transform token_count
+printf 'Hello, world!' | openai tokenizer count -n
 openai --format json tokenizer inspect --file prompt.txt
 openai tokenizer encodings
 openai tokenizer licenses
@@ -224,8 +224,9 @@ See [configuration basics](https://learn.chatgpt.com/docs/config-file/config-bas
 Tokenizer subcommands and Codex support `--format auto`, `text`, and `json`.
 Bare `openai tokenizer` requires `count` or `inspect` for JSON output.
 `auto` produces readable text through pipes by default.
-`tokenizer count --transform token_count` writes one number followed by a newline.
-The input `Hello, world!` produces `4`. Use `input_bytes` to select the byte count.
+`tokenizer count --number` (or `-n`) writes only the token count followed by a newline.
+The input `Hello, world!` produces `4`. You can also select the count with `--transform token_count`.
+Use `--transform input_bytes` to select the byte count.
 Use `--transform encoding --raw-output` to print the encoding name without JSON quotes.
 Extraction follows the shared CLI behavior. A missing path returns the complete count object.
 For `inspect`, use `--format json` to pipe the complete token records to a JSON reader.

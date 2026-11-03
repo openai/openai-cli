@@ -257,6 +257,10 @@ func TestTokenizerCountExtractsFieldsFromPipedInput(t *testing.T) {
 	}{
 		{"", []string{"--transform", "token_count"}, "0\n"},
 		{"Hello, world!", []string{"--transform", "token_count"}, "4\n"},
+		{"Hello, world!", []string{"-n"}, "4\n"},
+		{"", []string{"--number"}, "0\n"},
+		{"Hello, world!", []string{"--number", "--transform", "token_count", "--format", "json"}, "4\n"},
+		{"Hello, world!", []string{"-n", "--format", "text", "--raw-output"}, "4\n"},
 		{"é\r\n", []string{"--transform", "input_bytes"}, "4\n"},
 		{"!", []string{"--transform", "encoding"}, "\"o200k_base\"\n"},
 		{"!", []string{"--transform", "encoding", "--raw-output"}, "o200k_base\n"},
@@ -280,6 +284,23 @@ func TestTokenizerCountExtractsFieldsFromPipedInput(t *testing.T) {
 		if err := json.Unmarshal(out.Bytes(), &fields); err != nil || !reflect.DeepEqual(fields, want) {
 			t.Fatalf("flags %v lost the count record: %s", flags, out.String())
 		}
+	}
+}
+
+func TestTokenizerCountNumberRejectsConflictingTransformBeforeReading(t *testing.T) {
+	var out bytes.Buffer
+	root := tokenizerTestRoot(tokenizerRejectReader{}, &out)
+	err := root.Run(t.Context(), []string{"openai", "--transform", "input_bytes", "tokenizer", "count", "--number"})
+	if err == nil || !strings.Contains(err.Error(), "--transform") || out.Len() != 0 {
+		t.Fatalf("conflicting count selection: error %v, stdout %q", err, out.String())
+	}
+}
+
+func TestTokenizerInspectRejectsNumber(t *testing.T) {
+	root := tokenizerTestRoot(tokenizerRejectReader{}, io.Discard)
+	err := root.Run(t.Context(), []string{"openai", "tokenizer", "inspect", "--number"})
+	if err == nil || !strings.Contains(err.Error(), "number") {
+		t.Fatalf("inspect should reject the count-only flag, got %v", err)
 	}
 }
 

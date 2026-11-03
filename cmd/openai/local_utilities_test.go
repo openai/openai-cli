@@ -299,6 +299,11 @@ func TestMainLocalUtilitiesHelpAndCompletion(t *testing.T) {
 				require.Empty(t, got.stderr)
 				require.Contains(t, got.stdout, "openai "+route.path)
 				require.Contains(t, got.stdout, route.flag)
+				if route.path == "tokenizer count" {
+					require.Contains(t, got.stdout, "--number")
+					require.Contains(t, got.stdout, "tokenizer count -n")
+					require.Contains(t, got.stdout, "--transform")
+				}
 				require.NotContains(t, got.stdout, "Key setup:", "local help must not imply an API-key requirement")
 				for _, line := range strings.Split(got.stdout, "\n") {
 					require.LessOrEqual(t, len(line), 79, "local help prose must wrap: %q", line)
