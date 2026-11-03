@@ -197,8 +197,8 @@ func TestTokenizerEditorHelpGroupsAndWorkspaceShortcuts(t *testing.T) {
 		help := strings.Join(strings.Fields(ansi.Strip(strings.Join(rows, "\n"))), " ")
 		for _, text := range []string{
 			"Controls", "Views and details",
-			"Tab Switch between Text and Tokens. Shift+Tab opens View settings.",
-			"← → In Text, move the cursor. In View, switch views. In Tokens, select a token.",
+			"Tab Inspect tokens or edit at the selected token. Shift+Tab opens settings.",
+			"← → In Text, move the cursor. In View, switch views. In Tokens, ← → select tokens and ↑ ↓ move a row.",
 			"PgUp/PgDn Page through text, tokens, or dialog rows.",
 			"Ctrl+← → Move between words in Text.",
 			"v / m / d Outside Text, open View, Model, or Details.",

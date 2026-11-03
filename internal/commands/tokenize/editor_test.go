@@ -552,10 +552,8 @@ func TestTokenizerEditorPickerNavigation(t *testing.T) {
 	tokenizerEditorKey(m, tea.KeyDown)
 	require.Equal(t, tokenizerFocusResults, m.focus)
 	tokenizerEditorKey(m, tea.KeyUp)
-	require.Equal(t, tokenizerFocusOptions, m.focus)
-	require.Equal(t, 1, m.option)
-	tokenizerEditorKey(m, tea.KeyUp)
-	tokenizerEditorKey(m, tea.KeyUp)
+	require.Equal(t, tokenizerFocusResults, m.focus, "an empty grid has no row above")
+	tokenizerEditorKey(m, tea.KeyTab)
 	require.Equal(t, tokenizerFocusText, m.focus)
 	for _, step := range []struct {
 		mod   tea.KeyMod
@@ -585,12 +583,14 @@ func TestTokenizerEditorResultsSeparateVerticalAndTokenNavigation(t *testing.T) 
 			cursor, revision := m.cursor, m.revision
 			require.Nil(t, tokenizerEditorKey(m, tea.KeyDown))
 			require.Equal(t, tokenizerFocusResults, m.focus, "Down stays at the bottom section")
-			require.Equal(t, selected, m.selected, "vertical keys must not select tokens")
-			require.Nil(t, tokenizerEditorKey(m, tea.KeyUp))
-			require.Equal(t, tokenizerFocusOptions, m.focus, "Up returns directly to settings from every token")
-			require.Equal(t, 1, m.option)
 			require.Equal(t, selected, m.selected)
-			require.Nil(t, tokenizerEditorKey(m, tea.KeyDown))
+			require.Nil(t, tokenizerEditorKey(m, tea.KeyUp))
+			require.Equal(t, tokenizerFocusResults, m.focus)
+			require.Equal(t, selected, m.selected, "there is no row above this token")
+			require.Nil(t, tokenizerEditorModifiedKey(m, tea.KeyTab, tea.ModShift))
+			require.Equal(t, tokenizerFocusOptions, m.focus)
+			require.Equal(t, selected, m.selected)
+			require.Nil(t, tokenizerEditorKey(m, tea.KeyTab))
 			require.Equal(t, tokenizerFocusResults, m.focus)
 			require.Equal(t, selected, m.selected, "returning must preserve the selected token")
 			require.Nil(t, tokenizerEditorKey(m, tea.KeyLeft))
@@ -868,7 +868,6 @@ func TestTokenizerEditorEnteringTextResyncsManualTokenSelection(t *testing.T) {
 		modal         int
 		key           tea.KeyPressMsg
 	}{
-		{"Tab", tokenizerFocusResults, 0, tokenizerModalNone, tea.KeyPressMsg{Code: tea.KeyTab}},
 		{"Shift+Tab", tokenizerFocusOptions, 0, tokenizerModalNone, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}},
 		{"Escape", tokenizerFocusResults, 0, tokenizerModalNone, tea.KeyPressMsg{Code: tea.KeyEscape}},
 		{"Up from View", tokenizerFocusOptions, 0, tokenizerModalNone, tea.KeyPressMsg{Code: tea.KeyUp}},

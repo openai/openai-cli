@@ -357,19 +357,23 @@ func (m *tokenizerEditor) footer() string {
 			footer += " · r retry"
 		} else if len(m.tokens) > 0 {
 			footer += " · ←→ token"
-			pages := m.resultEnd(0, m.resultWidth()) < len(m.tokens)
+			width := m.resultWidth()
+			if m.walkResultSegments(0, width, 1, nil) < len(m.tokens) {
+				footer += " · ↑↓ row"
+			}
+			pages := m.resultEnd(0, width) < len(m.tokens)
 			if pages {
 				footer += " · PgUp/PgDn"
 				if ansi.StringWidth(footer) > m.viewWidth() {
-					footer = "Ctrl+C exit · Tab edit · ←→ · PgUp/PgDn"
+					footer = "Ctrl+C exit · Tab edit · ↔↕ · PgUp/PgDn"
 				}
 			}
 			if ansi.StringWidth(footer+" · Enter details") <= m.viewWidth() {
 				footer += " · Enter details"
 			}
 		}
-		if ansi.StringWidth(footer+" · ↑ settings") <= m.viewWidth() {
-			footer += " · ↑ settings"
+		if ansi.StringWidth(footer+" · Shift+Tab settings") <= m.viewWidth() {
+			footer += " · Shift+Tab settings"
 		}
 	case tokenizerFocusOptions:
 		footer = "Ctrl+C exit · Tab tokens"
@@ -658,7 +662,8 @@ func (m *tokenizerEditor) tokenStrip(s tokenizerEditorStyles, width, start int) 
 	if m.tab == 2 && !m.color {
 		separator = "│" // Uncolored byte pairs still need a visible token boundary.
 	}
-	end := m.walkResultSegments(start, width, func(index, row, gap int, label string) {
+	end := m.walkResultSegments(start, width, m.resultRows(), func(cell tokenizerTokenCell, label string) {
+		index, row := cell.index, cell.row
 		if lines[row] == "" {
 			lines[row] = "  "
 		}
@@ -674,7 +679,10 @@ func (m *tokenizerEditor) tokenStrip(s tokenizerEditorStyles, width, start int) 
 				}
 			}
 		}
-		lines[row] += strings.Repeat(separator, gap) + style.Render(label)
+		if cell.column > 2 && m.tab != 0 {
+			lines[row] += separator
+		}
+		lines[row] += style.Render(label)
 	})
 	return lines, end
 }
@@ -695,14 +703,14 @@ func (m *tokenizerEditor) resultStart(width int) int {
 	if m.selected < m.resultEnd(start, width) {
 		return start
 	}
-	return m.resultStartIncluding(m.selected, width)
+	return m.resultStartIncluding(m.selected, width, m.resultRows())
 }
 
 // Search only the preceding visible window, even when jumping to the last token.
-func (m *tokenizerEditor) resultStartIncluding(last, width int) int {
+func (m *tokenizerEditor) resultStartIncluding(last, width, rows int) int {
 	start := last
 	for previous := last - 1; previous >= 0; previous-- {
-		if m.resultEnd(previous, width) <= last {
+		if m.walkResultSegments(previous, width, rows, nil) <= last {
 			break
 		}
 		start = previous
@@ -711,32 +719,7 @@ func (m *tokenizerEditor) resultStartIncluding(last, width int) int {
 }
 
 func (m *tokenizerEditor) resultEnd(start, width int) int {
-	return m.walkResultSegments(start, width, nil)
-}
-
-// Painting and paging share a fixed gutter and the same conservative widths.
-func (m *tokenizerEditor) walkResultSegments(start, width int, visit func(index, row, gap int, label string)) int {
-	row, used := 0, 2
-	for index := start; index < len(m.tokens); index++ {
-		label := m.tokenSegment(index, width)
-		cells := tokenizerSourceWidth(label)
-		gap := 0
-		if used > 2 && m.tab != 0 {
-			gap = 1
-		}
-		if used > 2 && used+gap+cells > width {
-			row++
-			used, gap = 2, 0
-		}
-		if row >= m.resultRows() {
-			return index
-		}
-		if visit != nil {
-			visit(index, row, gap, label)
-		}
-		used += gap + cells
-	}
-	return len(m.tokens)
+	return m.walkResultSegments(start, width, m.resultRows(), nil)
 }
 
 func (m *tokenizerEditor) tokenSegment(index, width int) string {
@@ -772,7 +755,7 @@ func (m *tokenizerEditor) pageResults(forward bool) {
 		if previous < start && m.resultEnd(previous, width) == start {
 			start = previous
 		} else {
-			start = m.resultStartIncluding(max(0, start-1), width)
+			start = m.resultStartIncluding(max(0, start-1), width, m.resultRows())
 		}
 	}
 	m.selected, m.tokenStart = start, start
@@ -788,8 +771,8 @@ var tokenizerEditorHelp = []struct {
 	items     [][2]string
 }{
 	{"Controls", true, [][2]string{
-		{"Tab", "Switch between Text and Tokens. Shift+Tab opens View settings."},
-		{"← →", "In Text, move the cursor. In View, switch views. In Tokens, select a token."},
+		{"Tab", "Inspect tokens or edit at the selected token. Shift+Tab opens settings."},
+		{"← →", "In Text, move the cursor. In View, switch views. In Tokens, ← → select tokens and ↑ ↓ move a row."},
 		{"PgUp/PgDn", "Page through text, tokens, or dialog rows."},
 		{"Ctrl+← →", "Move between words in Text."},
 		{"v / m / d", "Outside Text, open View, Model, or Details."},

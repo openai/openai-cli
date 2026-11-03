@@ -71,7 +71,6 @@ func TestTokenizerSourceSelectionFollowsTheInspectedOccurrence(t *testing.T) {
 			}})
 			tokenizerEditorKey(m, tea.KeyHome)
 			tokenizerEditorKey(m, tea.KeyRight)
-			caret := m.View().Cursor
 			require.Equal(t, "c", tokenizerCursorCell(t, m.View()))
 			tokenizerEditorKey(m, tea.KeyTab)
 			tokenizerEditorKey(m, tea.KeyHome)
@@ -93,9 +92,10 @@ func TestTokenizerSourceSelectionFollowsTheInspectedOccurrence(t *testing.T) {
 			require.Contains(t, tokenizerMarkedSource(t, m, theme.style), "echo echo[ echo]")
 			tokenizerEditorKey(m, tea.KeyTab)
 			require.Contains(t, tokenizerMarkedSource(t, m, theme.style), "echo echo echo")
-			require.Equal(t, caret, m.View().Cursor)
+			require.Equal(t, len("echo echo"), m.cursor)
+			require.Equal(t, " ", tokenizerCursorCell(t, m.View()))
 			m.Update(tea.KeyPressMsg{Code: '!', Text: "!"})
-			require.Equal(t, "e!cho echo echo", m.text)
+			require.Equal(t, "echo echo! echo", m.text)
 		})
 	}
 }
@@ -123,7 +123,11 @@ func TestTokenizerSourceSelectionMarksPartialGraphemesAndLineBreaks(t *testing.T
 				require.Contains(t, rendered, want)
 				require.Equal(t, 1, strings.Count(rendered, "["))
 			}
-			require.Equal(t, source, m.text)
+			tokenizerEditorKey(m, tea.KeyLeft) // This token starts inside the joined emoji.
+			tokenizerEditorKey(m, tea.KeyTab)
+			require.Equal(t, len("a"), m.cursor)
+			m.Update(tea.KeyPressMsg{Code: '!', Text: "!"})
+			require.Equal(t, "a!"+cluster+"\nb", m.text)
 		})
 	}
 }
@@ -158,7 +162,6 @@ func TestTokenizerSourceSelectionTracksResultPages(t *testing.T) {
 			m.Update(tea.PasteMsg{Content: source.String()})
 			m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
 			tokenizerEditorKey(m, tea.KeyHome)
-			caret := m.View().Cursor
 			tokenizerEditorKey(m, tea.KeyTab)
 			tokenizerEditorKey(m, tea.KeyHome)
 			for _, key := range []rune{tea.KeyPgDown, tea.KeyEnd, tea.KeyPgUp, tea.KeyHome} {
@@ -173,7 +176,7 @@ func TestTokenizerSourceSelectionTracksResultPages(t *testing.T) {
 			}
 			tokenizerEditorKey(m, tea.KeyEnd)
 			tokenizerEditorKey(m, tea.KeyTab)
-			require.Equal(t, caret, m.View().Cursor)
+			require.Equal(t, strings.LastIndex(m.text, "x79"), m.cursor)
 			require.Equal(t, "x", tokenizerCursorCell(t, m.View()))
 		})
 	}

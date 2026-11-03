@@ -47,6 +47,7 @@ type tokenizerEditor struct {
 	focus, tab, modal int
 	selected, scroll  int
 	tokenStart        int
+	rowNavigation     tokenizerRowNavigation
 	priorPageStart    int
 	width, height     int
 	color, dark       bool
@@ -80,6 +81,7 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.rowNavigation = tokenizerRowNavigation{}
 		m.keepSelectionVisible()
 	case tea.BackgroundColorMsg:
 		m.dark = msg.IsDark()
@@ -90,6 +92,7 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.updating = false
+		m.rowNavigation = tokenizerRowNavigation{}
 		if msg.Err != nil || !m.validTokens(msg.Tokens) {
 			m.tokens, m.failed = nil, true
 			m.selected, m.tokenStart = 0, 0
@@ -113,6 +116,14 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyPressMsg:
 		key := msg.String()
+		switch key {
+		case "up", "down":
+			// Continue navigating at the same column.
+		case "left", "right":
+			m.rowNavigation.column = 0
+		default:
+			m.rowNavigation = tokenizerRowNavigation{}
+		}
 		if key == "ctrl+c" {
 			m.quit, m.exitCode = true, 130
 			return m, tea.Quit
@@ -161,13 +172,14 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.openDetails()
 			return m, nil
 		}
+		if m.focus == tokenizerFocusResults && key == "tab" {
+			m.cursor = m.boundaries[m.sourceRange().first]
+			m.focus = tokenizerFocusText
+			return m, nil
+		}
 		switch key {
 		case "tab":
-			if m.focus == tokenizerFocusResults {
-				m.focus = tokenizerFocusText
-			} else {
-				m.focus = tokenizerFocusResults
-			}
+			m.focus = tokenizerFocusResults
 			return m, nil
 		case "shift+tab":
 			if m.focus == tokenizerFocusOptions {
@@ -222,8 +234,8 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case tokenizerFocusResults:
 			switch key {
-			case "up":
-				m.focus, m.option = tokenizerFocusOptions, 1
+			case "up", "down":
+				m.moveTokenRow(key == "down")
 			case "left":
 				m.selected--
 			case "right":
