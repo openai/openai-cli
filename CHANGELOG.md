@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.48.0](https://github.com/openai/openai-cli/compare/v1.47.1...v1.48.0) (2026-11-03)
+
+
+### Features
+
+* Help coding agents find and use OpenAI CLI commands. ([#684](https://github.com/openai/openai-cli/pull/684)) ([e21cea4](https://github.com/openai/openai-cli/commit/e21cea48))
+* Make CLI installation and Homebrew upgrades easier to verify. ([#682](https://github.com/openai/openai-cli/pull/682)) ([4198c247](https://github.com/openai/openai-cli/commit/4198c247))
+* Improve the tokenizer editor and support piped request files. ([#686](https://github.com/openai/openai-cli/pull/686)) ([7c55da9a](https://github.com/openai/openai-cli/commit/7c55da9a))
+* enable automatic updates during macOS and Linux archive setup ([#683](https://github.com/openai/openai-cli/issues/683)) ([236b9c3](https://github.com/openai/openai-cli/commit/236b9c30888cec5b7f2efb0a5bcba4883c89cf76))
+
+
+### Bug Fixes
+
+* **api:** clarify Responses prompt-cache lifetime help ([#687](https://github.com/openai/openai-cli/issues/687)) ([9deddac](https://github.com/openai/openai-cli/commit/9deddace717875cb8913c28f0b7fa5958bda37d4))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.92.0 ([#681](https://github.com/openai/openai-cli/issues/681)) ([f2de487](https://github.com/openai/openai-cli/commit/f2de4874d6cc7ba03e596b5c844801ba35791cdb))
+
 ## [1.47.1](https://github.com/openai/openai-cli/compare/v1.47.0...v1.47.1) (2026-11-03)
 
 
