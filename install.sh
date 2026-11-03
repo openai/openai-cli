@@ -8,7 +8,12 @@ fail() {
     exit 1
 }
 
-[ "$#" -eq 0 ] || fail 'Usage: sh ./install.sh'
+require_gh=false
+case $#:${1:-} in
+    0:) ;;
+    1:--require-gh) require_gh=true ;;
+    *) fail 'Usage: sh ./install.sh [--require-gh]' ;;
+esac
 system=$(uname -s)
 case $system in
     Darwin|Linux) ;;
@@ -90,18 +95,40 @@ exec 3<&-
 chmod 700 "$stage/openai"
 version=$(env -i HOME="$HOME" PATH=/usr/bin:/bin "$stage/openai" --version) ||
     fail 'This binary could not run. Download the archive for your operating system and processor.'
+release=${version#"openai version "}
+case $release in
+    ''|*[!0-9.]*|.*|*.|*..*|*.*.*.*) fail 'The archive binary did not report an OpenAI CLI release version.' ;;
+esac
 case $version in
-    "openai version "[0-9]*.[0-9]*.[0-9]*) ;;
+    "openai version "*.*.*) ;;
     *) fail 'The archive binary did not report an OpenAI CLI release version.' ;;
 esac
+# Ask the staged CLI to run the same local capability check as its updater.
+readiness=$(env -i HOME="$HOME" PATH="$PATH" OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_archive_verifier 2>/dev/null) || readiness=unavailable
+case $readiness in
+    ready) advice='GitHub CLI supports update verification.' ;;
+    missing)
+        if [ "$system" = Darwin ] && command -v brew >/dev/null 2>&1; then
+            advice='Install GitHub CLI with: brew install gh'
+        else
+            advice='Install GitHub CLI from https://cli.github.com/ and put gh on PATH.'
+        fi ;;
+    *) advice='Update GitHub CLI from https://cli.github.com/ and check which gh your PATH selects.' ;;
+esac
+if [ "$readiness" != ready ] && [ "$require_gh" = true ]; then
+    fail "Automatic update verification is unavailable. $advice Then rerun this installer."
+fi
 # Link the finished file into this directory. An occupied name always wins.
 ln "$stage/openai" . || fail 'Could not install openai. Check whether another installation already exists.'
 clean_stage "$stage"
 trap - EXIT
-printf '%s\n' 'Installed $HOME/.openai/bin/openai.' \
-    'Put this installation first on PATH in Bash or zsh:' \
-    '  export PATH="$HOME/.openai/bin:$PATH"' \
-    '  "$HOME/.openai/bin/openai" --version' \
-    '  command -v openai' \
-    'If an alias or function takes precedence, use the full path above.' \
-    'Automatic updates require a compatible GitHub CLI (gh) on PATH and a bare interactive openai launch.'
+printf 'Installed OpenAI CLI %s at $HOME/.openai/bin/openai.\n' "$release"
+if [ "$(command -v openai || :)" != "$HOME/.openai/bin/openai" ]; then
+    printf '%s\n' 'Select it in this shell: export PATH="$HOME/.openai/bin:$PATH"'
+fi
+printf '%s\n' "$advice"
+if [ "$readiness" = ready ]; then
+    printf '%s\n' 'Run openai without arguments in a terminal to check for automatic updates.'
+else
+    printf '%s\n' 'The CLI is installed. After fixing gh, run openai without arguments in a terminal.'
+fi

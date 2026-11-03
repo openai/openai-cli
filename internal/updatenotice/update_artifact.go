@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const updateBundleName = "bundle.jsonl"
+
 func (d *releaseDelivery) prepare(ctx context.Context, cache *noticeCache, selected releaseSelection) (string, error) {
 	address := "https://github.com/openai/openai-cli/releases/download/v" + selected.Version + "/" + archiveName(selected.Version)
 	response, err := d.request(ctx, address)
@@ -173,11 +175,11 @@ func (d *releaseDelivery) authenticate(ctx context.Context, cache *noticeCache, 
 	if len(response.Attestations) == 0 || len(response.Attestations) > 30 {
 		return errUpdate
 	}
-	bundle, err := cache.root.OpenFile("bundle", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	bundle, err := cache.root.OpenFile(updateBundleName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
-	defer cache.root.Remove("bundle")
+	defer cache.root.Remove(updateBundleName)
 	for _, entry := range response.Attestations {
 		if _, err := bundle.Write(append(entry.Bundle, '\n')); err != nil {
 			bundle.Close()
@@ -187,8 +189,8 @@ func (d *releaseDelivery) authenticate(ctx context.Context, cache *noticeCache, 
 	if err := bundle.Close(); err != nil {
 		return err
 	}
-	command := d.verifierCommand(ctx, cache, "attestation", "verify", filepath.Join(cache.directory, "archive"),
-		"--bundle", filepath.Join(cache.directory, "bundle"), "--hostname", "github.com", "--repo", "openai/openai-cli",
+	command := d.verifierCommand(ctx, cache.directory, "attestation", "verify", filepath.Join(cache.directory, "archive"),
+		"--bundle", filepath.Join(cache.directory, updateBundleName), "--hostname", "github.com", "--repo", "openai/openai-cli",
 		"--cert-identity", workflowIdentity, "--source-ref", "refs/heads/main", "--deny-self-hosted-runners", "--format", "json")
 	var output limitedVerification
 	command.Stdout = &output
@@ -212,18 +214,39 @@ func (d *releaseDelivery) authenticate(ctx context.Context, cache *noticeCache, 
 	return d.completedPublication(ctx, verified, selected)
 }
 
-func (d *releaseDelivery) verifierCommand(ctx context.Context, cache *noticeCache, args ...string) *exec.Cmd {
+func (d *releaseDelivery) verifierCommand(ctx context.Context, directory string, args ...string) *exec.Cmd {
 	command := exec.CommandContext(ctx, d.verifier, args...)
-	command.Env = append(updateEnvironment(), "GH_CONFIG_DIR="+filepath.Join(cache.directory, "gh-config"), "GH_NO_UPDATE_NOTIFIER=1", "GH_NO_EXTENSION_UPDATE_NOTIFIER=1", "GH_PROMPT_DISABLED=1")
+	command.Env = append(updateEnvironment(), "GH_CONFIG_DIR="+filepath.Join(directory, "gh-config"), "GH_NO_UPDATE_NOTIFIER=1", "GH_NO_EXTENSION_UPDATE_NOTIFIER=1", "GH_PROMPT_DISABLED=1")
 	command.WaitDelay = time.Second
 	isolateVerifier(command)
 	return command
 }
 
+func archiveVerifierStatus() string {
+	verifier, err := exec.LookPath("gh")
+	if err != nil {
+		return "missing"
+	}
+	directory, err := os.MkdirTemp("", "openai-verifier-*")
+	if err != nil {
+		return "unavailable"
+	}
+	defer os.RemoveAll(directory)
+	d := releaseDelivery{verifier: verifier}
+	if err := d.checkVerifierHelp(context.Background(), directory); err != nil {
+		return "unavailable"
+	}
+	return "ready"
+}
+
 func (d *releaseDelivery) checkVerifier(ctx context.Context, cache *noticeCache) error {
+	return d.checkVerifierHelp(ctx, cache.directory)
+}
+
+func (d *releaseDelivery) checkVerifierHelp(ctx context.Context, directory string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	command := d.verifierCommand(ctx, cache, "attestation", "verify", "--help")
+	command := d.verifierCommand(ctx, directory, "attestation", "verify", "--help")
 	var output limitedVerification
 	command.Stdout = &output
 	if err := command.Run(); err != nil || output.exceeded {

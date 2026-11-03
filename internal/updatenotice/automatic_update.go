@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -148,9 +149,12 @@ func Automatic(ctx context.Context, current string) (string, bool) {
 	return message, message != "" || !state.VerifierUnavailable
 }
 
-// RunUpdateHelper handles the private, detached worker entrypoint. No update
-// controls can turn an ordinary script invocation into this worker.
+// RunUpdateHelper handles the private installer probe and detached update worker.
 func RunUpdateHelper(argv []string) bool {
+	if len(argv) == 2 && argv[1] == "__openai_archive_verifier" && os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") == "1" {
+		fmt.Fprintln(os.Stdout, archiveVerifierStatus())
+		return true
+	}
 	if len(argv) < 2 || argv[1] != workerArgument {
 		return false
 	}
@@ -246,7 +250,7 @@ func (worker updateWorker) run(ctx context.Context) error {
 	}
 	// Fixed owned temporary names keep interrupted work bounded. Remove only
 	// regular files inside the locked private directory, never arbitrary trees.
-	for _, name := range []string{"archive", "bundle", "next", "next.tmp"} {
+	for _, name := range []string{"archive", "bundle", updateBundleName, "next", "next.tmp"} {
 		if err := removeUpdateFile(cache, name); err != nil {
 			return err
 		}

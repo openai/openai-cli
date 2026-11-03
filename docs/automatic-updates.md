@@ -4,42 +4,91 @@ Supported self-managed installations prepare release updates automatically. Othe
 
 ## Install from a release archive
 
-On macOS and Linux, an official release can keep itself current.
-The updater uses [GitHub CLI](https://cli.github.com/) (`gh`) to verify each new release.
-On a Mac with Homebrew, `brew install gh` supplies that prerequisite.
+On macOS or Linux, the official release executable can update itself. GitHub CLI (`gh`) verifies each future download.
 
-1. Download the archive for your platform from [GitHub Releases](https://github.com/openai/openai-cli/releases/latest).
-2. Extract the archive.
-3. If the extracted directory contains `install.sh`, run this command there.
+### Set up automatic updates with Homebrew on macOS
 
-   ```sh
-   sh ./install.sh
-   ```
+Choose this route if you want the CLI to manage future upgrades.
+Homebrew downloads the matching archive and checks its cask checksum. This avoids installing another Homebrew cask.
+The block installs `gh` and selects the self-managed executable in this terminal.
+In zsh, it also adds that selection to your interactive startup file. Choose the extracted-archive steps to keep setup temporary.
 
-The helper installs `openai` at `$HOME/.openai/bin/openai`. It stops if that path already contains a file or link.
-If setup stops, rerun the helper. If an executable already exists, check its version with `"$HOME/.openai/bin/openai" --version`.
-A forced stop can leave a private `.openai-install.*` staging directory under `$HOME/.openai/bin`.
-After all installers exit, you can remove a staging directory left by that interrupted attempt.
+```sh
+if sh -eu <<'SETUP'
+  brew update
+  brew fetch --cask openai/tools/openai
+  archive=$(brew --cache --cask openai/tools/openai)
+  work=$(mktemp -d)
+  trap 'rm -f "$work/install.sh" "$work/openai"; rmdir "$work"' EXIT
+  if ! unzip -q "$archive" openai install.sh -d "$work"; then
+    printf '%s\n' 'Setup needs a release archive containing openai and install.sh.' >&2
+    exit 1
+  fi
+  brew install gh
+  sh "$work/install.sh" --require-gh
+SETUP
+then
+  export PATH="$HOME/.openai/bin:$PATH"
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    profile="${ZDOTDIR:-$HOME}/.zshrc"
+    path_line='export PATH="$HOME/.openai/bin:$PATH"'
+    if [ -L "$profile" ] || { [ -e "$profile" ] && [ ! -f "$profile" ]; }; then
+      printf '%s\n' 'CLI installed. Add the PATH export to your chosen zsh startup file.' >&2
+      false
+    else
+      grep -Fqx "$path_line" "$profile" 2>/dev/null || printf '\n%s\n' "$path_line" >> "$profile"
+    fi
+  fi &&
+  if [ "$(command -v openai)" = "$HOME/.openai/bin/openai" ]; then
+    command -v openai
+  else
+    printf '%s\n' 'CLI installed. Your shell selects another command. Use "$HOME/.openai/bin/openai" directly.' >&2
+    false
+  fi
+else
+  false
+fi
+```
 
-**Older archives without the helper.** You can check the extracted CLI immediately with `./openai --version`.
-To enable future upgrades, use an official release with updater metadata, starting with v1.41.0.
+The installer needs a compatible `gh` before enrolling through this route. Fix the reported prerequisite and retry.
+If the tap still supplies an older archive, use a [completed release](https://github.com/openai/openai-cli/releases) that contains the helper.
 
-1. In your home directory, create `.openai/bin` if needed. Both directories must meet the [ownership requirements](#supported-installations).
-2. If the destination `.openai/bin/openai` is empty of any file or link, copy the extracted executable there as `openai`.
-3. If another installation owns that path, use its existing update method.
+### From an extracted archive
 
-The helper copies only the executable. The archive also contains shell completions and a manual.
+1. Download and extract your platform archive from [GitHub Releases](https://github.com/openai/openai-cli/releases/latest).
+2. In the extracted directory, paste this command into Bash or zsh.
 
-Select this copy in Bash or zsh and check its version.
+```sh
+sh ./install.sh && export PATH="$HOME/.openai/bin:$PATH"
+```
+
+The installer reports the installed version and where it put the executable.
+If GitHub CLI is missing, install it using the instruction shown. Bare interactive `openai` launches handle future updates.
+An alias or function can take precedence. Use `"$HOME/.openai/bin/openai"` directly in that case.
+
+### Keep this selection in a new terminal
+
+If your new terminal already selects `$HOME/.openai/bin/openai`, setup is complete.
+If installation succeeded but shell selection failed, keep the installed executable.
+Run `export PATH="$HOME/.openai/bin:$PATH"` to select it in this shell. Use its full path if an alias still wins.
+For zsh, put this line in your interactive startup file (`${ZDOTDIR:-$HOME}/.zshrc`).
 
 ```sh
 export PATH="$HOME/.openai/bin:$PATH"
-"$HOME/.openai/bin/openai" --version && command -v openai
 ```
 
-To keep using this copy, add the export to your shell profile.
-Bare `openai` starts the background update check on eligible interactive runs.
-After activation, the CLI prints `Updated to vX.Y.Z.` once. See [controls](#controls) to disable updates or pin a version.
+For Bash, add the same export to your interactive startup file. The installer itself never edits shell profiles.
+
+### Older installations and interrupted setup
+
+An older archive without the helper can run directly as `./openai`. Homebrew can still manage its own installed cask.
+Released versions 1.46.0 and 1.47.0 can fail to verify future updates with GitHub CLI.
+To enroll, download a release containing the corrected updater and `install.sh`.
+
+The helper stops if `$HOME/.openai/bin/openai` already exists.
+If you previously installed your own executable there, verify it and move it to a new backup path before running setup.
+Keep that backup until the new executable works. For a package-owned file, use that package's upgrade method.
+A forced stop can leave a private `.openai-install.*` staging directory. Remove that directory only after all installers exit.
 
 ## Supported installations
 

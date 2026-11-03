@@ -41,6 +41,47 @@ func TestArchiveInstall(t *testing.T) {
 		return
 	}
 
+	t.Run("GitHub CLI requirements", func(t *testing.T) {
+		t.Cleanup(func() {
+			if err := os.WriteFile(binary, []byte(archiveBinary), 0700); err != nil {
+				t.Error(err)
+			}
+		})
+		for _, tc := range []struct{ readiness, hint string }{
+			{"missing", "Install GitHub CLI"},
+			{"unavailable", "Update GitHub CLI"},
+			{"ready", "GitHub CLI supports update verification"},
+		} {
+			t.Run(tc.readiness, func(t *testing.T) {
+				staged := "#!/bin/sh\ncase \"$1\" in\n--version) echo 'openai version 1.2.3';;\n__openai_archive_verifier) echo " + tc.readiness + ";;\n*) exit 9;;\nesac\n"
+				if err := os.WriteFile(binary, []byte(staged), 0700); err != nil {
+					t.Fatal(err)
+				}
+				home := t.TempDir()
+				strict := run(home, path)
+				strict.Args = append(strict.Args, "--require-gh")
+				output, err := strict.CombinedOutput()
+				ready := tc.readiness == "ready"
+				if (err == nil) != ready || !strings.Contains(string(output), tc.hint) {
+					t.Fatalf("strict installer: %v: %s", err, output)
+				}
+				target := filepath.Join(home, ".openai", "bin", "openai")
+				if !ready {
+					if _, err := os.Lstat(target); !os.IsNotExist(err) {
+						t.Fatalf("strict installer published %s: %v", target, err)
+					}
+					output, err = run(home, path).CombinedOutput()
+					if err != nil || !strings.Contains(string(output), tc.hint) || !strings.Contains(string(output), "After fixing gh") {
+						t.Fatalf("ordinary install: %v: %s", err, output)
+					}
+				}
+				if got, err := exec.Command(target, "--version").CombinedOutput(); err != nil || string(got) != "openai version 1.2.3\n" {
+					t.Fatalf("installed CLI: %v: %s", err, got)
+				}
+			})
+		}
+	})
+
 	if runtime.GOOS == "darwin" {
 		for _, tc := range []struct {
 			target string
@@ -132,7 +173,7 @@ func TestArchiveInstall(t *testing.T) {
 			t.Fatalf("interruption left files: %v, %v", entries, err)
 		}
 		output, err := run(home, path).CombinedOutput()
-		if err != nil || !strings.Contains(string(output), "Automatic updates require") {
+		if err != nil || !strings.Contains(string(output), "Installed OpenAI CLI 1.2.3") {
 			t.Fatalf("retry: err=%v output=%q", err, output)
 		}
 	})
