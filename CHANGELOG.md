@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.47.1](https://github.com/openai/openai-cli/compare/v1.47.0...v1.47.1) (2026-11-03)
+
+
+### Chores
+
+* **api:** update Live Responses delegation API reference ([#680](https://github.com/openai/openai-cli/issues/680)) ([c51f9d8](https://github.com/openai/openai-cli/commit/c51f9d83bfe371c76880ff741e7c1b30d523f52b))
+* **deps:** bump github.com/tiktoken-go/tokenizer from 0.8.1 to 0.10.0 in the go-minor-and-patch group across 1 directory ([#677](https://github.com/openai/openai-cli/issues/677)) ([14d52e5](https://github.com/openai/openai-cli/commit/14d52e5f69e29852344906f1a9178dfddbfb857c))
+* **deps:** bump the codeql group across 1 directory with 2 updates ([#678](https://github.com/openai/openai-cli/issues/678)) ([fdb8fc6](https://github.com/openai/openai-cli/commit/fdb8fc67a4418bff69dc1611590176265bccdb13))
+* **deps:** update openai-go to v3.91.1 ([#675](https://github.com/openai/openai-cli/issues/675)) ([239b7a8](https://github.com/openai/openai-cli/commit/239b7a88726c117be2160b5c3bd1683ac35ec454))
+
 ## [1.47.0](https://github.com/openai/openai-cli/compare/v1.46.0...v1.47.0) (2026-10-31)
 
 
