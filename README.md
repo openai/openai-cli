@@ -18,55 +18,72 @@
 
 One `openai` executable includes all CLI commands. Choose one installation method.
 
-The Bash and zsh examples check the installed executable by its full path.
-`command -v openai` shows what your shell runs when you type `openai`.
-If an alias or function takes precedence, use the full path from the example or update your shell definition.
-
 ### Installing with Homebrew
 
-On a Mac with Homebrew, paste this block into Bash or zsh.
+On a Mac with Homebrew, paste this command to install the CLI and print its cask version.
+
+```sh
+brew install --cask openai/tools/openai && brew list --cask --versions openai
+```
+
+To upgrade, paste this command. It refreshes the tap and prints the installed cask version.
+
+```sh
+brew update && brew upgrade --cask openai/tools/openai && brew list --cask --versions openai
+```
+
 Homebrew shows progress when it downloads the cask.
 
-```sh
-brew install --cask openai/tools/openai && {
-  brew_bin="$(brew --prefix)/bin"
-  export PATH="$brew_bin:$PATH"
-  "$brew_bin/openai" --version && command -v openai
-}
-```
-
-This puts Homebrew first on `PATH` for the current shell. If you configured a custom `--binarydir`, use that directory for `brew_bin`.
-If new shells select another copy, add Homebrew's binary directory first in your shell profile.
-
-To upgrade an existing Homebrew installation, refresh the tap and upgrade its cask.
-
-```sh
-brew update && brew upgrade --cask openai/tools/openai && {
-  brew_bin="$(brew --prefix)/bin"
-  export PATH="$brew_bin:$PATH"
-  "$brew_bin/openai" --version && command -v openai
-}
-```
-
-If Homebrew says “already installed,” compare its cask version with the [latest CLI release](https://github.com/openai/openai-cli/releases/latest).
-The tap can trail a release. Reinstalling the same cask gives you the same version.
+**Homebrew says the cask is current, but GitHub has a newer release.**
+The tap can trail [GitHub Releases](https://github.com/openai/openai-cli/releases/latest). Reinstalling the same cask gives you the same version.
 Wait for the tap update or use the [prebuilt archive](#installing-a-prebuilt-binary) without installing Go.
-In Bash or zsh, check which copy your shell runs.
+
+**`openai --version` shows an older version than Homebrew printed.**
+Your shell can select another executable, alias, or function. Use the repair below.
+
+<details>
+<summary>Check the installed cask and select it in Bash or zsh</summary>
+
+Paste this block into your current shell. It checks Homebrew’s receipt and runs that exact executable.
 
 ```sh
-brew info --cask openai/tools/openai
-type -a openai
-openai --version
+cask_dir=$(brew --caskroom openai/tools/openai) &&
+receipt="$cask_dir/.metadata/INSTALL_RECEIPT.json" &&
+[ "$(/usr/bin/plutil -extract source.tap raw "$receipt")" = openai/tools ] &&
+version=$(/usr/bin/plutil -extract source.version raw "$receipt") &&
+cask_cli="$cask_dir/$version/openai" &&
+"$cask_cli" --version && {
+  brew_prefix=$(brew --prefix) &&
+  if [ "$brew_prefix/bin/openai" -ef "$cask_cli" ]; then export PATH="$brew_prefix/bin:$PATH"; fi &&
+  if ! [ "$(command -v openai)" -ef "$cask_cli" ]; then
+    printf 'The cask is installed. Your shell selects another command. Run %q directly.\n' "$cask_cli" >&2
+    false
+  fi
+}
 ```
+
+Run `type -a openai` to see competing commands. If a new shell selects another copy, put Homebrew’s binary directory first in your profile.
+
+</details>
 
 ### Installing a prebuilt binary
 
 Download the archive for your operating system and architecture from [GitHub Releases](https://github.com/openai/openai-cli/releases/latest).
 Choose the macOS ZIP, Linux tarball, or Windows ZIP under **Assets**.
 On a Mac, the filename ends in `macos_arm64.zip` for Apple silicon or `macos_amd64.zip` for Intel.
-Extract the archive.
-For a manual installation, place `openai` (`openai.exe` on Windows) in a directory on your `PATH`.
-Run `openai --version` to verify it.
+Extract the archive into a dedicated directory.
+On macOS and Linux, you can keep that directory as your manual installation.
+From inside it, paste this block into Bash or zsh.
+
+```sh
+archive_bin=$(pwd -P) &&
+"$archive_bin/openai" --version &&
+export PATH="$archive_bin:$PATH" &&
+command -v openai
+```
+
+The last command shows which executable, alias, or function your shell selects. If an alias or function wins, use the verified executable directly.
+On Windows, run `.\openai.exe --version` in the extracted directory. Add that directory to your user `Path` and check `where.exe openai`.
 
 **Want automatic updates?** On macOS or Linux, place the official release binary at `$HOME/.openai/bin/openai`.
 The updater requires a compatible GitHub CLI (`gh`) and interactive launches.
@@ -79,19 +96,24 @@ With [Go 1.26 or later](https://go.dev/doc/install), paste this block into Bash 
 It installs the latest CLI and puts Go’s binary directory ahead of older copies.
 
 ```sh
-printf '%s\n' 'Installing the latest OpenAI CLI with Go...'
-go install github.com/openai/openai-cli/cmd/openai@latest && {
-  go_bin=$(go env GOBIN)
-  if [ -z "$go_bin" ]; then
-    go_path=$(go env GOPATH)
-    go_bin="${go_path%%:*}/bin"
-  fi
-  export PATH="$go_bin:$PATH"
+go_bin=$(go env GOBIN) && go_path=$(go env GOPATH) &&
+go_bin=${go_bin:-"${go_path%%:*}/bin"} &&
+if [ -L "$go_bin/openai" ] || [ "${go_bin%/}" = "$HOME/.openai/bin" ] || [ "$go_bin" -ef "$HOME/.openai/bin" ]; then
+  printf '%s\n' 'Go would write into another installation. Choose a separate Go directory, then paste this block again:' \
+    '  export GOBIN="$HOME/.local/openai-go/bin"' >&2
+  false
+else
+  printf '%s\n' 'Installing the latest OpenAI CLI with Go...'
+  go_os=$(go env GOHOSTOS) && go_arch=$(go env GOHOSTARCH) &&
+  GOOS="$go_os" GOARCH="$go_arch" GOBIN="$go_bin" go install github.com/openai/openai-cli/cmd/openai@latest &&
+  export PATH="$go_bin:$PATH" &&
   "$go_bin/openai" --version && command -v openai
-}
+fi
 ```
 
+This command targets the computer running Go, including when you configured Go for cross-compilation.
 Go can finish silently. Add `-v` after `install` to show each package as it compiles.
+If the last command shows an alias or function, use the verified Go executable directly.
 For new shells, add the same PATH setup to your shell profile.
 
 On Windows, run `go install github.com/openai/openai-cli/cmd/openai@latest`.
