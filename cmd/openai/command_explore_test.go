@@ -89,6 +89,24 @@ func TestMainExploreQueryWorksOfflineInPipes(t *testing.T) {
 	}
 }
 
+func TestMainExploreDistinguishesBatchUploadFromSubmission(t *testing.T) {
+	for _, tc := range []struct{ query, first string }{
+		{"upload a JSONL file", "files upload"},
+		{"upload a file for a future batch", "files upload"},
+		{"start a batch", "batches submit requests.jsonl"},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			got := runMainDispatchWithEnv(t, "zsh", []string{"OPENAI_BASE_URL=not%url"}, "openai", "explore", tc.query)
+			_, results, found := strings.Cut(got.stdout, "MATCHING COMMANDS\n")
+			line, _, _ := strings.Cut(results, "\n")
+			first, _, _ := strings.Cut(strings.TrimSpace(line), "  ")
+			if got.code != 0 || got.stderr != "" || !found || first != "openai "+tc.first {
+				t.Fatalf("unexpected search result for %q: %+v", tc.query, got)
+			}
+		})
+	}
+}
+
 func TestMainExploreHelpAndStructuredErrors(t *testing.T) {
 	help := runMainDispatch(t, "zsh", "openai", "explore", "--help")
 	if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, "openai explore") {
