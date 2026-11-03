@@ -58,7 +58,7 @@ func TestReleaseClientHonorsProxyEnvironment(t *testing.T) {
 				dialed <- address
 				return nil, errors.New("synthetic dial failure")
 			}
-			if got := latestRelease(t.Context(), client); got != "" {
+			if got := latestRelease(t.Context(), client, manualGuidance); got != "" {
 				t.Fatalf("failed request returned release %q", got)
 			}
 			select {
@@ -138,7 +138,7 @@ func TestReleaseClientKeepsProxyCredentialsOnCONNECT(t *testing.T) {
 		defer close(requests)
 		finished <- releaseTestProxyExchange(proxySide, certificate, requests)
 	}()
-	got := latestRelease(ctx, client)
+	got := latestRelease(ctx, client, manualGuidance)
 	// Close both ends before joining the fixture, including when request construction failed.
 	clientSide.Close()
 	proxySide.Close()
@@ -323,8 +323,33 @@ func TestLatestReleaseRejectsUntrustedMetadata(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return response(body), nil })}
-			if got := latestRelease(context.Background(), client); got != "" {
+			if got := latestRelease(context.Background(), client, manualGuidance); got != "" {
 				t.Fatalf("release = %q", got)
+			}
+		})
+	}
+}
+
+func TestHomebrewReleaseRejectsUnexpectedMetadata(t *testing.T) {
+	for name, body := range map[string]string{
+		"GitHub tag":       releaseBody("v2.0.0"),
+		"wrong cask":       strings.Replace(caskBody("2.0.0"), `cask "openai"`, `cask "another"`, 1),
+		"duplicate":        strings.Replace(caskBody("2.0.0"), "  binary", "  version \"1.0.0\"\n  binary", 1),
+		"truncated":        strings.TrimSuffix(caskBody("2.0.0"), "end\n"),
+		"nonliteral":       strings.Replace(caskBody("2.0.0"), `"2.0.0"`, "get_version", 1),
+		"missing version":  "cask \"openai\" do\n  binary \"openai\"\nend\n",
+		"prerelease":       caskBody("2.0.0-rc.1"),
+		"leading zero":     caskBody("02.0.0"),
+		"unexpected v":     caskBody("v2.0.0"),
+		"control sequence": caskBody("2.0.0\x1b[1m"),
+		"oversized":        caskBody("2.0.0") + strings.Repeat(" ", maxReleaseBytes),
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return response(body), nil
+			})}
+			if version := latestHomebrewRelease(t.Context(), client); version != "" {
+				t.Fatalf("reported cask version %q", version)
 			}
 		})
 	}
@@ -337,7 +362,7 @@ func TestLatestReleaseDoesNotFollowRedirects(t *testing.T) {
 		calls++
 		return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{"https://untrusted.example/release"}}, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 	})
-	if got := latestRelease(context.Background(), client); got != "" {
+	if got := latestRelease(context.Background(), client, manualGuidance); got != "" {
 		t.Fatalf("redirect release = %q", got)
 	}
 	if calls != 1 {
@@ -347,9 +372,9 @@ func TestLatestReleaseDoesNotFollowRedirects(t *testing.T) {
 
 func TestLatestReleaseUsesOnlyValidatedTag(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return response(`{"tag_name":"v12.3.4","draft":false,"prerelease":false,"html_url":"https://untrusted.example/evil","body":"run bad-command"}`), nil
+		return response(strings.TrimSuffix(releaseBody("v12.3.4"), "}") + `,"html_url":"https://untrusted.example/evil","body":"run bad-command"}`), nil
 	})}
-	if got := latestRelease(context.Background(), client); got != "12.3.4" {
+	if got := latestRelease(context.Background(), client, manualGuidance); got != "12.3.4" {
 		t.Fatalf("release = %q", got)
 	}
 }
