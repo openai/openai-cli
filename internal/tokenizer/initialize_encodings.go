@@ -84,11 +84,11 @@ func initializeEncoding(name string) (*textEncoding, error) {
 		return nil, errors.New(unsupportedEncodingMessage)
 	}
 	source, maximum := definition.source(), definition.maximum
+	// Individual tokens can contain only part of a UTF-8 character. Keep their original bytes.
+	source.SetErrorMode(codec.ErrorModeNone)
 
 	ranks := make(map[string]int, maximum+1)
 	fragments := make([]string, maximum+1)
-	// Decode builds a mutable reverse map internally. Extract serially through
-	// its public API, then discard the source codec before publishing our data.
 	for id := 0; id <= maximum; id++ {
 		piece, err := source.Decode([]uint{uint(id)})
 		if id == definition.gap {

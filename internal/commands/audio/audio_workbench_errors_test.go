@@ -277,7 +277,11 @@ func TestAudioWorkbenchChoiceDialogsShowAsynchronousPlaybackFailure(t *testing.T
 				for range len(m.choices) {
 					view := audioFeedbackView(t, m)
 					require.Contains(t, view, "Enter select Esc back")
-					require.Contains(t, view, "› "+m.choices[m.choice])
+					label := m.choices[m.choice]
+					if setting == 2 {
+						label = strings.ToUpper(label)
+					}
+					require.Contains(t, view, "› "+label)
 					require.NotContains(t, m.View().Content, "\x1b[2J")
 					require.Nil(t, audioReviewKey(m, tea.KeyDown))
 					require.False(t, m.busy, "choosing settings generated speech")

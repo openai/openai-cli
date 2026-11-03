@@ -19,25 +19,13 @@ func audioWaveformMarker(width, boundary int) int {
 	return int((int64(boundary)*int64(width-1) + bars/2) / bars)
 }
 
-// audioWaveform draws a relative waveform for the workbench only. One gain
-// applies to the recording's measured peaks; original audio remains unchanged.
-// The marker occupies a gap, so selection never replaces a measured bar.
-func audioWaveform(peaks []float64, width, height, selectedBoundary int) []string {
-	return audioWaveformRows(peaks, min(width, 120), height, selectedBoundary, false)
-}
-
-// Dense framed waveforms keep the existing endpoints and seek boundaries.
-// Adjacent measured columns remain fixed; the playhead may cover one column.
-func audioDenseWaveform(peaks []float64, width, height, selectedBoundary int) []string {
-	return audioWaveformRows(peaks, width, height, selectedBoundary, true)
-}
-
-func audioWaveformRows(peaks []float64, width, height, selectedBoundary int, dense bool) []string {
+// Preserve the measured height for shading between the glyph's half-cell steps.
+func audioWaveformRows(peaks []float64, width, height, selectedBoundary int, dense bool) ([]string, []float64) {
 	// Native terminal dimensions fit in an unsigned 16-bit coordinate.
 	width = min(width, math.MaxUint16)
 	bars := audioWaveformBars(width)
 	if len(peaks) == 0 || bars == 0 || height < 1 {
-		return nil
+		return nil, nil
 	}
 	selectedBoundary = max(0, min(bars, selectedBoundary))
 	span, marker := bars*2+1, selectedBoundary*2
@@ -78,6 +66,7 @@ func audioWaveformRows(peaks []float64, width, height, selectedBoundary int, den
 		if amplitude > 0 {
 			// Divide directly: a reciprocal gain can overflow for quiet peaks.
 			level := amplitude / maximum * float64(resolution)
+			amplitudes[column] = level
 			if height == 1 {
 				levels[column] = max(1, int(math.Ceil(level)))
 			} else {
@@ -123,5 +112,5 @@ func audioWaveformRows(peaks []float64, width, height, selectedBoundary int, den
 		cells[marker] = '┃'
 		rows[row] = string(cells)
 	}
-	return rows
+	return rows, amplitudes
 }

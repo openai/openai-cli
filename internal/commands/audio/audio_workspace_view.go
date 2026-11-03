@@ -10,21 +10,48 @@ import (
 
 func (m *audioWorkbench) inlineActions() bool { return m.framed() && m.width >= 110 }
 
-const (
-	audioActionGap   = 4
-	audioActionWidth = 38 // Focus marker, label, description, and one trailing cell.
-)
+const audioColumnGap = 4
+
+func (m *audioWorkbench) splitComposer() bool {
+	return m.framed() && m.width >= 100
+}
 
 func (m *audioWorkbench) composerWidth() int {
-	if m.inlineActions() {
-		// Keep Actions beside the draft when a very wide terminal has space to spare.
-		return min(80, m.audioWidth()-audioActionGap-audioActionWidth-2)
+	if m.studioLayout() {
+		return m.studioScriptWidth()
+	}
+	if m.splitComposer() {
+		// Keep the script at a readable measure while leaving room for a dated model ID.
+		return min(80, (m.audioWidth()-audioColumnGap)*11/20)
 	}
 	return m.audioWidth()
 }
 
+func (m *audioWorkbench) settingsWidth() int {
+	if m.studioLayout() {
+		return m.studioScriptWidth()
+	}
+	if m.splitComposer() {
+		return m.audioWidth() - m.composerWidth() - audioColumnGap
+	}
+	return m.audioWidth()
+}
+
+func (m *audioWorkbench) settingsLabelWidth() int {
+	if m.studioLayout() {
+		return m.formLabelWidth()
+	}
+	if m.splitComposer() {
+		return 9
+	}
+	return m.formLabelWidth()
+}
+
 // The framed workspace keeps the draft and retained recording together.
 func (m *audioWorkbench) workspaceView() tea.View {
+	if m.studioLayout() {
+		return m.studioView()
+	}
 	rows, cursor, _ := m.formRows(false)
 	cursorRow := -1
 	if cursor != nil {
@@ -32,9 +59,6 @@ func (m *audioWorkbench) workspaceView() tea.View {
 	}
 	rows = append(rows, "")
 	rows = append(rows, m.formActionRows()...)
-	if m.inlineActions() {
-		rows = m.withActionColumn(rows)
-	}
 	rows = append(rows, "", m.listeningRule(), "")
 	footer := m.workspaceFooter()
 	// Most hints use one or two rows. Focus must not resize the player between them.
@@ -50,25 +74,19 @@ func (m *audioWorkbench) workspaceView() tea.View {
 		}
 	}
 	controlRows := len(controls)
-	waveRows := 0
-	if m.result.hasWaveform() {
-		waveRows = 2 // One measured row and the seek rail.
-		if m.modal != "seek" {
-			if len(m.result.savedPaths) == 0 {
-				controlRows++ // Reserve the receipt before sizing the waveform.
-			}
-			// One form separator can yield to the receipt to preserve measured detail.
-			capacity := m.audioHeight() - len(rows) - len(header) - controlRows - footerRows
-			waveRows = m.waveformDetailHeight(capacity) + 1
-		}
+	if m.modal != "seek" && (m.result == nil || len(m.result.savedPaths) == 0) {
+		controlRows++ // Leave room for a save receipt before the first recording.
 	}
+	// Size the form against the same plot before, during, and after generation.
+	controlLimit := m.audioHeight() - controlRows - footerRows
+	waveRows := m.waveformDetailHeight(controlLimit-len(rows)-1) + 1
 	contentRows := 0
 	for _, row := range rows {
 		if row != "" {
 			contentRows++
 		}
 	}
-	gapBudget := max(0, m.audioHeight()-contentRows-footerRows-len(header)-controlRows-waveRows)
+	gapBudget := max(0, min(controlLimit-contentRows-1-waveRows, controlLimit-contentRows-len(header)-2))
 	var lines []string
 	for index, row := range rows {
 		if row == "" { // Editor rows retain their indentation, even when empty.
@@ -82,26 +100,31 @@ func (m *audioWorkbench) workspaceView() tea.View {
 		}
 		lines = append(lines, row)
 	}
-	budget := m.audioHeight() - len(lines) - len(header) - controlRows - footerRows
-	wave := m.workspaceWaveformRows(budget)
-	free := budget - len(wave)
-	if len(wave) > 0 && free == 0 && len(lines) > 0 && lines[len(lines)-1] == "" {
-		// On short screens, move the divider's spare row below the metadata.
+	if len(lines) > 0 && lines[len(lines)-1] == "" && controlLimit-len(lines)-1 <= waveRows {
+		// On short screens, use the divider's spare row for the recording.
 		lines = lines[:len(lines)-1]
-		free++
 	}
-	lines = append(lines, header...)
-	if len(wave) > 0 && free > 0 {
-		lines = append(lines, "")
-		free--
-	}
-	if m.height >= 36 && free > 0 {
+	if m.height >= 36 && controlLimit-len(lines)-1 > waveRows {
 		lines = append([]string{""}, lines...)
 		if cursor != nil {
 			cursor.Y++
 		}
 	}
+	// Cap the empty plot at the same height as a measured plot. Its three
+	// auxiliary rows hold the rail and one gap on each side.
+	// One more row separates the plot from the recording header.
+	controlRow := min(controlLimit, len(lines)+1+m.waveformDetailHeight(audioMaxWaveformHeight)+4)
+	lines = append(lines, header...)
+	budget := controlRow - len(lines)
+	if budget > m.waveformDetailHeight(budget-1)+1 {
+		lines = append(lines, "")
+		budget--
+	}
+	wave := m.workspaceWaveformRows(budget)
 	lines = append(lines, wave...)
+	for len(lines) < controlRow {
+		lines = append(lines, "")
+	}
 	if m.modal == "seek" {
 		cursor = audioEditorCursor(m.seekInput, len(audioSeekLabel), len(lines))
 	}
@@ -111,6 +134,9 @@ func (m *audioWorkbench) workspaceView() tea.View {
 
 func (m *audioWorkbench) workspaceFooter() []string {
 	if m.busy {
+		if m.framed() {
+			return []string{"  " + m.progressView()}
+		}
 		return m.formShortcutRows([2]string{"Ctrl+C", "cancel"})
 	}
 	if m.modal == "seek" {
@@ -123,24 +149,61 @@ func (m *audioWorkbench) workspaceFooter() []string {
 	if m.focus == 4 {
 		return m.resultHintRows()
 	}
-	if m.inlineActions() && m.modal == "more" {
-		return m.formShortcutRows([2]string{"↑↓", "choose"}, [2]string{"Enter", "open"}, [2]string{"Tab", "Audio"}, [2]string{"Esc", "back"})
+	below := "Audio"
+	if m.result.hasWaveform() {
+		below = "waveform"
 	}
-	next := "Settings"
+	if m.inlineActions() && m.modal == "more" {
+		return m.formShortcutRows([2]string{"←→", "choose"}, [2]string{"↑", "Settings"}, [2]string{"↓", below}, [2]string{"Enter", "open"}, [2]string{"Esc", "back"})
+	}
+	nextKey, next := "Tab", "Settings"
 	if m.focus == 0 && m.instructionsSupported() {
 		next = "Instructions"
 	} else if m.focus == 2 {
 		next = "Audio"
 		if m.inlineActions() {
 			next = "Actions"
+			if m.setting == 4 || m.setting == audioSettingDisclosure {
+				nextKey = "→"
+			}
 		}
 	}
-	shortcuts := [][2]string{{"Ctrl+C", "Exit"}, {"Tab", next}}
+	shortcuts := [][2]string{{nextKey, next}}
+	if m.focus == 0 {
+		if m.studioLayout() {
+			shortcuts = append(shortcuts, [2]string{"↑", "Actions at top"})
+		}
+		recording := "Audio"
+		if m.studioLayout() {
+			recording = "Recording"
+		}
+		shortcuts = append(shortcuts, [2]string{"Shift+Tab", recording})
+	}
 	if m.focus == 0 || m.focus == 1 {
+		if m.splitComposer() && m.focus == 0 {
+			shortcuts = append(shortcuts, [2]string{"→", "Delivery at text end"})
+		}
 		shortcuts = append(shortcuts, [2]string{"Alt+Enter", "New line"})
-	} else if m.focus == 2 && m.setting == audioSettingMore {
-		shortcuts = append(shortcuts, [2]string{"Enter", "open"})
+	} else if m.focus == 2 && m.setting >= 4 && m.setting <= audioSettingMore {
+		horizontal := m.inlineActions() || len(m.formActionRows()) == 1
+		if horizontal && !m.inlineActions() {
+			shortcuts = append(shortcuts, [2]string{"←→", "choose"})
+		}
+		if horizontal || m.setting == audioSettingMore {
+			if m.studioLayout() && m.setting == 4 {
+				below = "Script"
+			}
+			shortcuts = append(shortcuts, [2]string{"↓", below})
+		}
+		action := "open"
+		if m.setting == 4 {
+			action = "generate"
+		}
+		shortcuts = append(shortcuts, [2]string{"Enter", action})
 	} else if m.focus == 2 && m.setting == audioSettingDisclosure {
+		if m.splitComposer() {
+			shortcuts = append(shortcuts, [2]string{"←", "Text"})
+		}
 		action := "expand"
 		if m.settingsExpanded {
 			action = "collapse"
@@ -164,7 +227,7 @@ func (m *audioWorkbench) workspaceFooter() []string {
 	if m.focus == 2 && m.settingsExpanded && audioAdvancedSetting(m.setting) {
 		shortcuts = append(shortcuts, [2]string{"Esc", "Settings"})
 	}
-	shortcuts = append(shortcuts, [2]string{"Ctrl+S", "Save"})
+	shortcuts = append(shortcuts, [2]string{"Ctrl+S", "Save"}, [2]string{"Ctrl+C", "Exit"})
 	return m.formShortcutRows(shortcuts...)
 }
 
@@ -193,28 +256,52 @@ func (r *audioWorkResult) hasWaveform() bool {
 	return r.seekDuration() > 0 && len(r.analysis.Peaks) > 0
 }
 
-func (m *audioWorkbench) retainedGenerationErrorRow() string {
+func (m *audioWorkbench) retainedGenerationErrorRow(width int) string {
 	if !m.retainedGenerationFailure || m.result == nil {
 		return ""
 	}
 	hint := m.keyHint("F1", "details")
-	width := m.audioWidth() - ansi.StringWidth(hint) - 6
+	width -= ansi.StringWidth(hint) + 6
 	summary := ansi.Truncate(readable.Text(m.failure.Summary), width, "…")
 	return "  " + m.failureStyle().Render("! "+summary) + "  " + hint
 }
 
 func (m *audioWorkbench) workspaceAudioHeader() []string {
 	r := m.result
-	if r == nil {
+	if r == nil && !m.framed() {
 		return []string{"  " + m.emptyAudioStatus()}
 	}
-	status := m.playerStatus()
-	end := 2 + m.waveformWidth()
+	// Reserve the longest status so labels and metadata stay in fixed columns.
+	statusColumn := 2 + m.waveformWidth() - audioPlayerStatusWidth
 	left := "  "
 	if m.framed() {
 		left += m.muted().Render("Audio") + strings.Repeat(" ", m.formLabelWidth()+1-len("Audio"))
 	}
-	width := end - ansi.StringWidth(left) - ansi.StringWidth(status) - 1
+	header := func(metadata string) string {
+		return metadata + strings.Repeat(" ", statusColumn-ansi.StringWidth(metadata)) + m.playerStatus()
+	}
+	width := statusColumn - ansi.StringWidth(left) - 1
+	if r == nil {
+		state := m.muted().Render("No recording yet")
+		if m.playerNotice != "" {
+			state = m.warningStyle().Render(m.playerNotice)
+		}
+		return []string{header(left + ansi.Truncate(state, width, "…"))}
+	}
+	left += m.recordingMetadata(width)
+	lines := []string{header(left)}
+	if issue := m.retainedGenerationErrorRow(m.audioWidth()); issue != "" {
+		lines = append(lines, issue)
+	}
+	lines = append(lines, m.workspaceRecordingRows()...)
+	if !r.hasWaveform() {
+		lines = append(lines, "  "+m.muted().Render("Preview unavailable"))
+	}
+	return lines
+}
+
+func (m *audioWorkbench) recordingMetadata(width int) string {
+	r := m.result
 	cell := func(text string, limit int) string {
 		return ansi.Truncate(strings.Join(strings.Fields(readable.Text(text)), " "), limit, "…")
 	}
@@ -226,16 +313,7 @@ func (m *audioWorkbench) workspaceAudioHeader() []string {
 	}
 	suffix := separator + format + separator + size
 	voice = ansi.Truncate(voice, max(1, width-ansi.StringWidth(suffix)), "…")
-	left += ansi.Truncate(m.primaryText().Render(voice)+m.muted().Render(suffix), width, "…")
-	lines := []string{left + strings.Repeat(" ", end-ansi.StringWidth(left)-ansi.StringWidth(status)) + status}
-	if issue := m.retainedGenerationErrorRow(); issue != "" {
-		lines = append(lines, issue)
-	}
-	lines = append(lines, m.workspaceRecordingRows()...)
-	if !r.hasWaveform() {
-		lines = append(lines, "  "+m.muted().Render("Preview unavailable"))
-	}
-	return lines
+	return ansi.Truncate(m.primaryText().Render(voice)+m.muted().Render(suffix), width, "…")
 }
 
 func (m *audioWorkbench) waveformDetailHeight(capacity int) int {
@@ -246,31 +324,52 @@ func (m *audioWorkbench) waveformDetailHeight(capacity int) int {
 	return height
 }
 
-// The budget includes the lower seek rail. Empty and unavailable players have neither.
+// Duration places the transition on the rail. Only measured peaks draw waveform bars.
 func (m *audioWorkbench) workspaceWaveformRows(budget int) []string {
-	if !m.result.hasWaveform() || budget < 2 {
+	return m.waveformRowsAtHeight(budget, m.waveformDetailHeight(budget-1))
+}
+
+func (m *audioWorkbench) waveformRowsAtHeight(budget, height int) []string {
+	if budget < 1 {
 		return nil
 	}
-	height := m.waveformDetailHeight(budget - 1)
+	width := m.waveformWidth()
+	height = min(budget-1, height)
+	marker := -1
+	if m.result.seekDuration() > 0 {
+		marker = audioWaveformMarker(width, m.selectedBoundary())
+	}
+	var rows []string
+	if m.result.hasWaveform() && height > 0 {
+		rows = m.measuredWaveformRows(height, marker)
+	} else {
+		rows = make([]string, height)
+	}
+	spare := budget - height - 1
+	if spare > 0 {
+		rows = append(rows, "")
+	}
+	rows = append(rows, m.timelineRail(width, marker))
+	if spare > 1 && m.framed() {
+		rows = append(rows, "")
+	}
+	return rows
+}
+
+func (m *audioWorkbench) measuredWaveformRows(height, marker int) []string {
 	boundary := m.selectedBoundary()
-	wave := audioDenseWaveform(m.result.analysis.Peaks, m.waveformWidth(), max(3, height), boundary)
+	wave, levels := audioWaveformRows(m.result.analysis.Peaks, m.waveformWidth(), max(3, height), boundary, true)
 	middle := len(wave) / 2
 	// Connect the measured columns only at zero amplitude, keeping all peak tips.
 	axis := []rune(waveformCenterline.Replace(wave[middle]))
 	last := len(axis) - 1
-	marker := audioWaveformMarker(len(axis), boundary)
 	axis[0], axis[last] = '╶', '╴'
-	switch marker {
-	case 0:
-		axis[0] = '┠'
-	case last:
-		axis[last] = '┨'
-	}
+	axis[marker] = '┃'
 	wave[middle] = string(axis)
 	if height == 1 {
 		wave = wave[middle : middle+1]
 	}
-	rows := m.workspaceHairlineRows(wave, marker)
+	rows := m.workspaceHairlineRows(wave, marker, levels)
 	for i, row := range rows {
 		prefix := "  "
 		if i == height/2 && m.focus == 4 && m.waveformFocused && !m.busy {
@@ -278,30 +377,30 @@ func (m *audioWorkbench) workspaceWaveformRows(budget int) []string {
 		}
 		rows[i] = prefix + row
 	}
-	// The heavier played rail remains distinct when the terminal disables color.
-	played, remaining := "", ""
-	if marker > 0 {
-		played = m.accent().Bold(false).Render("├" + strings.Repeat("━", marker-1))
-	}
-	if marker < last {
-		remaining = m.borderStyle().Render(strings.Repeat("─", last-marker-1) + "┤")
-	}
-	anchorStyle := m.playheadStyle()
-	if marker == last && m.result.finished && !m.playing {
-		anchorStyle = m.playbackProgressStyle()
-	}
-	spare := budget - len(rows) - 1 // The rail needs one row.
-	if spare > 0 {
-		rows = append(rows, "")
-	}
-	rows = append(rows, "  "+played+anchorStyle.Render("┷")+remaining)
-	if spare > 1 && m.framed() {
-		rows = append(rows, "")
-	}
 	return rows
 }
 
+func (m *audioWorkbench) timelineRail(width, marker int) string {
+	if marker <= 0 {
+		start := "╶"
+		if marker == 0 {
+			start = "╺"
+		}
+		return "  " + m.borderStyle().Render(start+strings.Repeat("─", width-2)+"╴")
+	}
+	// The heavier elapsed stroke stays distinct on terminals without color.
+	played := "╺" + strings.Repeat("━", marker-1)
+	if marker == width-1 {
+		return "  " + m.elapsedWaveformStyle().Render(played+"╸")
+	}
+	return "  " + m.elapsedWaveformStyle().Render(played+"╾") +
+		m.borderStyle().Render(strings.Repeat("─", width-marker-2)+"╴")
+}
+
 func (m *audioWorkbench) playbackVerb() string {
+	if m.result == nil {
+		return "Play"
+	}
 	if m.playing {
 		if m.result.resumable {
 			return "Pause"
@@ -319,20 +418,11 @@ func (m *audioWorkbench) playbackVerb() string {
 
 func (m *audioWorkbench) workspacePlayerControls() []string {
 	r := m.result
-	if r == nil {
+	if r == nil && !m.framed() {
 		return nil
 	}
-	play := m.playbackVerb() + " audio"
-	if duration := r.seekDuration(); !m.playing && !r.finished && duration > 0 && r.playbackPosition() >= duration {
-		play = "At end"
-	}
-	active := m.focus == 4 && !m.waveformFocused && !m.busy
-	playRow := "  " + m.playbackActionRow(play, active && m.resultAction == 0)
-	const saveWidth = 14
-	saveRow := m.playerActionRow("Save audio…", active && m.resultAction == 1, saveWidth)
+	actions := m.playerActions()
 	columnWidth := audioFormLabelWidth + 1
-	actions := playRow + strings.Repeat(" ", columnWidth-ansi.StringWidth(playRow)) + saveRow
-
 	timing, timeWidth := m.playerTiming()
 	end := 2 + m.waveformWidth()
 	// The timer occupies the third grid column. Keep its right edge stable while seeking.
@@ -344,23 +434,61 @@ func (m *audioWorkbench) workspacePlayerControls() []string {
 	} else {
 		rows = []string{strings.Repeat(" ", max(0, end-ansi.StringWidth(timing))) + timing, actions}
 	}
-	if len(r.savedPaths) == 0 {
-		return rows
+	if receipt := m.savedRecordingRow(m.audioWidth()); receipt != "" {
+		rows = append(rows, receipt)
+	}
+	return rows
+}
+
+func (m *audioWorkbench) playerActions() string {
+	r := m.result
+	play := m.playbackVerb() + " audio"
+	if duration := r.seekDuration(); duration > 0 && !m.playing && !r.finished && r.playbackPosition() >= duration {
+		play = "At end"
+	}
+	active := m.focus == 4 && !m.waveformFocused && !m.busy
+	playRow := "  " + m.playbackActionRow(play, active && m.resultAction == audioPlayAction)
+	const saveWidth = 14
+	saveRow := m.playerActionRow("Save audio…", active && m.resultAction == audioSaveAction, saveWidth)
+	columnWidth := audioFormLabelWidth + 1
+	return playRow + strings.Repeat(" ", columnWidth-ansi.StringWidth(playRow)) + saveRow
+}
+
+func (m *audioWorkbench) savedRecordingRow(width int) string {
+	r := m.result
+	if r == nil || len(r.savedPaths) == 0 {
+		return ""
 	}
 	label, path := "Saved: ", r.savedPaths[len(r.savedPaths)-1]
-	pathWidth := max(0, m.audioWidth()-4-ansi.StringWidth(label))
-	return append(rows, "  "+m.muted().Render(label+audioPathSuffix(path, pathWidth)))
+	pathWidth := max(0, width-4-ansi.StringWidth(label))
+	return "  " + m.muted().Render(label+audioPathSuffix(path, pathWidth))
 }
 
 // A retained recording with unavailable analysis has no known duration.
 func (m *audioWorkbench) playerTiming() (string, int) {
 	r := m.result
-	if !r.hasWaveform() {
-		return m.muted().Render("--:--.--- / --:--.---"), 21
+	if r == nil {
+		return "  " + m.muted().Render("00:00.000 / 00:00.000"), 21
+	}
+	if r.seekDuration() == 0 {
+		return "  " + m.muted().Render("--:--.--- / --:--.---"), 21
 	}
 	total := audioDuration(r.analysis.Duration)
 	elapsed := m.accent().Bold(false).Render(audioDuration(r.playbackPosition().Seconds()))
 	timing := elapsed + m.borderStyle().Render(" / ") + m.muted().Render(total)
+	// Keep the clock in the same columns while selecting it.
+	innerWidth := ansi.StringWidth(timing)
+	hasGutter := innerWidth+2 <= m.waveformWidth()+4
+	selected := m.focus == 4 && !m.waveformFocused && !m.busy && m.resultAction == audioTimeAction
+	if hasGutter {
+		if selected {
+			timing = m.selected("› "+ansi.Strip(timing), innerWidth+2)
+		} else {
+			timing = "  " + timing
+		}
+	} else if selected {
+		timing = m.selected(ansi.Strip(timing), innerWidth)
+	}
 	// Reserve the widest elapsed value before playback or seeking changes it.
 	return timing, max(21, 2*ansi.StringWidth(total)+3)
 }

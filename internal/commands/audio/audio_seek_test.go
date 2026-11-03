@@ -67,6 +67,7 @@ func TestAudioTypedSeekExactTimeAndEndpoints(t *testing.T) {
 		require.False(t, m.playing)
 		require.Zero(t, m.playID)
 	}
+	require.Contains(t, ansi.Strip(m.View().Content), "● Completed")
 	require.Nil(t, audioReviewKey(m, tea.KeySpace), "selecting the endpoint must not replay the recording")
 	m.result.finished = true
 	audioReviewKey(m, 'g')
@@ -149,7 +150,7 @@ func TestAudioTypedSeekEditsTheFramedTimeline(t *testing.T) {
 		audioReviewKey(m, '9')
 		view := m.View()
 		require.Contains(t, view.Content, "Text to speech")
-		require.Contains(t, view.Content, "┷")
+		require.Contains(t, view.Content, "╺")
 		require.Contains(t, view.Content, "Go to time")
 		require.NotNil(t, view.Cursor)
 		rows := strings.Split(ansi.Strip(view.Content), "\n")
@@ -288,7 +289,7 @@ func TestAudioSeekRespectsFocusModalBusyAndSizeGuards(t *testing.T) {
 		{"history modal", func(m *audioWorkbench) { m.modal = "history" }},
 		{"choice modal", func(m *audioWorkbench) { m.modal = "choice" }},
 		{"more modal", func(m *audioWorkbench) { m.modal = "more" }},
-		{"information modal", func(m *audioWorkbench) { m.openInformation("Help", "Synthetic help", "") }},
+		{"information modal", func(m *audioWorkbench) { m.openHelp("") }},
 		{"recovery modal", func(m *audioWorkbench) { m.rememberFailure("play", errors.New("synthetic player failure")) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {

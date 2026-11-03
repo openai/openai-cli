@@ -32387,7 +32387,7 @@ paths:
     post:
       operationId: updateAgentSession
       summary: Update an agent session
-      description: Updates session metadata, model, reasoning effort, or service tier. Model settings apply to subsequent turns. Omitted fields are unchanged. See [managing sessions](https://developers.openai.com/api/docs/guides/agents-api/sessions/manage).
+      description: Updates session tools, metadata, model, reasoning effort, or service tier. Model settings apply to subsequent turns. Omitted fields are unchanged. See [managing sessions](https://developers.openai.com/api/docs/guides/agents-api/sessions/manage).
       tags:
       - Agents
       parameters:
@@ -63717,8 +63717,8 @@ components:
     ResponseConfigurationUpdate:
       type: object
       description: |
-        A configuration update that applies to subsequent responses until it is
-        replaced by another configuration update.
+        A configuration update for subsequent responses. Each setting stays in effect
+        until a later update replaces that setting.
       properties:
         id:
           type: string
@@ -63740,15 +63740,27 @@ components:
               description: |
                 The reasoning effort used for subsequent responses until another
                 configuration update replaces it.
+        text:
+          type: object
+          description: The text output configuration for subsequent responses.
+          properties:
+            format:
+              description: Use a JSON schema for structured output or text to return to plain text.
+              discriminator:
+                propertyName: type
+              anyOf:
+              - $ref: '#/components/schemas/ResponseFormatText'
+              - $ref: '#/components/schemas/TextResponseFormatJsonSchema'
+          required:
+          - format
       required:
       - id
       - type
     ResponseConfigurationUpdateItemParam:
       type: object
       description: |
-        An update to the conversation's response configuration. The configuration
-        remains in effect for subsequent responses until it is replaced by another
-        configuration update.
+        An update to the conversation's response configuration. Supply reasoning,
+        text, or both. Each setting stays in effect until a later update replaces it.
       properties:
         id:
           anyOf:
@@ -63772,6 +63784,19 @@ components:
               description: |
                 The reasoning effort to use for subsequent responses until another
                 configuration update replaces it.
+        text:
+          type: object
+          description: The text output configuration for subsequent responses.
+          properties:
+            format:
+              description: Use a JSON schema for structured output or text to return to plain text.
+              discriminator:
+                propertyName: type
+              anyOf:
+              - $ref: '#/components/schemas/ResponseFormatText'
+              - $ref: '#/components/schemas/TextResponseFormatJsonSchema'
+          required:
+          - format
       required:
       - type
     ResponseContentPartAddedEvent:
@@ -69346,12 +69371,12 @@ components:
         Setting to `{ "type": "json_object" }` enables the older JSON mode, which
         ensures the message the model generates is valid JSON. Using `json_schema`
         is preferred for models that support it.
+      discriminator:
+        propertyName: type
       anyOf:
       - $ref: '#/components/schemas/ResponseFormatText'
       - $ref: '#/components/schemas/TextResponseFormatJsonSchema'
       - $ref: '#/components/schemas/ResponseFormatJsonObject'
-      discriminator:
-        propertyName: type
     TextResponseFormatJsonSchema:
       x-openai-structured-output: json_schema_default_strict
       type: object
@@ -78239,12 +78264,37 @@ components:
             anyOf:
             - $ref: '#/components/schemas/LiveFunctionToolInputParam'
             - $ref: '#/components/schemas/LiveWebSearchToolInputParam'
+            - $ref: '#/components/schemas/LiveFileSearchToolInputParam'
+            - $ref: '#/components/schemas/LiveCodeInterpreterToolInputParam'
+            - $ref: '#/components/schemas/LiveHostedShellToolInputParam'
+            - $ref: '#/components/schemas/LiveImageGenerationToolInputParam'
+            - $ref: '#/components/schemas/LiveMCPToolInputParam'
+            - $ref: '#/components/schemas/LiveCustomToolInputParam'
+            - $ref: '#/components/schemas/LiveNamespaceToolInputParam'
+            - $ref: '#/components/schemas/LiveToolSearchToolInputParam'
+            - $ref: '#/components/schemas/LiveProgrammaticToolInputParam'
+            - $ref: '#/components/schemas/LiveComputerToolInputParam'
+            - $ref: '#/components/schemas/LiveApplyPatchToolInputParam'
         tool_choice:
           description: Controls which tool the Responses backend uses when handling a task delegated by the Live model.
           anyOf:
           - $ref: '#/components/schemas/LiveToolChoiceEnum'
-          - $ref: '#/components/schemas/LiveFunctionToolChoiceParam'
-          - $ref: '#/components/schemas/LiveMCPToolChoiceParam'
+          - discriminator:
+              propertyName: type
+            anyOf:
+            - $ref: '#/components/schemas/LiveFunctionToolChoiceParam'
+            - $ref: '#/components/schemas/LiveMCPToolChoiceParam'
+            - $ref: '#/components/schemas/LiveSpecificFileSearchParam'
+            - $ref: '#/components/schemas/LiveSpecificWebSearchParam'
+            - $ref: '#/components/schemas/LiveSpecificWebSearchPreviewParam'
+            - $ref: '#/components/schemas/LiveSpecificImageGenParam'
+            - $ref: '#/components/schemas/LiveSpecificComputerParam'
+            - $ref: '#/components/schemas/LiveSpecificCodeInterpreterParam'
+            - $ref: '#/components/schemas/LiveSpecificProgrammaticToolCallingParam'
+            - $ref: '#/components/schemas/LiveSpecificFunctionShellParam'
+            - $ref: '#/components/schemas/LiveSpecificCustomToolParam'
+            - $ref: '#/components/schemas/LiveSpecificApplyPatchParam'
+          - $ref: '#/components/schemas/LiveAllowedToolsChoiceParam'
         parallel_tool_calls:
           anyOf:
           - description: Whether the delegated Responses model may request multiple tool calls in a single response.
@@ -78595,12 +78645,37 @@ components:
             anyOf:
             - $ref: '#/components/schemas/LiveFunctionToolInputParam'
             - $ref: '#/components/schemas/LiveWebSearchToolInputParam'
+            - $ref: '#/components/schemas/LiveFileSearchToolInputParam'
+            - $ref: '#/components/schemas/LiveCodeInterpreterToolInputParam'
+            - $ref: '#/components/schemas/LiveHostedShellToolInputParam'
+            - $ref: '#/components/schemas/LiveImageGenerationToolInputParam'
+            - $ref: '#/components/schemas/LiveMCPToolInputParam'
+            - $ref: '#/components/schemas/LiveCustomToolInputParam'
+            - $ref: '#/components/schemas/LiveNamespaceToolInputParam'
+            - $ref: '#/components/schemas/LiveToolSearchToolInputParam'
+            - $ref: '#/components/schemas/LiveProgrammaticToolInputParam'
+            - $ref: '#/components/schemas/LiveComputerToolInputParam'
+            - $ref: '#/components/schemas/LiveApplyPatchToolInputParam'
         tool_choice:
           description: Controls which tool the Responses backend uses when handling a task delegated by the Live model.
           anyOf:
           - $ref: '#/components/schemas/LiveToolChoiceEnum'
-          - $ref: '#/components/schemas/LiveFunctionToolChoiceParam'
-          - $ref: '#/components/schemas/LiveMCPToolChoiceParam'
+          - discriminator:
+              propertyName: type
+            anyOf:
+            - $ref: '#/components/schemas/LiveFunctionToolChoiceParam'
+            - $ref: '#/components/schemas/LiveMCPToolChoiceParam'
+            - $ref: '#/components/schemas/LiveSpecificFileSearchParam'
+            - $ref: '#/components/schemas/LiveSpecificWebSearchParam'
+            - $ref: '#/components/schemas/LiveSpecificWebSearchPreviewParam'
+            - $ref: '#/components/schemas/LiveSpecificImageGenParam'
+            - $ref: '#/components/schemas/LiveSpecificComputerParam'
+            - $ref: '#/components/schemas/LiveSpecificCodeInterpreterParam'
+            - $ref: '#/components/schemas/LiveSpecificProgrammaticToolCallingParam'
+            - $ref: '#/components/schemas/LiveSpecificFunctionShellParam'
+            - $ref: '#/components/schemas/LiveSpecificCustomToolParam'
+            - $ref: '#/components/schemas/LiveSpecificApplyPatchParam'
+          - $ref: '#/components/schemas/LiveAllowedToolsChoiceParam'
         parallel_tool_calls:
           anyOf:
           - description: Whether the delegated Responses model may request multiple tool calls in a single response.
@@ -87782,6 +87857,9 @@ components:
           - $ref: '#/components/schemas/TokenUsageResource'
           - type: 'null'
           description: Best-effort token usage for the session, or null if unknown. Recorded usage may change.
+        review:
+          $ref: '#/components/schemas/SessionReviewResource'
+          description: Review applied to eligible actions in this session. Omitted when review is none and automatic review is not enabled. Omission means none.
       required:
       - metadata
       - id
@@ -88584,6 +88662,9 @@ components:
           type: boolean
           default: false
           description: Whether to stream session events as server-sent events. Defaults to `false`.
+        review:
+          $ref: '#/components/schemas/SessionReviewParam'
+          description: Action review mode. Omit to use none.
       required:
       - environment
       additionalProperties: false
@@ -90189,8 +90270,17 @@ components:
           - type: 'null'
           description: Omit to keep the current tier. Null resets it to auto.
           x-openai-go-optional-enum: true
+        tools:
+          type:
+          - array
+          - 'null'
+          items:
+            $ref: '#/components/schemas/AgentToolConfigParam'
+          minItems: 0
+          maxItems: 16384
+          description: Replaces the session tools. Functions and MCP servers change on the next model call. Built-in tools change by the next turn. Omit to keep the current tools, or pass null or an empty array to clear them.
       additionalProperties: false
-      description: Model settings that can change after session creation.
+      description: Agent settings that can change after session creation.
     UpdateAgentSessionParams:
       type: object
       properties:
@@ -90201,7 +90291,7 @@ components:
           description: Omit to retain the limit; null or a null limit removes it without resetting spend.
         agent:
           $ref: '#/components/schemas/UpdateSessionAgentParam'
-          description: Model settings for subsequent turns. Omitted fields stay unchanged.
+          description: Agent settings to update on this session. Omitted fields stay unchanged.
         metadata:
           type:
           - object
@@ -90217,6 +90307,9 @@ components:
           minProperties: 0
           maxProperties: 16
           description: Replaces all metadata. Omit to leave unchanged, or pass null or {} to clear it. Up to 16 string key-value pairs, with keys up to 64 and values up to 512 characters.
+        review:
+          $ref: '#/components/schemas/SessionReviewParam'
+          description: Default action review for new root turns. Existing turns and their subagents keep their review mode.
       additionalProperties: false
       description: Fields to update on an existing session.
     DeletedSessionResource:
@@ -94434,12 +94527,12 @@ components:
         Setting to `{ "type": "json_object" }` enables the older JSON mode, which
         ensures the message the model generates is valid JSON. Using `json_schema`
         is preferred for models that support it.
+      discriminator:
+        propertyName: type
       anyOf:
       - $ref: '#/components/schemas/BetaResponseFormatText'
       - $ref: '#/components/schemas/BetaTextResponseFormatJsonSchema'
       - $ref: '#/components/schemas/BetaResponseFormatJsonObject'
-      discriminator:
-        propertyName: type
     BetaResponseFormatJsonObject:
       type: object
       title: JSON object
@@ -97450,9 +97543,8 @@ components:
     BetaResponseConfigurationUpdateItemParam:
       type: object
       description: |
-        An update to the conversation's response configuration. The configuration
-        remains in effect for subsequent responses until it is replaced by another
-        configuration update.
+        An update to the conversation's response configuration. Supply reasoning,
+        text, or both. Each setting stays in effect until a later update replaces it.
       properties:
         agent:
           anyOf:
@@ -97481,6 +97573,19 @@ components:
               description: |
                 The reasoning effort to use for subsequent responses until another
                 configuration update replaces it.
+        text:
+          type: object
+          description: The text output configuration for subsequent responses.
+          properties:
+            format:
+              description: Use a JSON schema for structured output or text to return to plain text.
+              discriminator:
+                propertyName: type
+              anyOf:
+              - $ref: '#/components/schemas/BetaResponseFormatText'
+              - $ref: '#/components/schemas/BetaTextResponseFormatJsonSchema'
+          required:
+          - format
       required:
       - type
     BetaAdditionalToolsItemParam:
@@ -100204,8 +100309,8 @@ components:
     BetaResponseConfigurationUpdate:
       type: object
       description: |
-        A configuration update that applies to subsequent responses until it is
-        replaced by another configuration update.
+        A configuration update for subsequent responses. Each setting stays in effect
+        until a later update replaces that setting.
       properties:
         agent:
           $ref: '#/components/schemas/BetaAgentTag'
@@ -100230,6 +100335,19 @@ components:
               description: |
                 The reasoning effort used for subsequent responses until another
                 configuration update replaces it.
+        text:
+          type: object
+          description: The text output configuration for subsequent responses.
+          properties:
+            format:
+              description: Use a JSON schema for structured output or text to return to plain text.
+              discriminator:
+                propertyName: type
+              anyOf:
+              - $ref: '#/components/schemas/BetaResponseFormatText'
+              - $ref: '#/components/schemas/BetaTextResponseFormatJsonSchema'
+          required:
+          - format
       required:
       - id
       - type
@@ -107972,6 +108090,21 @@ components:
       type: string
       format: binary
       description: A transparent PNG overlaid on the first image to guide the edit. Must match that image's dimensions after orientation and contain transparent pixels. Supports GPT Image 2.5 and 2.6. Cannot be combined with mask.
+    SessionReviewParam:
+      type: string
+      enum:
+      - none
+      - auto_review
+      x-enumDescriptions:
+      - Keep the existing execution behavior without automatic action review.
+      - Review eligible actions automatically. Deny manual approval fallbacks.
+      description: Review applied to eligible actions in a session.
+    SessionReviewResource:
+      type: string
+      enum:
+      - none
+      - auto_review
+      description: The configured action review mode.
     OAuthErrorCode:
       anyOf:
       - enum:
