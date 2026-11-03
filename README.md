@@ -25,6 +25,18 @@ files, submit batches, and inspect API results without writing an application.
 > (`codex`) when you want a coding agent to work on a project: read and edit code,
 > run commands, and help implement or debug a change.
 
+## Use the CLI from a coding agent
+
+The optional [OpenAI CLI skill](skills/openai-cli/SKILL.md) helps a shell agent choose API commands and interpret their output.
+Install the CLI in the environment where the agent runs. Copy the entire `skills/openai-cli` folder into the appropriate skills directory.
+
+| Agent | Current project | All projects for this user |
+| --- | --- | --- |
+| Codex | `.agents/skills/` | `~/.agents/skills/` |
+| Claude Code | `.claude/skills/` | `~/.claude/skills/` |
+
+Start a new agent session in the target project. For example, ask “Upload requests.jsonl to OpenAI for a future batch.”
+
 ## Things to try
 
 These examples use an API key; see [installation](#installation) and
