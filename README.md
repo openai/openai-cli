@@ -18,6 +18,10 @@
 
 One `openai` executable includes all CLI commands. Choose one installation method.
 
+The Bash and zsh examples check the installed executable by its full path.
+`command -v openai` shows what your shell runs when you type `openai`.
+If an alias or function takes precedence, use the full path from the example or update your shell definition.
+
 ### Installing with Homebrew
 
 On a Mac with Homebrew, paste this block into Bash or zsh.
@@ -31,7 +35,7 @@ brew install --cask openai/tools/openai && {
 }
 ```
 
-This selects Homebrew for the current shell. If you configured a custom `--binarydir`, use that directory for `brew_bin`.
+This puts Homebrew first on `PATH` for the current shell. If you configured a custom `--binarydir`, use that directory for `brew_bin`.
 If new shells select another copy, add Homebrew's binary directory first in your shell profile.
 
 To upgrade an existing Homebrew installation, refresh the tap and upgrade its cask.
