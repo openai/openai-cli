@@ -34,9 +34,9 @@ Apple Terminal can draw brackets at both ends of the shell command.
 Choose **View > Hide Marks** to hide them.
 For one launch, submit the command with Shift+Command+Return. [Apple Terminal shortcuts](https://support.apple.com/guide/terminal/trmlshtcts/mac)
 
-Press Left or Right while typing to switch between Text, Token IDs, and Bytes.
-Shift+Left and Shift+Right move the text cursor by one character.
-Tab moves from Text to View. A second Tab focuses the tokens.
+Press Left or Right while typing to move the text cursor by one character.
+Tab moves from Text to View. Use Left or Right there to switch between Text, Token IDs, and Bytes.
+A second Tab focuses the tokens.
 Use Left or Right there to select a token. Press Enter to inspect it.
 Outside the text field, `v` opens View, `m` opens Model, and `?` opens Help.
 When tokens are available, `d` opens Details for the selected token.

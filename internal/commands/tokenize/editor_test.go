@@ -61,9 +61,13 @@ func TestTokenizerEditorMovesAndDeletesCompleteGraphemes(t *testing.T) {
 		t.Run(cluster, func(t *testing.T) {
 			m := testTokenizerEditor()
 			m.insert("a" + cluster + "z")
-			tokenizerEditorModifiedKey(m, tea.KeyLeft, tea.ModShift)
+			tokenizerEditorKey(m, tea.KeyLeft)
 			require.Equal(t, 1+len(cluster), m.cursor)
-			tokenizerEditorModifiedKey(m, tea.KeyLeft, tea.ModShift)
+			tokenizerEditorKey(m, tea.KeyLeft)
+			require.Equal(t, 1, m.cursor)
+			tokenizerEditorKey(m, tea.KeyRight)
+			require.Equal(t, 1+len(cluster), m.cursor)
+			tokenizerEditorKey(m, tea.KeyLeft)
 			require.Equal(t, 1, m.cursor)
 			tokenizerEditorKey(m, tea.KeyDelete)
 			require.Equal(t, "az", m.text)
@@ -315,32 +319,37 @@ func TestTokenizerEditorSwitchingViewsDoesNotRecompute(t *testing.T) {
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
 	m.option = 1 // The last visit to settings ended on Model.
 	tokenizerEditorKey(m, tea.KeyHome)
-	tokenizerEditorModifiedKey(m, tea.KeyRight, tea.ModShift)
+	tokenizerEditorKey(m, tea.KeyRight)
 	require.Equal(t, 1, m.cursor)
 	require.Equal(t, 1, m.selected)
 	revision := m.revision
-	for _, focus := range []int{tokenizerFocusText, tokenizerFocusOptions} {
-		if focus == tokenizerFocusOptions {
-			require.Nil(t, tokenizerEditorKey(m, tea.KeyTab))
-			require.Zero(t, m.option, "Tab from Text returns to View")
-		}
-		for _, step := range []struct {
-			key rune
-			tab int
-		}{
-			{tea.KeyLeft, 2}, {tea.KeyRight, 0}, {tea.KeyRight, 1}, {tea.KeyRight, 2}, {tea.KeyRight, 0},
-		} {
-			require.Nil(t, tokenizerEditorKey(m, step.key))
-			require.Equal(t, step.tab, m.tab)
-			require.Equal(t, focus, m.focus)
-			require.Equal(t, 1, m.selected)
-			require.Equal(t, 1, m.cursor)
-			require.Equal(t, revision, m.revision)
-			require.Same(t, &tokens[0], &m.tokens[0])
-			require.False(t, m.updating)
-			require.Equal(t, "abc", m.text)
-		}
+	require.Nil(t, tokenizerEditorKey(m, tea.KeyTab))
+	require.Zero(t, m.option, "Tab from Text returns to View")
+	for _, step := range []struct {
+		key rune
+		tab int
+	}{
+		{tea.KeyLeft, 2}, {tea.KeyRight, 0}, {tea.KeyRight, 1}, {tea.KeyRight, 2},
+	} {
+		require.Nil(t, tokenizerEditorKey(m, step.key))
+		require.Equal(t, step.tab, m.tab)
+		require.Equal(t, tokenizerFocusOptions, m.focus)
+		require.Equal(t, 1, m.selected)
+		require.Equal(t, 1, m.cursor)
+		require.Equal(t, revision, m.revision)
+		require.Same(t, &tokens[0], &m.tokens[0])
+		require.False(t, m.updating)
+		require.Equal(t, "abc", m.text)
 	}
+	tokenizerEditorKey(m, tea.KeyEscape)
+	tokenizerEditorKey(m, tea.KeyRight)
+	require.Equal(t, 2, m.cursor)
+	tokenizerEditorKey(m, tea.KeyLeft)
+	require.Equal(t, 1, m.cursor)
+	require.Equal(t, 2, m.tab, "editing keeps the chosen Bytes view")
+	require.Equal(t, revision, m.revision)
+	m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	require.Equal(t, "axbc", m.text)
 }
 
 func TestTokenizerEditorEncodingRequiresExplicitSelection(t *testing.T) {

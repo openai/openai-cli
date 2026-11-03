@@ -198,9 +198,9 @@ func TestTokenizerEditorHelpGroupsAndWorkspaceShortcuts(t *testing.T) {
 		for _, text := range []string{
 			"Controls", "Views and details",
 			"Tab Cycle through Text, View, and Tokens.",
-			"← → Switch views. In Tokens, select a token.",
+			"← → In Text, move the cursor. In View, switch views. In Tokens, select a token.",
 			"PgUp/PgDn Page through text, tokens, or dialog rows.",
-			"Shift+← → Move the text cursor one character.",
+			"Ctrl+← → Move between words in Text.",
 			"v / m / d Outside Text, open View, Model, or Details.",
 			"Enter Add a line in Text or open the selection.",
 			"Token IDs The number this encoding assigns to each token.",

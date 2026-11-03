@@ -177,7 +177,7 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		onView := m.focus == tokenizerFocusOptions && m.option == 0
-		if (m.focus == tokenizerFocusText || onView) && (key == "left" || key == "right") {
+		if onView && (key == "left" || key == "right") {
 			direction := 1
 			if key == "left" {
 				direction = -1
@@ -408,9 +408,9 @@ func (m *tokenizerEditor) edit(msg tea.KeyPressMsg) {
 	switch msg.String() {
 	case "enter", "alt+enter":
 		m.insert("\n")
-	case "shift+left":
+	case "left", "shift+left":
 		m.cursor = m.boundaries[max(0, index-1)]
-	case "shift+right":
+	case "right", "shift+right":
 		m.cursor = m.boundaries[min(len(m.boundaries)-1, index+1)]
 	case "home", "ctrl+a":
 		m.cursor = m.lineStarts[m.lineIndex(m.cursor)]
