@@ -3,6 +3,7 @@ package images
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"image"
 	"os"
@@ -17,7 +18,24 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v3"
 )
+
+func TestImagePickerKonsoleReportingPreservesFailures(t *testing.T) {
+	require.NoError(t, imagePickerReportFailure(nil))
+	canceled := cli.Exit("", 143)
+	require.Same(t, canceled, imagePickerReportFailure(canceled))
+	cause := errors.New("synthetic terminal restoration failure")
+	failure := imagePickerReportFailure(errors.Join(canceled, imagePickerDisplayFailure(cause)))
+	require.ErrorIs(t, failure, cause)
+	var exit cli.ExitCoder
+	require.ErrorAs(t, failure, &exit)
+	require.Equal(t, 1, exit.ExitCode())
+	require.NotEmpty(t, exit.Error())
+	require.Contains(t, failure.Error(), "Saved images remain available.")
+	ordinary := imagePickerDisplayFailure(cause)
+	require.Same(t, ordinary, imagePickerReportFailure(ordinary))
+}
 
 func konsoleWorkspaceForTest(t *testing.T) (*imagePicker, *imagePickerWorkspace) {
 	t.Helper()

@@ -2,6 +2,7 @@ package images
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -10,7 +11,23 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/terminalimage"
+	"github.com/urfave/cli/v3"
 )
+
+// A quiet cancellation must not hide a joined restoration or output failure.
+// Keep the complete cause available to the shared diagnostic presenter.
+type imagePickerReportError struct{ error }
+
+func (e *imagePickerReportError) Unwrap() error { return e.error }
+func (e *imagePickerReportError) ExitCode() int { return 1 }
+
+func imagePickerReportFailure(failure error) error {
+	var exit cli.ExitCoder
+	if failure != nil && errors.As(failure, &exit) && exit.Error() == "" && strings.TrimSpace(failure.Error()) != "" {
+		return &imagePickerReportError{failure}
+	}
+	return failure
+}
 
 // The picker keeps input, raw modes, and request ownership. Only explicit
 // expansion uses a temporary screen; native images never enter its main panel.

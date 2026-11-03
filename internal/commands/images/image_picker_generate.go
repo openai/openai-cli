@@ -41,17 +41,34 @@ func imagePickerWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 		// Keep the executable binding through initial input and every request.
 		// Each native writer still finishes before the picker reads input again.
 		var closeOutput func() error
-		if interactiveImageEligible(true, true, os.Getenv, runtime.GOOS) {
+		konsole := interactiveImageEligible(true, true, os.Getenv, runtime.GOOS)
+		if konsole {
 			// Bind before any nested writer so group signals leave a helper
 			// available to restore the temporary screen and terminal modes.
 			ctx, closeOutput = terminalimage.PrepareInteractiveImageOutput(ctx, out)
 		} else {
 			ctx, closeOutput = prepareNativeImageOutput(ctx, command)
 		}
+		var reporter *cliterminal.Output
 		defer func() {
 			resultErr = errors.Join(resultErr, closeOutput())
+			if reporter != nil {
+				resultErr = reportInteractiveImageFailure(command, reporter, imagePickerReportFailure(resultErr), PreviewOptions{ShowError: opts.ShowError})
+			}
 		}()
 		if opts.DiagnosticsAllowed(ctx) && !command.Root().Bool("debug") && opts.ErrorFormat(command.Root()) == "text" && command.Root().String("transform-error") == "" {
+			if konsole && opts.ShowError != nil {
+				executable, err := os.Executable()
+				if err != nil {
+					return err
+				}
+				// Bind stderr before input. A blocked display can also block the
+				// final diagnostic when both descriptors share one terminal.
+				reporter, err = cliterminal.NewOutput(cliterminal.DetachedOutputContext(ctx), executable, os.Stderr)
+				if err != nil {
+					return err
+				}
+			}
 			workspaceCtx, closeWorkspaceOutput := terminalimage.PrepareNativeImageOutput(ctx, out)
 			defer func() { resultErr = errors.Join(resultErr, closeWorkspaceOutput()) }()
 			workspace := &imagePickerWorkspace{out: out, root: command.Root(), context: workspaceCtx}
