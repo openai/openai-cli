@@ -14,16 +14,19 @@ func TestTokenizerStudioSourceWrapsWithoutChangingDraft(t *testing.T) {
 	m := testTokenizerEditor()
 	source := "hello, world\n\n界e\u0301\r\n\tx!"
 	m.insert(source)
-	rows := m.studioSourceLines(m.styles(), 6, 6)
-	require.Equal(t, []string{"hello,", " world", "", "界e\u0301" + tokenizerSourceDisplay("\r"), `\tx!` + tokenizerCaret(" "), ""}, rows)
+	rows, cursor := m.studioSourceLines(m.styles(), 6, 6)
+	require.Equal(t, []string{"hello,", " world", "", "界e\u0301" + tokenizerSourceDisplay("\r"), `\tx! `, ""}, rows)
+	require.Equal(t, tea.NewCursor(4, 4), cursor)
 	m.cursor = len("hello")
 	tokenizerEditorModifiedKey(m, tea.KeyRight, tea.ModShift)
-	rows = m.studioSourceLines(m.styles(), 6, 6)
-	require.Equal(t, tokenizerCaret(" ")+"world", rows[1])
+	rows, cursor = m.studioSourceLines(m.styles(), 6, 6)
+	require.Equal(t, " world", rows[1])
+	require.Equal(t, tea.NewCursor(0, 1), cursor)
 	m.cursor = len("hello, world\n\n界e\u0301")
 	tokenizerEditorModifiedKey(m, tea.KeyLeft, tea.ModShift)
-	rows = m.studioSourceLines(m.styles(), 6, 6)
-	require.Contains(t, rows[3], tokenizerCaret("e\u0301"), "the caret covers the entire combining cluster")
+	rows, cursor = m.studioSourceLines(m.styles(), 6, 6)
+	require.Contains(t, rows[3], "界e\u0301")
+	require.Equal(t, tea.NewCursor(2, 3), cursor, "the caret precedes the complete combining cluster")
 	require.Equal(t, source, m.text)
 }
 
@@ -33,14 +36,16 @@ func TestTokenizerStudioSourceKeepsOversizedGraphemeAndEndCaretVisible(t *testin
 		m.insert(source)
 		for _, index := range []int{0, len(m.boundaries) / 2, len(m.boundaries) - 1} {
 			m.cursor = m.boundaries[index]
-			rows := m.studioSourceLines(m.styles(), 20, 4)
+			rows, cursor := m.studioSourceLines(m.styles(), 20, 4)
 			require.Len(t, rows, 4)
-			require.Equal(t, 1, strings.Count(strings.Join(rows, ""), "\x1b[7m"))
+			require.NotNil(t, cursor)
+			require.Less(t, cursor.X, 20)
+			require.Less(t, cursor.Y, len(rows))
 			for _, row := range rows {
 				require.LessOrEqual(t, tokenizerSourceWidth(ansi.Strip(row)), 20)
 			}
 			if m.cursor == len(source) {
-				require.Contains(t, strings.Join(rows, ""), tokenizerCaret(" "))
+				require.Equal(t, tokenizerSourceWidth(rows[cursor.Y])-1, cursor.X)
 			}
 		}
 		require.Equal(t, source, m.text)
@@ -69,7 +74,7 @@ func TestTokenizerStudioPageKeepsWrappedParagraphContiguous(t *testing.T) {
 		tokenizerEditorModifiedKey(m, home, tea.ModCtrl)
 		var previousStart, previousEnd int
 		for step := range len(m.boundaries) {
-			rows := m.studioSourceLines(m.styles(), width, count)
+			rows, _ := m.studioSourceLines(m.styles(), width, count)
 			visible := strings.TrimSuffix(ansi.Strip(strings.Join(rows, "")), " ")
 			start := strings.Index(source, visible)
 			require.GreaterOrEqual(t, start, 0, "page must contain a continuous substring")
@@ -109,11 +114,14 @@ func TestTokenizerStudioPageMeasuresEscapedTextAndEndCaret(t *testing.T) {
 	tokenizerEditorModifiedKey(m, tea.KeyRight, tea.ModShift)
 	tokenizerEditorKey(m, tea.KeyPgDown)
 	require.Equal(t, count*len(row)+len("e\u0301界"), m.cursor)
-	visible := m.studioSourceLines(m.styles(), width, count)
-	require.Contains(t, visible[0], tokenizerCaret(`\t`))
+	visible, cursor := m.studioSourceLines(m.styles(), width, count)
+	require.Contains(t, visible[0], `\t`)
+	require.Equal(t, tea.NewCursor(3, 0), cursor)
 	tokenizerEditorKey(m, tea.KeyPgDown)
 	require.Equal(t, len(m.text), m.cursor)
-	require.Contains(t, m.studioSourceLines(m.styles(), width, count)[0], tokenizerCaret(" "))
+	visible, cursor = m.studioSourceLines(m.styles(), width, count)
+	require.Equal(t, " ", visible[0])
+	require.Equal(t, tea.NewCursor(0, 0), cursor)
 	tokenizerEditorKey(m, tea.KeyPgUp)
 	require.GreaterOrEqual(t, m.cursor, count*len(row))
 	require.Less(t, m.cursor, (count+1)*len(row), "a reconstructed page overlaps by at most one row")
@@ -123,7 +131,9 @@ func TestTokenizerStudioPageMeasuresEscapedTextAndEndCaret(t *testing.T) {
 	require.Zero(t, m.cursor)
 
 	m.insert("x")
-	require.Contains(t, m.studioSourceLines(m.styles(), width, count)[0], "x"+tokenizerCaret("e\u0301"))
+	visible, cursor = m.studioSourceLines(m.styles(), width, count)
+	require.Contains(t, visible[0], "xe\u0301")
+	require.Equal(t, tea.NewCursor(1, 0), cursor)
 }
 
 func TestTokenizerStudioPagingKeepsWidthAcrossLineNumbers(t *testing.T) {

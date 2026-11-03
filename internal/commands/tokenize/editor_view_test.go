@@ -72,7 +72,7 @@ func TestTokenizerEditorTextPositionAppearsOnlyOnOverflow(t *testing.T) {
 			}
 			require.Equal(t, overflowing, strings.Contains(frame, "PgUp/PgDn"))
 			require.Contains(t, frame, "Ctrl+C exit")
-			require.Contains(t, frame, "↓ options")
+			require.Contains(t, frame, "Tab tokens")
 			require.LessOrEqual(t, len(strings.Split(frame, "\n")), m.viewHeight())
 			for _, row := range strings.Split(frame, "\n") {
 				require.Less(t, ansi.StringWidth(row), m.width)
@@ -87,11 +87,12 @@ func TestTokenizerEditorMaximumNewlineInputKeepsCaretAndFooter(t *testing.T) {
 	source := strings.Repeat("\n", 1<<20)
 	m.insert(source)
 	require.Len(t, m.lineStarts, len(source)+1)
-	frame := m.View().Content
+	view := m.View()
+	frame := view.Content
 	require.Contains(t, frame, "Text 1048577/1048577")
-	require.Contains(t, frame, "\x1b[7m \x1b[27m")
+	require.Equal(t, " ", tokenizerCursorCell(t, view))
 	require.Contains(t, frame, "Ctrl+C exit")
-	require.Contains(t, frame, "↓ options")
+	require.Contains(t, frame, "Tab tokens")
 	require.LessOrEqual(t, len(strings.Split(frame, "\n")), m.viewHeight())
 	require.Equal(t, source, m.text)
 }
@@ -250,7 +251,7 @@ func TestTokenizerEditorCompactResultHintsRemainComplete(t *testing.T) {
 	m.width, m.height, m.focus = 40, 12, tokenizerFocusResults
 	view := m.View().Content
 	require.Contains(t, view, "←→")
-	require.Contains(t, view, "Enter details")
+	require.Contains(t, view, "Tab edit")
 	require.Contains(t, view, "Ctrl+C exit")
 	require.NotContains(t, view, "PgUp/PgDn", "all tokens fit")
 	require.NotContains(t, view, "details…")
@@ -262,24 +263,21 @@ func TestTokenizerEditorSourceInheritsTerminalBackground(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		m.dark = dark
 		m.cursor = len(m.text)
-		rows := strings.Split(m.View().Content, "\n")
-		var sourceRow string
-		for _, row := range rows {
-			if strings.Contains(row, "\x1b[7m") {
-				sourceRow = row
-				break
-			}
-		}
+		view := m.View()
+		require.NotNil(t, view.Cursor)
+		sourceRow := strings.Split(view.Content, "\n")[view.Cursor.Y]
 		require.Contains(t, ansi.Strip(sourceRow), "Hello, world!")
 		_, source, found := strings.Cut(sourceRow, "Text")
 		require.True(t, found)
 		require.NotContains(t, source, "48;2;", "the source inherits the terminal background after the focused label")
 	}
 	m.insert("\n")
-	rows := strings.Split(m.View().Content, "\n")
+	view := m.View()
+	rows := strings.Split(view.Content, "\n")
 	for i, row := range rows {
 		if strings.Contains(row, "Hello, world!") {
-			require.Contains(t, rows[i+1], "\x1b[7m \x1b[27m")
+			require.Equal(t, i+1, view.Cursor.Y)
+			require.Equal(t, " ", tokenizerCursorCell(t, view))
 			require.NotContains(t, rows[i+1], "48;2;", "the empty cursor row inherits the terminal background")
 			return
 		}
@@ -343,15 +341,17 @@ func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
 				focus, option int
 				marker, hint  string
 			}{
-				{tokenizerFocusText, 0, "\x1b[7m \x1b[27m", "↓ options"},
+				{tokenizerFocusText, 0, "› Text", "Tab tokens"},
 				{tokenizerFocusOptions, 0, "› View", "←→ view"},
 				{tokenizerFocusOptions, 1, "› Model", "Enter open"},
-				{tokenizerFocusResults, 0, "› Token ", "Enter details"},
+				{tokenizerFocusResults, 0, "› Token ", "Tab edit"},
 			} {
 				m := tokenizerEditorExample()
 				m.width, m.height, m.color, m.dark = size[0], size[1], false, dark
 				m.focus, m.option = state.focus, state.option
-				view := m.View().Content
+				rendered := m.View()
+				require.Equal(t, state.focus == tokenizerFocusText, rendered.Cursor != nil)
+				view := rendered.Content
 				for _, rendition := range regexp.MustCompile(`\x1b\[[0-9;:]*m`).FindAllString(view, -1) {
 					require.Contains(t, []string{"\x1b[7m", "\x1b[27m", "\x1b[1m", "\x1b[m"}, rendition, "NO_COLOR retains functional monochrome cues")
 				}
@@ -648,6 +648,7 @@ func TestTokenizerEditorContinuousTextPreservesLiteralSegments(t *testing.T) {
 		{"Hello", ",", " world", "!"},
 		{" say ", `"hi"`, " [x]", ` \path`, "  "},
 		{" ", "  ", " "},
+		{"a", "\u3000", "\u00a0", "b"},
 		{"é", " 日本語"},
 	} {
 		for _, width := range []int{40, 80} {
@@ -670,8 +671,17 @@ func TestTokenizerEditorContinuousTextPreservesLiteralSegments(t *testing.T) {
 						rows, count := m.resultWindow(m.styles(), m.viewWidth())
 						result := strings.Join(rows, "")
 						require.Equal(t, len(pieces), count)
-						require.Equal(t, "  "+source, ansi.Strip(result), "only the fixed gutter may precede the exact source")
-						selectedText := m.styles().tokenSelected.Render(piece)
+						shown := piece
+						switch piece {
+						case " ", "\u00a0":
+							shown = "␣"
+						case "  ", "\u3000":
+							shown = "␣ "
+						}
+						want := strings.Join(pieces[:selected], "") + shown + strings.Join(pieces[selected+1:], "")
+						require.Equal(t, "  "+want, ansi.Strip(result))
+						require.Equal(t, tokenizerSourceWidth(source), tokenizerSourceWidth(want))
+						selectedText := m.styles().tokenSelected.Render(shown)
 						require.Contains(t, result, selectedText, "selection must cover the complete token, including spaces")
 					}
 				}
@@ -701,7 +711,7 @@ func TestTokenizerEditorSingleTokenResultsKeepFocusHeading(t *testing.T) {
 	m.focus = tokenizerFocusResults
 	view := m.View().Content
 	require.Contains(t, view, "› Token 1 of 1")
-	require.Contains(t, view, "\x1b[7m  \x1b[m")
+	require.Contains(t, view, "\x1b[7m␣ \x1b[m")
 	require.Contains(t, view, "Ctrl+C exit")
 	require.LessOrEqual(t, len(strings.Split(view, "\n")), m.viewHeight())
 }
@@ -756,21 +766,37 @@ func TestTokenizerEditorContinuousEmojiUsesPainterWidths(t *testing.T) {
 	}
 }
 
+func tokenizerCursorCell(t *testing.T, view tea.View) string {
+	t.Helper()
+	require.NotNil(t, view.Cursor)
+	require.Equal(t, tea.CursorBar, view.Cursor.Shape)
+	require.True(t, view.Cursor.Blink)
+	row := strings.Split(ansi.Strip(view.Content), "\n")[view.Cursor.Y]
+	for x := 0; row != ""; {
+		cell, width, n := cliterminal.Sequence(row)
+		if x == view.Cursor.X {
+			return cell
+		}
+		x += width
+		row = row[n:]
+	}
+	t.Fatalf("cursor outside rendered text at (%d, %d)", view.Cursor.X, view.Cursor.Y)
+	return ""
+}
+
 func TestTokenizerEditorCaretDoesNotShiftSource(t *testing.T) {
 	for _, source := range []string{"hello", "e\u0301日本👩‍💻", "a\tb"} {
 		m := testTokenizerEditor()
 		m.insert(source)
 		for _, cursor := range m.boundaries {
 			m.cursor = cursor
-			line := m.editorLine(0, len(source), cursor, 76)
+			line, column := m.editorLine(0, len(source), cursor, 76)
 			want := tokenizerSourceDisplay(source)
 			if cursor == len(source) {
 				want += " "
 			}
-			require.Equal(t, want, ansi.Strip(line), "caret must not insert a cell between graphemes")
-			require.NotContains(t, line, "▏")
-			require.Equal(t, 1, strings.Count(line, "\x1b[7m"))
-			require.Equal(t, 1, strings.Count(line, "\x1b[27m"))
+			require.Equal(t, want, line, "the native caret adds no characters or rendition escapes")
+			require.Equal(t, tokenizerSourceWidth(tokenizerSourceControls.Replace(source[:cursor])), column)
 			require.Equal(t, source, m.text)
 		}
 	}
@@ -778,7 +804,7 @@ func TestTokenizerEditorCaretDoesNotShiftSource(t *testing.T) {
 
 func TestTokenizerEditorCaretSurvivesASCIIProfile(t *testing.T) {
 	for _, source := range []string{"", "hello", "👩‍💻", "\n"} {
-		for _, size := range [][2]int{{40, 12}, {80, 24}} {
+		for _, size := range [][2]int{{40, 12}, {80, 24}, {120, 30}} {
 			m := testTokenizerEditor()
 			m.width, m.height = size[0], size[1]
 			m.insert(source)
@@ -786,11 +812,17 @@ func TestTokenizerEditorCaretSurvivesASCIIProfile(t *testing.T) {
 				m.cursor = cursor
 				var converted strings.Builder
 				writer := &colorprofile.Writer{Forward: &converted, Profile: colorprofile.ASCII}
-				_, err := writer.WriteString(m.View().Content)
+				view := m.View()
+				_, err := writer.WriteString(view.Content)
 				require.NoError(t, err)
 				frame := cliterminal.InlineFrame(converted.String(), m.width)
-				require.Contains(t, frame, "\x1b[7m")
-				require.Contains(t, frame, "\x1b[27m")
+				want := " "
+				if source == "" {
+					want = "T" // First cell of the placeholder.
+				} else if cursor < len(source) && source[cursor] != '\n' {
+					want, _, _ = cliterminal.Sequence(source[cursor:])
+				}
+				require.Equal(t, want, tokenizerCursorCell(t, view))
 				require.Contains(t, frame, "\x1b[1m[Text]\x1b[m")
 				for _, rendition := range regexp.MustCompile(`\x1b\[[0-9;:]*m`).FindAllString(frame, -1) {
 					require.Contains(t, []string{"\x1b[7m", "\x1b[27m", "\x1b[1m", "\x1b[m"}, rendition)
@@ -813,12 +845,13 @@ func TestTokenizerEditorCaretRemainsVisibleOnOversizedGrapheme(t *testing.T) {
 	_, err := writer.WriteString(m.View().Content)
 	require.NoError(t, err)
 	frame := cliterminal.InlineFrame(converted.String(), m.width)
-	require.Contains(t, frame, "\x1b[7m…\x1b[27m", "clipping must not hide the current caret")
+	require.Contains(t, frame, "…")
+	require.Equal(t, "…", tokenizerCursorCell(t, m.View()))
 	require.Equal(t, source, m.text)
 	require.Zero(t, m.cursor)
 	tokenizerEditorModifiedKey(m, tea.KeyRight, tea.ModShift)
 	require.Equal(t, len(source), m.cursor)
-	require.Contains(t, m.View().Content, "\x1b[7m \x1b[27m")
+	require.Equal(t, " ", tokenizerCursorCell(t, m.View()))
 }
 
 func TestTokenizerEditorTokenPaletteStaysStableAcrossViewsAndPages(t *testing.T) {
@@ -887,7 +920,7 @@ func TestTokenizerEditorMainViewShowsModelNamesWithoutRedundantHints(t *testing.
 			require.NotContains(t, view, "Token 1 of 1")
 			require.NotContains(t, view, "F1 help")
 			require.NotContains(t, view, "Enter newline")
-			require.Contains(t, view, "↓ options")
+			require.Contains(t, view, "Tab tokens")
 		}
 	}
 }
@@ -901,10 +934,11 @@ func TestTokenizerEditorLargeFrameWorkStaysBounded(t *testing.T) {
 			runtime.GC()
 			var before, after runtime.MemStats
 			runtime.ReadMemStats(&before)
-			frame := m.View().Content
+			view := m.View()
 			runtime.ReadMemStats(&after)
+			frame := view.Content
 			require.Contains(t, ansi.Strip(frame), "tail ")
-			require.Contains(t, frame, "\x1b[7m \x1b[27m")
+			require.Equal(t, " ", tokenizerCursorCell(t, view))
 			require.Less(t, len(frame), 4096)
 			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256<<10), "repaint must not allocate per source grapheme")
 		})
@@ -1028,10 +1062,11 @@ func TestTokenizerEditorEmojiEndCursorSurvivesInlinePainter(t *testing.T) {
 				m.width, m.height = size[0], size[1]
 				source := strings.Repeat(cluster, 200)
 				m.insert(source)
-				paint := cliterminal.InlineFrame(m.View().Content, m.width)
+				view := m.View()
+				paint := cliterminal.InlineFrame(view.Content, m.width)
 				frame := ansi.Strip(paint)
 				require.Contains(t, frame, cluster+" ", "the ending grapheme and cursor cell must remain visible")
-				require.Contains(t, paint, "\x1b[7m \x1b[27m")
+				require.Equal(t, " ", tokenizerCursorCell(t, view))
 				if m.roomy() {
 					require.Equal(t, 2*(len(strings.Split(m.View().Content, "\n"))-2), strings.Count(frame, "│"))
 				}
@@ -1089,7 +1124,7 @@ func TestTokenizerEditorStudioAndCompactLayout(t *testing.T) {
 			}
 			require.Contains(t, rows[header+2], "› Text")
 			require.Contains(t, rows[footer], "Ctrl+C exit")
-			require.NotContains(t, rows[footer], "Shift+")
+			require.NotContains(t, rows[footer], "Shift+←")
 			require.NotEmpty(t, strings.Trim(rows[footer-1], " │╎"), "controls follow the last content row")
 			if studio {
 				dividerColumn := m.sourceWidth() + 3

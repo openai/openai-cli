@@ -11,6 +11,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/tokenizer"
 	"github.com/stretchr/testify/require"
@@ -163,25 +165,38 @@ func TestTokenizerEditorRestoresInlineModes(t *testing.T) {
 
 func TestTokenizerEditorRepaintsFromInlineAnchorOnResize(t *testing.T) {
 	paint := &tokenizerRecordedFrames{}
-	inline := &tokenizerEditorInline{model: newTokenizerEditor(), painter: paint}
+	receipt := &tokenizerCursorOutput{FrameOutput: tokenizerFrameWriteFunc(func(_ context.Context, data []byte) (int, error) {
+		return len(data), nil
+	})}
+	inline := &tokenizerEditorInline{model: newTokenizerEditor(), painter: paint, cursorOutput: receipt}
 	inline.Init()
 	inline.Update(tokenizerEditorWrapTimeout{})
 	inline.Update(tea.ModeReportMsg{Mode: ansi.ModeAltScreenSaveCursor, Value: ansi.ModeSet})
 
-	for _, size := range [][2]int{{120, 30}, {60, 18}, {100, 25}} {
+	for i, size := range [][2]int{{120, 30}, {60, 18}, {100, 25}} {
 		width, height := size[0], size[1]
 		start := paint.Len()
 		inline.drawFrame(width, height)
 		frame := paint.String()[start:]
 		require.Contains(t, frame, "Tokenizer")
-		require.True(t, strings.HasPrefix(frame, "\r"+ansi.EraseScreenBelow))
+		prefix := ansi.ResetModeTextCursorEnable
+		if i > 0 {
+			prefix += ansi.RestoreCursor
+		}
+		require.True(t, strings.HasPrefix(frame, prefix+"\r"+ansi.EraseScreenBelow))
+		require.Equal(t, i, paint.replacements, "the initial origin must precede replaceable frames")
 		rows := strings.Count(inline.content, "\n") + 1
 		require.Less(t, rows, height, "leave room above the panel")
-		require.True(t, strings.HasSuffix(frame, "\r"+ansi.CursorUp(rows-1)), "return to the panel's first row")
+		c := inline.model.View().Cursor
+		require.NotNil(t, c)
+		placement := ansi.CursorDown(c.Y) + ansi.CursorHorizontalAbsolute(c.X+1) + ansi.SetCursorStyle(5) + ansi.SetModeTextCursorEnable
+		require.True(t, strings.HasSuffix(frame, "\r"+ansi.CursorUp(rows-1)+ansi.SaveCursor+placement))
+		_, err := receipt.WriteContext(t.Context(), []byte(frame))
+		require.NoError(t, err)
 	}
 
 	cleanup := inline.close()
-	require.Contains(t, cleanup, "\r"+ansi.EraseScreenBelow)
+	require.Contains(t, cleanup, ansi.RestoreCursor+"\r"+ansi.EraseScreenBelow+ansi.SetCursorStyle(0))
 	require.Contains(t, cleanup, ansi.SetModeTextCursorEnable)
 	all := paint.String() + cleanup
 	for _, control := range []string{ansi.SetModeAltScreenSaveCursor, ansi.RequestModeAltScreenSaveCursor,
@@ -190,10 +205,155 @@ func TestTokenizerEditorRepaintsFromInlineAnchorOnResize(t *testing.T) {
 	}
 }
 
-type tokenizerRecordedFrames struct{ strings.Builder }
+func TestTokenizerCursorOnlyMoveRepaintsCompleteFrame(t *testing.T) {
+	m := newTokenizerEditor()
+	m.insert("abcde")
+	m.cursor = 3
+	paint := &tokenizerRecordedFrames{}
+	p := &tokenizerEditorInline{model: m, painter: paint}
+	p.drawFrame(96, 24)
+	content := p.content
+	before := *p.cursor
+	paint.Reset()
+	tokenizerEditorKey(m, tea.KeyLeft)
+	p.drawFrame(96, 24)
+	require.Equal(t, content, p.content)
+	require.Equal(t, before.X-1, p.cursor.X)
+	require.Contains(t, paint.String(), ansi.ResetModeTextCursorEnable+ansi.RestoreCursor)
+	require.Contains(t, paint.String(), "abcde")
+	require.Contains(t, paint.String(), ansi.CursorHorizontalAbsolute(p.cursor.X+1)+ansi.SetCursorStyle(5))
+
+	paint.Reset()
+	p.drawFrame(96, 24)
+	require.Empty(t, paint.String(), "an unchanged frame must leave native blinking undisturbed")
+	tokenizerEditorKey(m, tea.KeyTab)
+	p.drawFrame(96, 24)
+	require.Nil(t, p.cursor)
+	require.Contains(t, paint.String(), ansi.ResetModeTextCursorEnable+ansi.RestoreCursor)
+	require.NotContains(t, paint.String(), ansi.SetModeTextCursorEnable)
+}
+
+func TestTokenizerCaretFollowsTerminalWidthAfterJoinedEmoji(t *testing.T) {
+	for _, size := range []struct {
+		name          string
+		width, height int
+		prefix        string
+	}{
+		{"wide", 120, 30, "a"},
+		{"soft-wrapped", 96, 16, strings.Repeat("a", 40)},
+		{"horizontally clipped", 40, 12, strings.Repeat("a", 55)},
+	} {
+		for _, profile := range []colorprofile.Profile{colorprofile.TrueColor, colorprofile.ASCII} {
+			t.Run(size.name+"/"+profile.String(), func(t *testing.T) {
+				m := newTokenizerEditor()
+				m.color = profile == colorprofile.TrueColor
+				draft := size.prefix + "👩‍💻Ze\u0301b"
+				m.insert(draft)
+				m.cursor = strings.IndexByte(draft, 'Z')
+				paint := &tokenizerRecordedFrames{}
+				p := &tokenizerEditorInline{model: m, painter: paint, profile: profile}
+				p.drawFrame(size.width, size.height)
+				require.NotNil(t, p.cursor)
+				line := strings.Split(p.content, "\n")[p.cursor.Y]
+				prefix, _, found := strings.Cut(line, "Z")
+				require.True(t, found, "the character under the caret must be visible")
+				require.True(t, strings.HasSuffix(prefix, "👩‍💻"))
+				require.Equal(t, m.color, prefix != ansi.Strip(prefix))
+				placement := ansi.CursorDown(p.cursor.Y) + ansi.ResetModeAutoWrap + prefix + ansi.SetModeAutoWrap
+				require.True(t, strings.HasSuffix(paint.String(), ansi.SaveCursor+placement+ansi.SetCursorStyle(5)+ansi.SetModeTextCursorEnable),
+					"replay the exact painted prefix up to Z, including styles and excluding pane controls")
+				require.Equal(t, draft, m.text)
+			})
+		}
+	}
+}
+
+func TestTokenizerRestoresReportedShellCursorStyle(t *testing.T) {
+	const query = "\x1bP$q q\x1b\\"
+	const underline = "\x1bP1$r3 q\x1b\\"
+	const bar = "\x1bP1$r6 q\x1b\\"
+	for _, test := range []struct {
+		name    string
+		replies []string
+		style   int
+	}{
+		{"silent terminal", nil, 0},
+		{"unsupported reply", []string{"\x1bP0$r3 q\x1b\\"}, 0},
+		{"first valid reply", []string{"\x1bP1$r2m\x1b\\", "\x1bP1$r9 q\x1b\\", underline, bar}, 3},
+		{"reported default", []string{"\x1bP1$r0 q\x1b\\", bar}, 0},
+		{"eight-bit reply", []string{"\x901$r4 q\x9c"}, 4},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := testTokenizerEditor()
+			m.insert("draft")
+			revision := m.revision
+			paint := &tokenizerRecordedFrames{}
+			inline := &tokenizerEditorInline{model: m, painter: paint}
+			inline.Init()
+			require.Equal(t, 1, strings.Count(paint.String(), query), "request the shell style before changing it")
+			require.NotContains(t, paint.String(), ansi.SetCursorStyle(5))
+			inline.drawFrame(80, 24)
+			require.Contains(t, paint.String(), ansi.SetCursorStyle(5), "Text uses a blinking bar")
+			var decoder uv.EventDecoder
+			for _, reply := range test.replies {
+				n, event := decoder.Decode([]byte(reply))
+				require.Equal(t, len(reply), n)
+				require.IsType(t, uv.UnknownDcsEvent(""), event)
+				inline.Update(event)
+			}
+			require.Equal(t, "draft", m.text)
+			require.Equal(t, revision, m.revision)
+			cleanup := inline.close()
+			for style := 0; style <= 6; style++ {
+				require.Equal(t, style == test.style, strings.Contains(cleanup, ansi.SetCursorStyle(style)), "cleanup style %d", style)
+			}
+		})
+	}
+}
+
+func TestTokenizerCursorCleanupRequiresAcknowledgedOrigin(t *testing.T) {
+	replay := "panel" + ansi.SaveCursor + ansi.ResetModeAutoWrap
+	frame := []byte(replay + "👩‍💻" + ansi.SetModeAutoWrap)
+	for _, n := range []int{0, len("panel"), len("panel") + 1, len("panel" + ansi.SaveCursor), len(replay), len(frame)} {
+		receipt := &tokenizerCursorOutput{FrameOutput: tokenizerFrameWriteFunc(func(context.Context, []byte) (int, error) {
+			if n < len(frame) {
+				return n, io.ErrShortWrite
+			}
+			return n, nil
+		})}
+		accepted, err := receipt.WriteContext(t.Context(), frame)
+		require.Equal(t, n, accepted)
+		require.Equal(t, n < len(frame), errors.Is(err, io.ErrShortWrite))
+		saved := n >= len("panel"+ansi.SaveCursor)
+		for _, originallyDisabled := range []bool{false, true} {
+			p := &tokenizerEditorInline{modesActive: true, restoreWrap: originallyDisabled, cursorStyled: true, cursorOutput: receipt}
+			cleanup := p.close()
+			require.Equal(t, saved, strings.Contains(cleanup, ansi.RestoreCursor))
+			require.Equal(t, saved, strings.Contains(cleanup, ansi.EraseScreenBelow))
+			require.Contains(t, cleanup, ansi.SetCursorStyle(0))
+			require.Equal(t, originallyDisabled, strings.Contains(cleanup, ansi.ResetModeAutoWrap))
+			require.Equal(t, !originallyDisabled, strings.Contains(cleanup, ansi.SetModeAutoWrap))
+			require.Empty(t, p.close())
+		}
+	}
+}
+
+type tokenizerFrameWriteFunc func(context.Context, []byte) (int, error)
+
+func (f tokenizerFrameWriteFunc) WriteContext(ctx context.Context, data []byte) (int, error) {
+	return f(ctx, data)
+}
+
+type tokenizerRecordedFrames struct {
+	strings.Builder
+	replacements int
+}
 
 func (p *tokenizerRecordedFrames) Control(data string) { _, _ = p.WriteString(data) }
-func (p *tokenizerRecordedFrames) Frame(data string)   { _, _ = p.WriteString(data) }
+func (p *tokenizerRecordedFrames) Frame(data string) {
+	p.replacements++
+	_, _ = p.WriteString(data)
+}
 
 type tokenizerPartialSink struct {
 	accepted bytes.Buffer

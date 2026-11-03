@@ -109,7 +109,7 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.usable() {
-			m.note = "Tab to Text to paste."
+			m.note = "Focus Text to paste."
 		}
 	case tea.KeyPressMsg:
 		key := msg.String()
@@ -162,14 +162,18 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch key {
-		case "tab", "shift+tab":
-			direction := 1
-			if key == "shift+tab" {
-				direction = -1
+		case "tab":
+			if m.focus == tokenizerFocusResults {
+				m.focus = tokenizerFocusText
+			} else {
+				m.focus = tokenizerFocusResults
 			}
-			m.focus = (m.focus + direction + 3) % 3
-			if previousFocus == tokenizerFocusText && m.focus == tokenizerFocusOptions {
-				m.option = 0 // Tab from Text always lands on the visible View selector.
+			return m, nil
+		case "shift+tab":
+			if m.focus == tokenizerFocusOptions {
+				m.focus = tokenizerFocusText
+			} else {
+				m.focus, m.option = tokenizerFocusOptions, 0
 			}
 			return m, nil
 		case "esc":

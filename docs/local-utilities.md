@@ -35,9 +35,8 @@ Choose **View > Hide Marks** to hide them.
 For one launch, submit the command with Shift+Command+Return. [Apple Terminal shortcuts](https://support.apple.com/guide/terminal/trmlshtcts/mac)
 
 Press Left or Right while typing to move the text cursor by one character.
-Tab moves from Text to View. Use Left or Right there to switch between Text, Token IDs, and Bytes.
-A second Tab focuses the tokens.
-Use Left or Right there to select a token. Press Enter to inspect it.
+Tab moves directly between Text and Tokens. In Tokens, Left and Right select a token. Enter opens its details.
+Shift+Tab opens View settings from either pane. Use Left or Right there to choose Text, Token IDs, or Bytes.
 Outside the text field, `v` opens View, `m` opens Model, and `?` opens Help.
 When tokens are available, `d` opens Details for the selected token.
 In a chooser, use Up or Down to highlight a choice. Enter applies it, and Escape cancels it.
@@ -54,11 +53,11 @@ Ctrl+Left and Ctrl+Right move between words separated by whitespace.
 When lines exceed the visible text area, the Text label shows the current line and total lines.
 The editor keeps the complete draft even when only part is visible.
 The highlighted token follows the text cursor without recalculating tokens.
-The highlight follows the selected token. A label identifies tokens that contain only spaces.
-The cursor highlights the character at its position without inserting a gap between letters.
+The selected token and its byte count share a blue background. Monochrome terminals use reverse video.
+In the token strip, `␣` marks a selected space-only token. Its caption gives the exact number of spaces.
+The text editor shows a thin blinking cursor at the insertion point.
 At a token boundary, the highlight selects the token on the right. At the end, it selects the last token.
 Tokens can split a Unicode character; cursor movement still follows complete graphemes.
-Tab and Shift+Tab cycle through text, options, and tokens.
 Chooser focus uses the image picker's bold highlight. A checkmark identifies the applied choice.
 The main screen shows model families instead of encoding identifiers.
 It shows the token count and, for multiple tokens, the selected position.

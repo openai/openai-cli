@@ -1,6 +1,7 @@
 package tokenize
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,8 +9,10 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -135,7 +138,8 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	defer inputBridge.Close()
 	worker := newTokenizerPreviewWorker(ctx, executable)
 	defer worker.Close()
-	painter := cliterminal.NewPainter(terminalOutput, cancel)
+	cursorOutput := &tokenizerCursorOutput{FrameOutput: terminalOutput}
+	painter := cliterminal.NewPainter(cursorOutput, cancel)
 	defer painter.Stop()
 	model := newTokenizerEditor()
 	model.width, model.height = width, height
@@ -153,7 +157,7 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	profile := cliterminal.ColorProfile(output, os.Environ(), term.IsTerminal(output.Fd()))
 	model.color = profile >= colorprofile.ANSI
 	inline := &tokenizerEditorInline{model: model, worker: worker, output: output, profile: profile,
-		painter: painter, input: inputBridge, fail: cancel}
+		painter: painter, cursorOutput: cursorOutput, input: inputBridge, fail: cancel}
 	options := []tea.ProgramOption{tea.WithInput(inputBridge.Input()), tea.WithOutput(io.Discard), tea.WithContext(ctx),
 		tea.WithWindowSize(width, height), tea.WithColorProfile(profile), tea.WithoutSignalHandler(), tea.WithoutRenderer()}
 	program := tea.NewProgram(inline, options...)
@@ -229,6 +233,9 @@ type tokenizerEncodingPrepared struct {
 // Bound synchronous BPE work, including a single unbroken word. Larger drafts use the cancellable child.
 const tokenizerInlineBytes = 4 << 10
 
+// DECRQSS requests the current DECSCUSR (cursor shape and blink) setting.
+const tokenizerRequestCursorStyle = "\x1bP$q q\x1b\\"
+
 // Reuse the image picker's frame layout while keeping terminal backpressure
 // outside the model and retaining the tokenizer's exact input bytes.
 type tokenizerEditorInline struct {
@@ -243,13 +250,18 @@ type tokenizerEditorInline struct {
 	preparing                         bool
 	prepared                          map[string]error
 	content                           string
+	cursor                            *tea.Cursor
+	cursorOutput                      *tokenizerCursorOutput
+	anchored, cursorStyled            bool
+	awaitCursorStyle                  bool
+	restoreCursorStyle                int
 	width, height                     int
 	err                               error
 }
 
 func (p *tokenizerEditorInline) Init() tea.Cmd {
-	p.modesActive = true
-	query := ansi.ResetModeTextCursorEnable + ansi.SetModeBracketedPaste + ansi.RequestModeAutoWrap
+	p.modesActive, p.awaitCursorStyle = true, true
+	query := ansi.ResetModeTextCursorEnable + ansi.SetModeBracketedPaste + ansi.RequestModeAutoWrap + tokenizerRequestCursorStyle
 	if p.model.color {
 		query += ansi.RequestBackgroundColor
 	}
@@ -276,6 +288,13 @@ func (p *tokenizerEditorInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	warmed := false
 	switch msg := message.(type) {
+	case uv.UnknownDcsEvent:
+		if p.awaitCursorStyle {
+			if style, ok := tokenizerReportedCursorStyle(string(msg)); ok {
+				p.restoreCursorStyle, p.awaitCursorStyle = style, false
+			}
+		}
+		return p, nil
 	case tokenizerEditorInputErrorMsg:
 		p.err = msg.err
 		return p, tea.Quit
@@ -369,14 +388,75 @@ func (p *tokenizerEditorInline) draw() {
 
 func (p *tokenizerEditorInline) drawFrame(width, height int) {
 	p.model.width, p.model.height = width, height
+	view := p.model.View()
 	var converted strings.Builder
-	_, _ = io.WriteString(&colorprofile.Writer{Forward: &converted, Profile: max(p.profile, colorprofile.ASCII)}, p.model.View().Content)
+	_, _ = io.WriteString(&colorprofile.Writer{Forward: &converted, Profile: max(p.profile, colorprofile.ASCII)}, view.Content)
 	content := converted.String()
-	if content == p.content && width == p.width && height == p.height {
+	sameCursor := p.cursor == nil && view.Cursor == nil ||
+		p.cursor != nil && view.Cursor != nil && p.cursor.Position == view.Cursor.Position
+	if content == p.content && width == p.width && height == p.height && sameCursor {
 		return
 	}
-	p.painter.Frame(cliterminal.InlineFrame(content, width))
-	p.content, p.width, p.height = content, width, height
+	frame := ansi.ResetModeTextCursorEnable
+	if p.anchored {
+		frame += ansi.RestoreCursor
+	}
+	// Each replaceable frame includes the complete panel, even for a cursor-only change.
+	frame += cliterminal.InlineFrame(content, width) + ansi.SaveCursor
+	if cursor := view.Cursor; cursor != nil {
+		if cursor.Y > 0 {
+			frame += ansi.CursorDown(cursor.Y)
+		}
+		frame += tokenizerCaretColumn(content, cursor) + ansi.SetCursorStyle(5) + ansi.SetModeTextCursorEnable
+		p.cursorStyled = true
+	}
+	if p.anchored {
+		p.painter.Frame(frame)
+	} else {
+		// The painter must write the first saved origin before any replacement frame.
+		p.painter.Control(frame)
+		p.anchored = true
+	}
+	p.content, p.width, p.height, p.cursor = content, width, height, view.Cursor
+}
+
+func tokenizerCaretColumn(content string, cursor *tea.Cursor) string {
+	for y := 0; y < cursor.Y; y++ {
+		_, content, _ = strings.Cut(content, "\n")
+	}
+	line, _, _ := strings.Cut(content, "\n")
+	left, end := cursor.X, 0
+	replay := false
+	for left > 0 && end < len(line) {
+		sequence, cells, read := cliterminal.Sequence(line[end:])
+		if cells > left || sequence[0] == '\x1b' && !strings.HasSuffix(sequence, "m") {
+			break // The source prefix can contain SGR, but never replay pane positioning.
+		}
+		replay = replay || cells > 1 || cells > 0 && utf8.RuneCountInString(sequence) > 1
+		left -= cells
+		end += read
+	}
+	if replay && left == 0 {
+		// The terminal advances over these same glyphs when it paints the source.
+		// A fixed column can miss the next character after a joined emoji.
+		return ansi.ResetModeAutoWrap + line[:end] + ansi.SetModeAutoWrap
+	}
+	return ansi.CursorHorizontalAbsolute(cursor.X + 1)
+}
+
+// Cancellation can discard a queued frame or interrupt a partial write. Only
+// an acknowledged SaveCursor establishes an origin that cleanup can restore.
+type tokenizerCursorOutput struct {
+	cliterminal.FrameOutput
+	saved atomic.Bool
+}
+
+func (w *tokenizerCursorOutput) WriteContext(ctx context.Context, data []byte) (int, error) {
+	n, err := w.FrameOutput.WriteContext(ctx, data)
+	if n > 0 && !w.saved.Load() && bytes.Contains(data[:min(n, len(data))], []byte(ansi.SaveCursor)) {
+		w.saved.Store(true)
+	}
+	return n, err
 }
 
 func (p *tokenizerEditorInline) close() string {
@@ -385,13 +465,33 @@ func (p *tokenizerEditorInline) close() string {
 	}
 	// Cancel a partial escape sequence before restoring visible terminal modes.
 	cleanup := "\x18\x1b\\" + ansi.ResetStyle
-	if p.width > 0 {
-		cleanup += "\r" + ansi.EraseScreenBelow
+	if p.cursorOutput != nil && p.cursorOutput.saved.Load() {
+		cleanup += ansi.RestoreCursor + "\r" + ansi.EraseScreenBelow
+	}
+	if p.cursorStyled {
+		cleanup += ansi.SetCursorStyle(p.restoreCursorStyle)
 	}
 	cleanup += ansi.ResetModeBracketedPaste + ansi.SetModeTextCursorEnable
 	if p.restoreWrap {
 		cleanup += ansi.ResetModeAutoWrap
+	} else if p.cursorStyled {
+		// A partial caret replay can leave wrapping disabled.
+		cleanup += ansi.SetModeAutoWrap
 	}
 	p.started, p.modesActive = false, false
+	p.anchored, p.cursorStyled, p.cursor = false, false, nil
+	p.awaitCursorStyle, p.restoreCursorStyle = false, 0
 	return cleanup
+}
+
+func tokenizerReportedCursorStyle(reply string) (int, bool) {
+	// A successful report can use either the 7-bit or 8-bit DCS and ST.
+	value, ok := strings.CutPrefix(reply, "\x1bP1$r")
+	if !ok {
+		value, ok = strings.CutPrefix(reply, "\x901$r")
+	}
+	if !ok || len(value) == 0 || value[0] < '0' || value[0] > '6' {
+		return 0, false
+	}
+	return int(value[0] - '0'), value[1:] == " q\x1b\\" || value[1:] == " q\x9c"
 }

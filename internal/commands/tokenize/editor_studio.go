@@ -22,9 +22,8 @@ func (m *tokenizerEditor) resultWidth() int {
 	return m.viewWidth()
 }
 
-func (m *tokenizerEditor) studioView(s tokenizerEditorStyles) string {
+func (m *tokenizerEditor) studioView(s tokenizerEditorStyles, left []string) string {
 	leftWidth, rightWidth := m.sourceWidth(), m.resultWidth()
-	left := m.textRows(s, leftWidth)
 	left = append(left, m.settingsRows(s, leftWidth)...)
 	left = append(left, m.noteRows(s, leftWidth)...)
 	right := m.studioResults(s, rightWidth)

@@ -19,8 +19,8 @@ func TestTokenByteCountsKeepSelectedAndNeighboringValuesAligned(t *testing.T) {
 	}
 	want := []string{"3", "3", "1", "2", "3", "3"}
 	for _, theme := range []struct{ name, selected string }{
-		{"dark", "\x1b[38;2;138;168;255;48;2;52;61;88m"},
-		{"light", "\x1b[38;2;49;89;188;48;2;233;239;254m"},
+		{"dark", "\x1b[38;2;23;35;56;48;2;138;168;255m"},
+		{"light", "\x1b[38;2;255;255;255;48;2;49;89;188m"},
 		{"monochrome", "\x1b[7m"},
 	} {
 		t.Run(theme.name, func(t *testing.T) {
@@ -60,8 +60,8 @@ func TestTokenizerStudioIdentifiesSelectedTrailingSpaces(t *testing.T) {
 		m.dark, m.color = theme == "dark", theme != "monochrome"
 		s := m.styles()
 		rows := m.studioResults(s, m.resultWidth())
-		require.Equal(t, source, strings.TrimPrefix(ansi.Strip(rows[1]), "  "))
-		require.Contains(t, rows[1], s.tokenSelected.Render("         "))
+		require.Equal(t, "how are you im doing so well!␣        ", strings.TrimPrefix(ansi.Strip(rows[1]), "  "))
+		require.Contains(t, rows[1], s.tokenSelected.Render("␣        "))
 		require.Contains(t, rows[2], s.tokenSelected.Render("9"))
 		require.Contains(t, rows[3], s.tokenSelected.Render("9 spaces"))
 		require.Equal(t, "Token 9 of 9  9 spaces", strings.TrimSpace(ansi.Strip(rows[3])))

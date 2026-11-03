@@ -3,6 +3,8 @@ package tokenize
 import (
 	"iter"
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 type studioSourceCell struct {
@@ -69,7 +71,7 @@ func (m *tokenizerEditor) wrappedSource(first, cursor, width int) iter.Seq[studi
 	}
 }
 
-func (m *tokenizerEditor) studioSourceLines(s tokenizerEditorStyles, width, count int) []string {
+func (m *tokenizerEditor) studioSourceLines(s tokenizerEditorStyles, width, count int) ([]string, *tea.Cursor) {
 	if m.text == "" {
 		return m.editorLines(s, width, count)
 	}
@@ -78,6 +80,7 @@ func (m *tokenizerEditor) studioSourceLines(s tokenizerEditorStyles, width, coun
 	var rows []string
 	var line strings.Builder
 	caretRow := -1
+	var caret *tea.Cursor
 	for cell := range m.wrappedSource(first, cursor, width) {
 		if cell.row != len(rows) {
 			rows = append(rows, line.String())
@@ -89,15 +92,19 @@ func (m *tokenizerEditor) studioSourceLines(s tokenizerEditorStyles, width, coun
 		if cell.index == cursor {
 			caretRow = cell.row
 			if m.focus == tokenizerFocusText {
-				cell.display = tokenizerCaret(cell.display)
+				caret = tea.NewCursor(cell.column, cell.row)
 			}
 		}
 		line.WriteString(cell.display)
 	}
 	rows = append(rows, line.String())
 	visible := make([]string, count)
-	copy(visible, rows[max(0, caretRow-count+1):])
-	return visible
+	start := max(0, caretRow-count+1)
+	copy(visible, rows[start:])
+	if caret != nil {
+		caret.Y -= start
+	}
+	return visible, caret
 }
 
 // Page through the same visual rows that the source pane displays.
