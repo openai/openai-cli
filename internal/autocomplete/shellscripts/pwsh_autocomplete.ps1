@@ -26,20 +26,28 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
       $completionArgs += $element.Extent.Text
     }
   }
-  $completionArgs += $wordContent
+  # Legacy native argument passing drops empty strings, including a new value after a space.
+  if ($wordContent.Length -eq 0 -and ($PSVersionTable.PSVersion -lt [version]'7.3' -or $PSNativeCommandArgumentPassing -eq 'Legacy')) {
+    $completionArgs += '""'
+  } else {
+    $completionArgs += $wordContent
+  }
 
   $previousStyle = $env:COMPLETION_STYLE
   $previousFileValues = $env:OPENAI_CLI_COMPLETION_FILE_VALUES
+  $previousStdinPath = $env:OPENAI_CLI_COMPLETION_STDIN_PATH
   $previousPreserveWords = $env:OPENAI_CLI_COMPLETION_PRESERVE_WORDS
   try {
     $env:COMPLETION_STYLE = 'pwsh'
     $env:OPENAI_CLI_COMPLETION_FILE_VALUES = '1'
+    $env:OPENAI_CLI_COMPLETION_STDIN_PATH = '1'
     $env:OPENAI_CLI_COMPLETION_PRESERVE_WORDS = '1'
     $output = __APPNAME__ __complete @completionArgs 2>&1
     $exitCode = $LASTEXITCODE
   } finally {
     $env:COMPLETION_STYLE = $previousStyle
     $env:OPENAI_CLI_COMPLETION_FILE_VALUES = $previousFileValues
+    $env:OPENAI_CLI_COMPLETION_STDIN_PATH = $previousStdinPath
     $env:OPENAI_CLI_COMPLETION_PRESERVE_WORDS = $previousPreserveWords
   }
 
@@ -50,7 +58,7 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
   $forceFileCompletion = $false
 
 
-  if ($exitCode -ne 10 -and $wordContent -match '^(.*)@(file://|data://)?(.*)$') {
+  if ($exitCode -ne 10 -and $exitCode -ne 12 -and $wordContent -match '^(.*)@(file://|data://)?(.*)$') {
     $prefix = $Matches[1] + '@' + $Matches[2]
     $filePart = $Matches[3]
     $forceFileCompletion = $true
@@ -59,12 +67,17 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
   # References and literal file flags share path enumeration and argument quoting.
   $completionBehavior = if ($forceFileCompletion) { 10 } else { $exitCode }
   switch ($completionBehavior) {
-    10 {
+    { $_ -in 10,12 } {
       # A nonempty backend result identifies an assigned file flag.
       $assignment = if ($forceFileCompletion) { $prefix } else { [string]($output | Select-Object -First 1) }
       $fileValue = if ($forceFileCompletion) { $filePart } else { $wordContent }
       if (!$forceFileCompletion -and $assignment.Length -gt 0) {
         $fileValue = $wordContent.Substring($assignment.Length)
+      }
+      if ($exitCode -eq 12) {
+        [System.Management.Automation.CompletionResult]::new(
+          "$assignment-", '-', 'ParameterValue', 'Read the piped request'
+        )
       }
       # Enumerate the literal parent. Provider wildcard completion can add
       # backticks that native FileInput would treat as filename characters.
@@ -95,14 +108,13 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
             $type = 'ProviderContainer'
           }
           $literal = [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($assignment + $path)
-          [System.Management.Automation.CompletionResult]::new(
-            "'$literal'", $_.Name, $type, $_.FullName
-          )
+          $label = if ($exitCode -eq 12 -and $_.Name -eq '-') { $path } else { $_.Name }
+          [System.Management.Automation.CompletionResult]::new("'$literal'", $label, $type, $_.FullName)
         }
       })
       if ($fileMatches.Count -gt 0) {
         $fileMatches
-      } else {
+      } elseif ($exitCode -ne 12) {
         # Prevent PowerShell's wildcard fallback for unmatched literal paths.
         [System.Management.Automation.CompletionResult]::new(' ', ' ', 'ParameterValue', ' ')
       }

@@ -25,8 +25,9 @@ API REQUESTS
        {{suggestFor . (printf "%s responses create --model MODEL --input @- < prompt.txt" $run) "bash" "zsh"}}
        {{suggestFor . (printf "%s files create --purpose user_data --file - < notes.txt" $run) "bash" "zsh"}}
    For responses create and chat completions create, --request-file accepts a JSON or YAML file.
-   Use --request-file - to wait for a piped request. Explicit flags override matching fields.
-       {{suggestFor . (printf "cat request.json | %s responses create --request-file -" $run) "bash" "zsh"}}
+   If your script prints the request, use --request-file - to read it from the pipe.
+       {{suggestFor . (printf "python3 make-request.py | %s responses create --request-file -" $run) "bash" "zsh"}}
+   Explicit flags override matching fields.
    For other commands accepting whole requests, finish writing the file before redirecting it.
        {{suggestFor . (printf "%s embeddings create < request.json" $run) "bash" "zsh"}}
    Set OPENAI_UNTRUSTED_STDIN=true when the request comes from an untrusted source.

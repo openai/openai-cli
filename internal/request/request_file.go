@@ -16,13 +16,20 @@ func EnableRequestFile(command *cli.Command) {
 	if command.Metadata == nil {
 		command.Metadata = make(map[string]any)
 	}
-	command.Metadata[requestFileCapability] = true
-	command.Flags = append(command.Flags, &cli.StringFlag{
+	flag := &cli.StringFlag{
 		Name:      "request-file",
-		Usage:     "Read a complete JSON or YAML request from `PATH`. Use - to read stdin through EOF.",
+		Usage:     "Read a JSON or YAML request from a file, or use - for piped input.",
 		OnlyOnce:  true,
 		TakesFile: true,
-	})
+	}
+	command.Metadata[requestFileCapability] = flag
+	command.Flags = append(command.Flags, flag)
+}
+
+// RequestFileFlag returns the registered whole-request input flag, if supported.
+func RequestFileFlag(command *cli.Command) *cli.StringFlag {
+	flag, _ := command.Metadata[requestFileCapability].(*cli.StringFlag)
+	return flag
 }
 
 func readRequestFile(path string, stdin io.Reader, explicitStdin int) (map[string]any, error) {

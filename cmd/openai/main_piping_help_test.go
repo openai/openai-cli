@@ -7,6 +7,26 @@ import (
 	"testing"
 )
 
+func TestMainPipingDiscovery(t *testing.T) {
+	env := []string{"OPENAI_BASE_URL=invalid-for-requests"}
+	root := runMainDispatchWithEnv(t, "bash", env, "openai", "--help")
+	_, intro, ok := strings.Cut(root.stdout, "START HERE\n")
+	intro, _, _ = strings.Cut(intro, "\nSHORTCUTS\n")
+	if root.code != 0 || !ok || !strings.Contains(intro, "openai help piping") {
+		t.Fatal("root help must introduce the piping guide")
+	}
+
+	for _, path := range []string{"responses create", "chat completions create"} {
+		args := append(strings.Fields("openai "+path), "--help")
+		got := runMainDispatchWithEnv(t, "bash", env, args...)
+		intro, _, ok := strings.Cut(got.stdout, "\nDESCRIPTION\n")
+		if got.code != 0 || !ok || !strings.Contains(intro, "--request-file=PATH|-") ||
+			!strings.Contains(intro, "python3 make-request.py | openai "+path+" --request-file -") {
+			t.Errorf("%s omitted the request pipe from its synopsis:\n%s", path, intro)
+		}
+	}
+}
+
 func TestMainPipingHelp(t *testing.T) {
 	input, writer, err := os.Pipe()
 	if err != nil {
@@ -35,7 +55,7 @@ func TestMainPipingHelp(t *testing.T) {
 			"openai responses create --model MODEL --input @- < prompt.txt",
 			"openai files create --purpose user_data --file - < notes.txt",
 			"chat completions create",
-			"cat request.json | openai responses create --request-file -",
+			"python3 make-request.py | openai responses create --request-file -",
 			"openai embeddings create < request.json",
 			"openai models list --format jsonl",
 		} {

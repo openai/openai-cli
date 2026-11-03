@@ -156,7 +156,7 @@ ____APPNAME___bash_autocomplete() {
         current_word="$value"
       fi
     done
-    completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_PRESERVE_WORDS=1 "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
+    completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_STDIN_PATH=1 OPENAI_CLI_COMPLETION_PRESERVE_WORDS=1 "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
     exit_code=$?
 
     local last_token="$cur"
@@ -175,7 +175,7 @@ ____APPNAME___bash_autocomplete() {
     local prefix=""
     local file_part="$cur"
     local force_file_completion=false
-    if [[ "$exit_code" -ne 10 && "$last_token" =~ (.*)@(file://|data://)?(.*)$ ]]; then
+    if [[ "$exit_code" -ne 10 && "$exit_code" -ne 12 && "$last_token" =~ (.*)@(file://|data://)?(.*)$ ]]; then
       local before_at="${BASH_REMATCH[1]}"
       local protocol="${BASH_REMATCH[2]}"
       file_part="${BASH_REMATCH[3]}"
@@ -200,7 +200,7 @@ ____APPNAME___bash_autocomplete() {
       done < <(compgen -f -- "$file_part")
     else
       case $exit_code in
-      10) # File completion, including Bash 3.2 (which has no mapfile).
+      10|12) # File completion, including Bash 3.2 (which has no mapfile).
         COMPREPLY=()
         local current_value="${completion_args[${#completion_args[@]} - 1]}"
         local assignment="$completions" replacement_prefix="" replacement_word="$current_word"
@@ -211,7 +211,12 @@ ____APPNAME___bash_autocomplete() {
         if [[ $# -ge 2 && "$current_value" == *"$replacement_word" ]]; then
           replacement_prefix="${current_value%"$replacement_word"}"
         fi
+        if [[ "$exit_code" -eq 12 ]]; then
+          file="$assignment-"
+          COMPREPLY+=("${file#"$replacement_prefix"}")
+        fi
         while IFS= read -r file; do
+          [[ "$exit_code" -eq 12 && "$file" == "-" ]] && continue
           file="$assignment$file"
           COMPREPLY+=("${file#"$replacement_prefix"}")
         done < <(____APPNAME___bash_literal_files "$file_part")

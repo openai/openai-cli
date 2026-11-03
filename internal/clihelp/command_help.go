@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/commandsuggest"
+	"github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
 
@@ -106,6 +107,11 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 		out.WriteByte('\n')
 		out.WriteString(wrapDescription(note, "  ", width))
 	}
+	if request.RequestFileFlag(command) != nil {
+		out.WriteByte('\n')
+		out.WriteString(wrapDescription("Pipe a JSON or YAML request from your script.", "  ", width))
+		fmt.Fprintf(&out, "    $ %s\n", commandsuggest.Record(command, "python3 make-request.py | "+name+" --request-file -"))
+	}
 	description := content.Description
 	if strings.Join(strings.Fields(plainUsage), " ") != strings.Join(strings.Fields(summary), " ") {
 		description = joinHelpDescriptions(usage, description)
@@ -121,6 +127,9 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 		content.Examples = []Example{{"Set up your API key:", "help setup"}, {"List available models:", "models list"}}
 		if explore := command.Command("explore"); explore != nil && !explore.Hidden {
 			content.Examples = append(content.Examples, Example{"Find image commands and examples offline:", "explore images"})
+		}
+		if help := command.Command("help"); help != nil && help.Command("piping") != nil {
+			content.Examples = append(content.Examples, Example{"Pipe text, files, and API requests:", "help piping"})
 		}
 	}
 	if len(content.Examples) > 0 {
