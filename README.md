@@ -16,136 +16,62 @@
 
 ## Installation
 
-One `openai` executable includes all CLI commands. Choose one installation method.
+One `openai` executable includes all commands in this CLI.
 
-### Installing with Homebrew
+<a id="installing-with-homebrew"></a>
 
-For automatic upgrades on macOS, use the [one-paste setup](docs/automatic-updates.md#set-up-automatic-updates-with-homebrew-on-macos).
-
-On a Mac with Homebrew, paste this command to install the CLI and print its cask version.
+**macOS with Homebrew**. Paste this command into your terminal.
 
 ```sh
-brew install --cask openai/tools/openai && brew list --cask --versions openai
+brew install --cask openai/tools/openai
 ```
 
-To upgrade, paste this command. It refreshes the tap and prints the installed cask version.
+<a id="installing-a-prebuilt-binary"></a>
 
-```sh
-brew update && brew upgrade --cask openai/tools/openai && brew list --cask --versions openai
-```
+**Linux**. Install the [package for your distribution](docs/installation.md#linux).
 
-Homebrew shows progress when it downloads the cask.
+**Windows**. Extract the [Windows ZIP](docs/installation.md#windows). Run `.\openai.exe --help` from the extracted directory.
 
-**Homebrew says the cask is current, but GitHub has a newer release.**
-The tap can trail [GitHub Releases](https://github.com/openai/openai-cli/releases/latest). Reinstalling the same cask gives you the same version.
-Wait for the tap update or use the [prebuilt archive](#installing-a-prebuilt-binary) without installing Go.
+<a id="installing-with-go"></a>
 
-**`openai --version` shows an older version than Homebrew printed.**
-Your shell can select another executable, alias, or function. Use the repair below.
+For a Mac without Homebrew, choose the [macOS ZIP](docs/installation.md#installing-a-prebuilt-binary).
+Developers can also [install with Go](docs/installation.md#installing-with-go).
 
-<details>
-<summary>Check the installed cask and select it in Bash or zsh</summary>
-
-Paste this block into your current shell. It checks Homebrew’s receipt and runs that exact executable.
-
-```sh
-cask_dir=$(brew --caskroom openai/tools/openai) &&
-receipt="$cask_dir/.metadata/INSTALL_RECEIPT.json" &&
-[ "$(/usr/bin/plutil -extract source.tap raw "$receipt")" = openai/tools ] &&
-version=$(/usr/bin/plutil -extract source.version raw "$receipt") &&
-cask_cli="$cask_dir/$version/openai" &&
-"$cask_cli" --version && {
-  brew_prefix=$(brew --prefix) &&
-  if [ "$brew_prefix/bin/openai" -ef "$cask_cli" ]; then export PATH="$brew_prefix/bin:$PATH"; fi &&
-  if ! [ "$(command -v openai)" -ef "$cask_cli" ]; then
-    printf 'The cask is installed. Your shell selects another command. Run %q directly.\n' "$cask_cli" >&2
-    false
-  fi
-}
-```
-
-Run `type -a openai` to see competing commands. If a new shell selects another copy, put Homebrew’s binary directory first in your profile.
-
-</details>
-
-### Installing a prebuilt binary
-
-Download the archive for your operating system and architecture from [GitHub Releases](https://github.com/openai/openai-cli/releases/latest).
-Choose the macOS ZIP, Linux tarball, or Windows ZIP under **Assets**.
-On a Mac, the filename ends in `macos_arm64.zip` for Apple silicon or `macos_amd64.zip` for Intel.
-If the latest release has no platform archives yet, wait for publication or choose an [earlier release](https://github.com/openai/openai-cli/releases) with assets.
-Extract the archive into a dedicated directory.
-On macOS and Linux, you can keep that directory as your manual installation.
-From inside it, paste this block into Bash or zsh.
-
-```sh
-archive_bin=$(pwd -P) &&
-"$archive_bin/openai" --version &&
-export PATH="$archive_bin:$PATH" &&
-command -v openai
-```
-
-The last command shows which executable, alias, or function your shell selects. If an alias or function wins, use the verified executable directly.
-On Windows, run `.\openai.exe --version` in the extracted directory. Add that directory to your user `Path` and check `where.exe openai`.
-
-**Want automatic updates?** On a Mac with Homebrew, [set up automatic upgrades in one paste](docs/automatic-updates.md#set-up-automatic-updates-with-homebrew-on-macos).
-Homebrew downloads the matching archive and supplies GitHub CLI. The CLI handles subsequent upgrades on eligible interactive launches.
-
-Already extracted a macOS or Linux archive containing `install.sh`? Paste this into Bash or zsh from the extracted directory.
-
-```sh
-sh ./install.sh && export PATH="$HOME/.openai/bin:$PATH"
-```
-
-The installer prints the installed version. See [automatic updates](docs/automatic-updates.md#install-from-a-release-archive) for older releases and future terminals.
-
-### Installing with Go
-
-With [Go 1.26 or later](https://go.dev/doc/install), paste this block into Bash or zsh.
-It installs the latest CLI and puts Go’s binary directory ahead of older copies.
-
-```sh
-go_bin=$(go env GOBIN) && go_path=$(go env GOPATH) &&
-go_bin=${go_bin:-"${go_path%%:*}/bin"} &&
-if [ -L "$go_bin/openai" ] || [ "${go_bin%/}" = "$HOME/.openai/bin" ] || [ "$go_bin" -ef "$HOME/.openai/bin" ]; then
-  printf '%s\n' 'Go would write into another installation. Choose a separate Go directory, then paste this block again:' \
-    '  export GOBIN="$HOME/.local/openai-go/bin"' >&2
-  false
-else
-  printf '%s\n' 'Installing the latest OpenAI CLI with Go...'
-  go_os=$(go env GOHOSTOS) && go_arch=$(go env GOHOSTARCH) &&
-  GOOS="$go_os" GOARCH="$go_arch" GOBIN="$go_bin" go install github.com/openai/openai-cli/cmd/openai@latest &&
-  export PATH="$go_bin:$PATH" &&
-  "$go_bin/openai" --version && command -v openai
-fi
-```
-
-This command targets the computer running Go, including when you configured Go for cross-compilation.
-Go can finish silently. Add `-v` after `install` to show each package as it compiles.
-If the last command shows an alias or function, use the verified Go executable directly.
-For new shells, add the same PATH setup to your shell profile.
-
-On Windows, run `go install github.com/openai/openai-cli/cmd/openai@latest`.
-Add the Go binary directory to your user `Path`. Use `where.exe openai` to find installed copies.
+**Want automatic updates?** [Enable them once on macOS or Linux](docs/automatic-updates.md#install-from-a-release-archive).
+To keep Homebrew in charge, [upgrade the cask](docs/installation.md#installing-with-homebrew).
 
 <!-- x-release-please-end -->
+
+## Authentication
+
+Check the installation without an API key.
+
+```sh
+openai --help
+```
+
+To make API requests, follow the instructions this command prints for your shell.
+
+```sh
+openai help setup
+```
+
+On Windows, use `.\openai.exe` from the extracted directory.
+For scripts, supply `OPENAI_API_KEY` through your environment or secret manager. [Create an API key](https://platform.openai.com/settings/organization/api-keys)
 
 <p align="center">
   <img src="./assets/openai-cli.png" alt="OpenAI CLI terminal showing commands for images, files, batches, and JSON output" width="80%">
 </p>
 
-Call the OpenAI REST API from your terminal or shell scripts. Generate images, upload
-files, submit batches, and inspect API results without writing an application.
-
-> [!NOTE]
-> **OpenAI CLI or Codex CLI?** Use `openai` when you want to call a specific API
-> or put API operations in a script. Use [Codex CLI](https://developers.openai.com/codex/cli)
-> (`codex`) when you want a coding agent to work on a project: read and edit code,
-> run commands, and help implement or debug a change.
+> Looking for the coding agent? Use [Codex CLI](https://developers.openai.com/codex/cli).
 
 ## Things to try
 
-These examples require [authentication](#authentication).
+### Send a request
+
+```sh
+openai responses create --model gpt-5.5 --input "Say this is a test"
+```
 
 ### Generate an image and save it locally
 
@@ -175,8 +101,7 @@ Submit a JSONL request file, then wait for the batch and download its results:
 
 ```sh
 openai files upload requests.jsonl --purpose batch
-openai batches create --input-file-id file-example \
-  --endpoint /v1/responses --completion-window 24h
+openai batches create --input-file-id file-example --endpoint /v1/responses --completion-window 24h
 openai batches wait batch_example --output-dir ./results
 ```
 
@@ -193,36 +118,6 @@ openai files list --format json > files.json
 Choose `--format json` for a JSON document or `--format jsonl` for records.
 The default output is readable text, **even in pipes**. The first example uses
 [jq](https://jqlang.org/).
-
-## Authentication
-
-Run the setup guide to enter your API key safely:
-
-```sh
-openai help setup
-```
-
-For scripts, supply `OPENAI_API_KEY` through your environment or secret manager.
-Create a key in [API settings](https://platform.openai.com/settings/organization/api-keys).
-
-Try a request:
-
-```sh
-openai responses create \
-  --model gpt-5.5 \
-  --input "Say this is a test"
-```
-
-Admin endpoints use `OPENAI_ADMIN_KEY`, a separate
-[admin API key](https://platform.openai.com/settings/organization/admin-keys).
-For example, retrieve one day of organization usage:
-
-```sh
-openai admin organization usage completions \
-  --start-time 1735689600 \
-  --end-time 1735776000 \
-  --bucket-width 1d
-```
 
 ## Usage
 
@@ -243,6 +138,16 @@ openai admin organization --help
 `openai help COMMAND` and `openai COMMAND --help` show the same page.
 Existing colon-separated commands, such as `openai admin:organization:usage completions`,
 also work.
+
+### Admin requests
+
+Admin endpoints use `OPENAI_ADMIN_KEY`, a separate
+[admin API key](https://platform.openai.com/settings/organization/admin-keys).
+For example, retrieve one day of organization usage:
+
+```sh
+openai admin organization usage completions --start-time 1735689600 --end-time 1735776000 --bucket-width 1d
+```
 
 ### Output and errors
 

@@ -172,15 +172,15 @@ It adds a plain-text notice below help, at most once every seven days.
 Explicit help, commands, completion, CI, and redirected streams skip the check entirely.
 
 The notice includes an update command when the CLI can verify its installation method.
-Verified Homebrew installations use `brew upgrade --cask openai/tools/openai`.
+Verified Homebrew installations check the official Homebrew cask.
+When that cask has a newer version, the notice gives `brew update && brew upgrade --cask openai/tools/openai`.
 Go commands require a verified binary, an available Go command, and an explicit matching `GOBIN`.
 Custom `GOOS` or `GOARCH` settings select the installation guide instead.
 Go upgrades to major version 2 or later also select the installation guide.
 Unknown installations receive the installation-guide link instead.
 Package-manager and Go installations retain their existing installation ownership.
 
-Checks use public GitHub release metadata without API credentials, at most once daily.
+Other installations check public GitHub release metadata. Both checks run without API credentials, at most once daily.
 Checks respect `HTTPS_PROXY` and `NO_PROXY`, including their lowercase forms.
 Update discovery waits at most 200 milliseconds. Failed checks remain silent.
-Package-manager availability can lag a new GitHub release.
 Set `OPENAI_CLI_NO_UPDATE_CHECK=1` to disable checks and notices.
