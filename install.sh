@@ -10,6 +10,14 @@ fail() {
 
 require_gh=false
 if [ "${1:-}" = --require-gh ]; then require_gh=true; shift; fi
+# Only the explicit Homebrew opt-in can install a missing verifier.
+brew_bin=
+if [ "${1:-}" = --homebrew ]; then
+    [ "$#" -eq 4 ] && [ "$3" = --zsh ] || fail 'Supply the Homebrew executable and zsh settings directory.'
+    case $2 in /*/brew) brew_bin=$2 ;; *) fail 'Supply the absolute path of the selected Homebrew executable.' ;; esac
+    require_gh=true
+    shift 2
+fi
 zsh_dir=
 case $#:${1:-} in
     0:) ;;
@@ -147,7 +155,18 @@ case $version in
     *) fail 'The archive binary did not report an OpenAI CLI release version.' ;;
 esac
 # Check the verifier that the documented PATH will select after installation.
-readiness=$(env -i HOME="$HOME" PATH="$HOME/.openai/bin:$PATH" OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_archive_verifier 2>/dev/null) || readiness=unavailable
+check_verifier() {
+    env -i HOME="$HOME" PATH="$HOME/.openai/bin:$PATH" OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_archive_verifier 2>/dev/null
+}
+readiness=$(check_verifier) || readiness=unavailable
+if [ "$readiness" != ready ] && [ -n "$brew_bin" ]; then
+    printf '%s\n' 'Setting up GitHub CLI for update verification...'
+    "$brew_bin" install gh
+    readiness=$(check_verifier) || readiness=unavailable
+    if [ "$readiness" != ready ]; then
+        fail 'GitHub CLI is still missing or incompatible. Check PATH="$HOME/.openai/bin:$PATH" command -v gh. Update the selected gh or put the Homebrew gh first, then rerun setup.'
+    fi
+fi
 case $readiness in
     ready) advice='GitHub CLI supports update verification.' ;;
     missing)

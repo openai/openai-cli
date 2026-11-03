@@ -20,7 +20,8 @@ In zsh, enable automatic updates with one command.
 source "$(brew --prefix)/bin/openai-enable-updates.zsh"
 ```
 
-The helper checks for shell conflicts, installs GitHub CLI, and selects the verified copy in this terminal.
+The helper checks for shell conflicts and selects the verified copy in this terminal.
+It uses the GitHub CLI on your PATH when it supports update verification. Otherwise, it asks Homebrew to install or upgrade GitHub CLI.
 It also adds the selection to your zsh startup file. Homebrew continues to own its separate copy.
 For temporary selection or other shells, use an extracted archive below.
 

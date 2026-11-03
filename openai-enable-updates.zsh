@@ -21,8 +21,7 @@
     print -ru2 -- 'The Homebrew helper is incomplete. Run brew update && brew upgrade --cask openai/tools/openai.'
     return 1
   fi
-  "$brew_bin" install gh || return $?
-  /bin/sh "$installer" --require-gh --zsh "${ZDOTDIR:-$HOME}" || return $?
+  /bin/sh "$installer" --homebrew "$brew_bin" --zsh "${ZDOTDIR:-$HOME}" || return $?
 
   if [[ $path[1] != "$HOME/.openai/bin" ]]; then
     export PATH="$HOME/.openai/bin:$PATH"

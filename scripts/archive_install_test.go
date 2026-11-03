@@ -361,7 +361,7 @@ func testHomebrewOptIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := "'" + strings.ReplaceAll(self, "'", "'\\''") + "'"
-	ready := []byte("#!/bin/sh\ncase $1 in --version) echo 'openai version 1.2.3';; __openai_archive_verifier) command -v gh >/dev/null && gh || echo missing;; __openai_archive_zsh_profile) exec " + command + " -test.run '^TestArchiveProfileProcess$' -- \"$2\" \"$3\";; esac\n")
+	ready := []byte("#!/bin/sh\ncase $1 in --version) echo 'openai version 1.2.3';; __openai_archive_verifier) echo probe >> \"$HOME/verifier.log\"; command -v gh >/dev/null && gh || echo missing;; __openai_archive_zsh_profile) exec " + command + " -test.run '^TestArchiveProfileProcess$' -- \"$2\" \"$3\";; esac\n")
 	for path, data := range map[string][]byte{
 		filepath.Join(source, name):         selection,
 		filepath.Join(source, "install.sh"): installer,
@@ -422,13 +422,42 @@ func testHomebrewOptIn(t *testing.T) {
 			t.Skip("zsh unavailable")
 		}
 		brew := filepath.Join(bin, "brew")
-		if err := os.WriteFile(brew, []byte("#!/bin/sh\ncase $1 in --caskroom) printf '%s/Caskroom/openai\\n' \"$(dirname \"$(dirname \"$0\")\")\";; --prefix) dirname \"$(dirname \"$0\")\";; install) [ \"$2\" = gh ] || exit 71; echo gh >> \"$HOME/brew.log\"; exit \"${BREW_RC:-0}\";; *) exit 72;; esac\n"), 0755); err != nil {
+		brewScript := `#!/bin/sh
+prefix=$(dirname "$(dirname "$0")")
+case $1 in
+    --caskroom) echo "$prefix/Caskroom/openai" ;;
+    --prefix) echo "$prefix" ;;
+    install)
+        [ "$2" = gh ] || exit 71
+        echo gh >> "$HOME/brew.log"
+        [ "${BREW_RC:-0}" -eq 0 ] || exit "$BREW_RC"
+        printf '%s\n' '#!/bin/sh' 'echo ready' > "$prefix/bin/gh"
+        chmod 755 "$prefix/bin/gh" ;;
+    *) exit 72 ;;
+esac
+`
+		if err := os.WriteFile(brew, []byte(brewScript), 0755); err != nil {
 			t.Fatal(err)
 		}
-		for _, kind := range []string{"normal", "hashed", "alias", "function", "failed brew", "missing sibling", "linked sibling", "wrong release link"} {
+		for _, kind := range []string{"normal", "hashed", "external gh", "missing gh", "old gh", "shadowed gh", "alias", "function", "failed brew", "missing sibling", "linked sibling", "wrong release link"} {
 			t.Run(kind, func(t *testing.T) {
 				home := privateInstallDirectory(t)
 				switch kind {
+				case "missing gh", "old gh", "failed brew", "external gh":
+					gh := filepath.Join(bin, "gh")
+					if err := os.Rename(gh, gh+".saved"); err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() {
+						if err := os.Rename(gh+".saved", gh); err != nil {
+							t.Error(err)
+						}
+					})
+					if kind == "old gh" {
+						if err := os.WriteFile(gh, []byte("#!/bin/sh\necho unavailable\n"), 0755); err != nil {
+							t.Fatal(err)
+						}
+					}
 				case "missing sibling", "linked sibling":
 					path := filepath.Join(source, "install.sh")
 					if err := os.Rename(path, path+".saved"); err != nil {
@@ -483,19 +512,39 @@ case $KIND in
     alias) alias openai=false ;;
     function) openai() { return 81; } ;;
     'failed brew') export BREW_RC=39 ;;
+    'external gh')
+        mkdir -p "$HOME/external" || exit 80
+        printf '%s\n' '#!/bin/sh' 'echo ready' > "$HOME/external/gh"
+        chmod 700 "$HOME/external/gh" || exit 80
+        export PATH="$HOME/external:$PATH" ;;
+    'shadowed gh')
+        mkdir -p "$HOME/.openai/bin" || exit 80
+        printf '%s\n' '#!/bin/sh' 'echo unavailable' > "$HOME/.openai/bin/gh"
+        chmod 700 "$HOME/.openai/bin/gh" || exit 80 ;;
 esac
 source "$(brew --prefix)/bin/openai-enable-updates.zsh"
 rc=$?
 [[ $before == "$PWD" && $entry == preserve && -o noclobber ]] || exit 92
 [[ $commands[keep] == "$HOME/keep" ]] || [[ $initial != "$PATH" ]] || exit 98
-if [[ $KIND == normal || $KIND == hashed ]]; then
+if [[ $KIND = (normal|hashed|'external gh'|'missing gh'|'old gh') ]]; then
     (( rc == 0 )) && [[ $(whence openai) == "$HOME/.openai/bin/openai" ]] || exit 93
     selected=$PATH
     source "$(brew --prefix)/bin/openai-enable-updates.zsh" || exit 94
     [[ $selected == "$PATH" ]] || exit 95
+    if [[ $KIND = ('missing gh'|'old gh') ]]; then
+        [[ $(cat "$HOME/brew.log") = gh && $(wc -l < "$HOME/verifier.log") -eq 3 ]] || exit 85
+    else
+        [[ ! -e "$HOME/brew.log" && $(wc -l < "$HOME/verifier.log") -eq 2 ]] || exit 86
+    fi
 else
     (( rc != 0 )) && [[ $initial == "$PATH" && ! -e "$ZDOTDIR/.zshrc" && ! -e "$HOME/.openai/bin/openai" ]] || exit 96
-    [[ $KIND == 'failed brew' || ! -e "$HOME/brew.log" ]] || exit 97
+    if [[ $KIND = 'failed brew' ]]; then
+        [[ $rc = 39 && $(cat "$HOME/brew.log") = gh ]] || exit 87
+    elif [[ $KIND = 'shadowed gh' ]]; then
+        [[ $(cat "$HOME/brew.log") = gh && $(wc -l < "$HOME/verifier.log") -eq 2 ]] || exit 88
+    else
+        [[ ! -e "$HOME/brew.log" ]] || exit 97
+    fi
 fi
 `
 				cmd := exec.Command(zsh, "-f", "-c", shell)
