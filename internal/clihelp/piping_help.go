@@ -9,7 +9,8 @@ import (
 const pipingHelp = `{{$run := index .Root.Metadata "help-invocation"}}Shell input and output
 
 Examples use Bash or Zsh.
-
+{{if eq $run "go run ./cmd/openai"}}Run these examples from the CLI repository root.
+{{end}}
 TOKENIZER
    Pipe UTF-8 text into view to open the editor in your terminal.
        {{suggestFor . (printf "printf hello | %s tokenizer view" $run) "bash" "zsh"}}
