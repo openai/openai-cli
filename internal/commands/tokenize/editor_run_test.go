@@ -338,6 +338,45 @@ func TestTokenizerCursorCleanupRequiresAcknowledgedOrigin(t *testing.T) {
 	}
 }
 
+func TestTokenizerResizeTracksTheLastWrittenCaret(t *testing.T) {
+	width, height := 120, 30
+	var output bytes.Buffer
+	receipt := &tokenizerCursorOutput{
+		FrameOutput: tokenizerFrameWriteFunc(func(_ context.Context, data []byte) (int, error) { return output.Write(data) }),
+		size:        func() (int, int, error) { return width, height, nil },
+	}
+	m := testTokenizerEditor()
+	m.insert("first\nsecond\nthird")
+	paint := &tokenizerRecordedFrames{}
+	p := &tokenizerEditorInline{model: m, painter: paint, cursorOutput: receipt}
+	p.drawFrame(width, height)
+	_, err := receipt.WriteContext(t.Context(), []byte(paint.String()))
+	require.NoError(t, err)
+	paintedY := p.cursor.Y
+	m.cursor = 0
+	p.drawFrame(width, height) // This replacement is dropped before the writer receives it.
+	require.NotEqual(t, paintedY, p.cursor.Y)
+	cleanup := func() string {
+		return (&tokenizerEditorInline{modesActive: true, cursorOutput: receipt}).close()
+	}
+	for _, size := range [][2]int{{40, 30}, {140, 30}, {120, 40}} {
+		width, height = size[0], size[1]
+		require.Contains(t, cleanup(), ansi.RestoreCursor+"\r"+ansi.EraseScreenBelow)
+	}
+	recoverOrigin := "\r" + ansi.CursorUp(paintedY)
+	for _, newWidth := range []int{40, 120, 140} {
+		width, height = newWidth, 12
+		require.Contains(t, cleanup(), recoverOrigin+"\r"+ansi.EraseScreenBelow, "resize followed immediately by Ctrl+C at width %d", width)
+	}
+	output.Reset()
+	paint.Reset()
+	p.drawFrame(width, height)
+	_, err = receipt.WriteContext(t.Context(), []byte(paint.String()))
+	require.NoError(t, err)
+	require.Equal(t, ansi.ResetModeTextCursorEnable+recoverOrigin+ansi.SaveCursor+paint.String(), output.String())
+	require.Contains(t, cleanup(), ansi.RestoreCursor+"\r"+ansi.EraseScreenBelow, "the resized frame established its origin")
+}
+
 type tokenizerFrameWriteFunc func(context.Context, []byte) (int, error)
 
 func (f tokenizerFrameWriteFunc) WriteContext(ctx context.Context, data []byte) (int, error) {

@@ -138,7 +138,7 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	defer inputBridge.Close()
 	worker := newTokenizerPreviewWorker(ctx, executable)
 	defer worker.Close()
-	cursorOutput := &tokenizerCursorOutput{FrameOutput: terminalOutput}
+	cursorOutput := &tokenizerCursorOutput{FrameOutput: terminalOutput, size: func() (int, int, error) { return term.GetSize(output.Fd()) }}
 	painter := cliterminal.NewPainter(cursorOutput, cancel)
 	defer painter.Stop()
 	model := newTokenizerEditor()
@@ -448,15 +448,82 @@ func tokenizerCaretColumn(content string, cursor *tea.Cursor) string {
 // an acknowledged SaveCursor establishes an origin that cleanup can restore.
 type tokenizerCursorOutput struct {
 	cliterminal.FrameOutput
-	saved atomic.Bool
+	saved  atomic.Bool
+	size   func() (int, int, error)
+	height int
+	caretY int
 }
 
 func (w *tokenizerCursorOutput) WriteContext(ctx context.Context, data []byte) (int, error) {
+	save := bytes.LastIndex(data, []byte(ansi.SaveCursor))
+	if save < 0 {
+		return w.FrameOutput.WriteContext(ctx, data)
+	}
+	height := w.terminalHeight()
+	if origin := w.origin(height); origin != ansi.RestoreCursor && origin != "" {
+		// Repair the saved origin before the usual frame restores it. A resize
+		// can scroll the live caret and panel together above the old saved row.
+		correction := []byte(ansi.ResetModeTextCursorEnable + origin + ansi.SaveCursor)
+		n, err := w.FrameOutput.WriteContext(ctx, correction)
+		if n == len(correction) {
+			w.height, w.caretY = height, 0
+		} else if n > 0 {
+			w.caretY = -1 // A partial correction leaves the live cursor uncertain.
+		}
+		if err != nil {
+			return 0, err
+		}
+		if n != len(correction) {
+			return 0, io.ErrShortWrite
+		}
+	}
 	n, err := w.FrameOutput.WriteContext(ctx, data)
 	if n > 0 && !w.saved.Load() && bytes.Contains(data[:min(n, len(data))], []byte(ansi.SaveCursor)) {
 		w.saved.Store(true)
 	}
+	if n > 0 {
+		w.caretY = -1
+	}
+	if n == len(data) && err == nil {
+		w.height = height
+		// Read the last painted frame. The painter may discard intervening frames.
+		w.caretY = 0
+		if tail, ok := bytes.CutPrefix(data[save+len(ansi.SaveCursor):], []byte("\x1b[")); ok {
+			row := 0
+			for _, b := range tail {
+				if b < '0' || b > '9' {
+					if b == 'B' { // CUD, the first control when the caret is below the origin.
+						w.caretY = max(row, 1)
+					}
+					break
+				}
+				row = row*10 + int(b-'0')
+			}
+		}
+	}
 	return n, err
+}
+
+func (w *tokenizerCursorOutput) terminalHeight() int {
+	if w.size != nil {
+		if _, height, err := w.size(); err == nil {
+			return height
+		}
+	}
+	return 0
+}
+
+func (w *tokenizerCursorOutput) origin(height int) string {
+	if !w.saved.Load() {
+		return ""
+	}
+	if w.caretY >= 0 && height > 0 && height < w.height {
+		if w.caretY > 0 {
+			return "\r" + ansi.CursorUp(w.caretY)
+		}
+		return "\r"
+	}
+	return ansi.RestoreCursor
 }
 
 func (p *tokenizerEditorInline) close() string {
@@ -465,8 +532,10 @@ func (p *tokenizerEditorInline) close() string {
 	}
 	// Cancel a partial escape sequence before restoring visible terminal modes.
 	cleanup := "\x18\x1b\\" + ansi.ResetStyle
-	if p.cursorOutput != nil && p.cursorOutput.saved.Load() {
-		cleanup += ansi.RestoreCursor + "\r" + ansi.EraseScreenBelow
+	if w := p.cursorOutput; w != nil {
+		if origin := w.origin(w.terminalHeight()); origin != "" {
+			cleanup += origin + "\r" + ansi.EraseScreenBelow
+		}
 	}
 	if p.cursorStyled {
 		cleanup += ansi.SetCursorStyle(p.restoreCursorStyle)
