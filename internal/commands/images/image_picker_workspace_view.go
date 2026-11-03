@@ -148,7 +148,7 @@ func (m *imagePicker) workspaceFooter(width int, key, muted lipgloss.Style) []st
 		secondary = append(secondary, [2]string{"Tab", "Settings"})
 		secondary = append(secondary, [2]string{"Alt+Enter", "New line"})
 	case "images":
-		secondary = [][2]string{{"Esc", "Prompt"}, {"Enter", "Expand"}, {"←→", "Images"}, {"↑↓", "Scroll"}, {"O", "Open file"}}
+		secondary = [][2]string{{"Esc", "Prompt"}, {"←→", "Images"}, {"↑↓", "Scroll"}, {"O", "Open"}}
 	case "command":
 		secondary = [][2]string{{"Esc", "Prompt"}}
 		commandWidth, commandHeight := m.commandDimensions()
@@ -164,7 +164,7 @@ func (m *imagePicker) workspaceFooter(width int, key, muted lipgloss.Style) []st
 	rows := imagePickerWorkspaceShortcutRows(append(primary, secondary...), width, key, muted)
 	controls := [][2]string{{"Ctrl+C", "Cancel generation"}}
 	if m.focus == "images" {
-		controls = append(controls, [2]string{"Esc", "Prompt"}, [2]string{"Enter", "Expand"}, [2]string{"←→", "Images"}, [2]string{"↑↓", "Scroll"}, [2]string{"O", "Open file"})
+		controls = append(controls, [2]string{"Esc", "Prompt"}, [2]string{"←→", "Images"}, [2]string{"↑↓", "Scroll"}, [2]string{"O", "Open"})
 	} else {
 		controls = append(controls, [2]string{"Tab", "Images"})
 	}
