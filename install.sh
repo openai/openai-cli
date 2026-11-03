@@ -78,8 +78,9 @@ ln "$stage/openai" . || fail 'Could not install openai. Check whether another in
 clean_stage "$stage"
 trap - EXIT
 printf '%s\n' 'Installed $HOME/.openai/bin/openai.' \
-    'Select this installation in Bash or zsh:' \
+    'Put this installation first on PATH in Bash or zsh:' \
     '  export PATH="$HOME/.openai/bin:$PATH"' \
+    '  "$HOME/.openai/bin/openai" --version' \
     '  command -v openai' \
-    '  openai --version' \
+    'If an alias or function takes precedence, use the full path above.' \
     'Automatic updates require a compatible GitHub CLI (gh) on PATH and a bare interactive openai launch.'
