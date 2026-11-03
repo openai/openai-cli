@@ -3,6 +3,7 @@
 import json
 import pathlib
 import re
+import subprocess
 import sys
 import time
 
@@ -10,10 +11,17 @@ import time
 def cache_path(runtime, name):
     state = runtime / f"{name}-state"
     cache = state / "home/Library/Caches" if sys.platform == "darwin" else state / "cache"
-    return cache / "openai-cli/update-notice/state.json"
+    directory = "update-notice"
+    if name != "before":
+        directory = (runtime / "archive-cache-directory").read_text()
+    return cache / "openai-cli" / directory / "state.json"
 
 
 def seed(runtime, output):
+    build = json.loads(subprocess.check_output(["go", "version", "-m", "-json", runtime / "after/openai"]))
+    settings = {item["Key"]: item["Value"] for item in build["Settings"]}
+    directory = f"update-notice-archive-{settings['GOOS']}-{settings['GOARCH']}"
+    (runtime / "archive-cache-directory").write_text(directory)
     versions = [(output / f"{side}-version.txt").read_text().strip() for side in ("before", "after")]
     if versions[0] != versions[1]:
         raise ValueError("Build both binaries with the same runtime version for a help comparison.")

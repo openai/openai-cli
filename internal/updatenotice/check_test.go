@@ -25,7 +25,8 @@ func response(body string) *http.Response {
 }
 
 func releaseBody(version string) string {
-	data, _ := json.Marshal(map[string]any{"tag_name": version, "draft": false, "prerelease": false})
+	data, _ := json.Marshal(map[string]any{"tag_name": version, "draft": false, "prerelease": false,
+		"assets": []any{map[string]any{"name": archiveName(strings.TrimPrefix(version, "v")), "state": "uploaded", "size": 1024}}})
 	return string(data)
 }
 
@@ -92,7 +93,7 @@ func TestNoticeFitsStandardTerminal(t *testing.T) {
 func privateCacheDirectory(t *testing.T) string {
 	t.Helper()
 	directory := filepath.Join(t.TempDir(), "notice")
-	cache, err := openCache(context.Background(), directory)
+	cache, err := openCache(context.Background(), noticeDirectory(directory, manualGuidance))
 	if err != nil {
 		t.Fatalf("cache prerequisite failed: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestCheckRatesAttemptsAndNoticesSeparately(t *testing.T) {
 	if got := checkAt(now.Add(noticeInterval + time.Hour)); got != "" || calls != 3 {
 		t.Fatalf("repeated notice %q, requests %d", got, calls)
 	}
-	data, err := os.ReadFile(filepath.Join(directory, stateName))
+	data, err := os.ReadFile(filepath.Join(noticeDirectory(directory, manualGuidance), stateName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,6 +154,9 @@ func TestHomebrewNoticeWaitsForThePublishedCask(t *testing.T) {
 	legacyState := cacheState{Schema: 1, Checked: now.Unix(), Notified: now.Unix(), Latest: "1.2.0"}
 	data, err := json.Marshal(legacyState)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(directory, 0700); err != nil {
 		t.Fatal(err)
 	}
 	legacyPath := filepath.Join(directory, stateName)
@@ -192,6 +196,71 @@ func TestHomebrewNoticeWaitsForThePublishedCask(t *testing.T) {
 	}
 	if unchanged, err := os.ReadFile(legacyPath); err != nil || string(unchanged) != string(data) {
 		t.Fatal("Homebrew check changed the GitHub release cache")
+	}
+}
+
+func TestCheckWaitsForUploadedArchiveUnlessGoCanUseTag(t *testing.T) {
+	for _, tc := range []struct {
+		name, command, version, assetName, state string
+		size                                     int64
+		want                                     bool
+	}{
+		{"empty archive release", manualGuidance, "1.3.0", "", "", 0, false},
+		{"Go source available", goGuidance, "1.3.0", "", "", 0, true},
+		{"Go major needs archive", goGuidance, "2.0.0", "", "", 0, false},
+		{"wrong platform", manualGuidance, "1.3.0", "openai_1.3.0_other_cpu.zip", "uploaded", 100, false},
+		{"wrong version", manualGuidance, "1.3.0", archiveName("1.2.0"), "uploaded", 100, false},
+		{"pending upload", manualGuidance, "1.3.0", archiveName("1.3.0"), "starter", 100, false},
+		{"empty upload", manualGuidance, "1.3.0", archiveName("1.3.0"), "uploaded", 0, false},
+		{"uploaded archive", manualGuidance, "1.3.0", archiveName("1.3.0"), "uploaded", 100, true},
+		{"uploaded Go fallback", goGuidance, "2.0.0", archiveName("2.0.0"), "uploaded", 100, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var assets []map[string]any
+			if tc.assetName != "" {
+				assets = append(assets, map[string]any{"name": tc.assetName, "state": tc.state, "size": tc.size})
+			}
+			data, err := json.Marshal(map[string]any{"tag_name": "v" + tc.version, "draft": false, "prerelease": false, "assets": assets})
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				calls++
+				if req.URL.String() != releaseURL {
+					t.Fatalf("unexpected request: %s", req.URL)
+				}
+				return response(string(data)), nil
+			})}
+			base := filepath.Join(t.TempDir(), "notice")
+			now := time.Now()
+			installed := func(string) string { return tc.command }
+			got := check(t.Context(), "1.2.0", base, now, client, installed)
+			if (got != "") != tc.want {
+				t.Fatalf("notice %q, want notice %t", got, tc.want)
+			}
+			if again := check(t.Context(), "1.2.0", base, now.Add(time.Hour), client, installed); again != "" || calls != 1 {
+				t.Fatalf("repeat notice %q, requests %d", again, calls)
+			}
+		})
+	}
+}
+
+func TestReleaseArchiveNamesMatchPublishedFormats(t *testing.T) {
+	for _, tc := range []struct{ os, arch, suffix string }{
+		{"darwin", "arm64", "macos_arm64.zip"},
+		{"darwin", "amd64", "macos_amd64.zip"},
+		{"windows", "386", "windows_386.zip"},
+		{"windows", "amd64", "windows_amd64.zip"},
+		{"windows", "arm64", "windows_arm64.zip"},
+		{"linux", "arm", "linux_armv6.tar.gz"},
+		{"linux", "386", "linux_386.tar.gz"},
+		{"linux", "amd64", "linux_amd64.tar.gz"},
+		{"linux", "arm64", "linux_arm64.tar.gz"},
+	} {
+		if got := platformArchiveName("1.2.0", tc.os, tc.arch); got != "openai_1.2.0_"+tc.suffix {
+			t.Errorf("archive for %s/%s: %q", tc.os, tc.arch, got)
+		}
 	}
 }
 
@@ -268,7 +337,7 @@ func TestCheckRejectsCacheFailuresBeforeHTTP(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			directory := privateCacheDirectory(t)
-			if err := os.WriteFile(filepath.Join(directory, stateName), []byte(data), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(noticeDirectory(directory, manualGuidance), stateName), []byte(data), 0600); err != nil {
 				t.Fatal(err)
 			}
 			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -278,7 +347,7 @@ func TestCheckRejectsCacheFailuresBeforeHTTP(t *testing.T) {
 			if got := check(context.Background(), "1.0.0", directory, now, client, unknownInstallation); got != "" {
 				t.Fatalf("invalid-cache notice = %q", got)
 			}
-			after, err := os.ReadFile(filepath.Join(directory, stateName))
+			after, err := os.ReadFile(filepath.Join(noticeDirectory(directory, manualGuidance), stateName))
 			if err != nil || string(after) != data {
 				t.Fatal("invalid cache changed")
 			}
@@ -322,7 +391,7 @@ func TestCheckTimeoutReservesAttempt(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("timeout took %s", elapsed)
 	}
-	data, err := os.ReadFile(filepath.Join(directory, stateName))
+	data, err := os.ReadFile(filepath.Join(noticeDirectory(directory, manualGuidance), stateName))
 	if err != nil || !strings.Contains(string(data), `"checked":`) {
 		t.Fatal("timeout attempt was not persisted")
 	}

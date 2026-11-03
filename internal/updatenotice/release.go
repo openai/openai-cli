@@ -38,18 +38,35 @@ func releaseDialer() *net.Dialer {
 	return &net.Dialer{Timeout: checkTimeout, FallbackDelay: checkTimeout / 4}
 }
 
-func latestRelease(ctx context.Context, client *http.Client) string {
+func latestRelease(ctx context.Context, client *http.Client, command string) string {
 	data := fetchReleaseMetadata(ctx, client, releaseURL, "application/vnd.github+json")
 	var release struct {
 		Tag        string `json:"tag_name"`
 		Draft      *bool  `json:"draft"`
 		Prerelease *bool  `json:"prerelease"`
+		Assets     []struct {
+			Name  string `json:"name"`
+			State string `json:"state"`
+			Size  int64  `json:"size"`
+		} `json:"assets"`
 	}
 	if json.Unmarshal(data, &release) != nil || release.Draft == nil || *release.Draft || release.Prerelease == nil || *release.Prerelease {
 		return ""
 	}
-	version, _ := stableVersion(release.Tag)
-	return version
+	version, ok := stableVersion(release.Tag)
+	if !ok {
+		return ""
+	}
+	if guidanceForRelease(command, version) == goGuidance {
+		return version
+	}
+	name := archiveName(version)
+	for _, asset := range release.Assets {
+		if asset.Name == name && asset.State == "uploaded" && asset.Size > 0 {
+			return version
+		}
+	}
+	return ""
 }
 
 func latestHomebrewRelease(ctx context.Context, client *http.Client) string {

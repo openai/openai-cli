@@ -45,6 +45,7 @@ func TestCachePrivateFilesAndTemporaryCleanup(t *testing.T) {
 	if got := check(context.Background(), "1.0.0", directory, time.Now(), client, unknownInstallation); got == "" {
 		t.Fatal("no notice")
 	}
+	directory = noticeDirectory(directory, manualGuidance)
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		t.Fatal(err)
@@ -76,11 +77,11 @@ func TestCacheRefusesSymlinks(t *testing.T) {
 			target := filepath.Join(t.TempDir(), "original")
 			fixtureFile(t, target, "keep original")
 			if name == ".lock" {
-				if err := os.Remove(filepath.Join(directory, name)); err != nil {
+				if err := os.Remove(filepath.Join(noticeDirectory(directory, manualGuidance), name)); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := os.Symlink(target, filepath.Join(directory, name)); err != nil {
+			if err := os.Symlink(target, filepath.Join(noticeDirectory(directory, manualGuidance), name)); err != nil {
 				t.Fatal(err)
 			}
 			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -103,8 +104,8 @@ func TestCachedNoticePreservesExternalStateChanges(t *testing.T) {
 		t.Run(map[bool]string{true: "replacement", false: "same inode edit"}[replace], func(t *testing.T) {
 			directory := privateCacheDirectory(t)
 			now := time.Now()
-			path := filepath.Join(directory, stateName)
-			cache, err := openCache(context.Background(), directory)
+			path := filepath.Join(noticeDirectory(directory, manualGuidance), stateName)
+			cache, err := openCache(context.Background(), noticeDirectory(directory, manualGuidance))
 			if err != nil {
 				t.Fatal(err)
 			}
