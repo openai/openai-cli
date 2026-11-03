@@ -2,7 +2,6 @@ package tokenize
 
 import (
 	"iter"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -24,13 +23,13 @@ func studioSourceStart(cursor, width, count int) int {
 
 func (m *tokenizerEditor) studioFirst(cursor, width, count int) int {
 	p := m.sourcePage
-	if p.cursor == m.cursor && p.width == width && p.count == count && p.revision == m.revision {
+	if p.cursor == m.boundaries[cursor] && p.width == width && p.count == count && p.revision == m.revision {
 		return p.start
 	}
 	return studioSourceStart(cursor, width, count)
 }
 
-func (m *tokenizerEditor) wrappedSource(first, cursor, width int) iter.Seq[studioSourceCell] {
+func (m *tokenizerEditor) wrappedSource(first int, span tokenizerSourceRange, width int) iter.Seq[studioSourceCell] {
 	return func(yield func(studioSourceCell) bool) {
 		row, column := 0, 0
 		for i := first; i < len(m.boundaries); i++ {
@@ -38,13 +37,9 @@ func (m *tokenizerEditor) wrappedSource(first, cursor, width int) iter.Seq[studi
 			last := i+1 == len(m.boundaries)
 			if !last {
 				raw := m.text[m.boundaries[i]:m.boundaries[i+1]]
-				raw, hardBreak = strings.CutSuffix(raw, "\n")
-				display = raw
-				if raw != "" && (len(raw) != 1 || raw[0] < ' ' || raw[0] > '~') {
-					display = tokenizerSourceDisplay(raw)
-				}
+				display, hardBreak = tokenizerSourceCell(raw, span.contains(i))
 			}
-			if display == "" && i == cursor && m.focus == tokenizerFocusText {
+			if display == "" && i == span.first && m.focus == tokenizerFocusText {
 				display = " "
 			}
 			cells := tokenizerSourceWidth(display)
@@ -75,31 +70,36 @@ func (m *tokenizerEditor) studioSourceLines(s tokenizerEditorStyles, width, coun
 	if m.text == "" {
 		return m.editorLines(s, width, count)
 	}
-	cursor := m.cursorIndex()
-	first := m.studioFirst(cursor, width, count)
+	span := m.sourceRange()
+	first := m.studioFirst(span.first, width, count)
 	var rows []string
-	var line strings.Builder
-	caretRow := -1
+	var line tokenizerSourceRow
+	firstRow, lastRow := -1, -1
 	var caret *tea.Cursor
-	for cell := range m.wrappedSource(first, cursor, width) {
+	for cell := range m.wrappedSource(first, span, width) {
 		if cell.row != len(rows) {
-			rows = append(rows, line.String())
-			line.Reset()
+			rows = append(rows, line.render(s.sourceSelected))
+			line = tokenizerSourceRow{}
 		}
-		if caretRow >= 0 && cell.row >= max(count, caretRow+1) {
-			break
-		}
-		if cell.index == cursor {
-			caretRow = cell.row
+		selected := span.contains(cell.index)
+		if cell.index == span.first {
+			firstRow, lastRow = cell.row, cell.row
 			if m.focus == tokenizerFocusText {
 				caret = tea.NewCursor(cell.column, cell.row)
 			}
 		}
-		line.WriteString(cell.display)
+		if selected {
+			// Keep the start visible even when one token spans more than a page.
+			lastRow = min(cell.row, firstRow+count-1)
+		}
+		if firstRow >= 0 && cell.row >= max(count, lastRow+1) {
+			break
+		}
+		line.appendCell(cell.display, selected)
 	}
-	rows = append(rows, line.String())
+	rows = append(rows, line.render(s.sourceSelected))
 	visible := make([]string, count)
-	start := max(0, caretRow-count+1)
+	start := max(0, lastRow-count+1)
 	copy(visible, rows[start:])
 	if caret != nil {
 		caret.Y -= start
@@ -115,11 +115,12 @@ func (m *tokenizerEditor) moveSourcePage(direction int) {
 		return
 	}
 	_, indent := m.sourceLabel()
-	width, cursor := m.sourceWidth()-indent, m.cursorIndex()
+	span := m.sourceRange()
+	width, cursor := m.sourceWidth()-indent, span.first
 	first := m.studioFirst(cursor, width, count)
 	var starts []int
 	row, column := 0, 0
-	for cell := range m.wrappedSource(first, cursor, width) {
+	for cell := range m.wrappedSource(first, span, width) {
 		if cell.row == len(starts) {
 			starts = append(starts, cell.index)
 		}
@@ -136,7 +137,7 @@ func (m *tokenizerEditor) moveSourcePage(direction int) {
 		// Reconstruct the preceding page from a bounded prefix. A partial
 		// row may overlap the old top, but no grapheme can fall between pages.
 		first = studioSourceStart(top, width, count)
-		for cell := range m.wrappedSource(first, cursor, width) {
+		for cell := range m.wrappedSource(first, span, width) {
 			if cell.index == top {
 				topRow = cell.row
 				if cell.column > 0 {
@@ -149,7 +150,7 @@ func (m *tokenizerEditor) moveSourcePage(direction int) {
 	newTopRow := max(0, topRow+direction*count)
 	targetRow := max(0, topRow+row+direction*count)
 	next := cursor
-	for cell := range m.wrappedSource(first, cursor, width) {
+	for cell := range m.wrappedSource(first, span, width) {
 		if cell.row > targetRow {
 			break
 		}
@@ -173,7 +174,7 @@ func (m *tokenizerEditor) sourceOverflows() bool {
 		return false
 	}
 	_, indent := m.sourceLabel()
-	for cell := range m.wrappedSource(0, m.cursorIndex(), m.sourceWidth()-indent) {
+	for cell := range m.wrappedSource(0, m.sourceRange(), m.sourceWidth()-indent) {
 		if cell.row >= count {
 			return true
 		}

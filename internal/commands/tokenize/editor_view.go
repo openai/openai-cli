@@ -43,7 +43,7 @@ func (m *tokenizerEditor) resultRows() int {
 type tokenizerEditorStyles struct {
 	muted, accent, selected, focused, border, warning, failure lipgloss.Style
 	fill, edge, secondary                                      string
-	tokenSelected                                              lipgloss.Style
+	tokenSelected, sourceSelected                              lipgloss.Style
 	tokens, byteCounts                                         [6]lipgloss.Style
 }
 
@@ -51,6 +51,7 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	s := tokenizerEditorStyles{}
 	if !m.color {
 		s.tokenSelected = lipgloss.NewStyle().Reverse(true)
+		s.sourceSelected = s.tokenSelected
 		return s
 	}
 	warning, failure, tokenInk := "#885B14", "#B23A3A", "#FFFFFF"
@@ -80,6 +81,7 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	s.muted = s.muted.Foreground(lipgloss.Color(muted))
 	s.accent = s.accent.Foreground(lipgloss.Color(focus))
 	s.selected = s.selected.Foreground(lipgloss.Color(text)).Background(lipgloss.Color(fill))
+	s.sourceSelected = s.selected
 	s.focused = s.selected.Bold(true)
 	s.tokenSelected = lipgloss.NewStyle().Foreground(lipgloss.Color(tokenInk)).Background(lipgloss.Color(focus))
 	s.border = s.border.Foreground(lipgloss.Color(border))
@@ -176,7 +178,7 @@ func (m *tokenizerEditor) sourceLabel() (string, int) {
 	if total <= m.sourceRows() {
 		return "Text", 9
 	}
-	label := fmt.Sprintf("Text %d/%d", m.lineIndex(m.cursor)+1, total)
+	label := fmt.Sprintf("Text %d/%d", m.lineIndex(m.boundaries[m.sourceRange().first])+1, total)
 	if !m.studioLayout() {
 		return label, len(label) + 3
 	}
@@ -451,8 +453,11 @@ func tokenizerSourceDisplay(value string) string {
 }
 
 func (m *tokenizerEditor) editorLines(s tokenizerEditorStyles, width, count int) ([]string, *tea.Cursor) {
-	lineIndex := m.lineIndex(m.cursor)
-	if count > 1 && lineIndex > 0 {
+	span := m.sourceRange()
+	anchor := m.boundaries[span.first]
+	lineIndex := m.lineIndex(anchor)
+	lastLine := m.lineIndex(m.boundaries[max(span.first, span.end-1)])
+	if count > lastLine-lineIndex+1 && lineIndex > 0 {
 		lineIndex--
 	}
 	lines := make([]string, 0, count)
@@ -463,11 +468,7 @@ func (m *tokenizerEditor) editorLines(s tokenizerEditorStyles, width, count int)
 		if lineIndex+1 < len(m.lineStarts) {
 			end = m.lineStarts[lineIndex+1] - 1
 		}
-		cursor := -1
-		if m.cursor >= start && m.cursor <= end && m.focus == 0 {
-			cursor = m.cursor
-		}
-		line, column := m.editorLine(start, end, cursor, width)
+		line, column := m.editorLine(start, end, width, span, s.sourceSelected)
 		if column >= 0 {
 			caret = tea.NewCursor(column, len(lines))
 		}
@@ -486,29 +487,33 @@ func (m *tokenizerEditor) editorLines(s tokenizerEditorStyles, width, count int)
 	return lines, caret
 }
 
-func (m *tokenizerEditor) editorLine(start, end, cursor, width int) (string, int) {
+func (m *tokenizerEditor) editorLine(start, end, width int, span tokenizerSourceRange, style lipgloss.Style) (string, int) {
 	// Bound work by visible graphemes, using the index built when text changes.
 	// A cursor near the end of a large line must not scan its complete prefix.
 	first := sort.SearchInts(m.boundaries, start)
 	index := first
-	if cursor >= 0 {
-		index = sort.SearchInts(m.boundaries, cursor)
-		caretWidth := 1
-		if cursor < end && index+1 < len(m.boundaries) {
-			caretWidth = tokenizerSourceWidth(tokenizerSourceDisplay(m.text[cursor:min(m.boundaries[index+1], end)]))
+	anchor := m.boundaries[span.first]
+	if anchor >= start && anchor <= end && (m.focus == tokenizerFocusText || span.first < span.end) {
+		index = span.first
+		// Reserve enough space for the selected token on this line before showing left context.
+		focusWidth := 0
+		limit := min(max(index+1, span.end), len(m.boundaries)-1)
+		for i := index; i < limit && m.boundaries[i] <= end && focusWidth < width; i++ {
+			display, _ := tokenizerSourceCell(m.text[m.boundaries[i]:m.boundaries[i+1]], span.contains(i))
+			focusWidth += tokenizerSourceWidth(display)
 		}
 		used := 0
 		for index > first {
 			part := m.text[m.boundaries[index-1]:min(m.boundaries[index], end)]
 			cells := tokenizerSourceWidth(tokenizerSourceDisplay(part))
-			if used+cells > max(0, width-caretWidth-2) {
+			if used+cells > max(0, width-max(1, focusWidth)-2) {
 				break
 			}
 			used += cells
 			index--
 		}
 	}
-	var out strings.Builder
+	var out tokenizerSourceRow
 	if index > first {
 		out.WriteRune('…')
 	}
@@ -516,27 +521,27 @@ func (m *tokenizerEditor) editorLine(start, end, cursor, width int) (string, int
 	column := -1
 	for index < len(m.boundaries) && m.boundaries[index] <= end {
 		offset := m.boundaries[index]
-		if offset == cursor {
+		if offset == anchor && m.focus == tokenizerFocusText {
 			column = used
 		}
-		if offset == end || index == len(m.boundaries)-1 {
-			if offset == cursor {
+		selected := span.contains(index)
+		if (offset == end && !selected) || index == len(m.boundaries)-1 {
+			if offset == anchor && m.focus == tokenizerFocusText {
 				out.WriteByte(' ')
 			}
 			break
 		}
-		part := m.text[offset:min(m.boundaries[index+1], end)]
-		display := tokenizerSourceDisplay(part)
+		display, _ := tokenizerSourceCell(m.text[offset:m.boundaries[index+1]], selected)
 		cells := tokenizerSourceWidth(display)
 		if used+cells > width-1 {
-			out.WriteRune('…')
+			out.appendCell("…", selected)
 			break
 		}
-		out.WriteString(display)
+		out.appendCell(display, selected)
 		used += cells
 		index++
 	}
-	return out.String(), column
+	return out.render(style), column
 }
 
 // Source windows and padding must share the inline painter's conservative

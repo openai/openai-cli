@@ -790,7 +790,7 @@ func TestTokenizerEditorCaretDoesNotShiftSource(t *testing.T) {
 		m.insert(source)
 		for _, cursor := range m.boundaries {
 			m.cursor = cursor
-			line, column := m.editorLine(0, len(source), cursor, 76)
+			line, column := m.editorLine(0, len(source), 76, m.sourceRange(), m.styles().sourceSelected)
 			want := tokenizerSourceDisplay(source)
 			if cursor == len(source) {
 				want += " "

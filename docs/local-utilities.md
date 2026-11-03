@@ -54,6 +54,9 @@ When lines exceed the visible text area, the Text label shows the current line a
 The editor keeps the complete draft even when only part is visible.
 The highlighted token follows the text cursor without recalculating tokens.
 The selected token and its byte count share a blue background. Monochrome terminals use reverse video.
+In Tokens, the text pane follows the selection and highlights its location. A selected line break appears as `↵`.
+If a token covers part of a displayed character, the text pane highlights the whole character.
+Tab returns to the original editing position.
 In the token strip, `␣` marks a selected space-only token. Its caption gives the exact number of spaces.
 The text editor shows a thin blinking cursor at the insertion point.
 At a token boundary, the highlight selects the token on the right. At the end, it selects the last token.
