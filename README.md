@@ -64,6 +64,35 @@ openai help setup
 On Windows, use `.\openai.exe` from the extracted directory.
 For scripts, supply `OPENAI_API_KEY` through your environment or secret manager. [Create an API key](https://platform.openai.com/settings/organization/api-keys)
 
+## Use the CLI from a coding agent
+
+The optional [OpenAI CLI skill](skills/openai-cli/SKILL.md) helps a shell agent choose API commands and interpret their output.
+Install the CLI in the environment where the agent runs.
+
+From your project, use GitHub CLI to install the skill from a tagged release that includes it:
+
+```sh
+gh skill install openai/openai-cli openai-cli --agent codex --scope project
+```
+
+Choose your agent with `--agent`. Options include `claude-code`, `cursor`, `gemini-cli`, and `github-copilot`.
+Run `gh skill install --help` for the full list. Use `--scope user` to share the skill across your projects.
+
+For an unreleased checkout, use its local path instead:
+
+```sh
+gh skill install /path/to/openai-cli openai-cli --from-local --agent codex --scope project
+```
+
+For manual installation, copy the entire `skills/openai-cli` folder into the appropriate skills directory.
+
+| Agent | Current project | All projects for this user |
+| --- | --- | --- |
+| Codex | `.agents/skills/` | `~/.agents/skills/` |
+| Claude Code | `.claude/skills/` | `~/.claude/skills/` |
+
+Start a new agent session in the target project. For example, ask “Upload requests.jsonl to OpenAI for a future batch.”
+
 ## Things to try
 
 ### Send a request
