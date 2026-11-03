@@ -128,6 +128,22 @@ func TestTokenizerSourceSelectionMarksPartialGraphemesAndLineBreaks(t *testing.T
 	}
 }
 
+func TestTokenizerSourceSelectionMarksAnOversizedGrapheme(t *testing.T) {
+	for _, size := range [][2]int{{96, 16}, {40, 12}} {
+		m := testTokenizerEditor()
+		m.width, m.height = size[0], size[1]
+		source := strings.Repeat("👩\u200d", 17) + "👩"
+		m.Update(tea.PasteMsg{Content: source})
+		m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{
+			{EndByte: 2}, {EndByte: uint32(len(source))},
+		}})
+		tokenizerEditorKey(m, tea.KeyTab)
+		tokenizerEditorKey(m, tea.KeyHome)
+		require.Contains(t, tokenizerMarkedSource(t, m, uv.Style{Attrs: uv.AttrReverse}), "[…]",
+			"the visible placeholder represents the selected grapheme at %dx%d", size[0], size[1])
+	}
+}
+
 func TestTokenizerSourceSelectionTracksResultPages(t *testing.T) {
 	for _, size := range [][2]int{{96, 16}, {40, 12}} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
