@@ -641,9 +641,14 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 		t.Fatal(err)
 	}
 	_, start, ok := strings.Cut(string(readme), "\n```zsh\n")
-	block, _, closed := strings.Cut(start, "\n```")
+	block, rest, closed := strings.Cut(start, "\n```")
 	if !ok || !closed {
 		t.Fatal("missing zsh installation block")
+	}
+	_, start, ok = strings.Cut(rest, "\n```zsh\n")
+	recovery, _, closed := strings.Cut(start, "\n```")
+	if !ok || !closed {
+		t.Fatal("missing zsh recovery block")
 	}
 	for _, tc := range []struct {
 		name, failure, calls string
@@ -653,7 +658,7 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 		{"old cask and earlier Go binary", "", "update\ncask\n", 0},
 		{"failed update", "update", "update\n", 39},
 		{"failed install", "install", "update\ncask\n", 40},
-		{"tap still offers a cask without setup", "old-tap", "update\ncask\n", 1},
+		{"tap still offers a cask without setup", "old-tap", "update\ncask\n", -1}, // zsh chooses the missing-file status.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := privateInstallDirectory(t)
@@ -673,13 +678,14 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 			available := release
 			if tc.failure == "old-tap" {
 				available = privateInstallDirectory(t)
-				if err := os.WriteFile(filepath.Join(available, "openai"), []byte("#!/bin/sh\necho 'openai version 1.0.0'\n"), 0755); err != nil {
+				const oldCaskCLI = "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = --help ] || exit 2\necho 'Usage from cask 1.0.0: openai [command]'\n"
+				if err := os.WriteFile(filepath.Join(available, "openai"), []byte(oldCaskCLI), 0755); err != nil {
 					t.Fatal(err)
 				}
 			}
 			profile := "# personal settings\n"
 			preflight := ""
-			if tc.name == "old cask and earlier Go binary" {
+			if tc.name == "old cask and earlier Go binary" || tc.failure == "old-tap" {
 				goBin := filepath.Join(home, "go", "bin")
 				oldCask := filepath.Join(prefix, "Caskroom", "openai", "1.0.0")
 				for _, dir := range []string{goBin, oldCask} {
@@ -712,19 +718,19 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 			}
 			if tc.failure != "" {
 				exit, ok := err.(*exec.ExitError)
-				if !ok || exit.ExitCode() != tc.exitCode {
+				if !ok || (tc.exitCode > 0 && exit.ExitCode() != tc.exitCode) {
 					t.Fatalf("failed %s: %v: %s", tc.failure, err, out)
 				}
 				if actual, err := os.ReadFile(profilePath); err != nil || string(actual) != profile {
 					t.Fatalf("changed profile after failure: %q: %v", actual, err)
 				}
 				if tc.failure == "old-tap" {
-					caskCLI := filepath.Join(bin, "openai")
-					if !strings.Contains(string(out), `"`+caskCLI+`"`) {
-						t.Fatalf("missing quoted cask executable in guidance: %s", out)
+					missingHelper := filepath.Join(bin, "openai-enable-updates.zsh")
+					if !strings.Contains(string(out), missingHelper) {
+						t.Fatalf("missing setup helper path in shell error: %s", out)
 					}
-					if version, err := exec.Command(caskCLI, "--version").Output(); err != nil || string(version) != "openai version 1.0.0\n" {
-						t.Fatalf("cask executable: %v: %s", err, version)
+					if output, err := run(preflight + recovery); err != nil || !strings.Contains(string(output), "Usage from cask 1.0.0: openai [command]") {
+						t.Fatalf("README recovery with earlier Go binary: %v: %s", err, output)
 					}
 				}
 				return

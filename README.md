@@ -22,38 +22,46 @@
 
 ## Installation
 
-One `openai` executable includes all commands in this CLI.
+[macOS](#macos) · [Linux](#linux) · [Windows](#windows)
 
 <a id="installing-with-homebrew"></a>
 
-**macOS with Homebrew and zsh**. Paste this block once to install the CLI with automatic updates.
+### macOS
+
+With Homebrew and zsh, paste both lines together in Terminal. This installs the CLI and enables automatic updates.
 
 ```zsh
-brew update &&
-brew install --cask openai/tools/openai &&
-if [[ -f "$(brew --prefix)/bin/openai-enable-updates.zsh" ]]; then
-  source "$(brew --prefix)/bin/openai-enable-updates.zsh"
-else
-  printf 'This cask has no automatic updates yet. Use "%s/bin/openai" for now.\n' "$(brew --prefix)" >&2
-  false
-fi
+brew update && brew install --cask openai/tools/openai &&
+source "$(brew --prefix)/bin/openai-enable-updates.zsh"
 ```
 
-Use the same block if you already installed the CLI with Homebrew.
-It selects the CLI in this terminal and future zsh sessions. The CLI updates itself during interactive use.
-For other shells or updates through Homebrew, use the [Homebrew instructions](docs/installation.md#installing-with-homebrew).
+Use the same paste for an older Homebrew installation. [When automatic updates run](docs/automatic-updates.md#eligible-invocations).
+
+<details>
+<summary>Terminal says “no such file” for the update helper</summary>
+
+Your Homebrew package lacks the setup helper. You can use the installed CLI now, even if another copy comes first.
+
+```zsh
+"$(brew --prefix)/bin/openai" --help
+```
+
+Repeat the installation once Homebrew offers a version with the helper. [Check the installed CLI version](docs/installation.md#installing-with-homebrew).
+
+</details>
+
+Using another shell? [Install with Homebrew](docs/installation.md#installing-with-homebrew). Without Homebrew, use the [macOS ZIP](docs/installation.md#installing-a-prebuilt-binary).
 
 <a id="installing-a-prebuilt-binary"></a>
 
-**Linux**. Install the [package for your distribution](docs/installation.md#linux).
-For automatic updates, use the [release archive instructions](docs/automatic-updates.md#from-an-extracted-archive).
+### Linux
 
-**Windows**. Extract the [Windows ZIP](docs/installation.md#windows). Run `.\openai.exe --help` from the extracted directory.
+For automatic updates, [install the release archive](docs/automatic-updates.md#from-an-extracted-archive). It requires GitHub CLI (`gh`).
+If you prefer a Debian or RPM package, [install it with your package manager](docs/installation.md#linux). Upgrade it manually.
 
-<a id="installing-with-go"></a>
+### Windows
 
-For a Mac without Homebrew, choose the [macOS ZIP](docs/installation.md#installing-a-prebuilt-binary).
-Developers can also [install with Go](docs/installation.md#installing-with-go).
+[Install the Windows ZIP](docs/installation.md#windows). To upgrade, download and extract a newer ZIP.
 
 <!-- x-release-please-end -->
 
@@ -258,6 +266,10 @@ In PowerShell, press Enter after `openai images generate` to open the picker.
 > as infrastructure as code.
 
 ## Development
+
+<a id="installing-with-go"></a>
+
+To install from source, follow the [Go installation instructions](docs/installation.md#installing-with-go).
 
 `scripts/run` is a development helper for running the CLI from a cloned checkout:
 
