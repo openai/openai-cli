@@ -191,20 +191,13 @@ $log = "$PSScriptRoot/results/test.log"
 $downloads = Join-Path $env:USERPROFILE 'Downloads'
 $null = [IO.Directory]::CreateDirectory($downloads)
 $work = Join-Path $downloads ('OpenAI CLI ' + [guid]::NewGuid())
-# The fixture controller runs Windows PowerShell 5.1 as the ordinary account.
-# Apply its private DACL at creation, before copying or extracting any bytes.
+# Explorer inherits the user's normal Downloads permissions during extraction.
 $ownerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-$privateAcl = [Security.AccessControl.DirectorySecurity]::new()
-$privateAcl.SetOwner($ownerSid)
-$privateAcl.SetAccessRuleProtection($true,$false)
-foreach ($principal in $ownerSid.Value,'S-1-5-18','S-1-5-32-544') {
-    $identity = [Security.Principal.SecurityIdentifier]::new($principal)
-    $privateAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($identity,'FullControl','ContainerInherit,ObjectInherit','None','Allow'))
-}
-$extractionStage = 'create-private-directory'
+$extractionStage = 'create-download-directory'
 $created = $false
 try {
-    [IO.DirectoryInfo]::new($work).Create($privateAcl)
+    if (Test-Path -LiteralPath $work) {throw 'The unique Downloads fixture already exists.'}
+    $null = [IO.Directory]::CreateDirectory($work)
     $created = $true
     $extractionStage = 'copy-zip'
     $name = (Get-Content -LiteralPath "$PSScriptRoot/fixture-zip.txt" -Raw).Trim()
