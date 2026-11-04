@@ -46,12 +46,8 @@ func TestMainWindowsArchiveInstallHelp(t *testing.T) {
 	}
 }
 
-// Positive enrollment edits HKCU. Run only in the dedicated hosted account;
-// local Windows developers can run the remaining archive tests without enrolling.
-func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
-	if os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_FIXTURE") != "1" {
-		t.Skip("requires the disposable standard-user Windows release fixture")
-	}
+func requireWindowsArchiveAccount(t *testing.T) {
+	t.Helper()
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +56,15 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 	if err != nil || !strings.EqualFold(account, "OpenAIArchiveTest") || os.Getenv("GITHUB_ACTIONS") != "true" || windows.GetCurrentProcessToken().IsElevated() {
 		t.Fatal("refusing HKCU enrollment outside the dedicated non-elevated hosted account")
 	}
+}
+
+// Positive enrollment edits HKCU. Run only in the dedicated hosted account;
+// local Windows developers can run the remaining archive tests without enrolling.
+func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
+	if os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_FIXTURE") != "1" {
+		t.Skip("requires the disposable standard-user Windows release fixture")
+	}
+	requireWindowsArchiveAccount(t)
 	archive, setupScript := os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_BINARY"), os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_SCRIPT")
 	olderArchive := os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_OLDER_BINARY")
 	if !filepath.IsAbs(archive) || !filepath.IsAbs(setupScript) || !filepath.IsAbs(olderArchive) {

@@ -139,6 +139,10 @@ func TestMainWindowsArchiveConsoleOwner(t *testing.T) {
 		}
 	}
 	mode := os.Getenv("OPENAI_ARCHIVE_TEST_MODE")
+	if mode == "paste" {
+		runRestrictedWindowsPaste(t, target, input, output)
+		return
+	}
 	args := []string{"models", "retrieve", "fixture-model"}
 	if mode == "install" {
 		if !strings.EqualFold(filepath.Base(target), "Install.cmd") {
@@ -258,3 +262,93 @@ func TestMainWindowsArchiveConsoleCapture(t *testing.T) {
 		t.Fatal("real console failed to preserve separate stdout and stderr rows")
 	}
 }
+
+// Start a console owner even when the calling standard-user job has redirected
+// handles. The owner supplies the native ConsoleHost input and output handles.
+func TestMainWindowsArchivePasteHost(t *testing.T) {
+	if os.Getenv("OPENAI_WINDOWS_PASTE_RESULT") == "" {
+		t.Skip("requires the disposable ConsoleHost driver")
+	}
+	client := os.Getenv("OPENAI_WINDOWS_PASTE_CLIENT")
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute+15*time.Second)
+	defer cancel()
+	runWindowsUpdateConsole(t, ctx, client, dir, append(os.Environ(), "OPENAI_ARCHIVE_TEST_MODE=paste"))
+}
+
+func runRestrictedWindowsPaste(t *testing.T, client string, input, output *os.File) {
+	t.Helper()
+	requireWindowsArchiveAccount(t)
+	base := strings.ToLower(filepath.Base(client))
+	if !filepath.IsAbs(client) || (base != "powershell.exe" && base != "pwsh.exe") {
+		t.Fatal("expected an absolute PowerShell client")
+	}
+	diagnostics, err := os.OpenFile(os.Getenv("OPENAI_WINDOWS_PASTE_STDERR"), os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		t.Fatal("cannot open private paste diagnostics")
+	}
+	defer diagnostics.Close()
+	timeout := 5 * time.Minute
+	if os.Getenv("OPENAI_WINDOWS_PASTE_PROBE") != "Paste" {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
+	defer cancel()
+	// os/exec retains the process handle returned by CreateProcess. Keep the
+	// native exit result even for clients that exit immediately. Only stderr
+	// is redirected, to count the public recipe's actual verifier downloads.
+	cmd := exec.CommandContext(ctx, client, "-NoLogo", "-NoProfile", "-NoExit", "-ExecutionPolicy", "Restricted", "-Command", windowsPasteDriver)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = input, output, diagnostics
+	result := struct {
+		State       string
+		Exit        *uint32
+		NativeError uint32
+	}{State: "launch-failed"}
+	if err = cmd.Start(); err == nil {
+		err = cmd.Wait()
+		result.State = "exit-unavailable"
+		var exitErr *exec.ExitError
+		if ctx.Err() != nil {
+			result.State = "timeout"
+		} else if (err == nil || errors.As(err, &exitErr)) && cmd.ProcessState != nil {
+			if status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
+				result.State, result.Exit = "exited", &status.ExitCode
+			}
+		}
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		result.NativeError = uint32(errno)
+	}
+	report, err := json.Marshal(result)
+	if err != nil || os.WriteFile(os.Getenv("OPENAI_WINDOWS_PASTE_RESULT"), report, 0600) != nil {
+		t.Fatal("cannot record native PowerShell process status")
+	}
+}
+
+// Only this fixed bootstrap is a process argument. The literal setup paste is
+// returned by the first ConsoleHost read, under the effective client policy.
+const windowsPasteDriver = `$fixtureHost = if ($Host.Name -ceq 'ConsoleHost') {'ConsoleHost'} else {'other'}
+[IO.File]::WriteAllLines($env:OPENAI_WINDOWS_PASTE_TRACE,[string[]]@('initialized',('host='+$fixtureHost),('policy='+(Get-ExecutionPolicy)),('stdin='+[Console]::IsInputRedirected),('stdout='+[Console]::IsOutputRedirected),('stderr='+[Console]::IsErrorRedirected)))
+$global:reads = 0
+function global:PSConsoleHostReadLine {
+    $global:reads++
+    if ($global:reads -eq 1) {
+        [IO.File]::AppendAllText($env:OPENAI_WINDOWS_PASTE_TRACE,'first-read'+[Environment]::NewLine)
+        if ($Host.Name -ne 'ConsoleHost' -or (Get-ExecutionPolicy) -ne 'Restricted') {return 'exit 32'}
+        if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) {return 'exit 36'}
+        $global:Error.Clear()
+        $global:LASTEXITCODE = 0
+        $literal = [IO.File]::ReadAllText($env:OPENAI_WINDOWS_PASTE_TEXT)
+        [IO.File]::AppendAllText($env:OPENAI_WINDOWS_PASTE_TRACE,'input-ready'+[Environment]::NewLine)
+        return $literal
+    }
+    if ($global:reads -eq 2) {
+        [IO.File]::AppendAllText($env:OPENAI_WINDOWS_PASTE_TRACE,'second-read'+[Environment]::NewLine)
+        return 'if ($Error.Count -or $LASTEXITCODE -ne 0 -or (Get-Command openai).Path -ine $env:OPENAI_WINDOWS_MANAGED_EXE) {exit 33}; $v=openai --version; if ($LASTEXITCODE -ne 0 -or $v -cne $env:OPENAI_WINDOWS_STARTER_VERSION) {exit 34}; [IO.File]::WriteAllText($env:OPENAI_WINDOWS_PASTE_RECEIPT,$env:OPENAI_WINDOWS_PASTE_CHALLENGE); exit 0'
+    }
+    return 'exit 35'
+}`

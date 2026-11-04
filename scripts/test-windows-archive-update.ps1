@@ -170,44 +170,43 @@ $blocks = [regex]::Matches($section, '(?ms)^```powershell\r?\n(.*?)^```\r?$')
 if ($blocks.Count -ne 1) {throw 'Cannot identify the documented extracted-ZIP paste.'}
 $text = [IO.Path]::GetTempFileName()
 $early = [IO.Path]::GetTempFileName()
+$nonzero = [IO.Path]::GetTempFileName()
+$failed = $false
+$log = "$PSScriptRoot/results/test.log"
 try {
     [IO.File]::WriteAllText($early,'exit 0')
+    [IO.File]::WriteAllText($nonzero,'exit 17')
     [IO.File]::WriteAllText($text,$blocks[0].Groups[1].Value,[Text.UTF8Encoding]::new($false))
     Push-Location $extracted
     try {
         $managed = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe'
         foreach ($client in 'powershell.exe','pwsh.exe') {
-            $shell = (Get-Command $client -CommandType Application | Select-Object -First 1).Path
-            $params = @{Client=$shell; ExpectedExe=$managed; ExpectedVersion=('openai version '+$fixtureTag.Substring(1))}
-            try {
-                & "$PSScriptRoot/test-windows-console-paste.ps1" @params -TextPath $early
-                throw 'Premature ConsoleHost exit passed qualification.'
-            } catch {
-                if ($_.Exception.Message -cne 'The ConsoleHost paste exited before its executable and version checks finished.') {
-                    Add-Content -LiteralPath "$PSScriptRoot/results/test.log" -Value "$client early-exit control failed."
-                    throw
+            try {$shell = (Get-Command $client -CommandType Application -ErrorAction Stop | Select-Object -First 1).Path}
+            catch {Add-Content -LiteralPath $log -Value "$client stage=client-discovery failed"; $failed=$true; continue}
+            $params = @{Client=$shell; ExpectedExe=$managed; ExpectedVersion=('openai version '+$fixtureTag.Substring(1)); EvidenceLog=$log}
+            foreach ($probe in 'Exit0','Exit17','Paste') {
+                $source = switch ($probe) { 'Exit0' {$early}; 'Exit17' {$nonzero}; 'Paste' {$text} }
+                try {
+                    & "$PSScriptRoot/test-windows-console-paste.ps1" @params -Probe $probe -TextPath $source
+                    if ($probe -eq 'Paste') {Add-Content -LiteralPath $log -Value "$client Restricted paste verified the managed executable and version."}
+                } catch {
+                    # Category is a PowerShell enum. Exception text can contain private operands.
+                    Add-Content -LiteralPath $log -Value "$client $probe stage=driver category=$($_.CategoryInfo.Category)"
+                    $failed = $true
                 }
             }
-            try {
-                & "$PSScriptRoot/test-windows-console-paste.ps1" @params -TextPath $text
-            } catch {
-                $reason = 'driver failed'
-                if ($_.Exception.Message -match '^The public ConsoleHost paste failed with code (-?[0-9]+)\.$') {$reason = "exit $($Matches[1])"}
-                if ($_.Exception.Message -ceq 'The public ConsoleHost paste timed out.') {$reason = 'timeout'}
-                if ($_.Exception.Message -ceq 'The ConsoleHost paste exited before its executable and version checks finished.') {$reason = 'missing completion receipt'}
-                Add-Content -LiteralPath "$PSScriptRoot/results/test.log" -Value "$client Restricted paste failed ($reason)."
-                throw
-            }
-            Add-Content -LiteralPath "$PSScriptRoot/results/test.log" -Value "$client Restricted paste verified the managed executable and version."
         }
     } finally {Pop-Location}
-} finally {[IO.File]::Delete($text); [IO.File]::Delete($early)}
+} finally {[IO.File]::Delete($text); [IO.File]::Delete($early); [IO.File]::Delete($nonzero)}
+if ($failed) {exit 1}
 exit 0
 '@ | Set-Content -LiteralPath "$root/ordinary.ps1" -Encoding utf8
     $credential = New-Object System.Management.Automation.PSCredential(".\$account", $secret)
     $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     function Invoke-StandardQualification([string]$expected) {
         $child = Start-Process -FilePath $shell -ArgumentList "-NoLogo -NoProfile -NonInteractive -File `"$root\ordinary.ps1`"" -WorkingDirectory $root -Credential $credential -LoadUserProfile -UseNewEnvironment -Wait -PassThru
+        # This independent record survives a failed published enrollment.
+        if (Test-Path -LiteralPath "$root/results/paste.log") {Get-Content -LiteralPath "$root/results/paste.log"}
         if (!(Test-Path -LiteralPath "$root/results/test.log")) {throw "The standard account failed before recording CLI evidence (exit $($child.ExitCode))."}
         $log = Get-Content -LiteralPath "$root/results/test.log" -Raw
         Write-Output $log

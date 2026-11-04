@@ -111,7 +111,7 @@ try {
         if (($env:Path -split ';') -notcontains $system -or (Get-Command gh -ErrorAction SilentlyContinue)) {throw 'Could not isolate a normal Windows PATH without GitHub CLI.'}
     }
     if ($Route -ceq 'PowerShell') {
-        & "$PSScriptRoot/test-windows-console-paste.ps1" -Client $shell -TextPath $recipe -ExpectOneVerifierDownload:$PrivateVerifier -ExpectedExe $target -ExpectedVersion ('openai version '+$Tag.Substring(1))
+        & "$PSScriptRoot/test-windows-console-paste.ps1" -Client $shell -TextPath $recipe -EvidenceLog "$PSScriptRoot/results/paste.log" -ExpectOneVerifierDownload:$PrivateVerifier -ExpectedExe $target -ExpectedVersion ('openai version '+$Tag.Substring(1))
     } else {
         $callerPath = $env:Path
         Invoke-PublishedLauncher $trusted
