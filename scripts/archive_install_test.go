@@ -656,7 +656,7 @@ fi
 }
 
 func testZshLoginSelection(t *testing.T, zsh, bin string) {
-	for _, kind := range []string{"regular", "symlink"} {
+	for _, kind := range []string{"regular", "symlink", "readonly path", "readonly PATH", "early return"} {
 		t.Run(kind, func(t *testing.T) {
 			home := filepath.Join(privateInstallDirectory(t), "home [old]")
 			settings := filepath.Join(home, "my settings")
@@ -677,7 +677,13 @@ func testZshLoginSelection(t *testing.T, zsh, bin string) {
 					t.Fatal(err)
 				}
 			}
-			const content = "echo read >> \"$HOME/login-runs\"\nexport PATH=\"$HOME/go/bin::$PATH\""
+			content := "echo read >> \"$HOME/login-runs\"\nexport PATH=\"$HOME/go/bin::$PATH\""
+			switch kind {
+			case "readonly path", "readonly PATH":
+				content += "\n" + kind
+			case "early return":
+				content += "\nreturn"
+			}
 			if err := os.WriteFile(personal, []byte(content), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -717,10 +723,10 @@ func testZshLoginSelection(t *testing.T, zsh, bin string) {
 				wantPath, version := managed+":"+path, "openai version 1.2.3"
 				switch flags {
 				case "-dlic":
-					if kind == "symlink" {
-						wantPath, version = goBin+"::"+managed+":"+path, "old"
-					} else {
+					if kind == "regular" {
 						wantPath = managed + ":" + goBin + "::" + path
+					} else {
+						wantPath, version = goBin+"::"+managed+":"+path, "old"
 					}
 				case "-dlc":
 					wantPath, version = goBin+"::"+path, "old"

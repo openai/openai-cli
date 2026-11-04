@@ -65,7 +65,7 @@ An alias, function, or machine PATH command can take precedence. Setup reports t
 2. Download your platform archive from the newest [stable release with downloads](https://github.com/openai/openai-cli/releases).
 3. Extract the archive.
 
-In zsh, paste this block from the extracted directory. It selects the CLI in current and future terminals.
+In zsh, paste this block from the extracted directory. It selects the CLI now and configures your zsh startup files.
 
 ```zsh
 sh ./install.sh --require-gh --zsh "${ZDOTDIR:-$HOME}" &&
@@ -86,8 +86,9 @@ An alias or function can take precedence. Use `"$HOME/.openai/bin/openai"` direc
 
 If your new terminal already selects `$HOME/.openai/bin/openai`, setup is complete.
 An interactive zsh login shell reads `.zlogin` after `.zshrc`.
-If `${ZDOTDIR:-$HOME}/.zlogin` exists, zsh setup also selects the managed CLI there for interactive login shells.
-If setup warns about `.zlogin`, run `command -v openai` in a new login shell.
+If `${ZDOTDIR:-$HOME}/.zlogin` exists and passes setup checks, setup appends a PATH selection for interactive login shells.
+An early `return` in that file can skip the selection. You can move the appended selection before your `return`.
+To check the result, run `command -v openai` in a new login shell.
 Use `"$HOME/.openai/bin/openai"` directly if that shell selects another executable.
 
 If installation succeeded but shell selection failed, keep the installed executable.

@@ -17,6 +17,15 @@ func TestArchiveZshProfile(t *testing.T) {
 	const selection = `export PATH="$HOME/.openai/bin:$PATH"`
 	selected := t.TempDir()
 	t.Chdir(selected)
+	// Setup requires directory search and write access. It need not list the directory.
+	if err := os.Chmod(selected, 0300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(selected, 0700); err != nil {
+			t.Error(err)
+		}
+	})
 	id := func(path string) string {
 		t.Helper()
 		info, err := os.Lstat(path)
