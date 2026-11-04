@@ -160,59 +160,7 @@ func updateTestInstallation(t *testing.T, content []byte) *updateInstallation {
 }
 
 func TestPreparedImageAfterTrust(t *testing.T) {
-	for _, scenario := range []string{"timestamp_only", "substituted_bytes", "restored_timestamp", "substituted_file"} {
-		t.Run(scenario, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "next")
-			file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer file.Close()
-			if _, err := file.WriteString("signed executable"); err != nil {
-				t.Fatal(err)
-			}
-			before, err := file.Stat()
-			if err != nil {
-				t.Fatal(err)
-			}
-			hash, err := fileDigest(t.Context(), file)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var want error
-			switch scenario {
-			case "substituted_bytes", "restored_timestamp":
-				if _, err := file.WriteAt([]byte("X"), 0); err != nil {
-					t.Fatal(err)
-				}
-				want = errPreparedUpdate
-			case "substituted_file":
-				if err := os.Remove(path); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, []byte("signed executable"), 0600); err != nil {
-					t.Fatal(err)
-				}
-				file, err = os.Open(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer file.Close()
-				want = errCache
-			}
-			stamp := before.ModTime().Add(time.Minute)
-			if scenario == "restored_timestamp" {
-				stamp = before.ModTime()
-			}
-			if err := os.Chtimes(path, stamp, stamp); err != nil {
-				t.Fatal(err)
-			}
-			after, err := preparedImageAfterTrust(t.Context(), file, before, hash)
-			if !errors.Is(err, want) || (want == nil && (after == nil || !after.ModTime().Equal(stamp))) {
-				t.Fatalf("post-trust file check returned %v, want %v", err, want)
-			}
-		})
-	}
+	exercisePreparedImageAfterTrust(t, t.TempDir())
 }
 
 func TestAutomaticUpdateTransactions(t *testing.T) {

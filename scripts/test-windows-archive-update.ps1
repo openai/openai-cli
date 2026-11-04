@@ -89,7 +89,8 @@ try {
         [IO.File]::WriteAllText((Join-Path $extracted 'openai.exe')+':Zone.Identifier',"[ZoneTransfer]`r`nZoneId=3`r`n",[Text.Encoding]::ASCII)
         Copy-Item -LiteralPath 'docs/installation.md' -Destination "$extracted/installation.md"
         Set-Content -LiteralPath "$root/fixture-tag.txt" -Value "v$version"
-        go test -count=1 -v ./internal/updatenotice -run '^TestWindowsArchive'
+        $archiveTests = '^(TestWindowsArchive|TestPreparedImageAfterTrust$)'
+        go test -count=1 -v ./internal/updatenotice -run $archiveTests
         if ($LASTEXITCODE -ne 0) { throw 'Native archive security or executable-lock tests failed.' }
         $env:OPENAI_CLI_NATIVE_SHELL_BINARY = Join-Path $root 'openai.exe'
         $env:OPENAI_CLI_NATIVE_SHELL_SHA256 = (Get-FileHash -Path $env:OPENAI_CLI_NATIVE_SHELL_BINARY -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -104,7 +105,7 @@ try {
                 $env:GOARCH = '386'
                 go test -c -o "$root/archive-386.test.exe" ./internal/updatenotice
                 if ($LASTEXITCODE -ne 0) { throw 'Could not compile the Windows x86 tests.' }
-                & "$root/archive-386.test.exe" '-test.run=^TestWindowsArchive' '-test.v'
+                & "$root/archive-386.test.exe" "-test.run=$archiveTests" '-test.v'
                 if ($LASTEXITCODE -ne 0) { throw 'Windows x86 compatibility execution failed.' }
             } finally {
                 $env:GOARCH = $priorArch

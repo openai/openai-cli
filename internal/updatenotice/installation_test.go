@@ -1,11 +1,13 @@
 package updatenotice
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"testing"
+	"time"
 )
 
 func fixtureFile(t *testing.T, path, data string) {
@@ -250,5 +252,59 @@ func TestGoInstallationRejectsFinalSymlink(t *testing.T) {
 	}
 	if !goInstallation(resolved, parentLink, "1.2.3", &info) {
 		t.Fatal("regular destination below a parent symlink was rejected")
+	}
+}
+
+func exercisePreparedImageAfterTrust(t *testing.T, directory string) {
+	t.Helper()
+	const content = "signed executable"
+	for _, scenario := range []string{"timestamp_only", "substituted_bytes", "restored_timestamp", "substituted_file"} {
+		t.Run(scenario, func(t *testing.T) {
+			path := filepath.Join(directory, scenario+"-next")
+			fixtureFile(t, path, content)
+			file, err := os.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			before, err := file.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			hash, err := fileDigest(t.Context(), file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var want error
+			switch scenario {
+			case "substituted_bytes", "restored_timestamp":
+				if err := os.WriteFile(path, []byte("forged executable"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				want = errPreparedUpdate
+			case "substituted_file":
+				// The original handle remains open. Use a distinct file with matching
+				// bytes and timestamp so only its identity distinguishes it.
+				path += ".other"
+				fixtureFile(t, path, content)
+				file, err = os.Open(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer file.Close()
+				want = errCache
+			}
+			stamp := before.ModTime().Add(time.Minute)
+			if scenario == "restored_timestamp" || scenario == "substituted_file" {
+				stamp = before.ModTime()
+			}
+			if err := os.Chtimes(path, stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
+			after, err := preparedImageAfterTrust(t.Context(), file, before, hash)
+			if !errors.Is(err, want) || (want == nil && (after == nil || !after.ModTime().Equal(stamp))) {
+				t.Fatalf("post-trust file check returned %v, want %v", err, want)
+			}
+		})
 	}
 }

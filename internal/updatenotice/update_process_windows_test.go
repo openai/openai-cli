@@ -59,6 +59,11 @@ func windowsUpdateFixture(t *testing.T) (bin, state string) {
 	return bin, filepath.Join(bin, ".update")
 }
 
+func TestPreparedImageAfterTrust(t *testing.T) {
+	_, directory := windowsUpdateFixture(t)
+	exercisePreparedImageAfterTrust(t, directory)
+}
+
 func TestWindowsArchivePrivatePaths(t *testing.T) {
 	bin, state := windowsUpdateFixture(t)
 	managed, err := openWindowsManagedBin()
