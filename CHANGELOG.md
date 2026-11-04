@@ -5,6 +5,7 @@
 
 ### Features
 
+* **images:** use native Konsole previews in Expand ([#692](https://github.com/openai/openai-cli/pull/692)) ([7975acf](https://github.com/openai/openai-cli/commit/7975acf86fbaa89145a31c9f008954e698ef5302))
 * **api:** add GPT-6 Rosalind to the model catalog ([#690](https://github.com/openai/openai-cli/issues/690)) ([2be784c](https://github.com/openai/openai-cli/commit/2be784cb368503f7a4ea93cc1aba8f15221e19db))
 
 
