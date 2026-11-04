@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory)][string] $ExpectedExe,
     [Parameter(Mandatory)][string] $ExpectedVersion,
     [switch] $ExpectOneVerifierDownload,
-    [ValidateSet('Paste','Exit0','Exit17')][string] $Probe = 'Paste',
+    [ValidatePattern('^[0-9a-fA-F]{64}$')][string] $ExpectedSourceSha,
+    [ValidateSet('Paste','Exit0','Exit17','Handled','Thrown')][string] $Probe = 'Paste',
     [string] $EvidenceLog
 )
 $ErrorActionPreference = 'Stop'
@@ -41,6 +42,7 @@ try {
     $challenge = [guid]::NewGuid().ToString('N')
     $values = @{
         OPENAI_WINDOWS_PASTE_CLIENT=$Client; OPENAI_WINDOWS_PASTE_PROBE=$Probe
+        OPENAI_WINDOWS_PASTE_CWD=(Get-Location).ProviderPath; OPENAI_WINDOWS_PASTE_SOURCE_SHA=$ExpectedSourceSha
         OPENAI_WINDOWS_PASTE_TEXT=$TextPath; OPENAI_WINDOWS_MANAGED_EXE=$ExpectedExe; OPENAI_WINDOWS_STARTER_VERSION=$ExpectedVersion
         OPENAI_WINDOWS_PASTE_CHALLENGE=$challenge; OPENAI_WINDOWS_PASTE_RECEIPT=$files.RECEIPT
         OPENAI_WINDOWS_PASTE_STDERR=$files.STDERR; OPENAI_WINDOWS_PASTE_TRACE=$files.TRACE; OPENAI_WINDOWS_PASTE_RESULT=$files.RESULT
@@ -71,11 +73,15 @@ try {
     # may contain private paths, environment values, or signed download URLs.
     $stage = 'validate-console'
     $trace = @([IO.File]::ReadAllLines($files.TRACE))
-    $safeTrace = @($trace -cmatch '^(initialized|first-read|input-ready|second-read|host=(ConsoleHost|other)|policy=(Restricted|AllSigned|RemoteSigned|Unrestricted|Bypass|Undefined|Default)|std(in|out|err)=(True|False))$')
+    $safeTrace = @($trace -cmatch '^(initialized|first-read|input-ready|second-read|host=(ConsoleHost|other)|policy=(Restricted|AllSigned|RemoteSigned|Unrestricted|Bypass|Undefined|Default)|std(in|out|err)=(True|False)|(cwd|errorRecords|pathFirst)=(True|False)|source=(verified|different|missing|unreadable)|history=(completed|failed|different|missing)|native=(unavailable|-?[0-9]{1,10})|selection=(missing|shadowed|different|expected)|version=(unchecked|expected|different|command-failed))$')
     $inputChecked = ($trace -ccontains 'initialized') -and ($trace -ccontains 'host=ConsoleHost') -and
         ($trace -ccontains 'policy=Restricted') -and ($trace -ccontains 'stdin=False') -and ($trace -ccontains 'stdout=False') -and
         ($trace -ccontains 'first-read') -and ($trace -ccontains 'input-ready')
+    $inputChecked = $inputChecked -and ($trace -ccontains 'cwd=True')
     $readAgain = $trace -ccontains 'second-read'
+    $commandChecked = ($trace -ccontains 'history=completed') -and ($trace -ccontains 'native=0') -and
+        ($trace -ccontains 'pathFirst=True') -and ($trace -ccontains 'selection=expected') -and ($trace -ccontains 'version=expected') -and
+        ($Probe -ne 'Paste' -or !$ExpectedSourceSha -or ($trace -ccontains 'source=verified'))
     $receipt = [IO.File]::ReadAllText($files.RECEIPT) -ceq $challenge
     $lines = @([IO.File]::ReadAllLines($files.STDERR))
     $stderrClass = 'empty'
@@ -83,17 +89,27 @@ try {
         $stderrClass = 'present'
         if ($lines -match 'ParserError|UnexpectedToken|MissingEndCurlyBrace') {$stderrClass = 'parser'}
         elseif ($lines -match 'PSSecurityException|AuthorizationManager') {$stderrClass = 'security'}
+        elseif ($lines -match 'extract the official ZIP into a directory only your account can modify') {$stderrClass = 'source-permissions'}
+        elseif ($lines -match 'Could not download the GitHub CLI verifier') {$stderrClass = 'verifier-download'}
+        elseif ($lines -match 'OpenAI CLI setup could not finish') {$stderrClass = 'setup-failed'}
     }
     $reason = 'passed'
     if ($runnerExit -ne 0) {$reason = 'console-owner-failed'}
     elseif ($state -ne 'exited' -or $null -eq $exitCode) {$reason = 'no-numeric-exit'}
     elseif (!$inputChecked) {$reason = 'input-not-verified'}
-    elseif ($Probe -ne 'Paste') {
+    elseif ($Probe -in 'Exit0','Exit17') {
         $expected = if ($Probe -eq 'Exit0') {0} else {17}
         if ($exitCode -ne $expected) {$reason = 'unexpected-control-exit'}
         elseif ($readAgain -or $receipt) {$reason = 'control-reached-validation'}
+    } elseif ($Probe -eq 'Thrown') {
+        # A prior healthy installation must never hide an unhandled paste failure.
+        if ($exitCode -ne 33 -or !$readAgain -or $receipt -or ($trace -cnotcontains 'history=failed') -or
+            ($trace -cnotcontains 'errorRecords=True') -or ($trace -cnotcontains 'native=0') -or ($trace -cnotcontains 'pathFirst=True') -or
+            ($trace -cnotcontains 'selection=expected') -or ($trace -cnotcontains 'version=expected')) {$reason = 'unverified-throw'}
     } elseif ($exitCode -ne 0) {$reason = 'client-exit'}
     elseif (!$readAgain -or !$receipt) {$reason = 'missing-completion-receipt'}
+    elseif (!$commandChecked) {$reason = 'unverified-paste'}
+    elseif ($Probe -eq 'Handled' -and $trace -cnotcontains 'errorRecords=True') {$reason = 'missing-handled-error'}
     elseif ($ExpectOneVerifierDownload -and (@($lines -ceq 'Downloading the pinned GitHub CLI verifier...').Count -ne 1 -or
         @($lines -ceq 'Downloading GitHub CLI for automatic update verification...').Count -ne 0)) {$reason = 'verifier-download-count'}
     $codeText = if ($null -eq $exitCode) {'unavailable'} else {[string]$exitCode}

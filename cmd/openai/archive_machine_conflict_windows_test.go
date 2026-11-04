@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestMainWindowsArchiveMachinePathConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	account, _, _, err := user.User.Sid.LookupAccount("")
-	if err != nil || !strings.EqualFold(account, "OpenAIArchiveTest") || os.Getenv("GITHUB_ACTIONS") != "true" || windows.GetCurrentProcessToken().IsElevated() {
+	if err != nil || !strings.EqualFold(account, "OpenAIPathTest") || os.Getenv("GITHUB_ACTIONS") != "true" || windows.GetCurrentProcessToken().IsElevated() {
 		t.Fatal("requires the disposable standard account")
 	}
 	archive := os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_BINARY")
@@ -48,7 +49,7 @@ func TestMainWindowsArchiveMachinePathConflict(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "Install.cmd"), launcher, 0600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
 	defer cancel()
 	// A pipe represents a user acknowledging the actual launcher's pause.
 	// Healthy attached-console setup has separate coverage without a keypress.
@@ -106,7 +107,11 @@ func TestMainWindowsArchiveMachinePathConflict(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
 			if err := cmd.Run(); err != nil {
-				t.Fatalf("machine conflict in %s: %v stdout=%s stderr=%s", name, err, stdout.String(), stderr.String())
+				code := "unavailable"
+				if cmd.ProcessState != nil {
+					code = strconv.Itoa(cmd.ProcessState.ExitCode())
+				}
+				t.Fatalf("machine conflict in %s: exit=%s; stdout present=%t; stderr present=%t", name, code, stdout.Len() != 0, stderr.Len() != 0)
 			}
 			return strings.TrimSpace(stdout.String()), stderr.String()
 		}

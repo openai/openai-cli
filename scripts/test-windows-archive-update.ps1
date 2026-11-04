@@ -20,7 +20,8 @@ if ($published -and [version]($StarterTag.Substring(1)) -ge [version]($Successor
     throw 'The successor tag must be newer than the starter tag.'
 }
 $account = 'OpenAIArchiveTest'
-if (Get-LocalUser -Name $account -ErrorAction SilentlyContinue) {
+$machineAccount = 'OpenAIPathTest'
+if ((Get-LocalUser -Name $account -ErrorAction SilentlyContinue) -or (!$published -and (Get-LocalUser -Name $machineAccount -ErrorAction SilentlyContinue))) {
     throw 'The disposable fixture account already exists.'
 }
 $root = Join-Path $env:ProgramData ('openai-cli-archive-test-' + [guid]::NewGuid())
@@ -33,12 +34,23 @@ $version = [regex]::Match($versionLine, 'const Version = "([^"]+)"').Groups[1].V
 $stamp = 'github.com/openai/openai-cli/internal/updatenotice.'
 $ldflags = "-s -w -X ${stamp}releaseVersion=$version -X ${stamp}releaseCommit=$env:GITHUB_SHA"
 $secret = ConvertTo-SecureString ('T4!' + [guid]::NewGuid().ToString('N')) -AsPlainText -Force
+$machineUser = $null
+$machineSecret = $null
 $user = New-LocalUser -Name $account -Password $secret -UserMayNotChangePassword
 try {
     New-Item -ItemType Directory -Path $root | Out-Null
     $sid = $user.Sid.Value
     icacls $root /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' "*${sid}:(OI)(CI)RX" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Could not protect the fixture directory.' }
+
+    if (!$published) {
+        $machineSecret = ConvertTo-SecureString ('T4!' + [guid]::NewGuid().ToString('N')) -AsPlainText -Force
+        $machineUser = New-LocalUser -Name $machineAccount -Password $machineSecret -UserMayNotChangePassword
+        $machineCredential = [PSCredential]::new(".\$machineAccount",$machineSecret)
+        $machineSid = $machineUser.Sid.Value
+        icacls $root /grant "*${machineSid}:(OI)(CI)RX" | Out-Null
+        if ($LASTEXITCODE -ne 0) {throw 'Could not grant the independent account read-only fixture access.'}
+    }
 
     go test -c -o "$root/archive.test.exe" ./cmd/openai
     if ($LASTEXITCODE -ne 0) { throw 'Could not compile the native entrypoint tests.' }
@@ -88,6 +100,8 @@ try {
         [IO.Compression.ZipFile]::ExtractToDirectory($candidateZip,$extracted)
         [IO.File]::WriteAllText((Join-Path $extracted 'openai.exe')+':Zone.Identifier',"[ZoneTransfer]`r`nZoneId=3`r`n",[Text.Encoding]::ASCII)
         Copy-Item -LiteralPath 'docs/installation.md' -Destination "$extracted/installation.md"
+        [IO.File]::WriteAllText($candidateZip+':Zone.Identifier',"[ZoneTransfer]`r`nZoneId=3`r`n",[Text.Encoding]::ASCII)
+        Set-Content -LiteralPath "$root/fixture-zip.txt" -Value ([IO.Path]::GetFileName($candidateZip))
         Set-Content -LiteralPath "$root/fixture-tag.txt" -Value "v$version"
         $archiveTests = '^(TestWindowsArchive|TestPreparedImageAfterTrust$)'
         go test -count=1 -v ./internal/updatenotice -run $archiveTests
@@ -157,38 +171,94 @@ $env:OPENAI_CLI_WINDOWS_ARCHIVE_BINARY = Join-Path $PSScriptRoot 'extracted/open
 $env:OPENAI_CLI_WINDOWS_ARCHIVE_SCRIPT = Join-Path $PSScriptRoot 'extracted/Install.cmd'
 if (Test-Path -LiteralPath "$PSScriptRoot/machine-conflict.txt") {
     $env:OPENAI_CLI_WINDOWS_ARCHIVE_CONFLICT = (Get-Content -LiteralPath "$PSScriptRoot/machine-conflict.txt" -Raw).Trim()
-    & "$PSScriptRoot/archive.test.exe" '-test.run=^TestMainWindowsArchiveMachinePathConflict$' '-test.v' *> "$PSScriptRoot/results/test.log"
+    & "$PSScriptRoot/archive.test.exe" '-test.run=^TestMainWindowsArchiveMachinePathConflict$' '-test.v' *> "$PSScriptRoot/machine-results/test.log"
     exit $LASTEXITCODE
 }
 & "$PSScriptRoot/archive.test.exe" '-test.run=^TestMainWindowsArchiveOrdinarySetup$' '-test.v' *> "$PSScriptRoot/results/test.log"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $fixtureTag = (Get-Content -LiteralPath "$PSScriptRoot/fixture-tag.txt" -Raw).Trim()
-$extracted = Join-Path $PSScriptRoot 'extracted'
-$guide = [IO.File]::ReadAllText((Join-Path $extracted 'installation.md'))
+$guide = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'extracted/installation.md'))
 $section = [regex]::Match($guide, '(?ms)^## Windows\r?\n(.*?)(?=^## |\z)').Groups[1].Value
 $blocks = [regex]::Matches($section, '(?ms)^```powershell\r?\n(.*?)^```\r?$')
 if ($blocks.Count -ne 1) {throw 'Cannot identify the documented extracted-ZIP paste.'}
 $text = [IO.Path]::GetTempFileName()
 $early = [IO.Path]::GetTempFileName()
 $nonzero = [IO.Path]::GetTempFileName()
+$handled = [IO.Path]::GetTempFileName()
+$thrown = [IO.Path]::GetTempFileName()
 $failed = $false
 $log = "$PSScriptRoot/results/test.log"
+$downloads = Join-Path $env:USERPROFILE 'Downloads'
+$null = [IO.Directory]::CreateDirectory($downloads)
+$work = Join-Path $downloads ('OpenAI CLI ' + [guid]::NewGuid())
+# The fixture controller runs Windows PowerShell 5.1 as the ordinary account.
+# Apply its private DACL at creation, before copying or extracting any bytes.
+$ownerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$privateAcl = [Security.AccessControl.DirectorySecurity]::new()
+$privateAcl.SetOwner($ownerSid)
+$privateAcl.SetAccessRuleProtection($true,$false)
+foreach ($principal in $ownerSid.Value,'S-1-5-18','S-1-5-32-544') {
+    $identity = [Security.Principal.SecurityIdentifier]::new($principal)
+    $privateAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($identity,'FullControl','ContainerInherit,ObjectInherit','None','Allow'))
+}
+$extractionStage = 'create-private-directory'
+$created = $false
 try {
+    [IO.DirectoryInfo]::new($work).Create($privateAcl)
+    $created = $true
+    $extractionStage = 'copy-zip'
+    $name = (Get-Content -LiteralPath "$PSScriptRoot/fixture-zip.txt" -Raw).Trim()
+    $protectedZip = Join-Path $PSScriptRoot $name
+    $localZip = Join-Path $work $name
+    [IO.File]::Copy($protectedZip,$localZip)
+    if ((Get-FileHash -LiteralPath $protectedZip).Hash -cne (Get-FileHash -LiteralPath $localZip).Hash) {throw 'The account received unexpected ZIP bytes.'}
+    $zone = [IO.File]::ReadAllText($protectedZip+':Zone.Identifier')
+    if ($zone -cne "[ZoneTransfer]`r`nZoneId=3`r`n") {throw 'The candidate ZIP lacks its Internet zone.'}
+    $extracted = Join-Path $work 'Extracted'
+    $extractionStage = 'extract-zip'
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::ExtractToDirectory($localZip,$extracted)
+    $entry = Join-Path $extracted 'openai.exe'
+    # ZipFile does not propagate Explorer's download mark. Preserve it explicitly.
+    foreach ($file in $localZip,$entry,(Join-Path $extracted 'Install.cmd')) {
+        [IO.File]::WriteAllText($file+':Zone.Identifier',$zone,[Text.Encoding]::ASCII)
+        if ([IO.File]::ReadAllText($file+':Zone.Identifier') -cne $zone) {throw 'The account lost the ZIP download zone.'}
+    }
+    $extractionStage = 'verify-user-source'
+    $expectedSha = (Get-FileHash -LiteralPath "$PSScriptRoot/openai.exe").Hash
+    if ((Get-FileHash -LiteralPath $entry).Hash -cne $expectedSha -or
+        (Get-Acl -LiteralPath $entry).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $ownerSid.Value) {
+        throw 'The extracted CLI differs from the candidate or belongs to another account.'
+    }
+    Add-Content -LiteralPath $log -Value 'Standard-user Downloads extraction verified the candidate bytes, owner and Internet zone.'
     [IO.File]::WriteAllText($early,'exit 0')
     [IO.File]::WriteAllText($nonzero,'exit 17')
+    $selectManaged = '$env:Path = [IO.Path]::GetDirectoryName($env:OPENAI_WINDOWS_MANAGED_EXE) + [IO.Path]::PathSeparator + $env:Path; '
+    [IO.File]::WriteAllText($handled,$selectManaged + 'try {throw "handled fixture"} catch {}; openai --version')
+    [IO.File]::WriteAllText($thrown,$selectManaged + 'throw "unhandled fixture"')
     [IO.File]::WriteAllText($text,$blocks[0].Groups[1].Value,[Text.UTF8Encoding]::new($false))
+    $extractionStage = 'run-clients'
     Push-Location $extracted
     try {
         $managed = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe'
         foreach ($client in 'powershell.exe','pwsh.exe') {
             try {$shell = (Get-Command $client -CommandType Application -ErrorAction Stop | Select-Object -First 1).Path}
             catch {Add-Content -LiteralPath $log -Value "$client stage=client-discovery failed"; $failed=$true; continue}
-            $params = @{Client=$shell; ExpectedExe=$managed; ExpectedVersion=('openai version '+$fixtureTag.Substring(1)); EvidenceLog=$log}
-            foreach ($probe in 'Exit0','Exit17','Paste') {
-                $source = switch ($probe) { 'Exit0' {$early}; 'Exit17' {$nonzero}; 'Paste' {$text} }
+            $params = @{Client=$shell; ExpectedSourceSha=$expectedSha; ExpectedExe=$managed; ExpectedVersion=('openai version '+$fixtureTag.Substring(1)); EvidenceLog=$log}
+            $installed = $false
+            foreach ($probe in 'Exit0','Exit17','Paste','Handled','Thrown') {
+                if ($probe -in 'Handled','Thrown' -and !$installed) {continue}
+                $source = switch ($probe) { 'Exit0' {$early}; 'Exit17' {$nonzero}; 'Paste' {$text}; 'Handled' {$handled}; 'Thrown' {$thrown} }
                 try {
                     & "$PSScriptRoot/test-windows-console-paste.ps1" @params -Probe $probe -TextPath $source
-                    if ($probe -eq 'Paste') {Add-Content -LiteralPath $log -Value "$client Restricted paste verified the managed executable and version."}
+                    if ($probe -eq 'Paste') {
+                        $bytesMatch = (Get-FileHash -LiteralPath $managed).Hash -ceq $expectedSha
+                        $zoneKept = [IO.File]::ReadAllText($managed+':Zone.Identifier') -cin $zone,"[ZoneTransfer]`r`nZoneId=4`r`n"
+                        Add-Content -LiteralPath $log -Value "$client installedBytesMatch=$bytesMatch installedZoneKept=$zoneKept"
+                        if (!$bytesMatch -or !$zoneKept) {throw 'The documented paste did not preserve the enrolled image.'}
+                        $installed = $true
+                        Add-Content -LiteralPath $log -Value "$client Restricted paste verified the managed executable and version."
+                    }
                 } catch {
                     # Category is a PowerShell enum. Exception text can contain private operands.
                     Add-Content -LiteralPath $log -Value "$client $probe stage=driver category=$($_.CategoryInfo.Category)"
@@ -197,18 +267,25 @@ try {
             }
         }
     } finally {Pop-Location}
-} finally {[IO.File]::Delete($text); [IO.File]::Delete($early); [IO.File]::Delete($nonzero)}
+} catch {
+    Add-Content -LiteralPath $log -Value "Standard-user ZIP stage=$extractionStage category=$($_.CategoryInfo.Category)"
+    throw 'The ordinary user could not qualify the extracted Windows ZIP.'
+} finally {
+    foreach ($file in $text,$early,$nonzero,$handled,$thrown) {[IO.File]::Delete($file)}
+    if ($created) {[IO.Directory]::Delete($work,$true)}
+}
 if ($failed) {exit 1}
 exit 0
 '@ | Set-Content -LiteralPath "$root/ordinary.ps1" -Encoding utf8
     $credential = New-Object System.Management.Automation.PSCredential(".\$account", $secret)
     $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    function Invoke-StandardQualification([string]$expected) {
-        $child = Start-Process -FilePath $shell -ArgumentList "-NoLogo -NoProfile -NonInteractive -File `"$root\ordinary.ps1`"" -WorkingDirectory $root -Credential $credential -LoadUserProfile -UseNewEnvironment -Wait -PassThru
+    function Invoke-StandardQualification([string]$expected, [PSCredential]$runAs = $credential) {
+        $logPath = if ($expected -eq 'TestMainWindowsArchiveMachinePathConflict') {"$root/machine-results/test.log"} else {"$root/results/test.log"}
+        $child = Start-Process -FilePath $shell -ArgumentList "-NoLogo -NoProfile -NonInteractive -File `"$root\ordinary.ps1`"" -WorkingDirectory $root -Credential $runAs -LoadUserProfile -UseNewEnvironment -Wait -PassThru
         # This independent record survives a failed published enrollment.
         if (Test-Path -LiteralPath "$root/results/paste.log") {Get-Content -LiteralPath "$root/results/paste.log"}
-        if (!(Test-Path -LiteralPath "$root/results/test.log")) {throw "The standard account failed before recording CLI evidence (exit $($child.ExitCode))."}
-        $log = Get-Content -LiteralPath "$root/results/test.log" -Raw
+        if (!(Test-Path -LiteralPath $logPath)) {throw "The standard account failed before recording CLI evidence (exit $($child.ExitCode))."}
+        $log = Get-Content -LiteralPath $logPath -Raw
         Write-Output $log
         if ($child.ExitCode -ne 0 -or !$log.Contains('--- PASS: ' + $expected)) {
             throw 'The standard-user entrypoint qualification did not pass.'
@@ -223,7 +300,14 @@ exit 0
     if ($published) {
         Invoke-StandardQualification 'TestMainWindowsArchivePublishedUpgrade'
     } else {
-        Invoke-StandardQualification 'TestMainWindowsArchiveOrdinarySetup'
+        $ordinaryFailed = $false
+        try {Invoke-StandardQualification 'TestMainWindowsArchiveOrdinarySetup'} catch {
+            $ordinaryFailed = $true
+            Write-Output 'The ordinary setup qualification failed. Checking machine PATH in a separate account.'
+        }
+        $machineResults = New-Item -ItemType Directory -Path "$root/machine-results"
+        icacls $machineResults.FullName /grant:r "*${machineSid}:(OI)(CI)M" | Out-Null
+        if ($LASTEXITCODE -ne 0) {throw 'Could not grant the independent account access to its results.'}
         # Place one inert fixture beside an installed CI tool. Never modify
         # machine PATH, pre-existing programs, or Windows system directories.
         $originalMachinePath = [Environment]::GetEnvironmentVariable('Path','Machine')
@@ -247,15 +331,22 @@ exit 0
             $held.Write($foreign, 0, $foreign.Length)
             $held.Flush()
             Set-Content -LiteralPath "$root/machine-conflict.txt" -Value $conflict
-            Invoke-StandardQualification 'TestMainWindowsArchiveMachinePathConflict'
+            Invoke-StandardQualification 'TestMainWindowsArchiveMachinePathConflict' $machineCredential
             if ([Environment]::GetEnvironmentVariable('Path','Machine') -cne $originalMachinePath) { throw 'Machine PATH changed during enrollment.' }
         } finally {
             $held.Dispose()
             [IO.File]::Delete($conflict)
         }
+        if ($ordinaryFailed) {throw 'Machine PATH qualification passed. Ordinary setup qualification failed.'}
     }
 } finally {
-    Remove-LocalUser -SID $user.Sid
-    $secret.Dispose()
-    if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Force -Recurse }
+    try {
+        if ($machineUser) {Remove-LocalUser -SID $machineUser.Sid}
+    } finally {
+        if ($machineSecret) {$machineSecret.Dispose()}
+        try {Remove-LocalUser -SID $user.Sid} finally {
+            $secret.Dispose()
+            if (Test-Path -LiteralPath $root) {Remove-Item -LiteralPath $root -Force -Recurse}
+        }
+    }
 }

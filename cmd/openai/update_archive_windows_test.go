@@ -270,9 +270,9 @@ func TestMainWindowsArchivePasteHost(t *testing.T) {
 		t.Skip("requires the disposable ConsoleHost driver")
 	}
 	client := os.Getenv("OPENAI_WINDOWS_PASTE_CLIENT")
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
+	dir := os.Getenv("OPENAI_WINDOWS_PASTE_CWD")
+	if !filepath.IsAbs(dir) {
+		t.Fatal("expected the caller's absolute filesystem location")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute+15*time.Second)
 	defer cancel()
@@ -334,21 +334,67 @@ func runRestrictedWindowsPaste(t *testing.T, client string, input, output *os.Fi
 const windowsPasteDriver = `$fixtureHost = if ($Host.Name -ceq 'ConsoleHost') {'ConsoleHost'} else {'other'}
 [IO.File]::WriteAllLines($env:OPENAI_WINDOWS_PASTE_TRACE,[string[]]@('initialized',('host='+$fixtureHost),('policy='+(Get-ExecutionPolicy)),('stdin='+[Console]::IsInputRedirected),('stdout='+[Console]::IsOutputRedirected),('stderr='+[Console]::IsErrorRedirected)))
 $global:reads = 0
+function global:Add-OpenAIPasteTrace([string]$record) {
+    [IO.File]::AppendAllText($env:OPENAI_WINDOWS_PASTE_TRACE,$record+[Environment]::NewLine)
+}
 function global:PSConsoleHostReadLine {
     $global:reads++
     if ($global:reads -eq 1) {
         [IO.File]::AppendAllText($env:OPENAI_WINDOWS_PASTE_TRACE,'first-read'+[Environment]::NewLine)
         if ($Host.Name -ne 'ConsoleHost' -or (Get-ExecutionPolicy) -ne 'Restricted') {return 'exit 32'}
         if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) {return 'exit 36'}
+        $location = (Get-Location).ProviderPath
+        $cwdOK = $location -ieq $env:OPENAI_WINDOWS_PASTE_CWD
+        Add-OpenAIPasteTrace ('cwd='+$cwdOK)
+        if (!$cwdOK) {return 'exit 37'}
+        if ($env:OPENAI_WINDOWS_PASTE_SOURCE_SHA -and $env:OPENAI_WINDOWS_PASTE_PROBE -eq 'Paste') {
+            $source = Join-Path $location 'openai.exe'
+            $sourceState = 'missing'
+            if ([IO.File]::Exists($source)) {
+                $stream = $null
+                $hasher = [Security.Cryptography.SHA256]::Create()
+                try {
+                    $stream = [IO.File]::OpenRead($source)
+                    $hash = [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-','')
+                    $sourceState = if ($hash -ieq $env:OPENAI_WINDOWS_PASTE_SOURCE_SHA) {'verified'} else {'different'}
+                } catch {$sourceState = 'unreadable'} finally {if ($stream) {$stream.Dispose()}; $hasher.Dispose()}
+            }
+            Add-OpenAIPasteTrace ('source='+$sourceState)
+            if ($sourceState -ne 'verified') {return 'exit 37'}
+        }
         $global:Error.Clear()
         $global:LASTEXITCODE = 0
-        $literal = [IO.File]::ReadAllText($env:OPENAI_WINDOWS_PASTE_TEXT)
-        [IO.File]::AppendAllText($env:OPENAI_WINDOWS_PASTE_TRACE,'input-ready'+[Environment]::NewLine)
-        return $literal
+        $global:openaiLiteral = [IO.File]::ReadAllText($env:OPENAI_WINDOWS_PASTE_TEXT)
+        Add-OpenAIPasteTrace 'input-ready'
+        return $global:openaiLiteral
     }
     if ($global:reads -eq 2) {
-        [IO.File]::AppendAllText($env:OPENAI_WINDOWS_PASTE_TRACE,'second-read'+[Environment]::NewLine)
-        return 'if ($Error.Count -or $LASTEXITCODE -ne 0 -or (Get-Command openai).Path -ine $env:OPENAI_WINDOWS_MANAGED_EXE) {exit 33}; $v=openai --version; if ($LASTEXITCODE -ne 0 -or $v -cne $env:OPENAI_WINDOWS_STARTER_VERSION) {exit 34}; [IO.File]::WriteAllText($env:OPENAI_WINDOWS_PASTE_RECEIPT,$env:OPENAI_WINDOWS_PASTE_CHALLENGE); exit 0'
+        $native = $global:LASTEXITCODE
+        $hasErrors = $global:Error.Count -gt 0
+        Add-OpenAIPasteTrace 'second-read'
+        # The global error list also contains handled exceptions. Interactive
+        # history records whether this exact submitted command actually failed.
+        $history = Microsoft.PowerShell.Core\Get-History -Count 1
+        $historyState = 'missing'
+        if ($history) {
+            $trim = [char[]](13,10)
+            $observed = $history.CommandLine.Replace(([string][char]13+[char]10),[string][char]10).TrimEnd($trim)
+            $wanted = $global:openaiLiteral.Replace(([string][char]13+[char]10),[string][char]10).TrimEnd($trim)
+            $historyState = if ($observed -cne $wanted) {'different'} elseif ($history.ExecutionStatus -eq 'Completed') {'completed'} else {'failed'}
+        }
+        $pathFirst = ($env:PATH -split [regex]::Escape([IO.Path]::PathSeparator),2)[0] -ieq [IO.Path]::GetDirectoryName($env:OPENAI_WINDOWS_MANAGED_EXE)
+        $selected = Microsoft.PowerShell.Core\Get-Command openai -ErrorAction SilentlyContinue
+        $selection = if (!$selected) {'missing'} elseif ($selected.CommandType -ne 'Application') {'shadowed'} elseif ($selected.Path -ine $env:OPENAI_WINDOWS_MANAGED_EXE) {'different'} else {'expected'}
+        $versionState = 'unchecked'
+        if ($selection -eq 'expected') {
+            $observedVersion = & $selected.Path --version
+            $versionState = if ($LASTEXITCODE -ne 0) {'command-failed'} elseif (@($observedVersion).Count -eq 1 -and $observedVersion -ceq $env:OPENAI_WINDOWS_STARTER_VERSION) {'expected'} else {'different'}
+        }
+        $nativeText = if ($native -is [int] -or $native -is [long]) {[string]$native} else {'unavailable'}
+        foreach ($field in "history=$historyState","errorRecords=$hasErrors","native=$nativeText","pathFirst=$pathFirst","selection=$selection","version=$versionState") {Add-OpenAIPasteTrace $field}
+        if ($historyState -ne 'completed' -or $nativeText -ne '0' -or !$pathFirst -or $selection -ne 'expected') {return 'exit 33'}
+        if ($versionState -ne 'expected') {return 'exit 34'}
+        return '[IO.File]::WriteAllText($env:OPENAI_WINDOWS_PASTE_RECEIPT,$env:OPENAI_WINDOWS_PASTE_CHALLENGE); exit 0'
     }
     return 'exit 35'
 }`
