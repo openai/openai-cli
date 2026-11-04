@@ -51,17 +51,29 @@ Run `type -a openai` to see competing commands. If a new shell selects another c
 
 ## Linux
 
-On Debian, Ubuntu, or Fedora, paste this block into Bash or zsh.
-It downloads the latest package for your system and verifies its SHA-256 before requesting your administrator password.
+Starting with v1.50.0, one paste installs the latest stable package and enables automatic updates on Debian, Ubuntu, or Fedora.
+For earlier releases, use the [Linux tarball](#installing-a-prebuilt-binary).
+
+Paste this block into Bash or zsh. Enter your system password if sudo prompts during installation.
 
 ```sh
-( installer=$(curl -qfsSL --proto '=https' --proto-redir '=https' https://github.com/openai/openai-cli/releases/latest/download/install-linux-release.sh) &&
-  /bin/bash -p -c "$installer" ) &&
-source /usr/share/openai-cli/enable-updates.sh
+(
+  installer=$(mktemp /tmp/openai-install.XXXXXXXX) || exit
+  trap 'rm -f -- "$installer"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  printf 'Downloading the OpenAI CLI installer...\n' >&2
+  curl -qfsSL --retry 3 --retry-max-time 60 --max-time 60 --proto '=https' --proto-redir '=https' \
+    -o "$installer" https://raw.githubusercontent.com/openai/openai-cli/334f332fc6a5f8298b20548d4fbbbb30c940cdc5/scripts/install-linux-release.sh || exit
+  printf '%s  %s\n' b0c05af08bd5e168366063bde36147d880f90fba337ce57fff928aa5f3633ce5 "$installer" | sha256sum --check --quiet || exit
+  /bin/bash -p "$installer"
+) && source /usr/share/openai-cli/enable-updates.sh
 ```
 
-The package manager owns `/usr/bin/openai`. The helper selects your automatically updated copy in this shell and future shells.
-If the latest release has no installer asset yet, choose your package from [Release downloads](https://github.com/openai/openai-cli/releases).
+The installer verifies the package checksum before installation. It waits up to 30 minutes for missing release files.
+Press Ctrl-C to cancel. The helper selects your automatically updated copy in this shell and future shells.
+The package manager owns `/usr/bin/openai`.
 
 For an offline installation, verify your chosen package against its official release checksum first.
 Give apt or dnf that exact path, such as `sudo apt install ./chosen-file.deb` or `sudo dnf install ./chosen-file.rpm`.
