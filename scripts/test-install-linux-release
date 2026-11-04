@@ -7,7 +7,7 @@ source "$repo/scripts/install-linux-release.sh"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 mkdir "$work/bin"
-for cmd in uname mktemp awk sha256sum rm cat stat; do ln -s "$(command -v "$cmd")" "$work/bin/$cmd"; done
+for cmd in uname mktemp awk sha256sum rm cat sort grep stat; do ln -s "$(command -v "$cmd")" "$work/bin/$cmd"; done
 export FIXTURE="$work"
 printf 'new package\n' > "$work/package"
 digest=$(sha256sum < "$work/package")
@@ -17,43 +17,90 @@ cat > "$work/bin/curl" <<'MOCK'
 set -eu
 url=${!#}
 printf '%s\n' "$url" >> "$FIXTURE/urls"
-case "$url" in
-  https://github.com/openai/openai-cli/releases/latest)
-    printf '%s' "${REDIRECT:-https://github.com/openai/openai-cli/releases/tag/v1.2.3}"
-    exit 0 ;;
-esac
-out=
-while [[ $# -gt 0 ]]; do
-  if [[ $1 = --output ]]; then out=$2; shift; fi
+out= left=0 retry_count=0 retry_window=0 head=false
+while [[ $# -gt 1 ]]; do
+  case "$1" in
+    --output) out=$2; shift ;;
+    --max-time) left=$2; shift ;;
+    --head) head=true ;;
+    --retry) retry_count=$2; shift ;;
+    --retry-max-time) retry_window=$2; shift ;;
+  esac
   shift
 done
+if (( retry_count != 2 || retry_window < 1 || retry_window > 15 )); then exit 110; fi
+if [[ $head == true || $url == *checksums.txt ]]; then
+  (( left > 0 && left <= 1800 )) || exit 111
+else
+  (( left == 0 )) || exit 111
+fi
+if [[ $url == https://github.com/openai/openai-cli/releases/latest ]]; then
+  read -r count < "$FIXTURE/latest-count"
+  echo "$((count + 1))" > "$FIXTURE/latest-count"
+  tag=v1.2.3
+  case "$CASE:$count" in
+    forward:*|superseded:*) if ((count > 0)); then tag=v1.10.0; fi ;;
+    rollback:1) tag=v1.1.99 ;;
+    withdrawn:1) printf '404 '; exit 22 ;;
+  esac
+  printf '200 %s' "${REDIRECT:-https://github.com/openai/openai-cli/releases/tag/$tag}"
+  exit 0
+fi
+echo "$out" > "$FIXTURE/last-output"
+read -r count < "$FIXTURE/download-count"
+echo "$((count + 1))" > "$FIXTURE/download-count"
+base=https://github.com/openai/openai-cli/releases/download/
+relative=${url#"$base"}
+tag=${relative%%/*}
+name=${NAME/1.2.3/${tag#v}}
 case "$url" in
-  https://github.com/openai/openai-cli/releases/download/v1.2.3/openai_1.2.3_checksums.txt)
+  "$base$tag/openai_${tag#v}_checksums.txt")
+    case "$CASE:$count" in
+      deferred-manifest:0|forward:0|cancel:0|withdrawn:0) printf 404; exit 22 ;;
+      deadline:0) echo 1780 > "$FIXTURE/clock"; printf 404; exit 22 ;;
+      forbidden:*|quota:*|server:*|tls:*|redirect-error:*|partial:*)
+        case "$CASE" in
+          forbidden) printf 403; exit 22;; quota) printf 429; exit 22;; server) printf 500; exit 22;;
+          tls) printf 000; exit 60;; redirect-error) printf 302; exit 1;; partial) printf 200; exit 18;;
+        esac ;;
+      spurious-404:*) printf 404; exit 0 ;;
+    esac
     case "$CASE" in
-      missing-manifest) exit 22 ;;
-      missing-entry) printf '%s  some-other-file\n' "$DIGEST" > "$out" ;;
-      duplicate) printf '%s  %s\n' "$DIGEST" "$NAME" "$DIGEST" "$NAME" > "$out" ;;
-      malformed) printf '%s  %s\n' invalid "$NAME" > "$out" ;;
-      *) printf '%s  %s\n' "$DIGEST" "$NAME" > "$out" ;;
+      missing-entry) printf '%s  other\n' "$DIGEST" > "$out" ;;
+      duplicate) printf '%s  %s\n' "$DIGEST" "$name" "$DIGEST" "$name" > "$out" ;;
+      malformed) printf 'invalid  %s\n' "$name" > "$out" ;;
+      *) printf '%s  %s\n' "$DIGEST" "$name" > "$out" ;;
+    esac
+    if [[ $CASE != unsupported ]]; then printf '%s  install-linux-release.sh\n' "$DIGEST" >> "$out"; fi
+    if [[ $CASE == duplicate-installer ]]; then printf '%s  install-linux-release.sh\n' "$DIGEST" >> "$out"; fi
+    ;;
+  "$base$tag/$name")
+    case "$CASE:$count" in
+      deferred-package:1|deferred-slow:1|deadline:*) printf 404; exit 22 ;;
+      tampered:*) printf altered > "$out" ;;
+      *)
+        if [[ $head == false ]]; then
+          if [[ $CASE == slow || $CASE == deferred-slow ]]; then echo 4000 > "$FIXTURE/clock"; fi
+          cat "$FIXTURE/package" > "$out"
+        fi ;;
     esac ;;
-  "https://github.com/openai/openai-cli/releases/download/v1.2.3/$NAME")
-    case "$CASE" in missing-package) exit 22;; tampered) printf 'altered' > "$out";; *) cat "$FIXTURE/package" > "$out";; esac ;;
-  *) exit 111 ;;
+  *) exit 112 ;;
 esac
 if [[ $CASE == umask ]]; then
   [[ $(stat -c %a "${out%/*}") == 700 && $(stat -c %a "$out") == 600 ]]
 fi
+printf 200
 MOCK
 cat > "$work/bin/sudo" <<'MOCK'
 #!/bin/bash
 set -eu
 printf 'requested\n' >> "$FIXTURE/sudo"
-[[ $1 == /bin/sh && ${5} == sh && ${6} == "$NAME" && ${7} == "$DIGEST" && ${8} == "$FORMAT" ]]
+[[ $1 == /bin/sh && ${5} == sh && ${6} == "${NAME/1.2.3/$EXPECTED_VERSION}" && ${7} == "$DIGEST" && ${8} == "$FORMAT" ]]
 if [[ $CASE == replaced ]]; then
   # Run the real staging/recheck code as the ordinary account. Its first
   # checksum must fail before either native package manager can run.
   printf 'replaced between checks\n' | "$@"
-elif [[ $CASE == umask ]]; then
+elif [[ $CASE == umask || $CASE == no-replay || $CASE == empty-transaction || $CASE == dnf-failed || $CASE == private-lock ]]; then
   [[ $(umask) == "$CALLER_MASK" ]]
   # Simulate sudo policy, then run the original staging code as this ordinary account.
   # Shell functions replace only the manager and observe the real checksum check.
@@ -65,43 +112,113 @@ elif [[ $CASE == umask ]]; then
     }
     manager() {
       [ "$(umask)" = "$SUDO_MASK" ] || exit 1
+      if [ "$CASE" = private-lock ]; then
+        [ "$(stat -c %a -- "$FIXTURE/lockdir")" = 700 ] || exit 1
+        if flock --nonblock "$FIXTURE/lockdir" true; then exit 1; fi
+        [ "$(readlink /proc/self/fd/9 || :)" != "$FIXTURE/lockdir" ] || exit 1
+      fi
       printf "%s\n" "$1" >> "$FIXTURE/manager"
     }
+    rpm() {
+      case "$1" in
+        -qp) printf "openai|0|1.2.3|1|x86_64|%s\n" "$DIGEST" ;;
+        -qa) if [ -s "$FIXTURE/manager" ]; then printf "0 1.2.3 1 %s\n" "$DIGEST"; fi ;;
+        --eval) printf "equal\n" ;;
+        *) return 97 ;;
+      esac
+    }
     apt() { manager deb; }
-    dnf() { manager rpm; }
+    dnf() {
+      case "$CASE:$1" in
+        empty-transaction:--version) echo "4.14.0" ;;
+        *:--version) echo "dnf5 version 5.4" ;;
+        no-replay:*) return 2 ;;
+        dnf-failed:--assumeyes) manager rpm; return 55 ;;
+        dnf-failed:replay) return 0 ;;
+        empty-transaction:*) cat >/dev/null ;;
+        *) manager rpm ;;
+      esac
+    }
   '
   args=("$@")
+  staged=${4/'PATH=/usr/sbin'/'PATH=$FIXTURE/bin:/usr/sbin'}
+  if [[ $CASE == private-lock ]]; then
+    # Use this ordinary account's private directory in place of root's /run directory.
+    staged=${staged/'lockdir=/run/openai-cli-package-install'/'lockdir="$FIXTURE/lockdir"'}
+    staged=${staged/0:700/"$(/usr/bin/id -u):700"}
+  fi
   args[3]="$probe
-$4"
+$staged"
   "${args[@]}"
 else
   actual=$(sha256sum)
   [[ ${actual%% *} == "$DIGEST" ]]
 fi
 MOCK
-printf '#!/bin/sh\nprintf "%%s\\n" "$MACHINE"\n' > "$work/bin/native-arch"
+cat > "$work/bin/native-arch" <<'MOCK'
+#!/bin/sh
+set -eu
+case "${0##*/}:$1" in
+  dpkg:--print-architecture) printf '%s\n' "$MACHINE" ;;
+  dpkg-query:-W) case "$CASE" in newer|existing-no-sudo) echo 'installed 9.0.0';; db-error) exit 2;; *) exit 1;; esac ;;
+  dpkg-deb:--field) echo 1.2.3 ;;
+  dpkg:--compare-versions) [ "$2" = 9.0.0 ] ;;
+  rpm:--eval)
+    if [ "$2" = '%{_arch}' ]; then printf '%s\n' "$MACHINE"; else printf 'newer\n'; fi ;;
+  rpm:-qa) case "$CASE" in newer) echo openai;; db-error) exit 2;; esac ;;
+  rpm:-qp)
+    name=openai
+    [ "$CASE" != wrong-name ] || name=other
+    printf '%s|0|%s|1|%s|%s\n' "$name" "$EXPECTED_VERSION" "$MACHINE" "$DIGEST" ;;
+  *) exit 97 ;;
+esac
+MOCK
 chmod 0755 "$work/bin/"{curl,sudo,native-arch}
 : > "$work/urls"
 commands() {
-  rm -f "$work/bin/"{apt,dpkg,dnf,rpm}
+  rm -f "$work/bin/"{apt,dpkg,dpkg-query,dpkg-deb,dnf,rpm}
   if [[ $1 == deb ]]; then
-    ln -s native-arch "$work/bin/apt"; ln -s native-arch "$work/bin/dpkg"
+    for tool in apt dpkg dpkg-query dpkg-deb; do ln -s native-arch "$work/bin/$tool"; done
   else
     ln -s native-arch "$work/bin/dnf"; ln -s native-arch "$work/bin/rpm"
   fi
 }
+# Advance a virtual Linux uptime only while exercising the availability deadline.
+[[ $(linux_release_uptime) =~ ^[0-9]+$ ]]
+linux_release_uptime() { cat "$FIXTURE/clock"; }
+cat > "$work/bin/sleep" <<'MOCK'
+#!/bin/bash
+set -eu
+printf '%s\n' "$1" >> "$FIXTURE/sleeps"
+if [[ $CASE == cancel ]]; then
+  echo "$$" > "$FIXTURE/wait-pid"
+  kill -TERM "$PPID"
+  exec /bin/sleep 8
+fi
+read -r now < "$FIXTURE/clock"
+echo "$((now + $1))" > "$FIXTURE/clock"
+MOCK
+chmod 0755 "$work/bin/sleep"
 run() {
-  : > "$work/sudo"; : > "$work/urls"
-  export FORMAT=$1 MACHINE=$2 NAME="openai_1.2.3_linux_$3.$1" CASE=$4
+  # The transport fixture cannot install files under /usr. Record the required postcondition instead.
+  # Separate native APT and DNF checks exercise package receipts, installed bytes, and helper activation.
+  linux_release_verified_version() {
+    printf '%s\n' "$1" >> "$FIXTURE/postcheck"
+    case "$CASE" in newer|postcheck-failed) return 1 ;; esac
+    printf '%s\n' "$EXPECTED_VERSION"
+  }
+  : > "$work/sudo"; : > "$work/postcheck"; : > "$work/urls"; : > "$work/sleeps"; : > "$work/last-output"
+  for counter in clock latest-count download-count; do echo 0 > "$work/$counter"; done
+  export FORMAT=$1 MACHINE=$2 NAME="openai_1.2.3_linux_$3.$1" CASE=$4 EXPECTED_VERSION=${5:-1.2.3}
   commands "$FORMAT"
-  # Execute the identical installer with controlled executable lookup.
   PATH="$work/bin" install_linux_release > "$work/output" 2>&1
 }
 for spec in 'deb amd64 amd64' 'deb arm64 arm64' 'deb i386 386' 'deb armhf armv6' \
             'rpm x86_64 amd64' 'rpm aarch64 arm64' 'rpm i686 386' 'rpm armv7hl armv6'; do
   read -r format machine arch <<< "$spec"
   run "$format" "$machine" "$arch" ok
-  [[ $(wc -l < "$work/sudo") == 1 && $(wc -l < "$work/urls") == 3 ]]
+  [[ $(wc -l < "$work/sudo") == 1 && $(wc -l < "$work/urls") == 4 && ! -s $work/sleeps ]]
+  [[ $(cat "$work/postcheck") == "$format" ]]
 done
 for masks in 'deb 0000 0022' 'deb 0077 0077' 'rpm 0022 0027' 'rpm 0000 0000'; do
   (
@@ -113,9 +230,89 @@ for masks in 'deb 0000 0022' 'deb 0077 0077' 'rpm 0022 0027' 'rpm 0000 0000'; do
     [[ $(wc -l < "$work/sudo") == 1 && $(cat "$work/manager") == "$format" ]]
   )
 done
-for problem in missing-manifest missing-entry duplicate malformed missing-package tampered; do
+if command -v flock >/dev/null 2>&1; then
+  (
+    umask 0022
+    export CALLER_MASK=0022 SUDO_MASK=0027
+    : > "$work/manager"
+    run rpm x86_64 amd64 private-lock
+    [[ $(cat "$work/manager") == rpm && $(wc -l < "$work/sudo") == 1 ]]
+  )
+fi
+# An enrolled-capable existing package can be verified on a system without sudo.
+mv "$work/bin/sudo" "$work/sudo.saved"
+run deb amd64 amd64 existing-no-sudo
+[[ ! -s $work/sudo && $(cat "$work/postcheck") == deb ]]
+if run deb amd64 amd64 ok; then exit 1; fi
+[[ ! -s $work/sudo && ! -s $work/postcheck ]]
+grep -Fq 'Use the Linux tarball without administrator access' "$work/output"
+mv "$work/sudo.saved" "$work/bin/sudo"
+for problem in no-replay empty-transaction; do
+  (
+    umask 0022
+    export CALLER_MASK=0022 SUDO_MASK=0022
+    : > "$work/manager"
+    if run rpm x86_64 amd64 "$problem"; then exit 1; fi
+    [[ $(wc -l < "$work/sudo") == 1 && ! -s $work/manager ]]
+    if [[ $problem == no-replay ]]; then
+      grep -Fq 'DNF5 replay is required' "$work/output"
+    else
+      grep -Fq 'DNF did not install the verified RPM' "$work/output"
+    fi
+  )
+done
+(
+  umask 0022
+  export CALLER_MASK=0022 SUDO_MASK=0022
+  : > "$work/manager"
+  rc=0
+  run rpm x86_64 amd64 dnf-failed || rc=$?
+  [[ $rc == 55 && $(cat "$work/manager") == rpm && ! -s $work/postcheck ]]
+)
+if run rpm x86_64 amd64 wrong-name; then exit 1; fi
+[[ ! -s $work/sudo ]]
+grep -Fq 'Unexpected RPM release identity' "$work/output"
+for problem in forbidden quota server tls redirect-error partial spurious-404 missing-entry duplicate malformed unsupported duplicate-installer tampered rollback; do
   if run deb amd64 amd64 "$problem"; then echo "Unexpected success for $problem" >&2; exit 1; fi
-  [[ ! -s $work/sudo ]]
+  [[ ! -s $work/sudo && ! -s $work/sleeps ]]
+done
+for format in deb rpm; do
+  if [[ $format == deb ]]; then machine=amd64; else machine=x86_64; fi
+  for problem in newer db-error; do
+    if run "$format" "$machine" amd64 "$problem"; then echo "Unexpected success for $problem" >&2; exit 1; fi
+    [[ ! -s $work/sudo ]]
+    if [[ $problem == newer ]]; then [[ $(cat "$work/postcheck") == "$format" ]]; fi
+  done
+done
+for format in deb rpm; do
+  if [[ $format == deb ]]; then machine=amd64; else machine=x86_64; fi
+  if run "$format" "$machine" amd64 postcheck-failed; then exit 1; fi
+  [[ $(wc -l < "$work/sudo") == 1 && $(cat "$work/postcheck") == "$format" ]]
+done
+for problem in deadline cancel withdrawn; do
+  start=$SECONDS
+  if run deb amd64 amd64 "$problem"; then echo "Unexpected success for $problem" >&2; exit 1; fi
+  [[ ! -s $work/sudo && ! -e $(cat "$work/last-output") ]]
+  if [[ $problem == cancel ]]; then
+    [[ $((SECONDS - start)) -lt 4 ]]
+    if kill -0 "$(cat "$work/wait-pid")" 2>/dev/null; then exit 1; fi
+  fi
+  if [[ $problem == deadline ]]; then
+    [[ $(cat "$work/sleeps") == $'15\n5' ]]
+    grep -Fq '30-minute wait' "$work/output"
+  fi
+done
+for delayed in deferred-manifest deferred-package deferred-slow; do
+  run rpm x86_64 amd64 "$delayed"
+  [[ $(cat "$work/sleeps") == 15 && $(wc -l < "$work/sudo") == 1 ]]
+  grep -Fq 'Press Ctrl-C to cancel' "$work/output"
+done
+run deb amd64 amd64 slow
+[[ ! -s $work/sleeps && $(wc -l < "$work/sudo") == 1 ]]
+for change in forward superseded; do
+  run deb amd64 amd64 "$change" 1.10.0
+  [[ $(wc -l < "$work/sudo") == 1 ]]
+  grep -Fq 'A newer release is available' "$work/output"
 done
 if run deb armel armv6 ok; then exit 1; fi
 [[ ! -s $work/sudo && ! -s $work/urls ]]
@@ -127,5 +324,14 @@ done
 if run rpm x86_64 amd64 replaced; then exit 1; fi
 [[ $(wc -l < "$work/sudo") == 1 ]]
 grep -Fq 'staged package failed' "$work/output"
+# Build a release-stamped copy with the same literal substitution as the publisher.
+sed "s/^  tag=''$/  tag='v1.2.3'/" "$repo/scripts/install-linux-release.sh" > "$work/stamped"
+(
+  source "$work/stamped"
+  run deb amd64 amd64 ok
+  [[ $(wc -l < "$work/urls") == 2 && $(wc -l < "$work/sudo") == 1 && ! -s $work/sleeps ]]
+  if run deb amd64 amd64 deferred-manifest; then exit 1; fi
+  [[ ! -s $work/sleeps && ! -s $work/sudo ]]
+)
+printf '%s\n' 'PASS availability deadline, forward-only release selection, cancellation, supported packages, and immutable release stamp.'
 printf '%s\n' 'PASS Linux installer architecture mapping, official release selection, checksums, failures before sudo, and changed privileged input.'
-printf '%s\n' 'PASS private staging, caller umask at sudo, and sudo-selected umask at both package managers.'
