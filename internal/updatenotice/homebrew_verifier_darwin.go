@@ -1,7 +1,6 @@
 package updatenotice
 
 import (
-	"bytes"
 	"context"
 	"debug/buildinfo"
 	"encoding/json"
@@ -394,25 +393,6 @@ func copyHomebrewVerifier(ctx context.Context, file *os.File, target string) err
 		return errCache
 	}
 	return copy.Chmod(0700)
-}
-
-// A filesystem can accept the bytes and still discard quarantine.
-func preservedQuarantine(source, target *os.File) bool {
-	const name = "com.apple.quarantine"
-	size, err := unix.Fgetxattr(int(source.Fd()), name, nil)
-	if errors.Is(err, unix.ENOATTR) || errors.Is(err, unix.ENOTSUP) {
-		return true
-	}
-	if err != nil || size > 64<<10 {
-		return false
-	}
-	a, b := make([]byte, size), make([]byte, size)
-	n, err := unix.Fgetxattr(int(source.Fd()), name, a)
-	if err != nil || n != size {
-		return false
-	}
-	n, err = unix.Fgetxattr(int(target.Fd()), name, b)
-	return err == nil && n == size && bytes.Equal(a, b)
 }
 
 func trustedHomebrewOwner(info os.FileInfo) bool {

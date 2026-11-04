@@ -21,7 +21,7 @@ func TestPackageEnrollmentTransitions(t *testing.T) {
 		a: buildUpdateFixture(t, t.TempDir(), a),
 		b: buildUpdateFixture(t, t.TempDir(), b),
 	}
-	for _, scenario := range []string{"system package upgraded before discovery", "automatic upgrade before repeat", "interrupted explicit upgrade", "competing worker", "unknown private binary", "unregistered release stamp"} {
+	for _, scenario := range []string{"system package upgraded before discovery", "same package restores its marking", "automatic upgrade before repeat", "interrupted explicit upgrade", "competing worker", "unknown private binary", "unregistered release stamp"} {
 		t.Run(scenario, func(t *testing.T) {
 			home, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -37,6 +37,7 @@ func TestPackageEnrollmentTransitions(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer bin.Close()
+			markIncoming := false
 			install := func(version string) (string, error) {
 				t.Helper()
 				dir, err := os.MkdirTemp(path, ".openai-install.")
@@ -46,6 +47,9 @@ func TestPackageEnrollmentTransitions(t *testing.T) {
 				source := filepath.Join(dir, "openai")
 				if err := os.WriteFile(source, fixtures[version], 0700); err != nil {
 					t.Fatal(err)
+				}
+				if markIncoming {
+					markUpdateFixture(t, source)
 				}
 				staged, err := openInstallation(source)
 				if err != nil {
@@ -84,6 +88,15 @@ func TestPackageEnrollmentTransitions(t *testing.T) {
 				return
 			}
 			requireVersion(a, a)
+			if scenario == "same package restores its marking" {
+				markIncoming = true
+				requireVersion(a, a)
+				checkUpdateFixtureQuarantine(t, filepath.Join(path, "openai"))
+				return
+			}
+			if scenario == "system package upgraded before discovery" {
+				markUpdateFixture(t, filepath.Join(path, "openai"))
+			}
 			if scenario == "interrupted explicit upgrade" || scenario == "competing worker" {
 				cache, err := openCache(t.Context(), filepath.Join(path, ".update"))
 				if err != nil {
@@ -140,6 +153,9 @@ func TestPackageEnrollmentTransitions(t *testing.T) {
 			}
 			requireVersion(a, b)
 			requireVersion(b, b)
+			if scenario == "system package upgraded before discovery" {
+				checkUpdateFixtureQuarantine(t, filepath.Join(path, "openai"))
+			}
 		})
 	}
 }

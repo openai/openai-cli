@@ -18,7 +18,7 @@ import (
 
 const updateBundleName = "bundle.jsonl"
 
-func (d *releaseDelivery) prepare(ctx context.Context, cache *noticeCache, selected releaseSelection) (string, error) {
+func (d *releaseDelivery) prepare(ctx context.Context, cache *noticeCache, selected releaseSelection, current *os.File) (string, error) {
 	address := "https://github.com/openai/openai-cli/releases/download/v" + selected.Version + "/" + archiveName(selected.Version)
 	response, err := d.request(ctx, address)
 	if err != nil {
@@ -68,6 +68,9 @@ func (d *releaseDelivery) prepare(ctx context.Context, cache *noticeCache, selec
 		return "", err
 	}
 	if err := next.Chmod(0700); err != nil {
+		return "", err
+	}
+	if err := preservePreparedImageTrust(current, next); err != nil {
 		return "", err
 	}
 	if err := next.Sync(); err != nil {

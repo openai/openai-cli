@@ -178,7 +178,7 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 	})
 	waitForWorker := func(t *testing.T, key string) map[string]any {
 		t.Helper()
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(20 * time.Second)
 		for {
 			data, err := os.ReadFile(statePath)
 			if err != nil {

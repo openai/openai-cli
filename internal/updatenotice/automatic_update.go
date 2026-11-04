@@ -236,7 +236,7 @@ type updateDelivery interface {
 	closeVerifier()
 	checkVerifier(context.Context, *noticeCache) error
 	selectRelease(context.Context, string) (releaseSelection, error)
-	prepare(context.Context, *noticeCache, releaseSelection) (string, error)
+	prepare(context.Context, *noticeCache, releaseSelection, *os.File) (string, error)
 	stillPublished(context.Context, releaseSelection) error
 }
 
@@ -318,7 +318,7 @@ func (worker updateWorker) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	binaryHash, err := worker.delivery.prepare(ctx, cache, selected)
+	binaryHash, err := worker.delivery.prepare(ctx, cache, selected, worker.installation.file)
 	if err != nil {
 		return err
 	}
@@ -359,6 +359,11 @@ func (worker updateWorker) activate(ctx context.Context, cache *noticeCache, sta
 	}
 	if digest != pending.BinaryHash || !binaryIdentity(next, pending.Release.Version, pending.Release.Commit) {
 		return errPreparedUpdate
+	}
+	// Older staged updates may lack trust metadata. Check the installed
+	// executable again before activating the exact verified replacement.
+	if err := preservePreparedImageTrust(worker.installation.file, next); err != nil {
+		return err
 	}
 	// Commit the receipt first. A crash before rename cannot announce success:
 	// only an executing binary with the new release version consumes it.

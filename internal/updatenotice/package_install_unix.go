@@ -122,7 +122,16 @@ func installPackageRelease(ctx context.Context, bin *os.Root, staged *updateInst
 		}
 	case !current.unchanged():
 		return "", errCache
-	case previous != source:
+	case previous == source:
+		// The same verified package can restore its original marking to a
+		// managed copy that an earlier updater installed without it.
+		if err := preservePreparedImageTrust(staged.file, current.file); err != nil {
+			return "", err
+		}
+	default:
+		if err := preservePreparedImageTrust(current.file, staged.file); err != nil {
+			return "", err
+		}
 		namedCurrent, err := bin.Lstat("openai")
 		if err != nil || !sameUpdateFile(current.identity, namedCurrent) {
 			return "", errCache

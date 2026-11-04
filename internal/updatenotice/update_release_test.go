@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -166,7 +167,34 @@ func updateArchive(t *testing.T, content []byte, duplicate bool) []byte {
 	return data.Bytes()
 }
 
+const fixtureQuarantine = "0081;00000000;fixture;"
+
+func markUpdateFixture(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS == "darwin" {
+		if out, err := exec.Command("/usr/bin/xattr", "-w", "com.apple.quarantine", fixtureQuarantine, path).CombinedOutput(); err != nil {
+			t.Fatalf("mark fixture: %v %s", err, out)
+		}
+	}
+}
+
+func checkUpdateFixtureQuarantine(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS == "darwin" {
+		out, err := exec.Command("/usr/bin/xattr", "-p", "com.apple.quarantine", path).Output()
+		if err != nil || strings.TrimSpace(string(out)) != fixtureQuarantine {
+			t.Fatal("replacement lost quarantine", err)
+		}
+	}
+}
+
 func TestAutomaticUpdateAuthenticatedPreparation(t *testing.T) {
+	current, err := os.CreateTemp(t.TempDir(), "current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer current.Close()
+	markUpdateFixture(t, current.Name())
 	t.Setenv("OPENAI_API_KEY", "synthetic-secret")
 	t.Setenv("GH_TOKEN", "synthetic-token")
 	t.Setenv("GH_DEBUG", "api")
@@ -250,12 +278,13 @@ grep -Fxq '{"synthetic":true}' "$5"
 				}
 				return jsonUpdateResponse(t, run), nil
 			})}}
-			digest, err := d.prepare(t.Context(), cache, selected)
+			digest, err := d.prepare(t.Context(), cache, selected, current)
 			if scenario == "valid" || scenario == "bare_workflow_path" {
 				want := sha256.Sum256(binary)
 				if err != nil || digest != hex.EncodeToString(want[:]) {
 					t.Fatalf("prepare: %s %v", digest, err)
 				}
+				checkUpdateFixtureQuarantine(t, filepath.Join(cache.directory, "next"))
 			} else {
 				if err == nil {
 					t.Fatal("unverified artifact prepared")
@@ -415,7 +444,7 @@ func testUpdateVerifierCancellation(t *testing.T, capabilities bool) {
 			finished <- d.checkVerifier(ctx, cache)
 			return
 		}
-		_, err := d.prepare(ctx, cache, selected)
+		_, err := d.prepare(ctx, cache, selected, nil)
 		finished <- err
 	}()
 	deadline := time.Now().Add(5 * time.Second)
