@@ -160,7 +160,7 @@ cat > "$work/bin/native-arch" <<'MOCK'
 set -eu
 case "${0##*/}:$1" in
   dpkg:--print-architecture) printf '%s\n' "$MACHINE" ;;
-  dpkg-query:-W) case "$CASE" in newer) echo 'installed 9.0.0';; db-error) exit 2;; *) exit 1;; esac ;;
+  dpkg-query:-W) case "$CASE" in newer|existing-no-sudo) echo 'installed 9.0.0';; db-error) exit 2;; *) exit 1;; esac ;;
   dpkg-deb:--field) echo 1.2.3 ;;
   dpkg:--compare-versions) [ "$2" = 9.0.0 ] ;;
   rpm:--eval)
@@ -235,6 +235,14 @@ if command -v flock >/dev/null 2>&1; then
     [[ $(cat "$work/manager") == rpm && $(wc -l < "$work/sudo") == 1 ]]
   )
 fi
+# An enrolled-capable existing package can be verified on a system without sudo.
+mv "$work/bin/sudo" "$work/sudo.saved"
+run deb amd64 amd64 existing-no-sudo
+[[ ! -s $work/sudo && $(cat "$work/postcheck") == deb ]]
+if run deb amd64 amd64 ok; then exit 1; fi
+[[ ! -s $work/sudo && ! -s $work/postcheck ]]
+grep -Fq 'Use the Linux tarball without administrator access' "$work/output"
+mv "$work/sudo.saved" "$work/bin/sudo"
 for problem in no-replay empty-transaction; do
   (
     umask 0022

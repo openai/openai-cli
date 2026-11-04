@@ -65,7 +65,6 @@ install_linux_release() (
   fail() { printf 'OpenAI CLI: %s\n' "$1" >&2; exit 1; }
   github=https://github.com/openai/openai-cli
   [ "$(uname -s)" = Linux ] && [ "$EUID" -ne 0 ] || fail 'Run this installer as an ordinary Linux user.'
-  command -v sudo >/dev/null || fail 'System packages require sudo. Use the Linux tarball without administrator access.'
   if command -v apt >/dev/null && command -v dpkg >/dev/null; then
     format=deb
     machine=$(dpkg --print-architecture)
@@ -343,6 +342,7 @@ TRANSACTION
     [[ $selected == "$tag" ]] && break
   done
   if [[ $installed != current ]]; then
+    command -v sudo >/dev/null || fail 'System packages require sudo. Use the Linux tarball without administrator access.'
     printf 'Verified %s. Installing the package...\n' "$name" >&2
     rc=0
     (umask "$caller_umask"; sudo /bin/sh -eu -c "$transaction" sh "$name" "$digest" "$format" install) < "$work/package" || rc=$?
