@@ -35,7 +35,13 @@ func TestSystemVerifierAcceptsOnlyProtectedPrograms(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", alias)
+	if got := systemUpdateVerifier(); got != filepath.Join(alias, "gh") {
+		t.Fatalf("protected directory link: got %q", got)
+	}
+	if err := os.Chmod(dir, 0777); err != nil {
+		t.Fatal(err)
+	}
 	if got := systemUpdateVerifier(); got != "" {
-		t.Fatalf("indirect verifier path: got %q", got)
+		t.Fatalf("replaceable link target: got %q", got)
 	}
 }
