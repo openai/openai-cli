@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.49.0](https://github.com/openai/openai-cli/compare/v1.48.1...v1.49.0) (2026-11-04)
+
+
+### Features
+
+* **api:** add GPT-6 Rosalind to the model catalog ([#690](https://github.com/openai/openai-cli/issues/690)) ([2be784c](https://github.com/openai/openai-cli/commit/2be784cb368503f7a4ea93cc1aba8f15221e19db))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.94.0 ([#691](https://github.com/openai/openai-cli/issues/691)) ([c3501d6](https://github.com/openai/openai-cli/commit/c3501d62a2e44e185770275bce52eafb5d36a07e))
+
 ## [1.48.1](https://github.com/openai/openai-cli/compare/v1.48.0...v1.48.1) (2026-11-04)
 
 
