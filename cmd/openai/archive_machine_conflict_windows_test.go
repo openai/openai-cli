@@ -32,23 +32,7 @@ func TestMainWindowsArchiveMachinePathConflict(t *testing.T) {
 		t.Fatal("requires the disposable standard account")
 	}
 	archive := os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_BINARY")
-	guide, err := os.ReadFile(filepath.Join(filepath.Dir(archive), "installation.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var paste string
-	for _, block := range strings.Split(strings.ReplaceAll(string(guide), "\r\n", "\n"), "```powershell\n")[1:] {
-		code, _, closed := strings.Cut(block, "```")
-		if closed && strings.Contains(code, `.\openai.exe install --user`) {
-			if paste != "" {
-				t.Fatal("ambiguous documented ZIP paste")
-			}
-			paste = code
-		}
-	}
-	if paste == "" {
-		t.Fatal("missing the documented ZIP setup paste")
-	}
+	paste := documentedWindowsArchivePaste(t, archive)
 	dir := t.TempDir()
 	data, err := os.ReadFile(archive)
 	if err != nil {
@@ -92,6 +76,28 @@ func TestMainWindowsArchiveMachinePathConflict(t *testing.T) {
 		}
 		run(check)
 	}
+}
+
+func documentedWindowsArchivePaste(t *testing.T, archive string) string {
+	t.Helper()
+	guide, err := os.ReadFile(filepath.Join(filepath.Dir(archive), "installation.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paste string
+	for _, block := range strings.Split(strings.ReplaceAll(string(guide), "\r\n", "\n"), "```powershell\n")[1:] {
+		code, _, closed := strings.Cut(block, "```")
+		if closed && strings.Contains(code, `.\openai.exe install --user`) {
+			if paste != "" {
+				t.Fatal("ambiguous documented ZIP paste")
+			}
+			paste = code
+		}
+	}
+	if paste == "" {
+		t.Fatal("missing the documented ZIP setup paste")
+	}
+	return paste
 }
 
 func verifyWindowsSetupWait(t *testing.T, exe, managed string) {

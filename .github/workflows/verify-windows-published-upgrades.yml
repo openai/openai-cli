@@ -18,7 +18,7 @@ permissions:
 jobs:
   verify:
     if: github.repository == 'openai/openai-cli' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    name: Published Windows upgrade (${{ matrix.arch }})
+    name: Published Windows upgrade (${{ matrix.arch }}, ${{ matrix.client }})
     timeout-minutes: 35
     strategy:
       fail-fast: false
@@ -26,8 +26,20 @@ jobs:
         include:
           - os: windows-latest
             arch: amd64
+            client: powershell.exe
+            private: true
+          - os: windows-latest
+            arch: amd64
+            client: pwsh.exe
+            private: false
           - os: windows-11-arm
             arch: arm64
+            client: powershell.exe
+            private: true
+          - os: windows-11-arm
+            arch: arm64
+            client: pwsh.exe
+            private: false
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -40,6 +52,8 @@ jobs:
       - name: Verify the published installer and two ordinary API requests
         shell: pwsh
         env:
+          VERIFY_CLIENT: ${{ matrix.client }}
+          PRIVATE_VERIFIER: ${{ matrix.private }}
           STARTER_TAG: ${{ inputs.starter }}
           SUCCESSOR_TAG: ${{ inputs.successor }}
           NATIVE_ARCH: ${{ matrix.arch }}
@@ -52,4 +66,4 @@ jobs:
           }
           if ((go env GOHOSTARCH).Trim() -cne $env:NATIVE_ARCH -or
               (go env GOARCH).Trim() -cne $env:NATIVE_ARCH) { throw 'Unexpected native Windows architecture.' }
-          ./scripts/test-windows-archive-update.ps1 -StarterTag $env:STARTER_TAG -SuccessorTag $env:SUCCESSOR_TAG
+          ./scripts/test-windows-archive-update.ps1 -StarterTag $env:STARTER_TAG -SuccessorTag $env:SUCCESSOR_TAG -PublicClient $env:VERIFY_CLIENT -PrivateVerifier:($env:PRIVATE_VERIFIER -eq 'true')

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -63,6 +64,9 @@ func TestMainWindowsArchivePublishedUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if before != os.Getenv("OPENAI_WINDOWS_PUBLIC_STARTER_SHA") {
+		t.Fatal("starter differed from authenticated A before its first ordinary request")
+	}
 	statePath := filepath.Join(filepath.Dir(managed), ".update", "state.json")
 	var token windows.Token
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &token); err != nil {
@@ -73,7 +77,31 @@ func TestMainWindowsArchivePublishedUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	shell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	selection := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `if ((Get-Command openai).Path -ine $env:OPENAI_WINDOWS_EXPECTED_EXE) {exit 22}`)
+	selection.Env = append(append([]string{}, fresh...), "OPENAI_WINDOWS_EXPECTED_EXE="+managed)
+	if err := selection.Run(); err != nil {
+		t.Fatal("the unaltered fresh environment selected another CLI", err)
+	}
 	requests, env := windowsUpdateAPI(t, fresh)
+	if os.Getenv("OPENAI_WINDOWS_PRIVATE_VERIFIER") == "1" {
+		for i, e := range env {
+			key, value, ok := strings.Cut(e, "=")
+			if !ok || !strings.EqualFold(key, "PATH") {
+				continue
+			}
+			var keep []string
+			for _, entry := range filepath.SplitList(value) {
+				if _, err := os.Stat(filepath.Join(entry, "gh.exe")); errors.Is(err, os.ErrNotExist) {
+					keep = append(keep, entry)
+				} else if err != nil {
+					t.Fatal(err)
+				}
+			}
+			env[i] = key + "=" + strings.Join(keep, ";")
+		}
+		env = append(env, "OPENAI_WINDOWS_REQUIRE_PRIVATE_GH=1")
+	}
 	env = append(env, "NO_PROXY=127.0.0.1,localhost")
 	work := t.TempDir()
 	run := func(mode string) string {
@@ -92,7 +120,14 @@ func TestMainWindowsArchivePublishedUpgrade(t *testing.T) {
 		}
 		return string(data)
 	}
-	run("request")
+	request := func() {
+		t.Helper()
+		screen := run("request")
+		if !strings.Contains(screen, "fixture-model") || strings.Contains(screen, "Updated to ") {
+			t.Fatal("ordinary request lost its API output or printed an update confirmation")
+		}
+	}
+	request()
 	prepared := waitWindowsPublishedState(t, statePath, func(state windowsPublishedState) bool { return state.Checked > 0 && state.Pending != nil })
 	if prepared.Pending.Release.Version != successor[1:] || prepared.Pending.PreviousHash != before {
 		t.Fatal("public discovery selected another release or source executable")
@@ -102,7 +137,7 @@ func TestMainWindowsArchivePublishedUpgrade(t *testing.T) {
 	if err != nil || staged != expected || staged == before {
 		t.Fatal("prepared successor does not match its verified receipt", err)
 	}
-	run("request")
+	request()
 	applied := waitWindowsPublishedState(t, statePath, func(state windowsPublishedState) bool {
 		if state.Applied != successor[1:] || state.AppliedHash != expected {
 			return false
@@ -114,7 +149,8 @@ func TestMainWindowsArchivePublishedUpgrade(t *testing.T) {
 		t.Fatal("wrong API request count or applied commit")
 	}
 	confirmation := "Updated to " + successor + "."
-	if strings.Count(run("bare"), confirmation) != 1 || strings.Contains(run("bare"), confirmation) {
+	firstBare, secondBare := run("bare"), run("bare")
+	if strings.Count(firstBare, "Updated to ") != 1 || !strings.Contains(firstBare, confirmation) || strings.Contains(secondBare, "Updated to ") {
 		t.Fatal("expected exactly one visible update confirmation across fresh consoles")
 	}
 	report := struct{ Architecture, Starter, Successor, StarterSHA256, ExecutableSHA256, ArchiveSHA256, Commit string }{

@@ -126,6 +126,11 @@
         $start.RedirectStandardError = $verifier
         $start.EnvironmentVariables.Clear()
         $start.EnvironmentVariables['SystemRoot'] = [Environment]::GetFolderPath('Windows')
+        # Both children can need the same proxy and trust settings as the parent.
+        foreach ($key in 'SSL_CERT_FILE','SSL_CERT_DIR','HTTPS_PROXY','https_proxy','HTTP_PROXY','http_proxy','NO_PROXY','no_proxy') {
+            $value = [Environment]::GetEnvironmentVariable($key)
+            if ($value) { $start.EnvironmentVariables[$key] = $value }
+        }
         if ($verifier) {
             foreach ($key in 'HOME','USERPROFILE','LOCALAPPDATA','APPDATA','TMP','TEMP','GH_CONFIG_DIR') { $start.EnvironmentVariables[$key] = $work }
             $start.EnvironmentVariables['GH_PROMPT_DISABLED'] = '1'
@@ -218,6 +223,7 @@
     $directory = [IO.DirectoryInfo]::new($work)
     if ($directory.Exists) { throw 'The Windows setup directory already exists.' }
     if ($PSVersionTable.PSVersion.Major -le 5) { $directory.Create($security) } else { [IO.FileSystemAclExtensions]::Create($directory,$security) }
+    $directory.Refresh()
     $createdAcl = Get-Acl -LiteralPath $work
     $rules = @($createdAcl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
     if (($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -or !$createdAcl.AreAccessRulesProtected -or
@@ -265,9 +271,9 @@
         Confirm-ReleaseExecutable $exe $selected
         $hash = Get-Sha $exe
         if ($VerifyOnly) {
-            return ([ordered]@{tag=$selected.tag; commit=$selected.commit; archiveSha256=$selected.digest; executableSha256=$hash} | ConvertTo-Json -Compress)
+            return ([ordered]@{tag=$selected.tag; commit=$selected.commit; archiveSha256=$selected.digest; executableSha256=$hash; verifierSha256=$pins[$arch][1]; verifierVersion=$ghVersion} | ConvertTo-Json -Compress)
         }
-        $null = Invoke-SetupProcess $exe 'install --user' $false
+        if (!(Invoke-SetupProcess $exe 'install --user' $false)) { throw 'Windows enrollment did not return an installed path.' }
         $bin = Join-Path $base 'OpenAI\CLI\bin'
         if (($env:Path -split ';',2)[0] -ine $bin) { $env:Path = "$bin;$env:Path" }
         $managed = Join-Path $bin 'openai.exe'

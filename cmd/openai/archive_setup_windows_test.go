@@ -62,7 +62,7 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 	archive, setupScript := os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_BINARY"), os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_SCRIPT")
 	olderArchive := os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_OLDER_BINARY")
 	if !filepath.IsAbs(archive) || !filepath.IsAbs(setupScript) || !filepath.IsAbs(olderArchive) {
-		t.Fatal("provide the candidate release-stamped Windows executable and install.ps1")
+		t.Fatal("provide the candidate release-stamped Windows executable and Install.cmd")
 	}
 	area := t.TempDir()
 	extracted := filepath.Join(area, "Extracted 日本語 ZIP's files & commands")
@@ -91,7 +91,7 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 	if olderHash == original {
 		t.Fatal("the release fixtures must have different bytes")
 	}
-	installer := filepath.Join(extracted, "install.ps1")
+	installer := filepath.Join(extracted, "Install.cmd")
 	copyFile(setupScript, installer)
 	managed := filepath.Join(os.Getenv("LOCALAPPDATA"), "OpenAI", "CLI", "bin", "openai.exe")
 	cliDir := filepath.Dir(filepath.Dir(managed))
@@ -203,20 +203,17 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 	}
 
 	// Test the native paste even on hosts whose policy rejects downloaded scripts.
-	const current = `
-$ErrorActionPreference = 'Stop'
-if ((Get-Command openai).Path -ine $env:ARCHIVE_OLD) { throw 'wrong initial selection' }
-Write-Host 'Installing OpenAI CLI for your account...'
-if ((& .\openai.exe install --user) -and $LASTEXITCODE -eq 0) {
-    $bin = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin'
-    if (($env:Path -split ';', 2)[0] -ine $bin) { $env:Path = "$bin;$env:Path" }
-    $selected = Microsoft.PowerShell.Core\Get-Command openai
-    if ($selected.CommandType -ne 'Application' -or $selected.Path -ine (Join-Path $bin 'openai.exe')) {
-        throw 'A shell command overrides openai. Use & (Join-Path $env:LOCALAPPDATA ''OpenAI\CLI\bin\openai.exe'').'
-    }
-    openai --version
-}
-`
+	paste := documentedWindowsArchivePaste(t, archive)
+	current := `$ErrorActionPreference='Stop'
+if ((Get-Command openai).Path -ine $env:ARCHIVE_OLD) {throw 'wrong initial selection'}
+` + paste
+	click := exec.Command(filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe"), "/d", "/c", "Install.cmd")
+	click.Dir = extracted
+	click.Stdin = strings.NewReader("\r\n")
+	click.Env = append(os.Environ(), "HTTP_PROXY=http://127.0.0.1:9", "HTTPS_PROXY=http://127.0.0.1:9")
+	if out, err := click.CombinedOutput(); err != nil || !bytes.Contains(out, []byte("OpenAI CLI setup finished.")) {
+		t.Fatalf("Explorer installer failed: %v %s", err, out)
+	}
 	var token windows.Token
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &token); err != nil {
 		t.Fatal(err)
@@ -227,34 +224,23 @@ if ((& .\openai.exe install --user) -and $LASTEXITCODE -eq 0) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		env := append(os.Environ(), "PATH="+staleBin+";"+os.Getenv("PATH"), "ARCHIVE_OLD="+stale, "ARCHIVE_ENTRY="+entry, "ARCHIVE_TARGET="+managed, "ARCHIVE_SCRIPT="+installer, "HTTP_PROXY=http://127.0.0.1:9", "HTTPS_PROXY=http://127.0.0.1:9", "NO_PROXY=127.0.0.1,localhost")
+		env := append(os.Environ(), "PATH="+staleBin+";"+os.Getenv("PATH"), "ARCHIVE_OLD="+stale, "ARCHIVE_ENTRY="+entry, "ARCHIVE_TARGET="+managed, "HTTP_PROXY=http://127.0.0.1:9", "HTTPS_PROXY=http://127.0.0.1:9", "NO_PROXY=127.0.0.1,localhost")
 		cmd := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", current)
 		cmd.Dir, cmd.Env = extracted, env
 		if out, err := cmd.CombinedOutput(); err != nil || !strings.HasSuffix(strings.TrimSpace(string(out)), wantVersion) {
 			t.Fatalf("current %s: %v %s", shellName, err, out)
 		}
-		// Use the actual policy for locally authored test scripts. Restricted
-		// hosts already exercised the native paste above.
-		const wrapper = `
-$ErrorActionPreference = 'Stop'
-if ((Get-ExecutionPolicy) -in 'Restricted','AllSigned') { 'native-only policy'; exit 0 }
-& $env:ARCHIVE_SCRIPT
-if ((Get-Command openai).Path -ine $env:ARCHIVE_TARGET) { throw 'wrapper selected the wrong CLI' }
+		alias := `$ErrorActionPreference='Stop'
 Set-Alias openai Write-Output
-try {
-    & $env:ARCHIVE_SCRIPT
-} catch {
-    if ($_.Exception.Message -like '*takes precedence in this shell*' -and (Get-Command openai).CommandType -eq 'Alias') {
-        'alias preserved'; exit 0
-    }
+try {` + paste + `} catch {
+    if ($_.Exception.Message -like '*overrides openai*' -and (Get-Command openai).CommandType -eq 'Alias') { 'alias preserved'; exit 0 }
     throw
 }
-throw 'setup silently replaced or ignored the conflicting alias'
-`
-		cmd = exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", wrapper)
-		cmd.Dir, cmd.Env = area, env
-		if out, err := cmd.CombinedOutput(); err != nil || !(bytes.Contains(out, []byte("alias preserved")) || bytes.Contains(out, []byte("native-only policy"))) {
-			t.Fatalf("packaged setup helper in %s: %v %s", shellName, err, out)
+throw 'setup ignored the conflicting alias'`
+		cmd = exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", alias)
+		cmd.Dir, cmd.Env = extracted, env
+		if out, err := cmd.CombinedOutput(); err != nil || !bytes.Contains(out, []byte("alias preserved")) {
+			t.Fatalf("conflicting alias in %s: %v %s", shellName, err, out)
 		}
 		// Rebuild from HKLM/HKCU through CreateEnvironmentBlock. Inheriting our
 		// prepared parent PATH would give a false fresh-shell pass.

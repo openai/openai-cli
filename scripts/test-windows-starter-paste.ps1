@@ -41,10 +41,12 @@ function Get-StarterBytes([string]$url) {
         try {& $script|Out-Null} catch {$rejected=$_.Exception.Message -eq 'The published Windows ZIP checksum did not match.'}
         if(!$rejected){throw 'An incorrect starter pin reached enrollment.'}
         [IO.File]::WriteAllText($script,$raw)
-        $actual=& $script
         $managed=Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe'
-        if($actual -cne "openai version $($Tag.Substring(1))" -or (Get-Command openai).Path -ine $managed -or
-            (Get-FileHash $managed).Hash -ne (Get-FileHash $Candidate).Hash -or
+        foreach($client in 'powershell.exe','pwsh.exe'){
+            $shell=(Get-Command $client -CommandType Application | Select-Object -First 1).Path
+            & "$PSScriptRoot/test-windows-console-paste.ps1" -Client $shell -TextPath $script -ExpectedExe $managed -ExpectedVersion ('openai version '+$Tag.Substring(1))
+        }
+        if((Get-FileHash $managed).Hash -ne (Get-FileHash $Candidate).Hash -or
             [IO.File]::ReadAllText($managed+':Zone.Identifier') -notmatch 'ZoneId=3') {throw 'The pinned starter did not qualify.'}
     } finally {
         $env:OPENAI_CLI_STARTER_TEST_ZIP=$prior

@@ -226,12 +226,7 @@ func preservePreparedImageTrust(cache *noticeCache) error {
 // The updater receives these files from the public release service. Preserve
 // Windows attachment metadata even when a prior portable copy arrived unmarked.
 func markDownloadedExecutable(path string) error {
-	zone, err := os.OpenFile(path+":Zone.Identifier", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	_, writeErr := io.WriteString(zone, "[ZoneTransfer]\r\nZoneId=3\r\n")
-	return errors.Join(writeErr, zone.Sync(), zone.Close())
+	return writeWindowsDownloadZone(path, false)
 }
 
 func sameUpdateDirectory(a, b string) bool { return sameWindowsName(a, b) }

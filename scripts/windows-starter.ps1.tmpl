@@ -24,6 +24,7 @@
     $security.SetSecurityDescriptorSddlForm("D:P(A;OICI;FA;;;$sid)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
     if ($d.Exists) {throw 'Setup directory already exists.'}
     if ($PSVersionTable.PSVersion.Major -le 5) {$d.Create($security)} else {[IO.FileSystemAclExtensions]::Create($d,$security)}
+    $d.Refresh()
     $created = Get-Acl -LiteralPath $d.FullName
     $rules=@($created.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
     if (($rules.Count -ne 3) -or ($d.Attributes -band 1024) -or !$created.AreAccessRulesProtected -or $created.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid) {throw 'Private staging failed.'}
@@ -48,8 +49,8 @@
         $zip = [IO.Compression.ZipArchive]::new($stream,'Read')
         try {[IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry('openai.exe'),$exe)} finally {$zip.Dispose();$stream.Dispose()}
         [IO.File]::WriteAllText($exe+':Zone.Identifier',"[ZoneTransfer]`r`nZoneId=3`r`n",[Text.Encoding]::ASCII)
-        $null = & $exe install --user
-        if ($LASTEXITCODE -ne 0) {throw 'Windows enrollment failed. See the installer diagnostic.'}
+        $installed = & $exe install --user
+        if ($LASTEXITCODE -ne 0 -or !$installed) {throw 'Windows enrollment failed. See the installer diagnostic.'}
         $bin = Join-Path $base 'OpenAI\CLI\bin'
         if (($env:Path -split ';',2)[0] -ine $bin) {$env:Path="$bin;$env:Path"}
         $current=Microsoft.PowerShell.Core\Get-Command openai

@@ -132,6 +132,11 @@ func TestMainWindowsArchiveConsoleOwner(t *testing.T) {
 		t.Fatal("expected native console handles")
 	}
 	target := os.Args[len(os.Args)-1]
+	if os.Getenv("OPENAI_WINDOWS_REQUIRE_PRIVATE_GH") == "1" {
+		if _, err := exec.LookPath("gh"); !errors.Is(err, exec.ErrNotFound) {
+			t.Fatal("ordinary request can resolve a system verifier", err)
+		}
+	}
 	mode := os.Getenv("OPENAI_ARCHIVE_TEST_MODE")
 	args := []string{"models", "retrieve", "fixture-model"}
 	if mode != "" {

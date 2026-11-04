@@ -17,7 +17,7 @@ $null = [IO.Directory]::CreateDirectory($work)
 try {
     # Execute the reviewed local function definitions with a synthetic metadata
     # provider. The shipped script exposes no fixture URL or verifier override.
-    $names = 'Set-InternetZone','Get-Sha','Expand-Executable','Read-Release','Test-Publication','Read-GoLength','Confirm-ReleaseExecutable'
+    $names = 'Set-InternetZone','Get-Sha','Expand-Executable','Read-Release','Invoke-SetupProcess','Test-Publication','Read-GoLength','Confirm-ReleaseExecutable'
     $defs = @($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $names},$true))
     if ($defs.Count -ne $names.Count) { throw 'The acquisition fixture is missing production code.' }
     $local = Join-Path $work 'local-functions.ps1'
@@ -27,6 +27,46 @@ try {
         try { & $probe | Out-Null } catch { return }
         throw 'A negative release fixture qualified.'
     }
+    $shell = (Get-Process -Id $PID).Path
+    $variables = @{HTTPS_PROXY='https://proxy.invalid:443'; SSL_CERT_FILE='fixture-ca'; HTTP_PROXY='http://proxy.invalid:80'; NO_PROXY='fixture.invalid'; SSL_CERT_DIR='fixture-certs'; GH_TOKEN='fake'; OPENAI_API_KEY='fake'; OPENAI_PRIVATE_SETUP_FIXTURE='private'}
+    $prior = @{}
+    try {
+        foreach ($key in $variables.Keys) {
+            $prior[$key] = [Environment]::GetEnvironmentVariable($key)
+            [Environment]::SetEnvironmentVariable($key,$variables[$key])
+        }
+        $probe = '-NoLogo -NoProfile -NonInteractive -Command "if ($env:HTTPS_PROXY -cne ''https://proxy.invalid:443'' -or $env:SSL_CERT_FILE -cne ''fixture-ca'' -or $env:HTTP_PROXY -cne ''http://proxy.invalid:80'' -or $env:NO_PROXY -cne ''fixture.invalid'' -or $env:SSL_CERT_DIR -cne ''fixture-certs'' -or $env:GH_TOKEN -or $env:OPENAI_API_KEY -or $env:OPENAI_PRIVATE_SETUP_FIXTURE) { exit 23 }; [Console]::Write(''transport-only'')"'
+        foreach ($verifier in $true,$false) {
+            if ((Invoke-SetupProcess $shell $probe $verifier) -cne 'transport-only') { throw 'Setup child transport isolation failed.' }
+        }
+    } finally {
+        foreach ($key in $prior.Keys) { [Environment]::SetEnvironmentVariable($key,$prior[$key]) }
+    }
+    # Exercise the exact extracted-ZIP paste in a separate PowerShell process.
+    $guide = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../docs/installation.md'))
+    $blocks = @([regex]::Matches($guide,'(?ms)^```powershell\r?\n(.*?)^```') | Where-Object { $_.Groups[1].Value.Contains('.\openai.exe install --user') })
+    if ($blocks.Count -ne 1) { throw 'The documented extracted ZIP paste is ambiguous.' }
+    $fakeDir = [IO.Directory]::CreateDirectory((Join-Path $work 'exit-fixture')).FullName
+    $src = Join-Path $fakeDir 'exit.go'
+    $fake = Join-Path $fakeDir 'openai.exe'
+    [IO.File]::WriteAllText($src,'package main; import ("os";"strconv"); func main() { n,_:=strconv.Atoi(os.Getenv("OPENAI_FIXTURE_EXIT")); os.Exit(n) }')
+    & go build -o $fake $src
+    if ($LASTEXITCODE -ne 0) {throw 'Could not build the paste failure fixture.'}
+    $priorExit = $env:OPENAI_FIXTURE_EXIT
+    Push-Location $fakeDir
+    try {
+        foreach ($status in '17','0') {
+            $env:OPENAI_FIXTURE_EXIT = $status
+            & $shell -NoLogo -NoProfile -NonInteractive -Command $blocks[0].Groups[1].Value *> $null
+            if ($LASTEXITCODE -eq 0) { throw 'The installation paste reported success after missing or failed enrollment.' }
+        }
+        if ([Environment]::OSVersion.Platform -eq 'Win32NT') {
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../Install.cmd') -Destination (Join-Path $fakeDir 'Install.cmd')
+            $env:OPENAI_FIXTURE_EXIT = '17'
+            '' | & "$env:SystemRoot\System32\cmd.exe" /d /c Install.cmd *> $null
+            if ($LASTEXITCODE -ne 17) {throw 'Explorer setup did not preserve the real failure status.'}
+        }
+    } finally { Pop-Location; $env:OPENAI_FIXTURE_EXIT = $priorExit }
     $repo = 'https://api.github.com/repos/openai/openai-cli'
     $workflow = 'https://github.com/openai/openai-cli/.github/workflows/publish-release.yml@refs/heads/main'
     $stable = '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'

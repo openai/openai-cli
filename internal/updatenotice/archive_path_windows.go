@@ -91,22 +91,40 @@ func prependWindowsUserPath(key registry.Key, bin string) (bool, error) {
 	} else if err != nil {
 		return false, err
 	}
-	entries := filepath.SplitList(raw)
-	if len(entries) > 0 {
-		first := entries[0]
-		if kind == registry.EXPAND_SZ {
-			first, err = registry.ExpandString(first)
+	// filepath.SplitList discards quotes. Keep the users' original text even
+	// for empty entries and quoted paths which contain a semicolon.
+	first := bin
+	var remaining []string
+	quoted, start := false, 0
+	for i := 0; raw != "" && i <= len(raw); i++ {
+		if i < len(raw) {
+			if raw[i] == '"' {
+				quoted = !quoted
+			}
+			if quoted || raw[i] != ';' {
+				continue
+			}
+		}
+		entry := raw[start:i]
+		resolved := strings.ReplaceAll(entry, `"`, "")
+		if kind == registry.EXPAND_SZ && resolved != "" {
+			resolved, err = registry.ExpandString(resolved)
 			if err != nil {
 				return false, err
 			}
 		}
-		if first != "" && strings.EqualFold(filepath.Clean(first), filepath.Clean(bin)) {
-			return false, nil
+		if resolved != "" && strings.EqualFold(filepath.Clean(resolved), filepath.Clean(bin)) {
+			if start == 0 {
+				first = entry
+			}
+		} else {
+			remaining = append(remaining, entry)
 		}
+		start = i + 1
 	}
-	updated := bin
-	if raw != "" {
-		updated += ";" + raw
+	updated := strings.Join(append([]string{first}, remaining...), ";")
+	if updated == raw {
+		return false, nil
 	}
 	if kind == registry.EXPAND_SZ {
 		err = key.SetExpandStringValue("Path", updated)

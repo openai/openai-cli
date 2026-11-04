@@ -71,23 +71,22 @@ Other systems can use the [Linux tarball](#installing-a-prebuilt-binary).
 
 ## Windows
 
-Open the [PowerShell setup recipe](../scripts/install-windows-release.ps1). Select **Copy raw file**.
-Paste it into an ordinary PowerShell window. Setup downloads the correct Windows ZIP and checks its publisher before installation.
-It selects the managed CLI in this PowerShell and adds the CLI to your user PATH.
-If a machine-wide installation takes precedence, setup selects your copy now and shows how to select it in new terminals.
-If your organization restricts scripts, use its approved installation method.
-
-<details>
-<summary>Already downloaded the official Windows ZIP?</summary>
-
 Download the Windows ZIP from **Assets** in the latest stable release with downloads. [Release downloads](https://github.com/openai/openai-cli/releases)
 Choose `windows_amd64.zip` for a 64-bit Intel or AMD PC, `windows_arm64.zip` for ARM64, or `windows_386.zip` for 32-bit Windows.
 
-Extract the ZIP. Open ordinary PowerShell in the extracted directory. Paste this block once.
+In File Explorer, select **Extract All**. Open the extracted folder. Double-click **Install.cmd**.
+Setup enables automatic updates for your account. The installer reports any conflict with the system PATH.
+
+<details>
+<summary>Use an existing PowerShell window</summary>
+
+To select the CLI in an existing PowerShell, open the extracted directory and paste this block.
 
 ```powershell
-Write-Host 'Installing OpenAI CLI for your account...'
-if ((& .\openai.exe install --user) -and $LASTEXITCODE -eq 0) {
+& {
+    Write-Host 'Installing OpenAI CLI for your account...'
+    $installed = & .\openai.exe install --user
+    if ($LASTEXITCODE -ne 0 -or !$installed) { throw 'OpenAI CLI setup could not finish. See the installer message above.' }
     $bin = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin'
     if (($env:Path -split ';', 2)[0] -ine $bin) { $env:Path = "$bin;$env:Path" }
     $selected = Microsoft.PowerShell.Core\Get-Command openai
@@ -102,6 +101,17 @@ Setup installs every CLI command for your Windows account. It configures the upd
 Eligible interactive commands install future authenticated releases. [Automatic updates](automatic-updates.md#eligible-invocations)
 
 If you prefer a portable copy, use `.\openai.exe` directly from the extracted directory.
+
+</details>
+
+<details>
+<summary>Download the matching ZIP automatically</summary>
+
+Open the [PowerShell setup recipe](../scripts/install-windows-release.ps1). Select **Copy raw file**.
+Paste it into an ordinary PowerShell window. Setup downloads the correct Windows ZIP and checks its publisher before installation.
+It selects the managed CLI in this PowerShell and adds the CLI to your user PATH.
+If a machine-wide installation takes precedence, setup selects your copy now and shows how to select it in new terminals.
+If your organization restricts scripts, use its approved installation method.
 
 </details>
 

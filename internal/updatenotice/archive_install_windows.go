@@ -367,14 +367,37 @@ func copyWindowsDownloadZone(source, target string) error {
 		return err
 	}
 	defer in.Close()
+	data, err := io.ReadAll(io.LimitReader(in, maxWindowsZoneBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > maxWindowsZoneBytes {
+		return errors.New("oversized Windows download security zone")
+	}
+	// Forward only the restriction. Zone.Identifier can also contain a private
+	// referrer or a signed download URL. Recognize ASCII fields in UTF-16 too.
+	restricted := false
+	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\x00", ""), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && strings.EqualFold(strings.TrimSpace(key), "ZoneId") && strings.TrimSpace(value) == "4" {
+			restricted = true
+			break
+		}
+	}
+	return writeWindowsDownloadZone(target, restricted)
+}
+
+func writeWindowsDownloadZone(target string, restricted bool) error {
+	const zone = ":Zone.Identifier"
 	out, err := os.OpenFile(target+zone, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
-	n, err := io.Copy(out, io.LimitReader(in, maxWindowsZoneBytes+1))
-	if err == nil && n > maxWindowsZoneBytes {
-		err = errors.New("oversized Windows download security zone")
+	id := "3"
+	if restricted {
+		id = "4"
 	}
+	_, err = io.WriteString(out, "[ZoneTransfer]\r\nZoneId="+id+"\r\n")
 	if err == nil {
 		err = out.Sync()
 	}

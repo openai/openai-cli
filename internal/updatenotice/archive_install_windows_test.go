@@ -50,6 +50,21 @@ func TestWindowsArchiveUserPath(t *testing.T) {
 		if changed, err = prependWindowsUserPath(key, strings.ToUpper(dir)); err != nil || changed {
 			t.Fatalf("repeat setup: changed=%v err=%v", changed, err)
 		}
+		// Another installer prepended its entry. Recover the managed first
+		// position without leaving older copies or rewriting unrelated text.
+		const external = `"C:\Another;tool"`
+		duplicated := external + ";" + strings.ToUpper(dir) + ";" + old + ";" + dir + `\`
+		if err := set("Path", duplicated); err != nil {
+			t.Fatal(err)
+		}
+		if changed, err = prependWindowsUserPath(key, dir); err != nil || !changed {
+			t.Fatal("could not recover a prepended PATH", err)
+		}
+		value, gotKind, err = key.GetStringValue("Path")
+		if err != nil || value != dir+";"+external+";"+old || gotKind != kind {
+			t.Fatalf("deduplication damaged registry PATH or its kind: %q %d %v", value, gotKind, err)
+		}
+
 	}
 	if err := key.SetBinaryValue("Path", []byte("foreign")); err != nil {
 		t.Fatal(err)
@@ -106,6 +121,26 @@ func TestWindowsArchiveInstallPreservesDownloadZone(t *testing.T) {
 	}
 	if err := os.Remove(target + ":Zone.Identifier"); err != nil {
 		t.Fatal(err)
+	}
+	for _, item := range []struct{ raw, want string }{
+		{"[ZoneTransfer]\r\nZoneId=2\r\nHostUrl=https://example.invalid/private-query\r\n", "3"},
+		{"[ZoneTransfer]\r\nZoneId=invalid\r\nReferrerUrl=https://example.invalid/private-query\r\n", "3"},
+		{"[ZoneTransfer]\r\nZoneId = 4\r\nHostUrl=https://example.invalid/private-query\r\n", "4"},
+		{"Z\x00o\x00n\x00e\x00I\x00d\x00=\x004\x00\r\x00\n\x00", "4"},
+	} {
+		if err := os.WriteFile(source+":Zone.Identifier", []byte(item.raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := copyWindowsDownloadZone(source, target); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(target + ":Zone.Identifier")
+		if err != nil || string(got) != "[ZoneTransfer]\r\nZoneId="+item.want+"\r\n" {
+			t.Fatal("incorrect sanitized download zone", err)
+		}
+		if err := os.Remove(target + ":Zone.Identifier"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	oversized := bytes.Repeat([]byte("z"), maxWindowsZoneBytes+1)
 	if err := os.WriteFile(source+":Zone.Identifier", oversized, 0600); err != nil {

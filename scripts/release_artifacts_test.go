@@ -486,7 +486,7 @@ func TestGoReleaserPreservesArtifactsWithoutApplicationHooks(t *testing.T) {
 		if archive.ID == "linux-archive" || archive.ID == "macos-archive" {
 			want = append(want, "install.sh", "openai-enable-updates.zsh")
 		} else if archive.ID == "windows-archive" {
-			want = append(want, "install.ps1")
+			want = append(want, "Install.cmd")
 		}
 		if !slices.Equal(archive.Files, want) {
 			t.Errorf("archive %q files = %v, want %v", archive.ID, archive.Files, want)

@@ -6,7 +6,9 @@ param(
     [string]$StarterTag,
     [Parameter(ParameterSetName='Published', Mandatory)]
     [ValidatePattern('(?-i)\Av(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z')]
-    [string]$SuccessorTag
+    [string]$SuccessorTag,
+    [ValidateSet('powershell.exe','pwsh.exe')][string] $PublicClient = 'powershell.exe',
+    [switch] $PrivateVerifier
 )
 $ErrorActionPreference = 'Stop'
 if ($env:RUNNER_OS -ne 'Windows' -or $env:GITHUB_ACTIONS -ne 'true') {
@@ -39,9 +41,11 @@ try {
 
     go test -c -o "$root/archive.test.exe" ./cmd/openai
     if ($LASTEXITCODE -ne 0) { throw 'Could not compile the native entrypoint tests.' }
+    Copy-Item -LiteralPath 'scripts/test-windows-console-paste.ps1' -Destination $root
     if ($published) {
         Copy-Item -LiteralPath 'scripts/install-windows-release.ps1' -Destination "$root/acquire.ps1"
-        @{starter=$StarterTag; successor=$SuccessorTag} | ConvertTo-Json | Set-Content -LiteralPath "$root/tags.json"
+        Copy-Item -LiteralPath 'scripts/windows-starter.ps1.tmpl','scripts/test-windows-published-starter.ps1' -Destination $root
+        @{starter=$StarterTag; successor=$SuccessorTag; client=$PublicClient; privateVerifier=[bool]$PrivateVerifier} | ConvertTo-Json | Set-Content -LiteralPath "$root/tags.json"
     } else {
         # The hosted runner owns build caches. The standard user receives only
         # read/execute access to the compiled probe, candidate, and ZIP helper.
@@ -57,7 +61,7 @@ try {
         $oldFlags = "-s -w -X ${stamp}releaseVersion=0.0.1 -X ${stamp}releaseCommit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         go build -overlay $overlay -ldflags $oldFlags -o "$root/older-openai.exe" ./cmd/openai/main.go
         if ($LASTEXITCODE -ne 0) { throw 'Could not build the older release-stamped fixture.' }
-        Copy-Item -LiteralPath 'install.ps1' -Destination "$root/install.ps1"
+        Copy-Item -LiteralPath 'Install.cmd' -Destination "$root/Install.cmd"
         Copy-Item -LiteralPath 'docs/installation.md' -Destination "$root/installation.md"
         Copy-Item -LiteralPath 'scripts/windows-starter.ps1.tmpl' -Destination "$root/windows-starter.ps1.tmpl"
         Copy-Item -LiteralPath 'scripts/test-windows-starter-paste.ps1' -Destination "$root/test-windows-starter-paste.ps1"
@@ -106,10 +110,8 @@ if (Test-Path -LiteralPath "$PSScriptRoot/tags.json") {
     $env:OPENAI_WINDOWS_PUBLIC_RECEIPT = "$PSScriptRoot/results/observed.json"
     $target = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe'
     if (Test-Path -LiteralPath $target) { throw 'The verification account already contains an installation.' }
-    $installed = & "$PSScriptRoot/acquire.ps1" -ReleaseTag $tags.starter
-    if ($installed -ine $target -or (Get-Command openai).Path -ine $target) { throw 'Acquisition did not select the enrolled executable.' }
-    $version = openai --version
-    if ($LASTEXITCODE -ne 0 -or $version -cne ('openai version ' + $tags.starter.Substring(1))) { throw 'Incorrect starter version.' }
+    $env:OPENAI_WINDOWS_PUBLIC_STARTER_SHA = & "$PSScriptRoot/test-windows-published-starter.ps1" -Tag $tags.starter -Client $tags.client -PrivateVerifier:([bool]$tags.privateVerifier)
+    if ($tags.privateVerifier) { $env:OPENAI_WINDOWS_PRIVATE_VERIFIER='1' }
     & "$PSScriptRoot/archive.test.exe" '-test.run=^TestMainWindowsArchivePublishedUpgrade$' '-test.v' *> "$PSScriptRoot/results/test.log"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     # Verify the successor independently after the observed upgrade.
@@ -125,7 +127,7 @@ if (Test-Path -LiteralPath "$PSScriptRoot/tags.json") {
 $env:OPENAI_CLI_WINDOWS_ARCHIVE_FIXTURE = '1'
 $env:OPENAI_CLI_WINDOWS_ARCHIVE_OLDER_BINARY = Join-Path $PSScriptRoot 'older-openai.exe'
 $env:OPENAI_CLI_WINDOWS_ARCHIVE_BINARY = Join-Path $PSScriptRoot 'openai.exe'
-$env:OPENAI_CLI_WINDOWS_ARCHIVE_SCRIPT = Join-Path $PSScriptRoot 'install.ps1'
+$env:OPENAI_CLI_WINDOWS_ARCHIVE_SCRIPT = Join-Path $PSScriptRoot 'Install.cmd'
 if (Test-Path -LiteralPath "$PSScriptRoot/machine-conflict.txt") {
     $env:OPENAI_CLI_WINDOWS_ARCHIVE_CONFLICT = (Get-Content -LiteralPath "$PSScriptRoot/machine-conflict.txt" -Raw).Trim()
     & "$PSScriptRoot/archive.test.exe" '-test.run=^TestMainWindowsArchiveMachinePathConflict$' '-test.v' *> "$PSScriptRoot/results/test.log"
@@ -141,6 +143,7 @@ exit 0
     $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     function Invoke-StandardQualification([string]$expected) {
         $child = Start-Process -FilePath $shell -ArgumentList "-NoLogo -NoProfile -NonInteractive -File `"$root\ordinary.ps1`"" -WorkingDirectory $root -Credential $credential -LoadUserProfile -UseNewEnvironment -Wait -PassThru
+        if (!(Test-Path -LiteralPath "$root/results/test.log")) {throw "The standard account failed before recording CLI evidence (exit $($child.ExitCode))."}
         $log = Get-Content -LiteralPath "$root/results/test.log" -Raw
         Write-Output $log
         if ($child.ExitCode -ne 0 -or !$log.Contains('--- PASS: ' + $expected)) {
