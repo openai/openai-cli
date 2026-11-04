@@ -55,21 +55,26 @@ Download one package for your distribution into an empty directory. [Release dow
 
 Use the newest stable release with package files under **Assets**.
 Choose `amd64` for x86-64 or `arm64` for 64-bit ARM.
-From the download directory, run the command for your distribution.
+From the download directory, paste your distribution’s commands into an interactive Bash or zsh shell.
 
 **Debian or Ubuntu**
 
 ```sh
-sudo apt install ./openai_*_linux_*.deb
+sudo apt install ./openai_*_linux_*.deb &&
+source /usr/share/openai-cli/enable-updates.sh
 ```
 
 **Fedora**
 
 ```sh
-sudo dnf install ./openai_*_linux_*.rpm
+sudo dnf install ./openai_*_linux_*.rpm &&
+source /usr/share/openai-cli/enable-updates.sh
 ```
 
-The package installs `openai` in `/usr/bin`. Run `openai --help` to check the installation.
+The first command installs the system copy at `/usr/bin/openai`.
+The second enables automatic updates for your account and selects `$HOME/.openai/bin/openai` in current and future shells.
+Setup uses a compatible GitHub CLI or downloads a verified private copy.
+To keep package-manager-only updates, run just the first command.
 For other distributions or an installation without administrator access, use the [Linux tarball](#installing-a-prebuilt-binary).
 
 ## Windows

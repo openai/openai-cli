@@ -29,6 +29,19 @@ brew update && brew upgrade --cask openai/tools/openai
 Retry the setup command. If the tap still provides an older cask, choose a release containing the helper below.
 You can keep using the Homebrew CLI while waiting for the tap.
 
+### From an installed Debian or RPM package
+
+Source the installed helper in an interactive Bash or zsh shell.
+
+```sh
+source /usr/share/openai-cli/enable-updates.sh
+```
+
+This enables updates for your account. The package manager continues to own `/usr/bin/openai`.
+Setup prepends `$HOME/.openai/bin` to your interactive shell’s PATH and preserves your other settings.
+It uses a compatible GitHub CLI or downloads a private verifier. You can rerun setup after an automatic upgrade.
+To return to the system copy, remove the added PATH line from your shell profiles and start a fresh shell.
+
 ### From an extracted archive
 
 1. Install a compatible [GitHub CLI](https://cli.github.com/).
@@ -95,7 +108,7 @@ The detached helper checks required options before downloading an update.
 If GitHub CLI lacks support, bare interactive `openai` can show a manual update notice.
 Capability checks retry at most every four hours, so upgrading GitHub CLI can restore automatic updates.
 
-Homebrew, Linux packages, Go installations, unknown locations, and development builds remain outside automatic installation.
+Package-managed executables, Go installations, unknown locations, and development builds keep their existing update method.
 A symlink from `$HOME/.openai/bin/openai` to a Go installation remains owned by Go.
 Windows retains update notices. This implementation does not replace running Windows executables.
 

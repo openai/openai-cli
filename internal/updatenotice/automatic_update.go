@@ -161,6 +161,9 @@ func automatic(ctx context.Context, current string, announce bool) (string, bool
 
 // RunUpdateHelper handles the private installer probe and detached update worker.
 func RunUpdateHelper(argv []string) bool {
+	if runLinuxPackageHelper(argv) {
+		return true
+	}
 	if len(argv) == 4 && argv[1] == "__openai_archive_zsh_profile" && os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") == "1" {
 		if enableZshPath(argv[2], argv[3]) {
 			fmt.Fprintln(os.Stdout, "ready")

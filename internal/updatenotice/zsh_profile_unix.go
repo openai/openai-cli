@@ -16,6 +16,10 @@ import (
 // enableZshPath runs inside the profile directory selected by the installer.
 // Both identities come from its ownership and ACL preflight before installation.
 func enableZshPath(profileDir, identity string) bool {
+	return appendProfilePath(profileDir, identity, ".zshrc", `export PATH="$HOME/.openai/bin:$PATH"`)
+}
+
+func appendProfilePath(profileDir, identity, name, line string) bool {
 	directory, expected, ok := strings.Cut(identity, "/")
 	parent, err := os.Stat(".")
 	if !automaticPlatform() || !filepath.IsAbs(profileDir) || !ok || err != nil || !parent.IsDir() || !ownedUpdatePath(parent) || profileID(parent) != directory {
@@ -32,7 +36,7 @@ func enableZshPath(profileDir, identity string) bool {
 	if expected == "new" {
 		flags |= os.O_CREATE | os.O_EXCL
 	}
-	file, err := os.OpenFile(".zshrc", flags, 0600)
+	file, err := os.OpenFile(name, flags, 0600)
 	if err != nil {
 		return false
 	}
@@ -46,10 +50,9 @@ func enableZshPath(profileDir, identity string) bool {
 		return false
 	}
 	current := func() bool {
-		named, err := os.Lstat(".zshrc")
+		named, err := os.Lstat(name)
 		return directorySelected() && err == nil && named.Mode().IsRegular() && ownedUpdatePath(named) && os.SameFile(info, named)
 	}
-	const line = `export PATH="$HOME/.openai/bin:$PATH"`
 	// A later PATH assignment can shadow an earlier copy of this line.
 	// Read only the tail, even when a generated profile is very large.
 	info, err = file.Stat()

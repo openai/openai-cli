@@ -95,6 +95,18 @@ nfpms:
         dst: /usr/share/fish/vendor_conf.d/openai-picker.fish
         file_info:
           mode: 0644
+      - src: install.sh
+        dst: /usr/share/openai-cli/install.sh
+        packager: deb
+      - src: openai-enable-updates.sh
+        dst: /usr/share/openai-cli/enable-updates.sh
+        packager: deb
+      - src: install.sh
+        dst: /usr/share/openai-cli/install.sh
+        packager: rpm
+      - src: openai-enable-updates.sh
+        dst: /usr/share/openai-cli/enable-updates.sh
+        packager: rpm
 homebrew_casks:
   - name: openai
     repository:

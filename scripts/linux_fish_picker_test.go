@@ -39,6 +39,13 @@ func TestLinuxFishPickerPackageArtifacts(t *testing.T) {
 		"man/man1/openai.1.gz":           "synthetic manual",
 		"completions/picker/openai.fish": picker,
 	}
+	for _, helper := range []string{"install.sh", "openai-enable-updates.sh"} {
+		data, err := os.ReadFile(filepath.Join("..", helper))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[helper] = string(data)
+	}
 	for relative, data := range files {
 		path := filepath.Join(root, relative)
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
