@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/charmbracelet/x/term"
 	"golang.org/x/sys/windows"
@@ -168,16 +169,92 @@ func TestMainWindowsArchiveConsoleOwner(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, target, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = input, output, output
-	if err := cmd.Run(); err != nil {
-		t.Fatal(err)
-	}
+	runErr := cmd.Run()
 	if path := os.Getenv("OPENAI_ARCHIVE_TEST_SCREEN"); path != "" {
-		screen, err := readOutputConsole(output)
-		if err != nil {
-			t.Fatal(err)
+		var screen string
+		if mode == "install" {
+			cells, width, err := readOutputConsoleCells(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			screen = windowsArchiveConsoleRows(cells, width)
+		} else {
+			// API and confirmation checks search the continuous screen text.
+			screen, err = readOutputConsole(output)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 		if err := os.WriteFile(path, []byte(screen), 0600); err != nil {
 			t.Fatal(err)
 		}
+		if mode == "install" {
+			statuses, err := windowsInstallerTranscript(screen)
+			if runErr != nil || err != nil {
+				t.Fatalf("Install.cmd exit=%v; status=%v; recognized=%q", runErr, err, statuses)
+			}
+		}
+	}
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+}
+
+// ReadConsoleOutputCharacterW returns adjacent UTF-16 cells without newlines.
+// Recover physical rows before decoding: a surrogate pair occupies two cells.
+func windowsArchiveConsoleRows(cells []uint16, width int) string {
+	var screen strings.Builder
+	for len(cells) > 0 {
+		n := min(width, len(cells))
+		screen.WriteString(strings.TrimRight(string(utf16.Decode(cells[:n])), " "))
+		screen.WriteByte('\n')
+		cells = cells[n:]
+	}
+	return screen.String()
+}
+
+const (
+	windowsInstallStart = "Installing OpenAI CLI for your account..."
+	windowsInstallDone  = "OpenAI CLI setup finished."
+)
+
+func windowsInstallerTranscript(screen string) ([]string, error) {
+	var statuses []string
+	visible := 0
+	for _, row := range strings.Split(screen, "\n") {
+		line := strings.TrimSpace(row)
+		if line != "" {
+			visible++
+		}
+		if line == windowsInstallStart || line == windowsInstallDone {
+			statuses = append(statuses, line)
+		}
+	}
+	if len(statuses) != 2 || statuses[0] != windowsInstallStart || statuses[1] != windowsInstallDone {
+		// Include only known text and counts. Other rows can contain paths.
+		return statuses[:min(len(statuses), 4)], fmt.Errorf("expected one start then one finish; observed %d visible rows, %d recognized, %d start text matches, %d finish text matches", visible, len(statuses), strings.Count(screen, windowsInstallStart), strings.Count(screen, windowsInstallDone))
+	}
+	return statuses, nil
+}
+
+// Capture both stdout and stderr from a new native console without any input.
+func TestMainWindowsArchiveConsoleCapture(t *testing.T) {
+	work := t.TempDir()
+	launcher := filepath.Join(work, "Install.cmd")
+	const detail = "synthetic installer detail"
+	script := "@echo off\r\necho " + windowsInstallStart + "\r\necho " + detail + " 1>&2\r\necho " + windowsInstallDone + "\r\nexit /b 0\r\n"
+	if err := os.WriteFile(launcher, []byte(script), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	capture := filepath.Join(work, "screen.txt")
+	runWindowsUpdateConsole(t, ctx, launcher, work, append(os.Environ(), "OPENAI_ARCHIVE_TEST_MODE=install", "OPENAI_ARCHIVE_TEST_SCREEN="+capture))
+	screen, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(screen), windowsInstallStart+"\n"+detail+"\n"+windowsInstallDone+"\n") {
+		t.Fatal("real console failed to preserve separate stdout and stderr rows")
 	}
 }

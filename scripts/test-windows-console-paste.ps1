@@ -25,19 +25,28 @@ function global:PSConsoleHostReadLine {
         return [IO.File]::ReadAllText($env:OPENAI_WINDOWS_PASTE_TEXT)
     }
     if ($global:reads -eq 2) {
-        return 'if ($Error.Count -or $LASTEXITCODE -ne 0 -or (Get-Command openai).Path -ine $env:OPENAI_WINDOWS_MANAGED_EXE) {exit 33}; $v=openai --version; if ($LASTEXITCODE -ne 0 -or $v -cne $env:OPENAI_WINDOWS_STARTER_VERSION) {exit 34}; exit 0'
+        return 'if ($Error.Count -or $LASTEXITCODE -ne 0 -or (Get-Command openai).Path -ine $env:OPENAI_WINDOWS_MANAGED_EXE) {exit 33}; $v=openai --version; if ($LASTEXITCODE -ne 0 -or $v -cne $env:OPENAI_WINDOWS_STARTER_VERSION) {exit 34}; [IO.File]::WriteAllText($env:OPENAI_WINDOWS_PASTE_RECEIPT,$env:OPENAI_WINDOWS_PASTE_CHALLENGE); exit 0'
     }
     return 'exit 35'
 }
 '@
     $argsText = '-NoLogo -NoProfile -NoExit -ExecutionPolicy Restricted -Command "'+$driver+'"'
     $capture = [IO.Path]::GetTempFileName()
+    $receipt = [IO.Path]::GetTempFileName()
+    $challenge = [guid]::NewGuid().ToString('N')
+    $priorReceipt = $env:OPENAI_WINDOWS_PASTE_RECEIPT
+    $priorChallenge = $env:OPENAI_WINDOWS_PASTE_CHALLENGE
     try {
+        $env:OPENAI_WINDOWS_PASTE_RECEIPT = $receipt
+        $env:OPENAI_WINDOWS_PASTE_CHALLENGE = $challenge
         $terminal = Start-Process $Client -ArgumentList $argsText -WindowStyle Hidden -RedirectStandardError $capture -PassThru
         try {
             if (!$terminal.WaitForExit(300000)) {$terminal.Kill(); throw 'The public ConsoleHost paste timed out.'}
             if ($terminal.ExitCode -ne 0) {throw "The public ConsoleHost paste failed with code $($terminal.ExitCode)."}
         } finally {$terminal.Dispose()}
+        if (!(Test-Path -LiteralPath $receipt -PathType Leaf) -or [IO.File]::ReadAllText($receipt) -cne $challenge) {
+            throw 'The ConsoleHost paste exited before its executable and version checks finished.'
+        }
         if ($ExpectOneVerifierDownload) {
             $lines = [IO.File]::ReadAllLines($capture)
             if (@($lines -ceq 'Downloading the pinned GitHub CLI verifier...').Count -ne 1 -or
@@ -45,4 +54,9 @@ function global:PSConsoleHostReadLine {
                 throw 'A fresh setup must download GitHub CLI exactly once.'
             }
         }
-    } finally {[IO.File]::Delete($capture)}
+    } finally {
+        $env:OPENAI_WINDOWS_PASTE_RECEIPT = $priorReceipt
+        $env:OPENAI_WINDOWS_PASTE_CHALLENGE = $priorChallenge
+        [IO.File]::Delete($receipt)
+        [IO.File]::Delete($capture)
+    }

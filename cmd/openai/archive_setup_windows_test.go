@@ -255,15 +255,9 @@ if ((Get-Command openai).Path -ine $env:ARCHIVE_OLD) {throw 'wrong initial selec
 	if err != nil {
 		t.Fatal(err)
 	}
-	var transcript []string
-	for _, line := range strings.Split(strings.ReplaceAll(string(output), "\r\n", "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "Installing OpenAI CLI for your account..." || line == "OpenAI CLI setup finished." {
-			transcript = append(transcript, line)
-		}
-	}
-	if len(transcript) != 2 || transcript[0] != "Installing OpenAI CLI for your account..." || transcript[1] != "OpenAI CLI setup finished." {
-		t.Fatal("Explorer installer omitted its status")
+	transcript, err := windowsInstallerTranscript(string(output))
+	if err != nil {
+		t.Fatal(err)
 	}
 	marker, err := os.ReadFile(managed + ":Zone.Identifier")
 	if err != nil || string(marker) != restrictedZone {

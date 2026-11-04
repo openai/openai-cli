@@ -94,11 +94,11 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Native archive security or executable-lock tests failed.' }
         $env:OPENAI_CLI_NATIVE_SHELL_BINARY = Join-Path $root 'openai.exe'
         $env:OPENAI_CLI_NATIVE_SHELL_SHA256 = (Get-FileHash -Path $env:OPENAI_CLI_NATIVE_SHELL_BINARY -Algorithm SHA256).Hash.ToLowerInvariant()
-        & "$root/archive.test.exe" '-test.run=^TestMainWindowsArchiveInstallHelp$' '-test.v'
+        & "$root/archive.test.exe" '-test.run=^TestMainWindowsArchive(InstallHelp|ConsoleCapture)$' '-test.v'
         $helpResult = $LASTEXITCODE
         Remove-Item Env:OPENAI_CLI_NATIVE_SHELL_BINARY, Env:OPENAI_CLI_NATIVE_SHELL_SHA256
         $LASTEXITCODE = $helpResult
-        if ($LASTEXITCODE -ne 0) { throw 'Native install command help or error handling failed.' }
+        if ($LASTEXITCODE -ne 0) { throw 'Native install command help, error handling, or console capture failed.' }
         if ($goarch -eq 'amd64') {
             $priorArch = $env:GOARCH
             try {
@@ -169,17 +169,39 @@ $section = [regex]::Match($guide, '(?ms)^## Windows\r?\n(.*?)(?=^## |\z)').Group
 $blocks = [regex]::Matches($section, '(?ms)^```powershell\r?\n(.*?)^```\r?$')
 if ($blocks.Count -ne 1) {throw 'Cannot identify the documented extracted-ZIP paste.'}
 $text = [IO.Path]::GetTempFileName()
+$early = [IO.Path]::GetTempFileName()
 try {
+    [IO.File]::WriteAllText($early,'exit 0')
     [IO.File]::WriteAllText($text,$blocks[0].Groups[1].Value,[Text.UTF8Encoding]::new($false))
     Push-Location $extracted
     try {
         $managed = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe'
         foreach ($client in 'powershell.exe','pwsh.exe') {
             $shell = (Get-Command $client -CommandType Application | Select-Object -First 1).Path
-            & "$PSScriptRoot/test-windows-console-paste.ps1" -Client $shell -TextPath $text -ExpectedExe $managed -ExpectedVersion ('openai version '+$fixtureTag.Substring(1))
+            $params = @{Client=$shell; ExpectedExe=$managed; ExpectedVersion=('openai version '+$fixtureTag.Substring(1))}
+            try {
+                & "$PSScriptRoot/test-windows-console-paste.ps1" @params -TextPath $early
+                throw 'Premature ConsoleHost exit passed qualification.'
+            } catch {
+                if ($_.Exception.Message -cne 'The ConsoleHost paste exited before its executable and version checks finished.') {
+                    Add-Content -LiteralPath "$PSScriptRoot/results/test.log" -Value "$client early-exit control failed."
+                    throw
+                }
+            }
+            try {
+                & "$PSScriptRoot/test-windows-console-paste.ps1" @params -TextPath $text
+            } catch {
+                $reason = 'driver failed'
+                if ($_.Exception.Message -match '^The public ConsoleHost paste failed with code (-?[0-9]+)\.$') {$reason = "exit $($Matches[1])"}
+                if ($_.Exception.Message -ceq 'The public ConsoleHost paste timed out.') {$reason = 'timeout'}
+                if ($_.Exception.Message -ceq 'The ConsoleHost paste exited before its executable and version checks finished.') {$reason = 'missing completion receipt'}
+                Add-Content -LiteralPath "$PSScriptRoot/results/test.log" -Value "$client Restricted paste failed ($reason)."
+                throw
+            }
+            Add-Content -LiteralPath "$PSScriptRoot/results/test.log" -Value "$client Restricted paste verified the managed executable and version."
         }
     } finally {Pop-Location}
-} finally {[IO.File]::Delete($text)}
+} finally {[IO.File]::Delete($text); [IO.File]::Delete($early)}
 exit 0
 '@ | Set-Content -LiteralPath "$root/ordinary.ps1" -Encoding utf8
     $credential = New-Object System.Management.Automation.PSCredential(".\$account", $secret)
@@ -192,6 +214,12 @@ exit 0
         if ($child.ExitCode -ne 0 -or !$log.Contains('--- PASS: ' + $expected)) {
             throw 'The standard-user entrypoint qualification did not pass.'
         }
+        if ($expected -ceq 'TestMainWindowsArchiveOrdinarySetup') {
+            foreach ($client in 'powershell.exe','pwsh.exe') {
+                $marker = "$client Restricted paste verified the managed executable and version."
+                if (@(($log -split '\r?\n') -ceq $marker).Count -ne 1) {throw "Missing $client documented paste verification."}
+            }
+        }
     }
     if ($published) {
         Invoke-StandardQualification 'TestMainWindowsArchivePublishedUpgrade'
@@ -200,7 +228,11 @@ exit 0
         # Place one inert fixture beside an installed CI tool. Never modify
         # machine PATH, pre-existing programs, or Windows system directories.
         $originalMachinePath = [Environment]::GetEnvironmentVariable('Path','Machine')
-        $machineEntries = [Environment]::ExpandEnvironmentVariables($originalMachinePath) -split ';'
+        $machineEntries = @([Environment]::ExpandEnvironmentVariables($originalMachinePath) -split ';' | ForEach-Object {
+            $entry = $_.Trim()
+            if ($entry -match '^"([^"]*)"$') {$entry = $Matches[1]}
+            $entry.TrimEnd('\','/')
+        })
         $directories = foreach ($tool in 'gh.exe','git.exe','pwsh.exe') {
             $cmd = Get-Command -CommandType Application -Name $tool -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($cmd) { [IO.Path]::GetDirectoryName($cmd.Path) }

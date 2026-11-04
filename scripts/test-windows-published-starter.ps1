@@ -66,7 +66,16 @@ function Invoke-PublishedLauncher($trusted) {
         $owner = Start-Process (Join-Path $PSScriptRoot 'archive.test.exe') -WorkingDirectory $extracted -ArgumentList $arguments -WindowStyle Hidden -PassThru
         try {
             if (!$owner.WaitForExit(180000)) {$owner.Kill(); throw 'The public Install.cmd did not finish without a keypress.'}
-            if ($owner.ExitCode -ne 0) {throw 'The authenticated public Install.cmd failed.'}
+            if ($owner.ExitCode -ne 0) {
+                $detail = 'no console capture'
+                if (Test-Path -LiteralPath $env:OPENAI_ARCHIVE_TEST_SCREEN) {
+                    $rows = [IO.File]::ReadAllLines($env:OPENAI_ARCHIVE_TEST_SCREEN)
+                    $starts = @($rows -ceq 'Installing OpenAI CLI for your account...').Count
+                    $finishes = @($rows -ceq 'OpenAI CLI setup finished.').Count
+                    $detail = "start rows=$starts, finish rows=$finishes"
+                }
+                throw "The authenticated public Install.cmd failed (exit $($owner.ExitCode), $detail)."
+            }
         } finally {$owner.Dispose()}
         $screen = [IO.File]::ReadAllText($env:OPENAI_ARCHIVE_TEST_SCREEN)
         foreach ($line in 'Installing OpenAI CLI for your account...','OpenAI CLI setup finished.') {
