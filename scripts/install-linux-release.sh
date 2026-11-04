@@ -7,6 +7,55 @@ linux_release_uptime() {
   printf '%s\n' "${uptime%%.*}"
 }
 
+# Confirm the selected package is actually installed before the caller can enroll its helper.
+linux_release_verified_version() (
+  set -euo pipefail
+  # Check only the files the caller will use. A changed manual does not affect enrollment.
+  incompatible() { printf '%s\n' 'OpenAI CLI: Keeping the installed system package. Could not verify its automatic-update helper.' >&2; exit 1; }
+  local format=$1 name=$2 package=$3 transaction=$4 current control canonical=''
+  current=$(/bin/sh -eu -c "$transaction" sh "$name" '' "$format" check "$package") || exit 1
+  [[ $current == current ]] || incompatible
+  if [[ $format == deb ]]; then
+    receipts=$(dpkg-query --control-show openai md5sums) || incompatible
+    package_version=$(dpkg-query -W -f='${Version}' openai) || incompatible
+    expected_version=$(dpkg-deb --field "$package" Version) || incompatible
+    if dpkg --compare-versions "$package_version" eq "$expected_version"; then
+      # APT can keep different same-version bytes. Check the three trusted files against the downloaded DEB.
+      control=$(mktemp -d "${package%/*}/control.XXXXXXXX") || incompatible
+      dpkg-deb --control "$package" "$control" || incompatible
+      canonical=$control/md5sums
+      [[ -f $canonical ]] || incompatible
+    fi
+    checksum=md5sum
+  else
+    receipts=$(rpm -q --queryformat '[%{FILEDIGESTS}  %{FILENAMES}\n]' openai) || incompatible
+    package_version=$(rpm -q --queryformat '%{VERSION}' openai) || incompatible
+    case $(rpm -q --queryformat '%{FILEDIGESTALGO}' openai) in
+      8) checksum=sha256sum ;; 10) checksum=sha512sum ;; *) incompatible ;;
+    esac
+  fi
+  receipt_hash='$2 == path && NF == 2 {hash=$1; n++} END {if (n != 1) exit 1; print hash}'
+  for file in /usr/bin/openai /usr/share/openai-cli/install.sh /usr/share/openai-cli/enable-updates.sh; do
+    [[ -n $(find "$file" -prune -type f -user 0 ! -perm -020 ! -perm -002 -size +0 -print) ]] || incompatible
+    key=$file
+    if [[ $format == deb ]]; then key=${file#/}; fi
+    digest=$(awk -v path="$key" "$receipt_hash" <<< "$receipts") || incompatible
+    if [[ -n $canonical ]]; then
+      expected=$(awk -v path="$key" "$receipt_hash" "$canonical") || incompatible
+      [[ $digest == "$expected" ]] || incompatible
+    fi
+    printf '%s  %s\n' "$digest" "$file" | "$checksum" --check --status || incompatible
+  done
+  cli=(env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 /usr/bin/openai)
+  version=$("${cli[@]}" --version) || incompatible
+  release=${version#'openai version '}
+  [[ $version == "openai version $release" && v$release =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || incompatible
+  if [[ $format == deb ]]; then package_version=${package_version#*:}; fi
+  [[ $package_version == "$release" || $format == deb && $package_version == "$release"-* ]] || incompatible
+  [[ $("${cli[@]}" __openai_linux_package_starter "$release") == ready ]] || incompatible
+  printf '%s\n' "$release"
+)
+
 install_linux_release() (
   set -euo pipefail
   caller_umask=$(umask)
@@ -184,7 +233,8 @@ RPM
         0:installed\ *)
           version=$(dpkg-deb --field "$package" Version) || fail 'Could not read the verified Debian package version.'
           dpkg --compare-versions "${receipt#* }" ge "$version" ;;
-        0:*) fail 'The installed Debian package needs repair.' ;;
+        0:unpacked\ *|0:half-installed\ *|0:half-configured\ *|0:triggers-awaited\ *|0:triggers-pending\ *) return 1 ;;
+        0:*) fail 'Could not determine the installed Debian package state.' ;;
         *) fail 'Could not read the package database.' ;;
       esac
     }
@@ -203,7 +253,9 @@ RPM
     rc=0
     if [ "$3" = deb ]; then
       apt install --yes --no-remove --no-allow-downgrades "$package" || rc=$?
-      if [ "$rc" -ne 0 ] && deb_state; then exit 76; fi
+      # Only an independently installed newer version can satisfy a rejected downgrade.
+      # An error after APT installed this version must keep its native status.
+      if [ "$rc" -ne 0 ] && deb_state && dpkg --compare-versions "${receipt#* }" gt "$version"; then exit 76; fi
       exit "$rc"
     fi
 
@@ -265,38 +317,13 @@ TRANSACTION
     printf 'Verified %s. Installing the package...\n' "$name" >&2
     rc=0
     (umask "$caller_umask"; sudo /bin/sh -eu -c "$transaction" sh "$name" "$digest" "$format" install) < "$work/package" || rc=$?
-    [[ $rc == 76 ]] || exit "$rc"
-    installed=$( /bin/sh -eu -c "$transaction" sh "$name" "$digest" "$format" check "$work/package" ) || exit 1
-    [[ $installed == current ]] || exit "$rc"
+    case "$rc" in 0) ;; 76) installed=current ;; *) exit "$rc" ;; esac
   fi
 
-  # Check only the files the caller will use. A changed manual does not affect enrollment.
-  incompatible() { fail 'Keeping the installed system package. Could not verify its automatic-update helper.'; }
-  if [[ $format == deb ]]; then
-    receipts=$(dpkg-query --control-show openai md5sums) || incompatible
-    package_version=$(dpkg-query -W -f='${Version}' openai) || incompatible
-    checksum=md5sum
-  else
-    receipts=$(rpm -q --queryformat '[%{FILEDIGESTS}  %{FILENAMES}\n]' openai) || incompatible
-    package_version=$(rpm -q --queryformat '%{VERSION}' openai) || incompatible
-    case $(rpm -q --queryformat '%{FILEDIGESTALGO}' openai) in
-      8) checksum=sha256sum ;; 10) checksum=sha512sum ;; *) incompatible ;;
-    esac
+  release=$(linux_release_verified_version "$format" "$name" "$work/package" "$transaction") || exit 1
+  if [[ $installed == current ]]; then
+    printf 'Keeping the installed OpenAI CLI %s and its verified automatic-update helper.\n' "$release" >&2
   fi
-  for file in /usr/bin/openai /usr/share/openai-cli/install.sh /usr/share/openai-cli/enable-updates.sh; do
-    [[ -n $(find "$file" -prune -type f -user 0 ! -perm -020 ! -perm -002 -size +0 -print) ]] || incompatible
-    key=$file
-    if [[ $format == deb ]]; then key=${file#/}; fi
-    digest=$(awk -v path="$key" '$2 == path && NF == 2 {hash=$1; n++} END {if (n != 1) exit 1; print hash}' <<< "$receipts") || incompatible
-    printf '%s  %s\n' "$digest" "$file" | "$checksum" --check --status || incompatible
-  done
-  cli=(env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 /usr/bin/openai)
-  version=$("${cli[@]}" --version) || incompatible
-  release=${version#'openai version '}
-  [[ $version == "openai version $release" && v$release =~ $stable ]] || incompatible
-  [[ $package_version == "$release" || $format == deb && $package_version == "$release"-* ]] || incompatible
-  [[ $("${cli[@]}" __openai_linux_package_starter "$release") == ready ]] || incompatible
-  printf 'Keeping the installed OpenAI CLI %s and its verified automatic-update helper.\n' "$release" >&2
 )
 
 if [[ -z ${BASH_SOURCE[0]:-} || ${BASH_SOURCE[0]} == "$0" ]]; then
