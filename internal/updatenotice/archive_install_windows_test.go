@@ -105,14 +105,14 @@ func TestWindowsArchiveInstallPreservesDownloadZone(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := copyWindowsDownloadZone(source, target); err != nil {
+	if err := preserveWindowsDownloadZone(target, 0, source); err != nil {
 		t.Fatal(err)
 	}
 	const marking = "[ZoneTransfer]\r\nZoneId=3\r\n"
 	if err := os.WriteFile(source+":Zone.Identifier", []byte(marking), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyWindowsDownloadZone(source, target); err != nil {
+	if err := preserveWindowsDownloadZone(target, 0, source); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(target + ":Zone.Identifier")
@@ -131,7 +131,7 @@ func TestWindowsArchiveInstallPreservesDownloadZone(t *testing.T) {
 		if err := os.WriteFile(source+":Zone.Identifier", []byte(item.raw), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if err := copyWindowsDownloadZone(source, target); err != nil {
+		if err := preserveWindowsDownloadZone(target, 0, source); err != nil {
 			t.Fatal(err)
 		}
 		got, err := os.ReadFile(target + ":Zone.Identifier")
@@ -142,11 +142,29 @@ func TestWindowsArchiveInstallPreservesDownloadZone(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := os.WriteFile(source+":Zone.Identifier", []byte(windowsZoneMarker(3)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target+":Zone.Identifier", []byte(windowsZoneMarker(4)+"HostUrl=https://fixture.invalid/private\r\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := preserveWindowsDownloadZone(target, 3, source); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(target + ":Zone.Identifier")
+		if err != nil || string(got) != windowsZoneMarker(4) {
+			t.Fatal("repeat verification lowered or exposed the existing zone", err)
+		}
+	}
+	if err := os.Remove(target + ":Zone.Identifier"); err != nil {
+		t.Fatal(err)
+	}
 	oversized := bytes.Repeat([]byte("z"), maxWindowsZoneBytes+1)
 	if err := os.WriteFile(source+":Zone.Identifier", oversized, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyWindowsDownloadZone(source, target); err == nil {
+	if err := preserveWindowsDownloadZone(target, 0, source); err == nil {
 		t.Fatal("accepted excessive security metadata")
 	}
 	if _, err := os.Open(target + ":Zone.Identifier"); !errors.Is(err, os.ErrNotExist) {

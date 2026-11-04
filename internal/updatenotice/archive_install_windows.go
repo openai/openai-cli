@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -270,17 +271,12 @@ func copyWindowsArchive(ctx context.Context, cache *noticeCache, source *os.File
 	if closeErr != nil {
 		return closeErr
 	}
-	if err := copyWindowsDownloadZone(sourcePath, stagePath); err != nil {
-		return fmt.Errorf("preserve the Windows download security zone: %w", err)
-	}
+	sources := []string{sourcePath}
 	if previous != nil {
-		if _, err := os.Stat(stagePath + ":Zone.Identifier"); errors.Is(err, os.ErrNotExist) {
-			if err := copyWindowsDownloadZone(target, stagePath); err != nil {
-				return err
-			}
-		} else if err != nil {
-			return err
-		}
+		sources = append(sources, target)
+	}
+	if err := preserveWindowsDownloadZone(stagePath, 0, sources...); err != nil {
+		return fmt.Errorf("preserve the Windows download security zone: %w", err)
 	}
 	receipt, err := os.OpenFile(stagePath+windowsArchiveReceiptStream, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
@@ -357,56 +353,84 @@ func moveWindowsArchive(from, to string, flags uint32) error {
 // executable on failure, preserving the original stream and security zone.
 const maxWindowsZoneBytes = 1 << 20
 
-func copyWindowsDownloadZone(source, target string) error {
-	const zone = ":Zone.Identifier"
-	in, err := os.Open(source + zone)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
+// The source, an earlier installation, and a previously staged image can
+// each carry a stricter zone. Keep the strongest restriction. Only the zone
+// number travels to a new file, never the source address or referrer.
+func preserveWindowsDownloadZone(target string, minimum int, sources ...string) error {
+	existing, canonical, err := windowsDownloadZone(target)
 	if err != nil {
 		return err
+	}
+	required := max(minimum, existing)
+	for _, source := range sources {
+		zone, _, err := windowsDownloadZone(source)
+		if err != nil {
+			return err
+		}
+		required = max(required, zone)
+	}
+	if required == 0 || (existing == required && canonical) {
+		return nil
+	}
+	marker := windowsZoneMarker(required)
+	stream, err := os.OpenFile(target+":Zone.Identifier", os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(stream, marker)
+	if err == nil {
+		err = stream.Truncate(int64(len(marker)))
+	}
+	if err == nil {
+		err = stream.Sync()
+	}
+	if err = errors.Join(err, stream.Close()); err != nil {
+		return err
+	}
+	verified, canonical, err := windowsDownloadZone(target)
+	if err != nil {
+		return err
+	}
+	if verified != required || !canonical {
+		return errors.New("Windows did not preserve the download security zone")
+	}
+	return nil
+}
+
+func windowsZoneMarker(id int) string {
+	return "[ZoneTransfer]\r\nZoneId=" + strconv.Itoa(id) + "\r\n"
+}
+
+func windowsDownloadZone(path string) (id int, canonical bool, err error) {
+	in, err := os.Open(path + ":Zone.Identifier")
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
 	}
 	defer in.Close()
 	data, err := io.ReadAll(io.LimitReader(in, maxWindowsZoneBytes+1))
 	if err != nil {
-		return err
+		return 0, false, err
 	}
 	if len(data) > maxWindowsZoneBytes {
-		return errors.New("oversized Windows download security zone")
+		return 0, false, errors.New("oversized Windows download security zone")
 	}
-	// Forward only the restriction. Zone.Identifier can also contain a private
-	// referrer or a signed download URL. Recognize ASCII fields in UTF-16 too.
-	restricted := false
+	id = 3
+	// The Windows attachment manager can write UTF-16. Only inspect the
+	// ASCII zone field, and discard every other piece of attachment metadata.
 	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\x00", ""), "\n") {
 		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok && strings.EqualFold(strings.TrimSpace(key), "ZoneId") && strings.TrimSpace(value) == "4" {
-			restricted = true
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "ZoneId") {
+			continue
+		}
+		value, _, _ = strings.Cut(value, ";")
+		rank, err := strconv.ParseUint(strings.Trim(strings.TrimSpace(value), "'\""), 0, 8)
+		if err == nil && rank == 4 {
+			id = 4
 			break
 		}
 	}
-	return writeWindowsDownloadZone(target, restricted)
-}
-
-func writeWindowsDownloadZone(target string, restricted bool) error {
-	const zone = ":Zone.Identifier"
-	out, err := os.OpenFile(target+zone, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return err
-	}
-	id := "3"
-	if restricted {
-		id = "4"
-	}
-	_, err = io.WriteString(out, "[ZoneTransfer]\r\nZoneId="+id+"\r\n")
-	if err == nil {
-		err = out.Sync()
-	}
-	closeErr := out.Close()
-	if err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		_ = os.Remove(target + zone)
-	}
-	return err
+	return id, string(data) == windowsZoneMarker(id), nil
 }

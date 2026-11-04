@@ -8,6 +8,6 @@ if "%setup_status%"=="0" (
   echo OpenAI CLI setup finished.
 ) else (
   echo OpenAI CLI setup failed. See the installer message above. 1>&2
+  pause
 )
-pause
 exit /b %setup_status%

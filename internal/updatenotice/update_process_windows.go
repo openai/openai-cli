@@ -195,7 +195,7 @@ func pinWindowsWorker(ctx context.Context, installation *updateInstallation, cac
 	if !cache.validLock() || !installation.unchanged() {
 		return nil, errCache
 	}
-	if err := copyWindowsDownloadZone(installation.path, filepath.Join(cache.directory, "worker.tmp")); err != nil {
+	if err := preserveWindowsDownloadZone(filepath.Join(cache.directory, "worker.tmp"), 0, installation.path); err != nil {
 		return nil, err
 	}
 	if err = cache.root.Rename("worker.tmp", windowsWorkerImage); err != nil {
@@ -213,20 +213,14 @@ func pinWindowsWorker(ctx context.Context, installation *updateInstallation, cac
 }
 
 func preservePreparedImageTrust(cache *noticeCache) error {
-	target := filepath.Join(cache.directory, "next.tmp")
-	if err := copyWindowsDownloadZone(filepath.Join(filepath.Dir(cache.directory), "openai.exe"), target); err != nil {
-		return err
-	}
-	if _, err := os.Stat(target + ":Zone.Identifier"); !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return markDownloadedExecutable(target)
+	return preserveWindowsDownloadZone(filepath.Join(cache.directory, "next.tmp"), 3, filepath.Join(filepath.Dir(cache.directory), "openai.exe"))
+
 }
 
 // The updater receives these files from the public release service. Preserve
 // Windows attachment metadata even when a prior portable copy arrived unmarked.
 func markDownloadedExecutable(path string) error {
-	return writeWindowsDownloadZone(path, false)
+	return preserveWindowsDownloadZone(path, 3)
 }
 
 func sameUpdateDirectory(a, b string) bool { return sameWindowsName(a, b) }

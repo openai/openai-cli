@@ -139,7 +139,13 @@ func TestMainWindowsArchiveConsoleOwner(t *testing.T) {
 	}
 	mode := os.Getenv("OPENAI_ARCHIVE_TEST_MODE")
 	args := []string{"models", "retrieve", "fixture-model"}
-	if mode != "" {
+	if mode == "install" {
+		if !strings.EqualFold(filepath.Base(target), "Install.cmd") {
+			t.Fatal("invalid console installer")
+		}
+		args = []string{"/d", "/c", "Install.cmd"}
+		target = filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
+	} else if mode != "" {
 		selected, err := exec.LookPath("openai")
 		if err != nil || !strings.EqualFold(filepath.Clean(selected), filepath.Clean(target)) {
 			t.Fatal("fresh shell did not select the enrolled CLI", err)

@@ -199,6 +199,13 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 		t.Fatalf("initial older ZIP setup: %v %s", err, out)
 	}
 	verifyWindowsSetupWait(t, older, managed)
+	if err := os.WriteFile(managed+":Zone.Identifier", []byte("[ZoneTransfer]\r\nZoneId=4\r\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entry+":Zone.Identifier", []byte("[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://fixture.invalid/source\r\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
 	statePath := filepath.Join(filepath.Dir(managed), ".update", "state.json")
 	before, err := os.ReadFile(statePath)
 	if err != nil {
@@ -237,22 +244,30 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 	current := `$ErrorActionPreference='Stop'
 if ((Get-Command openai).Path -ine $env:ARCHIVE_OLD) {throw 'wrong initial selection'}
 ` + paste
-	click := exec.Command(filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe"), "/d", "/c", "Install.cmd")
-	click.Dir = extracted
-	click.Stdin = strings.NewReader("\r\n")
-	click.Env = append(os.Environ(), "HTTP_PROXY=http://127.0.0.1:9", "HTTPS_PROXY=http://127.0.0.1:9")
-	output, err := click.CombinedOutput()
+	// A successful Explorer setup must exit on its own. Both handles belong
+	// to a real console. No keypress is written to its input buffer.
+	ctxClick, cancelClick := context.WithTimeout(t.Context(), 35*time.Second)
+	defer cancelClick()
+	screen := filepath.Join(area, "install-console.txt")
+	envClick := append(os.Environ(), "OPENAI_ARCHIVE_TEST_MODE=install", "OPENAI_ARCHIVE_TEST_SCREEN="+screen, "HTTP_PROXY=http://127.0.0.1:9", "HTTPS_PROXY=http://127.0.0.1:9")
+	runWindowsUpdateConsole(t, ctxClick, installer, extracted, envClick)
+	output, err := os.ReadFile(screen)
 	if err != nil {
-		t.Fatal("Explorer installer failed", err)
+		t.Fatal(err)
 	}
 	var transcript []string
 	for _, line := range strings.Split(strings.ReplaceAll(string(output), "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
 		if line == "Installing OpenAI CLI for your account..." || line == "OpenAI CLI setup finished." {
 			transcript = append(transcript, line)
 		}
 	}
 	if len(transcript) != 2 || transcript[0] != "Installing OpenAI CLI for your account..." || transcript[1] != "OpenAI CLI setup finished." {
 		t.Fatal("Explorer installer omitted its status")
+	}
+	marker, err := os.ReadFile(managed + ":Zone.Identifier")
+	if err != nil || string(marker) != "[ZoneTransfer]\r\nZoneId=4\r\n" {
+		t.Fatal("explicit re-enrollment lowered the previous download zone", err)
 	}
 	t.Logf("Windows ZIP after (candidate archive)\n> Install.cmd\n%s\nExit 0", strings.Join(transcript, "\n"))
 	var token windows.Token

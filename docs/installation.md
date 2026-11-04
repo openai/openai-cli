@@ -74,13 +74,16 @@ Other systems can use the [Linux tarball](#installing-a-prebuilt-binary).
 Download the Windows ZIP from **Assets** in the latest stable release with downloads. [Release downloads](https://github.com/openai/openai-cli/releases)
 Choose `windows_amd64.zip` for a 64-bit Intel or AMD PC, `windows_arm64.zip` for ARM64, or `windows_386.zip` for 32-bit Windows.
 
-In File Explorer, select **Extract All**. Open the extracted folder. Double-click **Install.cmd**.
+In File Explorer, select **Extract All**. Open the extracted folder.
+If it contains **Install.cmd**, double-click **Install.cmd**.
 Setup enables automatic updates for your account. The installer reports any conflict with the system PATH.
+
+For an older ZIP without **Install.cmd**, open PowerShell in the extracted folder and run `.\openai.exe --help`.
 
 <details>
 <summary>Use an existing PowerShell window</summary>
 
-To select the CLI in an existing PowerShell, open the extracted directory and paste this block.
+For a ZIP with **Install.cmd**, this block also selects the managed CLI in your existing PowerShell.
 
 ```powershell
 & {
@@ -107,6 +110,7 @@ If you prefer a portable copy, use `.\openai.exe` directly from the extracted di
 <details>
 <summary>Download the matching ZIP automatically</summary>
 
+The setup recipe requires a published Windows ZIP that contains **Install.cmd**.
 Open the [PowerShell setup recipe](../scripts/install-windows-release.ps1). Select **Copy raw file**.
 Paste it into an ordinary PowerShell window. Setup downloads the correct Windows ZIP and checks its publisher before installation.
 It selects the managed CLI in this PowerShell and adds the CLI to your user PATH.
