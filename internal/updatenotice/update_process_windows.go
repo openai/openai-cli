@@ -213,7 +213,25 @@ func pinWindowsWorker(ctx context.Context, installation *updateInstallation, cac
 }
 
 func preservePreparedImageTrust(cache *noticeCache) error {
-	return copyWindowsDownloadZone(filepath.Join(filepath.Dir(cache.directory), "openai.exe"), filepath.Join(cache.directory, "next.tmp"))
+	target := filepath.Join(cache.directory, "next.tmp")
+	if err := copyWindowsDownloadZone(filepath.Join(filepath.Dir(cache.directory), "openai.exe"), target); err != nil {
+		return err
+	}
+	if _, err := os.Stat(target + ":Zone.Identifier"); !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return markDownloadedExecutable(target)
+}
+
+// The updater receives these files from the public release service. Preserve
+// Windows attachment metadata even when a prior portable copy arrived unmarked.
+func markDownloadedExecutable(path string) error {
+	zone, err := os.OpenFile(path+":Zone.Identifier", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, writeErr := io.WriteString(zone, "[ZoneTransfer]\r\nZoneId=3\r\n")
+	return errors.Join(writeErr, zone.Sync(), zone.Close())
 }
 
 func sameUpdateDirectory(a, b string) bool { return sameWindowsName(a, b) }

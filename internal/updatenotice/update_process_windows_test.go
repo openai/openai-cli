@@ -358,6 +358,10 @@ func TestWindowsArchivePrivateVerifier(t *testing.T) {
 			t.Fatal("incorrect private verifier bytes", err)
 		}
 	}
+	zone, err := os.ReadFile(filepath.Join(store.Name(), "fixture-gh.exe") + ":Zone.Identifier")
+	if err != nil || !bytes.Contains(zone, []byte("ZoneId=3")) {
+		t.Fatal("downloaded private verifier lost its Internet zone", err)
+	}
 	if calls != 1 {
 		t.Fatalf("expected one verifier download across reruns, got %d", calls)
 	}

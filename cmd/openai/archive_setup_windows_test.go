@@ -3,14 +3,19 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -154,6 +159,7 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 		cmd.Env = append(os.Environ(), "HTTP_PROXY=http://127.0.0.1:9", "HTTPS_PROXY=http://127.0.0.1:9", "NO_PROXY=localhost,127.0.0.1")
 		return cmd.CombinedOutput()
 	}
+	verifyWindowsVerifierDownloadProgress(t, older, area)
 	const olderVersion = "openai version 0.0.1"
 	wantVersion := "openai version " + app.Version
 	if out, err := exec.Command(older, "--version").Output(); err != nil || strings.TrimSpace(string(out)) != olderVersion {
@@ -162,6 +168,7 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 	if out, err := setup(older); err != nil || !strings.EqualFold(strings.TrimSpace(string(out)), managed) {
 		t.Fatalf("initial older ZIP setup: %v %s", err, out)
 	}
+	verifyWindowsSetupWait(t, older, managed)
 	statePath := filepath.Join(filepath.Dir(managed), ".update", "state.json")
 	before, err := os.ReadFile(statePath)
 	if err != nil {
@@ -303,4 +310,69 @@ throw 'setup silently replaced or ignored the conflicting alias'
 		t.Fatal("new ZIP lacks the expected managed receipt", err)
 	}
 	verifyWindowsOrdinaryUpdateAdmission(t, managed)
+}
+
+func verifyWindowsVerifierDownloadProgress(t *testing.T, exe, area string) {
+	t.Helper()
+	release := make(chan struct{})
+	requested := make(chan string, 1)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		select {
+		case requested <- req.Method + " " + req.Host:
+		default:
+		}
+		<-release
+		http.Error(w, "offline fixture", http.StatusServiceUnavailable)
+	}))
+	defer proxy.Close()
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe, "install", "--user")
+	cmd.Env = append(os.Environ(), "PATH="+area, "HTTP_PROXY="+proxy.URL, "HTTPS_PROXY="+proxy.URL, "NO_PROXY=")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	diag, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	seen, totals := make(chan struct{}, 1), make(chan int, 1)
+	go func() {
+		scan := bufio.NewScanner(diag)
+		count := 0
+		for scan.Scan() {
+			if scan.Text() == "Downloading GitHub CLI for automatic update verification..." {
+				count++
+				if count == 1 {
+					seen <- struct{}{}
+				}
+			}
+		}
+		totals <- count
+	}()
+	select {
+	case <-seen:
+	case <-ctx.Done():
+		unblock()
+		cmd.Wait()
+		t.Fatal("native setup withheld progress while the download was active")
+	}
+	select {
+	case destination := <-requested:
+		if destination != "CONNECT github.com:443" {
+			t.Error("unexpected verifier download destination")
+		}
+	case <-ctx.Done():
+		t.Error("the installer never attempted its announced verifier download")
+	}
+	unblock()
+	count := <-totals
+	if err := cmd.Wait(); err == nil || count != 1 || out.Len() != 0 {
+		t.Fatal("failed enrollment must report one download start and no installed path")
+	}
 }

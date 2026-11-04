@@ -15,36 +15,34 @@ import (
 
 // Windows constructs a new user's PATH from the machine value followed by the
 // user value. Updating HKCU cannot override a package earlier on the machine PATH.
-func registerWindowsUserPath(bin string) error {
+func registerWindowsUserPath(bin string) (bool, error) {
 	if strings.ContainsAny(bin, ";%") {
-		return windowsSetupMessage(`the installation path contains a PATH separator or expansion character. Run & (Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe')`)
+		return false, windowsSetupMessage(`the installation path contains a PATH separator or expansion character. Run & (Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe')`)
 	}
 	system, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\Session Manager\Environment`, registry.QUERY_VALUE)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer system.Close()
 	machinePath, kind, err := system.GetStringValue("Path")
 	if err != nil && !errors.Is(err, registry.ErrNotExist) {
-		return err
+		return false, err
 	}
 	if kind == registry.EXPAND_SZ {
 		machinePath, err = registry.ExpandString(machinePath)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
-	if windowsMachinePathConflict(machinePath, bin, os.Getenv("PATHEXT")) {
-		return windowsSetupMessage(`a machine PATH command takes precedence in new terminals. Run & (Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe')`)
-	}
+	conflict := windowsMachinePathConflict(machinePath, bin, os.Getenv("PATHEXT"))
 	user, _, err := registry.CreateKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE|registry.SET_VALUE)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer user.Close()
 	changed, err := prependWindowsUserPath(user, bin)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if changed {
 		// Existing terminal processes retain their environment. Explorer listens
@@ -56,7 +54,7 @@ func registerWindowsUserPath(bin string) error {
 		const smtoAbortIfHung = 2
 		broadcast.Call(hwndBroadcast, wmSettingChange, 0, uintptr(unsafe.Pointer(environment)), smtoAbortIfHung, 250, 0)
 	}
-	return nil
+	return conflict, nil
 }
 
 func windowsMachinePathConflict(machinePath, bin, pathExt string) bool {

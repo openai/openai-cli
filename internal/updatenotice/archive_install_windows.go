@@ -93,7 +93,7 @@ func installWindowsArchive(ctx context.Context) (string, error) {
 	if checkWindowsUpdateHandle(executable, false, false) != nil || !binaryIdentity(executable, releaseVersion, releaseCommit) {
 		return "", windowsSetupMessage("setup requires the release executable from the official Windows ZIP")
 	}
-	ctx, cancel := context.WithTimeout(ctx, workerTimeout)
+	ctx, cancel := context.WithTimeout(ctx, workerTimeout+10*time.Second)
 	defer cancel()
 	bin := filepath.Dir(target)
 	cacheDir := filepath.Join(bin, ".update")
@@ -128,11 +128,14 @@ func installWindowsArchive(ctx context.Context) (string, error) {
 	probe := exec.CommandContext(ctx, source, "__openai_setup_update_verifier")
 	probe.Env = append(updateEnvironment(), "OPENAI_CLI_ARCHIVE_INSTALL=1")
 	isolateVerifier(probe)
+	// The helper emits fixed progress and recovery messages on stderr.
+	// Keep the installed path as the only successful stdout record.
+	probe.Stderr = os.Stderr
 	result, err := probe.Output()
 	if err != nil || string(result) != "ready\n" {
 		return "", windowsSetupMessage("could not prepare the update verifier; check network access and retry setup")
 	}
-	cache, err := openPrivateWindowsUpdateCache(ctx, cacheDir)
+	cache, err := openInstallerCache(ctx, true, func() (*noticeCache, error) { return openPrivateWindowsUpdateCache(ctx, cacheDir) })
 	if err != nil {
 		return "", windowsSetupMessage("cannot lock the private installation directory; retry setup after other CLI activity finishes")
 	}
@@ -167,12 +170,16 @@ func installWindowsArchive(ctx context.Context) (string, error) {
 			return "", err
 		}
 	}
-	if err := registerWindowsUserPath(bin); err != nil {
+	conflict, err := registerWindowsUserPath(bin)
+	if err != nil {
 		var message windowsSetupMessage
 		if errors.As(err, &message) {
 			return "", message
 		}
 		return "", windowsSetupMessage(`could not update the user PATH. Run the managed CLI with & (Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe')`)
+	}
+	if conflict {
+		fmt.Fprintln(os.Stderr, `New terminals select the machine PATH copy first. To select this installation in a new PowerShell, run: $env:Path = "$env:LOCALAPPDATA\OpenAI\CLI\bin;$env:Path"`)
 	}
 	return target, nil
 }

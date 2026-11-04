@@ -34,6 +34,8 @@ func safeOpenedUpdateFile(*os.File) bool                               { return 
 func relayUpdateWorker(context.Context, string) bool                   { return false }
 func replaceUpdateImage(_ context.Context, replace func() error) error { return replace() }
 
+func markDownloadedExecutable(string) error { return nil }
+
 func preservePreparedImageTrust(*noticeCache) error { return nil }
 
 func safeVerifierStore(*os.Root) bool { return true }

@@ -1,0 +1,55 @@
+name: Verify published Windows upgrades
+
+on:
+  workflow_dispatch:
+    inputs:
+      starter:
+        description: Older stable release tag with Windows archive setup
+        required: true
+        type: string
+      successor:
+        description: Current stable release tag to verify after automatic updates
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.repository == 'openai/openai-cli' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    name: Published Windows upgrade (${{ matrix.arch }})
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: amd64
+          - os: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-go
+        with:
+          restore-only: 'true'
+      - name: Verify the published installer and two ordinary API requests
+        shell: pwsh
+        env:
+          STARTER_TAG: ${{ inputs.starter }}
+          SUCCESSOR_TAG: ${{ inputs.successor }}
+          NATIVE_ARCH: ${{ matrix.arch }}
+        run: |
+          $platform = if ($env:NATIVE_ARCH -ceq 'arm64') { 'ARM64' } else { 'X64' }
+          if ($env:RUNNER_ARCH -cne $platform -or
+              [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ine $platform -or
+              [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString() -ine $platform) {
+            throw 'Expected native Windows hardware and PowerShell.'
+          }
+          if ((go env GOHOSTARCH).Trim() -cne $env:NATIVE_ARCH -or
+              (go env GOARCH).Trim() -cne $env:NATIVE_ARCH) { throw 'Unexpected native Windows architecture.' }
+          ./scripts/test-windows-archive-update.ps1 -StarterTag $env:STARTER_TAG -SuccessorTag $env:SUCCESSOR_TAG
