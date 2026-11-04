@@ -100,7 +100,7 @@ if [[ $CASE == replaced ]]; then
   # Run the real staging/recheck code as the ordinary account. Its first
   # checksum must fail before either native package manager can run.
   printf 'replaced between checks\n' | "$@"
-elif [[ $CASE == umask || $CASE == no-replay || $CASE == empty-transaction || $CASE == dnf-failed ]]; then
+elif [[ $CASE == umask || $CASE == no-replay || $CASE == empty-transaction || $CASE == dnf-failed || $CASE == private-lock ]]; then
   [[ $(umask) == "$CALLER_MASK" ]]
   # Simulate sudo policy, then run the original staging code as this ordinary account.
   # Shell functions replace only the manager and observe the real checksum check.
@@ -112,6 +112,11 @@ elif [[ $CASE == umask || $CASE == no-replay || $CASE == empty-transaction || $C
     }
     manager() {
       [ "$(umask)" = "$SUDO_MASK" ] || exit 1
+      if [ "$CASE" = private-lock ]; then
+        [ "$(stat -c %a -- "$FIXTURE/lockdir")" = 700 ] || exit 1
+        if flock --nonblock "$FIXTURE/lockdir" true; then exit 1; fi
+        [ "$(readlink /proc/self/fd/9 || :)" != "$FIXTURE/lockdir" ] || exit 1
+      fi
       printf "%s\n" "$1" >> "$FIXTURE/manager"
     }
     rpm() {
@@ -137,6 +142,11 @@ elif [[ $CASE == umask || $CASE == no-replay || $CASE == empty-transaction || $C
   '
   args=("$@")
   staged=${4/'PATH=/usr/sbin'/'PATH=$FIXTURE/bin:/usr/sbin'}
+  if [[ $CASE == private-lock ]]; then
+    # Use this ordinary account's private directory in place of root's /run directory.
+    staged=${staged/'lockdir=/run/openai-cli-package-install'/'lockdir="$FIXTURE/lockdir"'}
+    staged=${staged/0:700/"$(/usr/bin/id -u):700"}
+  fi
   args[3]="$probe
 $staged"
   "${args[@]}"
@@ -216,6 +226,15 @@ for masks in 'deb 0000 0022' 'deb 0077 0077' 'rpm 0022 0027' 'rpm 0000 0000'; do
     [[ $(wc -l < "$work/sudo") == 1 && $(cat "$work/manager") == "$format" ]]
   )
 done
+if command -v flock >/dev/null 2>&1; then
+  (
+    umask 0022
+    export CALLER_MASK=0022 SUDO_MASK=0027
+    : > "$work/manager"
+    run rpm x86_64 amd64 private-lock
+    [[ $(cat "$work/manager") == rpm && $(wc -l < "$work/sudo") == 1 ]]
+  )
+fi
 for problem in no-replay empty-transaction; do
   (
     umask 0022

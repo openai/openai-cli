@@ -184,130 +184,144 @@ install_linux_release() (
       fi
       chmod 0755 "$stage"
       chmod 0644 "$package"
+      if [ "$3" = rpm ] && command -v flock >/dev/null 2>&1; then
+        # Serialize cooperating installers. Strict DNF transactions still protect against other managers.
+        # Keep the directory across calls so all waiters use the same inode until reboot.
+        lockdir=/run/openai-cli-package-install
+        if { mkdir -m 0700 "$lockdir" 2>/dev/null || [ -d "$lockdir" ]; } &&
+          [ ! -L "$lockdir" ] && [ "$(stat -c %u:%a -- "$lockdir")" = 0:700 ]; then
+          exec 9< "$lockdir"
+          flock --exclusive 9
+        fi
+      fi
       umask "$manager_umask"
     else
       package=$5
     fi
 
-    already_installed() {
-      if [ "$4" = check ]; then printf "%s\n" current; exit 0; fi
-      exit 76
-    }
-    fail() { printf 'OpenAI CLI: %s\n' "$1" >&2; exit 1; }
-    if [ "$3" = rpm ]; then
-      # The public release version and the verified header must agree before constructing a DNF request.
-      expected=${1#openai_}
-      expected=${expected%%_*}
-      metadata=$(rpm -qp --queryformat '%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}' "$package")
-      IFS='|' read -r name epoch version release architecture header <<RPM
+    # Only the waiting parent keeps the lock. Package hooks cannot keep it alive.
+    (
+      exec 9>&-
+      already_installed() {
+        if [ "$4" = check ]; then printf "%s\n" current; exit 0; fi
+        exit 76
+      }
+      fail() { printf 'OpenAI CLI: %s\n' "$1" >&2; exit 1; }
+      if [ "$3" = rpm ]; then
+        # The public release version and the verified header must agree before constructing a DNF request.
+        expected=${1#openai_}
+        expected=${expected%%_*}
+        metadata=$(rpm -qp --queryformat '%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}' "$package")
+        IFS='|' read -r name epoch version release architecture header <<RPM
 $metadata
 RPM
-      [ "$metadata" = "$name|$epoch|$version|$release|$architecture|$header" ] &&
-        [ "$name" = openai ] && [ "$version" = "$expected" ] || fail 'Unexpected RPM release identity.'
-      case "$epoch" in ''|*[!0-9]*) fail 'Invalid RPM epoch.' ;; esac
-      case "$release" in ''|*[!A-Za-z0-9._+~^]*) fail 'Invalid RPM release.' ;; esac
-      case "$architecture" in ''|*[!A-Za-z0-9_]*) fail 'Invalid RPM architecture.' ;; esac
-      case "$header" in ''|*[!0-9a-f]*) fail 'Invalid RPM header digest.' ;; esac
-      [ "${#header}" -eq 64 ] || fail 'Invalid RPM header digest.'
-      evr=$version-$release
-      [ "$epoch" = 0 ] || evr=$epoch:$evr
-    fi
+        [ "$metadata" = "$name|$epoch|$version|$release|$architecture|$header" ] &&
+          [ "$name" = openai ] && [ "$version" = "$expected" ] || fail 'Unexpected RPM release identity.'
+        case "$epoch" in ''|*[!0-9]*) fail 'Invalid RPM epoch.' ;; esac
+        case "$release" in ''|*[!A-Za-z0-9._+~^]*) fail 'Invalid RPM release.' ;; esac
+        case "$architecture" in ''|*[!A-Za-z0-9_]*) fail 'Invalid RPM architecture.' ;; esac
+        case "$header" in ''|*[!0-9a-f]*) fail 'Invalid RPM header digest.' ;; esac
+        [ "${#header}" -eq 64 ] || fail 'Invalid RPM header digest.'
+        evr=$version-$release
+        [ "$epoch" = 0 ] || evr=$epoch:$evr
+      fi
 
-    rpm_state() {
-      # rpm.vercmp compares each EVR component, including on RPM before 4.16.
-      # Use only the RPM database. A restrictive DNF policy can hide its metadata from the caller.
-      installed=$(rpm -qa --queryformat '%{EPOCHNUM} %{VERSION} %{RELEASE} %{SHA256HEADER}\n' openai) || return 1
-      if [ -z "$installed" ]; then printf 'absent\n'; return; fi
-      OPENAI_INSTALLED_RPMS="$installed" OPENAI_WANTED_RPM="$epoch $version $release $header" rpm --eval '%{lua:
-        local function fields(line) return assert(line:match("^(%d+) (%S+) (%S+) (%S+)$")) end
-        local e, v, r, h = fields(os.getenv("OPENAI_WANTED_RPM"))
-        local state = "older"
-        for line in os.getenv("OPENAI_INSTALLED_RPMS"):gmatch("[^\n]+") do
-          local ie, iv, ir, ih = fields(line)
-          local order = rpm.vercmp(ie, e)
-          if order == 0 then order = rpm.vercmp(iv, v) end
-          if order == 0 then order = rpm.vercmp(ir, r) end
-          if order > 0 then print("newer"); return end
-          if order == 0 then state = ih == h and "equal" or "different" end
-        end
-        print(state)
-      }'
-    }
-    deb_state() {
-      query_status=0
-      receipt=$(dpkg-query -W -f='${db:Status-Status} ${Version}' openai 2>/dev/null) || query_status=$?
-      case "$query_status:$receipt" in
-        1:*|0:not-installed\ *|0:config-files\ *) return 1 ;;
-        0:installed\ *)
-          version=$(dpkg-deb --field "$package" Version) || fail 'Could not read the verified Debian package version.'
-          dpkg --compare-versions "${receipt#* }" ge "$version" ;;
-        0:unpacked\ *|0:half-installed\ *|0:half-configured\ *|0:triggers-awaited\ *|0:triggers-pending\ *) return 1 ;;
-        0:*) fail 'Could not determine the installed Debian package state.' ;;
-        *) fail 'Could not read the package database.' ;;
+      rpm_state() {
+        # rpm.vercmp compares each EVR component, including on RPM before 4.16.
+        # Use only the RPM database. A restrictive DNF policy can hide its metadata from the caller.
+        installed=$(rpm -qa --queryformat '%{EPOCHNUM} %{VERSION} %{RELEASE} %{SHA256HEADER}\n' openai) || return 1
+        if [ -z "$installed" ]; then printf 'absent\n'; return; fi
+        OPENAI_INSTALLED_RPMS="$installed" OPENAI_WANTED_RPM="$epoch $version $release $header" rpm --eval '%{lua:
+          local function fields(line) return assert(line:match("^(%d+) (%S+) (%S+) (%S+)$")) end
+          local e, v, r, h = fields(os.getenv("OPENAI_WANTED_RPM"))
+          local state = "older"
+          for line in os.getenv("OPENAI_INSTALLED_RPMS"):gmatch("[^\n]+") do
+            local ie, iv, ir, ih = fields(line)
+            local order = rpm.vercmp(ie, e)
+            if order == 0 then order = rpm.vercmp(iv, v) end
+            if order == 0 then order = rpm.vercmp(ir, r) end
+            if order > 0 then print("newer"); return end
+            if order == 0 then state = ih == h and "equal" or "different" end
+          end
+          print(state)
+        }'
+      }
+      deb_state() {
+        query_status=0
+        receipt=$(dpkg-query -W -f='${db:Status-Status} ${Version}' openai 2>/dev/null) || query_status=$?
+        case "$query_status:$receipt" in
+          1:*|0:not-installed\ *|0:config-files\ *) return 1 ;;
+          0:installed\ *)
+            version=$(dpkg-deb --field "$package" Version) || fail 'Could not read the verified Debian package version.'
+            dpkg --compare-versions "${receipt#* }" ge "$version" ;;
+          0:unpacked\ *|0:half-installed\ *|0:half-configured\ *|0:triggers-awaited\ *|0:triggers-pending\ *) return 1 ;;
+          0:*) fail 'Could not determine the installed Debian package state.' ;;
+          *) fail 'Could not read the package database.' ;;
+        esac
+      }
+      if [ "$3" = deb ]; then
+        if deb_state; then already_installed "$@"; else [ "$?" -eq 1 ] || exit 1; fi
+      else
+        state=$(rpm_state)
+        case "$state" in
+          newer|equal) already_installed "$@" ;;
+          older|absent) ;;
+          different) fail 'Keeping the installed system package. Its RPM header differs from the verified release.' ;;
+          *) fail 'Could not compare installed RPM versions.' ;;
+        esac
+      fi
+      [ "$4" = install ] || exit 0
+      rc=0
+      if [ "$3" = deb ]; then
+        apt install --yes --no-remove --no-allow-downgrades "$package" || rc=$?
+        # Only an independently installed newer version can satisfy a rejected downgrade.
+        # An error after APT installed this version must keep its native status.
+        if [ "$rc" -ne 0 ] && deb_state && dpkg --compare-versions "${receipt#* }" gt "$version"; then exit 76; fi
+        exit "$rc"
+      fi
+
+      # Use a fixed relative path in the DNF command stream and stored transaction.
+      # The outer trap removes this private directory and its link to the verified RPM.
+      plan=$(mktemp -d "$stage/transaction.XXXXXXXX")
+      mkdir -m 0700 "$plan/packages"
+      ln -- "$package" "$plan/packages/verified.rpm"
+      cd "$plan"
+      dnf_version=$(dnf --version)
+      case "$dnf_version" in
+        'dnf5 version '*)
+          if [ "$state" = older ]; then
+            dnf --assumeyes upgrade ./packages/verified.rpm || rc=$?
+          else
+            # Replay an Install action so DNF rejects a concurrent downgrade.
+            # Resolve dependencies against the current repository and signature policies.
+            printf '{"version":"1.0","rpms":[{"nevra":"%s","action":"Install","reason":"User","repo_id":"@stored_transaction(@commandline)","package_path":"./packages/verified.rpm"}]}\n' \
+              "openai-$evr.$architecture" > transaction.json
+            dnf --assumeyes replay --ignore-extras . || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              dnf replay --help >/dev/null 2>&1 || fail 'DNF5 replay is required for a first installation. Use the Linux tarball on this system.'
+              # Another manager can install an older package before replay takes its lock.
+              # Only a native upgrade may finish this request. Keep every normal DNF policy.
+              after=$(rpm_state)
+              if [ "$after" = older ]; then
+                rc=0
+                dnf --assumeyes upgrade ./packages/verified.rpm || rc=$?
+              fi
+            fi
+          fi ;;
+        4.*)
+          # Load the exact package into DNF4's command-line repository before solving.
+          printf 'repoquery ./packages/verified.rpm\nrepository-packages @commandline install "openai >= %s"\nrun\nexit\n' "$evr" |
+            dnf --assumeyes shell || rc=$? ;;
+        *) fail 'This DNF version does not support the verified local transaction.' ;;
       esac
-    }
-    if [ "$3" = deb ]; then
-      if deb_state; then already_installed "$@"; else [ "$?" -eq 1 ] || exit 1; fi
-    else
+      # DNF4 shell can return zero after a failed signature or dependency check.
       state=$(rpm_state)
       case "$state" in
-        newer|equal) already_installed "$@" ;;
-        older|absent) ;;
-        different) fail 'Keeping the installed system package. Its RPM header differs from the verified release.' ;;
-        *) fail 'Could not compare installed RPM versions.' ;;
+        equal) [ "$rc" -eq 0 ] || exit "$rc" ;;
+        newer) exit 76 ;;
+        *) [ "$rc" -eq 0 ] || exit "$rc"; fail 'DNF did not install the verified RPM.' ;;
       esac
-    fi
-    [ "$4" = install ] || exit 0
-    rc=0
-    if [ "$3" = deb ]; then
-      apt install --yes --no-remove --no-allow-downgrades "$package" || rc=$?
-      # Only an independently installed newer version can satisfy a rejected downgrade.
-      # An error after APT installed this version must keep its native status.
-      if [ "$rc" -ne 0 ] && deb_state && dpkg --compare-versions "${receipt#* }" gt "$version"; then exit 76; fi
-      exit "$rc"
-    fi
-
-    # Use a fixed relative path in the DNF command stream and stored transaction.
-    # The outer trap removes this private directory and its link to the verified RPM.
-    plan=$(mktemp -d "$stage/transaction.XXXXXXXX")
-    mkdir -m 0700 "$plan/packages"
-    ln -- "$package" "$plan/packages/verified.rpm"
-    cd "$plan"
-    dnf_version=$(dnf --version)
-    case "$dnf_version" in
-      'dnf5 version '*)
-        if [ "$state" = older ]; then
-          dnf --assumeyes upgrade ./packages/verified.rpm || rc=$?
-        else
-          # Replay an Install action so DNF rejects a concurrent downgrade.
-          # Resolve dependencies against the current repository and signature policies.
-          printf '{"version":"1.0","rpms":[{"nevra":"%s","action":"Install","reason":"User","repo_id":"@stored_transaction(@commandline)","package_path":"./packages/verified.rpm"}]}\n' \
-            "openai-$evr.$architecture" > transaction.json
-          dnf --assumeyes replay --ignore-extras . || rc=$?
-          if [ "$rc" -ne 0 ]; then
-            dnf replay --help >/dev/null 2>&1 || fail 'DNF5 replay is required for a first installation. Use the Linux tarball on this system.'
-            # Another manager can install an older package before replay takes its lock.
-            # Only a native upgrade may finish this request. Keep every normal DNF policy.
-            after=$(rpm_state)
-            if [ "$after" = older ]; then
-              rc=0
-              dnf --assumeyes upgrade ./packages/verified.rpm || rc=$?
-            fi
-          fi
-        fi ;;
-      4.*)
-        # Load the exact package into DNF4's command-line repository before solving.
-        printf 'repoquery ./packages/verified.rpm\nrepository-packages @commandline install "openai >= %s"\nrun\nexit\n' "$evr" |
-          dnf --assumeyes shell || rc=$? ;;
-      *) fail 'This DNF version does not support the verified local transaction.' ;;
-    esac
-    # DNF4 shell can return zero after a failed signature or dependency check.
-    state=$(rpm_state)
-    case "$state" in
-      equal) [ "$rc" -eq 0 ] || exit "$rc" ;;
-      newer) exit 76 ;;
-      *) [ "$rc" -eq 0 ] || exit "$rc"; fail 'DNF did not install the verified RPM.' ;;
-    esac
+    )
 TRANSACTION
   while :; do
     selected=$tag
