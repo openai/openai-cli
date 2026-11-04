@@ -91,9 +91,9 @@ For a ZIP with **Install.cmd**, this block also selects the managed CLI in your 
     $installed = & .\openai.exe install --user
     if ($LASTEXITCODE -ne 0 -or !$installed) { throw 'OpenAI CLI setup could not finish. See the installer message above.' }
     $bin = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin'
-    if (($env:Path -split ';', 2)[0] -ine $bin) { $env:Path = "$bin;$env:Path" }
+    if (![string]::Equals(($env:Path -split ';', 2)[0], $bin, [StringComparison]::OrdinalIgnoreCase)) { $env:Path = "$bin;$env:Path" }
     $selected = Microsoft.PowerShell.Core\Get-Command openai
-    if ($selected.CommandType -ne 'Application' -or $selected.Path -ine (Join-Path $bin 'openai.exe')) {
+    if ($selected.CommandType -ne 'Application' -or ![string]::Equals($selected.Path, (Join-Path $bin 'openai.exe'), [StringComparison]::OrdinalIgnoreCase)) {
         throw 'A shell command overrides openai. Use & (Join-Path $env:LOCALAPPDATA ''OpenAI\CLI\bin\openai.exe'').'
     }
     openai --version

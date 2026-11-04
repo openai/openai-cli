@@ -17,7 +17,7 @@ $null = [IO.Directory]::CreateDirectory($work)
 try {
     # Execute the reviewed local function definitions with a synthetic metadata
     # provider. The shipped script exposes no fixture URL or verifier override.
-    $names = 'Set-InternetZone','Get-Sha','Expand-Executable','Read-Release','Invoke-SetupProcess','Test-Publication','Read-GoLength','Confirm-ReleaseExecutable'
+    $names = 'Set-InternetZone','Select-InstalledCLI','Get-Sha','Expand-Executable','Read-Release','Invoke-SetupProcess','Test-Publication','Read-GoLength','Confirm-ReleaseExecutable'
     $defs = @($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $names},$true))
     if ($defs.Count -ne $names.Count) { throw 'The acquisition fixture is missing production code.' }
     $local = Join-Path $work 'local-functions.ps1'
@@ -29,11 +29,9 @@ try {
         Write-Output 'NTFS download zone checks require Windows.'
         function Set-InternetZone([string]$path) {if (![IO.File]::Exists($path)) {throw 'Missing downloaded file.'}}
     }
+    . (Join-Path $PSScriptRoot 'test-windows-download-zone.ps1')
     function Assert-InternetZone([string]$path) {
-        $mode = if ($PSVersionTable.PSVersion.Major -le 5) {@{Encoding='Byte'; ReadCount=0}} else {@{AsByteStream=$true; Raw=$true}}
-        $bytes = [byte[]](Microsoft.PowerShell.Management\Get-Content -LiteralPath $path -Stream Zone.Identifier @mode -ErrorAction Stop)
-        $expected = [Text.Encoding]::ASCII.GetBytes("[ZoneTransfer]`r`nZoneId=3`r`n")
-        if ([Convert]::ToBase64String($bytes) -cne [Convert]::ToBase64String($expected)) {throw 'Unexpected download zone bytes.'}
+        if ((Get-WindowsDownloadZone $path) -ne 3) {throw 'Unexpected download zone bytes.'}
     }
     function Assert-Rejected([scriptblock]$probe) {
         try { & $probe | Out-Null } catch { return }
@@ -61,7 +59,28 @@ try {
     $fakeDir = [IO.Directory]::CreateDirectory((Join-Path $work 'exit-fixture')).FullName
     $src = Join-Path $fakeDir 'exit.go'
     $fake = Join-Path $fakeDir 'openai.exe'
-    [IO.File]::WriteAllText($src,'package main; import ("os";"strconv"); func main() { n,_:=strconv.Atoi(os.Getenv("OPENAI_FIXTURE_EXIT")); os.Exit(n) }')
+    [IO.File]::WriteAllText($src,@'
+package main
+
+import (
+    "os"
+    "path/filepath"
+    "strconv"
+)
+
+func main() {
+    exe, err := os.Executable()
+    if err == nil {
+        identity, err := os.ReadFile(filepath.Join(filepath.Dir(exe), "identity.txt"))
+        if err == nil {
+            os.Stdout.Write(identity)
+            return
+        }
+    }
+    status, _ := strconv.Atoi(os.Getenv("OPENAI_FIXTURE_EXIT"))
+    os.Exit(status)
+}
+'@)
     & go build -o $fake $src
     if ($LASTEXITCODE -ne 0) {throw 'Could not build the paste failure fixture.'}
     $priorExit = $env:OPENAI_FIXTURE_EXIT
@@ -138,7 +157,60 @@ try {
     if ([Environment]::OSVersion.Platform -eq 'Win32NT') {
         # Feed the exact raw text through each real interactive ConsoleHost
         # parser. A synthetic CPU or the elevated runner stops network access.
+        [IO.File]::WriteAllText((Join-Path $work 'selection-paste.txt'),$blocks[0].Groups[1].Value)
+        function Test-SelectedExecutable([string]$fixture) {
+            $work = [IO.Path]::GetDirectoryName($fixture)
+            $root = $fixture + '.paths'
+            $bin = Join-Path $root 'OpenAI\CLI\bin'
+            $similar = Join-Path $root ("Open"+[char]0xAD+"AI\CLI\bin")
+            $portable = Join-Path $root 'extracted'
+            $fake = Join-Path $work 'exit-fixture/openai.exe'
+            foreach ($entry in @(@($bin,'expected'),@($similar,'shadow'),@($portable,'enrolled'))) {
+                $null = [IO.Directory]::CreateDirectory($entry[0])
+                [IO.File]::Copy($fake,(Join-Path $entry[0] 'openai.exe'))
+                [IO.File]::WriteAllText((Join-Path $entry[0] 'identity.txt'),$entry[1])
+            }
+            function Assert-ShadowRejected([scriptblock]$select) {
+                try { & $select | Out-Null } catch {
+                    if ($_.Exception.Message -notmatch 'overrides openai') {throw}
+                    return
+                }
+                throw 'A shadowing command passed executable selection.'
+            }
+            $guide = [scriptblock]::Create([IO.File]::ReadAllText((Join-Path $work 'selection-paste.txt')))
+            $priorPath = $env:Path
+            $localData = $env:LOCALAPPDATA
+            Push-Location -LiteralPath $portable
+            try {
+                $env:LOCALAPPDATA = $root
+                foreach ($select in $guide,{Select-InstalledCLI $root | Out-Null; openai --version}) {
+                    $env:Path = "$similar;$priorPath"
+                    if ((openai --version) -cne 'shadow') {throw 'Distinct executable fixture unavailable.'}
+                    if ((& $select) -cne 'expected') {throw 'Selected a different executable.'}
+                    $upper = $bin.ToUpperInvariant() + ';' + $priorPath
+                    $env:Path = $upper
+                    if ((& $select) -cne 'expected' -or ![string]::Equals($env:Path,$upper,[StringComparison]::Ordinal)) {
+                        throw 'Changed an already-selected directory with different letter casing.'
+                    }
+                    $managed = Join-Path $bin 'openai.exe'
+                    [IO.File]::Move($managed,$managed + '.saved')
+                    try {
+                        $env:Path = "$bin;$similar;$priorPath"
+                        Assert-ShadowRejected $select
+                    } finally {[IO.File]::Move($managed + '.saved',$managed)}
+                    Set-Alias -Name openai -Value Get-Location -Scope Local
+                    try {Assert-ShadowRejected $select} finally {Remove-Item -LiteralPath Alias:\openai}
+                }
+            } finally {
+                Pop-Location
+                $env:Path = $priorPath
+                $env:LOCALAPPDATA = $localData
+            }
+        }
+        $selector = (Get-Command Select-InstalledCLI -CommandType Function).ScriptBlock.Ast.Extent.Text
+        $pathTest = (Get-Command Test-SelectedExecutable -CommandType Function).ScriptBlock.Ast.Extent.Text
         $zoneFunction = ($defs | Where-Object Name -ceq 'Set-InternetZone').Extent.Text
+        $zoneReader = (Get-Command Get-WindowsDownloadZone -CommandType Function).ScriptBlock.Ast.Extent.Text
         $zoneAssertion = (Get-Command Assert-InternetZone -CommandType Function).ScriptBlock.Ast.Extent.Text
         $driver = Join-Path $work 'console-paste.ps1'
         $driverBody = @'
@@ -149,19 +221,44 @@ try {
     Assert-InternetZone $file
     $plain = [Text.Encoding]::ASCII.GetBytes("[ZoneTransfer]`r`nZoneId=3`r`n")
     $binary = if ($PSVersionTable.PSVersion.Major -le 5) {@{Encoding='Byte'}} else {@{AsByteStream=$true}}
-    foreach ($case in 'bom','newline') {
-        $invalid = if ($case -ceq 'bom') {@(239,187,191) + $plain} else {$plain + @(13,10)}
-        Microsoft.PowerShell.Management\Set-Content -LiteralPath $file -Stream Zone.Identifier @binary -Value ([byte[]]$invalid) -ErrorAction Stop
-        $rejected = $false
-        try {Assert-InternetZone $file} catch {
-            if ($_.Exception.Message -cne 'Unexpected download zone bytes.') {throw}
-            $rejected = $true
+    $restricted = [Text.Encoding]::ASCII.GetBytes("[ZoneTransfer]`r`nZoneId=4`r`n")
+    Microsoft.PowerShell.Management\Set-Content -LiteralPath $file -Stream Zone.Identifier @binary -Value $restricted -ErrorAction Stop
+    if ((Get-WindowsDownloadZone $file) -ne 4) {exit 74}
+    foreach ($case in 'bom','newline','nul3','nul4') {
+        $invalid = switch ($case) {
+            'bom' { @(239,187,191) + $plain }
+            'newline' { $plain + @(13,10) }
+            'nul3' { [Text.Encoding]::ASCII.GetBytes("[ZoneTransfer]`r`nZone`0Id=3`r`n") }
+            'nul4' { [Text.Encoding]::ASCII.GetBytes("[ZoneTransfer]`r`nZone`0Id=4`r`n") }
         }
-        if (!$rejected) {exit 74}
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $file -Stream Zone.Identifier @binary -Value ([byte[]]$invalid) -ErrorAction Stop
+        if ((Get-WindowsDownloadZone $file) -ne 0) {exit 74}
     }
+    $origin = $file + '.trusted'
+    $copy = $file + '.private'
+    [IO.File]::WriteAllText($origin,'trusted file')
+    [IO.File]::WriteAllBytes($copy,[IO.File]::ReadAllBytes($origin))
+    $strong = "[ZoneTransfer]`r`nZoneId=4`r`nHostUrl=https://fixture.invalid/private`r`n"
+    Microsoft.PowerShell.Management\Set-Content -LiteralPath $origin -Stream Zone.Identifier -Value $strong -Encoding ASCII -NoNewline -ErrorAction Stop
+    Set-InternetZone $copy $origin
+    if ((Get-WindowsDownloadZone $copy) -ne 4) {exit 74}
+    Set-InternetZone $origin
+    Set-InternetZone $copy $origin
+    if ((Get-WindowsDownloadZone $copy) -ne 4) {exit 74}
+    $other = $file + '.another-copy'
+    [IO.File]::WriteAllBytes($other,[IO.File]::ReadAllBytes($origin))
+    $ordinary = "[ZoneTransfer]`r`nZoneId=3`r`nHostUrl=https://fixture.invalid/private`r`n"
+    Microsoft.PowerShell.Management\Set-Content -LiteralPath $origin -Stream Zone.Identifier -Value $ordinary -Encoding ASCII -NoNewline -ErrorAction Stop
+    Set-InternetZone $other $origin
+    Assert-InternetZone $other
+    $ambiguous = $ordinary + "ZoneId=4`r`n"
+    Microsoft.PowerShell.Management\Set-Content -LiteralPath $origin -Stream Zone.Identifier -Value $ambiguous -Encoding ASCII -NoNewline -ErrorAction Stop
+    Set-InternetZone $other $origin
+    if ((Get-WindowsDownloadZone $other) -ne 4) {exit 74}
     Set-InternetZone $file
     Assert-InternetZone $file
-    [IO.File]::WriteAllText($file + '.verified','canonical, rejected BOM, rejected newline')
+    Test-SelectedExecutable $file
+    [IO.File]::WriteAllText($file + '.verified','exact markers, rejected corrupt markers, preserved restricted copy, selected managed executable')
 } catch {exit 75}
 $global:rawSetup = [IO.File]::ReadAllText($env:OPENAI_CLI_PASTE_FIXTURE)
 $global:reads = 0
@@ -175,7 +272,7 @@ function global:PSConsoleHostReadLine {
     return 'exit 73'
 }
 '@
-        [IO.File]::WriteAllText($driver,(($zoneFunction,$zoneAssertion,$driverBody) -join [Environment]::NewLine))
+        [IO.File]::WriteAllText($driver,(($zoneFunction,$zoneReader,$zoneAssertion,$selector,$pathTest,$driverBody) -join [Environment]::NewLine))
         $prior = $env:OPENAI_CLI_PASTE_FIXTURE
         $priorZone = $env:OPENAI_CLI_ZONE_FIXTURE
         try {
@@ -183,6 +280,7 @@ function global:PSConsoleHostReadLine {
             foreach ($shell in 'powershell.exe','pwsh.exe') {
                 $zoneFile = Join-Path $work ("download [1] $shell")
                 [IO.File]::WriteAllText($zoneFile,'original')
+                $originalHash = (Get-FileHash -LiteralPath $zoneFile).Hash
                 $env:OPENAI_CLI_ZONE_FIXTURE = $zoneFile
                 $exe = (Get-Command $shell -CommandType Application).Path | Select-Object -First 1
                 $child = Start-Process $exe -ArgumentList ("-NoLogo -NoProfile -NoExit -File `""+$driver+"`"") -WindowStyle Hidden -PassThru
@@ -190,12 +288,13 @@ function global:PSConsoleHostReadLine {
                     if (!$child.WaitForExit(20000)) { $child.Kill(); throw "Interactive paste timed out in $shell." }
                     if ($child.ExitCode -ne 0) { throw "The acquisition controls failed in $shell (exit $($child.ExitCode))." }
                 } finally { $child.Dispose() }
-                if (![IO.File]::Exists($zoneFile + '.verified') -or [IO.File]::ReadAllText($zoneFile + '.verified') -cne 'canonical, rejected BOM, rejected newline') {
+                if (![IO.File]::Exists($zoneFile + '.verified') -or [IO.File]::ReadAllText($zoneFile + '.verified') -cne 'exact markers, rejected corrupt markers, preserved restricted copy, selected managed executable') {
                     throw "Missing download zone controls in $shell."
                 }
                 Assert-InternetZone $zoneFile
-                if ([IO.File]::ReadAllText($zoneFile) -cne 'original') {throw "The zone write altered the main data stream in $shell."}
-                Write-Output "$shell preserved the file, wrote the exact Internet zone, and rejected extra BOM and newline bytes."
+                if ((Get-FileHash -LiteralPath $zoneFile).Hash -cne $originalHash) {throw "The zone write altered the main data stream in $shell."}
+                Write-Output "$shell preserved the file, wrote the exact Internet zone, preserved a restricted verifier copy, and rejected BOM, newline and embedded NUL bytes."
+                Write-Output "$shell selected the expected executable and rejected shadowing commands."
             }
         } finally {
             $env:OPENAI_CLI_PASTE_FIXTURE = $prior

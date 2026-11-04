@@ -137,11 +137,8 @@ if ($PrivateVerifier) {
     if ((Get-FileHash -LiteralPath $gh).Hash.ToLowerInvariant() -cne $trusted.verifierSha256) {throw 'Private verifier differs from its upstream executable pin.'}
     $images += $gh
 }
-$mode = if ($PSVersionTable.PSVersion.Major -le 5) {@{Encoding='Byte'; ReadCount=0}} else {@{AsByteStream=$true; Raw=$true}}
+. (Join-Path $PSScriptRoot 'test-windows-download-zone.ps1')
 foreach ($image in $images) {
-    $bytes = [byte[]](Microsoft.PowerShell.Management\Get-Content -LiteralPath $image -Stream Zone.Identifier @mode -ErrorAction Stop)
-    if ([Text.Encoding]::ASCII.GetString($bytes) -cnotin "[ZoneTransfer]`r`nZoneId=3`r`n","[ZoneTransfer]`r`nZoneId=4`r`n") {
-        throw 'A downloaded executable lost its Internet security zone.'
-    }
+    if ((Get-WindowsDownloadZone $image) -notin 3,4) {throw 'A downloaded executable lost its Internet security zone.'}
 }
 return $trusted.executableSha256

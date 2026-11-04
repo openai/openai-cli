@@ -59,8 +59,34 @@
             $client.Dispose()
         }
     }
-    function Set-InternetZone([string]$path) {
-        Microsoft.PowerShell.Management\Set-Content -LiteralPath $path -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value "[ZoneTransfer]`r`nZoneId=3`r`n" -ErrorAction Stop
+    function Set-InternetZone([string]$path, [string]$source) {
+        $zone = 3
+        if ($source) {
+            # The filesystem can omit streams when copying. Inspect both files.
+            # Keep ambiguous or restricted attachments in zone 4. Discard source URLs.
+            foreach ($file in $source,$path) {
+                $info = @(Microsoft.PowerShell.Management\Get-Item -LiteralPath $file -Stream '*' -ErrorAction Stop |
+                    Where-Object { [string]::Equals($_.Stream,'Zone.Identifier',[StringComparison]::OrdinalIgnoreCase) })
+                if (!$info.Count) {continue}
+                if ($info.Count -ne 1 -or $info[0].Length -le 0 -or $info[0].Length -gt 1MB) {$zone = 4; break}
+                $mark = Microsoft.PowerShell.Management\Get-Content -LiteralPath $file -Stream Zone.Identifier -Encoding UTF8 -Raw -ErrorAction Stop
+                if ($mark -cnotmatch '\A\[ZoneTransfer\]\r?\nZoneId=[0-3](?:\r?\n(?:HostUrl|ReferrerUrl)=[^\r\n\x00]*)*(?:\r?\n)?\z') {
+                    $zone = 4
+                    break
+                }
+            }
+        }
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $path -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value "[ZoneTransfer]`r`nZoneId=$zone`r`n" -ErrorAction Stop
+    }
+    function Select-InstalledCLI([string]$base) {
+        $bin = Join-Path $base 'OpenAI\CLI\bin'
+        if (![string]::Equals(($env:Path -split ';',2)[0],$bin,[StringComparison]::OrdinalIgnoreCase)) { $env:Path = "$bin;$env:Path" }
+        $managed = Join-Path $bin 'openai.exe'
+        $command = Microsoft.PowerShell.Core\Get-Command openai
+        if ($command.CommandType -ne 'Application' -or ![string]::Equals($command.Path,$managed,[StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Another command overrides openai. Use & (Join-Path $env:LOCALAPPDATA ''OpenAI\CLI\bin\openai.exe'').'
+        }
+        return $managed
     }
     function Get-Sha([string]$path) {
         return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -243,18 +269,19 @@
         $gh = Join-Path $verifiers 'gh.exe'
         $installedGh = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'GitHub CLI\gh.exe'
         $ghDirectory = [IO.Path]::GetDirectoryName($installedGh)
-        $pathDirectories = @($env:Path -split ';' | ForEach-Object { $_.Trim('"').TrimEnd('\') })
-        if ($pathDirectories -contains $ghDirectory -and [IO.File]::Exists($installedGh) -and (Get-Sha $installedGh) -ceq $pins[$arch][1]) {
+        $onPath = @($env:Path -split ';' | Where-Object {
+            [string]::Equals($_.Trim('"').TrimEnd('\'),$ghDirectory,[StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($onPath.Count -gt 0 -and [IO.File]::Exists($installedGh) -and (Get-Sha $installedGh) -ceq $pins[$arch][1]) {
             [IO.File]::Copy($installedGh,$gh)
+            Set-InternetZone $gh $installedGh
         } else {
             [Console]::Error.WriteLine('Downloading the pinned GitHub CLI verifier...')
             $ghZip = Join-Path $work 'gh.zip'
             Get-PublicResource "https://github.com/cli/cli/releases/download/v$ghVersion/gh_${ghVersion}_windows_$arch.zip" 32MB $ghZip
-            Set-InternetZone $ghZip
             if ((Get-Sha $ghZip) -cne $pins[$arch][0]) { throw 'The GitHub CLI archive checksum did not match.' }
             Expand-Executable $ghZip 'bin/gh.exe' $gh
         }
-        Set-InternetZone $gh
         if ((Get-Sha $gh) -cne $pins[$arch][1]) { throw 'The GitHub CLI executable checksum did not match.' }
         [Console]::Error.WriteLine('Downloading the Windows ZIP...')
         $zip = Join-Path $work 'openai.zip'
@@ -280,11 +307,6 @@
             return ([ordered]@{tag=$selected.tag; commit=$selected.commit; assetName=$selected.name; assetSize=$selected.size; archiveSha256=$selected.digest; executableSha256=$hash; verifierSha256=$pins[$arch][1]; verifierVersion=$ghVersion} | ConvertTo-Json -Compress)
         }
         if (!(Invoke-SetupProcess $exe 'install --user' $false)) { throw 'Windows enrollment did not return an installed path.' }
-        $bin = Join-Path $base 'OpenAI\CLI\bin'
-        if (($env:Path -split ';',2)[0] -ine $bin) { $env:Path = "$bin;$env:Path" }
-        $managed = Join-Path $bin 'openai.exe'
-        $command = Microsoft.PowerShell.Core\Get-Command openai
-        if ($command.CommandType -ne 'Application' -or $command.Path -ine $managed) { throw 'Another command overrides openai. Use & (Join-Path $env:LOCALAPPDATA ''OpenAI\CLI\bin\openai.exe'').' }
-        return $managed
+        return (Select-InstalledCLI $base)
     } finally { [IO.Directory]::Delete($work,$true) }
 } @args

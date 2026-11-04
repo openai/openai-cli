@@ -78,7 +78,7 @@ func TestMainWindowsArchivePublishedUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	shell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-	selection := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `if ((Get-Command openai).Path -ine $env:OPENAI_WINDOWS_EXPECTED_EXE) {exit 22}`)
+	selection := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `if (![string]::Equals((Get-Command openai).Path,$env:OPENAI_WINDOWS_EXPECTED_EXE,[StringComparison]::OrdinalIgnoreCase)) {exit 22}`)
 	selection.Env = append(append([]string{}, fresh...), "OPENAI_WINDOWS_EXPECTED_EXE="+managed)
 	if err := selection.Run(); err != nil {
 		t.Fatal("the unaltered fresh environment selected another CLI", err)
@@ -232,7 +232,7 @@ func windowsPublishedHash(path string) (string, error) {
 func requirePublishedInternetZone(t *testing.T, path string) {
 	t.Helper()
 	mark, err := os.ReadFile(path + ":Zone.Identifier")
-	if err != nil || !regexp.MustCompile("(?m)^ZoneId=[34]\\r?$").Match(mark) {
+	if err != nil || (string(mark) != "[ZoneTransfer]\r\nZoneId=3\r\n" && string(mark) != "[ZoneTransfer]\r\nZoneId=4\r\n") {
 		t.Fatal("public executable lost its Windows attachment security zone", err)
 	}
 }

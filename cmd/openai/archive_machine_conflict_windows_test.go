@@ -115,7 +115,7 @@ func TestMainWindowsArchiveMachinePathConflict(t *testing.T) {
 			}
 			return strings.TrimSpace(stdout.String()), stderr.String()
 		}
-		check := `if ((Get-Command openai).Path -ine $env:OPENAI_ARCHIVE_MACHINE_FIXTURE) { throw 'expected the original machine command' }`
+		check := `if (![string]::Equals((Get-Command openai).Path,$env:OPENAI_ARCHIVE_MACHINE_FIXTURE,[StringComparison]::OrdinalIgnoreCase)) { throw 'expected the original machine command' }`
 		out, diagnostic := run("$ErrorActionPreference='Stop'; " + check + "\n" + paste)
 		if !strings.Contains(out, "openai version ") || !strings.Contains(diagnostic, "New terminals select the machine PATH copy first") {
 			t.Fatalf("%s lost the current CLI or new-terminal warning", name)

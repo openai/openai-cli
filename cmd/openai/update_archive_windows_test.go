@@ -344,7 +344,7 @@ function global:PSConsoleHostReadLine {
         if ($Host.Name -ne 'ConsoleHost' -or (Get-ExecutionPolicy) -ne 'Restricted') {return 'exit 32'}
         if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) {return 'exit 36'}
         $location = (Get-Location).ProviderPath
-        $cwdOK = $location -ieq $env:OPENAI_WINDOWS_PASTE_CWD
+        $cwdOK = [string]::Equals($location,$env:OPENAI_WINDOWS_PASTE_CWD,[StringComparison]::OrdinalIgnoreCase)
         Add-OpenAIPasteTrace ('cwd='+$cwdOK)
         if (!$cwdOK) {return 'exit 37'}
         if ($env:OPENAI_WINDOWS_PASTE_SOURCE_SHA -and $env:OPENAI_WINDOWS_PASTE_PROBE -eq 'Paste') {
@@ -380,11 +380,11 @@ function global:PSConsoleHostReadLine {
             $trim = [char[]](13,10)
             $observed = $history.CommandLine.Replace(([string][char]13+[char]10),[string][char]10).TrimEnd($trim)
             $wanted = $global:openaiLiteral.Replace(([string][char]13+[char]10),[string][char]10).TrimEnd($trim)
-            $historyState = if ($observed -cne $wanted) {'different'} elseif ($history.ExecutionStatus -eq 'Completed') {'completed'} else {'failed'}
+            $historyState = if (![string]::Equals($observed,$wanted,[StringComparison]::Ordinal)) {'different'} elseif ($history.ExecutionStatus -eq 'Completed') {'completed'} else {'failed'}
         }
-        $pathFirst = ($env:PATH -split [regex]::Escape([IO.Path]::PathSeparator),2)[0] -ieq [IO.Path]::GetDirectoryName($env:OPENAI_WINDOWS_MANAGED_EXE)
+        $pathFirst = [string]::Equals(($env:PATH -split [regex]::Escape([IO.Path]::PathSeparator),2)[0],[IO.Path]::GetDirectoryName($env:OPENAI_WINDOWS_MANAGED_EXE),[StringComparison]::OrdinalIgnoreCase)
         $selected = Microsoft.PowerShell.Core\Get-Command openai -ErrorAction SilentlyContinue
-        $selection = if (!$selected) {'missing'} elseif ($selected.CommandType -ne 'Application') {'shadowed'} elseif ($selected.Path -ine $env:OPENAI_WINDOWS_MANAGED_EXE) {'different'} else {'expected'}
+        $selection = if (!$selected) {'missing'} elseif ($selected.CommandType -ne 'Application') {'shadowed'} elseif (![string]::Equals($selected.Path,$env:OPENAI_WINDOWS_MANAGED_EXE,[StringComparison]::OrdinalIgnoreCase)) {'different'} else {'expected'}
         $versionState = 'unchecked'
         if ($selection -eq 'expected') {
             $observedVersion = & $selected.Path --version

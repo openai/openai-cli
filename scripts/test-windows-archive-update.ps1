@@ -54,7 +54,7 @@ try {
 
     go test -c -o "$root/archive.test.exe" ./cmd/openai
     if ($LASTEXITCODE -ne 0) { throw 'Could not compile the native entrypoint tests.' }
-    Copy-Item -LiteralPath 'scripts/test-windows-console-paste.ps1' -Destination $root
+    Copy-Item -LiteralPath 'scripts/test-windows-console-paste.ps1','scripts/test-windows-download-zone.ps1' -Destination $root
     if ($published) {
         Copy-Item -LiteralPath 'scripts/install-windows-release.ps1' -Destination "$root/acquire.ps1"
         Copy-Item -LiteralPath 'scripts/test-windows-published-starter.ps1' -Destination $root
@@ -193,11 +193,7 @@ $null = [IO.Directory]::CreateDirectory($downloads)
 $work = Join-Path $downloads ('OpenAI CLI [' + [guid]::NewGuid() + ']')
 # Explorer inherits the user's normal Downloads permissions during extraction.
 $ownerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-function Read-ArchiveZone([string]$path) {
-    $mode = if ($PSVersionTable.PSVersion.Major -le 5) {@{Encoding='Byte'; ReadCount=0}} else {@{AsByteStream=$true; Raw=$true}}
-    $bytes = [byte[]](Microsoft.PowerShell.Management\Get-Content -LiteralPath $path -Stream Zone.Identifier @mode -ErrorAction Stop)
-    return [Text.Encoding]::ASCII.GetString($bytes)
-}
+. (Join-Path $PSScriptRoot 'test-windows-download-zone.ps1')
 function Write-ZipFailure([string]$step, [Management.Automation.ErrorRecord]$failure) {
     $exception = $failure.Exception
     $cause = $exception.GetBaseException()
@@ -247,8 +243,8 @@ try {
     $extractionStage = 'hash-zip-copy'
     if ((Get-FileHash -LiteralPath $localZip).Hash -cne $zipHash) {throw 'The account received unexpected ZIP bytes.'}
     $extractionStage = 'read-source-zone'
-    $zone = Read-ArchiveZone $protectedZip
-    if ($zone -cne "[ZoneTransfer]`r`nZoneId=3`r`n") {throw 'The candidate ZIP lacks its Internet zone.'}
+    if ((Get-WindowsDownloadZone $protectedZip) -ne 3) {throw 'The candidate ZIP lacks its Internet zone.'}
+    $zone = "[ZoneTransfer]`r`nZoneId=3`r`n"
     $extracted = Join-Path $work 'Extracted'
     $extractionStage = 'extract-zip'
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -260,7 +256,7 @@ try {
         $extractionStage = 'write-zone-' + $item.Key
         Microsoft.PowerShell.Management\Set-Content -LiteralPath $item.Value -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value $zone -ErrorAction Stop
         $extractionStage = 'read-zone-' + $item.Key
-        if ((Read-ArchiveZone $item.Value) -cne $zone) {throw 'The account lost the ZIP download zone.'}
+        if ((Get-WindowsDownloadZone $item.Value) -ne 3) {throw 'The account lost the ZIP download zone.'}
     }
     $extractionStage = 'hash-candidate-cli'
     $expectedSha = (Get-FileHash -LiteralPath "$PSScriptRoot/openai.exe").Hash
@@ -296,7 +292,7 @@ try {
                         $clientStage = 'hash-installed-cli'
                         $bytesMatch = (Get-FileHash -LiteralPath $managed).Hash -ceq $expectedSha
                         $clientStage = 'verify-installed-zone'
-                        $zoneKept = (Read-ArchiveZone $managed) -cin $zone,"[ZoneTransfer]`r`nZoneId=4`r`n"
+                        $zoneKept = (Get-WindowsDownloadZone $managed) -in 3,4
                         Add-Content -LiteralPath $log -Value "$client installedBytesMatch=$bytesMatch installedZoneKept=$zoneKept"
                         if (!$bytesMatch -or !$zoneKept) {throw 'The documented paste did not preserve the enrolled image.'}
                         $installed = $true

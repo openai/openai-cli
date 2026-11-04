@@ -247,7 +247,7 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 	// Test the native paste even on hosts whose policy rejects downloaded scripts.
 	paste := documentedWindowsArchivePaste(t, archive)
 	current := `$ErrorActionPreference='Stop'
-if ((Get-Command openai).Path -ine $env:ARCHIVE_OLD) {throw 'wrong initial selection'}
+if (![string]::Equals((Get-Command openai).Path,$env:ARCHIVE_OLD,[StringComparison]::OrdinalIgnoreCase)) {throw 'wrong initial selection'}
 ` + paste
 	// A successful Explorer setup must exit on its own. Both handles belong
 	// to a real console. No keypress is written to its input buffer.
