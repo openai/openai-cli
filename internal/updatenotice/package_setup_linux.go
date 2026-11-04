@@ -1,7 +1,6 @@
 package updatenotice
 
 import (
-	"context"
 	"fmt"
 	"os"
 )
@@ -27,35 +26,6 @@ func runLinuxPackageHelper(argv []string) bool {
 			if appendProfilePath(argv[2], argv[3], argv[4], line) {
 				fmt.Println("ready")
 			}
-		}
-	case "__openai_linux_package_current", "__openai_linux_package_install":
-		if len(argv) != 2 || !automaticPlatform() {
-			return true
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), workerTimeout)
-		defer cancel()
-		bin, err := openVerifierBin()
-		if err != nil {
-			return true
-		}
-		defer bin.Close()
-		var active string
-		if argv[1] == "__openai_linux_package_current" {
-			active, err = packageInstalledVersion(ctx, bin)
-		} else {
-			path, pathErr := os.Executable()
-			if pathErr != nil {
-				return true
-			}
-			staged, openErr := openInstallation(path)
-			if openErr != nil {
-				return true
-			}
-			defer staged.close()
-			active, err = installPackageRelease(ctx, bin, staged, releaseVersion, releaseCommit)
-		}
-		if err == nil && active != "" {
-			fmt.Println(active)
 		}
 	default:
 		return false

@@ -4,11 +4,50 @@ package updatenotice
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
+
+// The installer runs the transaction from a private copy of the new release.
+func runPackageInstallHelper(argv []string) bool {
+	if len(argv) != 2 || os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") != "1" ||
+		(argv[1] != "__openai_package_current" && argv[1] != "__openai_package_install") {
+		return false
+	}
+	if !automaticPlatform() {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), workerTimeout+10*time.Second)
+	defer cancel()
+	bin, err := openManagedBin()
+	if err != nil {
+		return true
+	}
+	defer bin.Close()
+	var active string
+	if argv[1] == "__openai_package_current" {
+		active, err = packageInstalledVersion(ctx, bin)
+	} else {
+		path, pathErr := os.Executable()
+		if pathErr != nil {
+			return true
+		}
+		staged, openErr := openInstallation(path)
+		if openErr != nil {
+			return true
+		}
+		defer staged.close()
+		active, err = installPackageRelease(ctx, bin, staged, releaseVersion, releaseCommit)
+	}
+	if err == nil && active != "" {
+		fmt.Println(active)
+	}
+	return true
+}
 
 // installPackageRelease serializes explicit package installs with automatic
 // activation. The package manager retains its own executable.
@@ -25,7 +64,7 @@ func installPackageRelease(ctx context.Context, bin *os.Root, staged *updateInst
 		return "", err
 	}
 	source := packageIdentity{version, commit, digest}
-	cache, err := openCache(ctx, filepath.Join(bin.Name(), ".update"))
+	cache, err := openPackageCache(ctx, bin)
 	if err != nil {
 		return "", err
 	}
@@ -43,7 +82,7 @@ func installPackageRelease(ctx context.Context, bin *os.Root, staged *updateInst
 		}
 		defer current.close()
 		// Identical bytes can enroll an existing official archive installation.
-		previous, err = matchPackageBinary(ctx, current, state, source)
+		previous, err = matchPackageBinary(ctx, cache, current, state, source)
 		if err != nil {
 			return "", err
 		}
@@ -95,7 +134,7 @@ func installPackageRelease(ctx context.Context, bin *os.Root, staged *updateInst
 	return version, nil
 }
 
-func matchPackageBinary(ctx context.Context, installation *updateInstallation, state updateState, source packageIdentity) (packageIdentity, error) {
+func matchPackageBinary(ctx context.Context, cache *noticeCache, installation *updateInstallation, state updateState, source packageIdentity) (packageIdentity, error) {
 	hash, err := installation.digest(ctx)
 	if err != nil {
 		return packageIdentity{}, err
@@ -110,27 +149,51 @@ func matchPackageBinary(ctx context.Context, installation *updateInstallation, s
 			return id, nil
 		}
 	}
-	return packageIdentity{}, errCache
+	return legacyPackageIdentity(ctx, cache, installation, hash)
 }
 
 func packageInstalledVersion(ctx context.Context, bin *os.Root) (string, error) {
+	cache, err := openPackageCache(ctx, bin)
+	if err != nil {
+		return "", err
+	}
+	defer cache.close()
 	current, err := openInstallation(filepath.Join(bin.Name(), "openai"))
 	if err != nil {
 		return "", err
 	}
 	defer current.close()
-	cache, err := openCache(ctx, current.stateDirectory())
-	if err != nil {
-		return "", err
-	}
-	defer cache.close()
 	state, err := loadUpdateState(cache, time.Now())
 	if err != nil {
 		return "", err
 	}
-	id, err := matchPackageBinary(ctx, current, state, packageIdentity{})
+	id, err := matchPackageBinary(ctx, cache, current, state, packageIdentity{})
 	if err != nil || !cache.validLock() || !cache.unchangedState() {
 		return "", errCache
 	}
 	return id.Version, nil
+}
+
+// An explicit installation can wait for a running update. Interactive API
+// commands still use the nonblocking cache lock.
+func openPackageCache(ctx context.Context, bin *os.Root) (*noticeCache, error) {
+	dir := filepath.Join(bin.Name(), ".update")
+	cache, err := openCache(ctx, dir)
+	if !errors.Is(err, errCacheBusy) {
+		return cache, err
+	}
+	fmt.Fprintln(os.Stderr, "Waiting for the current OpenAI CLI update to finish...")
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			cache, err := openCache(ctx, dir)
+			if !errors.Is(err, errCacheBusy) {
+				return cache, err
+			}
+		}
+	}
 }

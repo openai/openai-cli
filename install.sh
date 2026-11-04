@@ -136,7 +136,7 @@ for directory in .openai bin; do
     cd -P "$directory"
 done
 clean_stage() {
-    rm -f "$1/openai" "$1/.archive-install"
+    rm -f "$1/openai" "$1/.archive-install" "$1/.setup"
     rmdir "$1" 2>/dev/null || [ ! -d "$1" ]
 }
 existing=false
@@ -172,11 +172,18 @@ same_binary() {
     # Minimal Fedora installations include coreutils but may omit diffutils.
     first=$(sha256sum < "$1") && second=$(sha256sum < "$2") && [ "$first" = "$second" ]
 }
-known_package_binary() {
-    [ "$package" = true ] && [ -n "$(env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 /usr/bin/openai __openai_linux_package_current)" ]
+selected_cli=$(pwd -P)/$stage/openai
+if [ "$package" = true ]; then selected_cli=/usr/bin/openai; fi
+package_current() {
+    env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 "$selected_cli" __openai_package_current
 }
-if [ "$existing" = true ]; then
-    same_binary "$stage/openai" openai || known_package_binary || fail 'A different executable already exists at $HOME/.openai/bin/openai. Keep its existing update method.'
+transaction=$package
+if [ "$existing" = true ] && ! same_binary "$stage/openai" openai; then
+    if { [ "$package" = true ] || [ "$system" = Darwin ]; } && [ -n "$(package_current)" ]; then
+        transaction=true
+    else
+        fail 'A different executable already exists at $HOME/.openai/bin/openai. Keep its existing update method.'
+    fi
 fi
 version=$(env -i HOME="$HOME" PATH=/usr/bin:/bin "$stage/openai" --version) ||
     fail 'This binary could not run. Download the archive for your operating system and processor.'
@@ -228,15 +235,21 @@ esac
 if [ "$readiness" != ready ] && [ "$require_gh" = true ]; then
     fail "Automatic update verification is unavailable. $advice Then rerun this installer."
 fi
-if [ "$package" = true ]; then
-    active=$(env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_linux_package_install)
+if [ "$transaction" = true ]; then
+    if [ "$system" = Darwin ]; then
+        # The transaction may rename the staged release into place. Keep its
+        # trusted profile helper available even if a newer installation wins.
+        cp "$stage/openai" "$stage/.setup"
+        selected_cli=$(pwd -P)/$stage/.setup
+    fi
+    active=$(env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_package_install)
     [ -n "$active" ] || fail 'Could not safely enroll the package. Check for a different executable or an update in progress, then retry.'
 elif [ "$existing" = false ]; then
     ln "$stage/openai" . || fail 'Could not install openai. Check whether another installation already exists.'
 fi
 check_destination() {
-    if [ "$package" = true ]; then
-        [ "$(env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 /usr/bin/openai __openai_linux_package_current)" = "$active" ]
+    if [ "$transaction" = true ]; then
+        [ "$(package_current)" = "$active" ]
     elif [ "$existing" = false ]; then
         [ ! -L openai ] && [ openai -ef "$stage/openai" ]
     else
@@ -246,8 +259,6 @@ check_destination() {
 }
 check_destination || fail 'The installed executable changed. Check which copy you want before enabling updates.'
 if [ -n "$profile_dir" ]; then
-    selected_cli=$(pwd -P)/$stage/openai
-    if [ "$package" = true ]; then selected_cli=/usr/bin/openai; fi
     update_profile() {
         if [ "$package" = true ]; then
             set -- __openai_linux_package_profile "$profile_dir" "$2" "$1"
@@ -264,10 +275,10 @@ if [ -n "$profile_dir" ]; then
 fi
 clean_stage "$stage"
 trap - EXIT
-if [ "$package" = true ]; then
+if [ "$transaction" = true ] && [ "$readiness" = ready ]; then
     printf 'Automatic updates are enabled for OpenAI CLI %s at $HOME/.openai/bin/openai.\n' "$active"
 else
-    printf 'Installed OpenAI CLI %s at $HOME/.openai/bin/openai.\n' "$release"
+    printf 'Installed OpenAI CLI %s at $HOME/.openai/bin/openai.\n' "${active:-$release}"
 fi
 if [ -z "$profile_dir" ] && [ "$(command -v openai || :)" != "$HOME/.openai/bin/openai" ]; then
     printf '%s\n' 'Select it in this shell: export PATH="$HOME/.openai/bin:$PATH"'

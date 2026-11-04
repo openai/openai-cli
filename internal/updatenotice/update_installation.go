@@ -175,16 +175,23 @@ func (r contextReader) Read(data []byte) (int, error) {
 const stampPrefix = "github.com/openai/openai-cli/internal/updatenotice."
 
 func binaryIdentity(file *os.File, version, commit string) bool {
+	v, c, ok := binaryReleaseStamp(file)
+	return ok && v == version && c == commit
+}
+
+// Inspect the opened executable without running it. A stamp identifies a
+// release only after the caller authenticates the bytes or matches a receipt.
+func binaryReleaseStamp(file *os.File) (string, string, bool) {
 	info, err := buildinfo.Read(file)
 	if err != nil || info.Path != "command-line-arguments" {
-		return false
+		return "", "", false
 	}
 	settings := map[string]string{}
 	for _, setting := range info.Settings {
 		settings[setting.Key] = setting.Value
 	}
 	if settings["GOOS"] != runtime.GOOS || settings["GOARCH"] != runtime.GOARCH {
-		return false
+		return "", "", false
 	}
 	values := map[string]string{}
 	fields := strings.Fields(settings["-ldflags"])
@@ -195,12 +202,12 @@ func binaryIdentity(file *os.File, version, commit string) bool {
 		key, value, ok := strings.Cut(fields[index+1], "=")
 		if ok && strings.HasPrefix(key, stampPrefix) {
 			if _, exists := values[key]; exists {
-				return false
+				return "", "", false
 			}
 			values[key] = value
 		}
 	}
-	return values[stampPrefix+"releaseVersion"] == version && values[stampPrefix+"releaseCommit"] == commit
+	return values[stampPrefix+"releaseVersion"], values[stampPrefix+"releaseCommit"], true
 }
 
 func validDigest(s string) bool { return validHex(s, 64) }

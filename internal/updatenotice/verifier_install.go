@@ -84,7 +84,10 @@ func verifierEnrolled(bin string) bool {
 }
 
 func openVerifierStore(enroll bool) (*os.Root, error) {
-	bin, err := openVerifierBin()
+	if _, supported := verifierPins[verifierPlatform()]; !supported {
+		return nil, errUpdate
+	}
+	bin, err := openManagedBin()
 	if err != nil {
 		return nil, err
 	}

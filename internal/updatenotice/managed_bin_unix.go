@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 package updatenotice
 
 import (
@@ -7,7 +9,7 @@ import (
 
 // The installer creates these private directories before provisioning. Never
 // follow a replacement link into a shared or package-manager directory.
-func openVerifierBin() (*os.Root, error) {
+func openManagedBin() (*os.Root, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || !filepath.IsAbs(home) {
 		return nil, errCache
