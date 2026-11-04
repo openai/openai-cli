@@ -703,7 +703,7 @@ jobs:
           retention-days: 7
 
   windows-picker-permissions:
-    timeout-minutes: 15
+    timeout-minutes: 30
     name: ${{ matrix.name }}
     needs: source
     permissions: {}
@@ -832,6 +832,10 @@ jobs:
           }
           $proof | ConvertTo-Json -Depth 4 |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'shell-suggestion-platform.json') -Encoding utf8NoBOM -ErrorAction Stop
+      - name: Verify Windows ZIP setup and automatic updates
+        if: matrix.powershell == 'current'
+        shell: pwsh
+        run: ./scripts/test-windows-archive-update.ps1
       - name: Check native Windows ownership, ACLs and profile transactions
         if: matrix.existing-checks
         run: go test ./internal/autocomplete -run '^TestPicker(ProfileRecovery.*|Rename.*|RecoveryDirectory.*|Windows.*|FileMetadataPreservesZoneIdentifierAtSnapshotRecheck|ReplacementMetadataKeepsSameInheritedPermissions|SecurityDescriptorComparisonPreservesPermissions|InstallRoundTrip|InstallConfigDirectoryChanges|InstallIgnoresUnusedConfigDirectory|InstallConfigDirectoryRefusalPreservesFiles|InstallPreservesHardLinkedProfiles|ProfileHardLinkAddedAfterSnapshot|ScriptContentChecksLegacyNamespaces|InstallRetriesSupersededScriptCleanup|RemoveRetriesScriptCleanup|RemoveMissingProfileParentCleansOwnedScripts|RemoveMissingProfileAndScriptDirectoriesNoOp|RemoveMissingProfileParentReappearsWhileWaiting|RemovePreservesPersonalLineBoundaries|InstalledDetectsAndRefreshesOlderScript)$' -count=1 -v

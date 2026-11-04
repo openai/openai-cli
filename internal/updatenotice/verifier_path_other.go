@@ -1,6 +1,6 @@
-//go:build !linux
+//go:build !linux && !windows
 
 package updatenotice
 
-// Platforms without the Linux package installer retain archive verifier lookup.
+// Other platforms retain their existing archive verifier lookup.
 func trustedSystemVerifier(path string) bool { return true }

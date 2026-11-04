@@ -106,7 +106,7 @@ func openVerifierStore(enroll bool) (*os.Root, error) {
 		return nil, err
 	}
 	actual, err := root.Stat(".")
-	if err != nil || !os.SameFile(info, actual) {
+	if err != nil || !os.SameFile(info, actual) || !safeVerifierStore(root) {
 		root.Close()
 		return nil, errCache
 	}
@@ -177,7 +177,7 @@ func (d *releaseDelivery) installPrivateVerifier(ctx context.Context, root *os.R
 	}
 	// openCache serializes downloads and releases the kernel lock on process
 	// exit. The permanent destination always wins if another process created it.
-	cache, err := openCache(ctx, root.Name())
+	cache, err := openInstallerCache(ctx, showProgress, func() (*noticeCache, error) { return openCache(ctx, root.Name()) })
 	if err != nil {
 		return "", err
 	}
@@ -200,17 +200,31 @@ func (d *releaseDelivery) installPrivateVerifier(ctx context.Context, root *os.R
 		extension, entry = ".zip", "bin/gh.exe"
 	}
 	url := "https://github.com/cli/cli/releases/download/v" + verifierVersion + "/" + base + extension
+	var acquired *os.File
 	if showProgress {
-		fmt.Fprintln(os.Stderr, "Downloading GitHub CLI for automatic update verification...")
+		// Only explicit setup can reuse a release installer's private download.
+		acquired, err = acquiredVerifierArchive()
+		if err != nil {
+			return "", err
+		}
 	}
-	res, err := d.request(ctx, url)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", errVerifierDownload, err)
+	var body io.ReadCloser
+	if acquired != nil {
+		body = acquired
+	} else {
+		if showProgress {
+			fmt.Fprintln(os.Stderr, "Downloading GitHub CLI for automatic update verification...")
+		}
+		res, err := d.request(ctx, url)
+		if err != nil {
+			return "", fmt.Errorf("%w: %w", errVerifierDownload, err)
+		}
+		body = res.Body
 	}
-	defer res.Body.Close()
+	defer body.Close()
 	// This bound applies only to the seven fixed verifier downloads.
 	const maxVerifierArchive = 32 << 20
-	data, err := io.ReadAll(io.LimitReader(res.Body, maxVerifierArchive+1))
+	data, err := io.ReadAll(io.LimitReader(body, maxVerifierArchive+1))
 	sum := sha256.Sum256(data)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", errVerifierDownload, err)
@@ -236,6 +250,14 @@ func (d *releaseDelivery) installPrivateVerifier(ctx context.Context, root *os.R
 		return "", errVerifierIntegrity
 	}
 	if err := tmp.Chmod(0700); err != nil {
+		return "", err
+	}
+	if acquired != nil {
+		if err := preservePreparedImageTrust(acquired, tmp); err != nil {
+			return "", err
+		}
+	}
+	if err := markDownloadedExecutable(filepath.Join(root.Name(), "gh.download")); err != nil {
 		return "", err
 	}
 	if err := tmp.Sync(); err != nil {

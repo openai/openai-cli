@@ -71,18 +71,53 @@ Other systems can use the [Linux tarball](#installing-a-prebuilt-binary).
 
 ## Windows
 
-Open **Assets** for the newest stable release with Windows ZIP files. [Release downloads](https://github.com/openai/openai-cli/releases)
+Download the Windows ZIP from **Assets** in the latest stable release with downloads. [Release downloads](https://github.com/openai/openai-cli/releases)
+Choose `windows_amd64.zip` for a 64-bit Intel or AMD PC, `windows_arm64.zip` for ARM64, or `windows_386.zip` for 32-bit Windows.
 
-Choose `windows_amd64.zip` for most 64-bit PCs or `windows_arm64.zip` for an ARM64 PC.
-Extract the ZIP. In the extracted directory, run this PowerShell command.
+In File Explorer, select **Extract All**. Open the extracted folder.
+If it contains **Install.cmd**, double-click **Install.cmd**.
+Setup enables automatic updates for your account. If the system PATH selects another copy, the installer keeps its recovery instruction visible.
+
+For an older ZIP without **Install.cmd**, open PowerShell in the extracted folder and run `.\openai.exe --help`.
+
+<details>
+<summary>Use an existing PowerShell window</summary>
+
+For a ZIP with **Install.cmd**, this block also selects the managed CLI in your existing PowerShell.
 
 ```powershell
-.\openai.exe --help
+& {
+    Write-Host 'Installing OpenAI CLI for your account...'
+    $installed = & .\openai.exe install --user
+    if ($LASTEXITCODE -ne 0 -or !$installed) { throw 'OpenAI CLI setup could not finish. See the installer message above.' }
+    $bin = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin'
+    if (![string]::Equals(($env:Path -split ';', 2)[0], $bin, [StringComparison]::OrdinalIgnoreCase)) { $env:Path = "$bin;$env:Path" }
+    $selected = Microsoft.PowerShell.Core\Get-Command openai
+    if ($selected.CommandType -ne 'Application' -or ![string]::Equals($selected.Path, (Join-Path $bin 'openai.exe'), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'A shell command overrides openai. Use & (Join-Path $env:LOCALAPPDATA ''OpenAI\CLI\bin\openai.exe'').'
+    }
+    openai --version
+}
 ```
 
-Use `.\openai.exe` in place of `openai` in the examples.
-To use `openai` from any directory, add the extracted directory to your user `Path`.
-Open a new terminal and run `where.exe openai` to check which copy it selects.
+Setup installs every CLI command for your Windows account. It configures the update verifier and registers the CLI for new terminals.
+Eligible interactive commands install future authenticated releases. [Automatic updates](automatic-updates.md#eligible-invocations)
+
+If you prefer a portable copy, use `.\openai.exe` directly from the extracted directory.
+
+</details>
+
+<details>
+<summary>Download the matching ZIP automatically</summary>
+
+The setup recipe requires a published Windows ZIP that contains **Install.cmd**.
+Open the [PowerShell setup recipe](../scripts/install-windows-release.ps1). Select **Copy raw file**.
+Paste it into an ordinary PowerShell window. Setup downloads the correct Windows ZIP and checks its publisher before installation.
+It selects the managed CLI in this PowerShell and adds the CLI to your user PATH.
+If a machine-wide installation takes precedence, setup selects your copy now and shows how to select it in new terminals.
+If your organization restricts scripts, use its approved installation method.
+
+</details>
 
 ## Installing a prebuilt binary
 
@@ -102,7 +137,7 @@ command -v openai
 ```
 
 The last command shows which executable, alias, or function your shell selects. If an alias or function wins, use the verified executable directly.
-On Windows, run `.\openai.exe --version` in the extracted directory. Add that directory to your user `Path` and check `where.exe openai`.
+On Windows, use `.\openai.exe --version` for a portable copy. For automatic installation and updates, use the [Windows setup](#windows).
 
 **Want automatic updates?** Follow the [archive setup for your shell](automatic-updates.md#from-an-extracted-archive).
 On a Mac with Homebrew and zsh, the [recommended installation](../README.md#installation) handles setup in one paste.

@@ -65,6 +65,7 @@ archives:
     files:
       - completions/*
       - man/*/*
+      - Install.cmd
 
 notarize:
   macos:

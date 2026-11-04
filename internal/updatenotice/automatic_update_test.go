@@ -159,6 +159,10 @@ func updateTestInstallation(t *testing.T, content []byte) *updateInstallation {
 	return i
 }
 
+func TestPreparedImageAfterTrust(t *testing.T) {
+	exercisePreparedImageAfterTrust(t, t.TempDir())
+}
+
 func TestAutomaticUpdateTransactions(t *testing.T) {
 	t.Setenv("OPENAI_CLI_NO_AUTO_UPDATE", "")
 	t.Setenv("OPENAI_CLI_NO_UPDATE_CHECK", "")

@@ -4,7 +4,6 @@ package updatenotice
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -183,26 +182,6 @@ func packageInstalledVersion(ctx context.Context, bin *os.Root) (string, error) 
 	return id.Version, nil
 }
 
-// An explicit installation can wait for a running update. Interactive API
-// commands still use the nonblocking cache lock.
 func openPackageCache(ctx context.Context, bin *os.Root) (*noticeCache, error) {
-	dir := filepath.Join(bin.Name(), ".update")
-	cache, err := openCache(ctx, dir)
-	if !errors.Is(err, errCacheBusy) {
-		return cache, err
-	}
-	fmt.Fprintln(os.Stderr, "Waiting for the current OpenAI CLI update to finish...")
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			cache, err := openCache(ctx, dir)
-			if !errors.Is(err, errCacheBusy) {
-				return cache, err
-			}
-		}
-	}
+	return openInstallerCache(ctx, true, func() (*noticeCache, error) { return openCache(ctx, filepath.Join(bin.Name(), ".update")) })
 }

@@ -345,6 +345,15 @@ func updateEnvironment() []string {
 			result = append(result, key+"="+value)
 		}
 	}
+	if runtime.GOOS == "windows" {
+		// Children use the same per-user managed root. Keep the system loader
+		// and temporary paths, without inheriting SDK, verifier, or Git tokens.
+		for _, key := range []string{"SystemRoot", "WINDIR", "LOCALAPPDATA", "USERPROFILE", "TEMP", "TMP", "PATHEXT"} {
+			if value, ok := os.LookupEnv(key); ok {
+				result = append(result, key+"="+value)
+			}
+		}
+	}
 	return append(result, "LC_ALL=C", "LANG=C")
 }
 

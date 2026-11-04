@@ -37,6 +37,29 @@ type noticeCache struct {
 	stateData         []byte
 }
 
+// An explicit installation can wait for a running update. Interactive API
+// commands still use the nonblocking cache lock.
+func openInstallerCache(ctx context.Context, wait bool, acquire func() (*noticeCache, error)) (*noticeCache, error) {
+	cache, err := acquire()
+	if !wait || !errors.Is(err, errCacheBusy) {
+		return cache, err
+	}
+	fmt.Fprintln(os.Stderr, "Waiting for the current OpenAI CLI update to finish...")
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			cache, err := acquire()
+			if !errors.Is(err, errCacheBusy) {
+				return cache, err
+			}
+		}
+	}
+}
+
 func openCache(ctx context.Context, directory string) (*noticeCache, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
