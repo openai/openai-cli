@@ -168,6 +168,21 @@ func main() {
         Assert-Decision ($pending.Replace('in_progress','in_\u00adprogress')) 'rejected'
         Assert-Decision ($good.Replace('publish-release.yml','publish-\u00adrelease.yml')) 'rejected'
         Assert-Decision ($good.Replace('openai/openai-cli','openai/openai-\u0000cli')) 'rejected'
+        $validItem = ConvertTo-Json -InputObject $fixture.item -Depth 10 -Compress
+        foreach ($container in 'result','signature','statement','certificate','subject','digest') {
+            $fixture.item = ConvertFrom-Json -InputObject $validItem
+            $result = $fixture.item.verificationResult
+            switch ($container) {
+                'result'      { $fixture.item.verificationResult = @($result) }
+                'signature'   { $result.signature = @($result.signature) }
+                'statement'   { $result.statement = @($result.statement) }
+                'certificate' { $result.signature.certificate = @($result.signature.certificate) }
+                'subject'     { $result.statement.subject = $result.statement.subject[0] }
+                'digest'      { $result.statement.subject[0].digest = @($result.statement.subject[0].digest) }
+            }
+            Assert-Decision $good 'rejected'
+        }
+        $fixture.item = ConvertFrom-Json -InputObject $validItem
         $fixture.item.verificationResult.statement.subject[0].name += [char]0x00ad
         Assert-Decision $good 'rejected'
     }
@@ -198,6 +213,39 @@ func main() {
         $release.assets = @($asset)
         $release.immutable = 'false'
         Assert-Rejected { Read-Release 'releases/latest' }
+    }
+    & {
+        $originalResource = ${function:Get-PublicResource}
+        function Get-PublicResource([string]$url) {
+            if ($url -ceq $badURL) { return (ConvertFrom-Json -InputObject $badJSON) }
+            return & $originalResource $url
+        }
+        $commitObject = '{"type":"commit","sha":"' + $Commit + '"}'
+        foreach ($badURL in "$repo/git/ref/tags/$Tag","$repo/git/tags/$('e'*40)") {
+            foreach ($badJSON in ('{"Object":' + $commitObject + '}'),('{"object":[' + $commitObject + ']}'),('{"object":' + $commitObject.Replace('"type"','"Type"') + '}')) {
+                Assert-Rejected { Read-Release 'releases/latest' }
+            }
+        }
+    }
+    & {
+        $publication = @{clock=[Diagnostics.Stopwatch]::new(); polls=0}
+        $counts = @{signature=0; publisher=0}
+        function Start-Sleep { throw 'Unexpected wait for invalid metadata.' }
+        function Get-PublicResource([string]$url) {
+            if ($url -ceq "$repo/actions/runs/23/attempts/2") { $counts.publisher++; return $run }
+            return (ConvertFrom-Json -InputObject $envelope)
+        }
+        function Invoke-SetupProcess { $counts.signature++; return $resultJSON }
+        foreach ($envelope in '{"ATTESTATIONS":[]}','{"attestations":[{"Bundle":{}}]}','{"attestations":[{"bundle":[{}]}]}') {
+            Assert-Rejected { Confirm-PublishedZIP $selected 'fixture-verifier' }
+        }
+        if ($publication.polls -or $counts.signature) { throw 'Malformed attestation metadata reached a wait or the verifier.' }
+        $envelope = '{"attestations":[{"bundle":{}}]}'
+        $justItem = ConvertTo-Json -InputObject $item -Depth 10 -Compress
+        foreach ($resultJSON in $justItem,('[[' + $justItem + ']]')) {
+            Assert-Rejected { Confirm-PublishedZIP $selected 'fixture-verifier' }
+        }
+        if ($publication.polls -or $counts.publisher -or $counts.signature -ne 2) { throw 'Malformed verifier result escaped its fixture.' }
     }
     foreach ($stage in 'attestation','publisher') {
         & {

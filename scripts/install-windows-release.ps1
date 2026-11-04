@@ -203,11 +203,18 @@
             return
         }
         if ($WaitForZIP) { $publication.clock.Stop() }
-        $ref = (Get-PublicResource "$repo/git/ref/tags/$($r.tag_name)" 16384).object
-        for ($i = 0; $i -lt 4 -and (Test-ProtocolText $ref.type 'tag') -and $ref.sha -is [string] -and $ref.sha -cmatch '\A[0-9a-f]{40}\z'; $i++) {
-            $ref = (Get-PublicResource "$repo/git/tags/$($ref.sha)" 16384).object
+        $refURL = "$repo/git/ref/tags/$($r.tag_name)"
+        for ($i=0; $i -le 4; $i++) {
+            $reference = Get-PublicResource $refURL 16384
+            if (!(Test-RecordFields $reference 'object') -or !(Test-RecordFields $reference.object @('type','sha'))) {
+                throw 'The release tag does not resolve to a commit.'
+            }
+            $ref = $reference.object
+            if ($ref.sha -isnot [string] -or $ref.sha -cnotmatch '\A[0-9a-f]{40}\z') { throw 'The release tag does not resolve to a commit.' }
+            if (Test-ProtocolText $ref.type 'commit') { break }
+            if ($i -eq 4 -or !(Test-ProtocolText $ref.type 'tag')) { throw 'The release tag does not resolve to a commit.' }
+            $refURL = "$repo/git/tags/$($ref.sha)"
         }
-        if (!(Test-ProtocolText $ref.type 'commit') -or $ref.sha -isnot [string] -or $ref.sha -cnotmatch '\A[0-9a-f]{40}\z') { throw 'The release tag does not resolve to a commit.' }
         return [ordered]@{tag=$r.tag_name; commit=$ref.sha; releaseId=$r.id; assetId=$a.id; name=$name; size=$a.size; updated=$a.updated_at; digest=$a.digest.Substring(7)}
     }
     function Confirm-CurrentRelease($selected) {
@@ -223,8 +230,14 @@
         return Read-Release 'releases/latest' -WaitForZIP -Known $selected
     }
     function Test-Publication($item, $selection, $pending) {
-        $cert = $item.verificationResult.signature.certificate
-        $subjects = @($item.verificationResult.statement.subject | Where-Object {
+        if (!(Test-RecordFields $item 'verificationResult')) { return $false }
+        $result = $item.verificationResult
+        if (!(Test-RecordFields $result @('signature','statement')) -or !(Test-RecordFields $result.signature 'certificate') -or
+            !(Test-RecordFields $result.statement 'subject') -or $result.statement.subject -isnot [array]) { return $false }
+        $cert = $result.signature.certificate
+        if (!(Test-RecordFields $cert @('subjectAlternativeName','sourceRepositoryDigest','runInvocationURI'))) { return $false }
+        $subjects = @($result.statement.subject | Where-Object {
+            (Test-RecordFields $_ @('name','digest')) -and (Test-RecordFields $_.digest 'sha256') -and
             (Test-ProtocolText $_.name $selection.name) -and (Test-ProtocolText $_.digest.sha256 $selection.digest)
         })
         if (!$subjects.Count -or !(Test-ProtocolText $cert.subjectAlternativeName $workflow) -or $cert.sourceRepositoryDigest -isnot [string] -or
@@ -249,17 +262,27 @@
 
     function Confirm-PublishedZIP($selected,[string]$gh) {
         do {
-            $attestations = (Get-PublicResource "$repo/attestations/sha256:$($selected.digest)" 4MB -AllowMissingAttestation).attestations
-            if ($attestations -isnot [array] -or $attestations.Count -gt 30) { throw 'Release provenance is unavailable.' }
+            $response = Get-PublicResource "$repo/attestations/sha256:$($selected.digest)" 4MB -AllowMissingAttestation
+            if (!(Test-RecordFields $response 'attestations') -or $response.attestations -isnot [array] -or $response.attestations.Count -gt 30) {
+                throw 'Release provenance is unavailable.'
+            }
+            $attestations = $response.attestations
             if ($attestations.Count) { break }
             $newer = Wait-ForSelectedRelease $selected
             if ($newer) { return $newer }
         } while ($true)
         $publication.clock.Stop()
-        $bundles = @($attestations | ForEach-Object { $_.bundle | ConvertTo-Json -Compress -Depth 100 })
+        # The pinned verifier validates the contents of each Sigstore bundle.
+        $bundles = @(foreach ($entry in $attestations) {
+            if (!(Test-RecordFields $entry 'bundle') -or !(Test-RecordFields $entry.bundle @())) { throw 'Release provenance is unavailable.' }
+            ConvertTo-Json -InputObject $entry.bundle -Compress -Depth 100
+        })
         [IO.File]::WriteAllLines((Join-Path $work 'bundles.jsonl'),[string[]]$bundles,[Text.UTF8Encoding]::new($false))
         $argsText = "attestation verify openai.zip --bundle bundles.jsonl --hostname github.com --repo openai/openai-cli --cert-identity $workflow --source-ref refs/heads/main --deny-self-hosted-runners --format json"
-        $verified = ConvertFrom-Json -InputObject (Invoke-SetupProcess $gh $argsText $true)
+        # A single result object can lose its enclosing array when PowerShell parses JSON.
+        $resultJSON = Invoke-SetupProcess $gh $argsText $true
+        if ($resultJSON -isnot [string] -or $resultJSON -cnotmatch '\A\s*\[\s*\{') { throw 'Release provenance is unavailable.' }
+        $verified = ConvertFrom-Json -InputObject $resultJSON
         $published = $false
         $pending = [Collections.Queue]::new()
         foreach ($item in $verified) { if (Test-Publication $item $selected $pending) { $published = $true; break } }
