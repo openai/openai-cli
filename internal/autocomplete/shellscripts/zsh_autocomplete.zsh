@@ -35,7 +35,7 @@ ____APPNAME___zsh_autocomplete() {
         compset -P "${(b)temp}"
       fi
       if (( exit_code == 12 )); then
-        opts=('-:Read the piped request')
+        opts=('-:Read the request from the command before |')
         local ret=1
         _describe 'input' opts && ret=0
         _files -F '(-)' && ret=0

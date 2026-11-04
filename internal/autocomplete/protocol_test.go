@@ -177,7 +177,7 @@ func TestZshCompletionRespectsCursor(t *testing.T) {
 		{"mid-line file value", []string{"--file", "candidate-", "models", "list"}, 3, 0, "files\n"},
 		{"end-of-line file value", []string{"--file", "candidate-"}, 3, 0, "files\n"},
 		{"request file value", []string{"--image", "candidate-"}, 3, 0, "files\n"},
-		{"piped request or filename", []string{"responses", "create", "--request-file", ""}, 5, 0, "-:Read the piped request\nfiles\n"},
+		{"piped request or filename", []string{"responses", "create", "--request-file", ""}, 5, 0, "-:Read the request from the command before |\nfiles\n"},
 		{"assigned file value", []string{"--file=assets/a=b"}, 2, 0, "prefix:--file=\nfiles\n"},
 		{"assigned image value", []string{"--image="}, 2, 0, "prefix:--image=\nfiles\n"},
 		{"separated flag-like file", []string{"--file", "--file=assets/lo"}, 3, 0, "files\n"},

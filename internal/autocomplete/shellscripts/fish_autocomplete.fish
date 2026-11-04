@@ -45,7 +45,7 @@ function ____APPNAME___fish_autocomplete
                     set value (string sub -s (math (string length -- "$assignment") + 1) -- "$current")
                 end
                 if test $exit_code -eq 12
-                    printf '%s-\tRead the piped request\n' "$assignment"
+                    printf '%s-\tRead the request from the command before |\n' "$assignment"
                 end
                 # Fish 3 also completes the suffix after = or : in a path.
                 # Escape literal separators without changing expansion syntax.

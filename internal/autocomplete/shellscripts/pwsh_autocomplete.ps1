@@ -76,7 +76,7 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
       }
       if ($exitCode -eq 12) {
         [System.Management.Automation.CompletionResult]::new(
-          "$assignment-", '-', 'ParameterValue', 'Read the piped request'
+          "$assignment-", '-', 'ParameterValue', 'Read the request from the command before |'
         )
       }
       # Enumerate the literal parent. Provider wildcard completion can add
