@@ -60,7 +60,7 @@
         }
     }
     function Set-InternetZone([string]$path) {
-        [IO.File]::WriteAllText($path + ':Zone.Identifier', "[ZoneTransfer]`r`nZoneId=3`r`n", [Text.Encoding]::ASCII)
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $path -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value "[ZoneTransfer]`r`nZoneId=3`r`n" -ErrorAction Stop
     }
     function Get-Sha([string]$path) {
         return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()

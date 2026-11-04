@@ -23,6 +23,18 @@ try {
     $local = Join-Path $work 'local-functions.ps1'
     [IO.File]::WriteAllText($local,($defs.Extent.Text -join [Environment]::NewLine))
     . $local
+    $windowsStreams = [Environment]::OSVersion.Platform -eq 'Win32NT'
+    if (!$windowsStreams) {
+        # Other filesystems can exercise ZIP and provenance checks. Windows verifies the real named stream below.
+        Write-Output 'NTFS download zone checks require Windows.'
+        function Set-InternetZone([string]$path) {if (![IO.File]::Exists($path)) {throw 'Missing downloaded file.'}}
+    }
+    function Assert-InternetZone([string]$path) {
+        $mode = if ($PSVersionTable.PSVersion.Major -le 5) {@{Encoding='Byte'; ReadCount=0}} else {@{AsByteStream=$true; Raw=$true}}
+        $bytes = [byte[]](Microsoft.PowerShell.Management\Get-Content -LiteralPath $path -Stream Zone.Identifier @mode -ErrorAction Stop)
+        $expected = [Text.Encoding]::ASCII.GetBytes("[ZoneTransfer]`r`nZoneId=3`r`n")
+        if ([Convert]::ToBase64String($bytes) -cne [Convert]::ToBase64String($expected)) {throw 'Unexpected download zone bytes.'}
+    }
     function Assert-Rejected([scriptblock]$probe) {
         try { & $probe | Out-Null } catch { return }
         throw 'A negative release fixture qualified.'
@@ -60,7 +72,7 @@ try {
             & $shell -NoLogo -NoProfile -NonInteractive -Command $blocks[0].Groups[1].Value *> $null
             if ($LASTEXITCODE -eq 0) { throw 'The installation paste reported success after missing or failed enrollment.' }
         }
-        if ([Environment]::OSVersion.Platform -eq 'Win32NT') {
+        if ($windowsStreams) {
             Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../Install.cmd') -Destination (Join-Path $fakeDir 'Install.cmd')
             $env:OPENAI_FIXTURE_EXIT = '17'
             '' | & "$env:SystemRoot\System32\cmd.exe" /d /c Install.cmd *> $null
@@ -116,17 +128,41 @@ try {
         $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z,$Candidate,'openai.exe','Fastest')
     } finally { $z.Dispose() }
     Expand-Executable $zip 'openai.exe' $out
-    if ((Get-Sha $out) -cne (Get-Sha $Candidate) -or [IO.File]::Exists((Join-Path $work '../escape')) -or
-        [IO.File]::ReadAllText($out + ':Zone.Identifier') -notmatch 'ZoneId=3') { throw 'Incorrect ZIP extraction or download zone.' }
+    if ((Get-Sha $out) -cne (Get-Sha $Candidate) -or [IO.File]::Exists((Join-Path $work '../escape'))) {
+        throw 'Incorrect ZIP extraction.'
+    }
+    if ($windowsStreams) {Assert-InternetZone $out}
     $z = [IO.Compression.ZipFile]::Open($zip,'Update')
     try { $null = $z.CreateEntry('openai.exe') } finally { $z.Dispose() }
     Assert-Rejected { Expand-Executable $zip 'openai.exe' (Join-Path $work 'duplicate.exe') }
     if ([Environment]::OSVersion.Platform -eq 'Win32NT') {
         # Feed the exact raw text through each real interactive ConsoleHost
         # parser. A synthetic CPU or the elevated runner stops network access.
+        $zoneFunction = ($defs | Where-Object Name -ceq 'Set-InternetZone').Extent.Text
+        $zoneAssertion = (Get-Command Assert-InternetZone -CommandType Function).ScriptBlock.Ast.Extent.Text
         $driver = Join-Path $work 'console-paste.ps1'
         $driverBody = @'
 if ([Console]::IsInputRedirected) { exit 71 }
+try {
+    $file = $env:OPENAI_CLI_ZONE_FIXTURE
+    Set-InternetZone $file
+    Assert-InternetZone $file
+    $plain = [Text.Encoding]::ASCII.GetBytes("[ZoneTransfer]`r`nZoneId=3`r`n")
+    $binary = if ($PSVersionTable.PSVersion.Major -le 5) {@{Encoding='Byte'}} else {@{AsByteStream=$true}}
+    foreach ($case in 'bom','newline') {
+        $invalid = if ($case -ceq 'bom') {@(239,187,191) + $plain} else {$plain + @(13,10)}
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $file -Stream Zone.Identifier @binary -Value ([byte[]]$invalid) -ErrorAction Stop
+        $rejected = $false
+        try {Assert-InternetZone $file} catch {
+            if ($_.Exception.Message -cne 'Unexpected download zone bytes.') {throw}
+            $rejected = $true
+        }
+        if (!$rejected) {exit 74}
+    }
+    Set-InternetZone $file
+    Assert-InternetZone $file
+    [IO.File]::WriteAllText($file + '.verified','canonical, rejected BOM, rejected newline')
+} catch {exit 75}
 $global:rawSetup = [IO.File]::ReadAllText($env:OPENAI_CLI_PASTE_FIXTURE)
 $global:reads = 0
 function global:Get-CimInstance { [pscustomobject]@{Architecture=999} }
@@ -139,19 +175,32 @@ function global:PSConsoleHostReadLine {
     return 'exit 73'
 }
 '@
-        [IO.File]::WriteAllText($driver,$driverBody)
+        [IO.File]::WriteAllText($driver,(($zoneFunction,$zoneAssertion,$driverBody) -join [Environment]::NewLine))
         $prior = $env:OPENAI_CLI_PASTE_FIXTURE
+        $priorZone = $env:OPENAI_CLI_ZONE_FIXTURE
         try {
             $env:OPENAI_CLI_PASTE_FIXTURE = $recipe
             foreach ($shell in 'powershell.exe','pwsh.exe') {
+                $zoneFile = Join-Path $work ("download [1] $shell")
+                [IO.File]::WriteAllText($zoneFile,'original')
+                $env:OPENAI_CLI_ZONE_FIXTURE = $zoneFile
                 $exe = (Get-Command $shell -CommandType Application).Path | Select-Object -First 1
                 $child = Start-Process $exe -ArgumentList ("-NoLogo -NoProfile -NoExit -File `""+$driver+"`"") -WindowStyle Hidden -PassThru
                 try {
                     if (!$child.WaitForExit(20000)) { $child.Kill(); throw "Interactive paste timed out in $shell." }
-                    if ($child.ExitCode -ne 0) { throw "Interactive paste did not reach the expected offline refusal in $shell." }
+                    if ($child.ExitCode -ne 0) { throw "The acquisition controls failed in $shell (exit $($child.ExitCode))." }
                 } finally { $child.Dispose() }
+                if (![IO.File]::Exists($zoneFile + '.verified') -or [IO.File]::ReadAllText($zoneFile + '.verified') -cne 'canonical, rejected BOM, rejected newline') {
+                    throw "Missing download zone controls in $shell."
+                }
+                Assert-InternetZone $zoneFile
+                if ([IO.File]::ReadAllText($zoneFile) -cne 'original') {throw "The zone write altered the main data stream in $shell."}
+                Write-Output "$shell preserved the file, wrote the exact Internet zone, and rejected extra BOM and newline bytes."
             }
-        } finally { $env:OPENAI_CLI_PASTE_FIXTURE = $prior }
+        } finally {
+            $env:OPENAI_CLI_PASTE_FIXTURE = $prior
+            $env:OPENAI_CLI_ZONE_FIXTURE = $priorZone
+        }
     }
     # Verify the public launcher's extraction checks without running fixtures.
     $public = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'test-windows-published-starter.ps1'),[ref]$tokens,[ref]$parseErrors)

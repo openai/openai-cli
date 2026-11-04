@@ -91,16 +91,16 @@ try {
             if (!$old -or $zip.GetEntry('Install.cmd')) {throw 'Unexpected baseline Windows archive layout.'}
             $legacy = Join-Path $root 'baseline-openai.exe'
             [IO.Compression.ZipFileExtensions]::ExtractToFile($old,$legacy)
-            [IO.File]::WriteAllText($legacy+':Zone.Identifier',"[ZoneTransfer]`r`nZoneId=3`r`n",[Text.Encoding]::ASCII)
+            Microsoft.PowerShell.Management\Set-Content -LiteralPath $legacy -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value "[ZoneTransfer]`r`nZoneId=3`r`n" -ErrorAction Stop
             $old.Delete()
             $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip,"$root/openai.exe",'openai.exe')
             $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip,(Resolve-Path 'Install.cmd').Path,'Install.cmd')
         } finally {$zip.Dispose()}
         $extracted = Join-Path $root 'extracted'
         [IO.Compression.ZipFile]::ExtractToDirectory($candidateZip,$extracted)
-        [IO.File]::WriteAllText((Join-Path $extracted 'openai.exe')+':Zone.Identifier',"[ZoneTransfer]`r`nZoneId=3`r`n",[Text.Encoding]::ASCII)
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath (Join-Path $extracted 'openai.exe') -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value "[ZoneTransfer]`r`nZoneId=3`r`n" -ErrorAction Stop
         Copy-Item -LiteralPath 'docs/installation.md' -Destination "$extracted/installation.md"
-        [IO.File]::WriteAllText($candidateZip+':Zone.Identifier',"[ZoneTransfer]`r`nZoneId=3`r`n",[Text.Encoding]::ASCII)
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $candidateZip -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value "[ZoneTransfer]`r`nZoneId=3`r`n" -ErrorAction Stop
         Set-Content -LiteralPath "$root/fixture-zip.txt" -Value ([IO.Path]::GetFileName($candidateZip))
         Set-Content -LiteralPath "$root/fixture-tag.txt" -Value "v$version"
         $archiveTests = '^(TestWindowsArchive|TestPreparedImageAfterTrust$)'
@@ -190,9 +190,20 @@ $failed = $false
 $log = "$PSScriptRoot/results/test.log"
 $downloads = Join-Path $env:USERPROFILE 'Downloads'
 $null = [IO.Directory]::CreateDirectory($downloads)
-$work = Join-Path $downloads ('OpenAI CLI ' + [guid]::NewGuid())
+$work = Join-Path $downloads ('OpenAI CLI [' + [guid]::NewGuid() + ']')
 # Explorer inherits the user's normal Downloads permissions during extraction.
 $ownerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+function Read-ArchiveZone([string]$path) {
+    $mode = if ($PSVersionTable.PSVersion.Major -le 5) {@{Encoding='Byte'; ReadCount=0}} else {@{AsByteStream=$true; Raw=$true}}
+    $bytes = [byte[]](Microsoft.PowerShell.Management\Get-Content -LiteralPath $path -Stream Zone.Identifier @mode -ErrorAction Stop)
+    return [Text.Encoding]::ASCII.GetString($bytes)
+}
+function Write-ZipFailure([string]$step, [Management.Automation.ErrorRecord]$failure) {
+    $exception = $failure.Exception
+    $cause = $exception.GetBaseException()
+    Add-Content -LiteralPath $log -Value ("$step category=$($failure.CategoryInfo.Category) " +
+        "exception=$($exception.GetType().Name) hresult=$($exception.HResult) cause=$($cause.GetType().Name) causeHresult=$($cause.HResult)")
+}
 $extractionStage = 'create-download-directory'
 $created = $false
 try {
@@ -209,13 +220,34 @@ try {
         throw 'An existing Downloads directory passed the exclusive creation check.'
     }
     [IO.File]::Delete($sentinel)
-    $extractionStage = 'copy-zip'
+    $extractionStage = 'read-zip-name'
     $name = (Get-Content -LiteralPath "$PSScriptRoot/fixture-zip.txt" -Raw).Trim()
+    $versionPattern = [regex]::Escape($fixtureTag.Substring(1))
+    if ($name -cnotmatch "^openai_${versionPattern}_windows_(amd64|arm64)\.zip\z") {throw 'Unexpected candidate archive name.'}
     $protectedZip = Join-Path $PSScriptRoot $name
     $localZip = Join-Path $work $name
+    $extractionStage = 'inspect-zip-source'
+    $source = Get-Item -LiteralPath $protectedZip -ErrorAction Stop
+    if ($source.PSIsContainer -or $source.Attributes -band [IO.FileAttributes]::ReparsePoint -or $source.Length -le 0) {
+        throw 'Expected a nonempty regular archive.'
+    }
+    $extractionStage = 'read-zip-owner'
+    $owner = (Get-Acl -LiteralPath $protectedZip).GetOwner([Security.Principal.SecurityIdentifier]).Value
+    $ownerClass = switch ($owner) {
+        $ownerSid.Value {'standard-user'}
+        'S-1-5-18'      {'system'}
+        'S-1-5-32-544'  {'administrators'}
+        default        {'other'}
+    }
+    Add-Content -LiteralPath $log -Value "Candidate ZIP name matched; source file present; owner=$ownerClass."
+    $extractionStage = 'copy-zip'
     [IO.File]::Copy($protectedZip,$localZip)
-    if ((Get-FileHash -LiteralPath $protectedZip).Hash -cne (Get-FileHash -LiteralPath $localZip).Hash) {throw 'The account received unexpected ZIP bytes.'}
-    $zone = [IO.File]::ReadAllText($protectedZip+':Zone.Identifier')
+    $extractionStage = 'hash-zip-source'
+    $zipHash = (Get-FileHash -LiteralPath $protectedZip).Hash
+    $extractionStage = 'hash-zip-copy'
+    if ((Get-FileHash -LiteralPath $localZip).Hash -cne $zipHash) {throw 'The account received unexpected ZIP bytes.'}
+    $extractionStage = 'read-source-zone'
+    $zone = Read-ArchiveZone $protectedZip
     if ($zone -cne "[ZoneTransfer]`r`nZoneId=3`r`n") {throw 'The candidate ZIP lacks its Internet zone.'}
     $extracted = Join-Path $work 'Extracted'
     $extractionStage = 'extract-zip'
@@ -223,15 +255,20 @@ try {
     [IO.Compression.ZipFile]::ExtractToDirectory($localZip,$extracted)
     $entry = Join-Path $extracted 'openai.exe'
     # ZipFile does not propagate Explorer's download mark. Preserve it explicitly.
-    foreach ($file in $localZip,$entry,(Join-Path $extracted 'Install.cmd')) {
-        [IO.File]::WriteAllText($file+':Zone.Identifier',$zone,[Text.Encoding]::ASCII)
-        if ([IO.File]::ReadAllText($file+':Zone.Identifier') -cne $zone) {throw 'The account lost the ZIP download zone.'}
+    $zoneFiles = [ordered]@{zip=$localZip; cli=$entry; launcher=(Join-Path $extracted 'Install.cmd')}
+    foreach ($item in $zoneFiles.GetEnumerator()) {
+        $extractionStage = 'write-zone-' + $item.Key
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $item.Value -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value $zone -ErrorAction Stop
+        $extractionStage = 'read-zone-' + $item.Key
+        if ((Read-ArchiveZone $item.Value) -cne $zone) {throw 'The account lost the ZIP download zone.'}
     }
-    $extractionStage = 'verify-user-source'
+    $extractionStage = 'hash-candidate-cli'
     $expectedSha = (Get-FileHash -LiteralPath "$PSScriptRoot/openai.exe").Hash
-    if ((Get-FileHash -LiteralPath $entry).Hash -cne $expectedSha -or
-        (Get-Acl -LiteralPath $entry).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $ownerSid.Value) {
-        throw 'The extracted CLI differs from the candidate or belongs to another account.'
+    $extractionStage = 'hash-extracted-cli'
+    if ((Get-FileHash -LiteralPath $entry).Hash -cne $expectedSha) {throw 'The extracted CLI differs from the candidate.'}
+    $extractionStage = 'verify-extracted-owner'
+    if ((Get-Acl -LiteralPath $entry).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $ownerSid.Value) {
+        throw 'The extracted CLI belongs to another account.'
     }
     Add-Content -LiteralPath $log -Value 'Standard-user Downloads extraction verified the candidate bytes, owner and Internet zone.'
     [IO.File]::WriteAllText($early,'exit 0')
@@ -241,7 +278,7 @@ try {
     [IO.File]::WriteAllText($thrown,$selectManaged + 'throw "unhandled fixture"')
     [IO.File]::WriteAllText($text,$blocks[0].Groups[1].Value,[Text.UTF8Encoding]::new($false))
     $extractionStage = 'run-clients'
-    Push-Location $extracted
+    Push-Location -LiteralPath $extracted
     try {
         $managed = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe'
         foreach ($client in 'powershell.exe','pwsh.exe') {
@@ -252,26 +289,28 @@ try {
             foreach ($probe in 'Exit0','Exit17','Paste','Handled','Thrown') {
                 if ($probe -in 'Handled','Thrown' -and !$installed) {continue}
                 $source = switch ($probe) { 'Exit0' {$early}; 'Exit17' {$nonzero}; 'Paste' {$text}; 'Handled' {$handled}; 'Thrown' {$thrown} }
+                $clientStage = 'driver'
                 try {
                     & "$PSScriptRoot/test-windows-console-paste.ps1" @params -Probe $probe -TextPath $source
                     if ($probe -eq 'Paste') {
+                        $clientStage = 'hash-installed-cli'
                         $bytesMatch = (Get-FileHash -LiteralPath $managed).Hash -ceq $expectedSha
-                        $zoneKept = [IO.File]::ReadAllText($managed+':Zone.Identifier') -cin $zone,"[ZoneTransfer]`r`nZoneId=4`r`n"
+                        $clientStage = 'verify-installed-zone'
+                        $zoneKept = (Read-ArchiveZone $managed) -cin $zone,"[ZoneTransfer]`r`nZoneId=4`r`n"
                         Add-Content -LiteralPath $log -Value "$client installedBytesMatch=$bytesMatch installedZoneKept=$zoneKept"
                         if (!$bytesMatch -or !$zoneKept) {throw 'The documented paste did not preserve the enrolled image.'}
                         $installed = $true
                         Add-Content -LiteralPath $log -Value "$client Restricted paste verified the managed executable and version."
                     }
                 } catch {
-                    # Category is a PowerShell enum. Exception text can contain private operands.
-                    Add-Content -LiteralPath $log -Value "$client $probe stage=driver category=$($_.CategoryInfo.Category)"
+                    Write-ZipFailure "$client $probe stage=$clientStage" $_
                     $failed = $true
                 }
             }
         }
     } finally {Pop-Location}
 } catch {
-    Add-Content -LiteralPath $log -Value "Standard-user ZIP stage=$extractionStage category=$($_.CategoryInfo.Category)"
+    Write-ZipFailure "Standard-user ZIP stage=$extractionStage" $_
     throw 'The ordinary user could not qualify the extracted Windows ZIP.'
 } finally {
     foreach ($file in $text,$early,$nonzero,$handled,$thrown) {[IO.File]::Delete($file)}

@@ -36,10 +36,6 @@ function Expand-AuthenticatedStarter([string]$zip, [string]$destination, $truste
         (Get-FileHash -LiteralPath $exe).Hash.ToLowerInvariant() -cne $trusted.executableSha256) {
         throw 'Extracted Windows files differ from authenticated release A.'
     }
-    # ZipFile extraction does not propagate Explorer's attachment mark.
-    foreach ($file in $zip,$launcher,$exe) {
-        [IO.File]::WriteAllText($file+':Zone.Identifier',"[ZoneTransfer]`r`nZoneId=3`r`n",[Text.Encoding]::ASCII)
-    }
 }
 
 function Invoke-PublishedLauncher($trusted) {
@@ -58,6 +54,10 @@ function Invoke-PublishedLauncher($trusted) {
         & $curl --disable --silent --fail --location --proto '=https' --proto-redir '=https' --max-time 150 --max-filesize $trusted.assetSize --output $zip "https://github.com/openai/openai-cli/releases/download/$Tag/$($trusted.assetName)"
         if ($LASTEXITCODE -ne 0) {throw 'Could not download the authenticated Explorer ZIP.'}
         Expand-AuthenticatedStarter $zip $extracted $trusted
+        # ZipFile does not propagate Explorer's attachment mark.
+        foreach ($file in $zip,(Join-Path $extracted 'Install.cmd'),(Join-Path $extracted 'openai.exe')) {
+            Microsoft.PowerShell.Management\Set-Content -LiteralPath $file -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value "[ZoneTransfer]`r`nZoneId=3`r`n" -ErrorAction Stop
+        }
         $env:OPENAI_ARCHIVE_TEST_CONSOLE = '1'
         $env:OPENAI_ARCHIVE_TEST_MODE = 'install'
         $env:OPENAI_ARCHIVE_TEST_SCREEN = Join-Path $work 'screen.txt'
@@ -137,7 +137,11 @@ if ($PrivateVerifier) {
     if ((Get-FileHash -LiteralPath $gh).Hash.ToLowerInvariant() -cne $trusted.verifierSha256) {throw 'Private verifier differs from its upstream executable pin.'}
     $images += $gh
 }
+$mode = if ($PSVersionTable.PSVersion.Major -le 5) {@{Encoding='Byte'; ReadCount=0}} else {@{AsByteStream=$true; Raw=$true}}
 foreach ($image in $images) {
-    if ([IO.File]::ReadAllText($image+':Zone.Identifier') -notmatch '(?m)^ZoneId=[34]\r?$') {throw 'A downloaded executable lost its Internet security zone.'}
+    $bytes = [byte[]](Microsoft.PowerShell.Management\Get-Content -LiteralPath $image -Stream Zone.Identifier @mode -ErrorAction Stop)
+    if ([Text.Encoding]::ASCII.GetString($bytes) -cnotin "[ZoneTransfer]`r`nZoneId=3`r`n","[ZoneTransfer]`r`nZoneId=4`r`n") {
+        throw 'A downloaded executable lost its Internet security zone.'
+    }
 }
 return $trusted.executableSha256
