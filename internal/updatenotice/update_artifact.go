@@ -79,9 +79,6 @@ func (d *releaseDelivery) prepare(ctx context.Context, cache *noticeCache, selec
 	if !cache.validLock() || !cache.unchangedState() {
 		return "", errCache
 	}
-	if err := preservePreparedImageTrust(cache); err != nil {
-		return "", err
-	}
 	if err := cache.root.Rename("next.tmp", "next"); err != nil {
 		return "", err
 	}

@@ -212,9 +212,31 @@ func pinWindowsWorker(ctx context.Context, installation *updateInstallation, cac
 	return image, nil
 }
 
-func preservePreparedImageTrust(cache *noticeCache) error {
-	return preserveWindowsDownloadZone(filepath.Join(cache.directory, "next.tmp"), 3, filepath.Join(filepath.Dir(cache.directory), "openai.exe"))
-
+func preservePreparedImageTrust(current, next *os.File) error {
+	// Zone.Identifier is named through a file path on Windows. Pin both names
+	// without delete sharing and match them to the checked image descriptors.
+	for _, image := range []*os.File{current, next} {
+		if image == nil {
+			return errCache
+		}
+		pinned, err := os.Open(image.Name())
+		if err != nil {
+			return err
+		}
+		defer pinned.Close()
+		expected, err := image.Stat()
+		if err != nil {
+			return err
+		}
+		actual, err := pinned.Stat()
+		if err != nil {
+			return err
+		}
+		if !actual.Mode().IsRegular() || !os.SameFile(expected, actual) {
+			return errCache
+		}
+	}
+	return preserveWindowsDownloadZone(next.Name(), 3, current.Name())
 }
 
 // The updater receives these files from the public release service. Preserve

@@ -36,8 +36,6 @@ func replaceUpdateImage(_ context.Context, replace func() error) error { return 
 
 func markDownloadedExecutable(string) error { return nil }
 
-func preservePreparedImageTrust(*noticeCache) error { return nil }
-
 func safeVerifierStore(*os.Root) bool { return true }
 
 func sameUpdateDirectory(a, b string) bool { return a == b }

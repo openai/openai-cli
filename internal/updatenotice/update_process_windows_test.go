@@ -113,13 +113,15 @@ type windowsStagedDelivery struct {
 	expected releaseSelection
 }
 
+func (*windowsStagedDelivery) closeVerifier() {}
+
 func (d *windowsStagedDelivery) checkVerifier(context.Context, *noticeCache) error {
 	return errors.New("unexpected verifier probe")
 }
 func (d *windowsStagedDelivery) selectRelease(context.Context, string) (releaseSelection, error) {
 	return releaseSelection{}, errors.New("unexpected download selection")
 }
-func (d *windowsStagedDelivery) prepare(context.Context, *noticeCache, releaseSelection) (string, error) {
+func (d *windowsStagedDelivery) prepare(context.Context, *noticeCache, releaseSelection, *os.File) (string, error) {
 	return "", errors.New("downloaded a prepared release again")
 }
 func (d *windowsStagedDelivery) stillPublished(_ context.Context, s releaseSelection) error {
@@ -205,9 +207,21 @@ func TestWindowsArchiveSharingViolationPreservesUpgrade(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, "next.tmp"), b, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := preservePreparedImageTrust(cache); err != nil {
-		t.Fatal(err)
-	}
+	func() {
+		current, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer current.Close()
+		next, err := os.Open(filepath.Join(directory, "next.tmp"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer next.Close()
+		if err := preservePreparedImageTrust(current, next); err != nil {
+			t.Fatal(err)
+		}
+	}()
 	marker, err = os.ReadFile(filepath.Join(directory, "next.tmp") + ":Zone.Identifier")
 	if err != nil || string(marker) != zone {
 		t.Fatal("staged successor lost the download zone", err)
