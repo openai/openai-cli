@@ -39,7 +39,9 @@ source /usr/share/openai-cli/enable-updates.sh
 
 This enables updates for your account. The package manager continues to own `/usr/bin/openai`.
 Setup prepends `$HOME/.openai/bin` to your interactive shell’s PATH and preserves your other settings.
-It uses a compatible GitHub CLI or downloads a private verifier. You can rerun setup after an automatic upgrade.
+It uses a compatible GitHub CLI or downloads a private verifier.
+If you install a newer system package, rerun setup to select that version immediately.
+If your private copy already upgraded further, setup keeps the newer version.
 To return to the system copy, remove the added PATH line from your shell profiles and start a fresh shell.
 
 ### From an extracted archive

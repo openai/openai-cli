@@ -403,6 +403,12 @@ jobs:
           go test -p 1 ./internal/autocomplete -count=1 -timeout=3m -v -json \
             -run '^(TestShellSuggestionsAdaptersUnavailableExecutable|TestShellSuggestionsAdaptersRefuseShadowedExecutable|TestShellSuggestionsAdaptersRecheckExecutablePrecedence|TestShellSuggestionsAdaptersRecheckRemovedExecutable)$/^fish$' \
             | tee "$RUNNER_TEMP/fish-suggestion-adapter-tests.jsonl"
+      - name: Test Linux package enrollment in Bash and zsh
+        if: (runner.os == 'Linux') && matrix.shard != 'dispatch'
+        shell: bash
+        timeout-minutes: 5
+        run: ./scripts/ci/test-linux-package-enrollment
+
       - name: Test Linux Bash and zsh executable suggestions
         if: (runner.os == 'Linux') && matrix.shard != 'dispatch'
         shell: bash

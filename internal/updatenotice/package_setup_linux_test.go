@@ -1,9 +1,9 @@
 package updatenotice
 
 import (
-	"context"
+	"bytes"
 	"crypto/sha256"
-	"fmt"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,72 +11,124 @@ import (
 	"time"
 )
 
-func TestLinuxPackageRepeatAfterManagedUpdate(t *testing.T) {
+func TestLinuxPackageEnrollmentTransitions(t *testing.T) {
 	if !automaticPlatform() {
 		t.Skip("package setup requires an ordinary user")
 	}
-	const version = "1.0.1"
-	start := buildUpdateFixture(t, t.TempDir(), "1.0.0")
-	binary := buildUpdateFixture(t, t.TempDir(), version)
-	installation := updateTestInstallation(t, start)
-	home := filepath.Dir(filepath.Dir(filepath.Dir(installation.path)))
-	t.Setenv("HOME", home)
-	if currentAppliedPackageBinary() {
-		t.Fatal("accepted an existing private file without a completed update")
+	a, b := "1.0.0", "1.0.1"
+	fixtures := map[string][]byte{
+		a: buildUpdateFixture(t, t.TempDir(), a),
+		b: buildUpdateFixture(t, t.TempDir(), b),
 	}
-	ctx := context.Background()
-	delivery := &syntheticDelivery{selected: syntheticSelection(), content: binary}
-	worker := updateWorker{installation: installation, current: "1.0.0", now: time.Now(), delivery: delivery}
-	if err := worker.run(ctx); err != nil {
-		t.Fatal("prepare package user's first automatic upgrade:", err)
-	}
-	if currentAppliedPackageBinary() {
-		t.Fatal("accepted a pending update before activation")
-	}
-	if err := worker.run(ctx); err != nil {
-		t.Fatal("activate package user's first automatic upgrade:", err)
-	}
-	if !currentAppliedPackageBinary() {
-		t.Fatal("rejected an already-applied managed update")
-	}
-
-	digest := fmt.Sprintf("%x", sha256.Sum256(binary))
-	state := updateState{Schema: 1, Applied: version, AppliedCommit: syntheticCommit, AppliedHash: digest}
-	write := func() {
-		t.Helper()
-		cache, err := openCache(ctx, installation.stateDirectory())
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer cache.close()
-		if _, err := loadUpdateState(cache, time.Now()); err != nil {
-			t.Fatal(err)
-		}
-		if err := cache.saveState(state); err != nil {
-			t.Fatal(err)
-		}
-	}
-	state.AppliedHash = strings.Repeat("0", 64)
-	write()
-	if currentAppliedPackageBinary() {
-		t.Fatal("accepted replaced private bytes")
-	}
-	state.AppliedHash = digest
-	state.AppliedCommit = strings.Repeat("2", 40)
-	write()
-	if currentAppliedPackageBinary() {
-		t.Fatal("accepted a different release commit")
-	}
-	if err := os.Rename(installation.path, installation.path+".other"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(installation.path+".other", installation.path); err != nil {
-		t.Fatal(err)
-	}
-	state.AppliedCommit = syntheticCommit
-	write()
-	if currentAppliedPackageBinary() {
-		t.Fatal("accepted a linked private executable")
+	for _, scenario := range []string{"system package upgraded before discovery", "automatic upgrade before repeat", "interrupted explicit upgrade", "competing worker", "unknown private binary"} {
+		t.Run(scenario, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			path := filepath.Join(home, ".openai", "bin")
+			if err := os.MkdirAll(path, 0700); err != nil {
+				t.Fatal(err)
+			}
+			bin, err := os.OpenRoot(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer bin.Close()
+			install := func(version string) (string, error) {
+				t.Helper()
+				dir, err := os.MkdirTemp(path, ".openai-install.")
+				if err != nil {
+					t.Fatal(err)
+				}
+				source := filepath.Join(dir, "openai")
+				if err := os.WriteFile(source, fixtures[version], 0700); err != nil {
+					t.Fatal(err)
+				}
+				staged, err := openInstallation(source)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer staged.close()
+				return installPackageRelease(t.Context(), bin, staged, version, syntheticCommit)
+			}
+			requireVersion := func(system, expected string) {
+				t.Helper()
+				got, err := install(system)
+				if err != nil || got != expected {
+					t.Fatalf("enroll system %s: got %q, want %q: %v", system, got, expected, err)
+				}
+				got, err = packageInstalledVersion(t.Context(), bin)
+				data, readErr := os.ReadFile(filepath.Join(path, "openai"))
+				if err != nil || got != expected || readErr != nil || !bytes.Equal(data, fixtures[expected]) {
+					t.Fatalf("active bytes do not match %s: %s %v %v", expected, got, err, readErr)
+				}
+			}
+			if scenario == "unknown private binary" {
+				if err := os.WriteFile(filepath.Join(path, "openai"), []byte("personal executable"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := install(a); err == nil {
+					t.Fatal("accepted unknown private bytes")
+				}
+				data, err := os.ReadFile(filepath.Join(path, "openai"))
+				if err != nil || string(data) != "personal executable" {
+					t.Fatal("changed unrelated executable")
+				}
+				return
+			}
+			requireVersion(a, a)
+			if scenario == "interrupted explicit upgrade" || scenario == "competing worker" {
+				cache, err := openCache(t.Context(), filepath.Join(path, ".update"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				state, err := loadUpdateState(cache, time.Now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if scenario == "interrupted explicit upgrade" {
+					// The process stopped after saving its intended identity, before rename.
+					nextHash := sha256.Sum256(fixtures[b])
+					state.PackageSources = append([]packageIdentity{{b, syntheticCommit, hex.EncodeToString(nextHash[:])}}, state.PackageSources...)
+					if err := cache.saveState(state); err != nil {
+						t.Fatal(err)
+					}
+				} else if _, err := install(b); err == nil {
+					t.Fatal("overwrote a managed binary during a competing worker's transaction")
+				}
+				cache.close()
+				if data, err := os.ReadFile(filepath.Join(path, "openai")); err != nil || !bytes.Equal(data, fixtures[a]) {
+					t.Fatal("changed the initial executable before explicit commit")
+				}
+			}
+			if scenario == "automatic upgrade before repeat" {
+				current, err := openInstallation(filepath.Join(path, "openai"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer current.close()
+				delivery := &syntheticDelivery{selected: syntheticSelection(), content: fixtures[b]}
+				worker := updateWorker{installation: current, current: a, now: time.Now(), delivery: delivery}
+				if err := worker.run(t.Context()); err != nil {
+					t.Fatal("prepare package user's first automatic upgrade:", err)
+				}
+				if err := worker.run(t.Context()); err != nil {
+					t.Fatal("activate package user's first automatic upgrade:", err)
+				}
+			} else {
+				requireVersion(b, b)
+				cache, err := openCache(t.Context(), filepath.Join(path, ".update"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				state, err := loadUpdateState(cache, time.Now())
+				cache.close()
+				if err != nil || state.Applied != "" || state.Pending != nil {
+					t.Fatal("explicit installation created automatic-update confirmation")
+				}
+			}
+			requireVersion(a, b)
+			requireVersion(b, b)
+		})
 	}
 }
 

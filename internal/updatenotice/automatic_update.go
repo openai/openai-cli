@@ -23,17 +23,24 @@ const (
 	workerArgument    = "__openai_update_worker"
 )
 
+type packageIdentity struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+	Hash    string `json:"sha256"`
+}
+
 type updateState struct {
-	Schema              int             `json:"schema"`
-	Checked             int64           `json:"checked"`
-	ActivationChecked   int64           `json:"activation_checked"`
-	Starting            int64           `json:"starting"`
-	Pending             *preparedUpdate `json:"pending,omitempty"`
-	Applied             string          `json:"applied,omitempty"`
-	AppliedCommit       string          `json:"applied_commit,omitempty"`
-	AppliedHash         string          `json:"applied_hash,omitempty"`
-	Announced           bool            `json:"announced"`
-	VerifierUnavailable bool            `json:"verifier_unavailable,omitempty"`
+	PackageSources      []packageIdentity `json:"package_sources,omitempty"`
+	Schema              int               `json:"schema"`
+	Checked             int64             `json:"checked"`
+	ActivationChecked   int64             `json:"activation_checked"`
+	Starting            int64             `json:"starting"`
+	Pending             *preparedUpdate   `json:"pending,omitempty"`
+	Applied             string            `json:"applied,omitempty"`
+	AppliedCommit       string            `json:"applied_commit,omitempty"`
+	AppliedHash         string            `json:"applied_hash,omitempty"`
+	Announced           bool              `json:"announced"`
+	VerifierUnavailable bool              `json:"verifier_unavailable,omitempty"`
 }
 
 type preparedUpdate struct {

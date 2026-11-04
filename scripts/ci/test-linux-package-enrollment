@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Build two local release-stamped
+# fixtures with no maintainer scripts, package dependencies, or network calls.
+set -euo pipefail
+[[ $(uname -s) == Linux && $(id -u) != 0 ]]
+if [[ ${RUNNER_ENVIRONMENT:-} != github-hosted ]]; then
+    [[ -f /.dockerenv && ${OPENAI_CLI_DISPOSABLE_PACKAGE_TEST:-} == 1 ]]
+fi
+[[ ! -e /usr/bin/openai && ! -L /usr/bin/openai && ! -e /usr/share/openai-cli ]]
+package=openai-cli-enrollment-ci
+if dpkg-query -W "$package" >/dev/null 2>&1; then exit 1; fi
+repo=$(pwd -P)
+work=$(mktemp -d)
+cleanup() {
+    if dpkg-query -W "$package" >/dev/null 2>&1; then sudo -n dpkg --purge "$package" >/dev/null; fi
+    rm -rf -- "$work"
+}
+trap cleanup EXIT
+arch=$(dpkg --print-architecture)
+commit=$(git rev-parse HEAD)
+mkdir -p "$work/tools" "$work/home"
+chmod 700 "$work/home"
+# This verifier supports the real capability probe and rejects all network work.
+cat > "$work/tools/gh" <<'SH'
+#!/bin/sh
+[ "$#" = 3 ] && [ "$1 $2 $3" = 'attestation verify --help' ] || exit 1
+printf '%s\n' '--bundle --hostname --repo --cert-identity --source-ref --deny-self-hosted-runners --format'
+SH
+chmod 755 "$work/tools/gh"
+export PATH="$work/tools:$PATH"
+for version in 1.2.3 1.2.4; do
+    root="$work/root-$version"
+    mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/share/openai-cli"
+    printf 'package app\nconst Version = "%s"\n' "$version" > "$work/version-$version.go"
+    python3 - "$repo/internal/app/version.go" "$work/version-$version.go" "$work/overlay.json" <<'PY'
+import json, sys
+with open(sys.argv[3], "w") as output:
+    json.dump({"Replace": {sys.argv[1]: sys.argv[2]}}, output)
+PY
+    stamp=github.com/openai/openai-cli/internal/updatenotice
+    go build -overlay "$work/overlay.json" -ldflags="-s -w -X $stamp.releaseVersion=$version -X $stamp.releaseCommit=$commit" -o "$root/usr/bin/openai" ./cmd/openai/main.go
+    install -m 0644 install.sh "$root/usr/share/openai-cli/install.sh"
+    install -m 0644 openai-enable-updates.sh "$root/usr/share/openai-cli/enable-updates.sh"
+    printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: CI <ci@example.invalid>\nDescription: Private enrollment test fixture\n' "$package" "$version" "$arch" > "$root/DEBIAN/control"
+    dpkg-deb --build --root-owner-group "$root" "$work/$version.deb" >/dev/null
+done
+export HTTPS_PROXY=http://127.0.0.1:1 HTTP_PROXY=http://127.0.0.1:1 NO_PROXY=
+export https_proxy="$HTTPS_PROXY" http_proxy="$HTTP_PROXY" no_proxy=
+sudo -n dpkg -i "$work/1.2.3.deb"
+./scripts/test-linux-package-updates
+enroll() {
+    HOME="$work/home" EXPECT="$1" bash --norc -ic 'source /usr/share/openai-cli/enable-updates.sh && test "$(openai --version)" = "openai version $EXPECT"'
+}
+enroll 1.2.3
+sudo -n dpkg -i "$work/1.2.4.deb"
+enroll 1.2.4
+sudo -n dpkg -i "$work/1.2.3.deb"
+enroll 1.2.4

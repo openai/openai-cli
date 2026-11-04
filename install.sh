@@ -172,12 +172,11 @@ same_binary() {
     # Minimal Fedora installations include coreutils but may omit diffutils.
     first=$(sha256sum < "$1") && second=$(sha256sum < "$2") && [ "$first" = "$second" ]
 }
-applied_binary() {
-    [ "$package" = true ] &&
-        [ "$(env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_linux_package_current)" = ready ]
+known_package_binary() {
+    [ "$package" = true ] && [ -n "$(env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 /usr/bin/openai __openai_linux_package_current)" ]
 }
 if [ "$existing" = true ]; then
-    same_binary "$stage/openai" openai || applied_binary || fail 'A different executable already exists at $HOME/.openai/bin/openai. Keep its existing update method.'
+    same_binary "$stage/openai" openai || known_package_binary || fail 'A different executable already exists at $HOME/.openai/bin/openai. Keep its existing update method.'
 fi
 version=$(env -i HOME="$HOME" PATH=/usr/bin:/bin "$stage/openai" --version) ||
     fail 'This binary could not run. Download the archive for your operating system and processor.'
@@ -229,21 +228,26 @@ esac
 if [ "$readiness" != ready ] && [ "$require_gh" = true ]; then
     fail "Automatic update verification is unavailable. $advice Then rerun this installer."
 fi
-# Link the finished file into this directory. An occupied name always wins.
-if [ "$existing" = false ]; then
+if [ "$package" = true ]; then
+    active=$(env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_linux_package_install)
+    [ -n "$active" ] || fail 'Could not safely enroll the package. Check for a different executable or an update in progress, then retry.'
+elif [ "$existing" = false ]; then
     ln "$stage/openai" . || fail 'Could not install openai. Check whether another installation already exists.'
 fi
 check_destination() {
-    if [ "$existing" = false ]; then
+    if [ "$package" = true ]; then
+        [ "$(env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 /usr/bin/openai __openai_linux_package_current)" = "$active" ]
+    elif [ "$existing" = false ]; then
         [ ! -L openai ] && [ openai -ef "$stage/openai" ]
     else
         [ -n "$(find ./openai -prune -type f -user "$uid" -links 1 ! -perm -020 ! -perm -002 -print)" ] &&
-            safe_acl ./openai && { same_binary "$stage/openai" ./openai || applied_binary; }
+            safe_acl ./openai && same_binary "$stage/openai" ./openai
     fi
 }
 check_destination || fail 'The installed executable changed. Check which copy you want before enabling updates.'
 if [ -n "$profile_dir" ]; then
     selected_cli=$(pwd -P)/$stage/openai
+    if [ "$package" = true ]; then selected_cli=/usr/bin/openai; fi
     update_profile() {
         if [ "$package" = true ]; then
             set -- __openai_linux_package_profile "$profile_dir" "$2" "$1"
@@ -261,7 +265,7 @@ fi
 clean_stage "$stage"
 trap - EXIT
 if [ "$package" = true ]; then
-    printf '%s\n' 'Automatic updates are enabled for $HOME/.openai/bin/openai.'
+    printf 'Automatic updates are enabled for OpenAI CLI %s at $HOME/.openai/bin/openai.\n' "$active"
 else
     printf 'Installed OpenAI CLI %s at $HOME/.openai/bin/openai.\n' "$release"
 fi

@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
-	"time"
 )
 
 func runLinuxPackageHelper(argv []string) bool {
@@ -30,9 +28,34 @@ func runLinuxPackageHelper(argv []string) bool {
 				fmt.Println("ready")
 			}
 		}
-	case "__openai_linux_package_current":
-		if len(argv) == 2 && currentAppliedPackageBinary() {
-			fmt.Println("ready")
+	case "__openai_linux_package_current", "__openai_linux_package_install":
+		if len(argv) != 2 || !automaticPlatform() {
+			return true
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), workerTimeout)
+		defer cancel()
+		bin, err := openVerifierBin()
+		if err != nil {
+			return true
+		}
+		defer bin.Close()
+		var active string
+		if argv[1] == "__openai_linux_package_current" {
+			active, err = packageInstalledVersion(ctx, bin)
+		} else {
+			path, pathErr := os.Executable()
+			if pathErr != nil {
+				return true
+			}
+			staged, openErr := openInstallation(path)
+			if openErr != nil {
+				return true
+			}
+			defer staged.close()
+			active, err = installPackageRelease(ctx, bin, staged, releaseVersion, releaseCommit)
+		}
+		if err == nil && active != "" {
+			fmt.Println(active)
 		}
 	default:
 		return false
@@ -56,38 +79,4 @@ func validPackageStarter(current string) bool {
 	}
 	defer file.Close()
 	return binaryIdentity(file, version, releaseCommit)
-}
-
-// A repeat setup may find an already-updated private binary. Use its applied
-// receipt and release identity without executing it or replacing its bytes.
-func currentAppliedPackageBinary() bool {
-	if !automaticPlatform() {
-		return false
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || !filepath.IsAbs(home) {
-		return false
-	}
-	installation, err := openInstallation(filepath.Join(home, ".openai", "bin", "openai"))
-	if err != nil {
-		return false
-	}
-	defer installation.close()
-	if _, err := installation.root.Lstat(".update/state.json"); err != nil {
-		return false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), workerTimeout)
-	defer cancel()
-	cache, err := openCache(ctx, installation.stateDirectory())
-	if err != nil {
-		return false
-	}
-	defer cache.close()
-	state, err := loadUpdateState(cache, time.Now())
-	if err != nil || state.Applied == "" || !validCommit(state.AppliedCommit) || !validDigest(state.AppliedHash) {
-		return false
-	}
-	digest, err := installation.digest(ctx)
-	return err == nil && digest == state.AppliedHash && binaryIdentity(installation.file, state.Applied, state.AppliedCommit) &&
-		installation.unchanged() && cache.validLock() && cache.unchangedState()
 }
