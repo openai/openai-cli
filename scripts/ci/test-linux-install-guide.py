@@ -4,7 +4,6 @@ import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import os
 from pathlib import Path
-import re
 import ssl
 import subprocess
 import tempfile
@@ -14,9 +13,11 @@ import threading
 guide = (Path(__file__).resolve().parents[2] / "docs/installation.md").read_text()
 linux = guide.split("\n## Linux\n", 1)[1].split("\n## ", 1)[0]
 paste = linux.split("```sh\n", 1)[1].split("\n```", 1)[0]
-pin, = re.findall(r"\b[0-9a-f]{64}\b", paste)
+# Verify new pins against the published installer before updating these expectations.
+revision = "334f332fc6a5f8298b20548d4fbbbb30c940cdc5"
+pin = "b0c05af08bd5e168366063bde36147d880f90fba337ce57fff928aa5f3633ce5"
 origin = "https://raw.githubusercontent.com"
-url, = re.findall(re.escape(origin) + r"/openai/openai-cli/[0-9a-f]{40}/scripts/install-linux-release\.sh\b", paste)
+url = f"{origin}/openai/openai-cli/{revision}/scripts/install-linux-release.sh"
 installer = b'echo installer >> "$CALLS"\nexit "$INSTALL_RC"\n'
 
 # Run the paste verbatim. Map its pinned checksum to our synthetic installer.
