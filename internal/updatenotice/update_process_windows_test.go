@@ -157,6 +157,36 @@ func main() { fmt.Println("running"); _,_ = io.Copy(io.Discard,os.Stdin) }
 	return data
 }
 
+func TestWindowsArchiveTrustRejectsRestoredTimestamp(t *testing.T) {
+	_, directory := windowsUpdateFixture(t)
+	path := filepath.Join(directory, "next")
+	if err := os.WriteFile(path, []byte("approved"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	before, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := fileDigest(t.Context(), file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replaced"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, before.ModTime(), before.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparedImageAfterTrust(t.Context(), file, before, hash); !errors.Is(err, errPreparedUpdate) {
+		t.Fatal("accepted different bytes with the original size and modification time", err)
+	}
+}
+
 func TestWindowsArchiveSharingViolationPreservesUpgrade(t *testing.T) {
 	bin, directory := windowsUpdateFixture(t)
 	aCommit := strings.Repeat("a", 40)
@@ -290,6 +320,13 @@ func TestWindowsArchiveSharingViolationPreservesUpgrade(t *testing.T) {
 	if err != nil || receipt.Pending == nil || *receipt.Pending != *pending || receipt.Applied != "" {
 		t.Fatal("lost or prematurely announced the prepared update", err)
 	}
+	if marked, _, err := windowsDownloadZone(filepath.Join(directory, "next")); err != nil || marked != 3 {
+		t.Fatal("busy activation lost the inherited Internet zone", err)
+	}
+	worker.now = now.Add(30 * time.Second)
+	if err := worker.run(ctx); err != nil || delivery.checks != 1 {
+		t.Fatal("busy activation retried before its delay elapsed", err)
+	}
 	blocked.Close()
 	stagedLock.Close()
 	stdin.Close()
@@ -305,6 +342,9 @@ func TestWindowsArchiveSharingViolationPreservesUpgrade(t *testing.T) {
 	}
 	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, b) {
 		t.Fatal("new CLI bytes differ", err)
+	}
+	if marked, _, err := windowsDownloadZone(path); err != nil || marked != 3 {
+		t.Fatal("activated CLI lost the inherited Internet zone", err)
 	}
 	if _, err = os.Stat(filepath.Join(directory, "next")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("staged source remains after replacement", err)

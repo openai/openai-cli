@@ -107,7 +107,33 @@ func (i *updateInstallation) unchanged() bool {
 }
 
 func sameUpdateFile(a, b os.FileInfo) bool {
-	return b.Mode().IsRegular() && ownedUpdatePath(b) && os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime() == b.ModTime() && a.Mode() == b.Mode()
+	return sameUpdateFileProperties(a, b) && a.ModTime() == b.ModTime()
+}
+
+func sameUpdateFileProperties(a, b os.FileInfo) bool {
+	return b.Mode().IsRegular() && ownedUpdatePath(b) && os.SameFile(a, b) && a.Size() == b.Size() && a.Mode() == b.Mode()
+}
+
+// Writing an NTFS attachment stream can change the file's last-write time.
+// Accept that change only for the same file with the authenticated bytes.
+func preparedImageAfterTrust(ctx context.Context, next *os.File, before os.FileInfo, expectedHash string) (os.FileInfo, error) {
+	after, err := next.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !sameUpdateFileProperties(before, after) || !safeOpenedUpdateFile(next) {
+		return nil, errCache
+	}
+	// NTFS can defer timestamp updates while another handle remains open.
+	// Recheck the bytes even when the last-write time still matches.
+	hash, err := fileDigest(ctx, next)
+	if err != nil {
+		return nil, err
+	}
+	if hash != expectedHash {
+		return nil, errPreparedUpdate
+	}
+	return after, nil
 }
 
 func (i *updateInstallation) digest(ctx context.Context) (string, error) {

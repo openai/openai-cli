@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -374,6 +375,12 @@ func (worker updateWorker) activate(ctx context.Context, cache *noticeCache, sta
 	// executable again before activating the exact verified replacement.
 	if err := preservePreparedImageTrust(worker.installation.file, next); err != nil {
 		return err
+	}
+	if runtime.GOOS == "windows" {
+		info, err = preparedImageAfterTrust(ctx, next, info, pending.BinaryHash)
+		if err != nil {
+			return err
+		}
 	}
 	// Commit the receipt first. A crash before rename cannot announce success:
 	// only an executing binary with the new release version consumes it.
