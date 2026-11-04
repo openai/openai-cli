@@ -65,6 +65,8 @@ type imagePickerWorkspace struct {
 	expanded                                  bool
 	konsole, konsoleScreen                    bool
 	konsoleViewport                           interactiveImageSize
+	konsoleTransfer                           *imagePickerKonsoleTransfer
+	konsoleWorkers                            sync.WaitGroup
 	mouse                                     imagePickerMouseModes
 	expandedRows                              []string
 	expandedNativeRows, expandedColumns       int
@@ -218,6 +220,17 @@ func (w *imagePickerWorkspace) progress() string {
 }
 
 func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile, busy, headerChanged bool) (err error) {
+	if transfer := w.konsoleTransfer; transfer != nil {
+		cw, ch := terminalimage.CellSize(w.out.Fd())
+		size := interactiveImageSize{m.width, m.height, cw, ch}
+		if !w.expanded || w.selected != transfer.index || size != transfer.size {
+			select {
+			case transfer.replace <- struct{}{}:
+			default:
+			}
+		}
+		return nil
+	}
 	defer func() {
 		w.nativeTransient = nil
 		err = imagePickerDisplayFailure(err)
@@ -350,6 +363,7 @@ func (w *imagePickerWorkspace) clearGraphics(output *strings.Builder) {
 
 func (w *imagePickerWorkspace) close() error {
 	mouseErr := w.stopMouse()
+	w.konsoleWorkers.Wait()
 	if w.openCancel != nil {
 		w.openCancel()
 	}

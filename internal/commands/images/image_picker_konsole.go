@@ -123,13 +123,18 @@ func (w *imagePickerWorkspace) drawKonsoleFrame(ctx context.Context, lines []str
 	if !changed {
 		return nil
 	}
+	parts := []string{frame.String()}
+	native := false
 	for _, row := range imageRows {
-		fmt.Fprintf(&frame, "\x1b[%d;1H", row+1)
-		frame.WriteString(lines[row])
+		parts = append(parts, fmt.Sprintf("\x1b[%d;5H", row+1), lines[row])
+		native = native || strings.HasPrefix(lines[row], "\x1b]1337;")
+	}
+	if native {
+		return w.startKonsoleTransfer(ctx, parts, keys, placements)
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	if err := terminalimage.WriteFrame(writeCtx, w.out, frame.String(), "iterm-konsole"); err != nil {
+	if err := terminalimage.WriteFrame(writeCtx, w.out, strings.Join(parts, ""), "iterm-konsole"); err != nil {
 		w.nativePainted = nil
 		return err
 	}

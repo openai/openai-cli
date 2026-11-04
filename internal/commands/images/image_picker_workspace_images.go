@@ -115,7 +115,12 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 			if cells := terminalimage.RowColumns(row); cells < 0 || cells > max(1, m.width-6) {
 				row = ""
 			}
-			lines[i+3] = "    " + row
+			if w.konsole && native {
+				// Cursor positioning supplies the margin without copying the PNG.
+				lines[i+3] = row
+			} else {
+				lines[i+3] = "    " + row
+			}
 		}
 	}
 	quit := "Quit"
@@ -145,7 +150,7 @@ func (w *imagePickerWorkspace) acquireFontPreview(ctx context.Context) (func(), 
 // Decode and encode outside the input loop. Only one expanded frame is cached.
 func (p *imagePickerInline) prepareExpanded() {
 	w := p.workspace
-	if len(w.images) == 0 {
+	if len(w.images) == 0 || w.konsoleTransfer != nil {
 		return
 	}
 	expanded := w.expanded

@@ -64,8 +64,21 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		}
 	}
 	switch msg := msg.(type) {
+	case imagePickerKonsoleWritten:
+		if err := p.workspace.finishKonsoleTransfer(msg.transfer); err != nil {
+			p.err = errors.Join(p.err, imagePickerDisplayFailure(err))
+			p.output.cancel()
+			return true, tea.Quit
+		}
+		if p.err != nil || p.model.result.Canceled {
+			return true, tea.Quit
+		}
+		if p.workspace.context == nil || p.workspace.context.Err() == nil {
+			draw(true)
+		}
+		return true, nil
 	case imagePickerPreviewFailure:
-		p.err = msg.err
+		p.err = errors.Join(p.err, msg.err)
 		p.output.cancel()
 		return true, tea.Quit
 	case imagePickerOpened:
@@ -165,7 +178,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		p.submitAfter = time.Now().Add(imagePickerResumeQuiet)
 		if msg.err != nil {
 			if !imagePickerRecoverableRequest(msg.err) {
-				p.err = msg.err
+				p.err = errors.Join(p.err, msg.err)
 				return true, tea.Quit
 			}
 			message := imagePickerRequestMessage(p.workspace.root, msg.err, msg.draftSaved)
