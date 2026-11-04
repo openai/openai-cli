@@ -123,7 +123,15 @@ install_linux_release() (
     [[ $tag =~ $stable ]] || fail 'Expected an official stable OpenAI CLI release tag.'
   fi
   work=$(mktemp -d /tmp/openai-package.XXXXXXXX)
-  trap 'rm -rf -- "$work"' EXIT
+  wait_pid=''
+  cleanup() {
+    if [[ -n $wait_pid ]]; then
+      kill "$wait_pid" 2>/dev/null || :
+      wait "$wait_pid" 2>/dev/null || :
+    fi
+    rm -rf -- "$work"
+  }
+  trap cleanup EXIT
   trap 'exit 1' HUP INT TERM
 
   # Return to the outer loop only when Latest advances. Every other error stops the installer.
@@ -154,11 +162,15 @@ install_linux_release() (
       fi
       [[ -z $pinned && $rc == 22 && $code == 404 ]] || fail "Could not download $asset."
       remaining
+      # Bash can defer an interrupt during foreground sleep. Its wait builtin handles signals immediately.
+      sleep "$((left < 15 ? left : 15))" &
+      wait_pid=$!
       if (( left <= notice_at )); then
         printf 'Waiting for %s from %s. Up to %d seconds remain. Press Ctrl-C to cancel.\n' "$asset" "$tag" "$left" >&2
         notice_at=$((left - 60))
       fi
-      sleep "$((left < 15 ? left : 15))" || fail 'Interrupted while waiting for the release.'
+      wait "$wait_pid" || fail 'Interrupted while waiting for the release.'
+      wait_pid=''
       select_latest
       [[ $tag == "$selected" ]] || return 1
       # Poll without a progress bar until the package exists, then download it normally.

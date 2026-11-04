@@ -190,7 +190,11 @@ cat > "$work/bin/sleep" <<'MOCK'
 #!/bin/bash
 set -eu
 printf '%s\n' "$1" >> "$FIXTURE/sleeps"
-if [[ $CASE == cancel ]]; then kill -TERM "$PPID"; exit 0; fi
+if [[ $CASE == cancel ]]; then
+  echo "$$" > "$FIXTURE/wait-pid"
+  kill -TERM "$PPID"
+  exec /bin/sleep 8
+fi
 read -r now < "$FIXTURE/clock"
 echo "$((now + $1))" > "$FIXTURE/clock"
 MOCK
@@ -286,8 +290,13 @@ for format in deb rpm; do
   [[ $(wc -l < "$work/sudo") == 1 && $(cat "$work/postcheck") == "$format" ]]
 done
 for problem in deadline cancel withdrawn; do
+  start=$SECONDS
   if run deb amd64 amd64 "$problem"; then echo "Unexpected success for $problem" >&2; exit 1; fi
   [[ ! -s $work/sudo && ! -e $(cat "$work/last-output") ]]
+  if [[ $problem == cancel ]]; then
+    [[ $((SECONDS - start)) -lt 4 ]]
+    if kill -0 "$(cat "$work/wait-pid")" 2>/dev/null; then exit 1; fi
+  fi
   if [[ $problem == deadline ]]; then
     [[ $(cat "$work/sleeps") == $'15\n5' ]]
     grep -Fq '30-minute wait' "$work/output"
