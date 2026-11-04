@@ -10,6 +10,13 @@ param(
     [string] $EvidenceLog
 )
 $ErrorActionPreference = 'Stop'
+
+# ConvertFrom-Json can return several integer types. Converting strings or
+# booleans to uint32 would turn malformed receipts into genuine process exits.
+function Read-NativeExitCode($value) {
+    $integer = $value -is [int] -or $value -is [long] -or $value -is [uint32] -or $value -is [uint64]
+    if ($integer -and $value -ge 0 -and $value -le [uint32]::MaxValue) {return [uint32]$value}
+}
 $clientName = [IO.Path]::GetFileName($Client)
 if ($clientName -inotmatch '^(powershell|pwsh)\.exe$') {$clientName = 'other-client'}
 $stage = 'prepare-fixture'
@@ -17,6 +24,19 @@ $reported = $false
 $files = @{}
 $prior = @{}
 try {
+    if ($Probe -eq 'Exit0') {
+        # Exercise the current client's JSON parser before its zero-exit control.
+        $stage = 'check-exit-format'
+        foreach ($token in 'false','true','" "','""','"0"','0.5','0.0','-1','4294967296','[]','{}','null') {
+            $record = ('{"Exit":' + $token + '}') | ConvertFrom-Json
+            if ($null -ne (Read-NativeExitCode $record.Exit)) {throw 'A malformed process exit passed validation.'}
+        }
+        foreach ($token in '0','17','2147483648','4294967295') {
+            $record = ('{"Exit":' + $token + '}') | ConvertFrom-Json
+            if ((Read-NativeExitCode $record.Exit) -ne [uint32]$token) {throw 'A valid process exit failed validation.'}
+        }
+        $stage = 'prepare-fixture'
+    }
     foreach ($key in 'STDERR','TRACE','RESULT','RECEIPT','RUNNER') {$files[$key] = [IO.Path]::GetTempFileName()}
     $challenge = [guid]::NewGuid().ToString('N')
     $values = @{
@@ -42,7 +62,7 @@ try {
         $result = $raw | ConvertFrom-Json
         if ($result.State -cin 'exited','launch-failed','exit-unavailable','timeout') {
             $state = $result.State
-            if ($null -ne $result.Exit) {$exitCode = [uint32]$result.Exit}
+            $exitCode = Read-NativeExitCode $result.Exit
             $nativeError = [uint32]$result.NativeError
         }
     }
