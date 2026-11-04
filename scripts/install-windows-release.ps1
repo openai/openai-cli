@@ -277,7 +277,7 @@
         Confirm-ReleaseExecutable $exe $selected
         $hash = Get-Sha $exe
         if ($VerifyOnly) {
-            return ([ordered]@{tag=$selected.tag; commit=$selected.commit; archiveSha256=$selected.digest; executableSha256=$hash; verifierSha256=$pins[$arch][1]; verifierVersion=$ghVersion} | ConvertTo-Json -Compress)
+            return ([ordered]@{tag=$selected.tag; commit=$selected.commit; assetName=$selected.name; assetSize=$selected.size; archiveSha256=$selected.digest; executableSha256=$hash; verifierSha256=$pins[$arch][1]; verifierVersion=$ghVersion} | ConvertTo-Json -Compress)
         }
         if (!(Invoke-SetupProcess $exe 'install --user' $false)) { throw 'Windows enrollment did not return an installed path.' }
         $bin = Join-Path $base 'OpenAI\CLI\bin'

@@ -143,7 +143,7 @@ func TestMainWindowsArchiveConsoleOwner(t *testing.T) {
 		if !strings.EqualFold(filepath.Base(target), "Install.cmd") {
 			t.Fatal("invalid console installer")
 		}
-		args = []string{"/d", "/c", "Install.cmd"}
+		args = []string{"/d", "/c", `.\Install.cmd`}
 		target = filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
 	} else if mode != "" {
 		selected, err := exec.LookPath("openai")
@@ -159,7 +159,12 @@ func TestMainWindowsArchiveConsoleOwner(t *testing.T) {
 			t.Fatal("invalid public console scenario")
 		}
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
+	timeout := 25 * time.Second
+	if mode == "install" {
+		// A pristine public installation can fetch its verifier before returning.
+		timeout = 150 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, target, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = input, output, output

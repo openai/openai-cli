@@ -153,5 +153,27 @@ function global:PSConsoleHostReadLine {
             }
         } finally { $env:OPENAI_CLI_PASTE_FIXTURE = $prior }
     }
+    # Verify the public launcher's extraction checks without running fixtures.
+    $public = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'test-windows-published-starter.ps1'),[ref]$tokens,[ref]$parseErrors)
+    $expand = $public.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Expand-AuthenticatedStarter'},$true)
+    if ($parseErrors.Count -or !$expand) {throw 'Cannot locate the public installer verification.'}
+    . ([scriptblock]::Create($expand.Extent.Text))
+    $publishedZip = Join-Path $work 'published.zip'
+    $source = Join-Path $work 'portable-fixture.exe'
+    [IO.File]::WriteAllText($source,'inert fixture')
+    $z = [IO.Compression.ZipFile]::Open($publishedZip,'Create')
+    try {$null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z,$source,'openai.exe')} finally {$z.Dispose()}
+    $receipt = @{assetSize=[IO.FileInfo]::new($publishedZip).Length; archiveSha256=(Get-Sha $publishedZip); executableSha256=(Get-Sha $source)}
+    $destination = Join-Path $work 'published-extracted'
+    Assert-Rejected {Expand-AuthenticatedStarter $publishedZip $destination $receipt}
+    $z = [IO.Compression.ZipFile]::Open($publishedZip,'Update')
+    try {$null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z,(Join-Path $PSScriptRoot '../Install.cmd'),'Install.cmd')} finally {$z.Dispose()}
+    Assert-Rejected {Expand-AuthenticatedStarter $publishedZip $destination $receipt}
+    $receipt.assetSize = [IO.FileInfo]::new($publishedZip).Length
+    $receipt.archiveSha256 = Get-Sha $publishedZip
+    Expand-AuthenticatedStarter $publishedZip $destination $receipt
+    if ((Get-Sha (Join-Path $destination 'Install.cmd')) -cne (Get-Sha (Join-Path $PSScriptRoot '../Install.cmd'))) {throw 'Public launcher bytes changed.'}
+    $receipt.executableSha256 = '0'*64
+    Assert-Rejected {Expand-AuthenticatedStarter $publishedZip (Join-Path $work 'wrong-executable') $receipt}
     Write-Output 'Windows release selection, stamp, publisher, extraction, and rejection fixtures passed.'
 } finally { [IO.Directory]::Delete($work,$true) }

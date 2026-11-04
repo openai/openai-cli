@@ -8,6 +8,7 @@ param(
     [ValidatePattern('(?-i)\Av(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z')]
     [string]$SuccessorTag,
     [ValidateSet('powershell.exe','pwsh.exe')][string] $PublicClient = 'powershell.exe',
+    [Parameter(ParameterSetName='Published', Mandatory)][ValidateSet('PowerShell','Install.cmd')][string] $PublicRoute,
     [switch] $PrivateVerifier
 )
 $ErrorActionPreference = 'Stop'
@@ -45,7 +46,7 @@ try {
     if ($published) {
         Copy-Item -LiteralPath 'scripts/install-windows-release.ps1' -Destination "$root/acquire.ps1"
         Copy-Item -LiteralPath 'scripts/test-windows-published-starter.ps1' -Destination $root
-        @{starter=$StarterTag; successor=$SuccessorTag; client=$PublicClient; privateVerifier=[bool]$PrivateVerifier} | ConvertTo-Json | Set-Content -LiteralPath "$root/tags.json"
+        @{starter=$StarterTag; successor=$SuccessorTag; client=$PublicClient; route=$PublicRoute; privateVerifier=[bool]$PrivateVerifier} | ConvertTo-Json | Set-Content -LiteralPath "$root/tags.json"
     } else {
         # The hosted runner owns build caches. The standard user receives only
         # read/execute access to the compiled probe, candidate, and ZIP helper.
@@ -132,7 +133,7 @@ if (Test-Path -LiteralPath "$PSScriptRoot/tags.json") {
     $env:OPENAI_WINDOWS_PUBLIC_RECEIPT = "$PSScriptRoot/results/observed.json"
     $target = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe'
     if (Test-Path -LiteralPath $target) { throw 'The verification account already contains an installation.' }
-    $env:OPENAI_WINDOWS_PUBLIC_STARTER_SHA = & "$PSScriptRoot/test-windows-published-starter.ps1" -Tag $tags.starter -Client $tags.client -PrivateVerifier:([bool]$tags.privateVerifier)
+    $env:OPENAI_WINDOWS_PUBLIC_STARTER_SHA = & "$PSScriptRoot/test-windows-published-starter.ps1" -Tag $tags.starter -Client $tags.client -Route $tags.route -PrivateVerifier:([bool]$tags.privateVerifier)
     if ($tags.privateVerifier) { $env:OPENAI_WINDOWS_PRIVATE_VERIFIER='1' }
     & "$PSScriptRoot/archive.test.exe" '-test.run=^TestMainWindowsArchivePublishedUpgrade$' '-test.v' *> "$PSScriptRoot/results/test.log"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -143,6 +144,8 @@ if (Test-Path -LiteralPath "$PSScriptRoot/tags.json") {
         $verified.executableSha256 -cne $observed.ExecutableSHA256 -or $verified.archiveSha256 -cne $observed.ArchiveSHA256) {
         throw 'The observed successor differs from the independently authenticated public release.'
     }
+    $observed | Add-Member -NotePropertyName InstallRoute -NotePropertyValue $tags.route
+    $observed | Add-Member -NotePropertyName PrivateVerifier -NotePropertyValue ([bool]$tags.privateVerifier)
     $observed | ConvertTo-Json -Compress | Add-Content -LiteralPath "$PSScriptRoot/results/test.log"
     exit 0
 }
