@@ -90,9 +90,12 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 			lines[2] = "    " + ansi.Truncate(imagePickerLine(m.note), max(0, m.width-6), "…")
 		}
 		rows, count, columns, native, expanded := w.expandedRows, w.expandedRowCount(), w.expandedColumns, w.expandedNativeRows > 0, true
-		if w.expandedIndex != w.selected || w.expandedSize.width != m.width || w.expandedSize.height != m.height || count == 0 {
+		if w.expandedIndex != w.selected || w.expandedSize.width != m.width || w.expandedSize.height != m.height || count == 0 || w.konsole && w.expandedSize != w.konsoleViewport {
 			rows = entry.rows
 			count, columns, native, expanded = entry.rowCount(), entry.columns, entry.nativeRows > 0, false
+			if w.konsole && entry.protocol != "" {
+				rows, count, native = []string{"Preparing preview…"}, 1, false
+			}
 		}
 		if count == 0 {
 			rows = []string{"Preview disabled or unavailable. The saved file is unchanged."}
@@ -112,7 +115,12 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 			if cells := terminalimage.RowColumns(row); cells < 0 || cells > max(1, m.width-6) {
 				row = ""
 			}
-			lines[i+3] = "    " + row
+			if w.konsole && native {
+				// Cursor positioning supplies the margin without copying the PNG.
+				lines[i+3] = row
+			} else {
+				lines[i+3] = "    " + row
+			}
 		}
 	}
 	quit := "Quit"
@@ -142,7 +150,7 @@ func (w *imagePickerWorkspace) acquireFontPreview(ctx context.Context) (func(), 
 // Decode and encode outside the input loop. Only one expanded frame is cached.
 func (p *imagePickerInline) prepareExpanded() {
 	w := p.workspace
-	if len(w.images) == 0 {
+	if len(w.images) == 0 || w.konsoleTransfer != nil {
 		return
 	}
 	expanded := w.expanded
@@ -167,6 +175,11 @@ func (p *imagePickerInline) prepareExpanded() {
 		p.output.cancel()
 		return
 	}
+	if reload && w.konsole && expanded && size != w.expandedSize {
+		// Cell geometry can change after drawing the missing placement.
+		// Refit the complete image before restoring it.
+		reload, columns = false, 0
+	}
 	if !expanded && !cacheMiss {
 		index = w.inlineResizeIndex(size)
 		if index < 0 {
@@ -174,6 +187,11 @@ func (p *imagePickerInline) prepareExpanded() {
 		}
 	}
 	entry := w.images[index]
+	if w.konsole && expanded && entry.protocol != "" {
+		// This copy belongs to the temporary view. Keep the saved entry's
+		// automatic-preview protocol, including disabled previews, unchanged.
+		entry.protocol = "iterm-konsole"
+	}
 	if w.previewPending && w.previewIndex == index && w.previewSize == size && w.previewExpanded == expanded && w.previewReload == reload && w.previewColumns == columns {
 		return
 	}
@@ -194,16 +212,35 @@ func (p *imagePickerInline) prepareExpanded() {
 	ctx, cancel := context.WithCancel(parent)
 	w.previewCancel = cancel
 	w.previewWorkers.Add(1)
+	if w.previewGate == nil {
+		w.previewGate = make(chan struct{}, 1)
+	}
+	gate := w.previewGate
 	prepare := w.prepareRows
 	if prepare == nil {
 		prepare = imagePickerPreviewRows
+		if w.konsole && expanded {
+			prepare = imagePickerKonsolePreview
+		}
 	}
 	go func() {
+		select {
+		case gate <- struct{}{}:
+		case <-ctx.Done():
+			w.previewWorkers.Done()
+			return
+		}
+		if ctx.Err() != nil {
+			<-gate
+			w.previewWorkers.Done()
+			return
+		}
 		var releaseFont func()
 		if entry.protocol == "font" {
 			var err error
 			releaseFont, err = w.acquireFontPreview(ctx)
 			if err != nil {
+				<-gate
 				w.previewWorkers.Done()
 				return
 			}
@@ -218,6 +255,7 @@ func (p *imagePickerInline) prepareExpanded() {
 		if releaseFont != nil {
 			releaseFont()
 		}
+		<-gate
 		if failure != nil {
 			w.previewErrorMu.Lock()
 			w.previewError = errors.Join(w.previewError, failure)
@@ -235,8 +273,8 @@ func (p *imagePickerInline) prepareExpanded() {
 	}()
 }
 
-// A cache miss reuses the displayed column width. PrepareRows still measures
-// current cell geometry; its returned row count becomes the new layout geometry.
+// A cache miss reuses the displayed column width. The caller must refit
+// complete images when current geometry differs from their saved fit.
 func imagePickerPrepareReload(ctx context.Context, out *os.File, entry imagePickerWorkspaceImage, columns int, prepare func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)) (imagePickerExpandedRows, error) {
 	result := imagePickerExpandedRows{protocol: entry.protocol, rows: []string{"Preview unavailable. Open the saved file; no need to generate again."}}
 	if entry.protocol == "" {

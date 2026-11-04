@@ -14,6 +14,7 @@ import (
 
 // Persistence belongs to the interactive session, never direct API commands.
 func runImagePickerSession(ctx context.Context, input, output *os.File, options imagePickerOptions) (imagePickerResult, error) {
+	diagnostics := imagePickerDiagnostics(ctx)
 	if options.Shell == "" {
 		options.Shell = os.Getenv("OPENAI_PICKER_SHELL")
 	}
@@ -49,7 +50,7 @@ func runImagePickerSession(ctx context.Context, input, output *os.File, options 
 	}
 	if generate := options.generate; generate != nil {
 		options.generate = func(requestCtx context.Context, result *imagePickerResult) error {
-			if err := finishImagePickerSelection(requestCtx, output, os.Stderr, path, result); err != nil {
+			if err := finishImagePickerSelection(requestCtx, output, diagnostics, path, result); err != nil {
 				return err
 			}
 			return generate(requestCtx, result)
@@ -58,13 +59,13 @@ func runImagePickerSession(ctx context.Context, input, output *os.File, options 
 	result, err := runImagePicker(ctx, input, output, options)
 	if err != nil || result.Canceled {
 		if result.changed {
-			result.draftSaved = saveImagePickerExitDraft(ctx, os.Stderr, path, result.settings)
+			result.draftSaved = saveImagePickerExitDraft(ctx, diagnostics, path, result.settings)
 		}
 		return result, err
 	}
-	err = finishImagePickerSelection(ctx, output, os.Stderr, path, &result, options.printCommand)
+	err = finishImagePickerSelection(ctx, output, diagnostics, path, &result, options.printCommand)
 	if err != nil && result.changed {
-		result.draftSaved = saveImagePickerExitDraft(ctx, os.Stderr, path, result.settings)
+		result.draftSaved = saveImagePickerExitDraft(ctx, diagnostics, path, result.settings)
 	}
 	return result, err
 }

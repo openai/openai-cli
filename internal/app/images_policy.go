@@ -47,7 +47,7 @@ func isSavedImageRoute(opts ShowJSONOpts, kind OutputKind) bool {
 
 // ImageSavingOptions binds image preparation to application request and diagnostic policy.
 func ImageSavingOptions() images.SavingOptions {
-	return images.SavingOptions{RequestOptions: FlagOptions, DiagnosticsAllowed: outputDiagnosticsAllowed, ErrorFormat: errorOutputFormat}
+	return images.SavingOptions{RequestOptions: FlagOptions, DiagnosticsAllowed: outputDiagnosticsAllowed, ErrorFormat: errorOutputFormat, ShowError: ShowCommandError}
 }
 
 // ImagePreviewOptions binds local previews to application receipt and error policy.
