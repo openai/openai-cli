@@ -21,7 +21,6 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
-	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
