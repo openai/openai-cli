@@ -25,6 +25,29 @@
     Add-Type -AssemblyName System.Net.Http
     Add-Type -AssemblyName System.IO.Compression.FileSystem
 
+    # PowerShell comparisons can coerce JSON types and ignore some Unicode characters.
+    function Test-ProtocolText($value,[string[]]$allowed) {
+        return $value -is [string] -and [Array]::IndexOf($allowed,$value) -ge 0
+    }
+    function Test-PositiveInteger($value) {
+        return ($value -is [int] -or $value -is [long]) -and $value -gt 0
+    }
+    function Test-RecordFields($record,[string[]]$required) {
+        if ($record -is [Collections.IDictionary]) { $names = $record.Keys }
+        elseif ($record -is [Management.Automation.PSCustomObject]) { $names = $record.PSObject.Properties.Name }
+        else { return $false }
+        foreach ($field in $required) {
+            if ([Array]::IndexOf([string[]]@($names),$field) -lt 0) { return $false }
+        }
+        return $true
+    }
+    function Test-ReleaseTime($value) {
+        if ($value -is [datetime] -or $value -is [datetimeoffset]) { return $true }
+        if ($value -isnot [string] -or $value -cnotmatch '\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})\z') { return $false }
+        $instant = [datetimeoffset]::MinValue
+        return [datetimeoffset]::TryParse($value,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$instant)
+    }
+
     # Fixed API origins never redirect. Only official GitHub asset URLs may
     # redirect once to the HTTPS release CDN. Keep signed URLs out of diagnostics.
     function Get-PublicResource([string]$url, [int]$limit, [string]$file, [switch]$AllowMissingAttestation) {
@@ -41,7 +64,7 @@
             $response = $client.GetAsync($url).GetAwaiter().GetResult()
             if ($file -and [int]$response.StatusCode -in 301,302,303,307,308) {
                 $redirect = $response.Headers.Location
-                if (!$redirect.IsAbsoluteUri -or $redirect.Scheme -cne 'https' -or $redirect.DnsSafeHost -cne 'release-assets.githubusercontent.com' -or $redirect.Port -ne 443 -or $redirect.UserInfo) {
+                if (!$redirect.IsAbsoluteUri -or !(Test-ProtocolText $redirect.Scheme 'https') -or !(Test-ProtocolText $redirect.DnsSafeHost 'release-assets.githubusercontent.com') -or $redirect.Port -ne 443 -or $redirect.UserInfo) {
                     throw 'Unexpected asset origin.'
                 }
                 $response.Dispose()
@@ -49,7 +72,11 @@
             }
             if ($AllowMissingAttestation -and [int]$response.StatusCode -eq 404) { return @{attestations=@()} }
             if ([int]$response.StatusCode -ne 200) { throw 'Download unavailable.' }
-            if (!$file) { return ($response.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json) }
+            if (!$file) {
+                $json = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                if ($json -cnotmatch '\A\s*\{') { throw 'Expected a GitHub metadata object.' }
+                return (ConvertFrom-Json -InputObject $json)
+            }
             $stream = [IO.File]::Open($file, 'CreateNew', 'Write', 'None')
             try { $response.Content.CopyToAsync($stream).GetAwaiter().GetResult() | Out-Null } finally { $stream.Dispose() }
             Set-InternetZone $file
@@ -95,7 +122,7 @@
     function Expand-Executable([string]$zip, [string]$member, [string]$dest) {
         $archive = [IO.Compression.ZipFile]::OpenRead($zip)
         try {
-            $entries = @($archive.Entries | Where-Object { $_.FullName -ceq $member })
+            $entries = @($archive.Entries | Where-Object { [string]::Equals($_.FullName,$member,[StringComparison]::Ordinal) })
             if ($entries.Count -ne 1 -or $entries[0].Length -le 0 -or $entries[0].Length -gt 256MB) { throw 'Invalid ZIP executable.' }
             $inputStream = $entries[0].Open()
             try {
@@ -145,18 +172,28 @@
     function Read-Release([string]$endpoint, [switch]$WaitForZIP, $known) {
         do {
             $r = Get-PublicResource "$repo/$endpoint" 2MB
-            if ($r.draft -isnot [bool] -or $r.draft -or $r.prerelease -isnot [bool] -or $r.prerelease -or
-                $r.tag_name -isnot [string] -or $r.tag_name -cnotmatch $stable -or ($ReleaseTag -and $r.tag_name -cne $ReleaseTag) -or
-                [long]$r.id -le 0 -or !$r.published_at -or $r.assets -isnot [array]) { throw 'The requested stable release is unavailable.' }
+            $hasImmutable = Test-RecordFields $r 'immutable'
+            if (!(Test-RecordFields $r @('id','draft','prerelease','tag_name','published_at','assets')) -or
+                $r.draft -isnot [bool] -or $r.draft -or $r.prerelease -isnot [bool] -or $r.prerelease -or
+                $r.tag_name -isnot [string] -or $r.tag_name -cnotmatch $stable -or ($ReleaseTag -and !(Test-ProtocolText $r.tag_name $ReleaseTag)) -or
+                !(Test-PositiveInteger $r.id) -or !(Test-ReleaseTime $r.published_at) -or $r.assets -isnot [array] -or
+                ($hasImmutable -and $r.immutable -isnot [bool])) { throw 'The requested stable release is unavailable.' }
             if ($WaitForZIP) { Confirm-ReleaseOrder $r.tag_name $r.id }
             $name = "openai_$($r.tag_name.Substring(1))_windows_$arch.zip"
-            $assets = @($r.assets | Where-Object { $_.name -ceq $name })
-            if ($assets.Count -or !$WaitForZIP -or ($known -and $r.tag_name -ceq $known.tag)) { break }
+            $assets = @(foreach ($asset in $r.assets) {
+                if (!(Test-RecordFields $asset 'name') -or $asset.name -isnot [string] -or !$asset.name -or $asset.name -cmatch '[\x00-\x1f\x7f]') {
+                    throw 'The release contains invalid Windows ZIP metadata.'
+                }
+                if (Test-ProtocolText $asset.name $name) { $asset }
+            })
+            if ($assets.Count -or !$WaitForZIP -or ($hasImmutable -and $r.immutable) -or ($known -and $r.tag_name -ceq $known.tag)) { break }
             Wait-ForPublication $r.tag_name
         } while ($true)
         if ($assets.Count -ne 1) { throw 'The matching Windows ZIP is unavailable.' }
         $a = $assets[0]
-        if ($a.digest -cnotmatch '^sha256:[0-9a-f]{64}$' -or [long]$a.size -le 0 -or [long]$a.size -gt 128MB -or [long]$a.id -le 0 -or !$a.updated_at) {
+        if (!(Test-RecordFields $a @('id','digest','size','updated_at')) -or
+            $a.digest -isnot [string] -or $a.digest -cnotmatch '\Asha256:[0-9a-f]{64}\z' -or
+            !(Test-PositiveInteger $a.size) -or $a.size -gt 128MB -or !(Test-PositiveInteger $a.id) -or !(Test-ReleaseTime $a.updated_at)) {
             throw 'The release lacks a usable Windows ZIP identity.'
         }
         # An occasional Latest check during publication needs only one metadata request.
@@ -167,30 +204,44 @@
         }
         if ($WaitForZIP) { $publication.clock.Stop() }
         $ref = (Get-PublicResource "$repo/git/ref/tags/$($r.tag_name)" 16384).object
-        for ($i = 0; $i -lt 4 -and $ref.type -ceq 'tag' -and $ref.sha -cmatch '^[0-9a-f]{40}$'; $i++) {
+        for ($i = 0; $i -lt 4 -and (Test-ProtocolText $ref.type 'tag') -and $ref.sha -is [string] -and $ref.sha -cmatch '\A[0-9a-f]{40}\z'; $i++) {
             $ref = (Get-PublicResource "$repo/git/tags/$($ref.sha)" 16384).object
         }
-        if ($ref.type -cne 'commit' -or $ref.sha -cnotmatch '^[0-9a-f]{40}$') { throw 'The release tag does not resolve to a commit.' }
+        if (!(Test-ProtocolText $ref.type 'commit') -or $ref.sha -isnot [string] -or $ref.sha -cnotmatch '\A[0-9a-f]{40}\z') { throw 'The release tag does not resolve to a commit.' }
         return [ordered]@{tag=$r.tag_name; commit=$ref.sha; releaseId=$r.id; assetId=$a.id; name=$name; size=$a.size; updated=$a.updated_at; digest=$a.digest.Substring(7)}
+    }
+    function Confirm-CurrentRelease($selected) {
+        $current = Read-Release "releases/$($selected.releaseId)"
+        if (![string]::Equals((ConvertTo-Json -Compress $selected),(ConvertTo-Json -Compress $current),[StringComparison]::Ordinal)) {
+            throw 'The public release changed during verification. Retry setup.'
+        }
     }
     function Wait-ForSelectedRelease($selected) {
         Wait-ForPublication $selected.tag
-        if (!$ReleaseTag -and $publication.polls % 4 -eq 0) {
-            return Read-Release 'releases/latest' -WaitForZIP -Known $selected
-        }
+        if ($publication.polls % 4) { return }
+        if ($ReleaseTag) { Confirm-CurrentRelease $selected; return }
+        return Read-Release 'releases/latest' -WaitForZIP -Known $selected
     }
     function Test-Publication($item, $selection, $pending) {
         $cert = $item.verificationResult.signature.certificate
-        $subjects = @($item.verificationResult.statement.subject | Where-Object { $_.name -ceq $selection.name -and $_.digest.sha256 -ceq $selection.digest })
-        if (!$subjects.Count -or $cert.subjectAlternativeName -cne $workflow -or $cert.sourceRepositoryDigest -cnotmatch '^[0-9a-f]{40}$' -or
-            $cert.runInvocationURI -cnotmatch '^https://github\.com/openai/openai-cli/actions/runs/([1-9][0-9]*)/attempts/([1-9][0-9]*)$') { return $false }
-        $runId, $attempt = $Matches[1], $Matches[2]
+        $subjects = @($item.verificationResult.statement.subject | Where-Object {
+            (Test-ProtocolText $_.name $selection.name) -and (Test-ProtocolText $_.digest.sha256 $selection.digest)
+        })
+        if (!$subjects.Count -or !(Test-ProtocolText $cert.subjectAlternativeName $workflow) -or $cert.sourceRepositoryDigest -isnot [string] -or
+            $cert.sourceRepositoryDigest -cnotmatch '\A[0-9a-f]{40}\z' -or $cert.runInvocationURI -isnot [string] -or
+            $cert.runInvocationURI -cnotmatch '\Ahttps://github\.com/openai/openai-cli/actions/runs/([1-9][0-9]*)/attempts/([1-9][0-9]*)\z') { return $false }
+        [long]$runId = 0
+        [long]$attempt = 0
+        if (![long]::TryParse($Matches[1],[ref]$runId) -or ![long]::TryParse($Matches[2],[ref]$attempt)) { return $false }
         $run = Get-PublicResource "$repo/actions/runs/$runId/attempts/$attempt" 2MB
-        if ($run.id -ne [long]$runId -or $run.run_attempt -ne [int]$attempt -or $run.event -cne 'workflow_dispatch' -or
-            $run.head_branch -cne 'main' -or $run.path -cnotin '.github/workflows/publish-release.yml','.github/workflows/publish-release.yml@main' -or
-            $run.head_sha -cne $cert.sourceRepositoryDigest -or $run.repository.full_name -cne 'openai/openai-cli') { return $false }
-        if ($run.status -ceq 'completed') { return $run.conclusion -ceq 'success' }
-        if ($null -ne $pending -and $null -eq $run.conclusion -and $run.status -cin 'queued','in_progress','requested','pending','waiting') {
+        if (!(Test-RecordFields $run @('id','run_attempt','event','head_branch','path','head_sha','repository','status','conclusion')) -or
+            !(Test-RecordFields $run.repository 'full_name') -or !(Test-PositiveInteger $run.id) -or $run.id -ne $runId -or !(Test-PositiveInteger $run.run_attempt) -or $run.run_attempt -ne $attempt -or
+            !(Test-ProtocolText $run.event 'workflow_dispatch') -or !(Test-ProtocolText $run.head_branch 'main') -or
+            !(Test-ProtocolText $run.path @('.github/workflows/publish-release.yml','.github/workflows/publish-release.yml@main')) -or
+            !(Test-ProtocolText $run.head_sha $cert.sourceRepositoryDigest) -or !(Test-ProtocolText $run.repository.full_name 'openai/openai-cli')) { return $false }
+        if (Test-ProtocolText $run.status 'completed') { return Test-ProtocolText $run.conclusion 'success' }
+        if ($null -ne $pending -and $null -eq $run.conclusion -and
+            (Test-ProtocolText $run.status @('queued','in_progress','requested','pending','waiting'))) {
             $pending.Enqueue($item)
         }
         return $false
@@ -219,9 +270,7 @@
         }
         $publication.clock.Stop()
         if (!$published) { throw 'The trusted publisher has not completed this release.' }
-        if ((ConvertTo-Json -Compress $selected) -cne (ConvertTo-Json -Compress (Read-Release "releases/$($selected.releaseId)"))) {
-            throw 'The public release changed during verification. Retry setup.'
-        }
+        Confirm-CurrentRelease $selected
         if (!$ReleaseTag) { return Read-Release 'releases/latest' -WaitForZIP -Known $selected }
     }
 
@@ -304,8 +353,8 @@
                 $stamp = '(?:^|\s)-X github\.com/openai/openai-cli/internal/updatenotice\.release'
                 $version = [regex]::Matches($flags[0], $stamp + 'Version=([^"\s]+)')
                 $commit = [regex]::Matches($flags[0], $stamp + 'Commit=([^"\s]+)')
-                if ($version.Count -eq 1 -and $commit.Count -eq 1 -and $version[0].Groups[1].Value -ceq $selection.tag.Substring(1) -and
-                    $commit[0].Groups[1].Value -ceq $selection.commit) { return }
+                if ($version.Count -eq 1 -and $commit.Count -eq 1 -and (Test-ProtocolText $version[0].Groups[1].Value $selection.tag.Substring(1)) -and
+                    (Test-ProtocolText $commit[0].Groups[1].Value $selection.commit)) { return }
                 break
             }
             throw 'The executable does not match the public release version and tag commit.'

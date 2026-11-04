@@ -17,7 +17,7 @@ $null = [IO.Directory]::CreateDirectory($work)
 try {
     # Execute the reviewed local function definitions with a synthetic metadata
     # provider. The shipped script exposes no fixture URL or verifier override.
-    $names = 'Set-InternetZone','Select-InstalledCLI','Get-Sha','Expand-Executable','Wait-ForPublication','Confirm-ReleaseOrder','Read-Release','Wait-ForSelectedRelease','Confirm-PublishedZIP','Invoke-SetupProcess','Test-Publication','Read-GoLength','Confirm-ReleaseExecutable'
+    $names = 'Test-ProtocolText','Test-PositiveInteger','Test-RecordFields','Test-ReleaseTime','Confirm-CurrentRelease','Set-InternetZone','Select-InstalledCLI','Get-Sha','Expand-Executable','Wait-ForPublication','Confirm-ReleaseOrder','Read-Release','Wait-ForSelectedRelease','Confirm-PublishedZIP','Invoke-SetupProcess','Test-Publication','Read-GoLength','Confirm-ReleaseExecutable'
     $defs = @($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $names},$true))
     if ($defs.Count -ne $names.Count) { throw 'The acquisition fixture is missing production code.' }
     $local = Join-Path $work 'local-functions.ps1'
@@ -127,6 +127,115 @@ func main() {
     $certificate = @{subjectAlternativeName=$workflow;sourceRepositoryDigest=$publisherHead;runInvocationURI='https://github.com/openai/openai-cli/actions/runs/23/attempts/2'}
     $item = @{verificationResult=@{signature=@{certificate=$certificate};statement=@{subject=@($subject)}}}
     if (!(Test-Publication $item $selected)) { throw 'Matching completed publisher failed verification.' }
+    # Run the same real JSON types in Windows PowerShell and PowerShell 7.
+    function Test-PublisherMetadata([string]$fixturePath) {
+        $fixture = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($fixturePath))
+        $repo = 'https://api.github.com/repos/openai/openai-cli'
+        $workflow = $fixture.workflow
+        function Get-PublicResource([string]$url) {
+            if (![string]::Equals($url,"$repo/actions/runs/23/attempts/2",[StringComparison]::Ordinal)) { throw 'Unexpected publisher endpoint.' }
+            return $record
+        }
+        function Assert-Decision([string]$json,[string]$expected) {
+            $record = ConvertFrom-Json -InputObject $json
+            $queue = New-Object System.Collections.Queue
+            $verified = Test-Publication $fixture.item $fixture.selected $queue
+            $actual = if ($verified) {'verified'} elseif ($queue.Count) {'pending'} else {'rejected'}
+            if ($actual -cne $expected) { throw "Publisher metadata decision was $actual instead of $expected." }
+        }
+        $good = ConvertTo-Json -InputObject $fixture.run -Compress -Depth 5
+        Assert-Decision $good 'verified'
+        $pending = $good.Replace('"completed"','"in_progress"').Replace('"success"','null')
+        Assert-Decision $pending 'pending'
+        foreach ($id in 'true','"23"','23.0','[23]','0','-23','null') {
+            Assert-Decision ($good.Replace('"id":23','"id":' + $id)) 'rejected'
+        }
+        foreach ($attempt in 'true','"2"','2.0','[2]','0','null') {
+            Assert-Decision ($pending.Replace('"run_attempt":2','"run_attempt":' + $attempt)) 'rejected'
+        }
+        foreach ($conclusion in 'true','"success"','0','""','"succ\u0000ess"') {
+            Assert-Decision ($pending.Replace('"conclusion":null','"conclusion":' + $conclusion)) 'rejected'
+        }
+        foreach ($conclusion in 'null','true','["success"]','"succ\u00adess"','"success\u0000"') {
+            Assert-Decision ($good.Replace('"success"',$conclusion)) 'rejected'
+        }
+        $absent = ConvertFrom-Json -InputObject $pending
+        $absent.PSObject.Properties.Remove('conclusion')
+        Assert-Decision (ConvertTo-Json -Compress -Depth 5 -InputObject $absent) 'rejected'
+        Assert-Decision ($pending.Replace('"conclusion":','"Conclusion":')) 'rejected'
+        Assert-Decision ($good.Replace('"id":23','"ID":23')) 'rejected'
+        Assert-Decision ($good.Replace('"repository":{"full_name":"openai/openai-cli"}','"repository":[{"full_name":"openai/openai-cli"}]')) 'rejected'
+        Assert-Decision ($pending.Replace('in_progress','in_\u00adprogress')) 'rejected'
+        Assert-Decision ($good.Replace('publish-release.yml','publish-\u00adrelease.yml')) 'rejected'
+        Assert-Decision ($good.Replace('openai/openai-cli','openai/openai-\u0000cli')) 'rejected'
+        $fixture.item.verificationResult.statement.subject[0].name += [char]0x00ad
+        Assert-Decision $good 'rejected'
+    }
+    $metadataFixture = Join-Path $work 'publisher.json'
+    $golden = @{workflow=$workflow; run=$run; item=$item; selected=$selected}
+    [IO.File]::WriteAllText($metadataFixture,(ConvertTo-Json -InputObject $golden -Depth 10 -Compress))
+    Test-PublisherMetadata $metadataFixture
+    & {
+        $release = $release.Clone()
+        foreach ($invalid in @($null,23,@{name=42},@{name="bad`0name"},@{name=''})) {
+            $release.assets = @($asset,$invalid)
+            Assert-Rejected { Read-Release 'releases/latest' }
+        }
+        foreach ($field in 'id','size','updated_at','digest') {
+            $invalid = $asset.Clone()
+            $invalid[$field] = $true
+            $release.assets = @($invalid)
+            Assert-Rejected { Read-Release 'releases/latest' }
+        }
+        $publication = @{clock=[Diagnostics.Stopwatch]::new(); polls=0; changes=0; tag=$Tag; id=11}
+        function Start-Sleep { throw 'Unexpected immutable release wait.' }
+        $lookalike = $asset.Clone()
+        $lookalike.name += [char]0x00ad
+        $release.immutable = $true
+        $release.assets = @($lookalike)
+        Assert-Rejected { Read-Release 'releases/latest' -WaitForZIP }
+        if ($publication.polls) { throw 'An immutable release waited for a missing ZIP.' }
+        $release.assets = @($asset)
+        $release.immutable = 'false'
+        Assert-Rejected { Read-Release 'releases/latest' }
+    }
+    foreach ($stage in 'attestation','publisher') {
+        & {
+            $originalResource = ${function:Get-PublicResource}
+            $publication = @{clock=[Diagnostics.Stopwatch]::new(); polls=0; changes=0; tag=$Tag; id=11}
+            $counts = @{wait=0; pinned=0; signature=0; latest=0}
+            function Start-Sleep { $counts.wait++ }
+            function Get-PublicResource([string]$url) {
+                if ($url -ceq "$repo/releases/latest") { $counts.latest++; throw 'Pinned release switched to latest.' }
+                if ($url -ceq "$repo/releases/11") {
+                    $counts.pinned++
+                    $replacement = $release.Clone()
+                    $replacement.id = 12
+                    return $replacement
+                }
+                if ($url -ceq "$repo/attestations/sha256:$digest") {
+                    if ($stage -ceq 'attestation') { return @{attestations=@()} }
+                    return @{attestations=@(@{bundle=@{fixture='bundle'}})}
+                }
+                if ($url -ceq "$repo/actions/runs/23/attempts/2") {
+                    $publishing = $run.Clone()
+                    $publishing.status = 'queued'
+                    $publishing.conclusion = $null
+                    return $publishing
+                }
+                return & $originalResource $url
+            }
+            function Invoke-SetupProcess {
+                $counts.signature++
+                return ConvertTo-Json -Compress -Depth 12 -InputObject @($item)
+            }
+            Assert-Rejected { Confirm-PublishedZIP $selected 'fixture-verifier' }
+            $signatures = if ($stage -ceq 'attestation') {0} else {1}
+            if ($counts.wait -ne 4 -or $counts.pinned -ne 1 -or $counts.latest -or $counts.signature -ne $signatures) {
+                throw "Pinned release withdrawal escaped the $stage wait control."
+            }
+        }
+    }
     # Drive the real publication waits with local metadata and a synthetic verifier.
     & {
         $ReleaseTag = ''
@@ -255,11 +364,14 @@ func main() {
         $zoneFunction = ($defs | Where-Object Name -ceq 'Set-InternetZone').Extent.Text
         $zoneReader = (Get-Command Get-WindowsDownloadZone -CommandType Function).ScriptBlock.Ast.Extent.Text
         $zoneAssertion = (Get-Command Assert-InternetZone -CommandType Function).ScriptBlock.Ast.Extent.Text
+        $metadataChecks = ($defs | Where-Object Name -in 'Test-Publication','Test-ProtocolText','Test-PositiveInteger','Test-RecordFields').Extent.Text -join [Environment]::NewLine
+        $metadataTest = (Get-Command Test-PublisherMetadata -CommandType Function).ScriptBlock.Ast.Extent.Text
         $driver = Join-Path $work 'console-paste.ps1'
         $driverBody = @'
 if ([Console]::IsInputRedirected) { exit 71 }
 try {
     $file = $env:OPENAI_CLI_ZONE_FIXTURE
+    Test-PublisherMetadata (Join-Path ([IO.Path]::GetDirectoryName($file)) 'publisher.json')
     Set-InternetZone $file
     Assert-InternetZone $file
     $plain = [Text.Encoding]::ASCII.GetBytes("[ZoneTransfer]`r`nZoneId=3`r`n")
@@ -315,7 +427,7 @@ function global:PSConsoleHostReadLine {
     return 'exit 73'
 }
 '@
-        [IO.File]::WriteAllText($driver,(($zoneFunction,$zoneReader,$zoneAssertion,$selector,$pathTest,$driverBody) -join [Environment]::NewLine))
+        [IO.File]::WriteAllText($driver,(($zoneFunction,$zoneReader,$zoneAssertion,$selector,$pathTest,$metadataChecks,$metadataTest,$driverBody) -join [Environment]::NewLine))
         $prior = $env:OPENAI_CLI_PASTE_FIXTURE
         $priorZone = $env:OPENAI_CLI_ZONE_FIXTURE
         try {
