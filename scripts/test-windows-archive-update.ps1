@@ -196,9 +196,19 @@ $ownerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 $extractionStage = 'create-download-directory'
 $created = $false
 try {
-    if (Test-Path -LiteralPath $work) {throw 'The unique Downloads fixture already exists.'}
-    $null = [IO.Directory]::CreateDirectory($work)
-    $created = $true
+    # Null security attributes inherit Downloads permissions. CreateDirectoryW
+    # fails atomically on collision, so only its winning caller owns cleanup.
+    Add-Type -Namespace OpenAIQualification -Name NativeDirectory -MemberDefinition '[DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true)] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool CreateDirectoryW(string path, IntPtr securityAttributes);'
+    $created = [OpenAIQualification.NativeDirectory]::CreateDirectoryW($work,[IntPtr]::Zero)
+    if (!$created) {throw 'Could not claim the new Downloads directory.'}
+
+    # A second caller must leave the first caller's nonempty directory intact.
+    $sentinel = Join-Path $work 'collision-control'
+    [IO.File]::WriteAllText($sentinel,'retain')
+    if ([OpenAIQualification.NativeDirectory]::CreateDirectoryW($work,[IntPtr]::Zero) -or [IO.File]::ReadAllText($sentinel) -cne 'retain') {
+        throw 'An existing Downloads directory passed the exclusive creation check.'
+    }
+    [IO.File]::Delete($sentinel)
     $extractionStage = 'copy-zip'
     $name = (Get-Content -LiteralPath "$PSScriptRoot/fixture-zip.txt" -Raw).Trim()
     $protectedZip = Join-Path $PSScriptRoot $name
