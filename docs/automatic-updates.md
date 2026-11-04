@@ -90,10 +90,10 @@ An older archive without the helper can run directly as `./openai`. Homebrew can
 Released versions 1.46.0 and 1.47.0 can fail to verify future updates with GitHub CLI.
 To enroll, download a release containing the corrected updater and `install.sh`.
 
-The helper preserves any existing `$HOME/.openai/bin/openai`.
-Repeated Homebrew setup can select an identical, safely owned copy. A different copy needs your decision.
-If you previously installed your own executable there, verify it and move it to a new backup path before running setup.
-Keep that backup until the new executable works. For a package-owned file, use that package's upgrade method.
+Repeated Homebrew or Linux package setup selects the newer version when it recognizes both copies.
+If setup reports an unrecognized executable at `$HOME/.openai/bin/openai`, inspect that file first.
+If you own the file, move it to a new backup path before repeating setup.
+Keep the backup until the new executable works. Use the package manager for any file it owns.
 A forced stop can leave a private `.openai-install.*` staging directory. Remove that directory only after all installers exit.
 
 ## Supported installations
@@ -105,10 +105,12 @@ Automatic installation requires all these conditions:
 - The executable is a regular file at `$HOME/.openai/bin/openai`.
 - The executable and dedicated directories belong to the current user and reject writes from other users.
 - The executable and dedicated directories have no symlinks. The executable has no hard links.
-- A compatible GitHub CLI, `gh`, is available through `PATH`.
+- The updater can find a compatible GitHub CLI for verification.
 
 GitHub CLI verifies existing GitHub artifact provenance. The updater downloads public attestation bundles without GitHub credentials.
-It supplies those bundles to `gh attestation verify`. It does not install GitHub CLI or request login.
+It supplies those bundles to `gh attestation verify`. Verification works without a GitHub login.
+Homebrew setup can use its own GitHub CLI. Linux package setup can download a verified copy for your account.
+For a standalone archive, install a compatible GitHub CLI on `PATH`.
 Verification requires `--bundle`, `--cert-identity`, `--source-ref`, and `--deny-self-hosted-runners` support.
 The detached helper checks required options before downloading an update.
 If GitHub CLI lacks support, bare interactive `openai` can show a manual update notice.

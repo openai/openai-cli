@@ -67,21 +67,22 @@ To enable automatic updates with an older package, use the [archive instructions
   if [ -x /usr/bin/apt ]; then
     manager=apt format=deb
     machine=$(dpkg --print-architecture)
-    package_name() { dpkg-deb -f "$1" Package; }
+    package_identity() { dpkg-deb --show --showformat='${Package} ${Architecture}' "$1"; }
   else
     manager=dnf format=rpm
     machine=$(rpm --eval '%{_arch}')
-    package_name() { rpm -qp --qf '%{NAME}' "$1"; }
+    package_identity() { rpm -qp --qf '%{NAME} %{ARCH}' "$1"; }
   fi
   case "$machine" in
-    amd64|x86_64) arch=amd64 ;; arm64|aarch64) arch=arm64 ;;
-    i386|i486|i586|i686) arch=386 ;; armhf|armv6hl|armv7hl) arch=armv6 ;;
+    amd64|x86_64) arch=amd64 expected=$machine ;; arm64|aarch64) arch=arm64 expected=$machine ;;
+    i386|i486|i586|i686) arch=386 expected=i386 ;; armhf) arch=armv6 expected=armhf ;;
+    armv6hl|armv7hl) arch=armv6 expected=armv6hl ;;
     *) printf '%s\n' 'No release package matches this architecture.' >&2; exit 1 ;;
   esac
   package=$(find . -maxdepth 1 -regextype posix-extended -type f \
     -regex "./openai_[0-9]+[.][0-9]+[.][0-9]+_linux_${arch}[.]${format}" |
     LC_ALL=C sort -Vr | while IFS= read -r file; do
-      [ "$(package_name "$file" 2>/dev/null)" = openai ] || continue
+      [ "$(package_identity "$file" 2>/dev/null)" = "openai $expected" ] || continue
       printf '%s\n' "$file"
       break
     done)
