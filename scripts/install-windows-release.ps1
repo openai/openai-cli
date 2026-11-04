@@ -7,7 +7,7 @@
     $ProgressPreference = 'SilentlyContinue'
     $repo = 'https://api.github.com/repos/openai/openai-cli'
     $workflow = 'https://github.com/openai/openai-cli/.github/workflows/publish-release.yml@refs/heads/main'
-    $stable = '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+    $stable = '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z'
     if ($ReleaseTag -and $ReleaseTag -cnotmatch $stable) { throw 'Use a stable release tag such as v1.2.3.' }
     if ([Environment]::OSVersion.Platform -ne 'Win32NT') { throw 'Run this in ordinary Windows PowerShell or PowerShell on Windows.' }
     $user = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -27,7 +27,7 @@
 
     # Fixed API origins never redirect. Only official GitHub asset URLs may
     # redirect once to the HTTPS release CDN. Keep signed URLs out of diagnostics.
-    function Get-PublicResource([string]$url, [int]$limit, [string]$file) {
+    function Get-PublicResource([string]$url, [int]$limit, [string]$file, [switch]$AllowMissingAttestation) {
         $handler = [Net.Http.HttpClientHandler]::new()
         $handler.AllowAutoRedirect = $false
         $handler.UseCookies = $false
@@ -47,6 +47,7 @@
                 $response.Dispose()
                 $response = $client.GetAsync($redirect).GetAwaiter().GetResult()
             }
+            if ($AllowMissingAttestation -and [int]$response.StatusCode -eq 404) { return @{attestations=@()} }
             if ([int]$response.StatusCode -ne 200) { throw 'Download unavailable.' }
             if (!$file) { return ($response.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json) }
             $stream = [IO.File]::Open($file, 'CreateNew', 'Write', 'None')
@@ -111,19 +112,60 @@
         } finally { $archive.Dispose() }
         Set-InternetZone $dest
     }
-    function Read-Release([string]$endpoint) {
-        $r = Get-PublicResource "$repo/$endpoint" 2MB
-        if ($r.draft -isnot [bool] -or $r.draft -or $r.prerelease -isnot [bool] -or $r.prerelease -or
-            $r.tag_name -cnotmatch $stable -or ($ReleaseTag -and $r.tag_name -cne $ReleaseTag) -or [long]$r.id -le 0 -or !$r.published_at) {
-            throw 'The requested stable release is unavailable.'
+    function Wait-ForPublication([string]$tag) {
+        # Count only time spent waiting for publication. Healthy downloads can take longer.
+        $remaining = 1800000 - $publication.clock.ElapsedMilliseconds
+        if ($remaining -le 0 -or $publication.polls -ge 20) { throw 'Timed out waiting for GitHub to finish publishing the Windows release.' }
+        if ($publication.polls -eq 0) {
+            [Console]::Error.WriteLine("Waiting up to 30 minutes for the OpenAI CLI $tag Windows release. Press Ctrl+C to cancel.")
         }
-        $name = "openai_$($r.tag_name.Substring(1))_windows_$arch.zip"
-        $assets = @($r.assets | Where-Object { $_.name -ceq $name })
+        $publication.polls++
+        $publication.clock.Start()
+        Start-Sleep -Milliseconds ([int][Math]::Min(90000,$remaining))
+    }
+    function Confirm-ReleaseOrder([string]$tag,[long]$id) {
+        if ($publication.tag -ceq $tag) {
+            if ($publication.id -ne $id) { throw 'The selected release was replaced.' }
+            return
+        }
+        if ($publication.tag) {
+            $previous = $publication.tag.Substring(1).Split('.')
+            $current = $tag.Substring(1).Split('.')
+            for ($i=0; $i -lt 3; $i++) {
+                $order = $current[$i].Length.CompareTo($previous[$i].Length)
+                if (!$order) { $order = [string]::CompareOrdinal($current[$i],$previous[$i]) }
+                if ($order -lt 0) { throw 'The latest release moved to an older version.' }
+                if ($order -gt 0) { break }
+            }
+            if (++$publication.changes -gt 3) { throw 'The latest release changed repeatedly during setup.' }
+        }
+        $publication.tag = $tag
+        $publication.id = $id
+    }
+    function Read-Release([string]$endpoint, [switch]$WaitForZIP, $known) {
+        do {
+            $r = Get-PublicResource "$repo/$endpoint" 2MB
+            if ($r.draft -isnot [bool] -or $r.draft -or $r.prerelease -isnot [bool] -or $r.prerelease -or
+                $r.tag_name -isnot [string] -or $r.tag_name -cnotmatch $stable -or ($ReleaseTag -and $r.tag_name -cne $ReleaseTag) -or
+                [long]$r.id -le 0 -or !$r.published_at -or $r.assets -isnot [array]) { throw 'The requested stable release is unavailable.' }
+            if ($WaitForZIP) { Confirm-ReleaseOrder $r.tag_name $r.id }
+            $name = "openai_$($r.tag_name.Substring(1))_windows_$arch.zip"
+            $assets = @($r.assets | Where-Object { $_.name -ceq $name })
+            if ($assets.Count -or !$WaitForZIP -or ($known -and $r.tag_name -ceq $known.tag)) { break }
+            Wait-ForPublication $r.tag_name
+        } while ($true)
         if ($assets.Count -ne 1) { throw 'The matching Windows ZIP is unavailable.' }
         $a = $assets[0]
         if ($a.digest -cnotmatch '^sha256:[0-9a-f]{64}$' -or [long]$a.size -le 0 -or [long]$a.size -gt 128MB -or [long]$a.id -le 0 -or !$a.updated_at) {
             throw 'The release lacks a usable Windows ZIP identity.'
         }
+        # An occasional Latest check during publication needs only one metadata request.
+        if ($known -and $r.tag_name -ceq $known.tag) {
+            if ($a.id -ne $known.assetId -or $a.size -ne $known.size -or $a.updated_at -ne $known.updated -or
+                $a.digest -cne "sha256:$($known.digest)") { throw 'The Windows ZIP changed during verification.' }
+            return
+        }
+        if ($WaitForZIP) { $publication.clock.Stop() }
         $ref = (Get-PublicResource "$repo/git/ref/tags/$($r.tag_name)" 16384).object
         for ($i = 0; $i -lt 4 -and $ref.type -ceq 'tag' -and $ref.sha -cmatch '^[0-9a-f]{40}$'; $i++) {
             $ref = (Get-PublicResource "$repo/git/tags/$($ref.sha)" 16384).object
@@ -131,17 +173,56 @@
         if ($ref.type -cne 'commit' -or $ref.sha -cnotmatch '^[0-9a-f]{40}$') { throw 'The release tag does not resolve to a commit.' }
         return [ordered]@{tag=$r.tag_name; commit=$ref.sha; releaseId=$r.id; assetId=$a.id; name=$name; size=$a.size; updated=$a.updated_at; digest=$a.digest.Substring(7)}
     }
-    function Test-Publication($item, $selection) {
+    function Wait-ForSelectedRelease($selected) {
+        Wait-ForPublication $selected.tag
+        if (!$ReleaseTag -and $publication.polls % 4 -eq 0) {
+            return Read-Release 'releases/latest' -WaitForZIP -Known $selected
+        }
+    }
+    function Test-Publication($item, $selection, $pending) {
         $cert = $item.verificationResult.signature.certificate
         $subjects = @($item.verificationResult.statement.subject | Where-Object { $_.name -ceq $selection.name -and $_.digest.sha256 -ceq $selection.digest })
         if (!$subjects.Count -or $cert.subjectAlternativeName -cne $workflow -or $cert.sourceRepositoryDigest -cnotmatch '^[0-9a-f]{40}$' -or
             $cert.runInvocationURI -cnotmatch '^https://github\.com/openai/openai-cli/actions/runs/([1-9][0-9]*)/attempts/([1-9][0-9]*)$') { return $false }
         $runId, $attempt = $Matches[1], $Matches[2]
         $run = Get-PublicResource "$repo/actions/runs/$runId/attempts/$attempt" 2MB
-        return ($run.id -eq [long]$runId -and $run.run_attempt -eq [int]$attempt -and $run.status -ceq 'completed' -and
-            $run.conclusion -ceq 'success' -and $run.event -ceq 'workflow_dispatch' -and $run.head_branch -ceq 'main' -and
-            $run.path -cin '.github/workflows/publish-release.yml','.github/workflows/publish-release.yml@main' -and
-            $run.head_sha -ceq $cert.sourceRepositoryDigest -and $run.repository.full_name -ceq 'openai/openai-cli')
+        if ($run.id -ne [long]$runId -or $run.run_attempt -ne [int]$attempt -or $run.event -cne 'workflow_dispatch' -or
+            $run.head_branch -cne 'main' -or $run.path -cnotin '.github/workflows/publish-release.yml','.github/workflows/publish-release.yml@main' -or
+            $run.head_sha -cne $cert.sourceRepositoryDigest -or $run.repository.full_name -cne 'openai/openai-cli') { return $false }
+        if ($run.status -ceq 'completed') { return $run.conclusion -ceq 'success' }
+        if ($null -ne $pending -and $null -eq $run.conclusion -and $run.status -cin 'queued','in_progress','requested','pending','waiting') {
+            $pending.Enqueue($item)
+        }
+        return $false
+    }
+
+    function Confirm-PublishedZIP($selected,[string]$gh) {
+        do {
+            $attestations = (Get-PublicResource "$repo/attestations/sha256:$($selected.digest)" 4MB -AllowMissingAttestation).attestations
+            if ($attestations -isnot [array] -or $attestations.Count -gt 30) { throw 'Release provenance is unavailable.' }
+            if ($attestations.Count) { break }
+            $newer = Wait-ForSelectedRelease $selected
+            if ($newer) { return $newer }
+        } while ($true)
+        $publication.clock.Stop()
+        $bundles = @($attestations | ForEach-Object { $_.bundle | ConvertTo-Json -Compress -Depth 100 })
+        [IO.File]::WriteAllLines((Join-Path $work 'bundles.jsonl'),[string[]]$bundles,[Text.UTF8Encoding]::new($false))
+        $argsText = "attestation verify openai.zip --bundle bundles.jsonl --hostname github.com --repo openai/openai-cli --cert-identity $workflow --source-ref refs/heads/main --deny-self-hosted-runners --format json"
+        $verified = ConvertFrom-Json -InputObject (Invoke-SetupProcess $gh $argsText $true)
+        $published = $false
+        $pending = [Collections.Queue]::new()
+        foreach ($item in $verified) { if (Test-Publication $item $selected $pending) { $published = $true; break } }
+        while (!$published -and $pending.Count) {
+            $newer = Wait-ForSelectedRelease $selected
+            if ($newer) { return $newer }
+            $published = Test-Publication ($pending.Dequeue()) $selected $pending
+        }
+        $publication.clock.Stop()
+        if (!$published) { throw 'The trusted publisher has not completed this release.' }
+        if ((ConvertTo-Json -Compress $selected) -cne (ConvertTo-Json -Compress (Read-Release "releases/$($selected.releaseId)"))) {
+            throw 'The public release changed during verification. Retry setup.'
+        }
+        if (!$ReleaseTag) { return Read-Release 'releases/latest' -WaitForZIP -Known $selected }
     }
 
     function Invoke-SetupProcess([string]$path, [string]$arguments, [bool]$verifier) {
@@ -262,8 +343,8 @@
     }
     try {
         $endpoint = if ($ReleaseTag) { "releases/tags/$ReleaseTag" } else { 'releases/latest' }
-        $selected = Read-Release $endpoint
-        [Console]::Error.WriteLine("Verifying OpenAI CLI $($selected.tag) for Windows $arch...")
+        $publication = @{clock=[Diagnostics.Stopwatch]::new(); polls=0; changes=0; tag=''; id=0}
+        $selected = Read-Release $endpoint -WaitForZIP
         $verifiers = Join-Path $work 'verifier'
         $null = [IO.Directory]::CreateDirectory($verifiers)
         $gh = Join-Path $verifiers 'gh.exe'
@@ -283,22 +364,16 @@
             Expand-Executable $ghZip 'bin/gh.exe' $gh
         }
         if ((Get-Sha $gh) -cne $pins[$arch][1]) { throw 'The GitHub CLI executable checksum did not match.' }
-        [Console]::Error.WriteLine('Downloading the Windows ZIP...')
-        $zip = Join-Path $work 'openai.zip'
-        Get-PublicResource "https://github.com/openai/openai-cli/releases/download/$($selected.tag)/$($selected.name)" $selected.size $zip
-        if ([IO.FileInfo]::new($zip).Length -ne $selected.size -or (Get-Sha $zip) -cne $selected.digest) { throw 'The Windows ZIP checksum did not match.' }
-        $attestations = (Get-PublicResource "$repo/attestations/sha256:$($selected.digest)" 4MB).attestations
-        if (!$attestations -or $attestations.Count -gt 30) { throw 'Release provenance is unavailable.' }
-        $bundles = @($attestations | ForEach-Object { $_.bundle | ConvertTo-Json -Compress -Depth 100 })
-        [IO.File]::WriteAllLines((Join-Path $work 'bundles.jsonl'),[string[]]$bundles,[Text.UTF8Encoding]::new($false))
-        $argsText = "attestation verify openai.zip --bundle bundles.jsonl --hostname github.com --repo openai/openai-cli --cert-identity $workflow --source-ref refs/heads/main --deny-self-hosted-runners --format json"
-        $verified = ConvertFrom-Json -InputObject (Invoke-SetupProcess $gh $argsText $true)
-        $published = $false
-        foreach ($item in $verified) { if (Test-Publication $item $selected) { $published = $true; break } }
-        if (!$published) { throw 'The trusted publisher has not completed this release.' }
-        if ((ConvertTo-Json -Compress $selected) -cne (ConvertTo-Json -Compress (Read-Release "releases/$($selected.releaseId)"))) {
-            throw 'The public release changed during verification. Retry setup.'
-        }
+        do {
+            [Console]::Error.WriteLine("Downloading and verifying OpenAI CLI $($selected.tag) for Windows $arch...")
+            $zip = Join-Path $work 'openai.zip'
+            Get-PublicResource "https://github.com/openai/openai-cli/releases/download/$($selected.tag)/$($selected.name)" $selected.size $zip
+            if ([IO.FileInfo]::new($zip).Length -ne $selected.size -or (Get-Sha $zip) -cne $selected.digest) { throw 'The Windows ZIP checksum did not match.' }
+            $latest = Confirm-PublishedZIP $selected $gh
+            if (!$latest) { break }
+            [IO.File]::Delete($zip)
+            $selected = $latest
+        } while ($true)
         $exe = Join-Path $work 'openai.exe'
         Expand-Executable $zip 'openai.exe' $exe
         Confirm-ReleaseExecutable $exe $selected

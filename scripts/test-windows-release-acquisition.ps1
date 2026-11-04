@@ -17,7 +17,7 @@ $null = [IO.Directory]::CreateDirectory($work)
 try {
     # Execute the reviewed local function definitions with a synthetic metadata
     # provider. The shipped script exposes no fixture URL or verifier override.
-    $names = 'Set-InternetZone','Select-InstalledCLI','Get-Sha','Expand-Executable','Read-Release','Invoke-SetupProcess','Test-Publication','Read-GoLength','Confirm-ReleaseExecutable'
+    $names = 'Set-InternetZone','Select-InstalledCLI','Get-Sha','Expand-Executable','Wait-ForPublication','Confirm-ReleaseOrder','Read-Release','Wait-ForSelectedRelease','Confirm-PublishedZIP','Invoke-SetupProcess','Test-Publication','Read-GoLength','Confirm-ReleaseExecutable'
     $defs = @($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $names},$true))
     if ($defs.Count -ne $names.Count) { throw 'The acquisition fixture is missing production code.' }
     $local = Join-Path $work 'local-functions.ps1'
@@ -127,6 +127,49 @@ func main() {
     $certificate = @{subjectAlternativeName=$workflow;sourceRepositoryDigest=$publisherHead;runInvocationURI='https://github.com/openai/openai-cli/actions/runs/23/attempts/2'}
     $item = @{verificationResult=@{signature=@{certificate=$certificate};statement=@{subject=@($subject)}}}
     if (!(Test-Publication $item $selected)) { throw 'Matching completed publisher failed verification.' }
+    # Drive the real publication waits with local metadata and a synthetic verifier.
+    & {
+        $ReleaseTag = ''
+        $originalResource = ${function:Get-PublicResource}
+        $publication = @{clock=[Diagnostics.Stopwatch]::new(); polls=0; changes=0; tag=''; id=0}
+        $calls = @{sleep=0; signature=0}
+        function Start-Sleep([int]$Milliseconds) {
+            if ($Milliseconds -le 0 -or $Milliseconds -gt 90000) { throw 'Unexpected publication polling interval.' }
+            $calls.sleep++
+        }
+        function Get-PublicResource([string]$url,[int]$limit,[string]$file,[switch]$AllowMissingAttestation) {
+            if ($url -ceq "$repo/releases/latest" -and $calls.sleep -lt 1) {
+                $missing = $release.Clone()
+                $missing.assets = @()
+                return $missing
+            }
+            if ($url -ceq "$repo/attestations/sha256:$digest") {
+                if (!$AllowMissingAttestation) { throw 'Expected only the digest-specific absence exception.' }
+                if ($calls.sleep -lt 2) { return @{attestations=@()} }
+                return @{attestations=@(@{bundle=@{fixture='bundle'}})}
+            }
+            if ($url -ceq "$repo/actions/runs/23/attempts/2" -and $calls.sleep -lt 3) {
+                $publishing = $run.Clone()
+                $publishing.status = 'in_progress'
+                $publishing.conclusion = $null
+                return $publishing
+            }
+            return & $originalResource $url
+        }
+        function Invoke-SetupProcess([string]$path,[string]$arguments,[bool]$verifier) {
+            if (!$verifier) { throw 'Unexpected enrollment from the publication check.' }
+            $calls.signature++
+            return ConvertTo-Json -Compress -Depth 12 -InputObject @($item)
+        }
+        $pending = Read-Release 'releases/latest' -WaitForZIP
+        $newer = Confirm-PublishedZIP $pending 'fixture-verifier'
+        if ($newer -or $calls.sleep -ne 3 -or $calls.signature -ne 1 -or $publication.polls -ne 3) {
+            throw 'The release did not resume from each publication stage.'
+        }
+        $publication.polls = 20
+        Assert-Rejected { Wait-ForPublication $Tag }
+        if ($calls.sleep -ne 3) { throw 'The publication wait exceeded its shared budget.' }
+    }
     $run.conclusion = 'failure'
     if (Test-Publication $item $selected) { throw 'A failed publisher qualified.' }
     $run.conclusion = 'success'
