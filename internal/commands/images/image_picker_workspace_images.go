@@ -170,6 +170,11 @@ func (p *imagePickerInline) prepareExpanded() {
 		p.output.cancel()
 		return
 	}
+	if reload && w.konsole && expanded && size != w.expandedSize {
+		// Cell geometry can change after drawing the missing placement.
+		// Refit the complete image before restoring it.
+		reload, columns = false, 0
+	}
 	if !expanded && !cacheMiss {
 		index = w.inlineResizeIndex(size)
 		if index < 0 {
@@ -263,8 +268,8 @@ func (p *imagePickerInline) prepareExpanded() {
 	}()
 }
 
-// A cache miss reuses the displayed column width. PrepareRows still measures
-// current cell geometry; its returned row count becomes the new layout geometry.
+// A cache miss reuses the displayed column width. The caller must refit
+// complete images when current geometry differs from their saved fit.
 func imagePickerPrepareReload(ctx context.Context, out *os.File, entry imagePickerWorkspaceImage, columns int, prepare func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)) (imagePickerExpandedRows, error) {
 	result := imagePickerExpandedRows{protocol: entry.protocol, rows: []string{"Preview unavailable. Open the saved file; no need to generate again."}}
 	if entry.protocol == "" {

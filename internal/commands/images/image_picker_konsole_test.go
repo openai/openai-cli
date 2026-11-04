@@ -292,3 +292,49 @@ func TestImagePickerKonsolePreparationReplacesQueuedWork(t *testing.T) {
 	require.Equal(t, "blocks", w.images[0].protocol)
 	w.previewCancel()
 }
+
+func TestImagePickerKonsoleCacheReloadRefitsChangedCells(t *testing.T) {
+	if !term.IsTerminal(os.Stdout.Fd()) {
+		t.Skip("requires a private PTY")
+	}
+	size, err := interactiveImageViewport(os.Stdout)
+	require.NoError(t, err)
+	require.Greater(t, size.cellWidth, 1)
+	require.Less(t, (size.height-4)*size.cellHeight, 64*size.cellWidth, "fixture must distinguish the old and current fits")
+	m, w := konsoleWorkspaceForTest(t)
+	m.width, m.height = size.width, size.height
+	w.out, w.context, w.expanded = os.Stdout, t.Context(), true
+	w.expandedIndex, w.expandedSize = 0, size
+	w.expandedSize.cellWidth = 1
+	w.konsoleViewport = w.expandedSize
+	w.expandedNativeRows, w.expandedColumns = 1, 64
+	w.painted = make([]string, size.height)
+	w.nativeFrame = map[int]imagePickerNativeRow{3: {image: 0, row: 0, columns: 64, count: 1, expanded: true}}
+	messages := make(chan tea.Msg, 2)
+	w.send = func(message tea.Msg) { messages <- message }
+	w.prepareRows = func(_ context.Context, _ *os.File, img image.Image, protocol string, _ int) ([]string, string, error) {
+		if img.Bounds().Dx() != img.Bounds().Dy() {
+			return nil, protocol, errors.New("regression fixture must be square")
+		}
+		return []string{"prepared complete image"}, protocol, nil
+	}
+	t.Cleanup(func() {
+		if w.previewCancel != nil {
+			w.previewCancel()
+		}
+		w.previewWorkers.Wait()
+	})
+	p := &imagePickerInline{model: m, workspace: w}
+	p.prepareExpanded()
+	select {
+	case message := <-messages:
+		prepared, ok := message.(imagePickerExpandedRows)
+		require.True(t, ok)
+		require.Equal(t, size, prepared.size)
+		require.Less(t, prepared.columns, 64)
+		require.LessOrEqual(t, prepared.columns*size.cellWidth, (size.height-4)*size.cellHeight,
+			"new cell geometry must refit the complete image inside the body")
+	case <-time.After(3 * time.Second):
+		t.Fatal("cache reload did not complete")
+	}
+}
