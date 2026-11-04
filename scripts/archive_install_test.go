@@ -361,7 +361,18 @@ func testHomebrewOptIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := "'" + strings.ReplaceAll(self, "'", "'\\''") + "'"
-	ready := []byte("#!/bin/sh\ncase $1 in --version) echo 'openai version 1.2.3';; __openai_archive_verifier) echo probe >> \"$HOME/verifier.log\"; command -v gh >/dev/null && gh || echo missing;; __openai_archive_zsh_profile) exec " + command + " -test.run '^TestArchiveProfileProcess$' -- \"$2\" \"$3\";; esac\n")
+	ready := []byte(`#!/bin/sh
+case $1 in
+    --version) echo 'openai version 1.2.3' ;;
+    __openai_homebrew_verifier)
+        echo probe >> "$HOME/formula.log"
+        if [ -x "$2/bin/gh" ]; then "$2/bin/gh"; else echo missing; fi ;;
+    __openai_archive_verifier)
+        echo probe >> "$HOME/verifier.log"
+        command -v gh >/dev/null && gh || echo missing ;;
+    __openai_archive_zsh_profile) exec ` + command + ` -test.run '^TestArchiveProfileProcess$' -- "$2" "$3" ;;
+esac
+`)
 	for path, data := range map[string][]byte{
 		filepath.Join(source, name):         selection,
 		filepath.Join(source, "install.sh"): installer,
@@ -548,22 +559,25 @@ source "$(brew --prefix)/bin/openai-enable-updates.zsh"
 rc=$?
 [[ $before == "$PWD" && $entry == preserve && -o noclobber ]] || exit 92
 [[ $commands[keep] == "$HOME/keep" ]] || [[ $initial != "$PATH" ]] || exit 98
-if [[ $KIND = (normal|hashed|'external gh'|'missing gh'|'old gh') ]]; then
+if [[ $KIND = (normal|hashed|'external gh'|'missing gh'|'old gh'|'shadowed gh') ]]; then
     (( rc == 0 )) && [[ $(whence openai) == "$HOME/.openai/bin/openai" ]] || exit 93
     selected=$PATH
     source "$(brew --prefix)/bin/openai-enable-updates.zsh" || exit 94
     [[ $selected == "$PATH" ]] || exit 95
     if [[ $KIND = ('missing gh'|'old gh') ]]; then
-        [[ $(cat "$HOME/brew.log") = gh && $(wc -l < "$HOME/verifier.log") -eq 3 ]] || exit 85
-    else
+        [[ $(cat "$HOME/brew.log") = gh && $(wc -l < "$HOME/formula.log") -eq 3 && $(wc -l < "$HOME/verifier.log") -eq 1 ]] || exit 85
+    elif [[ $KIND = 'external gh' ]]; then
         [[ ! -e "$HOME/brew.log" && $(wc -l < "$HOME/verifier.log") -eq 2 ]] || exit 86
+    else
+        [[ ! -e "$HOME/brew.log" && ! -e "$HOME/verifier.log" && $(wc -l < "$HOME/formula.log") -eq 2 ]] || exit 86
+        if [[ $KIND = 'shadowed gh' ]]; then
+            [[ $(whence gh) = "$HOME/.openai/bin/gh" && $(gh) = unavailable ]] || exit 88
+        fi
     fi
 else
     (( rc != 0 )) && [[ $initial == "$PATH" && ! -e "$ZDOTDIR/.zshrc" && ! -e "$HOME/.openai/bin/openai" ]] || exit 96
     if [[ $KIND = 'failed brew' ]]; then
         [[ $rc = 39 && $(cat "$HOME/brew.log") = gh ]] || exit 87
-    elif [[ $KIND = 'shadowed gh' ]]; then
-        [[ $(cat "$HOME/brew.log") = gh && $(wc -l < "$HOME/verifier.log") -eq 2 ]] || exit 88
     else
         [[ ! -e "$HOME/brew.log" ]] || exit 97
     fi

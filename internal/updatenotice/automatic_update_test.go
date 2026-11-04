@@ -100,6 +100,8 @@ type syntheticDelivery struct {
 	beforePrepare, beforeValidation            func()
 }
 
+func (*syntheticDelivery) closeVerifier() {}
+
 func (d *syntheticDelivery) checkVerifier(context.Context, *noticeCache) error {
 	d.verifierCalls++
 	return d.verifierError

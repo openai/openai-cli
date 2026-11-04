@@ -201,7 +201,7 @@ if [ "$package" = true ]; then
 fi
 # Check the verifier that the documented PATH will select after installation.
 check_verifier() {
-    env -i HOME="$HOME" PATH="$HOME/.openai/bin:$PATH" OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_archive_verifier 2>/dev/null
+    env -i HOME="$HOME" PATH="$HOME/.openai/bin:$PATH" OPENAI_CLI_HOMEBREW_SETUP="${brew_bin:+1}" OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_archive_verifier 2>/dev/null
 }
 if [ "$package" = true ]; then
     # The explicit package opt-in can bootstrap a private, digest-pinned verifier.
@@ -211,16 +211,26 @@ if [ "$package" = true ]; then
         NO_PROXY="${NO_PROXY:-}" no_proxy="${no_proxy:-}" SSL_CERT_FILE="${SSL_CERT_FILE:-}" SSL_CERT_DIR="${SSL_CERT_DIR:-}" \
         OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_setup_update_verifier) || readiness=unavailable
     [ "$readiness" = ready ] || fail 'Retry the same package setup command after checking network access and your private installation directory.'
+elif [ -n "$brew_bin" ]; then
+    prefix=$("$brew_bin" --prefix)
+    [ "$prefix/bin/brew" -ef "$brew_bin" ] || fail 'The selected Homebrew installation reported a different prefix.'
+    use_homebrew_verifier() {
+        env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_homebrew_verifier "$prefix"
+    }
+    # Prefer Homebrew's protected formula before consulting the user's gh.
+    readiness=$(use_homebrew_verifier) || readiness=unavailable
+    [ "$readiness" != unsafe ] || fail 'The Homebrew verifier or private settings have unsafe ownership or permissions.'
+    if [ "$readiness" != ready ]; then readiness=$(check_verifier) || readiness=unavailable; fi
+    if [ "$readiness" != ready ]; then
+        printf '%s\n' 'Setting up GitHub CLI for update verification...'
+        "$brew_bin" install gh
+        readiness=$(use_homebrew_verifier) || readiness=unavailable
+        [ "$readiness" != unsafe ] || fail 'The Homebrew verifier or private settings have unsafe ownership or permissions.'
+        if [ "$readiness" != ready ]; then readiness=$(check_verifier) || readiness=unavailable; fi
+        [ "$readiness" = ready ] || fail 'Homebrew could not supply a compatible GitHub CLI verifier. Check the selected Homebrew installation, then retry setup.'
+    fi
 else
     readiness=$(check_verifier) || readiness=unavailable
-fi
-if [ "$readiness" != ready ] && [ -n "$brew_bin" ]; then
-    printf '%s\n' 'Setting up GitHub CLI for update verification...'
-    "$brew_bin" install gh
-    readiness=$(check_verifier) || readiness=unavailable
-    if [ "$readiness" != ready ]; then
-        fail 'GitHub CLI is still missing or incompatible. Check PATH="$HOME/.openai/bin:$PATH" command -v gh. Update the selected gh or put the Homebrew gh first, then rerun setup.'
-    fi
 fi
 case $readiness in
     ready) advice='GitHub CLI supports update verification.' ;;

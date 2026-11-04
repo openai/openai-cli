@@ -30,6 +30,7 @@ type packageIdentity struct {
 }
 
 type updateState struct {
+	HomebrewPrefix      string            `json:"homebrew_prefix,omitempty"`
 	PackageSources      []packageIdentity `json:"package_sources,omitempty"`
 	Schema              int               `json:"schema"`
 	Checked             int64             `json:"checked"`
@@ -79,6 +80,9 @@ func loadUpdateState(cache *noticeCache, now time.Time) (updateState, error) {
 	if json.Unmarshal(data, &state) != nil || state.Schema != 1 || state.Checked < 0 || state.Checked > now.Unix() || state.ActivationChecked < 0 || state.ActivationChecked > now.Unix() || state.Starting < 0 || state.Starting > now.Unix() {
 		return state, errCache
 	}
+	if state.HomebrewPrefix != "" && !validHomebrewReceipt(cache, state.HomebrewPrefix) {
+		return state, errCache
+	}
 	if state.Applied != "" {
 		v, ok := stableVersion(state.Applied)
 		if !ok || v != state.Applied {
@@ -121,7 +125,8 @@ func automatic(ctx context.Context, current string, announce bool) (string, bool
 		return "", false
 	}
 	defer installation.close()
-	if systemUpdateVerifier() == "" && !verifierEnrolled(installation.root.Name()) {
+	haveVerifier := systemUpdateVerifier() != "" || verifierEnrolled(installation.root.Name())
+	if !haveVerifier && !mayHaveHomebrewVerifier(installation.stateDirectory()) {
 		return "", false
 	}
 	cache, err := openCache(ctx, installation.stateDirectory())
@@ -133,6 +138,10 @@ func automatic(ctx context.Context, current string, announce bool) (string, bool
 	if err != nil {
 		cache.close()
 		return "", true
+	}
+	if !haveVerifier && state.HomebrewPrefix == "" {
+		cache.close()
+		return "", false
 	}
 	message := ""
 	if announce && state.Applied == current && !state.Announced && (pin == "" || pin == current) && state.AppliedCommit == releaseCommit {
@@ -168,7 +177,7 @@ func automatic(ctx context.Context, current string, announce bool) (string, bool
 
 // RunUpdateHelper handles the private installer probe and detached update worker.
 func RunUpdateHelper(argv []string) bool {
-	if runPackageInstallHelper(argv) || runLinuxPackageHelper(argv) {
+	if runPackageInstallHelper(argv) || runLinuxPackageHelper(argv) || runHomebrewVerifierHelper(argv) {
 		return true
 	}
 	if len(argv) == 4 && argv[1] == "__openai_archive_zsh_profile" && os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") == "1" {
@@ -212,17 +221,19 @@ func RunUpdateHelper(argv []string) bool {
 	}
 	verifier := systemUpdateVerifier()
 	privateVerifier := verifierEnrolled(installation.root.Name())
-	if verifier == "" && !privateVerifier {
+	if verifier == "" && !privateVerifier && !mayHaveHomebrewVerifier(installation.stateDirectory()) {
 		return true
 	}
 	client := updateClient()
 	defer client.CloseIdleConnections()
-	worker := updateWorker{installation: installation, current: argv[2], pin: pin, now: time.Now(), delivery: &releaseDelivery{client: client, verifier: verifier, privateVerifierEnabled: privateVerifier}}
+	delivery := &releaseDelivery{client: client, verifier: verifier, privateVerifierEnabled: privateVerifier}
+	worker := updateWorker{installation: installation, current: argv[2], pin: pin, now: time.Now(), delivery: delivery}
 	_ = worker.run(ctx)
 	return true
 }
 
 type updateDelivery interface {
+	closeVerifier()
 	checkVerifier(context.Context, *noticeCache) error
 	selectRelease(context.Context, string) (releaseSelection, error)
 	prepare(context.Context, *noticeCache, releaseSelection) (string, error)
@@ -242,6 +253,7 @@ func (worker updateWorker) run(ctx context.Context) error {
 		return err
 	}
 	defer cache.close()
+	defer worker.delivery.closeVerifier()
 	state, err := loadUpdateState(cache, worker.now)
 	if err != nil || !worker.installation.unchanged() {
 		return errCache

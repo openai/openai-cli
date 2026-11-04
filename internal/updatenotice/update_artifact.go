@@ -238,7 +238,7 @@ func archiveVerifierStatus() string {
 	if storeErr == nil {
 		defer root.Close()
 	}
-	if verifier == "" && storeErr != nil {
+	if runtime.GOOS != "darwin" && verifier == "" && storeErr != nil {
 		return "missing"
 	}
 	directory, err := os.MkdirTemp("", "openai-verifier-*")
@@ -248,7 +248,11 @@ func archiveVerifierStatus() string {
 	defer os.RemoveAll(directory)
 	ctx := context.Background()
 	d := &releaseDelivery{verifier: verifier}
-	if verifier != "" && d.checkVerifierHelp(ctx, directory) == nil {
+	defer d.closeVerifier()
+	if probeHomebrewVerifier(ctx, d, directory) {
+		return "ready"
+	}
+	if d.verifier != "" && d.checkVerifierHelp(ctx, directory) == nil {
 		return "ready"
 	}
 	// A capability probe must never download or install a verifier.
@@ -267,7 +271,17 @@ func archiveVerifierStatus() string {
 	return "unavailable"
 }
 
+func (d *releaseDelivery) closeVerifier() {
+	if d.verifierCleanup != nil {
+		d.verifierCleanup()
+		d.verifierCleanup = nil
+	}
+}
+
 func (d *releaseDelivery) checkVerifier(ctx context.Context, cache *noticeCache) error {
+	if selectEnrolledHomebrewVerifier(ctx, d, cache) {
+		return nil
+	}
 	if !d.privateVerifierEnabled {
 		return d.checkVerifierHelp(ctx, cache.directory)
 	}

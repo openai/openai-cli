@@ -16,7 +16,9 @@ source "$(brew --prefix)/bin/openai-enable-updates.zsh"
 ```
 
 The helper checks for shell conflicts and selects the verified copy in this terminal.
-It uses the GitHub CLI on your PATH when it supports update verification. Otherwise, it asks Homebrew to install or upgrade GitHub CLI.
+The updater uses a compatible GitHub CLI from the selected Homebrew installation when available.
+It can use this verifier even when your shell selects an older `gh`.
+Setup installs GitHub CLI through Homebrew only when it needs a compatible verifier.
 It also adds the selection to your zsh startup file. Homebrew continues to own its separate copy.
 For other shells or a linked zsh startup file, use the [archive instructions](#from-an-extracted-archive).
 

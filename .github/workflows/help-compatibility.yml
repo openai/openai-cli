@@ -403,6 +403,16 @@ jobs:
           go test -p 1 ./internal/autocomplete -count=1 -timeout=3m -v -json \
             -run '^(TestShellSuggestionsAdaptersUnavailableExecutable|TestShellSuggestionsAdaptersRefuseShadowedExecutable|TestShellSuggestionsAdaptersRecheckExecutablePrecedence|TestShellSuggestionsAdaptersRecheckRemovedExecutable)$/^fish$' \
             | tee "$RUNNER_TEMP/fish-suggestion-adapter-tests.jsonl"
+      - name: Test Homebrew verifier enrollment on Intel
+        if: matrix.os == 'macos-15-intel' && matrix.shard == 'contracts'
+        shell: bash
+        timeout-minutes: 8
+        run: |
+          go test -count=1 ./internal/darwinacl ./internal/updatenotice -run 'TestDirectoryACLBounds|TestNativeVerifierDirectoryACL|TestHomebrewVerifierSelection'
+          export OPENAI_CLI_TEST_HOMEBREW_PREFIX="$(brew --prefix)"
+          test -x "$OPENAI_CLI_TEST_HOMEBREW_PREFIX/opt/gh/bin/gh"
+          go test -count=1 ./cmd/openai -run '^TestMainAutomaticUpdateEligibilityAndConfirmation$/^enrolled_Homebrew_worker$'
+
       - name: Test Linux package enrollment in Bash and zsh
         if: (runner.os == 'Linux') && matrix.shard != 'dispatch'
         shell: bash
