@@ -47,6 +47,7 @@ done
 export HTTPS_PROXY=http://127.0.0.1:1 HTTP_PROXY=http://127.0.0.1:1 NO_PROXY=
 export https_proxy="$HTTPS_PROXY" http_proxy="$HTTP_PROXY" no_proxy=
 ./scripts/test-install-linux-release
+python3 -I -B scripts/ci/test-linux-install-guide.py
 sudo -n dpkg -i "$work/1.2.3.deb"
 ./scripts/test-linux-package-updates
 enroll() {

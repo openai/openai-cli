@@ -60,7 +60,9 @@ Paste this block into Bash or zsh. Enter your system password if sudo prompts du
 (
   installer=$(mktemp /tmp/openai-install.XXXXXXXX) || exit
   trap 'rm -f -- "$installer"' EXIT
+  trap 'exit 129' HUP
   trap 'exit 130' INT
+  trap 'exit 143' TERM
   printf 'Downloading the OpenAI CLI installer...\n' >&2
   curl -qfsSL --retry 3 --retry-max-time 60 --max-time 60 --proto '=https' --proto-redir '=https' \
     -o "$installer" https://raw.githubusercontent.com/openai/openai-cli/334f332fc6a5f8298b20548d4fbbbb30c940cdc5/scripts/install-linux-release.sh || exit
