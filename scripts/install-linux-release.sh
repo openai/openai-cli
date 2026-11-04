@@ -3,6 +3,7 @@
 
 install_linux_release() (
   set -euo pipefail
+  caller_umask=$(umask)
   umask 077
   export LC_ALL=C
 
@@ -60,8 +61,10 @@ install_linux_release() (
   printf 'Verified %s. Installing the package...\n' "$name" >&2
   # The administrator receives only the opened package stream. Recheck the
   # root-owned copy before the package manager can execute any package content.
+  umask "$caller_umask"
   sudo /bin/sh -eu -c '
     PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+    manager_umask=$(umask)
     umask 077
     stage=$(mktemp -d /tmp/openai-system-package.XXXXXXXX)
     trap '\''rm -rf -- "$stage"'\'' EXIT
@@ -74,6 +77,7 @@ install_linux_release() (
     fi
     chmod 0755 "$stage"
     chmod 0644 "$package"
+    umask "$manager_umask"
     case "$3" in
       deb) apt install --yes --no-remove "$package" ;;
       rpm) dnf install --assumeyes "$package" ;;
