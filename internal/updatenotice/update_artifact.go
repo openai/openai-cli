@@ -233,12 +233,12 @@ func (d *releaseDelivery) verifierCommand(ctx context.Context, directory string,
 }
 
 func archiveVerifierStatus() string {
-	verifier, lookupErr := exec.LookPath("gh")
+	verifier := systemUpdateVerifier()
 	root, storeErr := openVerifierStore(false)
 	if storeErr == nil {
 		defer root.Close()
 	}
-	if lookupErr != nil && storeErr != nil {
+	if verifier == "" && storeErr != nil {
 		return "missing"
 	}
 	directory, err := os.MkdirTemp("", "openai-verifier-*")
@@ -248,7 +248,7 @@ func archiveVerifierStatus() string {
 	defer os.RemoveAll(directory)
 	ctx := context.Background()
 	d := &releaseDelivery{verifier: verifier}
-	if lookupErr == nil && d.checkVerifierHelp(ctx, directory) == nil {
+	if verifier != "" && d.checkVerifierHelp(ctx, directory) == nil {
 		return "ready"
 	}
 	// A capability probe must never download or install a verifier.
@@ -261,7 +261,7 @@ func archiveVerifierStatus() string {
 			}
 		}
 	}
-	if lookupErr != nil {
+	if verifier == "" {
 		return "missing"
 	}
 	return "unavailable"

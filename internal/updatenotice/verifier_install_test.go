@@ -8,9 +8,12 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,5 +158,35 @@ func TestInstallPrivateVerifier(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestVerifierLookupRejectsRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.Mkdir("tools", 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("tools", "gh"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"tools", "./tools"} {
+		t.Setenv("PATH", path)
+		if got := systemUpdateVerifier(); got != "" {
+			t.Fatalf("Accepted a verifier relative to the current directory: %q", got)
+		}
+	}
+	tools := filepath.Join(dir, "tools")
+	t.Setenv("PATH", tools)
+	if got := systemUpdateVerifier(); got != filepath.Join(tools, "gh") {
+		t.Fatalf("Could not resolve the absolute verifier: %q", got)
+	}
+}
+
+func TestVerifierSetupAdviceRedactsTransportDetails(t *testing.T) {
+	failed := &url.Error{Op: "Get", URL: "https://example.invalid/download?signature=private-fixture", Err: &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}}
+	got := verifierSetupAdvice(fmt.Errorf("%w: %w", errVerifierDownload, failed))
+	if !strings.Contains(got, "trusted certificates") || strings.Contains(got, "private-fixture") || strings.Contains(got, "example.invalid") {
+		t.Fatalf("Unexpected TLS diagnostic: %s", got)
 	}
 }

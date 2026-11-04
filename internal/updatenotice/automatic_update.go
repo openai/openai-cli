@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -115,7 +114,7 @@ func automatic(ctx context.Context, current string, announce bool) (string, bool
 		return "", false
 	}
 	defer installation.close()
-	if _, err := exec.LookPath("gh"); err != nil && !verifierEnrolled(installation.root.Name()) {
+	if systemUpdateVerifier() == "" && !verifierEnrolled(installation.root.Name()) {
 		return "", false
 	}
 	cache, err := openCache(ctx, installation.stateDirectory())
@@ -174,7 +173,7 @@ func RunUpdateHelper(argv []string) bool {
 		if err := setupUpdateVerifier(ctx); err == nil {
 			fmt.Fprintln(os.Stdout, "ready")
 		} else {
-			fmt.Fprintln(os.Stderr, "Could not set up the update verifier. Check your network and private installation directory, then retry.")
+			fmt.Fprintln(os.Stderr, verifierSetupAdvice(err))
 		}
 		return true
 	}
@@ -201,9 +200,9 @@ func RunUpdateHelper(argv []string) bool {
 	if !enabled {
 		return true
 	}
-	verifier, err := exec.LookPath("gh")
+	verifier := systemUpdateVerifier()
 	privateVerifier := verifierEnrolled(installation.root.Name())
-	if err != nil && !privateVerifier {
+	if verifier == "" && !privateVerifier {
 		return true
 	}
 	client := updateClient()

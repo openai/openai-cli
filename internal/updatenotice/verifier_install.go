@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -18,6 +19,27 @@ import (
 
 const verifierVersion = "2.103.3"
 const verifierDirectory = ".update-verifier"
+
+var (
+	errVerifierDownload  = errors.New("verifier download failed")
+	errVerifierIntegrity = errors.New("verifier checksum mismatch")
+)
+
+func verifierSetupAdvice(err error) string {
+	var certificate *tls.CertificateVerificationError
+	switch {
+	case errors.As(err, &certificate):
+		return "GitHub TLS verification failed. Check your trusted certificates and proxy settings, then retry setup."
+	case errors.Is(err, errVerifierDownload):
+		return "Could not download the GitHub CLI verifier from github.com. Check network access and retry setup."
+	case errors.Is(err, errVerifierIntegrity):
+		return "The GitHub CLI verifier failed its checksum check. Check the download and the private installation directory."
+	case errors.Is(err, errCache), errors.Is(err, os.ErrPermission):
+		return "Could not access the private verifier directory. Check its ownership and permissions, then retry setup."
+	default:
+		return "Could not set up the update verifier. Check your installation and retry setup."
+	}
+}
 
 type verifierPin struct {
 	archive, binary string
@@ -41,6 +63,16 @@ func verifierPlatform() string {
 		arch = "armv6"
 	}
 	return runtime.GOOS + "_" + arch
+}
+
+// LookPath can return a nonempty relative path together with exec.ErrDot.
+// Never hand that path to exec.Command, even when private fallback is enabled.
+func systemUpdateVerifier() string {
+	path, err := exec.LookPath("gh")
+	if err != nil || !filepath.IsAbs(path) {
+		return ""
+	}
+	return path
 }
 
 func verifierEnrolled(bin string) bool {
@@ -91,7 +123,7 @@ func setupUpdateVerifier(ctx context.Context) error {
 	defer root.Close()
 	client := updateClient()
 	defer client.CloseIdleConnections()
-	system, _ := exec.LookPath("gh")
+	system := systemUpdateVerifier()
 	d := &releaseDelivery{client: client, verifier: system}
 	return d.selectVerifier(ctx, root.Name(), root, true)
 }
@@ -100,7 +132,8 @@ func (d *releaseDelivery) selectVerifier(ctx context.Context, work string, root 
 	if d.verifier != "" && d.checkVerifierHelp(ctx, work) == nil {
 		return nil
 	}
-	path, err := d.privateVerifier(ctx, root, showProgress)
+	name, pin := privateVerifierAsset()
+	path, err := d.installPrivateVerifier(ctx, root, verifierPlatform(), name, pin, showProgress)
 	if err != nil {
 		return err
 	}
@@ -126,15 +159,13 @@ func existingPrivateVerifier(ctx context.Context, root *os.Root, name string, pi
 	}
 	defer file.Close()
 	hash, err := fileDigest(ctx, file)
-	if err != nil || hash != pin.binary {
-		return "", errUpdate
+	if err != nil {
+		return "", err
+	}
+	if hash != pin.binary {
+		return "", errVerifierIntegrity
 	}
 	return filepath.Join(root.Name(), name), nil
-}
-
-func (d *releaseDelivery) privateVerifier(ctx context.Context, root *os.Root, showProgress bool) (string, error) {
-	name, pin := privateVerifierAsset()
-	return d.installPrivateVerifier(ctx, root, verifierPlatform(), name, pin, showProgress)
 }
 
 func (d *releaseDelivery) installPrivateVerifier(ctx context.Context, root *os.Root, platform, name string, pin verifierPin, showProgress bool) (string, error) {
@@ -171,15 +202,18 @@ func (d *releaseDelivery) installPrivateVerifier(ctx context.Context, root *os.R
 	}
 	res, err := d.request(ctx, url)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", errVerifierDownload, err)
 	}
 	defer res.Body.Close()
 	// This bound applies only to the seven fixed verifier downloads.
 	const maxVerifierArchive = 32 << 20
 	data, err := io.ReadAll(io.LimitReader(res.Body, maxVerifierArchive+1))
 	sum := sha256.Sum256(data)
-	if err != nil || len(data) > maxVerifierArchive || hex.EncodeToString(sum[:]) != pin.archive {
-		return "", errUpdate
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", errVerifierDownload, err)
+	}
+	if len(data) > maxVerifierArchive || hex.EncodeToString(sum[:]) != pin.archive {
+		return "", errVerifierIntegrity
 	}
 
 	tmp, err := root.OpenFile("gh.download", os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
@@ -192,8 +226,11 @@ func (d *releaseDelivery) installPrivateVerifier(ctx context.Context, root *os.R
 		return "", err
 	}
 	hash, err := fileDigest(ctx, tmp)
-	if err != nil || hash != pin.binary {
-		return "", errUpdate
+	if err != nil {
+		return "", err
+	}
+	if hash != pin.binary {
+		return "", errVerifierIntegrity
 	}
 	if err := tmp.Chmod(0700); err != nil {
 		return "", err
