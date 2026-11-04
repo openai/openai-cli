@@ -69,7 +69,7 @@ func verifierPlatform() string {
 // Never hand that path to exec.Command, even when private fallback is enabled.
 func systemUpdateVerifier() string {
 	path, err := exec.LookPath("gh")
-	if err != nil || !filepath.IsAbs(path) {
+	if err != nil || !filepath.IsAbs(path) || !trustedSystemVerifier(path) {
 		return ""
 	}
 	return path
