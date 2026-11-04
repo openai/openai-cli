@@ -126,14 +126,17 @@ func TestImagePickerKonsoleReturnsBeforeReceipts(t *testing.T) {
 	m.cursor, m.selected, m.focus = 4, 2, "options"
 	w.receipts = []string{w.images[0].file.Path}
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+	require.Contains(t, strings.Join(w.painted, "\n"), "Color preview")
 	settings := m.settings
 	w.expanded = true
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	stageKonsoleImageForTest(t, m, w)
+	require.NotContains(t, strings.Join(w.painted, "\n"), "Color preview", "native expansion must not use the block approximation label")
 	require.Contains(t, konsoleOutputForTest(t, w), "\x1b]1337;File=")
 	p := &imagePickerInline{model: m, workspace: w}
 	p.closeExpanded()
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+	require.Contains(t, strings.Join(w.painted, "\n"), "Color preview", "returning must restore the automatic preview label")
 	require.Equal(t, settings, m.settings)
 	require.Equal(t, 4, m.cursor)
 	require.Equal(t, 2, m.selected)

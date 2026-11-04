@@ -91,7 +91,7 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 
 func (w *imagePickerWorkspace) imageTitle() string {
 	title := fmt.Sprintf("Image %d · %s", w.selected+1, imagePickerLine(filepath.Base(w.images[w.selected].file.Path)))
-	if w.images[w.selected].protocol == "blocks" {
+	if w.images[w.selected].protocol == "blocks" && !(w.konsole && w.expanded) {
 		title += " · Color preview"
 	}
 	return title
