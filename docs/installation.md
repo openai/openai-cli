@@ -65,11 +65,11 @@ To enable automatic updates with an older package, use the [archive instructions
 ```sh
 (
   if [ -x /usr/bin/apt ]; then
-    manager=apt format=deb
+    format=deb
     machine=$(dpkg --print-architecture)
     package_identity() { dpkg-deb --show --showformat='${Package} ${Architecture}' "$1"; }
   else
-    manager=dnf format=rpm
+    format=rpm
     machine=$(rpm --eval '%{_arch}')
     package_identity() { rpm -qp --qf '%{NAME} %{ARCH}' "$1"; }
   fi
@@ -86,7 +86,12 @@ To enable automatic updates with an older package, use the [archive instructions
       printf '%s\n' "$file"
       break
     done)
-  sudo "$manager" install "${package:?Download an OpenAI CLI package for this architecture first.}"
+  : "${package:?Download an OpenAI CLI package for this architecture first.}"
+  if [ "$format" = deb ]; then
+    sudo apt install --yes --no-remove "$package"
+  else
+    sudo dnf install --assumeyes "$package"
+  fi
 ) &&
 if [ -r /usr/share/openai-cli/enable-updates.sh ]; then
   source /usr/share/openai-cli/enable-updates.sh
@@ -95,7 +100,7 @@ else
 fi
 ```
 
-The package manager installs the system copy at `/usr/bin/openai`.
+The package manager installs the system copy at `/usr/bin/openai`. Your system can ask for your administrator password.
 The package helper enables automatic updates for your account and selects `$HOME/.openai/bin/openai` in current and future shells.
 Setup uses a compatible GitHub CLI or downloads a verified private copy.
 To manage updates through your package manager, install the downloaded file with apt or dnf and skip the helper.
