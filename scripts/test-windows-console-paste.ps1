@@ -87,7 +87,7 @@ try {
     # may contain private paths, environment values, or signed download URLs.
     $stage = 'validate-console'
     $trace = @([IO.File]::ReadAllLines($files.TRACE))
-    $safeTrace = @($trace -cmatch '^(initialized|first-read|input-ready|second-read|literal-location-input|directory-observed|host=(ConsoleHost|other)|policy=(Restricted|AllSigned|RemoteSigned|Unrestricted|Bypass|Undefined|Default)|std(in|out|err)=(True|False)|(cwd|nativeCwd|initialProvider|initialDirectory|finalDirectory|initialSourcePath|sourcePath|errorRecords|pathFirst)=(True|False)|(initialSource|source)=(unchecked|verified|different|missing|unreadable)|history=(completed|failed|different|missing)|native=(unavailable|-?[0-9]{1,10})|selection=(missing|shadowed|different|expected)|version=(unchecked|expected|different|command-failed))$')
+    $safeTrace = @($trace -cmatch '^(initialized|first-read|input-ready|second-read|literal-location-input|directory-observed|host=(ConsoleHost|other)|policy=(Restricted|AllSigned|RemoteSigned|Unrestricted|Bypass|Undefined|Default)|std(in|out|err)=(True|False)|(cwd|nativeCwd|initialProvider|initialDirectory|finalDirectory|initialSourcePath|sourcePath|errorRecords|pathFirst)=(True|False)|(initialMarker|finalMarker)=(match|different|provider|reparse|directory|length|format|missing|denied|unreadable)|(initialSource|source)=(unchecked|verified|different|missing|unreadable)|history=(completed|failed|different|missing)|native=(unavailable|-?[0-9]{1,10})|selection=(missing|shadowed|different|expected)|version=(unchecked|expected|different|command-failed))$')
     $consoleChecked = ($trace -ccontains 'initialized') -and ($trace -ccontains 'host=ConsoleHost') -and
         ($trace -ccontains 'policy=Restricted') -and ($trace -ccontains 'stdin=False') -and ($trace -ccontains 'stdout=False') -and
         ($trace -ccontains 'first-read') -and $ownerCwd
@@ -121,13 +121,16 @@ try {
         foreach ($field in 'initialSource','source') {
             if (@($safeTrace -cmatch ('^' + $field + '=(verified|different|missing|unreadable)$')).Count -ne 1) {$complete = $false}
         }
+        foreach ($field in 'initialMarker','finalMarker') {
+            if (@($safeTrace -cmatch ('^' + $field + '=')).Count -ne 1) {$complete = $false}
+        }
         if (!$consoleChecked -or !$complete -or $exitCode -ne 0 -or $receipt -or $readAgain -or ($trace -ccontains 'input-ready') -or
             ($trace -cnotcontains 'directory-observed')) {$reason='directory-observation-failed'}
         else {$reason='observed'}
     }
     elseif ($Probe -eq 'WrongDirectory') {
         if (!$startChecked -or $exitCode -ne 37 -or $receipt -or $readAgain -or ($trace -ccontains 'input-ready') -or
-            ($trace -cnotcontains 'finalDirectory=False') -or ($trace -cnotcontains 'source=verified') -or ($trace -cnotcontains 'sourcePath=False')) {$reason='wrong-directory-not-rejected'}
+            ($trace -cnotcontains 'finalMarker=different') -or ($trace -cnotcontains 'finalDirectory=False') -or ($trace -cnotcontains 'source=verified') -or ($trace -cnotcontains 'sourcePath=False')) {$reason='wrong-directory-not-rejected'}
     }
     elseif (!$inputChecked) {$reason = 'input-not-verified'}
     elseif ($Probe -in 'Exit0','Exit17') {

@@ -373,13 +373,34 @@ $global:openaiStartMeasured = $false
 function global:Add-OpenAIPasteTrace([string]$record) {
     [IO.File]::AppendAllText($env:OPENAI_WINDOWS_PASTE_TRACE,$record+[Environment]::NewLine)
 }
-function global:Get-OpenAIFolderID {
-    if (!$env:OPENAI_WINDOWS_PASTE_TARGET_ID) {return ''}
+function global:Test-OpenAIFolder([string]$phase,[string]$expected,[bool]$pathMatches) {
+    if (!$expected) {return $pathMatches}
+    $result = 'provider'
     try {
-        $file = Microsoft.PowerShell.Management\Get-Item -LiteralPath '.\.openai-qualification-folder' -Force -ErrorAction Stop
-        if ($file.Length -eq 32 -and !($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {return [IO.File]::ReadAllText($file.FullName)}
-    } catch {}
-    return ''
+        $location = Microsoft.PowerShell.Management\Get-Location
+        if ($location.Provider.Name -ceq 'FileSystem') {
+            # Read from the actual provider location, independent of Win32 cwd and wildcard expansion.
+            $path = [IO.Path]::Combine($location.ProviderPath,'.openai-qualification-folder')
+            $attributes = [IO.File]::GetAttributes($path)
+            if ($attributes -band [IO.FileAttributes]::ReparsePoint) {$result = 'reparse'}
+            elseif ($attributes -band [IO.FileAttributes]::Directory) {$result = 'directory'}
+            elseif ([IO.FileInfo]::new($path).Length -ne 32) {$result = 'length'}
+            else {
+                $id = [IO.File]::ReadAllText($path)
+                if ($id -cnotmatch '\A[0-9a-f]{32}\z') {$result = 'format'}
+                elseif ([string]::Equals($id,$expected,[StringComparison]::Ordinal)) {$result = 'match'}
+                else {$result = 'different'}
+            }
+        }
+    } catch {
+        $result = 'unreadable'
+        for ($cause=$_.Exception; $cause; $cause=$cause.InnerException) {
+            if ($cause -is [IO.FileNotFoundException] -or $cause -is [IO.DirectoryNotFoundException]) {$result = 'missing'; break}
+            if ($cause -is [UnauthorizedAccessException] -or $cause -is [Security.SecurityException]) {$result = 'denied'; break}
+        }
+    }
+    Add-OpenAIPasteTrace ($phase+'Marker='+$result)
+    return $result -ceq 'match'
 }
 function global:Get-OpenAIRelativeSource {
     if (!$env:OPENAI_WINDOWS_PASTE_SOURCE_SHA -or $env:OPENAI_WINDOWS_PASTE_PROBE -notin 'Paste','ObserveDirectory','WrongDirectory') {
@@ -404,8 +425,7 @@ function global:PSConsoleHostReadLine {
         $initial = (Get-Location).ProviderPath
         $nativeCwd = [string]::Equals([Environment]::CurrentDirectory,$env:OPENAI_WINDOWS_PASTE_CWD,[StringComparison]::OrdinalIgnoreCase)
         $initialProvider = [string]::Equals($initial,$env:OPENAI_WINDOWS_PASTE_CWD,[StringComparison]::OrdinalIgnoreCase)
-        $global:initialFolderID = Get-OpenAIFolderID
-        $initialDirectory = if ($env:OPENAI_WINDOWS_PASTE_START_ID) {[string]::Equals($global:initialFolderID,$env:OPENAI_WINDOWS_PASTE_START_ID,[StringComparison]::Ordinal)} else {$initialProvider}
+        $initialDirectory = Test-OpenAIFolder 'initial' $env:OPENAI_WINDOWS_PASTE_START_ID $initialProvider
         $global:initialSource = Get-OpenAIRelativeSource
         foreach ($field in "nativeCwd=$nativeCwd","initialProvider=$initialProvider","initialDirectory=$initialDirectory",("initialSource="+$global:initialSource.State),("initialSourcePath="+$global:initialSource.AtTarget)) {Add-OpenAIPasteTrace $field}
         if ($env:OPENAI_WINDOWS_PASTE_LOCATION -ceq 'Literal') {
@@ -422,8 +442,7 @@ function global:PSConsoleHostReadLine {
         $location = (Get-Location).ProviderPath
         $cwdOK = [string]::Equals($location,$env:OPENAI_WINDOWS_PASTE_TARGET,[StringComparison]::OrdinalIgnoreCase)
         $source = if ($env:OPENAI_WINDOWS_PASTE_LOCATION -ceq 'Literal') {Get-OpenAIRelativeSource} else {$global:initialSource}
-        $folderID = if ($env:OPENAI_WINDOWS_PASTE_LOCATION -ceq 'Literal') {Get-OpenAIFolderID} else {$global:initialFolderID}
-        $finalDirectory = if ($env:OPENAI_WINDOWS_PASTE_TARGET_ID) {[string]::Equals($folderID,$env:OPENAI_WINDOWS_PASTE_TARGET_ID,[StringComparison]::Ordinal)} else {$cwdOK}
+        $finalDirectory = Test-OpenAIFolder 'final' $env:OPENAI_WINDOWS_PASTE_TARGET_ID $cwdOK
         foreach ($field in "cwd=$cwdOK","finalDirectory=$finalDirectory",("source="+$source.State),("sourcePath="+$source.AtTarget)) {Add-OpenAIPasteTrace $field}
         if ($env:OPENAI_WINDOWS_PASTE_PROBE -ceq 'ObserveDirectory') {Add-OpenAIPasteTrace 'directory-observed'; return 'exit 0'}
         if (!$finalDirectory) {return 'exit 37'}
