@@ -52,16 +52,17 @@ Run `type -a openai` to see competing commands. If a new shell selects another c
 ## Linux
 
 On Debian, Ubuntu, or Fedora, paste this block into Bash or zsh.
-It downloads the latest package for your system and verifies its SHA-256 before requesting your administrator password.
+The installer downloads the latest stable package for your system and verifies its SHA-256 checksum.
+If GitHub is still publishing the package or its checksum manifest, the installer waits up to 30 minutes.
+Press Ctrl-C to cancel. Enter your system password if sudo prompts during installation.
 
 ```sh
-( installer=$(curl -qfsSL --proto '=https' --proto-redir '=https' https://github.com/openai/openai-cli/releases/latest/download/install-linux-release.sh) &&
+( installer=$(curl -qfsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/openai/openai-cli/334f332fc6a5f8298b20548d4fbbbb30c940cdc5/scripts/install-linux-release.sh) &&
   /bin/bash -p -c "$installer" ) &&
 source /usr/share/openai-cli/enable-updates.sh
 ```
 
 The package manager owns `/usr/bin/openai`. The helper selects your automatically updated copy in this shell and future shells.
-If the latest release has no installer asset yet, choose your package from [Release downloads](https://github.com/openai/openai-cli/releases).
 
 For an offline installation, verify your chosen package against its official release checksum first.
 Give apt or dnf that exact path, such as `sudo apt install ./chosen-file.deb` or `sudo dnf install ./chosen-file.rpm`.
