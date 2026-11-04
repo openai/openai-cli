@@ -87,6 +87,16 @@ func extractUpdate(ctx context.Context, archive, next *os.File) error {
 	if err != nil {
 		return err
 	}
+	name := "openai"
+	if runtime.GOOS == "windows" {
+		name = "openai.exe"
+	}
+	return extractArchiveBinary(ctx, archive, info.Size(), runtime.GOOS == "darwin" || runtime.GOOS == "windows", name, next)
+}
+
+// Read only the requested regular file from a verified archive. Reject
+// duplicates and bound expansion before publishing any executable.
+func extractArchiveBinary(ctx context.Context, archive io.ReaderAt, size int64, isZIP bool, name string, next io.Writer) error {
 	found := false
 	copyBinary := func(reader io.Reader, size int64) error {
 		if found || size <= 0 || size > maxBinaryBytes {
@@ -99,8 +109,8 @@ func extractUpdate(ctx context.Context, archive, next *os.File) error {
 		}
 		return nil
 	}
-	if runtime.GOOS == "darwin" {
-		reader, err := zip.NewReader(archive, info.Size())
+	if isZIP {
+		reader, err := zip.NewReader(archive, size)
 		if err != nil {
 			return err
 		}
@@ -111,7 +121,7 @@ func extractUpdate(ctx context.Context, archive, next *os.File) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if entry.Name != "openai" {
+			if entry.Name != name {
 				continue
 			}
 			if !entry.Mode().IsRegular() || entry.UncompressedSize64 > maxBinaryBytes {
@@ -128,7 +138,7 @@ func extractUpdate(ctx context.Context, archive, next *os.File) error {
 			}
 		}
 	} else {
-		compressed, err := gzip.NewReader(io.NewSectionReader(archive, 0, info.Size()))
+		compressed, err := gzip.NewReader(io.NewSectionReader(archive, 0, size))
 		if err != nil {
 			return err
 		}
@@ -146,7 +156,7 @@ func extractUpdate(ctx context.Context, archive, next *os.File) error {
 			if count >= 4096 {
 				return errUpdate
 			}
-			if entry.Name != "openai" {
+			if entry.Name != name {
 				continue
 			}
 			if entry.Typeflag != tar.TypeReg {
@@ -223,8 +233,12 @@ func (d *releaseDelivery) verifierCommand(ctx context.Context, directory string,
 }
 
 func archiveVerifierStatus() string {
-	verifier, err := exec.LookPath("gh")
-	if err != nil {
+	verifier, lookupErr := exec.LookPath("gh")
+	root, storeErr := openVerifierStore(false)
+	if storeErr == nil {
+		defer root.Close()
+	}
+	if lookupErr != nil && storeErr != nil {
 		return "missing"
 	}
 	directory, err := os.MkdirTemp("", "openai-verifier-*")
@@ -232,15 +246,37 @@ func archiveVerifierStatus() string {
 		return "unavailable"
 	}
 	defer os.RemoveAll(directory)
-	d := releaseDelivery{verifier: verifier}
-	if err := d.checkVerifierHelp(context.Background(), directory); err != nil {
-		return "unavailable"
+	ctx := context.Background()
+	d := &releaseDelivery{verifier: verifier}
+	if lookupErr == nil && d.checkVerifierHelp(ctx, directory) == nil {
+		return "ready"
 	}
-	return "ready"
+	// A capability probe must never download or install a verifier.
+	if storeErr == nil {
+		name, pin := privateVerifierAsset()
+		if path, err := existingPrivateVerifier(ctx, root, name, pin); err == nil {
+			d.verifier = path
+			if d.checkVerifierHelp(ctx, directory) == nil {
+				return "ready"
+			}
+		}
+	}
+	if lookupErr != nil {
+		return "missing"
+	}
+	return "unavailable"
 }
 
 func (d *releaseDelivery) checkVerifier(ctx context.Context, cache *noticeCache) error {
-	return d.checkVerifierHelp(ctx, cache.directory)
+	if !d.privateVerifierEnabled {
+		return d.checkVerifierHelp(ctx, cache.directory)
+	}
+	root, err := openVerifierStore(false)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return d.selectVerifier(ctx, cache.directory, root, false)
 }
 
 func (d *releaseDelivery) checkVerifierHelp(ctx context.Context, directory string) error {

@@ -115,7 +115,7 @@ func automatic(ctx context.Context, current string, announce bool) (string, bool
 		return "", false
 	}
 	defer installation.close()
-	if _, err := exec.LookPath("gh"); err != nil {
+	if _, err := exec.LookPath("gh"); err != nil && !verifierEnrolled(installation.root.Name()) {
 		return "", false
 	}
 	cache, err := openCache(ctx, installation.stateDirectory())
@@ -168,6 +168,16 @@ func RunUpdateHelper(argv []string) bool {
 		}
 		return true
 	}
+	if len(argv) == 2 && argv[1] == "__openai_setup_update_verifier" && os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") == "1" {
+		ctx, cancel := context.WithTimeout(context.Background(), workerTimeout)
+		defer cancel()
+		if err := setupUpdateVerifier(ctx); err == nil {
+			fmt.Fprintln(os.Stdout, "ready")
+		} else {
+			fmt.Fprintln(os.Stderr, "Could not set up the update verifier. Check your network and private installation directory, then retry.")
+		}
+		return true
+	}
 	if len(argv) == 2 && argv[1] == "__openai_archive_verifier" && os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") == "1" {
 		fmt.Fprintln(os.Stdout, archiveVerifierStatus())
 		return true
@@ -192,12 +202,13 @@ func RunUpdateHelper(argv []string) bool {
 		return true
 	}
 	verifier, err := exec.LookPath("gh")
-	if err != nil {
+	privateVerifier := verifierEnrolled(installation.root.Name())
+	if err != nil && !privateVerifier {
 		return true
 	}
 	client := updateClient()
 	defer client.CloseIdleConnections()
-	worker := updateWorker{installation: installation, current: argv[2], pin: pin, now: time.Now(), delivery: &releaseDelivery{client: client, verifier: verifier}}
+	worker := updateWorker{installation: installation, current: argv[2], pin: pin, now: time.Now(), delivery: &releaseDelivery{client: client, verifier: verifier, privateVerifierEnabled: privateVerifier}}
 	_ = worker.run(ctx)
 	return true
 }
