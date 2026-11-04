@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -145,6 +146,7 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 		}
 	})
 	const zone = "[ZoneTransfer]\r\nZoneId=3\r\n"
+	const restrictedZone = "[ZoneTransfer]\r\nZoneId=4\r\n"
 	if err := os.WriteFile(entry+":Zone.Identifier", []byte(zone), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -195,11 +197,9 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 	if out, err := exec.Command(older, "--version").Output(); err != nil || strings.TrimSpace(string(out)) != olderVersion {
 		t.Fatalf("older release fixture has the wrong displayed version: %v %s", err, out)
 	}
-	if out, err := setup(older); err != nil || !strings.EqualFold(strings.TrimSpace(string(out)), managed) {
-		t.Fatalf("initial older ZIP setup: %v %s", err, out)
-	}
+	verifyWindowsFirstPrivateVerifier(t, older, area, managed)
 	verifyWindowsSetupWait(t, older, managed)
-	if err := os.WriteFile(managed+":Zone.Identifier", []byte("[ZoneTransfer]\r\nZoneId=4\r\n"), 0600); err != nil {
+	if err := os.WriteFile(managed+":Zone.Identifier", []byte(restrictedZone), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(entry+":Zone.Identifier", []byte("[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://fixture.invalid/source\r\n"), 0600); err != nil {
@@ -266,7 +266,7 @@ if ((Get-Command openai).Path -ine $env:ARCHIVE_OLD) {throw 'wrong initial selec
 		t.Fatal("Explorer installer omitted its status")
 	}
 	marker, err := os.ReadFile(managed + ":Zone.Identifier")
-	if err != nil || string(marker) != "[ZoneTransfer]\r\nZoneId=4\r\n" {
+	if err != nil || string(marker) != restrictedZone {
 		t.Fatal("explicit re-enrollment lowered the previous download zone", err)
 	}
 	t.Logf("Windows ZIP after (candidate archive)\n> Install.cmd\n%s\nExit 0", strings.Join(transcript, "\n"))
@@ -329,7 +329,7 @@ throw 'setup ignored the conflicting alias'`
 		}
 	}
 	content, err := os.ReadFile(managed + ":Zone.Identifier")
-	if err != nil || string(content) != zone {
+	if err != nil || string(content) != restrictedZone {
 		t.Fatal("managed executable lost its download zone", err)
 	}
 	content, err = os.ReadFile(stale)
@@ -352,6 +352,92 @@ throw 'setup ignored the conflicting alias'`
 		t.Fatal("new ZIP lacks the expected managed receipt", err)
 	}
 	verifyWindowsOrdinaryUpdateAdmission(t, managed)
+}
+
+// Test the ordinary public download independently of tools installed on the
+// hosted runner. Only the retry runs with the deliberately unreachable proxy.
+func verifyWindowsFirstPrivateVerifier(t *testing.T, cli, emptyPath, managed string) {
+	t.Helper()
+	cmd := func(path string, args ...string) *exec.Cmd {
+		c := exec.CommandContext(t.Context(), cli, args...)
+		// Only forward OS loader, user-directory, proxy, and TLS settings.
+		// No GitHub credentials or pre-acquired archive can satisfy this check.
+		for _, key := range []string{"SystemRoot", "WINDIR", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "HOME", "TEMP", "TMP", "TMPDIR", "PATHEXT", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
+			if value, ok := os.LookupEnv(key); ok {
+				c.Env = append(c.Env, key+"="+value)
+			}
+		}
+		c.Env = append(c.Env, "PATH="+path)
+		return c
+	}
+	status := func(path string) string {
+		t.Helper()
+		probe := cmd(path, "__openai_archive_verifier")
+		probe.Env = append(probe.Env, "OPENAI_CLI_ARCHIVE_INSTALL=1")
+		out, err := probe.Output()
+		value := strings.TrimSpace(string(out))
+		if err != nil || (value != "ready" && value != "missing" && value != "unavailable") {
+			t.Fatal("invalid verifier capability result", err)
+		}
+		return value
+	}
+	path, lookupErr := exec.LookPath("gh")
+	t.Logf("Disposable account system verifier: PATH lookup=%t, CLI capability=%s", lookupErr == nil && filepath.IsAbs(path), status(os.Getenv("PATH")))
+	if status(emptyPath) != "missing" {
+		t.Fatal("first transfer requires a pristine account without a usable verifier")
+	}
+
+	start := cmd(emptyPath, "install", "--user")
+	var diag bytes.Buffer
+	start.Stderr = &diag
+	out, err := start.Output()
+	if err != nil {
+		// Keep transport details, signed URLs, and paths out of hosted logs.
+		for _, hint := range []string{"Could not download the GitHub CLI verifier", "GitHub TLS verification failed", "failed its checksum check", "Could not access the private verifier directory"} {
+			if strings.Contains(diag.String(), hint) {
+				t.Fatalf("initial Windows ZIP setup: %v (%s)", err, hint)
+			}
+		}
+		t.Fatalf("initial Windows ZIP setup: %v", err)
+	}
+	const progress = "Downloading GitHub CLI for automatic update verification..."
+	if strings.TrimSpace(diag.String()) != progress || !strings.EqualFold(strings.TrimSpace(string(out)), managed) {
+		t.Fatal("first setup must print exactly one download start and one installed path")
+	}
+	// With no system gh, the read-only probe checks the private executable
+	// against its compiled SHA-256 and exercises its required capabilities.
+	if status(emptyPath) != "ready" {
+		t.Fatal("the downloaded private verifier failed its pin or capability check")
+	}
+	files, err := filepath.Glob(filepath.Join(filepath.Dir(managed), ".update-verifier", "gh-*.exe"))
+	if err != nil || len(files) != 1 {
+		t.Fatal("expected exactly one private verifier executable", err)
+	}
+	f, err := os.Open(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.New()
+	size, err := io.Copy(hash, f)
+	f.Close()
+	if err != nil || size == 0 {
+		t.Fatal("could not hash the downloaded verifier", err)
+	}
+	mark, err := os.ReadFile(files[0] + ":Zone.Identifier")
+	if err != nil || string(mark) != "[ZoneTransfer]\r\nZoneId=3\r\n" {
+		t.Fatal("private verifier lacks its Internet zone", err)
+	}
+	t.Logf("First private verifier transfer: one download, %d executable bytes, pinned SHA-256 %x, Internet zone 3", size, hash.Sum(nil))
+
+	repeat := cmd(emptyPath, "install", "--user")
+	repeat.Env = append(repeat.Env, "HTTP_PROXY=http://127.0.0.1:9", "HTTPS_PROXY=http://127.0.0.1:9", "NO_PROXY=127.0.0.1,localhost")
+	diag.Reset()
+	repeat.Stderr = &diag
+	out, err = repeat.Output()
+	if err != nil || diag.Len() != 0 || !strings.EqualFold(strings.TrimSpace(string(out)), managed) {
+		t.Fatal("verified cached setup must succeed quietly through a closed proxy", err)
+	}
+	t.Log("Cached verifier: offline repeat succeeded without a download message")
 }
 
 func verifyWindowsVerifierDownloadProgress(t *testing.T, exe, area string) {
