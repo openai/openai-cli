@@ -1,11 +1,16 @@
 package images
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -20,6 +25,57 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
+
+func TestImagePickerKonsolePreviewPreservesOneCompleteImage(t *testing.T) {
+	for _, bounds := range []image.Rectangle{
+		image.Rect(0, 0, 64, 64), image.Rect(0, 0, 160, 960),
+		image.Rect(0, 0, 640, 320), image.Rect(7, 11, 14, 20),
+	} {
+		t.Run(fmt.Sprint(bounds), func(t *testing.T) {
+			img := image.NewNRGBA(bounds)
+			for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+				for x := bounds.Min.X; x < bounds.Max.X; x++ {
+					img.SetNRGBA(x, y, color.NRGBA{R: uint8(x * 17), G: uint8(y * 31), B: uint8(x + y), A: uint8(64 + (x+y)%192)})
+				}
+			}
+			rows, protocol, err := imagePickerKonsolePreview(t.Context(), nil, img, "iterm-konsole", 64)
+			require.NoError(t, err)
+			require.Equal(t, "iterm-konsole", protocol)
+			require.Len(t, rows, 1, "one image must use one scale, without independently fitted strips")
+			header, payload, ok := strings.Cut(rows[0], ":")
+			require.True(t, ok)
+			require.Contains(t, header, "width=64;")
+			require.Contains(t, header, "height=auto")
+			require.Equal(t, 1, strings.Count(rows[0], "\x1b]1337;File="))
+			encoded, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(payload, "\a"))
+			require.NoError(t, err)
+			decoded, err := png.Decode(bytes.NewReader(encoded))
+			require.NoError(t, err)
+			require.Equal(t, bounds.Size(), decoded.Bounds().Size())
+			normalized := image.NewNRGBA(image.Rectangle{Max: bounds.Size()})
+			draw.Draw(normalized, normalized.Bounds(), decoded, decoded.Bounds().Min, draw.Src)
+			require.Equal(t, img.Pix, normalized.Pix, "preparation must retain every source pixel and alpha value")
+		})
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	rows, _, err := imagePickerKonsolePreview(ctx, nil, image.NewNRGBA(image.Rect(0, 0, 64, 64)), "iterm-konsole", 64)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, rows)
+}
+
+func TestImagePickerKonsolePaintsImageAfterText(t *testing.T) {
+	m, w := konsoleWorkspaceForTest(t)
+	w.expanded = true
+	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+	written := len(konsoleOutputForTest(t, w))
+	stageKonsoleImageForTest(t, m, w)
+	frame := konsoleOutputForTest(t, w)[written:]
+	require.Equal(t, 1, strings.Count(frame, "\x1b]1337;File="))
+	require.Less(t, strings.LastIndex(frame, "\x1b[2K"), strings.Index(frame, "\x1b]1337;File="), "later text clears must not erase image pixels")
+	require.Len(t, w.nativePainted, 1)
+	require.LessOrEqual(t, w.nativeBytes, imagePickerNativeCacheBytes)
+}
 
 func TestImagePickerKonsoleReportingPreservesFailures(t *testing.T) {
 	require.NoError(t, imagePickerReportFailure(nil))
@@ -56,7 +112,7 @@ func konsoleOutputForTest(t *testing.T, w *imagePickerWorkspace) string {
 
 func stageKonsoleImageForTest(t *testing.T, m *imagePicker, w *imagePickerWorkspace) {
 	t.Helper()
-	rows, err := terminalimage.PrepareRows(t.Context(), w.out, image.NewNRGBA(image.Rect(0, 0, 32, 32)), "iterm-konsole", 8)
+	rows, _, err := imagePickerKonsolePreview(t.Context(), w.out, image.NewNRGBA(image.Rect(0, 0, 32, 32)), "iterm-konsole", 8)
 	require.NoError(t, err)
 	w.expandedIndex, w.expandedSize = w.selected, w.konsoleViewport
 	w.expandedRows = nil

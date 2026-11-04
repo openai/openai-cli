@@ -209,6 +209,9 @@ func (p *imagePickerInline) prepareExpanded() {
 	prepare := w.prepareRows
 	if prepare == nil {
 		prepare = imagePickerPreviewRows
+		if w.konsole && expanded {
+			prepare = imagePickerKonsolePreview
+		}
 	}
 	go func() {
 		select {

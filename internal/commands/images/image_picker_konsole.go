@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"maps"
 	"os"
@@ -80,6 +81,19 @@ func (w *imagePickerWorkspace) setKonsoleScreen(ctx context.Context, expanded bo
 	return err
 }
 
+// Expand fits the complete image. One PNG preserves a single scale across all
+// pixels; independently fitted source strips can leave gaps and unequal widths.
+func imagePickerKonsolePreview(ctx context.Context, _ *os.File, img image.Image, protocol string, columns int) ([]string, string, error) {
+	if columns < 1 {
+		return nil, protocol, errors.New("invalid image viewport")
+	}
+	var frame strings.Builder
+	if err := terminalimage.Write(ctx, &frame, img, protocol, columns); err != nil {
+		return nil, protocol, err
+	}
+	return []string{frame.String()}, protocol, nil
+}
+
 // Konsole cannot remove or resize a retained native placement. Replace the
 // temporary screen when image geometry changes; ordinary status updates only
 // repaint their text rows. The existing cache still bounds retained PNG data.
@@ -87,6 +101,7 @@ func (w *imagePickerWorkspace) drawKonsoleFrame(ctx context.Context, lines []str
 	repaint := resized || len(lines) != len(w.painted) || len(w.painted) == 0 || !maps.Equal(w.nativeFrame, w.nativePainted)
 	keys, placements := w.nativePaintKeys(lines, repaint)
 	var frame strings.Builder
+	var imageRows []int
 	frame.WriteString(ansi.ResetModeTextCursorEnable)
 	if repaint {
 		frame.WriteString("\x1b[2J\x1b[H")
@@ -98,13 +113,19 @@ func (w *imagePickerWorkspace) drawKonsoleFrame(ctx context.Context, lines []str
 		}
 		changed = true
 		fmt.Fprintf(&frame, "\x1b[%d;1H\x1b[2K", row+1)
-		if _, native := w.nativeFrame[row]; !native {
-			line = ansi.Truncate(line, max(0, w.width-1), "…")
+		if _, native := w.nativeFrame[row]; native {
+			// Clear continuation rows before placing the complete image.
+			imageRows = append(imageRows, row)
+		} else {
+			frame.WriteString(ansi.Truncate(line, max(0, w.width-1), "…"))
 		}
-		frame.WriteString(line)
 	}
 	if !changed {
 		return nil
+	}
+	for _, row := range imageRows {
+		fmt.Fprintf(&frame, "\x1b[%d;1H", row+1)
+		frame.WriteString(lines[row])
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
