@@ -190,7 +190,7 @@ $failed = $false
 $log = "$PSScriptRoot/results/test.log"
 $downloads = Join-Path $env:USERPROFILE 'Downloads'
 $null = [IO.Directory]::CreateDirectory($downloads)
-$work = Join-Path $downloads ('OpenAI CLI [' + [guid]::NewGuid() + ']')
+$work = Join-Path $downloads ('OpenAI CLI ' + [guid]::NewGuid())
 # Explorer inherits the user's normal Downloads permissions during extraction.
 $ownerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 . (Join-Path $PSScriptRoot 'test-windows-download-zone.ps1')
@@ -245,26 +245,43 @@ try {
     $extractionStage = 'read-source-zone'
     if ((Get-WindowsDownloadZone $protectedZip) -ne 3) {throw 'The candidate ZIP lacks its Internet zone.'}
     $zone = "[ZoneTransfer]`r`nZoneId=3`r`n"
-    $extracted = Join-Path $work 'Extracted'
-    $extractionStage = 'extract-zip'
+    $stem = [IO.Path]::GetFileNameWithoutExtension($name)
+    $extracted = Join-Path $work $stem
+    $bracketed = Join-Path $work ($stem + ' [1]')
+    $extractionStage = 'hash-candidate-cli'
+    $expectedSha = (Get-FileHash -LiteralPath "$PSScriptRoot/openai.exe").Hash
+    $expectedLauncher = (Get-FileHash -LiteralPath "$PSScriptRoot/extracted/Install.cmd").Hash
+    $zoneFiles = [ordered]@{zip=$localZip}
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [IO.Compression.ZipFile]::ExtractToDirectory($localZip,$extracted)
-    $entry = Join-Path $extracted 'openai.exe'
+    foreach ($folder in $extracted,$bracketed) {
+        $kind = if ($folder -ceq $bracketed) {'bracketed'} else {'ordinary'}
+        $extractionStage = 'extract-' + $kind
+        [IO.Compression.ZipFile]::ExtractToDirectory($localZip,$folder)
+        $entry = Join-Path $folder 'openai.exe'
+        $launcher = Join-Path $folder 'Install.cmd'
+        $extractionStage = 'hash-extracted-' + $kind
+        if ((Get-FileHash -LiteralPath $entry).Hash -cne $expectedSha -or (Get-FileHash -LiteralPath $launcher).Hash -cne $expectedLauncher) {
+            throw 'Extracted files differ from the candidate.'
+        }
+        $extractionStage = 'verify-owner-' + $kind
+        if ((Get-Acl -LiteralPath $entry).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $ownerSid.Value) {
+            throw 'The extracted CLI belongs to another account.'
+        }
+        # A private marker distinguishes these two directories even though both contain the same verified executable.
+        $marker = [IO.File]::Open((Join-Path $folder '.openai-qualification-folder'),'CreateNew','Write','None')
+        try {
+            $identity = [Text.Encoding]::ASCII.GetBytes([guid]::NewGuid().ToString('N'))
+            $marker.Write($identity,0,$identity.Length)
+        } finally {$marker.Dispose()}
+        $zoneFiles["$kind-cli"] = $entry
+        $zoneFiles["$kind-launcher"] = $launcher
+    }
     # ZipFile does not propagate Explorer's download mark. Preserve it explicitly.
-    $zoneFiles = [ordered]@{zip=$localZip; cli=$entry; launcher=(Join-Path $extracted 'Install.cmd')}
     foreach ($item in $zoneFiles.GetEnumerator()) {
         $extractionStage = 'write-zone-' + $item.Key
         Microsoft.PowerShell.Management\Set-Content -LiteralPath $item.Value -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value $zone -ErrorAction Stop
         $extractionStage = 'read-zone-' + $item.Key
         if ((Get-WindowsDownloadZone $item.Value) -ne 3) {throw 'The account lost the ZIP download zone.'}
-    }
-    $extractionStage = 'hash-candidate-cli'
-    $expectedSha = (Get-FileHash -LiteralPath "$PSScriptRoot/openai.exe").Hash
-    $extractionStage = 'hash-extracted-cli'
-    if ((Get-FileHash -LiteralPath $entry).Hash -cne $expectedSha) {throw 'The extracted CLI differs from the candidate.'}
-    $extractionStage = 'verify-extracted-owner'
-    if ((Get-Acl -LiteralPath $entry).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $ownerSid.Value) {
-        throw 'The extracted CLI belongs to another account.'
     }
     Add-Content -LiteralPath $log -Value 'Standard-user Downloads extraction verified the candidate bytes, owner and Internet zone.'
     [IO.File]::WriteAllText($early,'exit 0')
@@ -280,7 +297,7 @@ try {
         foreach ($client in 'powershell.exe','pwsh.exe') {
             try {$shell = (Get-Command $client -CommandType Application -ErrorAction Stop | Select-Object -First 1).Path}
             catch {Add-Content -LiteralPath $log -Value "$client stage=client-discovery failed"; $failed=$true; continue}
-            $params = @{Client=$shell; ExpectedSourceSha=$expectedSha; ExpectedExe=$managed; ExpectedVersion=('openai version '+$fixtureTag.Substring(1)); EvidenceLog=$log}
+            $params = @{Client=$shell; CheckFolderIdentity=$true; ExpectedSourceSha=$expectedSha; ExpectedExe=$managed; ExpectedVersion=('openai version '+$fixtureTag.Substring(1)); EvidenceLog=$log}
             $installed = $false
             foreach ($probe in 'Exit0','Exit17','Paste','Handled','Thrown') {
                 if ($probe -in 'Handled','Thrown' -and !$installed) {continue}
@@ -303,8 +320,40 @@ try {
                     $failed = $true
                 }
             }
+            # Keep the five ordinary probes above independent of bracket handling.
+            foreach ($case in 'WrongDirectory','EquivalentDirectory','ExistingShell','RawBracketStartup') {
+                try {
+                    switch ($case) {
+                        'WrongDirectory' {
+                            & "$PSScriptRoot/test-windows-console-paste.ps1" @params -Probe WrongDirectory -TargetDirectory $bracketed -TextPath $text
+                        }
+                        'EquivalentDirectory' {
+                            $sameFolder = [IO.Path]::Combine($extracted,'..',$stem)
+                            & "$PSScriptRoot/test-windows-console-paste.ps1" @params -TargetDirectory $sameFolder -TextPath $text
+                        }
+                        'ExistingShell' {
+                            & "$PSScriptRoot/test-windows-console-paste.ps1" @params -TargetDirectory $bracketed -EnterLiteralDirectory -TextPath $text
+                            if ((Get-FileHash -LiteralPath $managed).Hash -cne $expectedSha -or (Get-WindowsDownloadZone $managed) -notin 3,4) {
+                                throw 'Bracketed paste selected different installed bytes or zone.'
+                            }
+                        }
+                        'RawBracketStartup' {
+                            Push-Location -LiteralPath $bracketed
+                            try { & "$PSScriptRoot/test-windows-console-paste.ps1" @params -Probe ObserveDirectory -TextPath $early } finally {Pop-Location}
+                        }
+                    }
+                    Add-Content -LiteralPath $log -Value "$client completed location check $case."
+                } catch {
+                    Write-ZipFailure "$client $case stage=location-check" $_
+                    $failed = $true
+                }
+            }
         }
     } finally {Pop-Location}
+    $extractionStage = 'run-bracketed-launcher'
+    $env:OPENAI_CLI_WINDOWS_BRACKETED_ZIP = $bracketed
+    & "$PSScriptRoot/archive.test.exe" '-test.run=^TestMainWindowsArchiveBracketedLauncher$' '-test.v' 2>&1 | Add-Content -LiteralPath $log
+    if ($LASTEXITCODE -ne 0) {$failed = $true}
 } catch {
     Write-ZipFailure "Standard-user ZIP stage=$extractionStage" $_
     throw 'The ordinary user could not qualify the extracted Windows ZIP.'
@@ -329,8 +378,12 @@ exit 0
             throw 'The standard-user entrypoint qualification did not pass.'
         }
         if ($expected -ceq 'TestMainWindowsArchiveOrdinarySetup') {
+            if (!$log.Contains('--- PASS: TestMainWindowsArchiveBracketedLauncher (')) {throw 'Missing bracketed launcher evidence.'}
             foreach ($client in 'powershell.exe','pwsh.exe') {
                 $marker = "$client Restricted paste verified the managed executable and version."
+                foreach ($case in 'WrongDirectory','EquivalentDirectory','ExistingShell','RawBracketStartup') {
+                    if (@(($log -split '\r?\n') -ceq "$client completed location check $case.").Count -ne 1) {throw "Missing $client $case evidence."}
+                }
                 if (@(($log -split '\r?\n') -ceq $marker).Count -ne 1) {throw "Missing $client documented paste verification."}
             }
         }

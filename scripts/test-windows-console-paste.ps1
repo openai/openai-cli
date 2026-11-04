@@ -7,7 +7,10 @@ param(
     [Parameter(Mandatory)][string] $ExpectedVersion,
     [switch] $ExpectOneVerifierDownload,
     [ValidatePattern('^[0-9a-fA-F]{64}$')][string] $ExpectedSourceSha,
-    [ValidateSet('Paste','Exit0','Exit17','Handled','Thrown')][string] $Probe = 'Paste',
+    [ValidateSet('Paste','Exit0','Exit17','Handled','Thrown','ObserveDirectory','WrongDirectory')][string] $Probe = 'Paste',
+    [string] $TargetDirectory = (Get-Location).ProviderPath,
+    [switch] $EnterLiteralDirectory,
+    [switch] $CheckFolderIdentity,
     [string] $EvidenceLog
 )
 $ErrorActionPreference = 'Stop'
@@ -40,8 +43,16 @@ try {
     }
     foreach ($key in 'STDERR','TRACE','RESULT','RECEIPT','RUNNER') {$files[$key] = [IO.Path]::GetTempFileName()}
     $challenge = [guid]::NewGuid().ToString('N')
+    $startID = $targetID = ''
+    if ($CheckFolderIdentity) {
+        $startID = [IO.File]::ReadAllText((Join-Path (Get-Location).ProviderPath '.openai-qualification-folder'))
+        $targetID = [IO.File]::ReadAllText((Join-Path $TargetDirectory '.openai-qualification-folder'))
+        if ($startID -cnotmatch '\A[0-9a-f]{32}\z' -or $targetID -cnotmatch '\A[0-9a-f]{32}\z') {throw 'Invalid qualification directory identity.'}
+    }
     $values = @{
         OPENAI_WINDOWS_PASTE_CLIENT=$Client; OPENAI_WINDOWS_PASTE_PROBE=$Probe
+        OPENAI_WINDOWS_PASTE_START_ID=$startID; OPENAI_WINDOWS_PASTE_TARGET_ID=$targetID
+        OPENAI_WINDOWS_PASTE_TARGET=$TargetDirectory; OPENAI_WINDOWS_PASTE_LOCATION=$(if ($EnterLiteralDirectory) {'Literal'} else {'Inherited'})
         OPENAI_WINDOWS_PASTE_CWD=(Get-Location).ProviderPath; OPENAI_WINDOWS_PASTE_SOURCE_SHA=$ExpectedSourceSha
         OPENAI_WINDOWS_PASTE_TEXT=$TextPath; OPENAI_WINDOWS_MANAGED_EXE=$ExpectedExe; OPENAI_WINDOWS_STARTER_VERSION=$ExpectedVersion
         OPENAI_WINDOWS_PASTE_CHALLENGE=$challenge; OPENAI_WINDOWS_PASTE_RECEIPT=$files.RECEIPT
@@ -58,14 +69,17 @@ try {
     $state = 'no-process-result'
     $exitCode = $null
     $nativeError = 0
+    $ownerCwd = $false
+    $ownerText = 'unavailable'
     $stage = 'read-process-result'
     $raw = [IO.File]::ReadAllText($files.RESULT)
     if ($raw) {
         $result = $raw | ConvertFrom-Json
-        if ($result.State -cin 'exited','launch-failed','exit-unavailable','timeout') {
+        if ($result.State -cin 'exited','launch-failed','exit-unavailable','timeout','directory-mismatch') {
             $state = $result.State
             $exitCode = Read-NativeExitCode $result.Exit
             $nativeError = [uint32]$result.NativeError
+            if ($result.OwnerCWD -is [bool]) {$ownerCwd = $result.OwnerCWD; $ownerText = [string]$ownerCwd}
         }
     }
 
@@ -73,15 +87,17 @@ try {
     # may contain private paths, environment values, or signed download URLs.
     $stage = 'validate-console'
     $trace = @([IO.File]::ReadAllLines($files.TRACE))
-    $safeTrace = @($trace -cmatch '^(initialized|first-read|input-ready|second-read|host=(ConsoleHost|other)|policy=(Restricted|AllSigned|RemoteSigned|Unrestricted|Bypass|Undefined|Default)|std(in|out|err)=(True|False)|(cwd|errorRecords|pathFirst)=(True|False)|source=(verified|different|missing|unreadable)|history=(completed|failed|different|missing)|native=(unavailable|-?[0-9]{1,10})|selection=(missing|shadowed|different|expected)|version=(unchecked|expected|different|command-failed))$')
-    $inputChecked = ($trace -ccontains 'initialized') -and ($trace -ccontains 'host=ConsoleHost') -and
+    $safeTrace = @($trace -cmatch '^(initialized|first-read|input-ready|second-read|literal-location-input|directory-observed|host=(ConsoleHost|other)|policy=(Restricted|AllSigned|RemoteSigned|Unrestricted|Bypass|Undefined|Default)|std(in|out|err)=(True|False)|(cwd|nativeCwd|initialProvider|initialDirectory|finalDirectory|initialSourcePath|sourcePath|errorRecords|pathFirst)=(True|False)|(initialSource|source)=(unchecked|verified|different|missing|unreadable)|history=(completed|failed|different|missing)|native=(unavailable|-?[0-9]{1,10})|selection=(missing|shadowed|different|expected)|version=(unchecked|expected|different|command-failed))$')
+    $consoleChecked = ($trace -ccontains 'initialized') -and ($trace -ccontains 'host=ConsoleHost') -and
         ($trace -ccontains 'policy=Restricted') -and ($trace -ccontains 'stdin=False') -and ($trace -ccontains 'stdout=False') -and
-        ($trace -ccontains 'first-read') -and ($trace -ccontains 'input-ready')
-    $inputChecked = $inputChecked -and ($trace -ccontains 'cwd=True')
+        ($trace -ccontains 'first-read') -and $ownerCwd
+    $startChecked = $consoleChecked -and ($trace -ccontains 'initialDirectory=True') -and [bool]($safeTrace -cmatch '^nativeCwd=') -and [bool]($safeTrace -cmatch '^initialProvider=')
+    $inputChecked = $startChecked -and ($trace -ccontains 'input-ready') -and ($trace -ccontains 'finalDirectory=True') -and
+        ([bool]$EnterLiteralDirectory -eq ($trace -ccontains 'literal-location-input'))
     $readAgain = $trace -ccontains 'second-read'
     $commandChecked = ($trace -ccontains 'history=completed') -and ($trace -ccontains 'native=0') -and
         ($trace -ccontains 'pathFirst=True') -and ($trace -ccontains 'selection=expected') -and ($trace -ccontains 'version=expected') -and
-        ($Probe -ne 'Paste' -or !$ExpectedSourceSha -or ($trace -ccontains 'source=verified'))
+        ($Probe -ne 'Paste' -or !$ExpectedSourceSha -or (($trace -ccontains 'source=verified') -and ($CheckFolderIdentity -or ($trace -ccontains 'sourcePath=True'))))
     $receipt = [IO.File]::ReadAllText($files.RECEIPT) -ceq $challenge
     $lines = @([IO.File]::ReadAllLines($files.STDERR))
     $stderrClass = 'empty'
@@ -95,7 +111,24 @@ try {
     }
     $reason = 'passed'
     if ($runnerExit -ne 0) {$reason = 'console-owner-failed'}
+    elseif ($state -ceq 'directory-mismatch') {$reason = 'wrong-native-directory'}
     elseif ($state -ne 'exited' -or $null -eq $exitCode) {$reason = 'no-numeric-exit'}
+    elseif ($Probe -eq 'ObserveDirectory') {
+        $complete = $true
+        foreach ($field in 'nativeCwd','initialProvider','initialDirectory','initialSourcePath','cwd','finalDirectory','sourcePath') {
+            if (@($safeTrace -cmatch ('^' + $field + '=(True|False)$')).Count -ne 1) {$complete = $false}
+        }
+        foreach ($field in 'initialSource','source') {
+            if (@($safeTrace -cmatch ('^' + $field + '=(verified|different|missing|unreadable)$')).Count -ne 1) {$complete = $false}
+        }
+        if (!$consoleChecked -or !$complete -or $exitCode -ne 0 -or $receipt -or $readAgain -or ($trace -ccontains 'input-ready') -or
+            ($trace -cnotcontains 'directory-observed')) {$reason='directory-observation-failed'}
+        else {$reason='observed'}
+    }
+    elseif ($Probe -eq 'WrongDirectory') {
+        if (!$startChecked -or $exitCode -ne 37 -or $receipt -or $readAgain -or ($trace -ccontains 'input-ready') -or
+            ($trace -cnotcontains 'finalDirectory=False') -or ($trace -cnotcontains 'source=verified') -or ($trace -cnotcontains 'sourcePath=False')) {$reason='wrong-directory-not-rejected'}
+    }
     elseif (!$inputChecked) {$reason = 'input-not-verified'}
     elseif ($Probe -in 'Exit0','Exit17') {
         $expected = if ($Probe -eq 'Exit0') {0} else {17}
@@ -114,10 +147,10 @@ try {
         @($lines -ceq 'Downloading GitHub CLI for automatic update verification...').Count -ne 0)) {$reason = 'verifier-download-count'}
     $codeText = if ($null -eq $exitCode) {'unavailable'} else {[string]$exitCode}
     $runnerText = if ($null -eq $runnerExit) {'unavailable'} else {[string]$runnerExit}
-    $summary = "$clientName $Probe stage=$stage reason=$reason runner=$runnerText process=$state nativeError=$nativeError exit=$codeText trace=[$($safeTrace -join ',')] receipt=$receipt stderr=$stderrClass"
+    $summary = "$clientName $Probe stage=$stage reason=$reason ownerCwd=$ownerText runner=$runnerText process=$state nativeError=$nativeError exit=$codeText trace=[$($safeTrace -join ',')] receipt=$receipt stderr=$stderrClass"
     if ($EvidenceLog) {Add-Content -LiteralPath $EvidenceLog -Value $summary}
     $reported = $true
-    if ($reason -ne 'passed') {throw "Restricted ConsoleHost qualification failed: $summary"}
+    if ($reason -notin 'passed','observed') {throw "Restricted ConsoleHost qualification failed: $summary"}
 } catch {
     if (!$reported -and $EvidenceLog) {
         Add-Content -LiteralPath $EvidenceLog -Value "$clientName $Probe stage=$stage category=$($_.CategoryInfo.Category) process=unavailable exit=unavailable"

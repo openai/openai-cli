@@ -241,6 +241,30 @@ func windowsInstallerTranscript(screen string) ([]string, error) {
 	return statuses, nil
 }
 
+func TestMainWindowsArchiveBracketedLauncher(t *testing.T) {
+	dir := os.Getenv("OPENAI_CLI_WINDOWS_BRACKETED_ZIP")
+	if dir == "" {
+		t.Skip("requires a standard-account extraction of the candidate ZIP")
+	}
+	requireWindowsArchiveAccount(t)
+	if !filepath.IsAbs(dir) || !strings.Contains(filepath.Base(dir), "[") {
+		t.Fatal("expected a bracketed extraction directory")
+	}
+	screen := filepath.Join(t.TempDir(), "screen.txt")
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
+	defer cancel()
+	env := append(os.Environ(), "OPENAI_ARCHIVE_TEST_MODE=install", "OPENAI_ARCHIVE_TEST_SCREEN="+screen)
+	runWindowsUpdateConsole(t, ctx, filepath.Join(dir, "Install.cmd"), dir, env)
+	output, err := os.ReadFile(screen)
+	if err != nil {
+		t.Fatal("could not read the bracketed launcher screen")
+	}
+	if _, err := windowsInstallerTranscript(string(output)); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("Install.cmd started and finished in the bracketed ZIP directory without a keypress.")
+}
+
 // Capture both stdout and stderr from a new native console without any input.
 func TestMainWindowsArchiveConsoleCapture(t *testing.T) {
 	work := t.TempDir()
@@ -302,12 +326,23 @@ func runRestrictedWindowsPaste(t *testing.T, client string, input, output *os.Fi
 	// is redirected, to count the public recipe's actual verifier downloads.
 	cmd := exec.CommandContext(ctx, client, "-NoLogo", "-NoProfile", "-NoExit", "-ExecutionPolicy", "Restricted", "-Command", windowsPasteDriver)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = input, output, diagnostics
+	wanted, err := os.Stat(os.Getenv("OPENAI_WINDOWS_PASTE_CWD"))
+	if err != nil {
+		t.Fatal("cannot inspect requested native launch directory")
+	}
+	actual, err := os.Stat(".")
+	if err != nil {
+		t.Fatal("cannot inspect inherited native launch directory")
+	}
 	result := struct {
+		OwnerCWD    bool
 		State       string
 		Exit        *uint32
 		NativeError uint32
-	}{State: "launch-failed"}
-	if err = cmd.Start(); err == nil {
+	}{State: "launch-failed", OwnerCWD: os.SameFile(actual, wanted)}
+	if !result.OwnerCWD {
+		result.State = "directory-mismatch"
+	} else if err = cmd.Start(); err == nil {
 		err = cmd.Wait()
 		result.State = "exit-unavailable"
 		var exitErr *exec.ExitError
@@ -334,34 +369,66 @@ func runRestrictedWindowsPaste(t *testing.T, client string, input, output *os.Fi
 const windowsPasteDriver = `$fixtureHost = if ($Host.Name -ceq 'ConsoleHost') {'ConsoleHost'} else {'other'}
 [IO.File]::WriteAllLines($env:OPENAI_WINDOWS_PASTE_TRACE,[string[]]@('initialized',('host='+$fixtureHost),('policy='+(Get-ExecutionPolicy)),('stdin='+[Console]::IsInputRedirected),('stdout='+[Console]::IsOutputRedirected),('stderr='+[Console]::IsErrorRedirected)))
 $global:reads = 0
+$global:openaiStartMeasured = $false
 function global:Add-OpenAIPasteTrace([string]$record) {
     [IO.File]::AppendAllText($env:OPENAI_WINDOWS_PASTE_TRACE,$record+[Environment]::NewLine)
 }
+function global:Get-OpenAIFolderID {
+    if (!$env:OPENAI_WINDOWS_PASTE_TARGET_ID) {return ''}
+    try {
+        $file = Microsoft.PowerShell.Management\Get-Item -LiteralPath '.\.openai-qualification-folder' -Force -ErrorAction Stop
+        if ($file.Length -eq 32 -and !($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {return [IO.File]::ReadAllText($file.FullName)}
+    } catch {}
+    return ''
+}
+function global:Get-OpenAIRelativeSource {
+    if (!$env:OPENAI_WINDOWS_PASTE_SOURCE_SHA -or $env:OPENAI_WINDOWS_PASTE_PROBE -notin 'Paste','ObserveDirectory','WrongDirectory') {
+        return [pscustomobject]@{State='unchecked'; AtTarget=$false}
+    }
+    $application = Microsoft.PowerShell.Core\Get-Command .\openai.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (!$application) {return [pscustomobject]@{State='missing'; AtTarget=$false}}
+    $expected = Join-Path $env:OPENAI_WINDOWS_PASTE_TARGET 'openai.exe'
+    $atTarget = [string]::Equals($application.Path,$expected,[StringComparison]::OrdinalIgnoreCase)
+    $stream = $null
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [IO.File]::OpenRead($application.Path)
+        $hash = [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-','')
+        $state = if ([string]::Equals($hash,$env:OPENAI_WINDOWS_PASTE_SOURCE_SHA,[StringComparison]::OrdinalIgnoreCase)) {'verified'} else {'different'}
+    } catch {$state='unreadable'} finally {if ($stream) {$stream.Dispose()}; $hasher.Dispose()}
+    return [pscustomobject]@{State=$state; AtTarget=$atTarget}
+}
 function global:PSConsoleHostReadLine {
+    if (!$global:openaiStartMeasured) {
+        $global:openaiStartMeasured = $true
+        $initial = (Get-Location).ProviderPath
+        $nativeCwd = [string]::Equals([Environment]::CurrentDirectory,$env:OPENAI_WINDOWS_PASTE_CWD,[StringComparison]::OrdinalIgnoreCase)
+        $initialProvider = [string]::Equals($initial,$env:OPENAI_WINDOWS_PASTE_CWD,[StringComparison]::OrdinalIgnoreCase)
+        $global:initialFolderID = Get-OpenAIFolderID
+        $initialDirectory = if ($env:OPENAI_WINDOWS_PASTE_START_ID) {[string]::Equals($global:initialFolderID,$env:OPENAI_WINDOWS_PASTE_START_ID,[StringComparison]::Ordinal)} else {$initialProvider}
+        $global:initialSource = Get-OpenAIRelativeSource
+        foreach ($field in "nativeCwd=$nativeCwd","initialProvider=$initialProvider","initialDirectory=$initialDirectory",("initialSource="+$global:initialSource.State),("initialSourcePath="+$global:initialSource.AtTarget)) {Add-OpenAIPasteTrace $field}
+        if ($env:OPENAI_WINDOWS_PASTE_LOCATION -ceq 'Literal') {
+            if (!$initialDirectory -or $Host.Name -ne 'ConsoleHost' -or (Get-ExecutionPolicy) -ne 'Restricted' -or [Console]::IsInputRedirected -or [Console]::IsOutputRedirected) {return 'exit 37'}
+            Add-OpenAIPasteTrace 'literal-location-input'
+            return 'Microsoft.PowerShell.Management\Set-Location -LiteralPath $env:OPENAI_WINDOWS_PASTE_TARGET -ErrorAction Stop'
+        }
+    }
     $global:reads++
     if ($global:reads -eq 1) {
-        [IO.File]::AppendAllText($env:OPENAI_WINDOWS_PASTE_TRACE,'first-read'+[Environment]::NewLine)
+        Add-OpenAIPasteTrace 'first-read'
         if ($Host.Name -ne 'ConsoleHost' -or (Get-ExecutionPolicy) -ne 'Restricted') {return 'exit 32'}
         if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) {return 'exit 36'}
         $location = (Get-Location).ProviderPath
-        $cwdOK = [string]::Equals($location,$env:OPENAI_WINDOWS_PASTE_CWD,[StringComparison]::OrdinalIgnoreCase)
-        Add-OpenAIPasteTrace ('cwd='+$cwdOK)
-        if (!$cwdOK) {return 'exit 37'}
-        if ($env:OPENAI_WINDOWS_PASTE_SOURCE_SHA -and $env:OPENAI_WINDOWS_PASTE_PROBE -eq 'Paste') {
-            $source = Join-Path $location 'openai.exe'
-            $sourceState = 'missing'
-            if ([IO.File]::Exists($source)) {
-                $stream = $null
-                $hasher = [Security.Cryptography.SHA256]::Create()
-                try {
-                    $stream = [IO.File]::OpenRead($source)
-                    $hash = [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-','')
-                    $sourceState = if ($hash -ieq $env:OPENAI_WINDOWS_PASTE_SOURCE_SHA) {'verified'} else {'different'}
-                } catch {$sourceState = 'unreadable'} finally {if ($stream) {$stream.Dispose()}; $hasher.Dispose()}
-            }
-            Add-OpenAIPasteTrace ('source='+$sourceState)
-            if ($sourceState -ne 'verified') {return 'exit 37'}
-        }
+        $cwdOK = [string]::Equals($location,$env:OPENAI_WINDOWS_PASTE_TARGET,[StringComparison]::OrdinalIgnoreCase)
+        $source = if ($env:OPENAI_WINDOWS_PASTE_LOCATION -ceq 'Literal') {Get-OpenAIRelativeSource} else {$global:initialSource}
+        $folderID = if ($env:OPENAI_WINDOWS_PASTE_LOCATION -ceq 'Literal') {Get-OpenAIFolderID} else {$global:initialFolderID}
+        $finalDirectory = if ($env:OPENAI_WINDOWS_PASTE_TARGET_ID) {[string]::Equals($folderID,$env:OPENAI_WINDOWS_PASTE_TARGET_ID,[StringComparison]::Ordinal)} else {$cwdOK}
+        foreach ($field in "cwd=$cwdOK","finalDirectory=$finalDirectory",("source="+$source.State),("sourcePath="+$source.AtTarget)) {Add-OpenAIPasteTrace $field}
+        if ($env:OPENAI_WINDOWS_PASTE_PROBE -ceq 'ObserveDirectory') {Add-OpenAIPasteTrace 'directory-observed'; return 'exit 0'}
+        if (!$finalDirectory) {return 'exit 37'}
+        if ($env:OPENAI_WINDOWS_PASTE_SOURCE_SHA -and $env:OPENAI_WINDOWS_PASTE_PROBE -in 'Paste','WrongDirectory' -and
+            ($source.State -cne 'verified' -or (!$env:OPENAI_WINDOWS_PASTE_TARGET_ID -and !$source.AtTarget))) {return 'exit 37'}
         $global:Error.Clear()
         $global:LASTEXITCODE = 0
         $global:openaiLiteral = [IO.File]::ReadAllText($env:OPENAI_WINDOWS_PASTE_TEXT)
