@@ -61,8 +61,32 @@ try {
         $oldFlags = "-s -w -X ${stamp}releaseVersion=0.0.1 -X ${stamp}releaseCommit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         go build -overlay $overlay -ldflags $oldFlags -o "$root/older-openai.exe" ./cmd/openai/main.go
         if ($LASTEXITCODE -ne 0) { throw 'Could not build the older release-stamped fixture.' }
-        Copy-Item -LiteralPath 'Install.cmd' -Destination "$root/Install.cmd"
-        Copy-Item -LiteralPath 'docs/installation.md' -Destination "$root/installation.md"
+        # Keep the real public layout, including the manual and completions.
+        # Change only the two entries supplied by this feature.
+        $digests = @{amd64='3d6410fe897df350b6cd60eabc1ef4be896711fad040d3d7959ade3a3400fe2e'; arm64='a9171c78958eeaffd941c4d8fff49c7f9864f57e1568f0951b77d8f5cfcb3540'}
+        $baseline = Join-Path $root 'before.zip'
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/openai/openai-cli/releases/download/v1.48.1/openai_1.48.1_windows_$goarch.zip" -OutFile $baseline
+        } catch {throw 'Could not download the public Windows baseline archive.'}
+        if ((Get-FileHash -LiteralPath $baseline).Hash.ToLowerInvariant() -cne $digests[$goarch]) {throw 'Public Windows baseline archive checksum mismatch.'}
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $candidateZip = Join-Path $root "openai_$($version)_windows_$goarch.zip"
+        Copy-Item -LiteralPath $baseline -Destination $candidateZip
+        $zip = [IO.Compression.ZipFile]::Open($candidateZip,'Update')
+        try {
+            $old = $zip.GetEntry('openai.exe')
+            if (!$old -or $zip.GetEntry('Install.cmd')) {throw 'Unexpected baseline Windows archive layout.'}
+            $legacy = Join-Path $root 'baseline-openai.exe'
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($old,$legacy)
+            [IO.File]::WriteAllText($legacy+':Zone.Identifier',"[ZoneTransfer]`r`nZoneId=3`r`n",[Text.Encoding]::ASCII)
+            $old.Delete()
+            $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip,"$root/openai.exe",'openai.exe')
+            $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip,(Resolve-Path 'Install.cmd').Path,'Install.cmd')
+        } finally {$zip.Dispose()}
+        $extracted = Join-Path $root 'extracted'
+        [IO.Compression.ZipFile]::ExtractToDirectory($candidateZip,$extracted)
+        [IO.File]::WriteAllText((Join-Path $extracted 'openai.exe')+':Zone.Identifier',"[ZoneTransfer]`r`nZoneId=3`r`n",[Text.Encoding]::ASCII)
+        Copy-Item -LiteralPath 'docs/installation.md' -Destination "$extracted/installation.md"
         Copy-Item -LiteralPath 'scripts/windows-starter.ps1.tmpl' -Destination "$root/windows-starter.ps1.tmpl"
         Copy-Item -LiteralPath 'scripts/test-windows-starter-paste.ps1' -Destination "$root/test-windows-starter-paste.ps1"
         Set-Content -LiteralPath "$root/fixture-tag.txt" -Value "v$version"
@@ -126,8 +150,9 @@ if (Test-Path -LiteralPath "$PSScriptRoot/tags.json") {
 }
 $env:OPENAI_CLI_WINDOWS_ARCHIVE_FIXTURE = '1'
 $env:OPENAI_CLI_WINDOWS_ARCHIVE_OLDER_BINARY = Join-Path $PSScriptRoot 'older-openai.exe'
-$env:OPENAI_CLI_WINDOWS_ARCHIVE_BINARY = Join-Path $PSScriptRoot 'openai.exe'
-$env:OPENAI_CLI_WINDOWS_ARCHIVE_SCRIPT = Join-Path $PSScriptRoot 'Install.cmd'
+$env:OPENAI_CLI_WINDOWS_ARCHIVE_BASELINE = Join-Path $PSScriptRoot 'baseline-openai.exe'
+$env:OPENAI_CLI_WINDOWS_ARCHIVE_BINARY = Join-Path $PSScriptRoot 'extracted/openai.exe'
+$env:OPENAI_CLI_WINDOWS_ARCHIVE_SCRIPT = Join-Path $PSScriptRoot 'extracted/Install.cmd'
 if (Test-Path -LiteralPath "$PSScriptRoot/machine-conflict.txt") {
     $env:OPENAI_CLI_WINDOWS_ARCHIVE_CONFLICT = (Get-Content -LiteralPath "$PSScriptRoot/machine-conflict.txt" -Raw).Trim()
     & "$PSScriptRoot/archive.test.exe" '-test.run=^TestMainWindowsArchiveMachinePathConflict$' '-test.v' *> "$PSScriptRoot/results/test.log"

@@ -94,6 +94,36 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 	installer := filepath.Join(extracted, "Install.cmd")
 	copyFile(setupScript, installer)
 	managed := filepath.Join(os.Getenv("LOCALAPPDATA"), "OpenAI", "CLI", "bin", "openai.exe")
+	public := os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_BASELINE")
+	if !filepath.IsAbs(public) {
+		t.Fatal("missing the public ZIP baseline")
+	}
+	plain := func(args ...string) (string, error) {
+		cmd := exec.Command(public, args...)
+		cmd.Env = append(os.Environ(), "NO_COLOR=1", "OPENAI_CLI_NO_UPDATE_CHECK=1")
+		out, err := cmd.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	if _, err := os.Lstat(managed); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("legacy comparison requires a pristine account", err)
+	}
+	legacyVersion, err := plain("--version")
+	if err != nil || legacyVersion != "openai version 1.48.1" {
+		t.Fatal("public baseline version mismatch", err)
+	}
+	failure, err := plain("install", "--user")
+	var failed *exec.ExitError
+	if !errors.As(err, &failed) || failed.ExitCode() == 0 {
+		t.Fatal("the legacy release unexpectedly accepted enrollment")
+	}
+	diagnostic, _, _ := strings.Cut(strings.ReplaceAll(failure, "\r\n", "\n"), "\n")
+	if diagnostic != "The --user option is not available for this command." {
+		t.Fatal("unrecognized public baseline diagnostic")
+	}
+	if _, err := os.Lstat(managed); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("legacy portable invocation changed managed state", err)
+	}
+	t.Logf("Windows ZIP before (published v1.48.1)\n> openai --version\n%s\n> openai install --user\n%s\nExit %d", legacyVersion, diagnostic, failed.ExitCode())
 	cliDir := filepath.Dir(filepath.Dir(managed))
 	if _, err := os.Lstat(cliDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("the disposable account already has an installation or inaccessible destination")
@@ -211,9 +241,20 @@ if ((Get-Command openai).Path -ine $env:ARCHIVE_OLD) {throw 'wrong initial selec
 	click.Dir = extracted
 	click.Stdin = strings.NewReader("\r\n")
 	click.Env = append(os.Environ(), "HTTP_PROXY=http://127.0.0.1:9", "HTTPS_PROXY=http://127.0.0.1:9")
-	if out, err := click.CombinedOutput(); err != nil || !bytes.Contains(out, []byte("OpenAI CLI setup finished.")) {
-		t.Fatalf("Explorer installer failed: %v %s", err, out)
+	output, err := click.CombinedOutput()
+	if err != nil {
+		t.Fatal("Explorer installer failed", err)
 	}
+	var transcript []string
+	for _, line := range strings.Split(strings.ReplaceAll(string(output), "\r\n", "\n"), "\n") {
+		if line == "Installing OpenAI CLI for your account..." || line == "OpenAI CLI setup finished." {
+			transcript = append(transcript, line)
+		}
+	}
+	if len(transcript) != 2 || transcript[0] != "Installing OpenAI CLI for your account..." || transcript[1] != "OpenAI CLI setup finished." {
+		t.Fatal("Explorer installer omitted its status")
+	}
+	t.Logf("Windows ZIP after (candidate archive)\n> Install.cmd\n%s\nExit 0", strings.Join(transcript, "\n"))
 	var token windows.Token
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &token); err != nil {
 		t.Fatal(err)
