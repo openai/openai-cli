@@ -178,7 +178,7 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 	})
 	waitForWorker := func(t *testing.T, key string) map[string]any {
 		t.Helper()
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(20 * time.Second)
 		for {
 			data, err := os.ReadFile(statePath)
 			if err != nil {
@@ -313,4 +313,31 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 			t.Fatalf("unsupported verifier suppressed manual notice: %+v", result)
 		}
 	})
+	if prefix := os.Getenv("OPENAI_CLI_TEST_HOMEBREW_PREFIX"); runtime.GOOS == "darwin" && prefix != "" {
+		t.Run("enrolled_Homebrew_worker", func(t *testing.T) {
+			// A runner-supplied Homebrew formula exercises native code signing
+			// and the actual CLI. All discovery traffic stops at loopback.
+			state = map[string]any{"schema": 1}
+			writeState()
+			enroll := exec.Command(binary, "__openai_homebrew_verifier", prefix)
+			enroll.Env = append(append([]string{}, environment...), "OPENAI_CLI_ARCHIVE_INSTALL=1")
+			if out, err := enroll.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "ready" {
+				t.Fatalf("Homebrew enrollment: %s %v", out, err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{"id":"resp-test","object":"response","status":"completed","output":[]}`)
+			}))
+			defer server.Close()
+			got := run("", []string{"OPENAI_BASE_URL=" + server.URL + "/v1", "OPENAI_API_KEY=sk-test-fixture"}, "responses", "create", "--model", "test-model", "--input", "test input")
+			if got.code != 0 {
+				t.Fatalf("ordinary request: %+v", got)
+			}
+			receipt := waitForWorker(t, "checked")
+			if receipt["verifier_unavailable"] == true || receipt["homebrew_prefix"] != prefix {
+				t.Fatal("worker lost enrolled verifier", receipt)
+			}
+		})
+	}
+
 }

@@ -100,6 +100,8 @@ type syntheticDelivery struct {
 	beforePrepare, beforeValidation            func()
 }
 
+func (*syntheticDelivery) closeVerifier() {}
+
 func (d *syntheticDelivery) checkVerifier(context.Context, *noticeCache) error {
 	d.verifierCalls++
 	return d.verifierError
@@ -109,7 +111,7 @@ func (d *syntheticDelivery) selectRelease(context.Context, string) (releaseSelec
 	d.selectCalls++
 	return d.selected, nil
 }
-func (d *syntheticDelivery) prepare(ctx context.Context, cache *noticeCache, selected releaseSelection) (string, error) {
+func (d *syntheticDelivery) prepare(ctx context.Context, cache *noticeCache, selected releaseSelection, current *os.File) (string, error) {
 	d.prepareCalls++
 	if d.beforePrepare != nil {
 		d.beforePrepare()
@@ -174,6 +176,10 @@ func TestAutomaticUpdateTransactions(t *testing.T) {
 			current, err := os.ReadFile(i.path)
 			if err != nil || !bytes.Equal(current, old) {
 				t.Fatal("preparation changed installed binary")
+			}
+			if scenario == "activate" {
+				// A previous version prepared the replacement before the active image was marked.
+				markUpdateFixture(t, i.path)
 			}
 			if delivery.prepareCalls != 1 || delivery.validationCalls != 0 {
 				t.Fatal("preparation activated an update")
@@ -264,6 +270,7 @@ func TestAutomaticUpdateTransactions(t *testing.T) {
 				t.Fatal(readErr)
 			}
 			if scenario == "activate" {
+				checkUpdateFixtureQuarantine(t, i.path)
 				if err != nil || !bytes.Equal(current, next) {
 					t.Fatalf("activation failed: %v", err)
 				}

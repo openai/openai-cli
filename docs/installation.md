@@ -51,26 +51,23 @@ Run `type -a openai` to see competing commands. If a new shell selects another c
 
 ## Linux
 
-Download one package for your distribution into an empty directory. [Release downloads](https://github.com/openai/openai-cli/releases)
-
-Use the newest stable release with package files under **Assets**.
-Choose `amd64` for x86-64 or `arm64` for 64-bit ARM.
-From the download directory, run the command for your distribution.
-
-**Debian or Ubuntu**
+On Debian, Ubuntu, or Fedora, paste this block into Bash or zsh.
+It downloads the latest package for your system and verifies its SHA-256 before requesting your administrator password.
 
 ```sh
-sudo apt install ./openai_*_linux_*.deb
+( installer=$(curl -qfsSL --proto '=https' --proto-redir '=https' https://github.com/openai/openai-cli/releases/latest/download/install-linux-release.sh) &&
+  /bin/bash -p -c "$installer" ) &&
+source /usr/share/openai-cli/enable-updates.sh
 ```
 
-**Fedora**
+The package manager owns `/usr/bin/openai`. The helper selects your automatically updated copy in this shell and future shells.
+If the latest release has no installer asset yet, choose your package from [Release downloads](https://github.com/openai/openai-cli/releases).
 
-```sh
-sudo dnf install ./openai_*_linux_*.rpm
-```
-
-The package installs `openai` in `/usr/bin`. Run `openai --help` to check the installation.
-For other distributions or an installation without administrator access, use the [Linux tarball](#installing-a-prebuilt-binary).
+For an offline installation, verify your chosen package against its official release checksum first.
+Give apt or dnf that exact path, such as `sudo apt install ./chosen-file.deb` or `sudo dnf install ./chosen-file.rpm`.
+Older packages, including v1.48.1, support `/usr/bin/openai --help` and `/usr/bin/openai --version`.
+To enable automatic updates with a supported package, run `source /usr/share/openai-cli/enable-updates.sh`.
+Other systems can use the [Linux tarball](#installing-a-prebuilt-binary).
 
 ## Windows
 

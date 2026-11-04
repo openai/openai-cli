@@ -1,0 +1,53 @@
+#!/bin/sh
+# Run as an ordinary user in a disposable Linux system with the candidate deb
+# or rpm installed. A compatible gh on PATH keeps the test offline.
+set -eu
+[ "$(uname -s)" = Linux ] && [ "$(id -u)" != 0 ] || exit 2
+[ -r /usr/share/openai-cli/enable-updates.sh ] && [ -x /usr/bin/openai ] || exit 2
+command -v bash >/dev/null && command -v zsh >/dev/null && command -v gh >/dev/null || exit 2
+if command -v dpkg-query >/dev/null; then
+    dpkg-query -S /usr/bin/openai && dpkg-query -S /usr/share/openai-cli/enable-updates.sh
+else
+    rpm -qf /usr/bin/openai /usr/share/openai-cli/enable-updates.sh
+fi
+umask 077
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+export HOME="$work/home"
+mkdir "$HOME" "$work/stale-bin"
+printf '#!/bin/sh\nexit 99\n' > "$work/stale-bin/openai"
+chmod 700 "$work/stale-bin/openai"
+export PATH="$work/stale-bin:$PATH"
+system_hash=$(sha256sum < /usr/bin/openai)
+expected=$(/usr/bin/openai --version)
+export expected
+check='test "$(command -v openai)" = "$HOME/.openai/bin/openai" && test "$(openai --version)" = "$expected"'
+setup='source /usr/share/openai-cli/enable-updates.sh'
+printf 'export OPENAI_TEST_PROFILE_MARKER=preserved\n' > "$HOME/.bash_profile"
+printf '# personal Bash settings\n' > "$HOME/.bashrc"
+bash --norc -ic "hash openai && $setup && $check"
+bash -ic "$check"
+bash -lic "$check && test \"\$OPENAI_TEST_PROFILE_MARKER\" = preserved"
+before=$(sha256sum < "$HOME/.bashrc")
+bash -ic "$setup && $check"
+test "$(sha256sum < "$HOME/.bashrc")" = "$before"
+grep -Fx '# personal Bash settings' "$HOME/.bashrc"
+test "$(sha256sum < "$HOME/.openai/bin/openai")" = "$system_hash"
+test -z "$(bash --noprofile --norc -c 'source /usr/share/openai-cli/enable-updates.sh 2>/dev/null && echo unexpected')"
+
+export HOME="$work/zsh-home" ZDOTDIR="$work/zsh-home/settings"
+mkdir "$HOME" "$ZDOTDIR"
+printf '# personal zsh settings\n' > "$ZDOTDIR/.zshrc"
+zsh -ic "$setup && $check"
+zsh -ic "$check"
+grep -Fx '# personal zsh settings' "$ZDOTDIR/.zshrc"
+
+export HOME="$work/conflict-home"
+mkdir "$HOME"
+bash --norc -ic "openai() { :; }; if $setup; then exit 1; fi; test ! -e \"\$HOME/.openai\""
+ln -s "$work/sentinel" "$HOME/.bashrc"
+printf 'preserve\n' > "$work/sentinel"
+bash --norc -ic "if $setup; then exit 1; fi; test ! -e \"\$HOME/.openai\""
+test "$(cat "$work/sentinel")" = preserve
+test "$(sha256sum < /usr/bin/openai)" = "$system_hash"
+printf '%s\n' 'PASS: package ownership, native Bash and zsh enrollment, fresh shells, repeat setup, conflicts, and system binary.'

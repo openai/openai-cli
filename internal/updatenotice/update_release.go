@@ -59,8 +59,10 @@ func (s releaseSelection) valid() bool {
 }
 
 type releaseDelivery struct {
-	client   *http.Client
-	verifier string
+	verifierCleanup        func()
+	client                 *http.Client
+	verifier               string
+	privateVerifierEnabled bool
 }
 
 func updateClient() *http.Client {

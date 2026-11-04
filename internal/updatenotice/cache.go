@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"runtime"
@@ -16,6 +17,7 @@ import (
 const stateName = "state.json"
 
 var errCache = errors.New("update notice cache is unavailable")
+var errCacheBusy = fmt.Errorf("%w: another process holds the lock", errCache)
 
 type cacheState struct {
 	Schema   int    `json:"schema"`
@@ -77,9 +79,13 @@ func openCache(ctx context.Context, directory string) (*noticeCache, error) {
 		return nil, errCache
 	}
 	locked, err := tryLock(lock)
-	if err != nil || !locked || !cache.validLock() {
+	if err != nil || !cache.validLock() {
 		cache.close()
 		return nil, errCache
+	}
+	if !locked {
+		cache.close()
+		return nil, errCacheBusy
 	}
 	return cache, nil
 }
