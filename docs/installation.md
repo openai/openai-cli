@@ -51,30 +51,52 @@ Run `type -a openai` to see competing commands. If a new shell selects another c
 
 ## Linux
 
-Download one package for your distribution into an empty directory. [Release downloads](https://github.com/openai/openai-cli/releases)
+Download the newest stable package for your distribution. [Release downloads](https://github.com/openai/openai-cli/releases)
 
-Use the newest stable release with package files under **Assets**.
-Choose `amd64` for x86-64 or `arm64` for 64-bit ARM.
-From the download directory, paste your distribution’s commands into an interactive Bash or zsh shell.
+Under **Assets**, choose `amd64` for x86-64, `386` for 32-bit x86, or `arm64` for 64-bit ARM.
+Use `armv6` for the published 32-bit hard-float ARM package. Its Debian architecture is `armhf`.
+From the download directory, paste your distribution’s block into interactive Bash or zsh.
+
+With older packages, including v1.48.1, these commands install `/usr/bin/openai` and print its version.
+Run `/usr/bin/openai --help` to use that copy.
+To enable automatic updates with an older package, use the [archive instructions](automatic-updates.md#from-an-extracted-archive).
 
 **Debian or Ubuntu**
 
 ```sh
-sudo apt install ./openai_*_linux_*.deb &&
-source /usr/share/openai-cli/enable-updates.sh
+openai_arch=$(dpkg --print-architecture | sed -e 's/^i386$/386/' -e 's/^armhf$/armv6/')
+sudo apt install ./openai_*_linux_"${openai_arch}".deb &&
+if [ -r /usr/share/openai-cli/enable-updates.sh ]; then
+  source /usr/share/openai-cli/enable-updates.sh
+else
+  /usr/bin/openai --version
+fi
 ```
 
 **Fedora**
 
+This block selects the newest compatible stable RPM in your download directory.
+
 ```sh
-sudo dnf install ./openai_*_linux_*.rpm &&
-source /usr/share/openai-cli/enable-updates.sh
+case "$(rpm --eval '%{_arch}')" in
+  x86_64) openai_arch=amd64 ;; aarch64) openai_arch=arm64 ;;
+  i?86) openai_arch=386 ;; armv[67]hl) openai_arch=armv6 ;;
+  *) openai_arch=unsupported ;;
+esac
+openai_rpm=$(find . -maxdepth 1 -regextype posix-extended -type f \
+  -regex "./openai_[0-9]+[.][0-9]+[.][0-9]+_linux_${openai_arch}[.]rpm" | LC_ALL=C sort -V | tail -n 1)
+sudo dnf install "${openai_rpm:?Download the Fedora RPM for this architecture first.}" &&
+if [ -r /usr/share/openai-cli/enable-updates.sh ]; then
+  source /usr/share/openai-cli/enable-updates.sh
+else
+  /usr/bin/openai --version
+fi
 ```
 
-The first command installs the system copy at `/usr/bin/openai`.
-The second enables automatic updates for your account and selects `$HOME/.openai/bin/openai` in current and future shells.
+The package manager installs the system copy at `/usr/bin/openai`.
+The package helper enables automatic updates for your account and selects `$HOME/.openai/bin/openai` in current and future shells.
 Setup uses a compatible GitHub CLI or downloads a verified private copy.
-To keep package-manager-only updates, run just the first command.
+To manage updates through your package manager, install the downloaded file with apt or dnf and skip the helper.
 For other distributions or an installation without administrator access, use the [Linux tarball](#installing-a-prebuilt-binary).
 
 ## Windows
