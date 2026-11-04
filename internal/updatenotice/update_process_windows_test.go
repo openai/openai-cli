@@ -187,6 +187,113 @@ func TestWindowsArchiveTrustRejectsRestoredTimestamp(t *testing.T) {
 	}
 }
 
+// Schedule a real second process between the final hash and native rename.
+// Its restored-time write and source rename must both fail at the OS boundary.
+func TestWindowsArchiveGuardedActivation(t *testing.T) {
+	if os.Getenv("OPENAI_TEST_WINDOWS_GUARDED_NEXT") == "1" {
+		fixture := os.Getenv("LOCALAPPDATA")
+		if !strings.HasPrefix(filepath.Base(fixture), "openai-cli-native-update-") {
+			t.Fatal("expected a disposable native update fixture")
+		}
+		path := filepath.Join(fixture, "OpenAI", "CLI", "bin", ".update", "next")
+		before, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writer, err := os.OpenFile(path, os.O_RDWR, 0)
+		if err == nil {
+			_, writeErr := writer.WriteAt([]byte("X"), 0)
+			closeErr := writer.Close()
+			timeErr := os.Chtimes(path, before.ModTime(), before.ModTime())
+			t.Fatal("late writer obtained access", writeErr, closeErr, timeErr)
+		}
+		if !windowsImageBusy(err) {
+			t.Fatal("unexpected writer refusal", err)
+		}
+		if err := os.Rename(path, path+".moved"); !windowsImageBusy(err) {
+			t.Fatal("a competing process could rename the source", err)
+		}
+		return
+	}
+
+	t.Run("writer and source rename", func(t *testing.T) { exerciseGuardedActivation(t, false) })
+	t.Run("substituted name", func(t *testing.T) { exerciseGuardedActivation(t, true) })
+}
+
+func exerciseGuardedActivation(t *testing.T, substitute bool) {
+	t.Helper()
+	bin, directory := windowsUpdateFixture(t)
+	installedPath := filepath.Join(bin, "openai.exe")
+	nextPath := filepath.Join(directory, "next")
+	expected := []byte("authenticated replacement")
+	if err := os.WriteFile(installedPath, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nextPath, expected, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := os.OpenRoot(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cache.Close()
+	root, err := os.OpenRoot(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	image, err := openActivationImage(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer image.Close()
+	before, err := image.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(expected))
+	held, _, err := pinActivationImage(t.Context(), cache, image, before, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := exec.CommandContext(t.Context(), self, "-test.run=^TestWindowsArchiveGuardedActivation$")
+	child.Env = append(os.Environ(), "OPENAI_TEST_WINDOWS_GUARDED_NEXT=1")
+	if output, err := child.CombinedOutput(); err != nil {
+		t.Fatalf("late writer or rename: %v\\n%s", err, output)
+	}
+	if substitute {
+		// Filesystems can permit POSIX replacement of an open destination.
+		// Even if the last pathname check raced, never install these bytes.
+		if err := cache.WriteFile("foreign", []byte("different file"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		swapErr := cache.Rename("foreign", "next")
+		if swapErr != nil && !windowsImageBusy(swapErr) {
+			t.Fatal(swapErr)
+		}
+		substitute = swapErr == nil
+	}
+	if err := renameActivationImage(root, held, "openai.exe"); err != nil {
+		if !substitute {
+			t.Fatal(err)
+		}
+		// NTFS can reject a rename of an already unlinked source handle.
+		expected = []byte("original")
+	}
+	if err := held.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(installedPath)
+	if err != nil || !bytes.Equal(data, expected) {
+		t.Fatal("installed bytes differ from the verified handle", err)
+	}
+}
+
 func TestWindowsArchiveSharingViolationPreservesUpgrade(t *testing.T) {
 	bin, directory := windowsUpdateFixture(t)
 	aCommit := strings.Repeat("a", 40)
@@ -333,12 +440,27 @@ func TestWindowsArchiveSharingViolationPreservesUpgrade(t *testing.T) {
 	if err = command.Wait(); err != nil {
 		t.Fatal("updater interrupted the running CLI", err)
 	}
+	// A writer can already own the default stream. Defer without discarding
+	// its prepared receipt, then revalidate from scratch on the next attempt.
+	writer, err := os.OpenFile(filepath.Join(directory, "next"), os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	worker.now = now.Add(2 * time.Minute)
+	err = worker.run(ctx)
+	closeErr := writer.Close()
+	if err != nil || closeErr != nil || delivery.checks != 2 {
+		t.Fatal("an existing writer did not defer the prepared update", err, closeErr)
+	}
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, a) {
+		t.Fatal("installed new bytes while a writer held the staged file", err)
+	}
+	worker.now = now.Add(4 * time.Minute)
 	if err = worker.run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if delivery.checks != 2 {
-		t.Fatalf("expected revalidation on both attempts, got %d", delivery.checks)
+	if delivery.checks != 3 {
+		t.Fatalf("expected revalidation on all three attempts, got %d", delivery.checks)
 	}
 	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, b) {
 		t.Fatal("new CLI bytes differ", err)

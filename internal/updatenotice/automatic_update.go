@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -355,7 +354,7 @@ func (worker updateWorker) activate(ctx context.Context, cache *noticeCache, sta
 	if _, err := cache.root.Lstat("next"); os.IsNotExist(err) {
 		return errPreparedUpdate
 	}
-	next, err := openUpdateFile(cache.root, "next")
+	next, err := openActivationImage(cache.root)
 	if err != nil {
 		return err
 	}
@@ -376,11 +375,12 @@ func (worker updateWorker) activate(ctx context.Context, cache *noticeCache, sta
 	if err := preservePreparedImageTrust(worker.installation.file, next); err != nil {
 		return err
 	}
-	if runtime.GOOS == "windows" {
-		info, err = preparedImageAfterTrust(ctx, next, info, pending.BinaryHash)
-		if err != nil {
-			return err
-		}
+	active, info, err := pinActivationImage(ctx, cache.root, next, info, pending.BinaryHash)
+	if err != nil {
+		return err
+	}
+	if active != next {
+		defer active.Close()
 	}
 	// Commit the receipt first. A crash before rename cannot announce success:
 	// only an executing binary with the new release version consumes it.
@@ -391,10 +391,10 @@ func (worker updateWorker) activate(ctx context.Context, cache *noticeCache, sta
 	}
 	replace := func() error {
 		actual, err := cache.root.Lstat("next")
-		if err != nil || !sameUpdateFile(info, actual) || !safeOpenedUpdateFile(next) || !worker.policyUnchanged() || !worker.installation.unchanged() || !cache.validLock() || !cache.unchangedState() || ctx.Err() != nil {
+		if err != nil || !sameUpdateFile(info, actual) || !safeOpenedUpdateFile(active) || !worker.policyUnchanged() || !worker.installation.unchanged() || !cache.validLock() || !cache.unchangedState() || ctx.Err() != nil {
 			return errCache
 		}
-		return worker.installation.root.Rename(".update/next", filepath.Base(worker.installation.path))
+		return renameActivationImage(worker.installation.root, active, filepath.Base(worker.installation.path))
 	}
 	return replaceUpdateImage(ctx, replace)
 }

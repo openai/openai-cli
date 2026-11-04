@@ -41,3 +41,13 @@ func safeVerifierStore(*os.Root) bool { return true }
 func sameUpdateDirectory(a, b string) bool { return a == b }
 
 func acquiredVerifierArchive() (*os.File, error) { return nil, nil }
+
+func openActivationImage(root *os.Root) (*os.File, error) { return openUpdateFile(root, "next") }
+
+func pinActivationImage(_ context.Context, _ *os.Root, file *os.File, before os.FileInfo, _ string) (*os.File, os.FileInfo, error) {
+	return file, before, nil
+}
+
+func renameActivationImage(root *os.Root, _ *os.File, target string) error {
+	return root.Rename(".update/next", target)
+}

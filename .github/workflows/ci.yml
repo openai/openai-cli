@@ -703,7 +703,7 @@ jobs:
           retention-days: 7
 
   windows-picker-permissions:
-    timeout-minutes: ${{ matrix.powershell == 'current' && 30 || 15 }}
+    timeout-minutes: 30
     name: ${{ matrix.name }}
     needs: source
     permissions: {}
