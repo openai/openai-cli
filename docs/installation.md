@@ -51,60 +51,23 @@ Run `type -a openai` to see competing commands. If a new shell selects another c
 
 ## Linux
 
-Download the newest stable package for your distribution. [Release downloads](https://github.com/openai/openai-cli/releases)
-
-Under **Assets**, choose `amd64` for x86-64, `386` for 32-bit x86, or `arm64` for 64-bit ARM.
-Use `armv6` for the published 32-bit hard-float ARM package. Its Debian architecture is `armhf`.
-In the download directory, paste this block into interactive Bash or zsh.
-It selects the newest compatible OpenAI CLI package among your stable release downloads.
-
-With older packages, including v1.48.1, the block installs `/usr/bin/openai` and prints its version.
-Run `/usr/bin/openai --help` to use that copy.
-To enable automatic updates with an older package, use the [archive instructions](automatic-updates.md#from-an-extracted-archive).
+On Debian, Ubuntu, or Fedora, paste this block into Bash or zsh.
+It downloads the latest package for your system and verifies its SHA-256 before requesting your administrator password.
 
 ```sh
-(
-  if [ -x /usr/bin/apt ]; then
-    format=deb
-    machine=$(dpkg --print-architecture)
-    package_identity() { dpkg-deb --show --showformat='${Package} ${Architecture}' "$1"; }
-  else
-    format=rpm
-    machine=$(rpm --eval '%{_arch}')
-    package_identity() { rpm -qp --qf '%{NAME} %{ARCH}' "$1"; }
-  fi
-  case "$machine" in
-    amd64|x86_64) arch=amd64 expected=$machine ;; arm64|aarch64) arch=arm64 expected=$machine ;;
-    i386|i486|i586|i686) arch=386 expected=i386 ;; armhf) arch=armv6 expected=armhf ;;
-    armv6hl|armv7hl) arch=armv6 expected=armv6hl ;;
-    *) printf '%s\n' 'No release package matches this architecture.' >&2; exit 1 ;;
-  esac
-  package=$(find . -maxdepth 1 -regextype posix-extended -type f \
-    -regex "./openai_[0-9]+[.][0-9]+[.][0-9]+_linux_${arch}[.]${format}" |
-    LC_ALL=C sort -Vr | while IFS= read -r file; do
-      [ "$(package_identity "$file" 2>/dev/null)" = "openai $expected" ] || continue
-      printf '%s\n' "$file"
-      break
-    done)
-  : "${package:?Download an OpenAI CLI package for this architecture first.}"
-  if [ "$format" = deb ]; then
-    sudo apt install --yes --no-remove "$package"
-  else
-    sudo dnf install --assumeyes "$package"
-  fi
-) &&
-if [ -r /usr/share/openai-cli/enable-updates.sh ]; then
-  source /usr/share/openai-cli/enable-updates.sh
-else
-  /usr/bin/openai --version
-fi
+( installer=$(curl -qfsSL --proto '=https' --proto-redir '=https' https://github.com/openai/openai-cli/releases/latest/download/install-linux-release.sh) &&
+  /bin/bash -p -c "$installer" ) &&
+source /usr/share/openai-cli/enable-updates.sh
 ```
 
-The package manager installs the system copy at `/usr/bin/openai`. Your system can ask for your administrator password.
-The package helper enables automatic updates for your account and selects `$HOME/.openai/bin/openai` in current and future shells.
-Setup uses a compatible GitHub CLI or downloads a verified private copy.
-To manage updates through your package manager, install the downloaded file with apt or dnf and skip the helper.
-For other distributions or an installation without administrator access, use the [Linux tarball](#installing-a-prebuilt-binary).
+The package manager owns `/usr/bin/openai`. The helper selects your automatically updated copy in this shell and future shells.
+If the latest release has no installer asset yet, choose your package from [Release downloads](https://github.com/openai/openai-cli/releases).
+
+For an offline installation, verify your chosen package against its official release checksum first.
+Give apt or dnf that exact path, such as `sudo apt install ./chosen-file.deb` or `sudo dnf install ./chosen-file.rpm`.
+Older packages, including v1.48.1, support `/usr/bin/openai --help` and `/usr/bin/openai --version`.
+To enable automatic updates with a supported package, run `source /usr/share/openai-cli/enable-updates.sh`.
+Other systems can use the [Linux tarball](#installing-a-prebuilt-binary).
 
 ## Windows
 

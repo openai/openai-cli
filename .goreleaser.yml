@@ -3,6 +3,11 @@ version: 2
 
 release:
   replace_existing_artifacts: true
+  extra_files: &linux_release_installer
+    - glob: '{{ or (index .Env "OPENAI_LINUX_RELEASE_INSTALLER") "scripts/install-linux-release.sh" }}'
+
+checksum:
+  extra_files: *linux_release_installer
 
 builds:
   - id: macos
