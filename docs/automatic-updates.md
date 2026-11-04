@@ -20,7 +20,7 @@ The updater uses a compatible GitHub CLI from the selected Homebrew installation
 It can use this verifier even when your shell selects an older `gh`.
 Setup installs GitHub CLI through Homebrew only when it needs a compatible verifier.
 It also adds the selection to your zsh startup file. Homebrew continues to own its separate copy.
-For other shells or a linked zsh startup file, use the [archive instructions](#from-an-extracted-archive).
+For other shells or a linked `.zshrc`, use the [archive instructions](#from-an-extracted-archive).
 
 If the helper is missing, refresh the tap and upgrade the cask explicitly.
 
@@ -72,7 +72,7 @@ sh ./install.sh --require-gh --zsh "${ZDOTDIR:-$HOME}" &&
 export PATH="$HOME/.openai/bin:$PATH"
 ```
 
-For Bash or a linked zsh startup file, paste this command instead. It selects the CLI in this terminal.
+For Bash or a linked `.zshrc`, paste this command instead. It selects the CLI in this terminal.
 
 ```sh
 sh ./install.sh --require-gh && export PATH="$HOME/.openai/bin:$PATH"
@@ -85,6 +85,11 @@ An alias or function can take precedence. Use `"$HOME/.openai/bin/openai"` direc
 ### Keep this selection in a new terminal
 
 If your new terminal already selects `$HOME/.openai/bin/openai`, setup is complete.
+An interactive zsh login shell reads `.zlogin` after `.zshrc`.
+If `${ZDOTDIR:-$HOME}/.zlogin` exists, zsh setup also selects the managed CLI there for interactive login shells.
+If setup warns about `.zlogin`, run `command -v openai` in a new login shell.
+Use `"$HOME/.openai/bin/openai"` directly if that shell selects another executable.
+
 If installation succeeded but shell selection failed, keep the installed executable.
 Run `export PATH="$HOME/.openai/bin:$PATH"` to select it in this shell. Use its full path if an alias still wins.
 For zsh, put this line in your interactive startup file (`${ZDOTDIR:-$HOME}/.zshrc`).
@@ -93,7 +98,7 @@ For zsh, put this line in your interactive startup file (`${ZDOTDIR:-$HOME}/.zsh
 export PATH="$HOME/.openai/bin:$PATH"
 ```
 
-For Bash, add the same export to your interactive startup file. Only the explicit `--zsh` option edits a profile.
+For Bash, add the same export to your interactive startup file. Standalone archive setup edits profiles only with `--zsh`.
 
 ### Older installations and interrupted setup
 

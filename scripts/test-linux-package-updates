@@ -38,8 +38,12 @@ test -z "$(bash --noprofile --norc -c 'source /usr/share/openai-cli/enable-updat
 export HOME="$work/zsh-home" ZDOTDIR="$work/zsh-home/settings"
 mkdir "$HOME" "$ZDOTDIR"
 printf '# personal zsh settings\n' > "$ZDOTDIR/.zshrc"
+export OPENAI_TEST_STALE_BIN="$work/stale-bin"
+printf '%s\n' 'export PATH="$OPENAI_TEST_STALE_BIN:$PATH"' > "$ZDOTDIR/.zlogin"
 zsh -ic "$setup && $check"
 zsh -ic "$check"
+zsh -lic "$check"
+zsh -lc 'test "$(command -v openai)" = "$OPENAI_TEST_STALE_BIN/openai"'
 grep -Fx '# personal zsh settings' "$ZDOTDIR/.zshrc"
 
 export HOME="$work/conflict-home"

@@ -7,7 +7,7 @@ import (
 	"os/exec"
 )
 
-func enableZshPath(string, string) bool { return false }
+func enableZshPath(string, string, bool) bool { return false }
 
 func automaticPlatform() bool          { return false }
 func ownedUpdatePath(os.FileInfo) bool { return false }

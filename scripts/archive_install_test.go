@@ -370,7 +370,7 @@ case $1 in
     __openai_archive_verifier)
         echo probe >> "$HOME/verifier.log"
         command -v gh >/dev/null && gh || echo missing ;;
-    __openai_archive_zsh_profile) exec ` + command + ` -test.run '^TestArchiveProfileProcess$' -- "$2" "$3" ;;
+    __openai_archive_zsh_profile|__openai_zsh_login_profile) exec ` + command + ` -test.run '^TestArchiveProfileProcess$' -- "$@" ;;
 esac
 `)
 	for path, data := range map[string][]byte{
@@ -415,6 +415,9 @@ esac
 	}
 	if data, err := os.ReadFile(profile); err != nil || string(data) != "# personal settings\nexport PATH=\"$HOME/.openai/bin:$PATH\"\n" {
 		t.Fatalf("profile after repeat: %q %v", data, err)
+	}
+	if _, err := os.Lstat(filepath.Join(profileDir, ".zlogin")); !os.IsNotExist(err) {
+		t.Fatalf("created an absent .zlogin: %v", err)
 	}
 	target := filepath.Join(home, ".openai", "bin", "openai")
 	if data, err := os.ReadFile(target); err != nil || string(data) != string(ready) {
@@ -471,6 +474,9 @@ esac
 		}
 		t.Run("README installation", func(t *testing.T) {
 			testHomebrewReadmeInstall(t, zsh, source, brewScript)
+		})
+		t.Run("login profile", func(t *testing.T) {
+			testZshLoginSelection(t, zsh, bin)
 		})
 		for _, kind := range []string{"normal", "hashed", "external gh", "missing gh", "old gh", "shadowed gh", "alias", "function", "failed brew", "missing sibling", "linked sibling", "wrong release link"} {
 			t.Run(kind, func(t *testing.T) {
@@ -649,6 +655,85 @@ fi
 	}
 }
 
+func testZshLoginSelection(t *testing.T, zsh, bin string) {
+	for _, kind := range []string{"regular", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			home := filepath.Join(privateInstallDirectory(t), "home [old]")
+			settings := filepath.Join(home, "my settings")
+			goBin := filepath.Join(home, "go", "bin")
+			for _, dir := range []string{settings, goBin} {
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(goBin, "openai"), []byte("#!/bin/sh\necho old\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			profile := filepath.Join(settings, ".zlogin")
+			personal := profile
+			if kind == "symlink" {
+				personal = filepath.Join(privateInstallDirectory(t), "linked profile")
+				if err := os.Symlink(personal, profile); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const content = "echo read >> \"$HOME/login-runs\"\nexport PATH=\"$HOME/go/bin::$PATH\""
+			if err := os.WriteFile(personal, []byte(content), 0600); err != nil {
+				t.Fatal(err)
+			}
+			path := goBin + ":" + bin + ":/usr/bin:/bin"
+			run := func(flags, script string) string {
+				t.Helper()
+				cmd := exec.Command(zsh, flags, script)
+				cmd.Env = []string{"HOME=" + home, "ZDOTDIR=" + settings, "PATH=" + path}
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("zsh %s: %v: %s", flags, err, out)
+				}
+				return string(out)
+			}
+			var previous string
+			for attempt := range 2 {
+				out := run("-dfic", `source "$(brew --prefix)/bin/openai-enable-updates.zsh" &&
+[[ $(command -v openai) == "$HOME/.openai/bin/openai" && $(openai --version) == 'openai version 1.2.3' ]]`)
+				warned := strings.Contains(out, "could not safely configure") && strings.Contains(out, `"$HOME/.openai/bin/openai" directly`)
+				if warned != (kind == "symlink") {
+					t.Fatalf("unexpected login profile advice: %s", out)
+				}
+				data, err := os.ReadFile(personal)
+				if err != nil || !strings.HasPrefix(string(data), content) || kind == "symlink" && string(data) != content {
+					t.Fatalf("personal profile after setup: %q, %v", data, err)
+				}
+				if attempt > 0 && string(data) != previous {
+					t.Fatal("repeat setup changed the profile")
+				}
+				previous = string(data)
+			}
+			if _, err := os.Stat(filepath.Join(home, "login-runs")); !os.IsNotExist(err) {
+				t.Fatalf("setup executed the login profile: %v", err)
+			}
+			managed := filepath.Join(home, ".openai", "bin")
+			for _, flags := range []string{"-dic", "-dlic", "-dlc"} {
+				wantPath, version := managed+":"+path, "openai version 1.2.3"
+				switch flags {
+				case "-dlic":
+					if kind == "symlink" {
+						wantPath, version = goBin+"::"+managed+":"+path, "old"
+					} else {
+						wantPath = managed + ":" + goBin + "::" + path
+					}
+				case "-dlc":
+					wantPath, version = goBin+"::"+path, "old"
+				}
+				out := run(flags, `openai --version && print -r -- "$PATH"`)
+				if out != version+"\n"+wantPath+"\n" {
+					t.Fatalf("zsh %s selection: %q, want %q on PATH %q", flags, out, version, wantPath)
+				}
+			}
+		})
+	}
+}
+
 func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 	readme, err := os.ReadFile("../README.md")
 	if err != nil {
@@ -761,9 +846,9 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 
 // TestArchiveProfileProcess runs as a subprocess of the executable fixture.
 func TestArchiveProfileProcess(t *testing.T) {
-	if len(os.Args) < 4 || os.Args[len(os.Args)-3] != "--" || os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") != "1" {
+	if len(os.Args) < 5 || os.Args[len(os.Args)-4] != "--" || os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") != "1" {
 		t.Skip("archive fixture subprocess only")
 	}
-	updatenotice.RunUpdateHelper([]string{"openai", "__openai_archive_zsh_profile", os.Args[len(os.Args)-2], os.Args[len(os.Args)-1]})
+	updatenotice.RunUpdateHelper(append([]string{"openai"}, os.Args[len(os.Args)-3:]...))
 	os.Exit(0)
 }

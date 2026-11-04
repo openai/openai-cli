@@ -15,7 +15,12 @@ import (
 
 // enableZshPath runs inside the profile directory selected by the installer.
 // Both identities come from its ownership and ACL preflight before installation.
-func enableZshPath(profileDir, identity string) bool {
+func enableZshPath(profileDir, identity string, login bool) bool {
+	if login {
+		// Reorder only the managed directory. Preserve all other PATH entries, including empty entries.
+		const line = `if [[ -o interactive ]]; then path=("$HOME/.openai/bin" "${(@)path[@]:#"$HOME/.openai/bin"}"); fi`
+		return !strings.HasSuffix(identity, "/new") && appendProfilePath(profileDir, identity, ".zlogin", line)
+	}
 	return appendProfilePath(profileDir, identity, ".zshrc", `export PATH="$HOME/.openai/bin:$PATH"`)
 }
 
