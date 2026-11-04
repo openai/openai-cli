@@ -17,16 +17,18 @@ cat > "$work/bin/curl" <<'MOCK'
 set -eu
 url=${!#}
 printf '%s\n' "$url" >> "$FIXTURE/urls"
-out= left=0 head=false
+out= left=0 retry_count=0 retry_window=0 head=false
 while [[ $# -gt 1 ]]; do
   case "$1" in
     --output) out=$2; shift ;;
     --max-time) left=$2; shift ;;
     --head) head=true ;;
-    --retry*) exit 110 ;;
+    --retry) retry_count=$2; shift ;;
+    --retry-max-time) retry_window=$2; shift ;;
   esac
   shift
 done
+if (( retry_count != 2 || retry_window < 1 || retry_window > 15 )); then exit 110; fi
 if [[ $head == true || $url == *checksums.txt ]]; then
   (( left > 0 && left <= 1800 )) || exit 111
 else
@@ -98,7 +100,7 @@ if [[ $CASE == replaced ]]; then
   # Run the real staging/recheck code as the ordinary account. Its first
   # checksum must fail before either native package manager can run.
   printf 'replaced between checks\n' | "$@"
-elif [[ $CASE == umask || $CASE == no-replay || $CASE == empty-transaction ]]; then
+elif [[ $CASE == umask || $CASE == no-replay || $CASE == empty-transaction || $CASE == dnf-failed ]]; then
   [[ $(umask) == "$CALLER_MASK" ]]
   # Simulate sudo policy, then run the original staging code as this ordinary account.
   # Shell functions replace only the manager and observe the real checksum check.
@@ -126,6 +128,8 @@ elif [[ $CASE == umask || $CASE == no-replay || $CASE == empty-transaction ]]; t
         empty-transaction:--version) echo "4.14.0" ;;
         *:--version) echo "dnf5 version 5.4" ;;
         no-replay:*) return 2 ;;
+        dnf-failed:--assumeyes) manager rpm; return 55 ;;
+        dnf-failed:replay) return 0 ;;
         empty-transaction:*) cat >/dev/null ;;
         *) manager rpm ;;
       esac
@@ -226,6 +230,14 @@ for problem in no-replay empty-transaction; do
     fi
   )
 done
+(
+  umask 0022
+  export CALLER_MASK=0022 SUDO_MASK=0022
+  : > "$work/manager"
+  rc=0
+  run rpm x86_64 amd64 dnf-failed || rc=$?
+  [[ $rc == 55 && $(cat "$work/manager") == rpm && ! -s $work/postcheck ]]
+)
 if run rpm x86_64 amd64 wrong-name; then exit 1; fi
 [[ ! -s $work/sudo ]]
 grep -Fq 'Unexpected RPM release identity' "$work/output"

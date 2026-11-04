@@ -90,6 +90,14 @@ install_linux_release() (
     now=$(linux_release_uptime) || fail 'Could not read the system clock.'
     left=$((deadline - now))
     (( left > 0 )) || fail 'The 30-minute wait for release availability expired. Retry later.'
+    # Curl resets --max-time per attempt. Reserve its short retry window inside the availability budget.
+    retry_window=$((left > 30 ? 15 : left / 2))
+    request_timeout=$((left - retry_window))
+    if (( retry_window > 0 )); then
+      retries=(--retry 2 --retry-max-time "$retry_window")
+    else
+      retries=(--retry 0)
+    fi
   }
   # The protected publisher stamps its immutable tag here. A source checkout
   # discovers the stable tag through the same public Releases page as a browser.
@@ -99,7 +107,7 @@ install_linux_release() (
   select_latest() {
     local result next
     remaining
-    result=$(curl -q "${transfer[@]}" --max-time "$left" --silent --head --output /dev/null \
+    result=$(curl -q "${transfer[@]}" "${retries[@]}" --max-time "$request_timeout" --silent --head --output /dev/null \
       --write-out '%{http_code} %{url_effective}' "$github/releases/latest") || fail 'Could not find the public stable release.'
     next=${result#"200 $github/releases/tag/"}
     [[ $result == "200 $github/releases/tag/$next" && $next =~ $stable ]] || fail 'Expected an official stable OpenAI CLI release tag.'
@@ -126,16 +134,16 @@ install_linux_release() (
     while :; do
       remaining
       if [[ $probe == true ]]; then
-        options=(--max-time "$left" --silent --head --output /dev/null)
+        options=(--max-time "$request_timeout" --silent --head --output /dev/null)
       elif [[ $display == --progress-bar ]]; then
         # A healthy package can take longer than the availability wait on a slow connection.
         started=$now
         options=(--progress-bar --output "$output")
       else
-        options=(--max-time "$left" --silent --output "$output")
+        options=(--max-time "$request_timeout" --silent --output "$output")
       fi
       rc=0
-      code=$(curl -q "${transfer[@]}" "${options[@]}" \
+      code=$(curl -q "${transfer[@]}" "${retries[@]}" "${options[@]}" \
         --write-out '%{http_code}' "$github/releases/download/$tag/$asset") || rc=$?
       if [[ $rc == 0 && $code == 200 ]]; then
         if [[ $probe == true ]]; then probe=false; continue; fi
@@ -276,8 +284,15 @@ RPM
           printf '{"version":"1.0","rpms":[{"nevra":"%s","action":"Install","reason":"User","repo_id":"@stored_transaction(@commandline)","package_path":"./packages/verified.rpm"}]}\n' \
             "openai-$evr.$architecture" > transaction.json
           dnf --assumeyes replay --ignore-extras . || rc=$?
-          if [ "$rc" -ne 0 ] && ! dnf replay --help >/dev/null 2>&1; then
-            fail 'DNF5 replay is required for a first installation. Use the Linux tarball on this system.'
+          if [ "$rc" -ne 0 ]; then
+            dnf replay --help >/dev/null 2>&1 || fail 'DNF5 replay is required for a first installation. Use the Linux tarball on this system.'
+            # Another manager can install an older package before replay takes its lock.
+            # Only a native upgrade may finish this request. Keep every normal DNF policy.
+            after=$(rpm_state)
+            if [ "$after" = older ]; then
+              rc=0
+              dnf --assumeyes upgrade ./packages/verified.rpm || rc=$?
+            fi
           fi
         fi ;;
       4.*)
@@ -289,7 +304,7 @@ RPM
     # DNF4 shell can return zero after a failed signature or dependency check.
     state=$(rpm_state)
     case "$state" in
-      equal) [ "$rc" -eq 0 ] || exit 76 ;;
+      equal) [ "$rc" -eq 0 ] || exit "$rc" ;;
       newer) exit 76 ;;
       *) [ "$rc" -eq 0 ] || exit "$rc"; fail 'DNF did not install the verified RPM.' ;;
     esac
