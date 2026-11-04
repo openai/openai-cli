@@ -20,7 +20,7 @@ type updateInstallation struct {
 	identity, directory os.FileInfo
 }
 
-func managedInstallation(current string) (*updateInstallation, error) {
+func managedInstallation(current string, worker bool) (*updateInstallation, error) {
 	if !automaticPlatform() || current != releaseVersion || !validCommit(releaseCommit) {
 		return nil, errCache
 	}
@@ -28,24 +28,15 @@ func managedInstallation(current string) (*updateInstallation, error) {
 	if !valid || v != current {
 		return nil, errCache
 	}
-	home, err := os.UserHomeDir()
+	path, err := managedExecutablePath(worker)
 	if err != nil {
 		return nil, err
-	}
-	home, err = filepath.EvalSymlinks(home)
-	if err != nil {
-		return nil, err
-	}
-	path := filepath.Join(home, ".openai", "bin", "openai")
-	executable, err := os.Executable()
-	if err != nil || filepath.Clean(executable) != path {
-		return nil, errCache
 	}
 	installation, err := openInstallation(path)
 	if err != nil {
 		return nil, err
 	}
-	if !binaryIdentity(installation.file, current, releaseCommit) {
+	if !binaryIdentity(installation.file, current, releaseCommit) || !authorizedUpdateImage(installation, worker) {
 		installation.close()
 		return nil, errCache
 	}
@@ -55,7 +46,7 @@ func managedInstallation(current string) (*updateInstallation, error) {
 func openInstallation(path string) (*updateInstallation, error) {
 	directory := filepath.Dir(path)
 	resolved, err := filepath.EvalSymlinks(directory)
-	if err != nil || resolved != directory {
+	if err != nil || !sameUpdateDirectory(resolved, directory) {
 		return nil, errCache
 	}
 	// Both dedicated directories must belong to this user. Package-manager
@@ -77,7 +68,7 @@ func openInstallation(path string) (*updateInstallation, error) {
 	i := &updateInstallation{path: path, root: root, identity: info}
 	i.directory, err = root.Stat(".")
 	if err == nil {
-		i.file, err = root.OpenFile("openai", os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		i.file, err = root.OpenFile(filepath.Base(path), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	}
 	if err != nil || !i.unchanged() {
 		i.close()
@@ -100,7 +91,7 @@ func (i *updateInstallation) unchanged() bool {
 		return false
 	}
 	actual, err := i.file.Stat()
-	if err != nil || !sameUpdateFile(i.identity, actual) {
+	if err != nil || !sameUpdateFile(i.identity, actual) || !safeOpenedUpdateFile(i.file) {
 		return false
 	}
 	current, err := os.Lstat(i.path)
@@ -112,7 +103,7 @@ func (i *updateInstallation) unchanged() bool {
 		return false
 	}
 	resolved, err := filepath.EvalSymlinks(filepath.Dir(i.path))
-	return err == nil && resolved == filepath.Dir(i.path)
+	return err == nil && sameUpdateDirectory(resolved, filepath.Dir(i.path))
 }
 
 func sameUpdateFile(a, b os.FileInfo) bool {
@@ -140,7 +131,7 @@ func openUpdateFile(root *os.Root, name string) (*os.File, error) {
 		return nil, err
 	}
 	actual, err := file.Stat()
-	if err != nil || !sameUpdateFile(info, actual) {
+	if err != nil || !sameUpdateFile(info, actual) || !safeOpenedUpdateFile(file) {
 		file.Close()
 		return nil, errCache
 	}

@@ -106,7 +106,7 @@ func openVerifierStore(enroll bool) (*os.Root, error) {
 		return nil, err
 	}
 	actual, err := root.Stat(".")
-	if err != nil || !os.SameFile(info, actual) {
+	if err != nil || !os.SameFile(info, actual) || !safeVerifierStore(root) {
 		root.Close()
 		return nil, errCache
 	}

@@ -71,18 +71,28 @@ Other systems can use the [Linux tarball](#installing-a-prebuilt-binary).
 
 ## Windows
 
-Open **Assets** for the newest stable release with Windows ZIP files. [Release downloads](https://github.com/openai/openai-cli/releases)
+Download the Windows ZIP from **Assets** in the latest stable release with downloads. [Release downloads](https://github.com/openai/openai-cli/releases)
+Choose `windows_amd64.zip` for a 64-bit Intel or AMD PC, `windows_arm64.zip` for ARM64, or `windows_386.zip` for 32-bit Windows.
 
-Choose `windows_amd64.zip` for most 64-bit PCs or `windows_arm64.zip` for an ARM64 PC.
-Extract the ZIP. In the extracted directory, run this PowerShell command.
+Extract the ZIP. Open ordinary PowerShell in the extracted directory. Paste this block once.
 
 ```powershell
-.\openai.exe --help
+Write-Host 'Installing OpenAI CLI for your account...'
+if ((& .\openai.exe install --user) -and $LASTEXITCODE -eq 0) {
+    $bin = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin'
+    if (($env:Path -split ';', 2)[0] -ine $bin) { $env:Path = "$bin;$env:Path" }
+    $selected = Microsoft.PowerShell.Core\Get-Command openai
+    if ($selected.CommandType -ne 'Application' -or $selected.Path -ine (Join-Path $bin 'openai.exe')) {
+        throw 'A shell command overrides openai. Use & (Join-Path $env:LOCALAPPDATA ''OpenAI\CLI\bin\openai.exe'').'
+    }
+    openai --version
+}
 ```
 
-Use `.\openai.exe` in place of `openai` in the examples.
-To use `openai` from any directory, add the extracted directory to your user `Path`.
-Open a new terminal and run `where.exe openai` to check which copy it selects.
+Setup installs every CLI command for your Windows account. It configures the update verifier and registers the CLI for new terminals.
+Eligible interactive commands install future authenticated releases. [Automatic updates](automatic-updates.md#eligible-invocations)
+
+If you prefer a portable copy, use `.\openai.exe` directly from the extracted directory.
 
 ## Installing a prebuilt binary
 
@@ -102,7 +112,7 @@ command -v openai
 ```
 
 The last command shows which executable, alias, or function your shell selects. If an alias or function wins, use the verified executable directly.
-On Windows, run `.\openai.exe --version` in the extracted directory. Add that directory to your user `Path` and check `where.exe openai`.
+On Windows, use `.\openai.exe --version` for a portable copy. For automatic installation and updates, use the [Windows setup](#windows).
 
 **Want automatic updates?** Follow the [archive setup for your shell](automatic-updates.md#from-an-extracted-archive).
 On a Mac with Homebrew and zsh, the [recommended installation](../README.md#installation) handles setup in one paste.

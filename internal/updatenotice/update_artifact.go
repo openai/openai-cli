@@ -79,6 +79,9 @@ func (d *releaseDelivery) prepare(ctx context.Context, cache *noticeCache, selec
 	if !cache.validLock() || !cache.unchangedState() {
 		return "", errCache
 	}
+	if err := preservePreparedImageTrust(cache); err != nil {
+		return "", err
+	}
 	if err := cache.root.Rename("next.tmp", "next"); err != nil {
 		return "", err
 	}
@@ -343,6 +346,15 @@ func updateEnvironment() []string {
 	for _, key := range []string{"HOME", "PATH", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy", "OPENAI_CLI_NO_UPDATE_CHECK", "OPENAI_CLI_NO_AUTO_UPDATE", "OPENAI_CLI_VERSION_PIN"} {
 		if value, ok := os.LookupEnv(key); ok {
 			result = append(result, key+"="+value)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		// Children use the same per-user managed root. Keep the system loader
+		// and temporary paths, without inheriting SDK, verifier, or Git tokens.
+		for _, key := range []string{"SystemRoot", "WINDIR", "LOCALAPPDATA", "USERPROFILE", "TEMP", "TMP", "PATHEXT"} {
+			if value, ok := os.LookupEnv(key); ok {
+				result = append(result, key+"="+value)
+			}
 		}
 	}
 	return append(result, "LC_ALL=C", "LANG=C")

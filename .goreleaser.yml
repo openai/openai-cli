@@ -65,6 +65,7 @@ archives:
     files:
       - completions/*
       - man/*/*
+      - install.ps1
 
 notarize:
   macos:

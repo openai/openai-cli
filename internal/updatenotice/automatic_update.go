@@ -15,6 +15,7 @@ import (
 // them empty, even when the application version is a stable release number.
 var releaseVersion, releaseCommit string
 
+var errBusyUpdateImage = errors.New("update executable is busy")
 var errPreparedUpdate = errors.New("prepared update is no longer usable")
 
 const (
@@ -120,7 +121,7 @@ func automatic(ctx context.Context, current string, announce bool) (string, bool
 	if !enabled || ctx.Err() != nil {
 		return "", false
 	}
-	installation, err := managedInstallation(current)
+	installation, err := managedInstallation(current, false)
 	if err != nil {
 		return "", false
 	}
@@ -129,7 +130,7 @@ func automatic(ctx context.Context, current string, announce bool) (string, bool
 	if !haveVerifier && !mayHaveHomebrewVerifier(installation.stateDirectory()) {
 		return "", false
 	}
-	cache, err := openCache(ctx, installation.stateDirectory())
+	cache, err := openManagedUpdateCache(ctx, installation)
 	if err != nil {
 		return "", true
 	}
@@ -210,7 +211,10 @@ func RunUpdateHelper(argv []string) bool {
 	defer cancel()
 	watchdog := time.AfterFunc(workerTimeout+3*time.Second, func() { os.Exit(0) })
 	defer watchdog.Stop()
-	installation, err := managedInstallation(argv[2])
+	if relayUpdateWorker(ctx, argv[2]) {
+		return true
+	}
+	installation, err := managedInstallation(argv[2], true)
 	if err != nil {
 		return true
 	}
@@ -248,7 +252,7 @@ type updateWorker struct {
 }
 
 func (worker updateWorker) run(ctx context.Context) error {
-	cache, err := openCache(ctx, worker.installation.stateDirectory())
+	cache, err := openManagedUpdateCache(ctx, worker.installation)
 	if err != nil {
 		return err
 	}
@@ -274,6 +278,12 @@ func (worker updateWorker) run(ctx context.Context) error {
 			return err
 		}
 		err := worker.activate(ctx, cache, state)
+		if errors.Is(err, errBusyUpdateImage) && ctx.Err() == nil {
+			// An existing CLI or antivirus scanner still has an open executable.
+			// Keep the prepared file and retry on later use without another download.
+			state.ActivationChecked = worker.now.Add(time.Minute - automaticInterval).Unix()
+			return cache.saveState(state)
+		}
 		if errors.Is(err, errPreparedUpdate) {
 			discardPreparedUpdate(cache, state)
 		}
@@ -372,13 +382,14 @@ func (worker updateWorker) activate(ctx context.Context, cache *noticeCache, sta
 	if err := cache.saveState(state); err != nil {
 		return err
 	}
-	actual, err := cache.root.Lstat("next")
-	if err != nil || !sameUpdateFile(info, actual) || !worker.policyUnchanged() || !worker.installation.unchanged() || !cache.validLock() || !cache.unchangedState() || ctx.Err() != nil {
-		return errCache
+	replace := func() error {
+		actual, err := cache.root.Lstat("next")
+		if err != nil || !sameUpdateFile(info, actual) || !safeOpenedUpdateFile(next) || !worker.policyUnchanged() || !worker.installation.unchanged() || !cache.validLock() || !cache.unchangedState() || ctx.Err() != nil {
+			return errCache
+		}
+		return worker.installation.root.Rename(".update/next", filepath.Base(worker.installation.path))
 	}
-	// Both paths are beneath the same installation root. Rename is atomic on
-	// supported systems. Existing processes continue using their original inode.
-	return worker.installation.root.Rename(".update/next", "openai")
+	return replaceUpdateImage(ctx, replace)
 }
 
 func discardPreparedUpdate(cache *noticeCache, state updateState) {
