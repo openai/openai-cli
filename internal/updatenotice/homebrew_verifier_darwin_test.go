@@ -39,9 +39,10 @@ func TestHomebrewVerifierSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	const source = `package main
-import ("fmt"; "os")
+import ("fmt"; "os"; "time")
 func main() {
  if len(os.Args)==4 && os.Args[1]=="attestation" && os.Args[2]=="verify" && os.Args[3]=="--help" {
+  if _,err:=os.Stat(os.Getenv("HOME")+"/cold-verifier"); err==nil {time.Sleep(2200*time.Millisecond)}
   fmt.Println("--bundle --hostname --repo --cert-identity --source-ref --deny-self-hosted-runners --format")
   return
  }
@@ -81,6 +82,17 @@ func main() {
 	}
 	if got := enrollHomebrewVerifier(t.Context(), prefix); got != "ready" {
 		t.Fatalf("repeat: %s", got)
+	}
+	// A cold macOS signature check can exceed the normal system-gh probe.
+	cold := filepath.Join(home, "cold-verifier")
+	if err := os.WriteFile(cold, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := enrollHomebrewVerifier(t.Context(), prefix); got != "ready" {
+		t.Fatalf("cold verifier: %s", got)
+	}
+	if err := os.Remove(cold); err != nil {
+		t.Fatal(err)
 	}
 	before, err := os.Stat(filepath.Join(bin, ".update", stateName))
 	if err != nil {

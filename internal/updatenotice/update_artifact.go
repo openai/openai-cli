@@ -294,7 +294,13 @@ func (d *releaseDelivery) checkVerifier(ctx context.Context, cache *noticeCache)
 }
 
 func (d *releaseDelivery) checkVerifierHelp(ctx context.Context, directory string) error {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	timeout := 2 * time.Second
+	if d.verifierCleanup != nil {
+		// macOS can inspect a newly cloned or copied executable on first launch.
+		// This probe runs in explicit setup or an already detached worker.
+		timeout = 15 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	command := d.verifierCommand(ctx, directory, "attestation", "verify", "--help")
 	var output limitedVerification
