@@ -132,7 +132,7 @@ func TestTextStreamInterleavedDetailsKeepPartIdentity(t *testing.T) {
 func streamItems(values ...string) *transformTestIterator {
 	iter := &transformTestIterator{}
 	for _, value := range values {
-		iter.items = append(iter.items, outputJSON{gjson.Parse(value)})
+		iter.items = append(iter.items, outputJSON{Result: gjson.Parse(value)})
 	}
 	return iter
 }
