@@ -55,37 +55,38 @@ Download the newest stable package for your distribution. [Release downloads](ht
 
 Under **Assets**, choose `amd64` for x86-64, `386` for 32-bit x86, or `arm64` for 64-bit ARM.
 Use `armv6` for the published 32-bit hard-float ARM package. Its Debian architecture is `armhf`.
-From the download directory, paste your distribution’s block into interactive Bash or zsh.
+In the download directory, paste this block into interactive Bash or zsh.
+It selects the newest compatible OpenAI CLI package among your stable release downloads.
 
-With older packages, including v1.48.1, these commands install `/usr/bin/openai` and print its version.
+With older packages, including v1.48.1, the block installs `/usr/bin/openai` and prints its version.
 Run `/usr/bin/openai --help` to use that copy.
 To enable automatic updates with an older package, use the [archive instructions](automatic-updates.md#from-an-extracted-archive).
 
-**Debian or Ubuntu**
-
 ```sh
-openai_arch=$(dpkg --print-architecture | sed -e 's/^i386$/386/' -e 's/^armhf$/armv6/')
-sudo apt install ./openai_*_linux_"${openai_arch}".deb &&
-if [ -r /usr/share/openai-cli/enable-updates.sh ]; then
-  source /usr/share/openai-cli/enable-updates.sh
-else
-  /usr/bin/openai --version
-fi
-```
-
-**Fedora**
-
-This block selects the newest compatible stable RPM in your download directory.
-
-```sh
-case "$(rpm --eval '%{_arch}')" in
-  x86_64) openai_arch=amd64 ;; aarch64) openai_arch=arm64 ;;
-  i?86) openai_arch=386 ;; armv[67]hl) openai_arch=armv6 ;;
-  *) openai_arch=unsupported ;;
-esac
-openai_rpm=$(find . -maxdepth 1 -regextype posix-extended -type f \
-  -regex "./openai_[0-9]+[.][0-9]+[.][0-9]+_linux_${openai_arch}[.]rpm" | LC_ALL=C sort -V | tail -n 1)
-sudo dnf install "${openai_rpm:?Download the Fedora RPM for this architecture first.}" &&
+(
+  if [ -x /usr/bin/apt ]; then
+    manager=apt format=deb
+    machine=$(dpkg --print-architecture)
+    package_name() { dpkg-deb -f "$1" Package; }
+  else
+    manager=dnf format=rpm
+    machine=$(rpm --eval '%{_arch}')
+    package_name() { rpm -qp --qf '%{NAME}' "$1"; }
+  fi
+  case "$machine" in
+    amd64|x86_64) arch=amd64 ;; arm64|aarch64) arch=arm64 ;;
+    i386|i486|i586|i686) arch=386 ;; armhf|armv6hl|armv7hl) arch=armv6 ;;
+    *) printf '%s\n' 'No release package matches this architecture.' >&2; exit 1 ;;
+  esac
+  package=$(find . -maxdepth 1 -regextype posix-extended -type f \
+    -regex "./openai_[0-9]+[.][0-9]+[.][0-9]+_linux_${arch}[.]${format}" |
+    LC_ALL=C sort -Vr | while IFS= read -r file; do
+      [ "$(package_name "$file" 2>/dev/null)" = openai ] || continue
+      printf '%s\n' "$file"
+      break
+    done)
+  sudo "$manager" install "${package:?Download an OpenAI CLI package for this architecture first.}"
+) &&
 if [ -r /usr/share/openai-cli/enable-updates.sh ]; then
   source /usr/share/openai-cli/enable-updates.sh
 else
