@@ -338,29 +338,14 @@ func TestWindowsArchivePrivateVerifier(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Reuse the production ZIP extractor, publication protocol, and digest
-	// checks. The synthetic payload never executes or leaves the test home.
-	var encoded bytes.Buffer
-	writer := zip.NewWriter(&encoded)
-	entry, err := writer.Create("bin/gh.exe")
-	if err != nil {
-		t.Fatal(err)
-	}
-	binary := []byte("synthetic verified gh payload")
-	if _, err := entry.Write(binary); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	pin := verifierPin{archive: fmt.Sprintf("%x", sha256.Sum256(encoded.Bytes())), binary: fmt.Sprintf("%x", sha256.Sum256(binary))}
+	encoded, binary, pin := windowsVerifierZIP(t)
 	calls := 0
 	delivery := releaseDelivery{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		calls++
 		if req.URL.Scheme != "https" || req.URL.Host != "github.com" || !strings.HasSuffix(req.URL.Path, "_"+verifierPlatform()+".zip") {
 			return nil, errors.New("unexpected verifier URL")
 		}
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(encoded.Bytes())), Header: make(http.Header), Request: req}, nil
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(encoded)), Header: make(http.Header), Request: req}, nil
 	})}}
 	for i := 0; i < 2; i++ {
 		got, err := delivery.installPrivateVerifier(t.Context(), store, verifierPlatform(), "fixture-gh.exe", pin, false)
@@ -429,5 +414,99 @@ func TestWindowsArchiveTrustedSystemVerifier(t *testing.T) {
 	})}}
 	if err := d.selectVerifier(t.Context(), root.Name(), root, false); err == nil || !attempted {
 		t.Fatal("failed to select pinned private fallback", err)
+	}
+}
+
+func windowsVerifierZIP(t *testing.T) ([]byte, []byte, verifierPin) {
+	t.Helper()
+	var encoded bytes.Buffer
+	writer := zip.NewWriter(&encoded)
+	entry, err := writer.Create("bin/gh.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := []byte("synthetic verified gh payload")
+	if _, err := entry.Write(binary); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	pin := verifierPin{archive: fmt.Sprintf("%x", sha256.Sum256(encoded.Bytes())), binary: fmt.Sprintf("%x", sha256.Sum256(binary))}
+	return encoded.Bytes(), binary, pin
+}
+
+// Use the real setup executable's directory and deny every network request.
+// Both the archive pin and the executable pin must match before publication.
+func TestWindowsArchiveAcquiredVerifier(t *testing.T) {
+	bin, _ := windowsUpdateFixture(t)
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("OPENAI_TEST_WINDOWS_ACQUIRED_VERIFIER") != "1" {
+		image, err := os.ReadFile(executable)
+		if err != nil {
+			t.Fatal(err)
+		}
+		testExe := filepath.Join(bin, "acquisition-test.exe")
+		if err := os.WriteFile(testExe, image, 0700); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.CommandContext(t.Context(), testExe, "-test.run=^TestWindowsArchiveAcquiredVerifier$")
+		cmd.Env = append(os.Environ(), "OPENAI_TEST_WINDOWS_ACQUIRED_VERIFIER=1", acquiredVerifierSetting+"=1")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("private archive handoff: %v\n%s", err, output)
+		}
+		return
+	}
+	source := filepath.Join(filepath.Dir(executable), "gh.zip")
+	archive, binary, pin := windowsVerifierZIP(t)
+	if err := os.WriteFile(source, archive, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source+":Zone.Identifier", []byte(windowsZoneMarker(4)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(filepath.Dir(source), "another-link")
+	if err := os.Link(source, other); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := acquiredVerifierArchive(); err == nil {
+		file.Close()
+		t.Fatal("accepted a multiply linked archive")
+	}
+	if err := os.Remove(other); err != nil {
+		t.Fatal(err)
+	}
+	store, err := openVerifierStore(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	calls := 0
+	delivery := releaseDelivery{client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return nil, errors.New("network disabled")
+	})}}
+	for _, wrong := range []verifierPin{{archive: "incorrect", binary: pin.binary}, {archive: pin.archive, binary: "incorrect"}} {
+		if _, err := delivery.installPrivateVerifier(t.Context(), store, verifierPlatform(), "local-gh.exe", wrong, true); !errors.Is(err, errVerifierIntegrity) {
+			t.Fatal("accepted or misclassified a mismatched private archive", err)
+		}
+	}
+	path, err := delivery.installPrivateVerifier(t.Context(), store, verifierPlatform(), "local-gh.exe", pin, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(actual, binary) || calls != 0 {
+		t.Fatal("setup did not reuse the authenticated archive", err)
+	}
+	if zone, _, err := windowsDownloadZone(path); err != nil || zone != 4 {
+		t.Fatal("setup lost the supplied archive's restricted zone", err)
+	}
+	_, err = delivery.installPrivateVerifier(t.Context(), store, verifierPlatform(), "worker-gh.exe", pin, false)
+	if !errors.Is(err, errVerifierDownload) || calls != 1 {
+		t.Fatal("an ordinary worker consulted the setup handoff", err)
 	}
 }

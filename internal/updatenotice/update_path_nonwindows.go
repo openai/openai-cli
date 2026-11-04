@@ -39,3 +39,5 @@ func markDownloadedExecutable(string) error { return nil }
 func safeVerifierStore(*os.Root) bool { return true }
 
 func sameUpdateDirectory(a, b string) bool { return a == b }
+
+func acquiredVerifierArchive() (*os.File, error) { return nil, nil }

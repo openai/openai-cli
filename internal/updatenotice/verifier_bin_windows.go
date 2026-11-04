@@ -4,9 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
-
-	"golang.org/x/sys/windows"
 )
 
 func openManagedBin() (*os.Root, error) { return openWindowsManagedBin() }
@@ -26,13 +23,46 @@ func safeVerifierStore(root *os.Root) bool {
 }
 
 func trustedSystemVerifier(path string) bool {
-	if !filepath.IsAbs(path) || len(filepath.VolumeName(path)) != 2 || strings.Contains(path[2:], ":") {
-		return false
-	}
-	drive, err := windows.UTF16PtrFromString(filepath.VolumeName(path) + `\`)
-	if err != nil || windows.GetDriveType(drive) != windows.DRIVE_FIXED {
+	if !localWindowsUpdatePath(path) {
 		return false
 	}
 	cwd, err := os.Getwd()
 	return err == nil && !sameWindowsName(filepath.Dir(path), cwd) && validateWindowsPath(path, false, false) == nil
+}
+
+// The PowerShell acquisition recipe keeps its authenticated gh.zip next to
+// the starter. The caller checks both compiled hashes before executing gh.
+const acquiredVerifierSetting = "OPENAI_CLI_WINDOWS_ACQUIRED_VERIFIER"
+
+func acquiredVerifierArchive() (*os.File, error) {
+	if os.Getenv(acquiredVerifierSetting) != "1" {
+		return nil, nil
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	return openAcquiredVerifierArchive(filepath.Dir(executable))
+}
+
+func openAcquiredVerifierArchive(dir string) (*os.File, error) {
+	if !localWindowsUpdatePath(dir) {
+		return nil, errCache
+	}
+	if err := validateWindowsUpdatePath(dir, true); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, "gh.zip")
+	if err := validateWindowsUpdatePath(path, false); err != nil {
+		return nil, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	if !safeOpenedUpdateFile(file) {
+		file.Close()
+		return nil, errCache
+	}
+	return file, nil
 }

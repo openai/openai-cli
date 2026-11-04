@@ -133,10 +133,12 @@ func TestMainWindowsArchivePublishedUpgrade(t *testing.T) {
 		t.Fatal("public discovery selected another release or source executable")
 	}
 	expected := prepared.Pending.BinaryHash
-	staged, err := windowsPublishedHash(filepath.Join(filepath.Dir(statePath), "next"))
+	stagedPath := filepath.Join(filepath.Dir(statePath), "next")
+	staged, err := windowsPublishedHash(stagedPath)
 	if err != nil || staged != expected || staged == before {
 		t.Fatal("prepared successor does not match its verified receipt", err)
 	}
+	requirePublishedInternetZone(t, stagedPath)
 	request()
 	applied := waitWindowsPublishedState(t, statePath, func(state windowsPublishedState) bool {
 		if state.Applied != successor[1:] || state.AppliedHash != expected {
@@ -145,6 +147,7 @@ func TestMainWindowsArchivePublishedUpgrade(t *testing.T) {
 		actual, err := windowsPublishedHash(managed)
 		return err == nil && actual == expected
 	})
+	requirePublishedInternetZone(t, managed)
 	if requests.Load() != 2 || applied.AppliedCommit != prepared.Pending.Release.Commit {
 		t.Fatal("wrong API request count or applied commit")
 	}
@@ -224,4 +227,12 @@ func windowsPublishedHash(path string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%x", digest.Sum(nil)), nil
+}
+
+func requirePublishedInternetZone(t *testing.T, path string) {
+	t.Helper()
+	mark, err := os.ReadFile(path + ":Zone.Identifier")
+	if err != nil || !regexp.MustCompile("(?m)^ZoneId=[34]\\r?$").Match(mark) {
+		t.Fatal("public executable lost its Windows attachment security zone", err)
+	}
 }

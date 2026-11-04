@@ -76,7 +76,7 @@ Choose `windows_amd64.zip` for a 64-bit Intel or AMD PC, `windows_arm64.zip` for
 
 In File Explorer, select **Extract All**. Open the extracted folder.
 If it contains **Install.cmd**, double-click **Install.cmd**.
-Setup enables automatic updates for your account. The installer reports any conflict with the system PATH.
+Setup enables automatic updates for your account. If the system PATH selects another copy, the installer keeps its recovery instruction visible.
 
 For an older ZIP without **Install.cmd**, open PowerShell in the extracted folder and run `.\openai.exe --help`.
 

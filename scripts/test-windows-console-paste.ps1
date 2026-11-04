@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory)][string] $Client,
     [Parameter(Mandatory)][string] $TextPath,
     [Parameter(Mandatory)][string] $ExpectedExe,
-    [Parameter(Mandatory)][string] $ExpectedVersion
+    [Parameter(Mandatory)][string] $ExpectedVersion,
+    [switch] $ExpectOneVerifierDownload
 )
 $ErrorActionPreference = 'Stop'
     $env:OPENAI_WINDOWS_PASTE_TEXT = $TextPath
@@ -20,6 +21,7 @@ function global:PSConsoleHostReadLine {
     if ($global:reads -eq 1) {
         if ($Host.Name -ne 'ConsoleHost' -or (Get-ExecutionPolicy) -ne 'Restricted') {return 'exit 32'}
         $global:Error.Clear()
+        $global:LASTEXITCODE = 0
         return [IO.File]::ReadAllText($env:OPENAI_WINDOWS_PASTE_TEXT)
     }
     if ($global:reads -eq 2) {
@@ -29,8 +31,18 @@ function global:PSConsoleHostReadLine {
 }
 '@
     $argsText = '-NoLogo -NoProfile -NoExit -ExecutionPolicy Restricted -Command "'+$driver+'"'
-    $terminal = Start-Process $Client -ArgumentList $argsText -WindowStyle Hidden -PassThru
+    $capture = [IO.Path]::GetTempFileName()
     try {
-        if (!$terminal.WaitForExit(300000)) {$terminal.Kill(); throw 'The public ConsoleHost paste timed out.'}
-        if ($terminal.ExitCode -ne 0) {throw "The public ConsoleHost paste failed with code $($terminal.ExitCode)."}
-    } finally {$terminal.Dispose()}
+        $terminal = Start-Process $Client -ArgumentList $argsText -WindowStyle Hidden -RedirectStandardError $capture -PassThru
+        try {
+            if (!$terminal.WaitForExit(300000)) {$terminal.Kill(); throw 'The public ConsoleHost paste timed out.'}
+            if ($terminal.ExitCode -ne 0) {throw "The public ConsoleHost paste failed with code $($terminal.ExitCode)."}
+        } finally {$terminal.Dispose()}
+        if ($ExpectOneVerifierDownload) {
+            $lines = [IO.File]::ReadAllLines($capture)
+            if (@($lines -ceq 'Downloading the pinned GitHub CLI verifier...').Count -ne 1 -or
+                @($lines -ceq 'Downloading GitHub CLI for automatic update verification...').Count -ne 0) {
+                throw 'A fresh setup must download GitHub CLI exactly once.'
+            }
+        }
+    } finally {[IO.File]::Delete($capture)}

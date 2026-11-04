@@ -2,7 +2,7 @@
 # A checked-out copy also accepts -ReleaseTag vX.Y.Z and -VerifyOnly.
 & {
     [CmdletBinding()]
-    param([string] $ReleaseTag, [switch] $VerifyOnly)
+    param([string] $ReleaseTag = $env:OPENAI_CLI_WINDOWS_INSTALL_TAG, [switch] $VerifyOnly)
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
     $repo = 'https://api.github.com/repos/openai/openai-cli'
@@ -136,6 +136,9 @@
             $start.EnvironmentVariables['GH_PROMPT_DISABLED'] = '1'
             $start.EnvironmentVariables['GH_NO_UPDATE_NOTIFIER'] = '1'
         } else {
+            if ([IO.File]::Exists((Join-Path $work 'gh.zip'))) {
+                $start.EnvironmentVariables['OPENAI_CLI_WINDOWS_ACQUIRED_VERIFIER'] = '1'
+            }
             foreach ($key in 'PATH','PATHEXT','USERPROFILE','LOCALAPPDATA','APPDATA','TEMP','TMP','COMSPEC','ProgramFiles','ProgramW6432','USERNAME','USERDOMAIN') {
                 $value = [Environment]::GetEnvironmentVariable($key)
                 if ($value) { $start.EnvironmentVariables[$key] = $value }
@@ -239,12 +242,15 @@
         $null = [IO.Directory]::CreateDirectory($verifiers)
         $gh = Join-Path $verifiers 'gh.exe'
         $installedGh = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'GitHub CLI\gh.exe'
-        if ([IO.File]::Exists($installedGh) -and (Get-Sha $installedGh) -ceq $pins[$arch][1]) {
+        $ghDirectory = [IO.Path]::GetDirectoryName($installedGh)
+        $pathDirectories = @($env:Path -split ';' | ForEach-Object { $_.Trim('"').TrimEnd('\') })
+        if ($pathDirectories -contains $ghDirectory -and [IO.File]::Exists($installedGh) -and (Get-Sha $installedGh) -ceq $pins[$arch][1]) {
             [IO.File]::Copy($installedGh,$gh)
         } else {
             [Console]::Error.WriteLine('Downloading the pinned GitHub CLI verifier...')
             $ghZip = Join-Path $work 'gh.zip'
             Get-PublicResource "https://github.com/cli/cli/releases/download/v$ghVersion/gh_${ghVersion}_windows_$arch.zip" 32MB $ghZip
+            Set-InternetZone $ghZip
             if ((Get-Sha $ghZip) -cne $pins[$arch][0]) { throw 'The GitHub CLI archive checksum did not match.' }
             Expand-Executable $ghZip 'bin/gh.exe' $gh
         }

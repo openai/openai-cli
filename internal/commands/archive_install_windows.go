@@ -26,6 +26,10 @@ func RegisterArchiveInstall(root *cli.Command) {
 				return &LocalError{Message: "Use openai install --user without other arguments."}
 			}
 			path, err := updatenotice.InstallWindowsArchive(ctx)
+			if err == updatenotice.ErrWindowsLauncherPathConflict {
+				// Only Install.cmd requests this successful, attention-required status.
+				return cli.Exit("", 86)
+			}
 			if err != nil {
 				return &LocalError{Message: err.Error(), Cause: err}
 			}

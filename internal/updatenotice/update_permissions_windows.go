@@ -16,14 +16,18 @@ import (
 // network mapping. Only a private, local, non-reparse installation is eligible.
 func windowsInstallPath() (string, error) {
 	base, err := os.UserCacheDir()
-	if err != nil || !filepath.IsAbs(base) || len(filepath.VolumeName(base)) != 2 || strings.Contains(base[2:], ":") {
-		return "", errCache
-	}
-	drive, err := windows.UTF16PtrFromString(filepath.VolumeName(base) + `\`)
-	if err != nil || windows.GetDriveType(drive) != windows.DRIVE_FIXED {
+	if err != nil || !localWindowsUpdatePath(base) {
 		return "", errCache
 	}
 	return filepath.Join(base, "OpenAI", "CLI", "bin", "openai.exe"), nil
+}
+
+func localWindowsUpdatePath(path string) bool {
+	if !filepath.IsAbs(path) || len(filepath.VolumeName(path)) != 2 || strings.Contains(path[2:], ":") {
+		return false
+	}
+	drive, err := windows.UTF16PtrFromString(filepath.VolumeName(path) + `\`)
+	return err == nil && windows.GetDriveType(drive) == windows.DRIVE_FIXED
 }
 
 func openWindowsManagedBin() (*os.Root, error) {

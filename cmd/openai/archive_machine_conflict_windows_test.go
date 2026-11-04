@@ -41,6 +41,47 @@ func TestMainWindowsArchiveMachinePathConflict(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "openai.exe"), data, 0700); err != nil {
 		t.Fatal(err)
 	}
+	launcher, err := os.ReadFile(os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_SCRIPT"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Install.cmd"), launcher, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+	// A pipe represents a user acknowledging the actual launcher's pause.
+	// Healthy attached-console setup has separate coverage without a keypress.
+	click := exec.CommandContext(ctx, os.Getenv("ComSpec"), "/d", "/c", "Install.cmd")
+	click.Dir = dir
+	input, err := click.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := click.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var warning bytes.Buffer
+	click.Stderr = &warning
+	if err := click.Start(); err != nil {
+		t.Fatal(err)
+	}
+	acknowledged := false
+	lines := bufio.NewScanner(output)
+	for lines.Scan() {
+		if strings.TrimSpace(lines.Text()) == "OpenAI CLI is installed. Review the machine PATH instruction above." {
+			acknowledged = true
+			if _, err := input.Write([]byte("\r\n")); err != nil {
+				t.Fatal(err)
+			}
+			input.Close()
+		}
+	}
+	if err := click.Wait(); err != nil || lines.Err() != nil || !acknowledged ||
+		!strings.Contains(warning.String(), "New terminals select the machine PATH copy first") {
+		t.Fatal("Explorer setup did not retain the machine PATH recovery instruction", err)
+	}
 	var token windows.Token
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &token); err != nil {
 		t.Fatal(err)

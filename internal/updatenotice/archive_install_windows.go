@@ -22,6 +22,9 @@ type windowsSetupMessage string
 
 func (m windowsSetupMessage) Error() string { return string(m) }
 
+// ErrWindowsLauncherPathConflict keeps an Explorer installer open after successful setup.
+var ErrWindowsLauncherPathConflict = errors.New("Windows installer PATH conflict")
+
 const windowsEnrollmentMarker = "openai windows archive installer v1\n"
 const windowsUnmanagedTarget = windowsSetupMessage("the installation directory already contains an unmanaged openai.exe; move that copy before retrying setup")
 
@@ -53,6 +56,9 @@ func windowsArchiveEnrolled(bin string) (bool, error) {
 // Public diagnostics contain authored instructions, never filesystem or verifier output.
 func InstallWindowsArchive(ctx context.Context) (string, error) {
 	path, err := installWindowsArchive(ctx)
+	if err == ErrWindowsLauncherPathConflict {
+		return path, err
+	}
 	if err != nil {
 		var message windowsSetupMessage
 		if errors.As(err, &message) {
@@ -128,6 +134,9 @@ func installWindowsArchive(ctx context.Context) (string, error) {
 	// and injection settings out of the verifier's environment.
 	probe := exec.CommandContext(ctx, source, "__openai_setup_update_verifier")
 	probe.Env = append(updateEnvironment(), "OPENAI_CLI_ARCHIVE_INSTALL=1")
+	if os.Getenv(acquiredVerifierSetting) == "1" {
+		probe.Env = append(probe.Env, acquiredVerifierSetting+"=1")
+	}
 	isolateVerifier(probe)
 	// The helper emits fixed progress and recovery messages on stderr.
 	// Keep the installed path as the only successful stdout record.
@@ -181,6 +190,9 @@ func installWindowsArchive(ctx context.Context) (string, error) {
 	}
 	if conflict {
 		fmt.Fprintln(os.Stderr, `New terminals select the machine PATH copy first. To select this installation in a new PowerShell, run: $env:Path = "$env:LOCALAPPDATA\OpenAI\CLI\bin;$env:Path"`)
+		if os.Getenv("OPENAI_CLI_WINDOWS_INSTALL_LAUNCHER") == "1" {
+			return target, ErrWindowsLauncherPathConflict
+		}
 	}
 	return target, nil
 }

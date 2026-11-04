@@ -44,7 +44,7 @@ try {
     Copy-Item -LiteralPath 'scripts/test-windows-console-paste.ps1' -Destination $root
     if ($published) {
         Copy-Item -LiteralPath 'scripts/install-windows-release.ps1' -Destination "$root/acquire.ps1"
-        Copy-Item -LiteralPath 'scripts/windows-starter.ps1.tmpl','scripts/test-windows-published-starter.ps1' -Destination $root
+        Copy-Item -LiteralPath 'scripts/test-windows-published-starter.ps1' -Destination $root
         @{starter=$StarterTag; successor=$SuccessorTag; client=$PublicClient; privateVerifier=[bool]$PrivateVerifier} | ConvertTo-Json | Set-Content -LiteralPath "$root/tags.json"
     } else {
         # The hosted runner owns build caches. The standard user receives only
@@ -87,8 +87,6 @@ try {
         [IO.Compression.ZipFile]::ExtractToDirectory($candidateZip,$extracted)
         [IO.File]::WriteAllText((Join-Path $extracted 'openai.exe')+':Zone.Identifier',"[ZoneTransfer]`r`nZoneId=3`r`n",[Text.Encoding]::ASCII)
         Copy-Item -LiteralPath 'docs/installation.md' -Destination "$extracted/installation.md"
-        Copy-Item -LiteralPath 'scripts/windows-starter.ps1.tmpl' -Destination "$root/windows-starter.ps1.tmpl"
-        Copy-Item -LiteralPath 'scripts/test-windows-starter-paste.ps1' -Destination "$root/test-windows-starter-paste.ps1"
         Set-Content -LiteralPath "$root/fixture-tag.txt" -Value "v$version"
         go test -count=1 -v ./internal/updatenotice -run '^TestWindowsArchive'
         if ($LASTEXITCODE -ne 0) { throw 'Native archive security or executable-lock tests failed.' }
@@ -161,7 +159,23 @@ if (Test-Path -LiteralPath "$PSScriptRoot/machine-conflict.txt") {
 & "$PSScriptRoot/archive.test.exe" '-test.run=^TestMainWindowsArchiveOrdinarySetup$' '-test.v' *> "$PSScriptRoot/results/test.log"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $fixtureTag = (Get-Content -LiteralPath "$PSScriptRoot/fixture-tag.txt" -Raw).Trim()
-& "$PSScriptRoot/test-windows-starter-paste.ps1" -Candidate $env:OPENAI_CLI_WINDOWS_ARCHIVE_BINARY -Tag $fixtureTag -Template "$PSScriptRoot/windows-starter.ps1.tmpl"
+$extracted = Join-Path $PSScriptRoot 'extracted'
+$guide = [IO.File]::ReadAllText((Join-Path $extracted 'installation.md'))
+$section = [regex]::Match($guide, '(?ms)^## Windows\r?\n(.*?)(?=^## |\z)').Groups[1].Value
+$blocks = [regex]::Matches($section, '(?ms)^```powershell\r?\n(.*?)^```\r?$')
+if ($blocks.Count -ne 1) {throw 'Cannot identify the documented extracted-ZIP paste.'}
+$text = [IO.Path]::GetTempFileName()
+try {
+    [IO.File]::WriteAllText($text,$blocks[0].Groups[1].Value,[Text.UTF8Encoding]::new($false))
+    Push-Location $extracted
+    try {
+        $managed = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe'
+        foreach ($client in 'powershell.exe','pwsh.exe') {
+            $shell = (Get-Command $client -CommandType Application | Select-Object -First 1).Path
+            & "$PSScriptRoot/test-windows-console-paste.ps1" -Client $shell -TextPath $text -ExpectedExe $managed -ExpectedVersion ('openai version '+$fixtureTag.Substring(1))
+        }
+    } finally {Pop-Location}
+} finally {[IO.File]::Delete($text)}
 exit 0
 '@ | Set-Content -LiteralPath "$root/ordinary.ps1" -Encoding utf8
     $credential = New-Object System.Management.Automation.PSCredential(".\$account", $secret)

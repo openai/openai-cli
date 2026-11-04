@@ -12,26 +12,13 @@ $bin = Join-Path $base 'OpenAI\CLI\bin'
 $target = Join-Path $bin 'openai.exe'
 if ((Test-Path -LiteralPath $bin) -or ($env:Path -split ';') -contains $bin) {throw 'The starter requires a pristine user profile.'}
 
-# Authenticate A independently. VerifyOnly deletes its temporary verifier.
-$trusted = & "$PSScriptRoot/acquire.ps1" -ReleaseTag $Tag -VerifyOnly | ConvertFrom-Json
-if ($trusted.tag -cne $Tag -or $trusted.executableSha256 -cnotmatch '^[a-f0-9]{64}$' -or (Test-Path -LiteralPath $bin)) {throw 'Independent starter verification failed.'}
-$release = Invoke-RestMethod -Uri "https://api.github.com/repos/openai/openai-cli/releases/tags/$Tag" -Headers @{Accept='application/vnd.github+json'} -MaximumRedirection 0
-$recipe = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'windows-starter.ps1.tmpl')).Replace('__STABLE_TAG__',$Tag)
-$cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Architecture
-$native = switch ($cpu) {9 {'amd64'} 12 {'arm64'} default {throw 'Unexpected public runner architecture.'}}
-foreach ($arch in 'amd64','arm64','386') {
-    $name = "openai_$($Tag.Substring(1))_windows_$arch.zip"
-    $assets = @($release.assets | Where-Object { $_.name -ceq $name })
-    if ($assets.Count -ne 1 -or $assets[0].digest -cnotmatch '^sha256:([0-9a-f]{64})$') {throw 'Missing or ambiguous public starter digest.'}
-    $digest = $Matches[1]
-    if ($arch -ceq $native -and $digest -cne $trusted.archiveSha256) {throw 'The public starter changed during qualification.'}
-    $recipe = $recipe.Replace(('__'+$arch.ToUpperInvariant()+'_SHA256__'),$digest)
-}
+# The initial acquisition may select A. The enrolled CLI discovers B itself.
+$recipe = Join-Path $PSScriptRoot 'acquire.ps1'
 $shell = (Get-Command $Client -CommandType Application | Select-Object -First 1).Path
 $priorPath = $env:Path
-$inputPath = Join-Path ([IO.Path]::GetTempPath()) ('openai-paste-'+[guid]::NewGuid()+'.txt')
-[IO.File]::WriteAllText($inputPath,$recipe,[Text.UTF8Encoding]::new($false))
+$priorTag = $env:OPENAI_CLI_WINDOWS_INSTALL_TAG
 try {
+    $env:OPENAI_CLI_WINDOWS_INSTALL_TAG = $Tag
     if ($PrivateVerifier) {
         $system = [Environment]::GetFolderPath('System')
         $env:Path = [string]::Join(';',@($priorPath -split ';' | Where-Object {
@@ -40,11 +27,14 @@ try {
         }))
         if (($env:Path -split ';') -notcontains $system -or (Get-Command gh -ErrorAction SilentlyContinue)) {throw 'Could not isolate a normal Windows PATH without GitHub CLI.'}
     }
-    & "$PSScriptRoot/test-windows-console-paste.ps1" -Client $shell -TextPath $inputPath -ExpectedExe $target -ExpectedVersion ('openai version '+$Tag.Substring(1))
+    & "$PSScriptRoot/test-windows-console-paste.ps1" -Client $shell -TextPath $recipe -ExpectOneVerifierDownload:$PrivateVerifier -ExpectedExe $target -ExpectedVersion ('openai version '+$Tag.Substring(1))
 } finally {
     $env:Path = $priorPath
-    [IO.File]::Delete($inputPath)
+    $env:OPENAI_CLI_WINDOWS_INSTALL_TAG = $priorTag
 }
+# Authenticate the observed A separately, after the fresh user's literal paste.
+$trusted = & "$PSScriptRoot/acquire.ps1" -ReleaseTag $Tag -VerifyOnly | ConvertFrom-Json
+if ($trusted.tag -cne $Tag -or $trusted.executableSha256 -cnotmatch '^[a-f0-9]{64}$') {throw 'Independent starter verification failed.'}
 if ((Get-FileHash -LiteralPath $target).Hash.ToLowerInvariant() -cne $trusted.executableSha256) {throw 'Installed starter differs from independently authenticated A.'}
 $acl = Get-Acl -LiteralPath $bin
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
