@@ -131,8 +131,8 @@ func authStatusTextValue(value authStatusValue) string {
 // Match the CLI and SDK option layers without constructing an SDK client or request.
 // Snapshot the six relevant environment inputs once; never enumerate unrelated secrets.
 func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (authStatusReport, error) {
-	environment := make(map[string]authStatusValue, 6)
-	for _, name := range []string{"OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", "OPENAI_BASE_URL", "OPENAI_CUSTOM_HEADERS"} {
+	environment := make(map[string]authStatusValue, 7)
+	for _, name := range []string{"OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_WEBHOOK_SECRET", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", "OPENAI_BASE_URL", "OPENAI_CUSTOM_HEADERS"} {
 		if value, present := lookup(name); present {
 			environment[name] = authStatusValue{Value: value, Source: "environment:" + name}
 		}
@@ -219,17 +219,19 @@ func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (a
 		BaseURL:      endpoint,
 	}
 	// A copied key can also occur in an otherwise printable project, organization, or host.
-	secrets := []string{environment["OPENAI_API_KEY"].Value, environment["OPENAI_ADMIN_KEY"].Value,
+	secrets := []string{environment["OPENAI_API_KEY"].Value, environment["OPENAI_ADMIN_KEY"].Value, environment["OPENAI_WEBHOOK_SECRET"].Value,
 		root.String("api-key"), root.String("admin-api-key"), root.String("webhook-secret")}
 	if password, ok := userinfo.Password(); ok {
 		secrets = append(secrets, password)
-	} else if userinfo != nil {
+	}
+	if userinfo != nil {
 		secrets = append(secrets, userinfo.Username())
 	}
-	for _, headers := range []http.Header{literal, inherited} {
-		auth := headers.Get("Authorization")
-		_, token, _ := strings.Cut(auth, " ")
-		secrets = append(secrets, auth, strings.TrimSpace(token), headers.Get("Api-Key"), headers.Get("X-Api-Key"))
+	for _, line := range root.StringSlice("header") {
+		secrets = appendHeaderCredentials(secrets, line)
+	}
+	for line := range strings.SplitSeq(environment["OPENAI_CUSTOM_HEADERS"].Value, "\n") {
+		secrets = appendHeaderCredentials(secrets, line)
 	}
 	report.Organization.redact(secrets)
 	report.Project.redact(secrets)
@@ -237,6 +239,25 @@ func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (a
 		report.BaseURL.Redacted = true
 	}
 	return report, nil
+}
+
+// Include overridden headers since their credentials may still appear in displayed settings.
+func appendHeaderCredentials(secrets []string, line string) []string {
+	name, value, ok := strings.Cut(line, ":")
+	if !ok {
+		return secrets
+	}
+	value = strings.TrimSpace(value)
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "authorization", "proxy-authorization":
+		if i := strings.IndexAny(value, " \t"); i >= 0 {
+			secrets = append(secrets, strings.TrimSpace(value[i:]))
+		}
+		return append(secrets, value)
+	case "api-key", "x-api-key":
+		return append(secrets, value)
+	}
+	return secrets
 }
 
 func (field *authStatusValue) redact(secrets []string) bool {

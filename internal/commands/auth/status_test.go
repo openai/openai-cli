@@ -177,7 +177,7 @@ func TestAuthStatusEndpointAndSingleEnvironmentSnapshot(t *testing.T) {
 				return nil
 			}
 			require.NoError(t, root.Run(t.Context(), append([]string{"openai", "auth", "status"}, tc.args...)))
-			require.Len(t, calls, 6)
+			require.Len(t, calls, 7)
 			for _, count := range calls {
 				require.Equal(t, 1, count)
 			}

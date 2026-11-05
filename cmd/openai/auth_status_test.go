@@ -295,7 +295,7 @@ func TestMainAuthStatusRedactsCredentialsInContext(t *testing.T) {
 	const password = "synthetic-copied-url-password"
 	env := append(authStatusEnvironment(t),
 		"OPENAI_API_KEY="+apiKey, "OPENAI_ORG_ID="+apiKey, "OPENAI_PROJECT_ID=proj_"+headerToken,
-		"OPENAI_CUSTOM_HEADERS=Authorization: Bearer "+headerToken,
+		"OPENAI_CUSTOM_HEADERS=Authorization: Bearer\t"+headerToken+"\nAuthorization: Bearer synthetic-current",
 		"OPENAI_BASE_URL=https://user:"+password+"@"+password+".example/v1")
 	for _, format := range []string{"text", "json"} {
 		got := runMainDispatchWithEnv(t, "bash", env, "openai", "auth", "status", "--api-key=synthetic-override", "--format", format)
@@ -306,6 +306,21 @@ func TestMainAuthStatusRedactsCredentialsInContext(t *testing.T) {
 			require.True(t, decodeAuthStatus(t, got).BaseURL.Redacted)
 		}
 	}
+	const username = "synthetic-copied-url-user"
+	const webhook = "synthetic-copied-webhook"
+	basic := runMainDispatchWithEnv(t, "bash", append(authStatusEnvironment(t), "OPENAI_WEBHOOK_SECRET="+webhook),
+		"openai", "auth", "status", "--format=json", "--project="+username, "--organization="+webhook,
+		"--webhook-secret=synthetic-current", "--base-url=https://"+username+":password@example.invalid/v1")
+	require.Zero(t, basic.code, "%s", basic.stderr)
+	assertAuthStatusPrivate(t, basic, username, webhook)
+	require.Equal(t, "[redacted]", decodeAuthStatus(t, basic).Project.Value)
+	require.Equal(t, "[redacted]", decodeAuthStatus(t, basic).Organization.Value)
+	literal := runMainDispatchWithEnv(t, "bash", authStatusEnvironment(t),
+		"openai", "auth", "status", "--format=json", "--project=proj_"+headerToken,
+		"--header", "Authorization: Bearer\t"+headerToken, "--header", "Authorization: Bearer synthetic-current")
+	require.Zero(t, literal.code, "%s", literal.stderr)
+	assertAuthStatusPrivate(t, literal, headerToken, "synthetic-current")
+	require.Equal(t, "[redacted]", decodeAuthStatus(t, literal).Project.Value)
 }
 
 func TestMainAuthStatusErrorsRemainPrivate(t *testing.T) {

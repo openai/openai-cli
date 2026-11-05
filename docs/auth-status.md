@@ -12,6 +12,7 @@ openai auth status --format json
 The report shows API credentials and Admin credentials separately.
 Each credential includes its configured state, type, and source. It never includes credential values or fragments.
 Organization, project, and base URL each include their own source.
+If a displayed setting contains a configured credential, the report replaces that setting with `[redacted]`.
 `offline: true` and `verified: false` describe the JSON report.
 Missing credentials still produce a successful configuration report.
 
