@@ -954,6 +954,7 @@ jobs:
                       "images/models/--help",
                   ],
                   "TestMainImageModelsInterruptPreservesCompletedResults": [],
+                  "TestMainImageModelsHintsKeepRequestSettings": [],
                   "TestMainImageModelsJSONAndHeaders": [],
                   "TestMainImageModelsKeepsPartialResultsOnTimeoutResponse": [],
                   "TestMainImageModelsPipeIsReadableAndAllRevealsUnavailable": ["all=false", "all=true"],
