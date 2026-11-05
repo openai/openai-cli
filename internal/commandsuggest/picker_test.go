@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/stretchr/testify/require"
 )
 
@@ -134,6 +135,38 @@ func TestCommandPickerNoMatchesAndSmallWindowCannotSelect(t *testing.T) {
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.False(t, m.done)
 	require.Contains(t, m.View().Content, "No matching commands")
+}
+
+func TestCommandPickerSectionDividers(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		color, known, dark    bool
+		fill, edge, secondary string
+	}{
+		{"light", true, true, false, "#E9EFFE", "#BAC4D8", "#657087"},
+		{"dark", true, true, true, "#343D58", "#51566B", "#A4ACC2"},
+		{"unknown background", true, false, true, "", "", ""},
+		{"monochrome", false, true, true, "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newCommandPicker([]Candidate{{Command: "openai models list"}}, "Explore commands", false)
+			m.width, m.height = 80, 24
+			m.color, m.backgroundKnown, m.dark = tc.color, tc.known, tc.dark
+			const ruleWidth = 72 // 80 columns minus the framed picker's margins and padding.
+			want := terminal.SectionDivider(ruleWidth, tc.color && tc.known, tc.fill, tc.edge, tc.secondary)
+			rules := 0
+			for _, line := range strings.Split(m.View().Content, "\n") {
+				if strings.Trim(ansi.Strip(line), " │") == strings.Repeat("─", ruleWidth) {
+					require.Contains(t, line, want)
+					if !tc.color || !tc.known {
+						require.Equal(t, ansi.Strip(line), line)
+					}
+					rules++
+				}
+			}
+			require.Equal(t, 2, rules)
+		})
+	}
 }
 
 func TestCommandPickerEditingNavigationAndRenderBounds(t *testing.T) {
