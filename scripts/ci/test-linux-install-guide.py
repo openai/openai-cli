@@ -10,8 +10,8 @@ import tempfile
 import threading
 
 
-guide = (Path(__file__).resolve().parents[2] / "docs/installation.md").read_text()
-linux = guide.split("\n## Linux\n", 1)[1].split("\n## ", 1)[0]
+guide = (Path(__file__).resolve().parents[2] / "README.md").read_text()
+linux = guide.split("\n### Linux\n", 1)[1].split("\n### ", 1)[0]
 paste = linux.split("```sh\n", 1)[1].split("\n```", 1)[0]
 # Verify new pins against the published installer before updating these expectations.
 revision = "334f332fc6a5f8298b20548d4fbbbb30c940cdc5"

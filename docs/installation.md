@@ -2,7 +2,8 @@
 
 ## Installing with Homebrew
 
-For automatic updates in zsh, paste the [macOS installation block](../README.md#installation).
+For automatic updates in zsh, paste the [macOS installation block](../README.md#macos).
+Setup also lets Explore insert a command at your zsh prompt for editing.
 If you prefer to manage updates through Homebrew, install the cask directly.
 
 ```sh
@@ -16,6 +17,15 @@ brew update && brew upgrade --cask openai/tools/openai && brew list --cask --ver
 ```
 
 Homebrew shows download progress. One cask contains all CLI commands.
+
+**Terminal says “no such file” for the update helper.**
+An older Homebrew package can lack the helper. Run the Homebrew copy directly until the newer package arrives.
+
+```zsh
+"$(brew --prefix)/bin/openai" --help
+```
+
+Then repeat the [macOS installation block](../README.md#macos).
 
 **Homebrew says the cask is current, but GitHub has a newer release.**
 Homebrew can publish after GitHub. Reinstalling the same cask gives you the same version.
@@ -51,25 +61,8 @@ Run `type -a openai` to see competing commands. If a new shell selects another c
 
 ## Linux
 
-Starting with v1.50.0, one paste installs the latest stable package and enables automatic updates on Debian, Ubuntu, or Fedora.
-For earlier releases, use the [Linux tarball](#installing-a-prebuilt-binary).
-
-Paste this block into Bash or zsh. Enter your system password if sudo prompts during installation.
-
-```sh
-(
-  installer=$(mktemp /tmp/openai-install.XXXXXXXX) || exit
-  trap 'rm -f -- "$installer"' EXIT
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-  printf 'Downloading the OpenAI CLI installer...\n' >&2
-  curl -qfsSL --retry 3 --retry-max-time 60 --max-time 60 --proto '=https' --proto-redir '=https' \
-    -o "$installer" https://raw.githubusercontent.com/openai/openai-cli/334f332fc6a5f8298b20548d4fbbbb30c940cdc5/scripts/install-linux-release.sh || exit
-  printf '%s  %s\n' b0c05af08bd5e168366063bde36147d880f90fba337ce57fff928aa5f3633ce5 "$installer" | sha256sum --check --quiet || exit
-  /bin/bash -p "$installer"
-) && source /usr/share/openai-cli/enable-updates.sh
-```
+Use the [Linux install command](../README.md#linux) with Bash or zsh on Debian, Ubuntu, or Fedora.
+It installs the latest stable package and sets up automatic updates. Enter your system password if sudo prompts.
 
 The installer verifies the package checksum before installation. It waits up to 30 minutes for missing release files.
 Press Ctrl-C to cancel. The helper selects your automatically updated copy in this shell and future shells.
