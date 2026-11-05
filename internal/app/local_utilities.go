@@ -14,5 +14,10 @@ func IsLocalUtilityCommand(command *cli.Command) bool {
 	}
 	root := command.Root()
 	selected := root.Command(root.Args().First())
+	if selected != nil && selected.Name == "auth" {
+		if leaf := selected.Command(selected.Args().First()); leaf != nil {
+			selected = leaf
+		}
+	}
 	return selected != nil && selected.Metadata[localcommands.LocalUtilityMetadata] == true
 }

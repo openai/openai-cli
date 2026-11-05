@@ -118,6 +118,19 @@ func TestAuthStatusSelection(t *testing.T) {
 	}
 }
 
+func TestAuthStatusRepeatedRunClearsExplicitProject(t *testing.T) {
+	authStatusTestEnvironment(t, nil)
+	var out bytes.Buffer
+	root := authStatusTestRoot(&out)
+	args := []string{"openai", "auth", "status", "--format=json"}
+	require.NoError(t, root.Run(t.Context(), append(args, "--project=proj-first")))
+	out.Reset()
+	require.NoError(t, root.Run(t.Context(), args))
+	var status authStatusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
+	require.Equal(t, authStatusValue{Source: "unset"}, status.Project)
+}
+
 func TestAuthStatusUsesParsedRequestValues(t *testing.T) {
 	authStatusTestEnvironment(t, map[string]string{"OPENAI_API_KEY": "synthetic-key", "OPENAI_PROJECT_ID": "proj-selected"})
 	var out bytes.Buffer

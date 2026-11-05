@@ -16,6 +16,8 @@ func TestLocalUtilityParsedSelection(t *testing.T) {
 		args []string
 		want bool
 	}{
+		{"auth status in an existing group", []string{"auth", "status"}, true},
+		{"remote auth sibling", []string{"auth", "remote"}, false},
 		{"tokenizer", []string{"tokenizer", "count"}, true},
 		{"codex", []string{"codex"}, true},
 		{"root value before local", []string{"--project", "responses", "tokenizer", "count"}, true},
@@ -42,6 +44,10 @@ func TestLocalUtilityParsedSelection(t *testing.T) {
 				HideHelpCommand: true, Action: action,
 				Flags: []cli.Flag{&cli.StringFlag{Name: "project"}},
 				Commands: []*cli.Command{
+					{Name: "auth", Commands: []*cli.Command{
+						{Name: "status", Metadata: map[string]any{localcommands.LocalUtilityMetadata: true}, Action: action},
+						{Name: "remote", Action: action},
+					}},
 					{Name: "tokenizer", Metadata: map[string]any{localcommands.LocalUtilityMetadata: true}, Commands: []*cli.Command{{Name: "count", Action: action}}},
 					{Name: "codex", Metadata: map[string]any{localcommands.LocalUtilityMetadata: true}, Action: action},
 					{Name: "responses", Flags: []cli.Flag{&cli.StringFlag{Name: "input"}}, Action: action, Commands: []*cli.Command{{Name: "codex", Action: action}}},

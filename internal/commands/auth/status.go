@@ -129,7 +129,7 @@ func authStatusTextValue(value authStatusValue) string {
 }
 
 // Match the CLI and SDK option layers without constructing an SDK client or request.
-// Snapshot the six relevant environment inputs once; never enumerate unrelated secrets.
+// Snapshot the relevant environment inputs once; never enumerate unrelated secrets.
 func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (authStatusReport, error) {
 	environment := make(map[string]authStatusValue, 7)
 	for _, name := range []string{"OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_WEBHOOK_SECRET", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", "OPENAI_BASE_URL", "OPENAI_CUSTOM_HEADERS"} {
@@ -150,11 +150,13 @@ func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (a
 	}
 	setting := func(flag, variable string) authStatusValue {
 		if root.IsSet(flag) {
-			source := "environment:" + variable
+			value := root.String(flag)
 			if request.ExplicitRootFlag(root, flag) {
-				source = "flag:--" + flag
+				return authStatusValue{Value: value, Source: "flag:--" + flag}
 			}
-			return authStatusValue{Value: root.String(flag), Source: source}
+			if value != "" || environment[variable].Source != "" {
+				return authStatusValue{Value: value, Source: "environment:" + variable}
+			}
 		}
 		if env, present := environment[variable]; present {
 			return env
