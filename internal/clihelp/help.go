@@ -92,6 +92,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 		root.Metadata = map[string]any{}
 	}
 	invocation, needsQuote := resolveInvocation(root.Name, args)
+	root.Metadata["help-control-launcher"] = len(args) > 0 && (unsafeCompletionPath(args[0]) || invocation != args[0] && unsafeCompletionPath(invocation))
 	delete(root.Metadata, "help-native-invocation")
 	if needsQuote {
 		name := invocation
@@ -99,7 +100,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 		root.Metadata["help-native-invocation"] = quoteNativeInvocation(context.Background(), name, invocation)
 	}
 	root.Metadata["help-invocation"] = invocation
-	delete(root.Metadata, "help-legacy-all")
+	delete(root.Metadata, "help-all")
 	root.Metadata["help-welcome"] = len(args) <= 1
 	delete(root.Metadata, "help-selected-command")
 	if root.Command("help") == nil {
@@ -257,6 +258,7 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 	chain := []*cli.Command{root}
 	remove := map[int]bool{}
 	help, legacy, all := false, false, false
+	completionOption := false
 	end := len(args)
 	for i := 1; i < len(args); i++ {
 		arg := args[i]
@@ -289,6 +291,9 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 					for _, alias := range flag.Names() {
 						if alias == name {
 							found = flag
+							if chain[j].Name == "@completion" {
+								completionOption = true
+							}
 						}
 					}
 				}
@@ -346,7 +351,10 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 	out = append(out, "--help")
 	out = append(out, args[end:]...)
 	if legacy {
-		root.Metadata["help-legacy-all"] = all
+		root.Metadata["help-all"] = all
+	} else if completionOption {
+		// Explicit completion options request their reference, including safe setup previews.
+		root.Metadata["help-all"] = true
 	}
 	root.Metadata["help-selected-command"] = chain[len(chain)-1]
 	return out, true
@@ -423,7 +431,7 @@ func legacyHelpNotice(command *cli.Command) string {
 	if !configured || command.Name == "@completion" {
 		return ""
 	}
-	_, legacy := root.Metadata["help-legacy-all"].(bool)
+	_, legacy := root.Metadata["help-all"].(bool)
 	if help := root.Command("help"); help != nil {
 		legacy = legacy || help.IsSet("all")
 	}

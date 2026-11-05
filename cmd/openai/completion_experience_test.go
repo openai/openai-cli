@@ -10,6 +10,13 @@ import (
 	"github.com/openai/openai-cli/internal/app"
 )
 
+func completionTestTopic() string {
+	if runtime.GOOS == "windows" {
+		return `"@completion"`
+	}
+	return "@completion"
+}
+
 func TestMainCompletionSetupHelp(t *testing.T) {
 	var first string
 	for _, args := range [][]string{
@@ -19,7 +26,7 @@ func TestMainCompletionSetupHelp(t *testing.T) {
 		{"openai", "help", "--all=false", "@completion"},
 		{"openai", "--help", "--all=false", "@completion"},
 		{"openai", "--all=false", "@completion", "--help"},
-		{"openai", "@completion", "zsh", "--install-suggestions", "--help"},
+		{"openai", "--all=false", "@completion", "zsh", "--install-suggestions", "--help"},
 	} {
 		got := runMainDispatchWithEnv(t, "zsh", []string{"OPENAI_BASE_URL=invalid"}, args...)
 		if got.code != 0 || got.stderr != "" {
@@ -30,10 +37,7 @@ func TestMainCompletionSetupHelp(t *testing.T) {
 		}
 		first = got.stdout
 	}
-	topic := "@completion"
-	if runtime.GOOS == "windows" {
-		topic = `"@completion"`
-	}
+	topic := completionTestTopic()
 	for _, text := range []string{"openai explore", "Select a command and press Enter.", "copy it to your prompt", "openai help --all " + topic} {
 		if !strings.Contains(first, text) {
 			t.Errorf("missing %q in %s", text, first)
@@ -51,6 +55,8 @@ func TestMainCompletionSetupHelp(t *testing.T) {
 	for _, args := range [][]string{
 		{"openai", "--help", "--all", "@completion"},
 		{"openai", "--all", "@completion", "--help"},
+		{"openai", "@completion", "zsh", "--install-suggestions", "--help"},
+		{"openai", "@completion", "--help", "bash", "--install-picker", "--profile", "startup"},
 	} {
 		if got := runMainDispatchWithEnv(t, "zsh", []string{"OPENAI_BASE_URL=invalid"}, args...); got != full {
 			t.Fatalf("full help %q differs from help --all @completion: %+v", args, got)

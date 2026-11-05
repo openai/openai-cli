@@ -3,13 +3,56 @@ package clihelp
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/commandsuggest"
 	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
+
+const completionReferenceArguments = "Use the same executable with the arguments help, --all, and @completion for setup options."
+
+// CompletionSetupGuidance preserves the launching executable when suggesting setup help.
+func CompletionSetupGuidance(ctx context.Context, root *cli.Command) string {
+	shell := terminal.ParentShell(ctx)
+	native, _ := completionInvocations(root, DisplayInvocation(root), shell)
+	if native == "" {
+		return completionReferenceArguments
+	}
+	return "Run " + native + " help --all " + completionTopic(shell) + " for setup options."
+}
+
+func unsafeCompletionPath(name string) bool {
+	_, control := terminal.QuoteProperties(name)
+	return control || !utf8.ValidString(name)
+}
+
+func completionInvocations(root *cli.Command, invocation, shell string) (native, bash string) {
+	if root.Metadata["help-control-launcher"] != true {
+		return NativeInvocation(root, invocation), invocation
+	}
+	// A display escape cannot identify a filename. Quote the actual executable for this shell.
+	quote := terminal.ShellQuoter(shell)
+	name, err := os.Executable()
+	if quote == nil || err != nil || !utf8.ValidString(name) {
+		return "", ""
+	}
+	native = quote(name)
+	if shell == "pwsh" {
+		native = "& " + native
+	}
+	return native, terminal.ShellQuote(name)
+}
+
+func completionTopic(shell string) string {
+	if runtime.GOOS == "windows" || shell == "pwsh" {
+		return `"@completion"` // Bare @completion is a splatted variable in PowerShell.
+	}
+	return "@completion"
+}
 
 // Completion help describes Explore first. Its full reference lists the declared local flags.
 func completionHelp(command *cli.Command, invocation string, width, navigationWidth int) string {
@@ -17,26 +60,27 @@ func completionHelp(command *cli.Command, invocation string, width, navigationWi
 	var out strings.Builder
 	heading := func(title string) { fmt.Fprintln(&out, style.render(style.section, title)) }
 	note := func(text string) { out.WriteString(style.render(style.note, wrapDescription(text, "  ", width))) }
-	native := NativeInvocation(command.Root(), invocation)
 	shell := terminal.ParentShell(context.Background())
-	topic := "@completion"
-	if runtime.GOOS == "windows" || shell == "pwsh" {
-		topic = `"@completion"` // Bare @completion is a splatted variable in PowerShell.
-	}
+	native, bash := completionInvocations(command.Root(), invocation, shell)
+	topic := completionTopic(shell)
 	heading("Shell completion")
-	all, _ := command.Root().Metadata["help-legacy-all"].(bool)
+	all, _ := command.Root().Metadata["help-all"].(bool)
 	if help := command.Root().Command("help"); help != nil && help.IsSet("all") {
 		all = help.Bool("all")
 	}
 	if all {
-		out.WriteString(style.synopsis(native+" "+topic, []string{"[SHELL]", "[FLAGS]"}, width))
-		note("Choose bash, zsh, fish, or pwsh to print its completion script.")
-		out.WriteByte('\n')
-		heading("EXAMPLES")
-		script := native + " " + topic + " zsh"
-		fmt.Fprintln(&out, "  "+commandsuggest.Record(command, script))
-		note("To enable insertion manually, run this command in zsh.")
-		fmt.Fprintln(&out, "  "+commandsuggest.RecordFor(command, "zsh", invocation+` @completion zsh --install-suggestions --profile "${ZDOTDIR-$HOME}/.zshrc"`))
+		if native == "" {
+			note("Pass @completion and a shell name to this executable to print its completion script.")
+		} else {
+			out.WriteString(style.synopsis(native+" "+topic, []string{"[SHELL]", "[FLAGS]"}, width))
+			note("Choose bash, zsh, fish, or pwsh to print its completion script.")
+			out.WriteByte('\n')
+			heading("EXAMPLES")
+			script := native + " " + topic + " zsh"
+			fmt.Fprintln(&out, "  "+commandsuggest.Record(command, script))
+			note("To enable insertion manually, run this command in zsh.")
+			fmt.Fprintln(&out, "  "+commandsuggest.RecordFor(command, "zsh", bash+` @completion zsh --install-suggestions --profile "${ZDOTDIR-$HOME}/.zshrc"`))
+		}
 		out.WriteByte('\n')
 		heading("FLAGS")
 		flags := command.VisibleFlags()
@@ -56,6 +100,10 @@ func completionHelp(command *cli.Command, invocation string, width, navigationWi
 		return out.String()
 	}
 
+	if native == "" {
+		note(completionReferenceArguments)
+		return out.String()
+	}
 	explore := native + " explore"
 	options := native + " help --all " + topic
 	column := helpDescriptionColumn(navigationWidth, []string{explore, options})

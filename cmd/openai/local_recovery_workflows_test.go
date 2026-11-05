@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -264,6 +265,14 @@ func TestMainRecoveryCompletionSetup(t *testing.T) {
 				if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, wantHelp) {
 					t.Fatalf("safe repair help failed: %+v", help)
 				}
+				if tc.name != "PowerShell" {
+					if !strings.Contains(message, "Run openai help --all "+completionTestTopic()+" for setup options.") {
+						t.Fatalf("setup diagnostic omitted the full reference command: %q", message)
+					}
+					if reference := runLocalRecovery(t, env, mode, "help", "--all", "@completion"); reference != help {
+						t.Fatalf("printed repair command differs from the option-specific reference: %+v", reference)
+					}
+				}
 				kept, err := os.ReadFile(profile)
 				if err != nil || !bytes.Equal(kept, original) {
 					t.Fatalf("validation/help changed the startup file: %v", err)
@@ -276,6 +285,61 @@ func TestMainRecoveryCompletionSetup(t *testing.T) {
 					t.Fatalf("setup validation made %d requests", requests.Load())
 				}
 			})
+		}
+	}
+}
+
+func TestMainRecoveryCompletionLauncherControls(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses Unix launcher filenames and Bash")
+	}
+	work, binary := buildNativeShellCLI(t)
+	decoy := t.TempDir()
+	if err := os.WriteFile(filepath.Join(decoy, "openai"), []byte("#!/bin/sh\nexit 42\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", decoy+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENAI_BASE_URL", "invalid")
+	t.Setenv("OPENAI_CLI_NO_UPDATE_CHECK", "1")
+	t.Setenv("NO_COLOR", "1")
+	for _, name := range []string{"sample\u202eexe", "sample\nexe"} {
+		launcher := filepath.Join(work, name)
+		if err := os.Link(filepath.Join(work, binary), launcher); err != nil {
+			t.Fatal(err)
+		}
+		args := []string{"--format-error", "json", "@completion", "bash", "--profile", "synthetic"}
+		for _, bash := range []bool{false, true} {
+			cmd := exec.CommandContext(t.Context(), launcher, args...)
+			if bash {
+				cmd = exec.CommandContext(t.Context(), "/bin/bash", append([]string{"-c", `"$@"; exit $?`, "bash", launcher}, args...)...)
+			}
+			raw, err := cmd.CombinedOutput()
+			if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 2 {
+				t.Fatalf("expected setup error: %v, %q", err, raw)
+			}
+			var diagnostic struct{ Message string }
+			if err := json.Unmarshal(raw, &diagnostic); err != nil {
+				t.Fatal(err)
+			}
+			if strings.ContainsAny(diagnostic.Message, "\n\u202e") {
+				t.Fatalf("unsafe launcher spelling in diagnostic: %q", diagnostic.Message)
+			}
+			if !bash {
+				if !strings.Contains(diagnostic.Message, "Use the same executable with the arguments help, --all, and @completion") {
+					t.Fatalf("unknown shell must receive argument-only guidance: %q", diagnostic.Message)
+				}
+				continue
+			}
+			_, suggestion, found := strings.Cut(diagnostic.Message, " Run ")
+			suggestion, ok := strings.CutSuffix(suggestion, " for setup options.")
+			if !found || !ok {
+				t.Fatalf("missing recovery command: %q", diagnostic.Message)
+			}
+			help, err := exec.CommandContext(t.Context(), "/bin/bash", "-c", suggestion+"; exit $?").CombinedOutput()
+			if err != nil || !bytes.Contains(help, []byte("\nFLAGS\n")) || bytes.Contains(help, []byte(name)) {
+				t.Fatalf("recovery command used the wrong executable or exposed a control: %v, %q", err, help)
+			}
 		}
 	}
 }

@@ -195,7 +195,7 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 	if setup.prompt != "" {
 		_, err = io.WriteString(os.Stderr, "To fill the prompt next time, open Explore and press F2 to set up insertion.\n")
 	} else if !integration {
-		_, err = io.WriteString(os.Stderr, "For shell insertion options, run openai @completion --help.\n")
+		_, err = fmt.Fprintln(os.Stderr, clihelp.CompletionSetupGuidance(ctx, root))
 	}
 	if err != nil {
 		return exploreFailure("Could not display command insertion guidance.", 1, err)
