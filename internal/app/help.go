@@ -253,12 +253,13 @@ func configureHelpGroups(root *cli.Command) {
 	groups := []clihelp.FlagGroup{
 		{Title: "Authentication", Names: []string{"api-key", "admin-api-key", "webhook-secret", "mtls-client-cert-file", "mtls-client-key-file"}, Owner: root},
 		{Title: "Output", Names: []string{"format", "format-error", "transform", "transform-error", "raw-output", "quiet", "verbose"}, Owner: root},
-		{Title: "Request options", Names: []string{"organization", "project", "base-url", "header"}, Owner: root},
+		{Title: "Request options", Names: []string{"organization", "project", "profile", "base-url", "header"}, Owner: root},
 		{Title: "Troubleshooting", Names: []string{"debug", debugBodyFlag, debugSSEFlag, debugEventTimingFlag, debugMaxBytesFlag, debugMaxEventsFlag}, Owner: root},
 	}
 	labels := []clihelp.FlagLabel{
 		{Owner: root, Names: []string{"api-key", "admin-api-key"}, Label: "KEY"},
 		{Owner: root, Names: []string{"organization", "project"}, Label: "ID"},
+		{Owner: root, Names: []string{"profile"}, Label: "NAME"},
 		{Owner: root, Names: []string{"webhook-secret"}, Label: "SECRET"},
 		{Owner: root, Names: []string{"header"}, Label: "'NAME: VALUE'"},
 		{Owner: root, Names: []string{debugMaxBytesFlag}, Label: "BYTES"},
