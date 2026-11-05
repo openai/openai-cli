@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"os"
@@ -406,4 +407,34 @@ func TestBuiltCLIAuthStatusAndHelpAreOffline(t *testing.T) {
 		})
 	}
 	require.Zero(t, requests.Load())
+}
+
+func TestMainAuthStatusProtectsCopiedCredentialForms(t *testing.T) {
+	const secret = "synthetic-private-status-marker"
+	const replacement = "synthetic-second-credential"
+	for _, tc := range []struct {
+		name       string
+		env, flags []string
+	}{
+		{"padded API key", []string{"OPENAI_API_KEY=" + secret + " \t"}, nil},
+		{"earlier literal Admin key", nil, []string{"--admin-api-key", secret, "--admin-api-key=" + replacement}},
+		{"overridden environment URL", []string{"OPENAI_BASE_URL=https://sample:" + secret + "@example.invalid"}, []string{"--base-url=https://example.invalid"}},
+		{"earlier literal URL", nil, []string{"--base-url=https://sample:" + secret + "@first.invalid", "--base-url=https://second.invalid"}},
+		{"signed URL token", []string{"OPENAI_BASE_URL=https://example.invalid/?access_token=" + secret}, nil},
+		{"decoded Basic password", []string{"OPENAI_CUSTOM_HEADERS=Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("person:"+secret))}, nil},
+		{"session cookie", nil, []string{"-H", "Cookie: theme=dark; session=\"" + secret + "\""}},
+		{"set-cookie value", []string{"OPENAI_CUSTOM_HEADERS=Set-Cookie: session=" + secret + "; HttpOnly"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := append(authStatusEnvironment(t), tc.env...)
+			env = append(env, "OPENAI_PROJECT_ID="+secret)
+			for _, format := range []string{"text", "json"} {
+				args := append([]string{"openai", "auth", "status", "--debug", "--format=" + format}, tc.flags...)
+				got := runMainDispatchWithEnv(t, "bash", env, args...)
+				require.Equal(t, 0, got.code)
+				assertAuthStatusPrivate(t, got, secret)
+				require.Contains(t, got.stdout, "[redacted]")
+			}
+		})
+	}
 }

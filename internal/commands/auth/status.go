@@ -246,7 +246,7 @@ func authStatusBaseURL(base authStatusValue, source string) (authStatusEndpoint,
 	parsed, _ := url.Parse(base.Value) // ValidateBaseURL has already parsed the same string.
 	redacted := parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != ""
 	// Custom paths can contain credentials. Display only the origin and known public API paths.
-	path := parsed.Path
+	path := parsed.EscapedPath()
 	if path == "" {
 		path = "/"
 	}

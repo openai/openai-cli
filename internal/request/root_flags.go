@@ -9,6 +9,10 @@ import (
 // Endpoint request flags retain their local scope, including a body --project.
 func ConfigureRootFlags(root *cli.Command) {
 	for i, flag := range root.Flags {
+		if url, ok := flag.(*cli.StringFlag); ok && url.Name == "base-url" {
+			root.Flags[i] = &baseURLFlag{StringFlag: url}
+			continue
+		}
 		request, ok := flag.(*requestflag.Flag[string])
 		if !ok {
 			continue
@@ -27,12 +31,14 @@ func ConfigureRootFlags(root *cli.Command) {
 // RootRequestFlag preserves request metadata while sharing root options with subcommands.
 type RootRequestFlag struct {
 	*requestflag.Flag[string]
-	explicitlySet bool
+	explicitlySet    bool
+	credentialInputs []string
 }
 
 func (*RootRequestFlag) IsLocal() bool { return false }
 
 func (f *RootRequestFlag) PreParse() error {
+	f.credentialInputs = nil
 	f.explicitlySet = false
 	return f.Flag.PreParse()
 }
@@ -42,6 +48,10 @@ func (f *RootRequestFlag) PreParse() error {
 func (f *RootRequestFlag) Set(name, value string) error {
 	if err := f.Flag.Set(name, value); err != nil {
 		return err
+	}
+	switch f.Name {
+	case "api-key", "admin-api-key", "webhook-secret":
+		f.credentialInputs = append(f.credentialInputs, value)
 	}
 	f.explicitlySet = true
 	return nil
@@ -58,4 +68,25 @@ func ExplicitRootFlag(root *cli.Command, name string) bool {
 		}
 	}
 	return false
+}
+
+// baseURLFlag keeps credentials from an earlier --base-url private even if a later flag replaces it.
+type baseURLFlag struct {
+	*cli.StringFlag
+	credentialInputs []string
+}
+
+func (f *baseURLFlag) CLIStringFlag() *cli.StringFlag { return f.StringFlag }
+
+func (f *baseURLFlag) PreParse() error {
+	f.credentialInputs = nil
+	return f.StringFlag.PreParse()
+}
+
+func (f *baseURLFlag) Set(name, value string) error {
+	if err := f.StringFlag.Set(name, value); err != nil {
+		return err
+	}
+	f.credentialInputs = appendURLCredentials(f.credentialInputs, value)
+	return nil
 }

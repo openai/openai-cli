@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/openai/openai-go/v3/option"
@@ -30,6 +31,11 @@ func ValidateBaseURL(value, source string) error {
 	}
 	if endpoint.Hostname() == "" || endpoint.Opaque != "" {
 		return errors.New(source + BaseURLHostRequired)
+	}
+	if port := endpoint.Port(); port != "" {
+		if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+			return errors.New(source + BaseURLHostRequired)
+		}
 	}
 	if endpoint.Scheme == "http" {
 		host := endpoint.Hostname()
