@@ -34,7 +34,7 @@ func TestTokenizerEditorViewFitsEverySupportedSizeAndFocus(t *testing.T) {
 				m.width, m.height, m.focus = size[0], size[1], focus
 				view := m.View()
 				require.False(t, view.AltScreen)
-				require.Contains(t, view.Content, "4 tokens")
+				require.Equal(t, !m.studioLayout(), strings.Contains(view.Content, "4 tokens"))
 				require.NotContains(t, view.Content, "13 bytes")
 				require.Contains(t, ansi.Strip(view.Content), "View  [Text] Token IDs  Bytes")
 				require.Contains(t, view.Content, "Token IDs")
@@ -70,9 +70,9 @@ func TestTokenizerEditorTextPositionAppearsOnlyOnOverflow(t *testing.T) {
 			} else {
 				require.NotRegexp(t, `Text \d+/\d+`, frame)
 			}
-			require.Equal(t, overflowing, strings.Contains(frame, "PgUp/PgDn"))
+			require.NotContains(t, frame, "PgUp/PgDn")
 			require.Contains(t, frame, "Ctrl+C exit")
-			require.Contains(t, frame, "Tab inspect tokens")
+			require.Contains(t, frame, "Tab inspect")
 			require.LessOrEqual(t, len(strings.Split(frame, "\n")), m.viewHeight())
 			for _, row := range strings.Split(frame, "\n") {
 				require.Less(t, ansi.StringWidth(row), m.width)
@@ -92,7 +92,7 @@ func TestTokenizerEditorMaximumNewlineInputKeepsCaretAndFooter(t *testing.T) {
 	require.Contains(t, frame, "Text 1048577/1048577")
 	require.Equal(t, " ", tokenizerCursorCell(t, view))
 	require.Contains(t, frame, "Ctrl+C exit")
-	require.Contains(t, frame, "Tab inspect tokens")
+	require.Contains(t, frame, "Tab inspect")
 	require.LessOrEqual(t, len(strings.Split(frame, "\n")), m.viewHeight())
 	require.Equal(t, source, m.text)
 }
@@ -341,7 +341,7 @@ func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
 				focus, option int
 				marker, hint  string
 			}{
-				{tokenizerFocusText, 0, "› Text", "Tab inspect tokens"},
+				{tokenizerFocusText, 0, "› Text", "Tab inspect"},
 				{tokenizerFocusOptions, 0, "› View", "←→ change view"},
 				{tokenizerFocusOptions, 1, "› Model", "Enter choose model"},
 				{tokenizerFocusResults, 0, "› Token ", "Tab edit"},
@@ -933,7 +933,7 @@ func TestTokenizerEditorMainViewShowsModelNamesWithoutRedundantHints(t *testing.
 			require.NotContains(t, view, "Token 1 of 1")
 			require.NotContains(t, view, "F1 help")
 			require.NotContains(t, view, "Enter newline")
-			require.Contains(t, view, "Tab inspect tokens")
+			require.Contains(t, view, "Tab inspect")
 		}
 	}
 }
@@ -1068,9 +1068,9 @@ func TestTokenizerEditorPanelSurvivesInlinePainter(t *testing.T) {
 			m.insert(source)
 			m.cursor = len("Line one\r\n日本語 and e\u0301")
 			view := m.View().Content
-			rows := strings.Split(ansi.Strip(view), "\n")
+			panel, _, _ := strings.Cut(ansi.Strip(view), "╰")
 			frame := ansi.Strip(cliterminal.InlineFrame(view, m.width))
-			require.Equal(t, 2*(len(rows)-2), strings.Count(frame, "│"), "every interior row must retain both borders")
+			require.Equal(t, 2*(strings.Count(panel, "\n")-1), strings.Count(frame, "│"), "every interior row must retain both borders")
 			require.Equal(t, 1, strings.Count(frame, "╭"))
 			require.Equal(t, 1, strings.Count(frame, "╮"))
 			require.Equal(t, 1, strings.Count(frame, "╰"))
@@ -1094,7 +1094,8 @@ func TestTokenizerEditorEmojiEndCursorSurvivesInlinePainter(t *testing.T) {
 				require.Contains(t, frame, cluster+" ", "the ending grapheme and cursor cell must remain visible")
 				require.Equal(t, " ", tokenizerCursorCell(t, view))
 				if m.roomy() {
-					require.Equal(t, 2*(len(strings.Split(m.View().Content, "\n"))-2), strings.Count(frame, "│"))
+					panel, _, _ := strings.Cut(view.Content, "╰")
+					require.Equal(t, 2*(strings.Count(panel, "\n")-1), strings.Count(frame, "│"))
 				}
 				require.Equal(t, source, m.text)
 			})
@@ -1111,15 +1112,16 @@ func TestTokenizerEditorStudioAndCompactLayout(t *testing.T) {
 			rows := strings.Split(ansi.Strip(view), "\n")
 			framed := size[0] >= 50 && size[1] >= 16
 			header, footer := 0, len(rows)-1
+			bottom := footer
 			if framed {
 				header++
-				footer--
+				bottom = footer - len(m.footer(m.styles()))
 				require.True(t, strings.HasPrefix(strings.TrimSpace(rows[0]), "╭"))
 				require.True(t, strings.HasSuffix(strings.TrimSpace(rows[0]), "╮"))
-				require.True(t, strings.HasPrefix(strings.TrimSpace(rows[len(rows)-1]), "╰"))
-				require.True(t, strings.HasSuffix(strings.TrimSpace(rows[len(rows)-1]), "╯"))
+				require.True(t, strings.HasPrefix(strings.TrimSpace(rows[bottom]), "╰"))
+				require.True(t, strings.HasSuffix(strings.TrimSpace(rows[bottom]), "╯"))
 				require.Less(t, len(rows), m.viewHeight(), "an empty editor uses only the rows it needs")
-				for _, row := range rows {
+				for _, row := range rows[:bottom+1] {
 					require.Equal(t, ansi.StringWidth(rows[0]), ansi.StringWidth(row))
 					require.Less(t, ansi.StringWidth(row), m.width)
 				}
@@ -1136,7 +1138,7 @@ func TestTokenizerEditorStudioAndCompactLayout(t *testing.T) {
 				m.focus = tokenizerFocusResults
 				require.Contains(t, ansi.Strip(m.View().Content), "› 0 tokens")
 				require.NotContains(t, strings.Join(m.footer(m.styles()), " "), "Enter open details")
-				require.NotContains(t, strings.Join(m.footer(m.styles()), " "), "←→ select token")
+				require.NotContains(t, strings.Join(m.footer(m.styles()), " "), "←→ select")
 			} else {
 				require.Contains(t, rows[header], "0 tokens")
 			}
@@ -1154,8 +1156,8 @@ func TestTokenizerEditorStudioAndCompactLayout(t *testing.T) {
 			require.NotEmpty(t, strings.Trim(rows[footer-1], " │╎"), "controls follow the last content row")
 			if studio {
 				dividerColumn := m.sourceWidth() + 3
-				for _, row := range rows[header+2 : footer] {
-					require.Equal(t, '╎', []rune(row)[dividerColumn])
+				for _, row := range rows[header+2 : bottom] {
+					require.Equal(t, '│', []rune(row)[dividerColumn])
 				}
 			}
 			require.Contains(t, view, "› Text")
@@ -1179,7 +1181,7 @@ func TestTokenizerEditorBatchPaletteForBorderAndShortcuts(t *testing.T) {
 			require.Contains(t, header, "38;2;"+focus+"m"+key+"\x1b[")
 		}
 		require.NotContains(t, ansi.Strip(header), "Details")
-		footer := rows[len(rows)-2]
+		footer := rows[len(rows)-1]
 		require.Regexp(t, "38;2;"+focus+`mCtrl\+C\x1b\[`, footer)
 		require.Regexp(t, "38;2;"+muted+`mexit\x1b\[`, footer)
 		require.Regexp(t, "38;2;"+muted+`mType or paste text…\x1b\[`, m.View().Content)

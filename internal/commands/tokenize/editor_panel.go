@@ -94,8 +94,8 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 	}
 	limit := max(0, m.bodyHeight()+1-len(footer))
 	lines = append(lines, body[:min(limit, len(body))]...)
-	lines = append(lines, footer...)
 	if !m.framed() {
+		lines = append(lines, footer...)
 		for i, line := range lines {
 			lines[i] = "  " + tokenizerClip(line, width)
 		}
@@ -111,5 +111,8 @@ func (m *tokenizerEditor) panel(s tokenizerEditorStyles, title, status string, b
 		frame = append(frame, edge+" "+line+padding+" "+ansi.CursorHorizontalAbsolute(width+4)+edge)
 	}
 	frame = append(frame, s.border.Render("╰"+rule+"╯"))
+	for _, hint := range footer {
+		frame = append(frame, "  "+tokenizerClip(hint, width))
+	}
 	return strings.Join(frame, "\n")
 }

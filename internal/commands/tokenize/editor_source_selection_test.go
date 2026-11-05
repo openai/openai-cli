@@ -19,7 +19,7 @@ func tokenizerMarkedSource(t *testing.T, m *tokenizerEditor, style uv.Style) str
 	var source strings.Builder
 	inSource := false
 	for _, row := range strings.Split(m.View().Content, "\n") {
-		left, _, _ := strings.Cut(row, "╎")
+		left, _, _ := strings.Cut(row, ansi.CursorHorizontalAbsolute(m.sourceWidth()+4))
 		label := strings.TrimLeft(ansi.Strip(left), " │›")
 		if strings.HasPrefix(label, "View ") {
 			break

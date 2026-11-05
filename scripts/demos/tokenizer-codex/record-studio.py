@@ -49,16 +49,21 @@ def capture(binary, name, output):
             until = time.monotonic() + hold
             while time.monotonic() < until:
                 terminal.read()
-            body = screen(terminal.raw, WIDTH, HEIGHT).rstrip()
+            # Interpret the one-cell DEC stroke when measuring the panel for cropping.
+            raw = terminal.raw.replace(b"\x1b(0x\x1b(B", "│".encode()).replace(b"\x1b(B", b"")
+            body = screen(raw, WIDTH, HEIGHT).rstrip()
             visible_rows = max(visible_rows, len(body.splitlines()))
+            return body.decode("utf-8")
 
         try:
             terminal.wait("$ ")
             press(b"openai tokenizer\r", "Type or paste text")
-            press(b"\x1b[200~" + DRAFT.encode() + b"\x1b[201~", "9 tokens", 1.0)
+            press(b"\x1b[200~" + DRAFT.encode() + b"\x1b[201~", "The blue door", 1.0)
             # The older editor puts Options between Text and Tokens in the Tab order.
-            tabs = b"\t\t" if name == "before" else b"\t"
-            press(tabs + HOME_KEY + RIGHT, "Token 2 of 9")
+            focused = press(b"\t", "Tokenizer")
+            if "› Token " not in focused:
+                press(b"\t", "Token ")
+            press(HOME_KEY + RIGHT, "Token 2 of 9")
             press(RIGHT * 5, "Token 7 of 9", 1.4)
             save_cast(output / (name + ".cast"), terminal.events)
             if name == "after":

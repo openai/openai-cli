@@ -117,6 +117,8 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	if err != nil {
 		return 0, err
 	}
+	model := newTokenizerEditor()
+	model.decLineDrawing = supportsDECLineDrawing()
 	// Catch signals before raw mode starts, and release them after restoration.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -141,7 +143,6 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	cursorOutput := &tokenizerCursorOutput{FrameOutput: terminalOutput, size: func() (int, int, error) { return term.GetSize(output.Fd()) }}
 	painter := cliterminal.NewPainter(cursorOutput, cancel)
 	defer painter.Stop()
-	model := newTokenizerEditor()
 	model.width, model.height = width, height
 	if draft != "" {
 		model.insert(draft)
@@ -532,6 +533,10 @@ func (p *tokenizerEditorInline) close() string {
 	}
 	// Cancel a partial escape sequence before restoring visible terminal modes.
 	cleanup := "\x18\x1b\\" + ansi.ResetStyle
+	if p.model != nil && p.model.decLineDrawing {
+		// A partial frame may have stopped between the line-drawing shifts.
+		cleanup += ansi.SelectCharacterSet('(', 'B')
+	}
 	if w := p.cursorOutput; w != nil {
 		if origin := w.origin(w.terminalHeight()); origin != "" {
 			cleanup += origin + "\r" + ansi.EraseScreenBelow

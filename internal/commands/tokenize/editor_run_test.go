@@ -163,6 +163,27 @@ func TestTokenizerEditorRestoresInlineModes(t *testing.T) {
 	}
 }
 
+func TestTokenizerStudioDividerRestoresCharacterSet(t *testing.T) {
+	for _, dec := range []bool{false, true} {
+		m := tokenizerEditorExample()
+		m.width, m.height, m.decLineDrawing = 120, 30, dec
+		inline := &tokenizerEditorInline{model: m, modesActive: true}
+		frame := m.View().Content
+		start := ansi.SelectCharacterSet('(', '0')
+		end := ansi.SelectCharacterSet('(', 'B')
+		if dec {
+			// A complete frame must leave each pane in the ordinary character set.
+			require.Contains(t, frame, start+"x"+end)
+			require.Equal(t, strings.Count(frame, start), strings.Count(frame, start+"x"+end))
+			// Cleanup must also recover when a write stops after the opening shift.
+			require.Contains(t, inline.close(), end)
+		} else {
+			require.Contains(t, frame, ansi.CursorHorizontalAbsolute(m.sourceWidth()+4)+"│")
+			require.NotContains(t, frame+inline.close(), start)
+		}
+	}
+}
+
 func TestTokenizerEditorRepaintsFromInlineAnchorOnResize(t *testing.T) {
 	paint := &tokenizerRecordedFrames{}
 	receipt := &tokenizerCursorOutput{FrameOutput: tokenizerFrameWriteFunc(func(_ context.Context, data []byte) (int, error) {

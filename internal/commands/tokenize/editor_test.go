@@ -468,7 +468,7 @@ func TestTokenizerEditorPageKeysMoveByVisibleTokens(t *testing.T) {
 			m.tab = tab
 			tokenizerEditorKey(m, tea.KeyHome)
 			width := m.resultWidth()
-			require.Contains(t, strings.Join(m.footer(m.styles()), " "), "PgUp/PgDn page")
+			require.Contains(t, strings.Join(m.footer(m.styles()), " "), "←→ select")
 			for {
 				first := m.resultStart(width)
 				_, visible := m.resultWindow(m.styles(), width)

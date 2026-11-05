@@ -60,15 +60,15 @@ func TestTokenizerStudioIdentifiesSelectedTrailingSpaces(t *testing.T) {
 		m.dark, m.color = theme == "dark", theme != "monochrome"
 		s := m.styles()
 		rows := m.studioResults(s, m.resultWidth())
-		require.Equal(t, "how are you im doing so well!␣        ", strings.TrimPrefix(ansi.Strip(rows[1]), "  "))
-		require.Contains(t, rows[1], s.tokenSelected.Render("␣        "))
-		require.Contains(t, rows[2], s.tokenSelected.Render("9"))
-		require.Contains(t, rows[3], s.tokenSelected.Render("9 spaces"))
-		require.Equal(t, "Token 9 of 9  9 spaces", strings.TrimSpace(ansi.Strip(rows[3])))
+		require.Equal(t, "how are you im doing so well!␣        ", strings.TrimPrefix(ansi.Strip(rows[0]), "  "))
+		require.Contains(t, rows[0], s.tokenSelected.Render("␣        "))
+		require.Contains(t, rows[1], s.tokenSelected.Render("9"))
+		require.Contains(t, rows[2], s.tokenSelected.Render("9 spaces"))
+		require.Equal(t, "Token 9 of 9  9 spaces", strings.TrimSpace(ansi.Strip(rows[2])))
 		if m.color {
-			require.Contains(t, rows[2], s.byteCounts[0].Render("3"))
-			require.Contains(t, rows[2], s.byteCounts[0].Render("5"), "seventh token repeats the first color")
-			require.Equal(t, 1, strings.Count(rows[2], "48;2;"), "only the selected count uses a background")
+			require.Contains(t, rows[1], s.byteCounts[0].Render("3"))
+			require.Contains(t, rows[1], s.byteCounts[0].Render("5"), "seventh token repeats the first color")
+			require.Equal(t, 1, strings.Count(rows[1], "48;2;"), "only the selected count uses a background")
 		}
 	}
 	m.width, m.height = 40, 12
@@ -197,12 +197,12 @@ func TestTokenizerStudioOmitsByteCountsUntilTokensAreReady(t *testing.T) {
 	check("Tokens")
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{{ID: 1, EndByte: 2}}})
 	rows := m.studioResults(m.styles(), m.resultWidth())
-	require.Len(t, rows, 4)
-	require.Equal(t, "1 token", strings.TrimSpace(ansi.Strip(rows[0])))
-	require.Contains(t, ansi.Strip(rows[1]), "é")
-	require.Contains(t, ansi.Strip(rows[2]), "Bytes per token")
-	require.Contains(t, rows[2], m.styles().tokenSelected.Render("2"))
-	require.Contains(t, ansi.Strip(rows[3]), "Token 1 of 1  “é”")
+	require.Len(t, rows, 3)
+	require.NotContains(t, ansi.Strip(strings.Join(rows, "\n")), "1 token")
+	require.Contains(t, ansi.Strip(rows[0]), "é")
+	require.Contains(t, ansi.Strip(rows[1]), "Bytes per token")
+	require.Contains(t, rows[1], m.styles().tokenSelected.Render("2"))
+	require.Contains(t, ansi.Strip(rows[2]), "Token 1 of 1  “é”")
 
 	m.insert("x")
 	m.Update(tokenizerEditorResultMsg{Revision: m.revision})
@@ -224,11 +224,11 @@ func TestTokenizerStudioKeepsLongByteMetadataWithinPane(t *testing.T) {
 		require.LessOrEqual(t, tokenizerSourceWidth(row), width)
 	}
 	text := ansi.Strip(strings.Join(rows, "\n"))
-	require.Contains(t, text, "2 tokens  1048576 bytes")
+	require.Contains(t, text, "of 1048576 bytes")
 	require.Contains(t, text, "Starts after 100000 bytes")
 	require.Contains(t, text, "Uses 948576 bytes")
-	require.Equal(t, []string{"Bytes", "per", "token", "100000", "948576"}, strings.Fields(ansi.Strip(rows[2])))
-	require.Contains(t, rows[2], m.styles().tokenSelected.Render("948576"))
+	require.Equal(t, []string{"Bytes", "per", "token", "100000", "948576"}, strings.Fields(ansi.Strip(rows[1])))
+	require.Contains(t, rows[1], m.styles().tokenSelected.Render("948576"))
 
 	m.tokens = []tokenizerPreviewToken{{EndByte: 1 << 20}}
 	m.selected = 0
