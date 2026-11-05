@@ -836,6 +836,12 @@ jobs:
         if: matrix.powershell == 'current'
         shell: pwsh
         run: ./scripts/test-windows-archive-update.ps1
+      - name: Reproduce the published 1.50.0 ARM64 launcher upgrade
+        if: >-
+          !cancelled() && github.event_name == 'pull_request' &&
+          steps.powershell.outcome == 'success' && matrix.goarch == 'arm64' && matrix.powershell == 'current'
+        shell: pwsh
+        run: ./scripts/test-windows-archive-update.ps1 -StarterTag v1.50.0 -SuccessorTag v1.51.0 -PublicRoute Install.cmd -PublicClient powershell.exe -PrivateVerifier
       - name: Check native Windows ownership, ACLs and profile transactions
         if: matrix.existing-checks
         run: go test ./internal/autocomplete -run '^TestPicker(ProfileRecovery.*|Rename.*|RecoveryDirectory.*|Windows.*|FileMetadataPreservesZoneIdentifierAtSnapshotRecheck|ReplacementMetadataKeepsSameInheritedPermissions|SecurityDescriptorComparisonPreservesPermissions|InstallRoundTrip|InstallConfigDirectoryChanges|InstallIgnoresUnusedConfigDirectory|InstallConfigDirectoryRefusalPreservesFiles|InstallPreservesHardLinkedProfiles|ProfileHardLinkAddedAfterSnapshot|ScriptContentChecksLegacyNamespaces|InstallRetriesSupersededScriptCleanup|RemoveRetriesScriptCleanup|RemoveMissingProfileParentCleansOwnedScripts|RemoveMissingProfileAndScriptDirectoriesNoOp|RemoveMissingProfileParentReappearsWhileWaiting|RemovePreservesPersonalLineBoundaries|InstalledDetectsAndRefreshesOlderScript)$' -count=1 -v
