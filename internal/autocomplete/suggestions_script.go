@@ -33,6 +33,13 @@ func renderSuggestionCompletion(shell CompletionStyle, appName string, doubleTab
 		key = "1"
 	}
 	content := strings.ReplaceAll(string(script), "__DOUBLE_TAB__", key)
+	if shell == CompletionStyleFish {
+		selection, err := autoCompleteFS.ReadFile("shellscripts/fish_explore_selection.fish")
+		if err != nil {
+			return "", err
+		}
+		content = strings.ReplaceAll(content, "__FISH_EXPLORE_SELECTION__", strings.ReplaceAll(string(selection), "__openai_", "__"+appName+"_"))
+	}
 	return strings.ReplaceAll(content, "__APPNAME__", appName), nil
 }
 

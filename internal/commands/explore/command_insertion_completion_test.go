@@ -16,15 +16,12 @@ func TestConfigureCommandInsertionCompletionIsIdempotent(t *testing.T) {
 	ConfigureCompletion(root)
 	ConfigureCompletion(root)
 	flags := root.Command("@completion").Flags
-	require.Len(t, flags, 9)
-	require.Equal(t, []string{"suggestions"}, flags[1].Names())
-	require.Equal(t, []string{"suggestions-double-tab"}, flags[2].Names())
-	require.Equal(t, []string{"suggestions-click"}, flags[3].Names())
-	require.Equal(t, []string{"suggestions-adapter"}, flags[4].Names())
-	require.Equal(t, []string{"install-suggestions"}, flags[5].Names())
-	require.Equal(t, []string{"uninstall-suggestions"}, flags[6].Names())
-	require.Equal(t, []string{"suggestions-status"}, flags[7].Names())
-	require.Equal(t, []string{"suggestions-only"}, flags[8].Names())
+	var names []string
+	for _, flag := range flags {
+		names = append(names, flag.Names()...)
+	}
+	require.ElementsMatch(t, []string{"picker", "suggestions", "suggestions-double-tab", "suggestions-click",
+		"suggestions-adapter", "install-suggestions", "auto-suggestions", "uninstall-suggestions", "suggestions-status", "suggestions-only"}, names)
 	ConfigureCompletion(&cli.Command{})
 }
 

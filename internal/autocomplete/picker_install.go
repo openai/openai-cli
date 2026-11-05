@@ -29,9 +29,11 @@ type PickerInstallation struct {
 	Profile    string
 	OptOutPath string // Optional shared marker for managed fish activation.
 	// The zero value preserves the existing picker namespace and script format.
-	integration string
-	executable  string
-	doubleTab   bool
+	integration     string
+	executable      string
+	doubleTab       bool
+	keepBindings    bool
+	afterShellSetup bool
 }
 
 type PickerInstallResult struct {
@@ -66,6 +68,10 @@ type pickerFileSnapshot struct {
 // all startup profiles and its opt-out preference. Its lock is distinct from
 // the per-file transaction locks used by InstallPicker and RemovePicker.
 func WithPickerSetupLock(ctx context.Context, directory string, change func() error) error {
+	return withPickerSetupRoot(ctx, directory, func(*os.Root) error { return change() })
+}
+
+func withPickerSetupRoot(ctx context.Context, directory string, change func(*os.Root) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -82,7 +88,7 @@ func WithPickerSetupLock(ctx context.Context, directory string, change func() er
 		return err
 	}
 	defer lock.Close()
-	return change()
+	return change(root)
 }
 
 // InstallPicker persists normal completion and the optional picker hook. The
@@ -211,6 +217,9 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	}
 	ownedPrevious := installed != nil && pickerScriptMatchesProfile(options, callerProfile, *installed)
 	if installed != nil {
+		if options.keepBindings {
+			options.doubleTab = installed.DoubleTab
+		}
 		options.Directory = filepath.Dir(installed.Script)
 		if !ownedPrevious {
 			// Older metadata cannot recover the spelling used for its profile
@@ -285,6 +294,10 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 			return result, errors.New("shell integration script path is already occupied; existing files were kept")
 		}
 		block := renderPickerBlock(next)
+		if options.afterShellSetup && len(after) != 0 {
+			// The installer can restore its PATH selection after an existing loader.
+			before, after = withoutPickerBlock(before, after), nil
+		}
 		desired = append(append(append([]byte(nil), before...), block...), after...)
 		if len(desired) > pickerInstallLimit {
 			return result, errors.New("shell startup file exceeds the setup size limit")

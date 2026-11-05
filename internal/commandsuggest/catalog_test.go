@@ -23,7 +23,14 @@ func TestCatalogUsesCurrentDefinitionsWithoutActions(t *testing.T) {
 	}
 	children := func(c *cli.Command) []*cli.Command { return c.VisibleCommands() }
 	got := Catalog(root, "openai", nil, children, examples)
-	require.Equal(t, []Candidate{{Command: "openai models --help", path: "models"}, {Command: "openai models list", Description: "List available models", path: "models list"}, {Command: "openai models list --format json", Description: "Print JSON"}}, got)
+	require.Len(t, got, 3)
+	require.Equal(t, "openai models --help", got[0].Command)
+	require.Equal(t, "models", got[0].path)
+	require.Equal(t, "openai models list", got[1].Command)
+	require.Equal(t, "models list", got[1].path)
+	require.Equal(t, "List available models", got[1].Description)
+	require.Equal(t, "openai models list --format json", got[2].Command)
+	require.Equal(t, "Print JSON", got[2].Description)
 	root.Commands = append(root.Commands, &cli.Command{Name: "future"})
 	require.Equal(t, "openai future", Catalog(root, "openai", nil, children, examples)[3].Command)
 	require.False(t, called)
@@ -85,5 +92,38 @@ func TestCatalogRetiredCommandsOfferTheirDeclaredReplacement(t *testing.T) {
 			}
 			return nil
 		})
-	require.Equal(t, []Candidate{{Command: "openai replacement --name example", Description: "Replacement operation"}, {Command: "openai replacement", path: "replacement"}}, got)
+	require.Len(t, got, 2)
+	require.Equal(t, "openai replacement --name example", got[0].Command)
+	require.Equal(t, "Replacement operation", got[0].Description)
+	require.Equal(t, "openai replacement", got[1].Command)
+	require.Equal(t, "replacement", got[1].path)
+}
+
+func TestBrowseUsesCommandNamesAndPreservesRecentOrder(t *testing.T) {
+	root := &cli.Command{Commands: []*cli.Command{{Name: "zebra"}, {Name: "Banana"}, {Name: "apple"}}}
+	const native = "& '/tmp/a b/openai'"
+	const bash = "'/tmp/a b/openai'"
+	examples := func(_ *cli.Command, path string) []Candidate {
+		if path == "Banana" {
+			return []Candidate{
+				Example(bash, "zebra --output file", "Print a zebra"),
+				Example(bash, "--format json Banana", "Print a banana"),
+			}
+		}
+		return nil
+	}
+	catalog := Catalog(root, native, nil, (*cli.Command).VisibleCommands, examples)
+	picker := newCommandPicker(catalog, "Explore commands", false)
+	var commands []string
+	for _, i := range picker.matches {
+		commands = append(commands, catalog[i].Command)
+	}
+	require.Equal(t, []string{
+		native + " apple", native + " Banana", bash + " --format json Banana",
+		native + " zebra", bash + " zebra --output file",
+	}, commands)
+
+	recent, err := ReadCandidates(strings.NewReader("openai zebra\nopenai apple\n"))
+	require.NoError(t, err)
+	require.Equal(t, []int{0, 1}, newCommandPicker(recent, "Recent commands", true).matches)
 }

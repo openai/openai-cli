@@ -25,10 +25,10 @@ profile_name=.zshrc
 login_profile=
 case $#:${1:-} in
     0:) ;;
-    2:--bash) [ "$package" = true ] || fail 'Bash setup requires the Linux package.'
-        profile_dir=$2; profile_name=.bashrc ;;
+    2:--bash) [ "$2" = "${HOME:-}" ] || fail 'Bash startup files must use the current HOME directory.'
+        profile_dir=$2; [ -n "$profile_dir" ] || fail 'Supply the directory containing .bashrc.'; profile_name=.bashrc ;;
     2:--zsh) profile_dir=$2; [ -n "$profile_dir" ] || fail 'Supply the directory containing .zshrc.' ;;
-    *) fail 'Usage: install.sh [--require-gh] [--zsh DIRECTORY]' ;;
+    *) fail 'Usage: install.sh [--require-gh] [--zsh DIRECTORY | --bash DIRECTORY]' ;;
 esac
 system=$(uname -s)
 case $system in
@@ -277,6 +277,8 @@ if [ -n "$profile_dir" ]; then
         [ -n "$2" ] || return 1
         if [ "$1" = .zlogin ]; then
             set -- __openai_zsh_login_profile "$profile_dir" "$2"
+        elif [ "$package" = false ] && [ "$profile_name" = .bashrc ]; then
+            set -- __openai_archive_shell_profile "$profile_dir" "$2" "$1"
         elif [ "$package" = true ]; then
             set -- __openai_linux_package_profile "$profile_dir" "$2" "$1"
         else
@@ -297,6 +299,16 @@ if [ -n "$profile_dir" ]; then
 fi
 clean_stage "$stage"
 trap - EXIT
+# A sourced installer sets up insertion once in the calling shell and its startup files.
+# An explicitly shell-aware standalone install can still prepare future sessions.
+if [ -n "$profile_dir" ] && [ "${OPENAI_CLI_SOURCED_INSTALL:-}" != 1 ]; then
+    case $profile_name in
+        .bashrc) set -- bash ;;
+        *) set -- zsh --profile "$profile_dir/$profile_name" ;;
+    esac
+    PATH="$HOME/.openai/bin:$PATH" "$HOME/.openai/bin/openai" @completion "$@" --auto-suggestions >/dev/null ||
+        printf '%s\n' 'The CLI is installed. Prompt insertion setup could not finish.' >&2
+fi
 if [ "$transaction" = true ] && [ "$readiness" = ready ]; then
     printf 'Automatic updates are enabled for OpenAI CLI %s at $HOME/.openai/bin/openai.\n' "$active"
 else

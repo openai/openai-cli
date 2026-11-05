@@ -83,7 +83,7 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 	completion.Flags = append(completion.Flags,
 		&cli.BoolFlag{Name: "install-picker", Usage: "Enable Tab shortcuts in future shell sessions"},
 		&cli.BoolFlag{Name: "uninstall-picker", Usage: "Remove the managed Tab shortcut setup"},
-		&cli.BoolFlag{Name: "automatic", Usage: "Installer setup for the preferred shell; preserve a previous opt-out"},
+		&cli.BoolFlag{Name: "automatic", Usage: "Requires --install-picker. Omit the shell name and --profile. Setup selects the preferred shell and honors opt-outs."},
 		&cli.StringFlag{Name: "profile", Usage: "Use this startup file; required for zsh unless ZDOTDIR is exported and absolute"},
 	)
 	next := completion.Action
@@ -91,16 +91,14 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 		install, remove := command.Bool("install-picker"), command.Bool("uninstall-picker")
 		if !install && !remove {
 			if command.Bool("automatic") || command.IsSet("profile") {
-				const message = "Use --install-picker or --uninstall-picker with setup options."
-				return &localcommands.LocalError{Message: message, Cause: cli.Exit(message, 2)}
+				return pickerSetupUsageError(ctx, command, "Use --install-picker or --uninstall-picker with setup options.")
 			}
 			return next(ctx, command)
 		}
 		if install && remove || command.Bool("picker") || command.Args().Len() > 1 ||
 			command.IsSet("profile") && command.String("profile") == "" ||
 			command.Bool("automatic") && (remove || command.IsSet("profile") || command.Args().Len() > 0) {
-			const message = "Choose one setup action. Automatic setup does not accept a shell or profile override."
-			return &localcommands.LocalError{Message: message, Cause: cli.Exit(message, 2)}
+			return pickerSetupUsageError(ctx, command, "Choose one setup action. Automatic setup does not accept a shell or profile override.")
 		}
 		shell := command.Args().First()
 		if shell == "" && !command.Bool("automatic") {
@@ -167,6 +165,11 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 		}
 		return receipt(ctx, message)
 	}
+}
+
+func pickerSetupUsageError(ctx context.Context, command *cli.Command, message string) error {
+	message += " " + clihelp.CompletionSetupGuidance(ctx, command.Root())
+	return &localcommands.LocalError{Message: message, Cause: cli.Exit(message, 2)}
 }
 
 func imagePickerShellSetupFailure(command *cli.Command, err error, remove bool) error {
