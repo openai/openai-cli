@@ -31,8 +31,8 @@ func TestGuideHelpWrapsProseAndPreservesShellLines(t *testing.T) {
 }
 
 func TestGuideHelpStylesLabelsAndSeparatesTerminalPrompt(t *testing.T) {
-	const guide = "Shell setup\n\nChoose a command:\n   openai help setup admin\n"
-	const plain = "Shell setup\n\nChoose a command:\n  openai help setup admin\n"
+	const guide = "Shell setup\n\nCOMMANDS\nChoose a command:\n   openai help setup admin\n"
+	const plain = "Shell setup\n\nCOMMANDS\nChoose a command:\n  openai help setup admin\n"
 	root := &cli.Command{Name: "openai", Writer: &bytes.Buffer{}}
 	if got := formatGuide(root, guide); got != plain {
 		t.Fatalf("piped guide = %q, want %q", got, plain)
@@ -40,12 +40,13 @@ func TestGuideHelpStylesLabelsAndSeparatesTerminalPrompt(t *testing.T) {
 	if !welcomeTerminal(os.Stdout) {
 		t.Skip("terminal styles and prompt spacing require a PTY")
 	}
+	setHelpTerminalColors(t)
 	root.Writer = &welcomeTerminalBuffer{}
 	style := commandHelpStyle(root)
-	want := style.render(style.section, "Shell setup") + "\n\n" +
+	want := "\x1b[1mShell setup\x1b[0m\n\n" + style.render(style.section, "COMMANDS") + "\n" +
 		style.render(style.note, "Choose a command:") + "\n  openai help setup admin\n\n"
 	for _, source := range []string{guide, guide + "\n"} {
-		if got := formatGuide(root, source); got != want {
+		if got := strings.ReplaceAll(formatGuide(root, source), "\x1b[m", "\x1b[0m"); got != strings.ReplaceAll(want, "\x1b[m", "\x1b[0m") {
 			t.Fatalf("terminal guide = %q, want %q", got, want)
 		}
 	}

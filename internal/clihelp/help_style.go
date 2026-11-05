@@ -31,8 +31,12 @@ func commandHelpStyle(command *cli.Command) helpStyle {
 	return newHelpStyle(profile)
 }
 
+// Match the welcome screen: emphasize the title by weight, sections by color,
+// and leave the terminal foreground available for the text users need to read.
 type helpStyle struct {
 	profile colorprofile.Profile
+	text    lipgloss.Style
+	title   lipgloss.Style
 	section lipgloss.Style
 	note    lipgloss.Style
 	value   lipgloss.Style
@@ -51,6 +55,8 @@ func newHelpStyle(profile colorprofile.Profile) helpStyle {
 	}
 	return helpStyle{
 		profile: profile,
+		text:    lipgloss.NewStyle(),
+		title:   lipgloss.NewStyle().Bold(true),
 		section: lipgloss.NewStyle().Foreground(lipgloss.Color(accent)),
 		note:    secondary,
 		value:   secondary,
@@ -89,17 +95,17 @@ func helpDescriptionColumn(width int, names []string) int {
 	return column
 }
 
-func (s helpStyle) entry(name, description, label string, width, column int) string {
+func (s helpStyle) entry(name, description, label string, descriptionStyle lipgloss.Style, width, column int) string {
 	// Keep command tokens and insertion links intact when columns cannot fit.
 	if column == 0 {
-		return "  " + label + "\n" + s.render(s.note, wrapEntryDescription(description, "    ", width))
+		return "  " + label + "\n" + s.render(descriptionStyle, wrapEntryDescription(description, "    ", width))
 	}
 	indent := strings.Repeat(" ", column)
 	details := wrapEntryDescription(description, indent, width)
 	if details == "" {
 		return "  " + label + "\n"
 	}
-	return "  " + label + strings.Repeat(" ", column-2-ansi.StringWidth(name)) + s.render(s.note, strings.TrimPrefix(details, indent))
+	return "  " + label + strings.Repeat(" ", column-2-ansi.StringWidth(name)) + s.render(descriptionStyle, strings.TrimPrefix(details, indent))
 }
 
 // Avoid leaving a single word on the final line of a command summary.
@@ -122,9 +128,17 @@ func wrapEntryDescription(description, indent string, width int) string {
 }
 
 func (s helpStyle) flag(name, value string) string {
-	name = s.render(s.section, name)
 	if value != "" {
 		name += s.render(s.value, "="+value)
 	}
 	return name
+}
+
+func (s helpStyle) flagLabels(heading string, nameStyle lipgloss.Style) []string {
+	labels := strings.Split(heading, ", ")
+	for i, label := range labels {
+		name, _, _ := strings.Cut(label, "=")
+		labels[i] = s.render(nameStyle, name) + s.render(s.value, label[len(name):])
+	}
+	return labels
 }

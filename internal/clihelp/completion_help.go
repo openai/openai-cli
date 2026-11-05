@@ -39,7 +39,7 @@ func completionHelp(command *cli.Command, invocation string, width, navigationWi
 	shell := terminal.ParentShell(context.Background())
 	native, bash := helpInvocations(command.Root(), invocation, shell)
 	topic := completionTopic(shell)
-	heading("Shell completion")
+	fmt.Fprintln(&out, style.render(style.title, "Shell completion"))
 	if fullReferenceRequested(command) {
 		if native == "" {
 			note("Pass @completion and a shell name to this executable to print its completion script.")
@@ -67,7 +67,7 @@ func completionHelp(command *cli.Command, invocation string, width, navigationWi
 		column := helpDescriptionColumn(navigationWidth, names)
 		for i, label := range names {
 			name, value, _ := strings.Cut(label, "=")
-			out.WriteString(style.entry(label, descriptions[i], style.flag(name, value), navigationWidth, column))
+			out.WriteString(style.entry(label, descriptions[i], style.flag(name, value), style.text, navigationWidth, column))
 		}
 		return out.String()
 	}
@@ -79,7 +79,7 @@ func completionHelp(command *cli.Command, invocation string, width, navigationWi
 	explore := native + " explore"
 	options := native + " help --all " + topic
 	column := helpDescriptionColumn(navigationWidth, []string{explore, options})
-	out.WriteString(style.entry(explore, "Select a command and press Enter.", commandsuggest.Record(command, explore), navigationWidth, column))
+	out.WriteString(style.entry(explore, "Select a command and press Enter.", commandsuggest.Record(command, explore), style.text, navigationWidth, column))
 	out.WriteByte('\n')
 	switch shell {
 	case "zsh":
@@ -97,6 +97,6 @@ func completionHelp(command *cli.Command, invocation string, width, navigationWi
 	}
 	note("Edit the command, then press Enter to run it.")
 	out.WriteByte('\n')
-	out.WriteString(style.entry(options, "Show setup options.", commandsuggest.Record(command, options), navigationWidth, column))
+	out.WriteString(style.entry(options, "Show setup options.", commandsuggest.Record(command, options), style.note, navigationWidth, column))
 	return out.String()
 }

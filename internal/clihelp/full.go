@@ -172,11 +172,11 @@ func commonFlagRows(command *cli.Command, path, example string, width int) (stri
 		description := commonFlagDescription(command, path, flag)
 		label := labels[i]
 		if column == 0 && ansi.StringWidth(label)+2 > width {
-			writeFlagLabels(&out, styledFlagLabels(label, style), "  ", width)
-			out.WriteString(style.render(style.note, wrapPlainDescription(description, "    ", width)))
+			writeFlagLabels(&out, style.flagLabels(label, style.text), "  ", width)
+			out.WriteString(wrapPlainDescription(description, "    ", width))
 			continue
 		}
-		out.WriteString(style.entry(label, description, style.flag(label, ""), width, column))
+		out.WriteString(style.entry(label, description, label, style.text, width, column))
 	}
 	return out.String(), localCount == len(selected)
 }
@@ -282,34 +282,25 @@ func compactFlagList(command *cli.Command, flags []cli.Flag, width int, style he
 	}
 	var out strings.Builder
 	for i, heading := range headings {
-		label := strings.Join(styledFlagLabels(heading, style), ", ")
-		out.WriteString(style.entry(heading, descriptions[i], label, width, column))
+		label := strings.Join(style.flagLabels(heading, style.text), ", ")
+		out.WriteString(style.entry(heading, descriptions[i], label, style.text, width, column))
 	}
 	return out.String()
 }
 
-func styledFlagLabels(heading string, style helpStyle) []string {
-	labels := strings.Split(heading, ", ")
-	for i, label := range labels {
-		name, value, hasValue := strings.Cut(label, "=")
-		if hasValue && value == "" {
-			labels[i] = style.render(style.section, label)
-		} else {
-			labels[i] = style.flag(name, value)
-		}
-	}
-	return labels
-}
-
 func flagList(command *cli.Command, flags []cli.Flag, width int) string {
 	style := commandHelpStyle(command)
+	nameStyle := style.text
+	if requestedHelpFlag(command) != nil {
+		nameStyle = style.title
+	}
 	var out strings.Builder
 	for i, flag := range flags {
 		if i > 0 {
 			out.WriteByte('\n')
 		}
 		heading, description := flagReference(command, flag)
-		writeFlagLabels(&out, styledFlagLabels(heading, style), "    ", width)
+		writeFlagLabels(&out, style.flagLabels(heading, nameStyle), "    ", width)
 		writeFlagDescription(&out, description, width, style)
 	}
 	return out.String()

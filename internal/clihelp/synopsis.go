@@ -21,7 +21,7 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 				if line == name || strings.HasPrefix(line, name+" ") {
 					title = name
 				}
-				line = style.render(style.section, title) + style.render(style.value, strings.TrimPrefix(line, title))
+				line = style.render(style.title, title) + style.render(style.value, strings.TrimPrefix(line, title))
 			}
 			lines = append(lines, "  "+line)
 		}
@@ -94,7 +94,7 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 	} else if fullReferenceRequested(command) && len(command.VisiblePersistentFlags()) > 0 {
 		arguments = append(arguments, "["+style.render(style.value, "GLOBAL FLAG ...")+"]")
 	}
-	return style.synopsis(style.render(style.section, name), arguments, width)
+	return style.synopsis(style.render(style.title, name), arguments, width)
 }
 
 // On a help page, the framework's own “show help” entry adds no information.

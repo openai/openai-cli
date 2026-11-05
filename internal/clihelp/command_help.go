@@ -114,7 +114,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 		if banner != "" {
 			out.WriteString(banner)
 		} else {
-			out.WriteString(heading(welcomeTitle))
+			out.WriteString(style.render(style.title, welcomeTitle))
 			if version := welcomeVersion(command.Version); version != "" {
 				separator := "  "
 				if ansi.StringWidth(welcomeTitle+separator+version) > width {
@@ -129,7 +129,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 		out.WriteString(style.synopsis(name, []string{"[GLOBAL FLAGS]", "COMMAND"}, width))
 	} else if fullReferenceRequested(command) {
 		out.WriteString(heading("NAME") + "\n")
-		writeCommandIdentity(&out, name, strings.TrimSuffix(summary, "."), width)
+		writeCommandIdentity(&out, style.render(style.title, name), strings.TrimSuffix(summary, "."), width)
 		out.WriteString("\n" + heading("SYNOPSIS") + "\n")
 		out.WriteString(commandSynopsis(command, name, invocation, width))
 	} else {
@@ -187,7 +187,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 					out.WriteByte('\n')
 				}
 				label := commandsuggest.Record(command, run+" "+example.Command)
-				out.WriteString(style.entry(run+" "+example.Command, strings.TrimSuffix(example.Description, ":")+".", label, navigationWidth, column))
+				out.WriteString(style.entry(run+" "+example.Command, strings.TrimSuffix(example.Description, ":")+".", label, style.note, navigationWidth, column))
 				continue
 			}
 			if i > 0 {
@@ -330,7 +330,7 @@ func compactCommandHelp(command *cli.Command, invocation, path, summary string, 
 		(supplied || strings.TrimSpace(command.Description) == "") {
 		return out.String()
 	}
-	out.WriteString("\n" + style.render(style.section, referenceTitle) + "\n")
+	out.WriteString("\n" + style.render(style.note, referenceTitle) + "\n")
 	if reference := fullReferenceCommand(command, invocation, path); reference != "" {
 		fmt.Fprintf(&out, "  %s\n", commandsuggest.Record(command, reference))
 	} else {
@@ -346,7 +346,7 @@ func commandIntroduction(command *cli.Command, invocation, path, summary string,
 	name := strings.TrimSpace(invocation + " " + path)
 	if command.Metadata["help-command-section"] == "Retired commands" {
 		style := commandHelpStyle(command)
-		return style.render(style.section, name) + "\n" + wrapPlainDescription(summary, "  ", width)
+		return style.render(style.title, name) + "\n" + wrapPlainDescription(summary, "  ", width)
 	}
 	return strings.TrimPrefix(commandSynopsis(command, name, invocation, width), "  ") + wrapPlainDescription(summary, "  ", width)
 }

@@ -58,7 +58,9 @@ func formatGuide(command *cli.Command, text string) string {
 		}
 		wrapped := strings.TrimSuffix(wrapPlainDescription(trimmed, indent, width), "\n")
 		switch {
-		case spaces == 0 && (out.Len() == 0 || strings.ToUpper(plain) == plain && strings.IndexFunc(plain, unicode.IsLetter) >= 0):
+		case spaces == 0 && out.Len() == 0:
+			wrapped = style.render(style.title, wrapped)
+		case spaces == 0 && strings.ToUpper(plain) == plain && strings.IndexFunc(plain, unicode.IsLetter) >= 0:
 			wrapped = style.render(style.section, wrapped)
 		case strings.HasSuffix(plain, ":"):
 			wrapped = style.render(style.note, wrapped)
