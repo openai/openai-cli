@@ -256,15 +256,12 @@ func explicitProfileEdits(command *cli.Command) (map[string]*string, error) {
 		if !ok || !flag.IsSet() {
 			continue
 		}
-		field := flag.Name
-		switch field {
-		case "organization", "project":
-
-		default:
-			continue
-		}
 		value := flag.Get().(string)
-		edits[field] = &value
+		if !profiles.ValidHeader(value) {
+			return nil, profileFailure("Profile organization and project values must contain valid UTF-8 without controls.", nil)
+		}
+		value = strings.Trim(value, " \t") // Match HTTP field whitespace on the wire.
+		edits[flag.Name] = &value
 	}
 	for _, field := range command.StringSlice("unset") {
 		if field != "organization" && field != "project" && field != "base_url" {
@@ -277,11 +274,6 @@ func explicitProfileEdits(command *cli.Command) (map[string]*string, error) {
 	}
 	if len(edits) == 0 {
 		return nil, profileFailure("No saved edits were specified. Use profile set flags after the command name, or use --unset FIELD.", nil)
-	}
-	for _, value := range edits {
-		if value != nil && !profiles.ValidHeader(*value) {
-			return nil, profileFailure("Profile organization and project values must contain valid UTF-8 without controls.", nil)
-		}
 	}
 	return edits, nil
 }

@@ -118,7 +118,8 @@ func ResolveProjectContext(root *cli.Command, lookup func(string) (string, bool)
 			return ContextValue{value, "environment:" + variable}
 		}
 		if saved != nil {
-			return ContextValue{*saved, "profile:" + name}
+			// Earlier profile files can contain surrounding HTTP field whitespace.
+			return ContextValue{strings.Trim(*saved, " \t"), "profile:" + name}
 		}
 		if inherited.Values(header) != nil {
 			return ContextValue{inherited.Get(header), "environment:OPENAI_CUSTOM_HEADERS"}

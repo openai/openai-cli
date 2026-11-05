@@ -44,7 +44,7 @@ Each context field follows this order.
 4. The selected profile's saved field.
 5. `OPENAI_CUSTOM_HEADERS` and the SDK defaults.
 
-An explicit empty field overrides lower defaults.
+Saving an organization or project trims surrounding spaces. An explicit empty field overrides lower defaults.
 Remove a field with `openai profile set work --unset project`.
 Delete an active profile with `openai profile delete work --deactivate`.
 

@@ -83,14 +83,46 @@ func TestMainProfileContextReachesRequests(t *testing.T) {
 	require.Equal(t, "proj_next", decodeAuthStatus(t, run(nil, nil, "auth", "status", "--format=json")).Project.Value)
 }
 
-func TestMainProfileContextPreservesMalformedRegistry(t *testing.T) {
+func TestMainProfileHeaderWhitespaceMatchesWire(t *testing.T) {
+	server, requests := globalFlagsServer(t, globalFlagsPage)
 	home := t.TempDir()
-	env := profileProcessEnvironment(home)
+	env := append(profileProcessEnvironment(home), globalFlagsEnv(server, "OPENAI_CUSTOM_HEADERS=OpenAI-Project: lower_default")...)
 	run := func(args ...string) mainDispatchResult {
+		t.Helper()
 		return runMainDispatchWithEnv(t, "bash", env, append([]string{"openai"}, args...)...)
 	}
-	got := run("profile", "create", "work")
-	require.Zero(t, got.code, "%s", got.stderr)
+	require.Zero(t, run("profile", "create", "work").code)
+	require.Zero(t, run("profile", "activate", "work").code)
+	check := func(project string) {
+		t.Helper()
+		report := decodeAuthStatus(t, run("auth", "status", "--format=json"))
+		require.Equal(t, authStatusValueResult{Value: project, Source: "profile:work"}, report.Project)
+		got := run("models", "list", "--format=raw")
+		require.Zero(t, got.code, "%s", got.stderr)
+		require.Equal(t, project, globalFlagsOneRequest(t, requests).header.Get("OpenAI-Project"))
+	}
+	for _, tc := range []struct{ saved, effective string }{
+		{"proj_team", "proj_team"}, {"", ""}, {"   ", ""}, {"  proj team/a  ", "proj team/a"},
+	} {
+		got := run("profile", "set", "work", "--project="+tc.saved, "--format=json")
+		require.Zero(t, got.code, "%s", got.stderr)
+		var receipt struct {
+			Profile struct{ Values map[string]string }
+		}
+		require.NoError(t, json.Unmarshal([]byte(got.stdout), &receipt))
+		require.Equal(t, tc.effective, receipt.Profile.Values["project"])
+		check(tc.effective)
+	}
+	require.NotZero(t, run("profile", "set", "work", "--project=\tproj_bad").code)
+	check("proj team/a")
+	// Restore an older profile file and verify its effective value in a fresh process.
+	path := profileRegistryPath(t, home)
+	require.NoError(t, os.WriteFile(path, []byte(`{"version":1,"default_profile":"work","profiles":{"work":{"project":" proj_old "}}}`), 0600))
+	check("proj_old")
+}
+
+func profileRegistryPath(t *testing.T, home string) string {
+	t.Helper()
 	var registry string
 	require.NoError(t, filepath.WalkDir(home, func(path string, entry os.DirEntry, err error) error {
 		if err == nil && entry.Name() == "profiles.json" {
@@ -99,6 +131,18 @@ func TestMainProfileContextPreservesMalformedRegistry(t *testing.T) {
 		return err
 	}))
 	require.NotEmpty(t, registry)
+	return registry
+}
+
+func TestMainProfileContextPreservesMalformedRegistry(t *testing.T) {
+	home := t.TempDir()
+	env := profileProcessEnvironment(home)
+	run := func(args ...string) mainDispatchResult {
+		return runMainDispatchWithEnv(t, "bash", env, append([]string{"openai"}, args...)...)
+	}
+	got := run("profile", "create", "work")
+	require.Zero(t, got.code, "%s", got.stderr)
+	registry := profileRegistryPath(t, home)
 	const damaged = "{damaged"
 	require.NoError(t, os.WriteFile(registry, []byte(damaged), 0600))
 	got = run("profile", "set", "work", "--project=proj_other")
