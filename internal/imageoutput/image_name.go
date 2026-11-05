@@ -22,7 +22,7 @@ const maxImageSequence int64 = 1<<63 - 1
 func NormalizeName(name string) (string, error) {
 	extension := filepath.Ext(name)
 	switch strings.ToLower(extension) {
-	case ".png", ".jpeg", ".jpg", ".webp":
+	case ".png", ".jpeg", ".jpg", ".webp", ".gif", ".svg":
 		name = strings.TrimSuffix(name, extension)
 	}
 	if err := ValidateName(name); err != nil {

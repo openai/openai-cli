@@ -539,11 +539,11 @@
     },
     "generated/commands/image.go": {
       "mode": "100644",
-      "sha256": "16f8a57e301d6ecbfbaa4481c00e4fe3e61422c3c0a0dd5f264788582bdeb078"
+      "sha256": "30651acf029924012c463aeeb662de06adc8db0aff535454da8f9d04bb56aa20"
     },
     "generated/commands/image_test.go": {
       "mode": "100644",
-      "sha256": "af4b67c668f266f4d502cd758eb280c751a8e71b9c6963bc926fdc0d5a234494"
+      "sha256": "2c1e83442c56df6eab257c973bf311a08f55045d894e51b9483fd99a44636f5d"
     },
     "generated/commands/inputitem.go": {
       "mode": "100644",
