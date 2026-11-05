@@ -53,7 +53,7 @@ func TestSuggestedImageModelCommandsReflectShownChoices(t *testing.T) {
 		imageModelTestRow("retired", imagemodels.StatusRetired, ""),
 	}}
 	var out, hints bytes.Buffer
-	require.NoError(t, writeImageModels(&out, report, false, "openai", &hints, root))
+	require.NoError(t, writeImageModels(&out, report, false, imageModelInvocation{binary: "openai"}, &hints, root))
 	require.Equal(t, commandRecorder{
 		{&hints, "", "openai images models --all"},
 		{&hints, "", `openai images generate --prompt "A tiny orange robot" --model gpt-image-1`},
@@ -61,7 +61,7 @@ func TestSuggestedImageModelCommandsReflectShownChoices(t *testing.T) {
 	require.NotContains(t, out.String(), "Choose a model:")
 	require.Contains(t, hints.String(), "Choose a model:")
 	recorder = nil
-	require.NoError(t, writeImageModels(&out, report, false, "openai", nil, root))
+	require.NoError(t, writeImageModels(&out, report, false, imageModelInvocation{binary: "openai"}, nil, root))
 	require.Empty(t, recorder, "suppressed hints must not register commands")
 }
 

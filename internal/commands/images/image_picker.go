@@ -21,7 +21,6 @@ import (
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/forminput"
 	"github.com/openai/openai-cli/internal/readable"
-	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-go/v3"
 )
@@ -31,6 +30,7 @@ type imagePickerOptions struct {
 	Prompt string
 	// Shell selects quoting for the displayed command, never execution.
 	Shell        string
+	connection   imagePickerConnection
 	initial      *imagePickerSettings
 	resuming     bool
 	initialNote  string
@@ -49,6 +49,7 @@ type imagePickerResult struct {
 	ExitCode   int
 	settings   imagePickerSettings
 	shell      string
+	connection imagePickerConnection
 	changed    bool
 	draftSaved bool
 	workspace  *imagePickerWorkspace
@@ -275,6 +276,7 @@ type imagePicker struct {
 	settings       imagePickerSettings
 	page, field    string
 	shell          string
+	connection     imagePickerConnection
 	focus          string
 	returnPage     string
 	returnSelected int
@@ -313,6 +315,7 @@ func newImagePicker(options imagePickerOptions) (*imagePicker, error) {
 		m.settings.prompt = options.Prompt
 	}
 	m.shell = options.Shell
+	m.connection = options.connection
 	m.note = options.initialNote
 	return m, nil
 }
@@ -622,9 +625,11 @@ func (m *imagePicker) activate(row imagePickerRow) tea.Cmd {
 	case "more":
 		m.page, m.selected = "more", 0
 	case "generate", "print":
-		if row.id == "print" && cliterminal.ShellQuoter(m.shell) == nil {
-			m.note = imagePickerUnsupportedShell
-			return nil
+		if row.id == "print" {
+			if unavailable := m.connection.unavailable(m.shell); unavailable != "" {
+				m.note = unavailable
+				return nil
+			}
 		}
 		if m.validPrompt() {
 			return m.submitWithFolder(row.id == "print")

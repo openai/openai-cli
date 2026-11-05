@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -205,6 +206,45 @@ func TestImagePickerUnsupportedShellSelection(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
 			require.ErrorIs(t, finishImagePickerSelection(ctx, &output, &diagnostics, path, &result), context.Canceled)
+		})
+	}
+}
+
+func TestImagePickerCopiedConnection(t *testing.T) {
+	const key = "synthetic-print-key"
+	t.Setenv("OPENAI_API_KEY", key)
+	for _, tc := range []struct {
+		name, project string
+		hidden        bool
+	}{{"overrides", "proj Staging", false}, {"key in project", "proj_" + key, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := &cli.Command{Name: "openai", Flags: []cli.Flag{&cli.StringFlag{Name: "project"}, &cli.StringFlag{Name: "organization"}}}
+			root.Action = func(ctx context.Context, c *cli.Command) error {
+				m, err := newImagePicker(imagePickerOptions{Prompt: "synthetic scene", Shell: "bash", connection: pickerConnection(c)})
+				require.NoError(t, err)
+				m.finishSubmission(m.settings, true)
+				result := m.snapshotResult(m.settings)
+				var out bytes.Buffer
+				path := filepath.Join(t.TempDir(), "draft.json")
+				err = finishImagePickerSelection(ctx, &out, io.Discard, path, &result)
+				preview := strings.Join(m.commandLines(250), "")
+				if tc.hidden {
+					require.ErrorContains(t, err, "Command hidden")
+					require.Empty(t, out.String())
+					require.NotContains(t, preview, key)
+					return nil
+				}
+				require.NoError(t, err)
+				want := cliterminal.FormatCommand(append([]string{"--project=" + tc.project, "--organization=org_test"}, m.settings.args()...), "bash")
+				require.Equal(t, want+"\n", out.String())
+				require.Equal(t, want, preview)
+				require.Equal(t, m.settings.args(), result.Args)
+				data, err := os.ReadFile(path)
+				require.NoError(t, err)
+				require.NotContains(t, string(data), tc.project)
+				return nil
+			}
+			require.NoError(t, root.Run(t.Context(), []string{"openai", "--project=" + tc.project, "--organization=org_test"}))
 		})
 	}
 }

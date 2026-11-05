@@ -62,7 +62,7 @@ func PreparedBodyForTest(command *cli.Command) io.ReadCloser {
 func InterruptForTest(err error) error      { return &imageLoadingInterrupt{err} }
 func InteractiveExitForTest(code int) error { return interactiveImageExit{code} }
 func ModelsErrorForTest(invocation string, extra bool, results []imagemodels.Result) *ModelsError {
-	return &ModelsError{invocation: invocation, extraArguments: extra, results: results}
+	return &ModelsError{invocation: imageModelInvocation{binary: invocation}, extraArguments: extra, results: results}
 }
 func ShellPathsForTest(home, config, zdotdir string) imagePickerShellPaths {
 	return imagePickerShellPaths{home: home, config: config, zdotdir: zdotdir}

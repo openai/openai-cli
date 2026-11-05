@@ -1,6 +1,10 @@
 package images
 
-import "strings"
+import (
+	"strings"
+
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
+)
 
 func (s imagePickerSettings) args() []string {
 	prompt := s.prompt
@@ -20,3 +24,32 @@ func (s imagePickerSettings) args() []string {
 }
 
 const imagePickerUnsupportedShell = "Command printing needs Bash, zsh, fish or PowerShell 7."
+
+type imagePickerConnection struct {
+	invocation string
+	args       []string
+	unsafe     bool
+}
+
+// Connection options belong in the displayed command only. The current request already has them.
+func (p imagePickerConnection) display(args []string, shell string) (command, unavailable string) {
+	if why := p.unavailable(shell); why != "" {
+		return "", why
+	}
+	args = append(p.args[:len(p.args):len(p.args)], args...)
+	command = cliterminal.FormatCommand(args, shell)
+	if p.invocation != "" {
+		command = p.invocation + strings.TrimPrefix(command, "openai")
+	}
+	return command, ""
+}
+
+func (p imagePickerConnection) unavailable(shell string) string {
+	if p.unsafe {
+		return "Command hidden because it requires private request options."
+	}
+	if cliterminal.ShellQuoter(shell) == nil {
+		return imagePickerUnsupportedShell
+	}
+	return ""
+}

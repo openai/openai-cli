@@ -94,6 +94,28 @@ func TestMainImageModelsJSONAndHeaders(t *testing.T) {
 	}
 }
 
+func TestMainImageModelsHintsKeepRequestSettings(t *testing.T) {
+	const key = "synthetic-model-hint-key"
+	for _, test := range []struct {
+		project  string
+		wantHint bool
+	}{{"proj_staging", true}, {key, false}} {
+		got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=" + key + " "},
+			"openai", "--project="+test.project, "--organization=org_team", "--base-url=http://127.0.0.1:1/v1", "images", "models", "--offline")
+		if got.code != 0 || strings.Contains(got.stdout+got.stderr, key) {
+			t.Fatalf("unsafe or failed report: %+v", got)
+		}
+		if test.wantHint {
+			want := `openai images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst --project=proj_staging --organization=org_team --base-url=http://127.0.0.1:1/v1`
+			if !strings.Contains(got.stderr, want) {
+				t.Fatalf("wrong follow-up command: %s", got.stderr)
+			}
+		} else if strings.Contains(got.stderr, "images generate") {
+			t.Fatalf("private override produced a copyable command: %s", got.stderr)
+		}
+	}
+}
+
 func TestMainImageModelsAllIncludesExactSnapshotNames(t *testing.T) {
 	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
 		mainImageModelResponse(w, r.URL.Path, "null")
@@ -165,7 +187,7 @@ func TestMainImageModelsExploreFallbackWarning(t *testing.T) {
 			if format == "explore" {
 				wantWarning = "Warning: Output format 'explore' not supported for non-terminal output; falling back to 'json'\n"
 			} else if format == "auto" {
-				wantWarning = "Choose a model:\n  openai images generate --prompt \"A tiny orange robot\" --model gpt-image-2.5-sunburst\n"
+				wantWarning = "Choose a model:\n  openai images generate --prompt \"A tiny orange robot\" --model gpt-image-2.5-sunburst --base-url=" + server.URL + "\n"
 			}
 			if got.stderr != wantWarning {
 				t.Errorf("stderr = %q; want %q", got.stderr, wantWarning)

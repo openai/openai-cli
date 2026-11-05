@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
@@ -392,7 +393,10 @@ func batchBrowserReview(cmd *cli.Command, draft *batchBrowserDraft, snapshot os.
 			project = values[len(values)-1]
 		}
 	}
-	if project == "" {
+	secrets := requestconfig.ConfiguredCredentials(root, os.LookupEnv)
+	if requestconfig.ContainsCredential(project, secrets) {
+		project = "[redacted]"
+	} else if project == "" {
 		project = "Key's default project"
 	}
 	base := cmd.String("base-url")
@@ -403,7 +407,7 @@ func batchBrowserReview(cmd *cli.Command, draft *batchBrowserDraft, snapshot os.
 		base = "https://api.openai.com/v1"
 	}
 	connection := "Configured connection"
-	if parsed, err := url.Parse(base); err == nil && parsed.Host != "" {
+	if parsed, err := url.Parse(base); err == nil && parsed.Host != "" && !requestconfig.ContainsCredential(parsed.Host, secrets) {
 		connection = parsed.Scheme + "://" + parsed.Host
 	}
 	var lines []string
@@ -442,8 +446,12 @@ func batchBrowserReview(cmd *cli.Command, draft *batchBrowserDraft, snapshot os.
 	}
 	lines = append(lines, "", "Project: "+project, "Connection: "+connection,
 		"", "Creating a batch can incur API charges.", "Leaving the browser does not cancel the remote batch.")
-	if shell := filepath.Base(os.Getenv("SHELL")); terminal.ShellQuoter(shell) != nil && (draft.csv == nil || draft.inputID != "") {
-		lines = append(lines, "", "Command arguments (reuse this session's connection settings):", terminal.FormatCommand(args, shell))
+	if shell := terminal.ParentShell(context.Background()); shell != "" && (draft.csv == nil || draft.inputID != "") {
+		if options, omit := requestconfig.NextCommandOptions(root); !omit {
+			command := terminal.FormatCommand(append(options, args...), shell)
+			invocation := clihelp.NativeInvocation(root, clihelp.DisplayInvocation(root))
+			lines = append(lines, "", "Command:", invocation+strings.TrimPrefix(command, "openai"))
+		}
 	}
 	return lines
 }

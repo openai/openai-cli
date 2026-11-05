@@ -28,18 +28,19 @@ func NextCommandOptions(root *cli.Command) (args []string, omit bool) {
 			return nil, true
 		}
 	}
+	secrets := ConfiguredCredentials(root, os.LookupEnv)
 	for _, name := range []string{"project", "organization", "base-url"} {
 		if !root.IsSet(name) {
 			continue
 		}
 		value := root.String(name)
-		if !utf8.ValidString(value) || strings.ContainsRune(value, 0) {
+		if !utf8.ValidString(value) || strings.ContainsRune(value, 0) || ContainsCredential(value, secrets) {
 			return nil, true
 		}
 		if name == "base-url" && value != "" {
 			endpoint, err := url.Parse(value)
 			if err != nil || strings.IndexFunc(value, unicode.IsControl) >= 0 || endpoint.Host == "" || endpoint.User != nil ||
-				endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" ||
+				ContainsCredential(endpoint.Path, secrets) || endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" ||
 				(endpoint.Scheme != "http" && endpoint.Scheme != "https") {
 				return nil, true
 			}
