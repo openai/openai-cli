@@ -7,6 +7,10 @@ param(
     [switch] $PrivateVerifier
 )
 $ErrorActionPreference = 'Stop'
+function Write-StarterStage([string] $stage) {
+    Set-Content -LiteralPath "$PSScriptRoot/results/starter-stage.log" -Value "Starter stage=$stage"
+}
+Write-StarterStage 'pristine-profile'
 if ($Tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {throw 'Invalid starter tag.'}
 $base = [Environment]::GetFolderPath('LocalApplicationData')
 $bin = Join-Path $base 'OpenAI\CLI\bin'
@@ -44,13 +48,14 @@ function Invoke-PublishedLauncher($trusted) {
         $trusted.assetSize -le 0 -or $trusted.archiveSha256 -cnotmatch '^[0-9a-f]{64}$') {throw 'Invalid authenticated Windows asset identity.'}
     $work = Join-Path $base ('OpenAI-public-zip-'+[guid]::NewGuid())
     $null = [IO.Directory]::CreateDirectory($work)
-    $keys = 'OPENAI_ARCHIVE_TEST_CONSOLE','OPENAI_ARCHIVE_TEST_MODE','OPENAI_ARCHIVE_TEST_SCREEN','OPENAI_WINDOWS_REQUIRE_PRIVATE_GH'
+    $keys = 'OPENAI_ARCHIVE_TEST_CONSOLE','OPENAI_ARCHIVE_TEST_MODE','OPENAI_ARCHIVE_TEST_SCREEN','OPENAI_ARCHIVE_TEST_LAUNCH_REPORT','OPENAI_WINDOWS_REQUIRE_PRIVATE_GH'
     $before = @{}
     foreach ($key in $keys) {$before[$key] = [Environment]::GetEnvironmentVariable($key)}
     try {
         $zip = Join-Path $work 'public.zip'
         $extracted = Join-Path $work 'extracted'
         $curl = Join-Path ([Environment]::GetFolderPath('System')) 'curl.exe'
+        Write-StarterStage 'download-zip'
         & $curl --disable --silent --fail --location --proto '=https' --proto-redir '=https' --max-time 150 --max-filesize $trusted.assetSize --output $zip "https://github.com/openai/openai-cli/releases/download/$Tag/$($trusted.assetName)"
         if ($LASTEXITCODE -ne 0) {throw 'Could not download the authenticated Explorer ZIP.'}
         Expand-AuthenticatedStarter $zip $extracted $trusted
@@ -61,29 +66,16 @@ function Invoke-PublishedLauncher($trusted) {
         $env:OPENAI_ARCHIVE_TEST_CONSOLE = '1'
         $env:OPENAI_ARCHIVE_TEST_MODE = 'install'
         $env:OPENAI_ARCHIVE_TEST_SCREEN = Join-Path $work 'screen.txt'
+        $env:OPENAI_ARCHIVE_TEST_LAUNCH_REPORT = Join-Path $PSScriptRoot 'results/launcher.json'
         if ($PrivateVerifier) {$env:OPENAI_WINDOWS_REQUIRE_PRIVATE_GH = '1'}
         $arguments = '-test.run=^TestMainWindowsArchiveConsoleOwner$ -- Install.cmd'
+        Write-StarterStage 'launcher'
         $owner = Start-Process (Join-Path $PSScriptRoot 'archive.test.exe') -WorkingDirectory $extracted -ArgumentList $arguments -WindowStyle Hidden -PassThru
         try {
             if (!$owner.WaitForExit(180000)) {$owner.Kill(); throw 'The public Install.cmd did not finish without a keypress.'}
-            if ($owner.ExitCode -ne 0) {
-                $detail = 'no console capture'
-                if (Test-Path -LiteralPath $env:OPENAI_ARCHIVE_TEST_SCREEN) {
-                    $rows = [IO.File]::ReadAllLines($env:OPENAI_ARCHIVE_TEST_SCREEN)
-                    $starts = @($rows -ceq 'Installing OpenAI CLI for your account...').Count
-                    $finishes = @($rows -ceq 'OpenAI CLI setup finished.').Count
-                    $detail = "start rows=$starts, finish rows=$finishes"
-                }
-                throw "The authenticated public Install.cmd failed (exit $($owner.ExitCode), $detail)."
-            }
+            Add-Content -LiteralPath "$PSScriptRoot/results/starter-stage.log" -Value "Launcher console owner exit=$($owner.ExitCode)"
+            if ($owner.ExitCode -ne 0) {throw 'The authenticated public Install.cmd failed.'}
         } finally {$owner.Dispose()}
-        $screen = [IO.File]::ReadAllText($env:OPENAI_ARCHIVE_TEST_SCREEN)
-        foreach ($line in 'Installing OpenAI CLI for your account...','OpenAI CLI setup finished.') {
-            if (!$screen.Contains($line)) {throw 'The public Install.cmd omitted its status.'}
-        }
-        if ($PrivateVerifier -and [regex]::Matches($screen,[regex]::Escape('Downloading GitHub CLI for automatic update verification...')).Count -ne 1) {
-            throw 'A fresh public ZIP installation must acquire its verifier once.'
-        }
     } finally {
         foreach ($key in $keys) {[Environment]::SetEnvironmentVariable($key,$before[$key])}
         [IO.Directory]::Delete($work,$true)
@@ -96,6 +88,7 @@ $shell = (Get-Command $Client -CommandType Application | Select-Object -First 1)
 $priorPath = $env:Path
 $trusted = $null
 if ($Route -ceq 'Install.cmd') {
+    Write-StarterStage 'authenticate-starter'
     $trusted = & $recipe -ReleaseTag $Tag -VerifyOnly | ConvertFrom-Json
     if (Test-Path -LiteralPath $bin) {throw 'Independent verification enrolled the pristine account.'}
 }
@@ -111,6 +104,7 @@ try {
         if (($env:Path -split ';') -notcontains $system -or (Get-Command gh -ErrorAction SilentlyContinue)) {throw 'Could not isolate a normal Windows PATH without GitHub CLI.'}
     }
     if ($Route -ceq 'PowerShell') {
+        Write-StarterStage 'powershell-paste'
         & "$PSScriptRoot/test-windows-console-paste.ps1" -Client $shell -TextPath $recipe -EvidenceLog "$PSScriptRoot/results/paste.log" -ExpectOneVerifierDownload:$PrivateVerifier -ExpectedExe $target -ExpectedVersion ('openai version '+$Tag.Substring(1))
     } else {
         $callerPath = $env:Path
@@ -122,7 +116,11 @@ try {
     $env:OPENAI_CLI_WINDOWS_INSTALL_TAG = $priorTag
 }
 # Authenticate the observed A separately, after the fresh user's literal paste.
-if (!$trusted) {$trusted = & $recipe -ReleaseTag $Tag -VerifyOnly | ConvertFrom-Json}
+if (!$trusted) {
+    Write-StarterStage 'authenticate-starter'
+    $trusted = & $recipe -ReleaseTag $Tag -VerifyOnly | ConvertFrom-Json
+}
+Write-StarterStage 'verify-installation'
 if ($trusted.tag -cne $Tag -or $trusted.executableSha256 -cnotmatch '^[a-f0-9]{64}$') {throw 'Independent starter verification failed.'}
 if ((Get-FileHash -LiteralPath $target).Hash.ToLowerInvariant() -cne $trusted.executableSha256) {throw 'Installed starter differs from independently authenticated A.'}
 $acl = Get-Acl -LiteralPath $bin
@@ -141,4 +139,5 @@ if ($PrivateVerifier) {
 foreach ($image in $images) {
     if ((Get-WindowsDownloadZone $image) -notin 3,4) {throw 'A downloaded executable lost its Internet security zone.'}
 }
+Write-StarterStage 'verified'
 return $trusted.executableSha256

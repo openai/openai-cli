@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/openai/openai-cli/internal/windowsfile"
@@ -137,9 +138,14 @@ func installWindowsArchive(ctx context.Context) (string, error) {
 	if os.Getenv(acquiredVerifierSetting) == "1" {
 		probe.Env = append(probe.Env, acquiredVerifierSetting+"=1")
 	}
-	isolateVerifier(probe)
-	// The helper emits fixed progress and recovery messages on stderr.
-	// Keep the installed path as the only successful stdout record.
+	// The foreground helper needs the caller's console to write its progress there.
+	// Redirected stderr works directly with the existing no-window process.
+	var mode uint32
+	if windows.GetConsoleMode(windows.Handle(os.Stderr.Fd()), &mode) == nil {
+		probe.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	} else {
+		isolateVerifier(probe)
+	}
 	probe.Stderr = os.Stderr
 	result, err := probe.Output()
 	if err != nil || string(result) != "ready\n" {
