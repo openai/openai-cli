@@ -8,7 +8,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 function Write-StarterStage([string] $stage) {
-    Add-Content -LiteralPath "$PSScriptRoot/results/starter-stage.log" -Value "Starter stage=$stage"
+    Set-Content -LiteralPath "$PSScriptRoot/results/starter-stage.log" -Value "Starter stage=$stage"
 }
 Write-StarterStage 'pristine-profile'
 if ($Tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {throw 'Invalid starter tag.'}
@@ -58,10 +58,8 @@ function Invoke-PublishedLauncher($trusted) {
         Write-StarterStage 'download-zip'
         & $curl --disable --silent --fail --location --proto '=https' --proto-redir '=https' --max-time 150 --max-filesize $trusted.assetSize --output $zip "https://github.com/openai/openai-cli/releases/download/$Tag/$($trusted.assetName)"
         if ($LASTEXITCODE -ne 0) {throw 'Could not download the authenticated Explorer ZIP.'}
-        Write-StarterStage 'extract-zip'
         Expand-AuthenticatedStarter $zip $extracted $trusted
         # ZipFile does not propagate Explorer's attachment mark.
-        Write-StarterStage 'mark-download'
         foreach ($file in $zip,(Join-Path $extracted 'Install.cmd'),(Join-Path $extracted 'openai.exe')) {
             Microsoft.PowerShell.Management\Set-Content -LiteralPath $file -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value "[ZoneTransfer]`r`nZoneId=3`r`n" -ErrorAction Stop
         }
@@ -98,7 +96,6 @@ $priorTag = $env:OPENAI_CLI_WINDOWS_INSTALL_TAG
 try {
     $env:OPENAI_CLI_WINDOWS_INSTALL_TAG = $Tag
     if ($PrivateVerifier) {
-        Write-StarterStage 'exclude-system-verifier'
         $system = [Environment]::GetFolderPath('System')
         $env:Path = [string]::Join(';',@($priorPath -split ';' | Where-Object {
             $entry = $_.Trim('"')
@@ -123,10 +120,9 @@ if (!$trusted) {
     Write-StarterStage 'authenticate-starter'
     $trusted = & $recipe -ReleaseTag $Tag -VerifyOnly | ConvertFrom-Json
 }
-Write-StarterStage 'installed-digest'
+Write-StarterStage 'verify-installation'
 if ($trusted.tag -cne $Tag -or $trusted.executableSha256 -cnotmatch '^[a-f0-9]{64}$') {throw 'Independent starter verification failed.'}
 if ((Get-FileHash -LiteralPath $target).Hash.ToLowerInvariant() -cne $trusted.executableSha256) {throw 'Installed starter differs from independently authenticated A.'}
-Write-StarterStage 'installed-acl'
 $acl = Get-Acl -LiteralPath $bin
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 if (!$acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $sid) {throw 'The enrolled directory is not private.'}
@@ -135,14 +131,12 @@ foreach ($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityId
 }
 $images = @($target)
 if ($PrivateVerifier) {
-    Write-StarterStage 'private-verifier-digest'
     $gh = Join-Path $bin ('.update-verifier\gh-'+$trusted.verifierVersion+'.exe')
     if ((Get-FileHash -LiteralPath $gh).Hash.ToLowerInvariant() -cne $trusted.verifierSha256) {throw 'Private verifier differs from its upstream executable pin.'}
     $images += $gh
 }
 . (Join-Path $PSScriptRoot 'test-windows-download-zone.ps1')
 foreach ($image in $images) {
-    if ($image -eq $target) {Write-StarterStage 'installed-zone'} else {Write-StarterStage 'private-verifier-zone'}
     if ((Get-WindowsDownloadZone $image) -notin 3,4) {throw 'A downloaded executable lost its Internet security zone.'}
 }
 Write-StarterStage 'verified'
