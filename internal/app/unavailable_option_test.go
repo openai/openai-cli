@@ -54,7 +54,7 @@ func TestUnavailableParserFlagKeepsLocalTypoSuggestion(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected parser failure")
 	}
-	want := "The --mode option is not available for this command. Did you mean --model?\nOptions and examples: openai create --help"
+	want := "The --mode option is not available for this command. Try --model instead.\nOptions and examples: openai create --help"
 	if got := localErrorMessage(root, err); got != want {
 		t.Fatalf("got %q; want %q", got, want)
 	}

@@ -120,7 +120,7 @@ func TestNestedParserErrorGuidanceRequiresVisibleOuterIdentity(t *testing.T) {
 			}
 			message := "An option is not recognized."
 			if visible {
-				message += " Did you mean --" + inner.Name + "?"
+				message += " Try --" + inner.Name + " instead."
 				if got := parserFlagExpectedType(leaf, inner.Name); got != "a boolean (true or false)" {
 					t.Fatalf("nested boolean lost its expected type: %q", got)
 				}

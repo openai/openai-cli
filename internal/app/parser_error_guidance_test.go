@@ -84,10 +84,10 @@ func TestParserErrorSuggestionsRespectScope(t *testing.T) {
 				t.Errorf("missing scoped recovery command: %q", got)
 			}
 			if test.suggestion == "" {
-				if strings.Contains(got, "Did you mean") {
+				if strings.Contains(got, "Try ") {
 					t.Errorf("unexpected suggestion: %q", got)
 				}
-			} else if !strings.Contains(got, "Did you mean "+test.suggestion+"?") {
+			} else if !strings.Contains(got, "Try "+test.suggestion+" instead.") {
 				t.Errorf("missing suggestion %q: %q", test.suggestion, got)
 			}
 			if strings.Contains(got, "synthetic-private-") || strings.ContainsAny(got, "\x1b\r") {

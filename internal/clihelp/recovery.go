@@ -67,13 +67,18 @@ func RecoveryAt(command *cli.Command, name string, remaining []string, helpReque
 				path = append(path, next.Name)
 				target = next
 			}
-			invocation := DisplayInvocation(command.Root()) + " help"
+			executable := DisplayInvocation(command.Root())
+			invocation := executable + " help"
 			if len(path) > 0 {
 				invocation += " " + strings.Join(path, " ")
 			}
-			message += " Did you mean: " + SuggestedCommandPath(target, output, invocation) + "?"
+			message += " Run this help command"
+			if executable == "go run ./cmd/openai" {
+				message += " from the CLI repository root"
+			}
+			message += " to check the spelling.\n  " + SuggestedCommandPath(target, output, invocation)
 			if !helpRequested {
-				message += "\nTo run it, correct only the command spelling. Keep your original options and arguments."
+				message += "\nEdit your original command and run it again with the same options and arguments."
 			}
 			return message
 		}

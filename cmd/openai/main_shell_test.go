@@ -332,9 +332,8 @@ func testNativeShellDifferentExecutable(t *testing.T, shell nativeShell, home, i
 	t.Setenv("PATH", other+string(os.PathListSeparator)+os.Getenv("PATH"))
 	for _, args := range []string{"help admin organization projcts", "admin organization projcts", "help audio:transcriptins"} {
 		got := runNativeShell(t, shell, other, home, "http://127.0.0.1:1", invocation+" "+args)
-		_, suggestion, found := strings.Cut(got.stderr, "Did you mean: ")
+		_, suggestion, found := strings.Cut(got.stderr, "Run this help command to check the spelling.\n  ")
 		suggestion, _, _ = strings.Cut(suggestion, "\n")
-		suggestion = strings.TrimSuffix(suggestion, "?")
 		if got.code != 3 || !found || !strings.HasPrefix(suggestion, invocation+" help ") {
 			t.Fatalf("suggestion changed executable identity: %+v", got)
 		}

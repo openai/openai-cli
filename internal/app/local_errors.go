@@ -300,7 +300,7 @@ func knownLocalError(command *cli.Command, message string, output ...io.Writer) 
 			message = "The " + flag + " option is not available for this command."
 		}
 		if suggestion := suggestParserFlag(command, name); suggestion != "" {
-			message += " Did you mean " + suggestion + "?"
+			message += " Try " + suggestion + " instead."
 		}
 		return parserErrorGuidance(command, message, output...)
 	case strings.HasPrefix(message, "No help topic for '"):
