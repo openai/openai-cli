@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 )
@@ -180,7 +181,7 @@ func Load(ctx context.Context, path string) (Registry, error) {
 		return Registry{}, err
 	}
 	// A missing registry must not create state or tighten existing config permissions.
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return emptyProfileRegistry(), nil
 	} else if err != nil {
 		return Registry{}, err
@@ -294,13 +295,25 @@ func Update(ctx context.Context, path string, edit func(*Registry) error) (Regis
 	if err := validateProfileRegistry(registry); err != nil {
 		return Registry{}, err
 	}
-	data, err := json.MarshalIndent(registry, "", "  ")
-	if err != nil {
+	// The limit applies to the stored document. Indentation and HTML escaping must
+	// not prevent edits to valid registries already near the size limit.
+	var data bytes.Buffer
+	encoder := json.NewEncoder(&data)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(registry); err != nil {
 		return Registry{}, err
 	}
-	data = append(data, '\n')
-	if len(data) > maxProfileBytes {
-		return Registry{}, ErrTooLarge
+	if data.Len() > maxProfileBytes {
+		data.Reset()
+		encoder.SetIndent("", "")
+		if err := encoder.Encode(registry); err != nil {
+			return Registry{}, err
+		}
+		data.Truncate(data.Len() - 1) // Drop Encode's optional trailing newline.
+		if data.Len() > maxProfileBytes {
+			return Registry{}, ErrTooLarge
+		}
 	}
 	temporary := ".profiles-" + rand.Text()
 	file, err := root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -308,17 +321,19 @@ func Update(ctx context.Context, path string, edit func(*Registry) error) (Regis
 		return Registry{}, err
 	}
 	defer root.Remove(temporary)
-	_, writeErr := file.Write(data)
+	_, writeErr := file.Write(data.Bytes())
 	if writeErr == nil {
 		writeErr = file.Sync()
 	}
+	tempInfo, statErr := file.Stat()
 	closeErr := file.Close()
-	if err := errors.Join(writeErr, closeErr, ctx.Err()); err != nil {
+	if err := errors.Join(writeErr, statErr, closeErr, ctx.Err()); err != nil {
 		return Registry{}, err
 	}
 	currentDirectory, err := os.Lstat(filepath.Dir(path))
 	if err != nil || !os.SameFile(directoryInfo, currentDirectory) || !privatePermissions(currentDirectory) ||
-		!profileSnapshotMatches(root, "."+name+".lock", lockInfo) || !profileSnapshotMatches(root, name, snapshot) {
+		!profileSnapshotMatches(root, "."+name+".lock", lockInfo) || !profileSnapshotMatches(root, name, snapshot) ||
+		!profileSnapshotMatches(root, temporary, tempInfo) {
 		return Registry{}, ErrChanged
 	}
 	if err := ctx.Err(); err != nil {

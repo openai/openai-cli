@@ -12,15 +12,18 @@ openai auth status
 A new profile starts empty. Activation selects the default for future commands.
 Use `profile get NAME` or `profile list` to inspect saved settings.
 
-## Change projects
+## Select another saved project
 
 ```sh
-openai auth switch --to-project proj_next
-openai --profile work auth switch --to-project proj_team --format json
+openai profile create staging
+openai profile set staging --organization org_example --project proj_staging
+openai profile activate staging
+openai auth status
 ```
 
-Switch updates the selected profile. Its receipt shows the saved project and the effective project for that invocation.
-The effective project can differ when a flag or environment setting overrides the saved value.
+Use `profile activate work` to return to your previous settings.
+Use `profile set staging --project proj_next` to change the ID saved under that name.
+Selecting a profile keeps your existing credentials. Platform checks access when you make a request.
 
 ## Override one request
 
@@ -49,7 +52,9 @@ Delete an active profile with `openai profile delete work --deactivate`.
 
 The CLI stores profiles in `openai/profiles.json` under the operating system's user configuration directory.
 Profile names are case-sensitive. Profile commands run locally. They support text, JSON and JSONL.
-Only command-local `profile set` options and `auth switch --to-project` save request settings.
+Only options passed to `profile set` edit saved organization and project IDs.
+The CLI rejects saved IDs that contain a currently configured credential before sending them.
+CLI writes use a shared lock. Close other editors before changing the file manually.
 
 Earlier preview versions allowed saved base URLs. A selected profile containing a saved base URL blocks requests.
 Remove that setting with `openai profile set work --unset base_url`.

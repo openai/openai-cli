@@ -49,6 +49,19 @@ func TestProfileStorePathAndMissingRegistry(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
+func TestProfileStoreUsesNoDefaultsWhenParentIsFile(t *testing.T) {
+	path := RegistryTestPath(t)
+	require.NoError(t, os.WriteFile(filepath.Dir(path), []byte("preserve"), 0600))
+	registry, err := Load(t.Context(), path)
+	require.NoError(t, err)
+	require.Equal(t, emptyProfileRegistry(), registry)
+	_, err = Update(t.Context(), path, func(*Registry) error { t.Fatal("editor called"); return nil })
+	require.Error(t, err)
+	data, err := os.ReadFile(filepath.Dir(path))
+	require.NoError(t, err)
+	require.Equal(t, "preserve", string(data))
+}
+
 func TestProfileStorePreservesPresenceAndExplicitEdits(t *testing.T) {
 	path := RegistryTestPath(t)
 	t.Setenv("OPENAI_ORG_ID", "org_ambient")
@@ -214,6 +227,20 @@ func TestProfileStoreInvalidEditsPreserveBytes(t *testing.T) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, emptyProfileJSON, string(data))
+}
+
+func TestProfileStoreEditsCompactRegistriesNearLimit(t *testing.T) {
+	path := RegistryTestPath(t)
+	// A valid compact document fits exactly. A no-op update must also fit.
+	prefix := `{"version":1,"default_profile":null,"profiles":{"team":{"project":"`
+	suffix := `"}}}`
+	project := strings.Repeat("&", maxProfileBytes-len(prefix)-len(suffix))
+	writeProfileRegistryTestFile(t, path, prefix+project+suffix)
+	_, err := Update(t.Context(), path, func(*Registry) error { return nil })
+	require.NoError(t, err)
+	registry, err := Load(t.Context(), path)
+	require.NoError(t, err)
+	require.Equal(t, project, *registry.Profiles["team"].Project)
 }
 
 func TestProfileStoreLocalSizeBoundary(t *testing.T) {

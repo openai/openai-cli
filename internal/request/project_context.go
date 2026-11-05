@@ -47,12 +47,6 @@ func profileSelector(root *cli.Command, lookup func(string) (string, bool)) (str
 	return lookup("OPENAI_PROFILE")
 }
 
-// SelectedName resolves the saved default against the supplied registry. Mutations call it under the writer lock.
-func SelectedName(root *cli.Command, lookup func(string) (string, bool), registry profiles.Registry) (string, error) {
-	name, explicit := profileSelector(root, lookup)
-	return selectedRegistryName(registry, name, explicit)
-}
-
 func selectedRegistryName(registry profiles.Registry, name string, explicit bool) (string, error) {
 	if !explicit && registry.DefaultProfile != nil {
 		name = *registry.DefaultProfile
@@ -156,6 +150,16 @@ func ConfigureProjectContext(ctx context.Context, root *cli.Command) error {
 	if err != nil {
 		return &ProjectContextError{message: "Invalid --" + err.Error() + ".", cause: err}
 	}
-	root.Metadata[projectContextMetadata] = ResolveProjectContext(root, os.LookupEnv, literal, EnvironmentHeaders(os.Getenv("OPENAI_CUSTOM_HEADERS")), name, values)
+	selection := ResolveProjectContext(root, os.LookupEnv, literal, EnvironmentHeaders(os.Getenv("OPENAI_CUSTOM_HEADERS")), name, values)
+	if name != "" {
+		// The current credentials may differ from those present when the profile was saved.
+		secrets := ConfiguredCredentials(root, os.LookupEnv)
+		for _, field := range []ContextValue{selection.Organization, selection.Project} {
+			if field.Source == "profile:"+name && ContainsCredential(field.Value, secrets) {
+				return &ProjectContextError{message: "A saved organization or project contains a configured credential. Use profile set to replace the value, or --profile= to bypass saved settings."}
+			}
+		}
+	}
+	root.Metadata[projectContextMetadata] = selection
 	return nil
 }

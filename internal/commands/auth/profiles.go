@@ -76,18 +76,6 @@ func RegisterProfiles(root *cli.Command) {
 		&profileDeactivateFlag{cli.BoolFlag{Name: "deactivate", Usage: "Clear the saved default when deleting its active profile", OnlyOnce: true}},
 	}
 	root.Commands = append(root.Commands, profile)
-	if auth := root.Command("auth"); auth != nil && auth.Command("switch") == nil {
-		const switchDescription = "Select a profile with root --profile, present OPENAI_PROFILE, or the saved default. " +
-			"Show the saved project and the effective project for this invocation. " +
-			"This does not activate the profile, contact the API, or change credentials or permissions. " +
-			"Supports --format auto, text, json, or jsonl."
-		command := profileCommand("switch", "Change the selected profile's saved project locally", switchDescription, "--profile work auth switch --to-project proj_demo")
-		command.Flags = []cli.Flag{
-			&profileStringFlag{cli.StringFlag{Name: "to-project", Usage: "Save nonempty project `VALUE` in the selected profile", OnlyOnce: true}},
-		}
-		command.Action = handleProfileCommand
-		auth.Commands = append(auth.Commands, command)
-	}
 }
 
 func profileCommand(name, usage, description, example string) *cli.Command {
@@ -112,9 +100,8 @@ type profileRecord struct {
 }
 
 type profileReceipt struct {
-	Action           string           `json:"action"`
-	Profile          profileRecord    `json:"profile"`
-	EffectiveProject *authStatusValue `json:"effective_project,omitempty"`
+	Action  string        `json:"action"`
+	Profile profileRecord `json:"profile"`
 }
 
 type profileDeleteReceipt struct {
@@ -136,7 +123,7 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 		return profileFailure("Profile commands support --format auto, text, json, or jsonl.", nil)
 	}
 	action, name := command.Name, command.Args().First()
-	if action == "list" || action == "switch" {
+	if action == "list" {
 		if command.Args().Present() {
 			return profileFailure("This profile command takes no positional arguments. Use its --help for an example.", nil)
 		}
@@ -151,12 +138,9 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 			return err
 		}
 	}
-	if action == "switch" && (!command.IsSet("to-project") || command.String("to-project") == "" || !profiles.ValidHeader(command.String("to-project"))) {
-		return profileFailure("Use --to-project with a nonempty UTF-8 project value without controls. Select a profile with root --profile or activate one.", nil)
-	}
 	secrets := request.ConfiguredCredentials(root, os.LookupEnv)
-	if action == "create" && request.ContainsCredential(name, secrets) || action == "switch" && request.ContainsCredential(command.String("to-project"), secrets) {
-		return profileFailure("Use a nonsecret profile name and project ID. Credentials cannot be saved in profiles.", nil)
+	if (action == "create" || action == "activate") && request.ContainsCredential(name, secrets) {
+		return profileFailure("Use a nonsecret profile name. Credentials cannot be saved in profiles.", nil)
 	}
 	for _, v := range edits {
 		if v != nil && request.ContainsCredential(*v, secrets) {
@@ -193,19 +177,7 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 		}
 	} else {
 		deactivated := false
-		var effective *authStatusValue
 		registry, err := profiles.Update(ctx, path, func(registry *profiles.Registry) error {
-			if action == "switch" {
-				var err error
-				// Resolve the saved default while holding the same lock as the edit.
-				name, err = request.SelectedName(root, os.LookupEnv, *registry)
-				if err != nil {
-					return err
-				}
-				if name == "" {
-					return profileFailure("No profile is selected. Use root --profile or activate a saved profile.", nil)
-				}
-			}
 			values, exists := registry.Profiles[name]
 			if action == "create" {
 				if exists {
@@ -241,21 +213,7 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 					registry.DefaultProfile = nil
 				}
 				delete(registry.Profiles, name)
-			case "switch":
-				project := command.String("to-project")
-				values.Project = &project
-				if values.BaseURL != nil {
-					return profileFailure("This profile contains a legacy base URL. Use profile set NAME --unset base_url before switching.", nil)
-				}
-				literal, err := request.Headers(root)
-				if err != nil {
-					return profileFailure("Invalid --"+err.Error()+".", err)
-				}
-				selection := request.ResolveProjectContext(root, os.LookupEnv, literal, request.EnvironmentHeaders(os.Getenv("OPENAI_CUSTOM_HEADERS")), name, values)
-				field := authStatusValue(selection.Project)
-				field.redact(secrets)
-				effective = &field
-				registry.Profiles[name] = values
+
 			}
 			return nil
 		})
@@ -268,7 +226,7 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 			}
 			result = profileDeleteReceipt{Action: action, Name: name, Deactivated: deactivated}
 		} else {
-			result = profileReceipt{Action: action, Profile: savedProfileRecord(registry, name, secrets), EffectiveProject: effective}
+			result = profileReceipt{Action: action, Profile: savedProfileRecord(registry, name, secrets)}
 		}
 	}
 	if err := writeProfileReceipt(root.Writer, func(out io.Writer) error {
@@ -376,9 +334,6 @@ func writeProfileResult(ctx context.Context, writer io.Writer, format string, re
 	case profileReceipt:
 		fmt.Fprintf(&text, "Saved profile (%s).\n", value.Action)
 		writeProfileText(&text, value.Profile)
-		if value.EffectiveProject != nil {
-			fmt.Fprintf(&text, "Effective project: %s\n", authStatusContextText(*value.EffectiveProject))
-		}
 	case profileDeleteReceipt:
 		fmt.Fprintf(&text, "Deleted profile: %s\n", profileTextValue(value.Name))
 		if value.Deactivated {
@@ -416,8 +371,7 @@ func profileTextValue(value string) string {
 
 func profileCommandStoreFailure(cause error) error {
 	var local *localcommands.LocalError
-	var selection *request.ProjectContextError
-	if errors.As(cause, &local) || errors.As(cause, &selection) {
+	if errors.As(cause, &local) {
 		return cause
 	}
 	recovery := "Check profiles.json and its lock in your user configuration folder."

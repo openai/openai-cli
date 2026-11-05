@@ -63,15 +63,14 @@ func TestMainProfileContextReachesRequests(t *testing.T) {
 	}
 
 	got := run([]string{"OPENAI_PROJECT_ID=proj_from_shell"}, nil,
-		"auth", "switch", "--to-project=proj_next", "--format=json")
+		"profile", "set", "work", "--project=proj_next", "--format=json")
 	require.Zero(t, got.code, "%s", got.stderr)
 	var receipt struct {
-		Profile          struct{ Values map[string]string }
-		EffectiveProject authStatusValueResult `json:"effective_project"`
+		Profile struct{ Values map[string]string }
 	}
 	require.NoError(t, json.Unmarshal([]byte(got.stdout), &receipt))
 	require.Equal(t, "proj_next", receipt.Profile.Values["project"])
-	require.Equal(t, authStatusValueResult{Value: "proj_from_shell", Source: "environment:OPENAI_PROJECT_ID"}, receipt.EffectiveProject)
+	require.Equal(t, "proj_from_shell", decodeAuthStatus(t, run([]string{"OPENAI_PROJECT_ID=proj_from_shell"}, nil, "auth", "status", "--format=json")).Project.Value)
 	require.Equal(t, "proj_next", decodeAuthStatus(t, run(nil, nil, "auth", "status", "--format=json")).Project.Value)
 	got = run(nil, []string{"--profile=missing"}, "models", "list")
 	require.NotZero(t, got.code)
@@ -102,9 +101,60 @@ func TestMainProfileContextPreservesMalformedRegistry(t *testing.T) {
 	require.NotEmpty(t, registry)
 	const damaged = "{damaged"
 	require.NoError(t, os.WriteFile(registry, []byte(damaged), 0600))
-	got = run("--profile=work", "auth", "switch", "--to-project=proj_other")
+	got = run("profile", "set", "work", "--project=proj_other")
 	require.NotZero(t, got.code)
 	after, err := os.ReadFile(registry)
 	require.NoError(t, err)
 	require.Equal(t, damaged, string(after))
+}
+
+func TestMainProfileRejectsConfiguredCredentialsBeforeDispatch(t *testing.T) {
+	server, requests := globalFlagsServer(t, globalFlagsPage)
+	env := append(profileProcessEnvironment(t.TempDir()), globalFlagsEnv(server)...)
+	run := func(settings []string, args ...string) mainDispatchResult {
+		t.Helper()
+		return runMainDispatchWithEnv(t, "bash", slices.Concat(env, settings), append([]string{"openai"}, args...)...)
+	}
+	const secret = "synthetic-credential-for-profile-test"
+	key := []string{"OPENAI_ADMIN_KEY=" + secret + " "}
+	require.Zero(t, run(nil, "profile", "create", "team").code)
+	require.Zero(t, run(nil, "profile", "activate", "team").code)
+
+	for _, field := range []string{"organization", "project"} {
+		t.Run(field, func(t *testing.T) {
+			// A profile created before this credential was configured remains inspectable and repairable.
+			flag := "--" + field
+			got := run(key, "profile", "set", "team", flag+"="+secret)
+			require.NotZero(t, got.code)
+			require.NotContains(t, got.stdout+got.stderr, secret)
+			require.Zero(t, run(nil, "profile", "set", "team", flag+"="+secret).code)
+			for _, args := range [][]string{{"auth", "status", "--format=json"}, {"profile", "get", "team"}, {"profile", "list", "--format=jsonl"}} {
+				got = run(key, args...)
+				require.Zero(t, got.code, "%s", got.stderr)
+				require.Contains(t, got.stdout, "[redacted]")
+				require.NotContains(t, got.stdout+got.stderr, secret)
+			}
+			got = run(key, "--debug", "models", "list")
+			require.NotZero(t, got.code)
+			require.Contains(t, got.stderr, "contains a configured credential")
+			require.NotContains(t, got.stdout+got.stderr, secret)
+			require.Empty(t, requests)
+			got = run(key, flag+"=explicit_safe", "models", "list", "--format=raw")
+			require.Zero(t, got.code, "%s", got.stderr)
+			req := globalFlagsOneRequest(t, requests)
+			require.Equal(t, "explicit_safe", req.header.Get("OpenAI-"+field))
+			require.Equal(t, "Bearer synthetic-env-key", req.header.Get("Authorization"))
+			got = run(key, "profile", "set", "team", "--unset="+field)
+			require.Zero(t, got.code, "%s", got.stderr)
+			require.NotContains(t, got.stdout+got.stderr, secret)
+		})
+	}
+	require.Zero(t, run(nil, "profile", "create", secret).code)
+	got := run(key, "profile", "activate", secret)
+	require.NotZero(t, got.code)
+	require.NotContains(t, got.stdout+got.stderr, secret)
+	got = run(key, "profile", "delete", secret)
+	require.Zero(t, got.code, "%s", got.stderr)
+	require.NotContains(t, got.stdout+got.stderr, secret)
+	require.Empty(t, requests)
 }
