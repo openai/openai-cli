@@ -46,27 +46,26 @@ func RegisterProfiles(root *cli.Command) {
 	if root.Command("profile") != nil {
 		return
 	}
-	profile := profileCommand("profile", "Manage saved organization and project settings locally", "profile create work")
-	profile.Description = "Profiles store nonsecret settings only. No command contacts the API or changes credentials or permissions. " +
+	const overview = "Profiles store nonsecret settings only. No command contacts the API or changes credentials or permissions. " +
 		"Management commands ignore --profile and OPENAI_PROFILE. Active means the saved default."
-	profile.CustomHelpTemplate = strings.Replace(profile.CustomHelpTemplate, cli.CommandHelpTemplate, cli.SubcommandHelpTemplate, 1)
-	profile.Metadata["local-help-full"] = profile.CustomHelpTemplate
+	const local = "Works locally without API requests. Supports --format auto, text, json, or jsonl."
+	const edit = "Only flags declared by profile set edit saved fields. Root request flags and environment values never persist. " +
+		"An empty value remains present; --unset removes presence. Supports --format auto, text, json, or jsonl."
+	profile := profileCommand("profile", "Manage saved organization and project settings locally", overview, "profile create work")
 	profile.Commands = []*cli.Command{
-		profileCommand("create", "Create an empty profile without activating it", "profile create work"),
-		profileCommand("set", "Edit only explicit saved profile fields", "profile set work --project proj_demo"),
-		profileCommand("get", "Show one saved profile", "profile get work"),
-		profileCommand("list", "List saved profiles in name order", "profile list"),
-		profileCommand("activate", "Select a saved default profile", "profile activate work"),
-		profileCommand("delete", "Delete a saved profile", "profile delete work --deactivate"),
+		profileCommand("create", "Create an empty profile without activating it", local, "profile create work"),
+		profileCommand("set", "Edit only explicit saved profile fields", edit, "profile set work --project proj_demo"),
+		profileCommand("get", "Show one saved profile", local, "profile get work"),
+		profileCommand("list", "List saved profiles in name order", local, "profile list"),
+		profileCommand("activate", "Select a saved default profile", local, "profile activate work"),
+		profileCommand("delete", "Delete a saved profile", local, "profile delete work --deactivate"),
 	}
 	for _, command := range profile.Commands {
 		command.ArgsUsage = "NAME"
 		command.Action = handleProfileCommand
 	}
-	profile.Command("list").ArgsUsage = " "
+	profile.Command("list").ArgsUsage = ""
 	set := profile.Command("set")
-	set.Description = "Only flags declared by profile set edit saved fields. Root request flags and environment values never persist. " +
-		"An empty value remains present; --unset removes presence. Supports --format auto, text, json, or jsonl."
 	set.DisableSliceFlagSeparator = true
 	set.Flags = []cli.Flag{
 		&profileStringFlag{cli.StringFlag{Name: "organization", Usage: "Save organization `VALUE`; an empty value suppresses lower defaults", OnlyOnce: true}},
@@ -78,11 +77,11 @@ func RegisterProfiles(root *cli.Command) {
 	}
 	root.Commands = append(root.Commands, profile)
 	if auth := root.Command("auth"); auth != nil && auth.Command("switch") == nil {
-		command := profileCommand("switch", "Change the selected profile's saved project locally", "--profile work auth switch --to-project proj_demo")
-		command.Description = "Select a profile with root --profile, present OPENAI_PROFILE, or the saved default. " +
+		const switchDescription = "Select a profile with root --profile, present OPENAI_PROFILE, or the saved default. " +
 			"Show the saved project and the effective project for this invocation. " +
 			"This does not activate the profile, contact the API, or change credentials or permissions. " +
 			"Supports --format auto, text, json, or jsonl."
+		command := profileCommand("switch", "Change the selected profile's saved project locally", switchDescription, "--profile work auth switch --to-project proj_demo")
 		command.Flags = []cli.Flag{
 			&profileStringFlag{cli.StringFlag{Name: "to-project", Usage: "Save nonempty project `VALUE` in the selected profile", OnlyOnce: true}},
 		}
@@ -91,14 +90,16 @@ func RegisterProfiles(root *cli.Command) {
 	}
 }
 
-func profileCommand(name, usage, example string) *cli.Command {
-	help := `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}EXAMPLE
-  {{$bin}} ` + example + "\n\n" + cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp
+func profileCommand(name, usage, description, example string) *cli.Command {
 	return &cli.Command{
-		Name: name, Usage: usage, HideHelpCommand: true, CustomHelpTemplate: help,
-		Description: "Works locally without API requests. Supports --format auto, text, json, or jsonl.",
+		Name: name, Usage: usage, Description: description, HideHelpCommand: true,
 		Metadata: map[string]any{
-			localcommands.LocalUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools",
+			localcommands.LocalUtilityMetadata: true, "help-command-section": "Local tools",
+			"help-content": clihelp.Content{
+				Description: description,
+				Examples:    []clihelp.Example{{Description: usage + ".", Command: example}},
+				Notes:       "No API key is required.",
+			},
 			"completion-root-flag-values": map[string][]string{"format": {"auto", "text", "json", "jsonl"}},
 		},
 	}
