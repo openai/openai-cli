@@ -7,9 +7,21 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/xo/terminfo"
 )
 
 const studioGutter = 3 // A divider cell with a space on each side.
+
+// Some terminals rasterize adjacent Unicode box glyphs with overlapping edges.
+// Use the terminal's own line-drawing stroke when it advertises the DEC set.
+func supportsDECLineDrawing() bool {
+	ti, err := terminfo.LoadFromEnv()
+	if err != nil {
+		return false
+	}
+	return string(ti.Strings[terminfo.EnterAltCharsetMode]) == ansi.SelectCharacterSet('(', '0') &&
+		string(ti.Strings[terminfo.ExitAltCharsetMode]) == ansi.SelectCharacterSet('(', 'B')
+}
 
 func (m *tokenizerEditor) sourceWidth() int {
 	return (m.viewWidth() - studioGutter) * 45 / 100
@@ -28,6 +40,11 @@ func (m *tokenizerEditor) studioView(s tokenizerEditorStyles, left []string) str
 	left = append(left, m.noteRows(s, leftWidth)...)
 	right := m.studioResults(s, rightWidth)
 	rows := make([]string, min(m.bodyHeight(), max(len(left), len(right))))
+	divider := "│"
+	if m.decLineDrawing {
+		divider = ansi.SelectCharacterSet('(', '0') + "x" + ansi.SelectCharacterSet('(', 'B')
+	}
+	divider = s.border.Render(divider)
 	for i := range rows {
 		line := ""
 		if i < len(left) {
@@ -35,7 +52,7 @@ func (m *tokenizerEditor) studioView(s tokenizerEditorStyles, left []string) str
 		}
 		// Pin the seam when a terminal draws a visible emoji narrower than its measured cells.
 		rows[i] = line + strings.Repeat(" ", max(0, leftWidth-tokenizerSourceWidth(line))+1) +
-			ansi.CursorHorizontalAbsolute(leftWidth+4) + s.border.Render("╎") + " "
+			ansi.CursorHorizontalAbsolute(leftWidth+4) + divider + " "
 		if i < len(right) {
 			rows[i] += right[i]
 		}
@@ -44,21 +61,19 @@ func (m *tokenizerEditor) studioView(s tokenizerEditorStyles, left []string) str
 }
 
 func (m *tokenizerEditor) studioResults(s tokenizerEditorStyles, width int) []string {
-	count := m.countStatus(s)
-	if count == "" {
-		count = s.muted.Render("Tokens")
-	}
-	header := "  " + count
-	if m.focus == tokenizerFocusResults && len(m.tokens) == 0 {
-		header = s.heading(ansi.Strip(count), true)
-	}
-	rows := []string{header}
 	if len(m.tokens) == 0 {
-		return rows
+		count := m.countStatus(s)
+		if count == "" {
+			count = s.muted.Render("Tokens")
+		}
+		if m.focus == tokenizerFocusResults {
+			return []string{s.heading(ansi.Strip(count), true)}
+		}
+		return []string{"  " + count}
 	}
 	startToken := m.resultStart(width)
 	strip, endToken := m.tokenStrip(s, width, startToken)
-	rows = append(rows, trimEmptyRows(strip)...)
+	rows := trimEmptyRows(strip)
 	rows = append(rows, m.tokenByteCounts(s, width, startToken, endToken))
 
 	piece, start, end := m.fragment(m.selected)
@@ -91,7 +106,7 @@ func (m *tokenizerEditor) studioResults(s tokenizerEditorStyles, width int) []st
 		rows = append(rows, "  "+s.muted.Render("This encoding uses ID ")+id)
 	case 2:
 		location := "  " + s.muted.Render("Starts after ") + tokenizerByteSize(start)
-		size := s.muted.Render("Uses ") + tokenizerByteSize(end-start)
+		size := s.muted.Render("Uses ") + tokenizerByteSize(end-start) + s.muted.Render(" of ") + tokenizerByteSize(len(m.text))
 		if ansi.StringWidth(location+"  "+size) > width {
 			return append(rows, location, "  "+size)
 		}

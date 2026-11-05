@@ -7,85 +7,46 @@ import (
 )
 
 const (
-	tokenizerPageHint = "PgUp/PgDn page"
-	tokenizerExitHint = "Ctrl+C exit"
+	tokenizerShortcutSeparator = " · "
+	tokenizerPageHint          = "PgUp/PgDn page"
+	tokenizerExitHint          = "Ctrl+C exit"
 )
 
 func (m *tokenizerEditor) footer(s tokenizerEditorStyles) []string {
-	width := m.viewWidth()
-	var navigation, actions, extra []string
+	var navigation, actions []string
 	switch m.focus {
 	case tokenizerFocusText:
-		if m.sourceOverflows() {
-			navigation = []string{tokenizerPageHint}
-		}
-		navigation = append(navigation, "Tab inspect tokens")
-		actions = []string{"Shift+Tab settings"}
+		actions = []string{"Tab inspect"}
 	case tokenizerFocusOptions:
+		navigation = []string{"↑↓ focus"}
 		if m.option == 0 {
-			navigation = []string{"←→ change view", "↑↓ move focus"}
+			actions = []string{"←→ change view"}
 		} else {
-			navigation = []string{"↑↓ move focus", "Enter choose model"}
+			actions = []string{"Enter choose model"}
 		}
-		actions = []string{"Tab inspect tokens"}
 	case tokenizerFocusResults:
-		actions = []string{"Tab edit text"}
+		actions = []string{"Tab edit"}
 		if m.failed {
 			navigation = []string{"r retry"}
-		} else if len(m.tokens) > 0 {
-			actions = []string{"Tab edit here"}
-			extra = append(extra, "Enter open details")
-			if len(m.tokens) > 1 {
-				navigation = m.tokenNavigationHints(width)
-			}
-		}
-		extra = append(extra, "Shift+Tab settings")
-	}
-	return s.shortcutFooter(width, navigation, actions, extra...)
-}
-
-func (m *tokenizerEditor) tokenNavigationHints(width int) []string {
-	hints := []string{"←→ select token"}
-	resultWidth := m.resultWidth()
-	if m.walkResultSegments(0, resultWidth, 1, nil) < len(m.tokens) {
-		hints = append(hints, "↑↓ move by row")
-	}
-	if m.resultEnd(0, resultWidth) < len(m.tokens) {
-		hints = append(hints, tokenizerPageHint)
-		if shortcutWidth(hints) > width {
-			return []string{"Arrows select token", tokenizerPageHint}
+		} else if len(m.tokens) > 1 {
+			navigation = []string{"←→ select"}
 		}
 	}
-	return hints
+	return s.shortcutFooter(m.viewWidth(), navigation, actions)
 }
 
 func shortcutWidth(hints []string) int {
-	return ansi.StringWidth(strings.Join(hints, "  "))
+	return ansi.StringWidth(strings.Join(hints, tokenizerShortcutSeparator))
 }
 
 // Keep navigation and actions together when they fit. On narrow terminals, each group gets one row.
-func (s tokenizerEditorStyles) shortcutFooter(width int, navigation, actions []string, extra ...string) []string {
-	actionWidth := shortcutWidth(append(actions, tokenizerExitHint))
-	budget := width
-	if len(navigation) > 0 {
-		budget -= shortcutWidth(navigation) + 2
-	}
-	split := actionWidth > budget
-	if split {
-		budget = width
-	}
-	for _, hint := range extra {
-		cells := 2 + ansi.StringWidth(hint)
-		if actionWidth+cells <= budget {
-			actions = append(actions, hint)
-			actionWidth += cells
-		}
-	}
+func (s tokenizerEditorStyles) shortcutFooter(width int, navigation, actions []string) []string {
 	actions = append(actions, tokenizerExitHint)
-	if split {
+	hints := append(navigation, actions...)
+	if len(navigation) != 0 && shortcutWidth(hints) > width {
 		return []string{s.shortcutLine(navigation), s.shortcutLine(actions)}
 	}
-	return []string{s.shortcutLine(append(navigation, actions...))}
+	return []string{s.shortcutLine(hints)}
 }
 
 func (s tokenizerEditorStyles) shortcutLine(hints []string) string {
@@ -94,5 +55,5 @@ func (s tokenizerEditorStyles) shortcutLine(hints []string) string {
 		key, action, _ := strings.Cut(hint, " ")
 		pairs = append(pairs, s.accent.Render(key)+" "+s.muted.Render(action))
 	}
-	return strings.Join(pairs, "  ")
+	return strings.Join(pairs, s.muted.Render(tokenizerShortcutSeparator))
 }

@@ -31,7 +31,7 @@ func (m *tokenizerEditor) sourceRows() int {
 }
 func (m *tokenizerEditor) resultRows() int {
 	if m.studioLayout() {
-		// Reserve a count row, a byte-count row and up to four rows of selected-token details.
+		// Reserve the byte counts and room for the selected token and its byte details.
 		return min(4, max(1, m.bodyHeight()-6))
 	}
 	if m.roomy() {
@@ -767,12 +767,10 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 			}
 		}
 	}
-	var footer []string
 	if total > count {
-		footer = append(footer, pageRange)
+		rows = append(rows, pageRange)
 	}
-	footer = append(footer, controls...)
-	return m.panel(s, title, s.muted.Render(model), rows, footer)
+	return m.panel(s, title, s.muted.Render(model), rows, controls)
 }
 
 func (m *tokenizerEditor) modalPageSize(total int) int {

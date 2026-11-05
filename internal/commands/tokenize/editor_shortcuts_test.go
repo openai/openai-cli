@@ -28,33 +28,25 @@ func tokenizerVisibleShortcuts(content string) string {
 		rows = append(rows, line)
 	}
 	slices.Reverse(rows)
-	return strings.Join(rows, "  ")
+	return strings.Join(rows, " · ")
 }
 
 func TestTokenizerFooterDescribesAvailableShortcuts(t *testing.T) {
-	const (
-		text        = "Tab inspect tokens  Shift+Tab settings"
-		pagedText   = "PgUp/PgDn page  Tab inspect tokens  Shift+Tab settings"
-		view        = "←→ change view  ↑↓ move focus  Tab inspect tokens"
-		model       = "↑↓ move focus  Enter choose model  Tab inspect tokens"
-		inspection  = "Tab edit here  Enter open details  Shift+Tab settings"
-		compactPage = "Arrows select token  PgUp/PgDn page  Tab edit here"
-	)
 	for _, tc := range []struct {
 		name          string
 		count         int
 		focus, option int
-		compact, wide string
+		want          string
 	}{
-		{"Text", 0, tokenizerFocusText, 0, text, text},
-		{"Paged Text", 12, tokenizerFocusText, 0, pagedText, pagedText},
-		{"View", 0, tokenizerFocusOptions, 0, view, view},
-		{"Model", 0, tokenizerFocusOptions, 1, model, model},
-		{"Empty tokens", 0, tokenizerFocusResults, 0, "Tab edit text", "Tab edit text  Shift+Tab settings"},
-		{"One token", 1, tokenizerFocusResults, 0, "Tab edit here", inspection},
-		{"Two tokens", 2, tokenizerFocusResults, 0, "←→ select token  Tab edit here", "←→ select token  " + inspection},
-		{"Wrapped tokens", 8, tokenizerFocusResults, 0, compactPage, "←→ select token  ↑↓ move by row  " + inspection},
-		{"Multiple pages", 80, tokenizerFocusResults, 0, compactPage, "←→ select token  ↑↓ move by row  PgUp/PgDn page  " + inspection},
+		{"Text", 0, tokenizerFocusText, 0, "Tab inspect"},
+		{"Paged Text", 12, tokenizerFocusText, 0, "Tab inspect"},
+		{"View", 0, tokenizerFocusOptions, 0, "↑↓ focus · ←→ change view"},
+		{"Model", 0, tokenizerFocusOptions, 1, "↑↓ focus · Enter choose model"},
+		{"Empty tokens", 0, tokenizerFocusResults, 0, "Tab edit"},
+		{"One token", 1, tokenizerFocusResults, 0, "Tab edit"},
+		{"Two tokens", 2, tokenizerFocusResults, 0, "←→ select · Tab edit"},
+		{"Wrapped tokens", 8, tokenizerFocusResults, 0, "←→ select · Tab edit"},
+		{"Multiple pages", 80, tokenizerFocusResults, 0, "←→ select · Tab edit"},
 	} {
 		for _, size := range [][2]int{{40, 12}, {120, 30}} {
 			t.Run(fmt.Sprintf("%s/%dx%d", tc.name, size[0], size[1]), func(t *testing.T) {
@@ -70,11 +62,7 @@ func TestTokenizerFooterDescribesAvailableShortcuts(t *testing.T) {
 					m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
 				}
 				m.focus, m.option = tc.focus, tc.option
-				want := tc.wide
-				if size[0] == 40 {
-					want = tc.compact
-				}
-				require.Equal(t, want+"  Ctrl+C exit", tokenizerVisibleShortcuts(m.View().Content))
+				require.Equal(t, tc.want+" · Ctrl+C exit", tokenizerVisibleShortcuts(m.View().Content))
 			})
 		}
 	}
@@ -87,9 +75,9 @@ func TestTokenizerChooserAndDetailsShortcuts(t *testing.T) {
 			key  rune
 			want string
 		}{
-			{"Choose view", 'v', "↑↓ choose  Enter apply  Esc cancel  Ctrl+C exit"},
-			{"Choose model", 'm', "↑↓ choose  Enter apply  Esc cancel  Ctrl+C exit"},
-			{"Details", 'd', "Esc back  Ctrl+C exit"},
+			{"Choose view", 'v', "↑↓ choose · Enter apply · Esc cancel · Ctrl+C exit"},
+			{"Choose model", 'm', "↑↓ choose · Enter apply · Esc cancel · Ctrl+C exit"},
+			{"Details", 'd', "Esc back · Ctrl+C exit"},
 		} {
 			t.Run(fmt.Sprintf("%s/%dx%d", tc.name, size[0], size[1]), func(t *testing.T) {
 				m := tokenizerEditorExample()

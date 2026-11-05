@@ -51,6 +51,7 @@ type tokenizerEditor struct {
 	priorPageStart    int
 	width, height     int
 	color, dark       bool
+	decLineDrawing    bool
 	revision          uint64
 	tokens            []tokenizerPreviewToken
 	updating, failed  bool

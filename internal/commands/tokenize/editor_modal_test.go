@@ -213,8 +213,8 @@ func TestTokenizerEditorHelpGroupsAndWorkspaceShortcuts(t *testing.T) {
 		require.NotRegexp(t, `\bF[1-4]\b`, help)
 		view := ansi.Strip(m.View().Content)
 		require.Contains(t, view, "Tokenizer help")
-		require.Contains(t, view, "Esc back  Ctrl+C exit")
-		require.NotContains(t, help+view, "·")
+		require.Contains(t, view, "Esc back · Ctrl+C exit")
+		require.NotContains(t, help, "·")
 		require.NotContains(t, help+view, "•")
 		if m.width == 120 {
 			require.Len(t, rows, 13)
@@ -352,7 +352,7 @@ func TestTokenizerEditorDetailsOverflowBoundaryAndResize(t *testing.T) {
 				require.NotContains(t, view, "scroll")
 			} else {
 				require.Contains(t, view, "Rows 1–7 of 9")
-				require.Contains(t, view, "↑↓ scroll  Esc back  Ctrl+C exit")
+				require.Contains(t, view, "↑↓ scroll · Esc back · Ctrl+C exit")
 			}
 			tokenizerEditorKey(m, tea.KeyEnd)
 			if size == 28 {
@@ -388,7 +388,7 @@ func TestTokenizerEditorDetailsLargeTokenAllocationsStayBounded(t *testing.T) {
 		runtime.ReadMemStats(&after)
 		require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(512*1024), "allocate only visible text and hexadecimal rows")
 		require.Less(t, len(view), 4096)
-		require.Contains(t, view, "↑↓ scroll  Esc back  Ctrl+C exit")
+		require.Contains(t, view, "↑↓ scroll · Esc back · Ctrl+C exit")
 	}
 }
 
