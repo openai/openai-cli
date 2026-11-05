@@ -19,7 +19,7 @@ The helper checks for shell conflicts and selects the verified copy in this term
 The updater uses a compatible GitHub CLI from the selected Homebrew installation when available.
 It can use this verifier even when your shell selects an older `gh`.
 Setup installs GitHub CLI through Homebrew only when it needs a compatible verifier.
-It also adds the selection to your zsh startup file. Homebrew continues to own its separate copy.
+It also configures your zsh startup file. Explore selections fill the editable prompt in this terminal and future terminals. Homebrew continues to own its separate copy.
 For other shells or a linked `.zshrc`, use the [archive instructions](#from-an-extracted-archive).
 
 If the helper is missing, refresh the tap and upgrade the cask explicitly.
@@ -65,14 +65,15 @@ An alias, function, or machine PATH command can take precedence. Setup reports t
 2. Download your platform archive from the newest [stable release with downloads](https://github.com/openai/openai-cli/releases).
 3. Extract the archive.
 
-In zsh, paste this block from the extracted directory. It selects the CLI now and configures your zsh startup files.
+From the extracted directory, run the bundled installer in Bash or zsh.
 
-```zsh
-sh ./install.sh --require-gh --zsh "${ZDOTDIR:-$HOME}" &&
-export PATH="$HOME/.openai/bin:$PATH"
+```sh
+source ./openai-enable-updates.sh
 ```
 
-For Bash or a linked `.zshrc`, paste this command instead. It selects the CLI in this terminal.
+Setup selects the installed CLI in this terminal and future interactive shells.
+In zsh, selecting a command in Explore fills your prompt. In Bash 4.3+, press Ctrl+X, then Tab to insert it.
+If your archive predates the helper or you use linked startup files, select the installation for this terminal manually.
 
 ```sh
 sh ./install.sh --require-gh && export PATH="$HOME/.openai/bin:$PATH"
@@ -88,7 +89,8 @@ If your new terminal already selects `$HOME/.openai/bin/openai`, setup is comple
 An interactive zsh login shell reads `.zlogin` after `.zshrc`.
 If `${ZDOTDIR:-$HOME}/.zlogin` exists and passes setup checks, setup appends a PATH selection for interactive login shells.
 An early `return` in that file can skip the selection. You can move the appended selection before your `return`.
-To check the result, run `command -v openai` in a new login shell.
+To check the selected executable, run `whence -p openai` in a new zsh login shell.
+In Bash, run `type -P openai`. These commands show the executable used by prompt insertion.
 Use `"$HOME/.openai/bin/openai"` directly if that shell selects another executable.
 
 If installation succeeded but shell selection failed, keep the installed executable.
@@ -99,7 +101,7 @@ For zsh, put this line in your interactive startup file (`${ZDOTDIR:-$HOME}/.zsh
 export PATH="$HOME/.openai/bin:$PATH"
 ```
 
-For Bash, add the same export to your interactive startup file. Standalone archive setup edits profiles only with `--zsh`.
+For a manual Bash installation, add the same export to your interactive startup file.
 
 ### Older installations and interrupted setup
 

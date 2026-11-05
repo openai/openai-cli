@@ -28,7 +28,7 @@
 
 ### macOS
 
-With Homebrew and zsh, paste both lines together in Terminal. This installs the CLI and enables automatic updates.
+With Homebrew and zsh, paste both lines together in Terminal. This installs the CLI, enables automatic updates, and makes Explore selections editable at your prompt.
 
 ```zsh
 brew update && brew install --cask openai/tools/openai &&

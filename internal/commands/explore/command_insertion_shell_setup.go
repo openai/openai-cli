@@ -41,13 +41,14 @@ func insertionSetupFailure(message string, cause error, code int) error {
 }
 
 type commandInsertionSetupResult struct {
-	Action      string `json:"action"`
-	Shell       string `json:"shell"`
-	Profiles    int    `json:"profiles"`
-	Installed   int    `json:"installed"`
-	Changed     bool   `json:"changed"`
-	NeedsUpdate bool   `json:"needs_update"`
-	DoubleTab   bool   `json:"double_tab"`
+	Action            string `json:"action"`
+	Shell             string `json:"shell"`
+	Profiles          int    `json:"profiles"`
+	Installed         int    `json:"installed"`
+	Changed           bool   `json:"changed"`
+	NeedsUpdate       bool   `json:"needs_update"`
+	DoubleTab         bool   `json:"double_tab"`
+	doubleTabProfiles int
 }
 
 func commandInsertionShellSetup(ctx context.Context, command *cli.Command) error {
@@ -55,15 +56,17 @@ func commandInsertionShellSetup(ctx context.Context, command *cli.Command) error
 		return insertionSetupFailure("Command insertion setup was interrupted.", err, 1)
 	}
 	install, remove, inspect := command.Bool("install-suggestions"), command.Bool("uninstall-suggestions"), command.Bool("suggestions-status")
+	automatic := command.Bool("auto-suggestions")
 	count := 0
-	for _, selected := range []bool{install, remove, inspect} {
+	for _, selected := range []bool{install, remove, inspect, automatic} {
 		if selected {
 			count++
 		}
 	}
 	if count != 1 || command.Args().Len() > 1 || command.Bool("install-picker") || command.Bool("uninstall-picker") ||
 		command.Bool("automatic") || command.Bool("picker") || command.Bool("suggestions-click") || command.Bool("suggestions-only") || command.IsSet("suggestions-adapter") ||
-		command.IsSet("profile") && command.String("profile") == "" || !install && command.Bool("suggestions-double-tab") {
+		command.IsSet("profile") && command.String("profile") == "" || !install && command.Bool("suggestions-double-tab") ||
+		automatic && (command.Bool("suggestions") || command.Args().Len() != 1) {
 		return insertionSetupFailure("Choose one command insertion setup action. Picker and mouse setup are separate.", nil, 2)
 	}
 	format := strings.ToLower(command.Root().String("format"))
@@ -71,7 +74,10 @@ func commandInsertionShellSetup(ctx context.Context, command *cli.Command) error
 		command.Root().String("transform") != "" || command.Root().Bool("raw-output") {
 		return insertionSetupFailure("Command insertion setup supports auto, text, json, and jsonl output. Transformations and raw output are unavailable.", nil, 2)
 	}
-	if install && runtime.GOOS == "windows" {
+	if automatic && format != "" && format != "auto" && format != "text" {
+		return insertionSetupFailure("Shell startup code requires text output.", nil, 2)
+	}
+	if (install || automatic) && runtime.GOOS == "windows" {
 		return insertionSetupFailure("Command insertion needs a Unix CLI build. On Windows, use the Linux CLI inside WSL.", nil, 2)
 	}
 	shell := command.Args().First()
@@ -89,26 +95,92 @@ func commandInsertionShellSetup(ctx context.Context, command *cli.Command) error
 	if err != nil {
 		return insertionSetupFailure("Could not select command insertion startup files. Check the shell and --profile option.", err, 2)
 	}
-	result := commandInsertionSetupResult{Action: "status", Shell: shell, Profiles: len(targets)}
-	if install {
-		result.Action = "install"
+	action := "status"
+	if automatic {
+		action = "auto"
+	} else if install {
+		action = "install"
+		for i := range targets {
+			targets[i].DoubleTab = command.Bool("suggestions-double-tab")
+		}
+	} else if remove {
+		action = "uninstall"
+	}
+	return applyCommandInsertionSetup(ctx, command.Root().Writer, format, shell, action, targets)
+}
+
+func applyCommandInsertionSetup(ctx context.Context, out io.Writer, format, shell, action string, targets []autocomplete.SuggestionInstallation) error {
+	result := commandInsertionSetupResult{Action: action, Shell: shell, Profiles: len(targets)}
+	if action == "install" || action == "auto" {
 		executable, err := commandInsertionExecutable()
 		if err != nil {
 			return insertionSetupFailure("Run setup through the installed openai command on PATH. Temporary go run builds cannot install startup integration.", err, 2)
 		}
 		for index := range targets {
 			targets[index].Executable = executable
-			targets[index].DoubleTab = command.Bool("suggestions-double-tab")
+			if action == "auto" {
+				targets[index].KeepBindings = true
+				targets[index].AfterShellSetup = true
+			}
 		}
-	} else if remove {
-		result.Action = "uninstall"
 	}
+	if action == "status" {
+		if err := inspectOrChangeInsertionTargets(ctx, targets, &result); err != nil {
+			return err
+		}
+	} else {
+		skipped, err := autocomplete.WithSuggestionSetup(ctx, autocomplete.CompletionStyle(shell), action == "auto", action == "uninstall", func() error {
+			return inspectOrChangeInsertionTargets(ctx, targets, &result)
+		})
+		if err != nil {
+			var setupErr *commandInsertionSetupError
+			if errors.As(err, &setupErr) {
+				return err
+			}
+			return insertionSetupFailure("Could not finish command insertion setup. Check your shell settings and retry.", err, 1)
+		}
+		if skipped {
+			return nil
+		}
+	}
+	if action == "auto" {
+		if result.Installed != len(targets) || result.NeedsUpdate {
+			return insertionSetupFailure("Could not verify the installed command insertion hook. Rerun setup.", nil, 1)
+		}
+		target := targets[0]
+		// Bash login and interactive startup files can have different bindings.
+		// Only enable this optional binding now if every profile requested it.
+		target.DoubleTab = result.doubleTabProfiles == len(targets)
+		loader, err := autocomplete.SuggestionLoader(target)
+		if err != nil {
+			return insertionSetupFailure("Could not prepare the command insertion hook.", err, 1)
+		}
+		if out == nil {
+			out = os.Stdout
+		}
+		n, err := io.WriteString(out, loader)
+		if err == nil && n != len(loader) {
+			err = io.ErrShortWrite
+		}
+		if err != nil {
+			return insertionSetupFailure("Shell setup finished, but its startup code could not be written.", err, 1)
+		}
+		return nil
+	}
+	if err := writeCommandInsertionSetup(out, format, result); err != nil {
+		return insertionSetupFailure("Command insertion setup finished, but its result could not be displayed. Use --suggestions-status to inspect it.", err, 1)
+	}
+	return nil
+}
+
+func inspectOrChangeInsertionTargets(ctx context.Context, targets []autocomplete.SuggestionInstallation, result *commandInsertionSetupResult) error {
 	// The shared engine locks each profile across validation, publication, and recovery.
 	// Multiple-profile failures retain successful changes; retrying is idempotent.
 	for _, target := range targets {
-		if install || remove {
+		if result.Action != "status" {
 			var changed autocomplete.PickerInstallResult
-			if install {
+			var err error
+			if result.Action != "uninstall" {
 				changed, err = autocomplete.InstallSuggestions(ctx, target)
 			} else {
 				changed, err = autocomplete.RemoveSuggestions(ctx, target)
@@ -130,10 +202,10 @@ func commandInsertionShellSetup(ctx context.Context, command *cli.Command) error
 			result.Installed++
 		}
 		result.NeedsUpdate = result.NeedsUpdate || status.NeedsUpdate
-		result.DoubleTab = result.DoubleTab || status.DoubleTab
-	}
-	if err := writeCommandInsertionSetup(command.Root().Writer, format, result); err != nil {
-		return insertionSetupFailure("Command insertion setup finished, but its result could not be displayed. Use --suggestions-status to inspect it.", err, 1)
+		if status.DoubleTab {
+			result.DoubleTab = true
+			result.doubleTabProfiles++
+		}
 	}
 	return nil
 }

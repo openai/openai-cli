@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/openai/openai-cli/internal/autocomplete"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -22,6 +24,17 @@ func enableZshPath(profileDir, identity string, login bool) bool {
 		return !strings.HasSuffix(identity, "/new") && appendProfilePath(profileDir, identity, ".zlogin", line)
 	}
 	return appendProfilePath(profileDir, identity, ".zshrc", `export PATH="$HOME/.openai/bin:$PATH"`)
+}
+
+// Bash login files can source .bashrc. Select the managed copy only once,
+// and leave noninteractive shells alone.
+func enableInteractiveProfile(dir, identity, name string) bool {
+	switch name {
+	case ".zshrc", ".bashrc", ".bash_profile", ".bash_login", ".profile":
+		const line = `case $- in *i*) case "$PATH" in "$HOME/.openai/bin"|"$HOME/.openai/bin":*) ;; *) export PATH="$HOME/.openai/bin:$PATH" ;; esac ;; esac`
+		return appendProfilePath(dir, identity, name, line)
+	}
+	return false
 }
 
 func appendProfilePath(profileDir, identity, name, line string) bool {
@@ -74,7 +87,8 @@ func appendProfilePath(profileDir, identity, name, line string) bool {
 		return false
 	}
 	tail = bytes.TrimSuffix(tail, []byte("\n"))
-	if string(tail) == line || bytes.HasSuffix(tail, []byte("\n"+line)) {
+	if string(tail) == line || bytes.HasSuffix(tail, []byte("\n"+line)) ||
+		autocomplete.PathPrecedesSuggestions(file, info.Size(), filepath.Join(profileDir, name), line, filepath.Join(os.Getenv("HOME"), ".openai", "bin", "openai")) {
 		return current()
 	}
 	if !current() {

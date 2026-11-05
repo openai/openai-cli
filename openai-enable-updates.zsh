@@ -6,7 +6,9 @@
     print -ru2 -- 'In zsh, run: source "$(brew --prefix)/bin/openai-enable-updates.zsh"'
     return 1
   fi
-  if (( ${+aliases[openai]} || ${+galiases[openai]} || ${+functions[openai]} )); then
+  if (( ${+aliases[openai]} || ${+galiases[openai]} )) ||
+     { (( ${+functions[openai]} )) && ! [[ ${__openai_suggestions_enabled-} == 1 &&
+       -n ${__openai_suggestions_wrapper_body-} && ${functions[openai]} == "$__openai_suggestions_wrapper_body" ]]; }; then
     print -ru2 -- 'Your shell selects an alias or function named openai. Rename it before enabling automatic updates.'
     return 1
   fi
@@ -21,7 +23,7 @@
     print -ru2 -- 'The Homebrew helper is incomplete. Run brew update && brew upgrade --cask openai/tools/openai.'
     return 1
   fi
-  /bin/sh "$installer" --homebrew "$brew_bin" --zsh "${ZDOTDIR:-$HOME}" || return $?
+  OPENAI_CLI_SOURCED_INSTALL=1 /bin/sh "$installer" --homebrew "$brew_bin" --zsh "${ZDOTDIR:-$HOME}" || return $?
 
   if [[ $path[1] != "$HOME/.openai/bin" ]]; then
     export PATH="$HOME/.openai/bin:$PATH"
@@ -29,9 +31,13 @@
   if (( ${+commands[openai]} )); then
     builtin unhash openai || return $?
   fi
-  if [[ $(whence openai) != "$HOME/.openai/bin/openai" ]]; then
+  if [[ $(builtin whence -p openai) != "$HOME/.openai/bin/openai" ]]; then
     print -ru2 -- 'Your shell selects another command. Run "$HOME/.openai/bin/openai" directly.'
     return 1
   fi
   print -r -- 'This shell now uses $HOME/.openai/bin/openai.'
+  local hook
+  if hook=$("$HOME/.openai/bin/openai" @completion zsh --auto-suggestions --profile "${ZDOTDIR:-$HOME}/.zshrc"); then
+    case $hook in *$'\n# openai-cli-install-suggestions-complete v1') builtin eval "$hook" ;; esac
+  fi
 }

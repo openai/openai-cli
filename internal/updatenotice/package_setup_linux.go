@@ -18,14 +18,8 @@ func runLinuxPackageHelper(argv []string) bool {
 		if len(argv) != 5 {
 			return true
 		}
-		switch argv[4] {
-		case ".zshrc", ".bashrc", ".bash_profile", ".bash_login", ".profile":
-			// A Bash login profile can also source .bashrc. Select the private
-			// copy once and leave noninteractive login scripts alone.
-			const line = `case $- in *i*) case "$PATH" in "$HOME/.openai/bin"|"$HOME/.openai/bin":*) ;; *) export PATH="$HOME/.openai/bin:$PATH" ;; esac ;; esac`
-			if appendProfilePath(argv[2], argv[3], argv[4], line) {
-				fmt.Println("ready")
-			}
+		if enableInteractiveProfile(argv[2], argv[3], argv[4]) {
+			fmt.Println("ready")
 		}
 	default:
 		return false

@@ -3,10 +3,70 @@ package autocomplete
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
 )
+
+// WithSuggestionSetup serializes the installer with explicit enable and removal.
+// The preference follows the user's shell even when XDG_CONFIG_HOME changes.
+func WithSuggestionSetup(ctx context.Context, shell CompletionStyle, automatic, remove bool, change func() error) (skipped bool, err error) {
+	if shell != CompletionStyleZsh && shell != CompletionStyleBash && shell != CompletionStyleFish {
+		return false, errors.New("unsupported command insertion shell")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || !AbsoluteShellPath(home) {
+		return false, errors.New("cannot locate the command insertion preference")
+	}
+	name := "command-insertion.off-" + string(shell)
+	attempted := false
+	err = withPickerSetupRoot(ctx, filepath.Join(home, ".openai", "shell"), func(root *os.Root) error {
+		marker, err := readPickerFile(ctx, root, name)
+		if err != nil {
+			return err
+		}
+		if len(marker.data) != 0 {
+			return errors.New("cannot verify the command insertion preference")
+		}
+		if automatic && marker.info != nil {
+			skipped = true
+			return nil
+		}
+		if remove && marker.info == nil {
+			file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err != nil {
+				return err
+			}
+			if err := file.Close(); err != nil {
+				return err
+			}
+		}
+		attempted = true
+		if err := change(); err != nil {
+			return err
+		}
+		if !remove && marker.info != nil {
+			return removePickerSnapshot(ctx, root, name, marker)
+		}
+		return nil
+	})
+	// A damaged preference must not prevent cleanup of a valid managed profile.
+	if remove && err != nil && !attempted && ctx.Err() == nil {
+		err = errors.Join(err, change())
+	}
+	return skipped, err
+}
+
+// SuggestionLoader returns the same startup code as the managed profile.
+// The installer checks the final line before loading it in its calling shell.
+func SuggestionLoader(options SuggestionInstallation) (string, error) {
+	data, err := renderInstalledSuggestions(options.installation())
+	if err != nil {
+		return "", err
+	}
+	return string(data) + "\n# openai-cli-install-suggestions-complete v1\n", nil
+}
 
 const suggestionsIntegration = "suggestions"
 
@@ -18,6 +78,10 @@ type SuggestionInstallation struct {
 	Profile    string
 	Executable string
 	DoubleTab  bool
+	// Preserve an existing binding preference when enabling insertion from Explore.
+	KeepBindings bool
+	// Source the loader after the installer has restored PATH.
+	AfterShellSetup bool
 }
 
 // SuggestionStatus describes verified persistent configuration, not current bindings.
@@ -32,7 +96,7 @@ type SuggestionStatus struct {
 func (options SuggestionInstallation) installation() PickerInstallation {
 	return PickerInstallation{
 		Shell: options.Shell, Directory: options.Directory, Profile: options.Profile,
-		integration: suggestionsIntegration, executable: options.Executable, doubleTab: options.DoubleTab,
+		integration: suggestionsIntegration, executable: options.Executable, doubleTab: options.DoubleTab, keepBindings: options.KeepBindings, afterShellSetup: options.AfterShellSetup,
 	}
 }
 

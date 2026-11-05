@@ -1,9 +1,96 @@
 package main
 
 import (
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/openai/openai-cli/generated/commands"
+	"github.com/openai/openai-cli/internal/app"
 )
+
+func completionTestTopic() string {
+	if runtime.GOOS == "windows" {
+		return `"@completion"`
+	}
+	return "@completion"
+}
+
+func TestMainCompletionSetupHelp(t *testing.T) {
+	var first string
+	for _, args := range [][]string{
+		{"openai", "@completion", "--help"},
+		{"openai", "@completion", "-h"},
+		{"openai", "help", "@completion"},
+		{"openai", "help", "--all=false", "@completion"},
+		{"openai", "--help", "--all=false", "@completion"},
+		{"openai", "--all=false", "@completion", "--help"},
+		{"openai", "--all=false", "@completion", "zsh", "--install-suggestions", "--help"},
+	} {
+		got := runMainDispatchWithEnv(t, "zsh", []string{"OPENAI_BASE_URL=invalid"}, args...)
+		if got.code != 0 || got.stderr != "" {
+			t.Fatalf("help %q: %+v", args, got)
+		}
+		if first != "" && got.stdout != first {
+			t.Fatalf("help %q differs from @completion --help: %s", args, got.stdout)
+		}
+		first = got.stdout
+	}
+	topic := completionTestTopic()
+	for _, text := range []string{"openai explore", "Select a command and press Enter.", "copy it to your prompt", "openai help --all " + topic} {
+		if !strings.Contains(first, text) {
+			t.Errorf("missing %q in %s", text, first)
+		}
+	}
+	for _, unrelated := range []string{"FLAGS", "--install-suggestions", "--profile", "--picker", "--suggestions", "--debug"} {
+		if strings.Contains(first, unrelated) {
+			t.Errorf("unexpected %q in completion help", unrelated)
+		}
+	}
+	full := runMainDispatchWithEnv(t, "zsh", []string{"OPENAI_BASE_URL=invalid"}, "openai", "help", "--all", "@completion")
+	if full.code != 0 || full.stderr != "" {
+		t.Fatalf("full completion reference: %+v", full)
+	}
+	for _, args := range [][]string{
+		{"openai", "--help", "--all", "@completion"},
+		{"openai", "--all", "@completion", "--help"},
+		{"openai", "@completion", "zsh", "--install-suggestions", "--help"},
+		{"openai", "@completion", "--help", "bash", "--install-picker", "--profile", "startup"},
+	} {
+		if got := runMainDispatchWithEnv(t, "zsh", []string{"OPENAI_BASE_URL=invalid"}, args...); got != full {
+			t.Fatalf("full help %q differs from help --all @completion: %+v", args, got)
+		}
+	}
+	for _, text := range []string{"openai " + topic + " [SHELL] [FLAGS]", "bash, zsh, fish, or pwsh", "openai " + topic + " zsh",
+		`openai @completion zsh --install-suggestions --profile "${ZDOTDIR-$HOME}/.zshrc"`, "\nFLAGS\n", "--help, -h"} {
+		if !strings.Contains(full.stdout, text) {
+			t.Errorf("full completion reference omitted %q", text)
+		}
+	}
+	app.ConfigureCommand(commands.Command)
+	_, flags, _ := strings.Cut(full.stdout, "\nFLAGS\n")
+	if !strings.Contains(strings.Join(strings.Fields(flags), " "), "--automatic Requires --install-picker. Omit the shell name and --profile.") {
+		t.Error("automatic picker setup must identify the required flag and incompatible overrides")
+	}
+	for _, flag := range commands.Command.Command("@completion").VisibleFlags() {
+		for _, name := range flag.Names() {
+			option := "--" + name
+			if len(name) == 1 {
+				option = "-" + name
+			}
+			label := regexp.MustCompile(`(?m)^  (?:\S+, )*` + regexp.QuoteMeta(option) + `(?:=|,|\s|$)`)
+			if !label.MatchString(flags) {
+				t.Errorf("full completion reference lacks a flag row for %s", option)
+			}
+		}
+	}
+	for _, unrelated := range []string{"\x1b", "--api-key", "--auto-suggestions", "--suggestions-only", "no longer needed"} {
+		if strings.Contains(first+full.stdout, unrelated) {
+			t.Errorf("unexpected %q in completion help", unrelated)
+		}
+	}
+}
 
 func TestMainCompletionStaysLocalWithInvalidRequestConfiguration(t *testing.T) {
 	env := []string{

@@ -7,6 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func searchCandidates(candidates []Candidate, query string) []int {
+	return newSearchIndex(candidates).search(query)
+}
+
 func TestCommandSearchRanksNamesBeforeDescriptionsAndExamples(t *testing.T) {
 	candidates := []Candidate{
 		{Command: "openai models --help", Description: "List and inspect available models"},
@@ -67,7 +71,7 @@ func TestCommandSearchReordersOnlyDeclaredIndependentWords(t *testing.T) {
 		{"files files count", nil},
 		{"stored file count remotely", nil},
 		{"stored fil count", []int{4}}, // An unfinished middle word only qualifies for usual keyword search.
-		{"files", nil},                 // Single words still use ordinary command search.
+		{"files", []int{3}},            // Singular and plural forms match installed route words.
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			require.Equal(t, tc.want, searchCandidates(candidates, tc.query))
@@ -108,4 +112,47 @@ func TestCommandSearchStableTiesAndEditingSelection(t *testing.T) {
 	m.Update(tea.PasteMsg{Content: " list"})
 	require.Equal(t, []int{0}, m.matches)
 	require.Zero(t, m.selected)
+}
+
+func TestSearchUsesCatalogRoutesForRecovery(t *testing.T) {
+	candidates := []Candidate{
+		{path: "projects model-permissions retrieve", commandText: "projects model-permissions retrieve"},
+		{path: "models retrieve", commandText: "models retrieve"},
+		{path: "models list", commandText: "models list", Command: "'/preview path/cli' models list"},
+		{commandText: "models list --format json", Command: "'/preview path/cli' models list --format json"},
+		{path: "speak", commandText: "speak", taskPhrases: []TaskPhrase{{Text: "text to speech"}}},
+		{path: "transcribe", commandText: "transcribe", taskPhrases: []TaskPhrase{{Text: "speech to text"}}},
+	}
+	index := newSearchIndex(candidates)
+	for _, tc := range []struct {
+		query string
+		want  []int
+	}{
+		{"retrieve model", []int{1, 0}},
+		{"modles list", []int{2}},
+		{"models ls", []int{2}},
+		{"ls models", []int{2}},
+		{"list all models", []int{2, 3}},
+		{"retrieve all models", nil},
+		{"openai modles list", []int{2}},
+		{"modles lsit", nil},
+		{"how do I list my models?", []int{2, 3}},
+		{"text-to-speech", []int{4}},
+		{"speech-to-text", []int{5}},
+		{"--fromat", nil},
+		{"preview", nil},
+		{"---", nil},
+		{"my", nil},
+	} {
+		t.Run(tc.query, func(t *testing.T) { require.Equal(t, tc.want, index.search(tc.query)) })
+	}
+	// Selection must preserve the executable quoting even after typo recovery.
+	require.Equal(t, "'/preview path/cli' models list", Search(candidates, "modles list")[0].Command)
+}
+
+func TestReorderedTaskPhrasesRequireTwoContentWords(t *testing.T) {
+	phrase := TaskPhrase{Text: "make an image", AnyWordOrder: true}
+	require.Equal(t, reorderedTask, phrase.match("make image", []string{"make", "image"}))
+	require.Equal(t, noTaskMatch, phrase.match("an image", []string{"an", "image"}))
+	require.Equal(t, noTaskMatch, phrase.match("image a", []string{"image", "a"}))
 }
