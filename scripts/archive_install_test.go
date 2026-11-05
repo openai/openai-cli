@@ -763,11 +763,15 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 		t.Fatal(err)
 	}
 	_, start, ok := strings.Cut(string(readme), "\n```zsh\n")
-	block, rest, closed := strings.Cut(start, "\n```")
+	block, _, closed := strings.Cut(start, "\n```")
 	if !ok || !closed {
 		t.Fatal("missing zsh installation block")
 	}
-	_, start, ok = strings.Cut(rest, "\n```zsh\n")
+	guide, err := os.ReadFile("../docs/installation.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, start, ok = strings.Cut(string(guide), "\n```zsh\n")
 	recovery, _, closed := strings.Cut(start, "\n```")
 	if !ok || !closed {
 		t.Fatal("missing zsh recovery block")

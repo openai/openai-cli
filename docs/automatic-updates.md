@@ -34,7 +34,7 @@ You can keep using the Homebrew CLI while waiting for the tap.
 ### From an installed Debian or RPM package
 
 Older packages, including v1.48.1, provide the CLI through `/usr/bin/openai`. Run `/usr/bin/openai --help` to use it.
-If your package lacks the setup helper, use the [archive instructions](#from-an-extracted-archive) to enable automatic updates.
+If your package lacks the setup helper, use the [Linux install command](../README.md#linux) to upgrade and enable automatic updates.
 For a package that includes the helper, run this command in interactive Bash or zsh.
 
 ```sh
