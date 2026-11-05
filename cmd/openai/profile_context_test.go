@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -180,7 +181,7 @@ func TestMainProfileRejectsConfiguredCredentialsBeforeDispatch(t *testing.T) {
 			}
 			got = run(key, "--debug", "models", "list")
 			require.NotZero(t, got.code)
-			require.Contains(t, got.stderr, "contains a configured credential")
+			require.Contains(t, got.stderr, "contains a credential")
 			require.NotContains(t, got.stdout+got.stderr, secret)
 			require.Empty(t, requests)
 			got = run(key, flag+"=explicit_safe", "models", "list", "--format=raw")
@@ -201,4 +202,60 @@ func TestMainProfileRejectsConfiguredCredentialsBeforeDispatch(t *testing.T) {
 	require.Zero(t, got.code, "%s", got.stderr)
 	require.NotContains(t, got.stdout+got.stderr, secret)
 	require.Empty(t, requests)
+}
+
+func TestMainProfileRejectsUnconfiguredOpenAIKeys(t *testing.T) {
+	server, requests := globalFlagsServer(t, globalFlagsPage)
+	home := t.TempDir()
+	env := append(profileProcessEnvironment(home), globalFlagsEnv(server)...)
+	run := func(args ...string) mainDispatchResult {
+		t.Helper()
+		return runMainDispatchWithEnv(t, "bash", env, append([]string{"openai"}, args...)...)
+	}
+	const name = "sk-proj-team"
+	require.Zero(t, run("profile", "create", name).code)
+	require.Zero(t, run("profile", "set", name, "--project=sk-admin-tools").code)
+	path := profileRegistryPath(t, home)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	// Construct fake credentials locally, separately from any configured credential.
+	material := strings.Repeat("F", 20) + "T3BlbkFJ" + strings.Repeat("X", 20)
+	for _, prefix := range []string{"sk-proj-", "sk-admin-", "sk-svcacct-", "sk-"} {
+		key := prefix + material
+		for _, args := range [][]string{{"profile", "create", key}, {"profile", "set", name, "--project=" + key},
+			{"profile", "set", name, "--organization=" + key}} {
+			got := run(args...)
+			require.NotZero(t, got.code)
+			require.NotContains(t, got.stdout+got.stderr, key)
+		}
+	}
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	// An earlier CLI could store a key in either a field or the profile name.
+	projectKey, profileKey := "sk-proj-"+material, "sk-admin-"+material
+	legacy := `{"version":1,"default_profile":"` + profileKey + `","profiles":{"` + profileKey + `":{"project":"` + projectKey + `"}}}`
+	require.NoError(t, os.WriteFile(path, []byte(legacy), 0600))
+	for _, args := range [][]string{{"auth", "status"}, {"auth", "status", "--format=json"}, {"profile", "list", "--format=jsonl"}, {"profile", "get", profileKey}} {
+		got := run(args...)
+		require.Zero(t, got.code, "%s", got.stderr)
+		require.Contains(t, got.stdout, "[redacted]")
+		require.NotContains(t, got.stdout+got.stderr, projectKey)
+		require.NotContains(t, got.stdout+got.stderr, profileKey)
+	}
+	got := run("--debug", "models", "list")
+	require.NotZero(t, got.code)
+	require.NotContains(t, got.stdout+got.stderr, projectKey)
+	require.NotContains(t, got.stdout+got.stderr, profileKey)
+	require.Empty(t, requests)
+	got = run("profile", "set", profileKey, "--unset=project")
+	require.Zero(t, got.code, "%s", got.stderr)
+	require.NotContains(t, got.stdout+got.stderr, profileKey)
+	got = run("profile", "delete", profileKey, "--deactivate")
+	require.Zero(t, got.code, "%s", got.stderr)
+	require.NotContains(t, got.stdout+got.stderr, profileKey)
+	after, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.NotContains(t, string(after), projectKey)
+	require.NotContains(t, string(after), profileKey)
 }

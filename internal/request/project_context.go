@@ -157,7 +157,7 @@ func ConfigureProjectContext(ctx context.Context, root *cli.Command) error {
 		secrets := ConfiguredCredentials(root, os.LookupEnv)
 		for _, field := range []ContextValue{selection.Organization, selection.Project} {
 			if field.Source == "profile:"+name && ContainsCredential(field.Value, secrets) {
-				return &ProjectContextError{message: "A saved organization or project contains a configured credential. Use profile set to replace the value, or --profile= to bypass saved settings."}
+				return &ProjectContextError{message: "A saved organization or project contains a credential. Use profile set to replace the value, or --profile= to bypass saved settings."}
 			}
 		}
 	}

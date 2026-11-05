@@ -53,7 +53,9 @@ Delete an active profile with `openai profile delete work --deactivate`.
 The CLI stores profiles in `openai/profiles.json` under the operating system's user configuration directory.
 Profile names are case-sensitive. Profile commands run locally. They support text, JSON and JSONL.
 Only options passed to `profile set` edit saved organization and project IDs.
-The CLI rejects saved IDs that contain a currently configured credential before sending them.
+Profile commands reject configured credentials and recognizable OpenAI keys in new names and IDs.
+If an old file contains one, the CLI hides it in profile output and blocks requests using that ID.
+Use `profile set NAME --unset project` or `--unset organization` to remove the saved ID.
 CLI writes use a shared lock. Close other editors before changing the file manually.
 
 Earlier preview versions allowed saved base URLs. A selected profile containing a saved base URL blocks requests.
