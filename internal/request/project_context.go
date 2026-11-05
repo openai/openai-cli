@@ -6,10 +6,18 @@ import (
 	"os"
 	"strings"
 
-	"github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/profiles"
 	"github.com/urfave/cli/v3"
 )
+
+// ProjectContextError retains the cause while displaying only authored request guidance.
+type ProjectContextError struct {
+	message string
+	cause   error
+}
+
+func (e *ProjectContextError) Error() string { return e.message }
+func (e *ProjectContextError) Unwrap() error { return e.cause }
 
 // Keep the selector local to this invocation, including when callers reuse the command tree.
 type profileFlag struct{ cli.StringFlag }
@@ -50,7 +58,7 @@ func selectedRegistryName(registry profiles.Registry, name string, explicit bool
 		name = *registry.DefaultProfile
 	}
 	if _, exists := registry.Profiles[name]; name != "" && !exists {
-		return "", &commands.LocalError{Message: "Selected profile does not exist. Use profile list to inspect saved names."}
+		return "", &ProjectContextError{message: "Selected profile does not exist. Use profile list to inspect saved names."}
 	}
 	return name, nil
 }
@@ -68,17 +76,17 @@ func SelectedProfile(ctx context.Context, root *cli.Command, lookup func(string)
 		return "", profiles.Values{}, nil
 	}
 	if err != nil {
-		return "", profiles.Values{}, &commands.LocalError{Message: "Could not locate profiles.json. Check your user configuration directory.", Cause: err}
+		return "", profiles.Values{}, &ProjectContextError{message: "Could not locate profiles.json. Check your user configuration directory.", cause: err}
 	}
 	registry, err := profiles.Load(ctx, path)
 	if err != nil {
-		return "", profiles.Values{}, &commands.LocalError{Message: "Could not read profiles.json. Check the file in your user configuration directory. Use --profile= to bypass saved profiles for one command.", Cause: err}
+		return "", profiles.Values{}, &ProjectContextError{message: "Could not read profiles.json. Check the file in your user configuration directory. Use --profile= to bypass saved profiles for one command.", cause: err}
 	}
 	name, err = selectedRegistryName(registry, name, explicit)
 	values := registry.Profiles[name]
 	// Even an empty legacy setting explicitly selected production in the earlier draft.
 	if values.BaseURL != nil {
-		return "", profiles.Values{}, &commands.LocalError{Message: "This profile contains a legacy base URL. Use profile set NAME --unset base_url, then specify --base-url or OPENAI_BASE_URL for requests."}
+		return "", profiles.Values{}, &ProjectContextError{message: "This profile contains a legacy base URL. Use profile set NAME --unset base_url, then specify --base-url or OPENAI_BASE_URL for requests."}
 	}
 	return name, values, err
 }
@@ -146,7 +154,7 @@ func ConfigureProjectContext(ctx context.Context, root *cli.Command) error {
 	}
 	literal, err := Headers(root)
 	if err != nil {
-		return &commands.LocalError{Message: "Invalid --" + err.Error() + ".", Cause: err}
+		return &ProjectContextError{message: "Invalid --" + err.Error() + ".", cause: err}
 	}
 	root.Metadata[projectContextMetadata] = ResolveProjectContext(root, os.LookupEnv, literal, EnvironmentHeaders(os.Getenv("OPENAI_CUSTOM_HEADERS")), name, values)
 	return nil

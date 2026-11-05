@@ -415,7 +415,8 @@ func profileTextValue(value string) string {
 
 func profileCommandStoreFailure(cause error) error {
 	var local *localcommands.LocalError
-	if errors.As(cause, &local) {
+	var selection *request.ProjectContextError
+	if errors.As(cause, &local) || errors.As(cause, &selection) {
 		return cause
 	}
 	recovery := "Check profiles.json and its lock in your user configuration folder."

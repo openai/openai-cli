@@ -56,6 +56,7 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	var debugCaptureFailure *debugCaptureOptionError
 	var adminCredentialsFailure *admin.CredentialsError
 	var adminSetupFailure *admin.SetupError
+	var projectContextFailure *requestconfig.ProjectContextError
 	var utilityFailure *localcommands.LocalError
 	var profileCommit interface {
 		error
@@ -92,6 +93,8 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 		return debugCaptureFailure.Error()
 	case errors.As(failure, &webhookFailure):
 		return webhookFailure.Error()
+	case errors.As(failure, &projectContextFailure):
+		return projectContextFailure.Error()
 	case errors.As(failure, &utilityFailure):
 		return utilityFailure.Error()
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
