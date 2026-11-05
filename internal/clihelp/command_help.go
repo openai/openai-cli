@@ -109,8 +109,10 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	}
 	if request.RequestFileFlag(command) != nil {
 		out.WriteByte('\n')
-		out.WriteString(wrapDescription("Pipe a JSON or YAML request from your script.", "  ", width))
-		fmt.Fprintf(&out, "    $ %s\n", commandsuggest.Record(command, "python3 make-request.py | "+name+" --request-file -"))
+		out.WriteString(wrapDescription("Read JSON or YAML from a pipe with --request-file -. Example for Bash, zsh, Fish, or PowerShell:", "  ", width))
+		if example := requestPipeExample(invocation, path); example != "" {
+			fmt.Fprintf(&out, "    $ %s\n", commandsuggest.Record(command, example))
+		}
 	}
 	description := content.Description
 	if strings.Join(strings.Fields(plainUsage), " ") != strings.Join(strings.Fields(summary), " ") {
