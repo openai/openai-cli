@@ -182,6 +182,21 @@ func TestMainWindowsArchiveConsoleOwner(t *testing.T) {
 				t.Fatal(err)
 			}
 			screen = windowsArchiveConsoleRows(cells, width)
+			if reportPath := os.Getenv("OPENAI_ARCHIVE_TEST_LAUNCH_REPORT"); reportPath != "" {
+				report := windowsLauncherPresentation(cells, width)
+				report.Exit = -1
+				if cmd.ProcessState != nil {
+					report.Exit = cmd.ProcessState.ExitCode()
+				}
+				data, err := json.Marshal(report)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(reportPath, data, 0600); err != nil {
+					t.Fatal(err)
+				}
+				t.Logf("Install.cmd console: %+v", report)
+			}
 		} else {
 			// API and confirmation checks search the continuous screen text.
 			screen, err = readOutputConsole(output)
@@ -192,7 +207,8 @@ func TestMainWindowsArchiveConsoleOwner(t *testing.T) {
 		if err := os.WriteFile(path, []byte(screen), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if mode == "install" {
+		// Published qualification checks presentation after it records the actual upgrade.
+		if mode == "install" && os.Getenv("OPENAI_ARCHIVE_TEST_LAUNCH_REPORT") == "" {
 			statuses, err := windowsInstallerTranscript(screen)
 			if runErr != nil || err != nil {
 				t.Fatalf("Install.cmd exit=%v; status=%v; recognized=%q", runErr, err, statuses)
@@ -218,9 +234,49 @@ func windowsArchiveConsoleRows(cells []uint16, width int) string {
 }
 
 const (
-	windowsInstallStart = "Installing OpenAI CLI for your account..."
-	windowsInstallDone  = "OpenAI CLI setup finished."
+	windowsInstallStart     = "Installing OpenAI CLI for your account..."
+	windowsInstallDone      = "OpenAI CLI setup finished."
+	windowsVerifierDownload = "Downloading GitHub CLI for automatic update verification..."
 )
+
+type windowsLauncherReport struct {
+	Width, Exit, Starts, Finishes, Downloads int
+	StatusOrder                              bool
+}
+
+func windowsLauncherPresentation(cells []uint16, width int) windowsLauncherReport {
+	report := windowsLauncherReport{Width: width}
+	// Compare complete messages from a row boundary, including padding after the last character.
+	// A full preceding row can continue onto this row. Do not count a suffix of that text.
+	continuation := false
+	for len(cells) > 0 {
+		if !continuation {
+			for _, message := range []string{windowsInstallStart, windowsInstallDone, windowsVerifierDownload} {
+				// A message that fills its last row must also end before the next visible text.
+				span := (len(message)/width + 1) * width
+				text := string(utf16.Decode(cells[:min(span, len(cells))]))
+				if strings.TrimRight(text, " ") != message {
+					continue
+				}
+				switch message {
+				case windowsInstallStart:
+					report.Starts++
+				case windowsInstallDone:
+					report.Finishes++
+					report.StatusOrder = report.Starts == 1
+				case windowsVerifierDownload:
+					report.Downloads++
+				}
+				break
+			}
+		}
+		row := cells[:min(width, len(cells))]
+		continuation = row[len(row)-1] != ' '
+		cells = cells[len(row):]
+	}
+	report.StatusOrder = report.StatusOrder && report.Starts == 1 && report.Finishes == 1
+	return report
+}
 
 func windowsInstallerTranscript(screen string) ([]string, error) {
 	var statuses []string
@@ -267,6 +323,28 @@ func TestMainWindowsArchiveBracketedLauncher(t *testing.T) {
 
 // Capture both stdout and stderr from a new native console without any input.
 func TestMainWindowsArchiveConsoleCapture(t *testing.T) {
+	t.Run("wrapped launcher messages", func(t *testing.T) {
+		for _, width := range []int{16, 25, 26, 41, 50, 59, 80} {
+			rows := func(lines ...string) []uint16 {
+				var cells []uint16
+				for _, line := range lines {
+					padded := line + strings.Repeat(" ", width-len(line)%width)
+					cells = append(cells, utf16.Encode([]rune(padded))...)
+				}
+				return cells
+			}
+			messages := rows(windowsInstallStart, windowsVerifierDownload, windowsVerifierDownload, windowsInstallDone)
+			report := windowsLauncherPresentation(messages, width)
+			if report.Downloads != 2 || !report.StatusOrder {
+				t.Fatalf("width %d: %+v", width, report)
+			}
+			bad := rows(windowsInstallDone, windowsInstallStart, strings.Repeat("x", width)+windowsVerifierDownload, windowsVerifierDownload+" extra")
+			report = windowsLauncherPresentation(bad, width)
+			if report.Downloads != 0 || report.StatusOrder {
+				t.Fatalf("accepted embedded text or reversed status at width %d: %+v", width, report)
+			}
+		}
+	})
 	work := t.TempDir()
 	launcher := filepath.Join(work, "Install.cmd")
 	const detail = "synthetic installer detail"

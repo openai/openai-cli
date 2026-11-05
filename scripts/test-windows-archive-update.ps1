@@ -141,6 +141,14 @@ $env:TMP = $env:TEMP
 $env:PATH = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
 $env:GITHUB_ACTIONS = 'true'
 if (Test-Path -LiteralPath "$PSScriptRoot/tags.json") {
+    trap {
+        # A PowerShell error can contain paths or a signed URL. Record only a known script and line.
+        $where = $_.InvocationInfo
+        $source = [IO.Path]::GetFileName($where.ScriptName)
+        if ($source -notin 'ordinary.ps1','test-windows-published-starter.ps1','acquire.ps1','test-windows-console-paste.ps1','test-windows-download-zone.ps1') {$source = 'other'}
+        Add-Content -LiteralPath "$PSScriptRoot/results/starter-stage.log" -Value "Failure source=$source line=$([int]$where.ScriptLineNumber)"
+        exit 1
+    }
     $tags = Get-Content -LiteralPath "$PSScriptRoot/tags.json" -Raw | ConvertFrom-Json
     $env:OPENAI_CLI_WINDOWS_PUBLISHED_VERIFY = '1'
     $env:OPENAI_WINDOWS_STARTER_TAG = $tags.starter
@@ -162,6 +170,14 @@ if (Test-Path -LiteralPath "$PSScriptRoot/tags.json") {
     $observed | Add-Member -NotePropertyName InstallRoute -NotePropertyValue $tags.route
     $observed | Add-Member -NotePropertyName PrivateVerifier -NotePropertyValue ([bool]$tags.privateVerifier)
     $observed | ConvertTo-Json -Compress | Add-Content -LiteralPath "$PSScriptRoot/results/test.log"
+    # Preserve the authenticated upgrade outcome even if the launcher omitted required status text.
+    if ($tags.route -ceq 'Install.cmd') {
+        $report = Get-Content -LiteralPath "$PSScriptRoot/results/launcher.json" -Raw | ConvertFrom-Json
+        if ($report.Exit -ne 0 -or $report.StatusOrder -ne $true -or ($tags.privateVerifier -and $report.Downloads -ne 1)) {
+            Add-Content -LiteralPath "$PSScriptRoot/results/test.log" -Value 'Authenticated upgrade passed. Launcher presentation failed.'
+            throw 'The public upgrade passed but the launcher presentation failed.'
+        }
+    }
     exit 0
 }
 $env:OPENAI_CLI_WINDOWS_ARCHIVE_FIXTURE = '1'
@@ -371,6 +387,13 @@ exit 0
         $child = Start-Process -FilePath $shell -ArgumentList "-NoLogo -NoProfile -NonInteractive -File `"$root\ordinary.ps1`"" -WorkingDirectory $root -Credential $runAs -LoadUserProfile -UseNewEnvironment -Wait -PassThru
         # This independent record survives a failed published enrollment.
         if (Test-Path -LiteralPath "$root/results/paste.log") {Get-Content -LiteralPath "$root/results/paste.log"}
+        if ($published) {
+            if (Test-Path -LiteralPath "$root/results/starter-stage.log") {Get-Content -LiteralPath "$root/results/starter-stage.log"}
+            if (Test-Path -LiteralPath "$root/results/launcher.json") {
+                $r = Get-Content -LiteralPath "$root/results/launcher.json" -Raw | ConvertFrom-Json
+                Write-Output "Install.cmd exit=$([int]$r.Exit) width=$([int]$r.Width) starts=$([int]$r.Starts) finishes=$([int]$r.Finishes) downloads=$([int]$r.Downloads) ordered=$([bool]$r.StatusOrder)"
+            }
+        }
         if (!(Test-Path -LiteralPath $logPath)) {throw "The standard account failed before recording CLI evidence (exit $($child.ExitCode))."}
         $log = Get-Content -LiteralPath $logPath -Raw
         Write-Output $log

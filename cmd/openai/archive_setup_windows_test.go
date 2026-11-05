@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -99,6 +100,9 @@ func TestMainWindowsArchiveOrdinarySetup(t *testing.T) {
 	}
 	installer := filepath.Join(extracted, "Install.cmd")
 	copyFile(setupScript, installer)
+	if runtime.GOARCH == "arm64" {
+		copyFile(setupScript, filepath.Join(olderDir, "Install.cmd"))
+	}
 	managed := filepath.Join(os.Getenv("LOCALAPPDATA"), "OpenAI", "CLI", "bin", "openai.exe")
 	public := os.Getenv("OPENAI_CLI_WINDOWS_ARCHIVE_BASELINE")
 	if !filepath.IsAbs(public) {
@@ -388,20 +392,39 @@ func verifyWindowsFirstPrivateVerifier(t *testing.T, cli, emptyPath, managed str
 
 	start := cmd(emptyPath, "install", "--user")
 	var diag bytes.Buffer
-	start.Stderr = &diag
-	out, err := start.Output()
-	if err != nil {
-		// Keep transport details, signed URLs, and paths out of hosted logs.
-		for _, hint := range []string{"Could not download the GitHub CLI verifier", "GitHub TLS verification failed", "failed its checksum check", "Could not access the private verifier directory"} {
-			if strings.Contains(diag.String(), hint) {
-				t.Fatalf("initial Windows ZIP setup: %v (%s)", err, hint)
-			}
+	if runtime.GOARCH == "arm64" {
+		// Match the public ARM64 ZIP route. The x64 run covers redirected stdout and stderr.
+		dir := filepath.Dir(cli)
+		reportPath := filepath.Join(dir, "launcher.json")
+		env := append(start.Env, "OPENAI_ARCHIVE_TEST_MODE=install", "OPENAI_WINDOWS_REQUIRE_PRIVATE_GH=1",
+			"OPENAI_ARCHIVE_TEST_SCREEN="+filepath.Join(dir, "screen.txt"), "OPENAI_ARCHIVE_TEST_LAUNCH_REPORT="+reportPath)
+		ctx, cancel := context.WithTimeout(t.Context(), 175*time.Second)
+		defer cancel()
+		runWindowsUpdateConsole(t, ctx, filepath.Join(dir, "Install.cmd"), dir, env)
+		data, err := os.ReadFile(reportPath)
+		var report windowsLauncherReport
+		if err != nil || json.Unmarshal(data, &report) != nil {
+			t.Fatal("missing private-verifier launcher evidence")
 		}
-		t.Fatalf("initial Windows ZIP setup: %v", err)
-	}
-	const progress = "Downloading GitHub CLI for automatic update verification..."
-	if strings.TrimSpace(diag.String()) != progress || !strings.EqualFold(strings.TrimSpace(string(out)), managed) {
-		t.Fatal("first setup must print exactly one download start and one installed path")
+		t.Logf("Private-verifier Install.cmd: %+v", report)
+		if report.Exit != 0 || !report.StatusOrder || report.Downloads != 1 {
+			t.Error("expected a successful launcher and one visible verifier download")
+		}
+	} else {
+		start.Stderr = &diag
+		out, err := start.Output()
+		if err != nil {
+			// Keep transport details, signed URLs, and paths out of hosted logs.
+			for _, hint := range []string{"Could not download the GitHub CLI verifier", "GitHub TLS verification failed", "failed its checksum check", "Could not access the private verifier directory"} {
+				if strings.Contains(diag.String(), hint) {
+					t.Fatalf("initial Windows ZIP setup: %v (%s)", err, hint)
+				}
+			}
+			t.Fatalf("initial Windows ZIP setup: %v", err)
+		}
+		if strings.TrimSpace(diag.String()) != windowsVerifierDownload || !strings.EqualFold(strings.TrimSpace(string(out)), managed) {
+			t.Fatal("first setup must print exactly one download start and one installed path")
+		}
 	}
 	// With no system gh, the read-only probe checks the private executable
 	// against its compiled SHA-256 and exercises its required capabilities.
@@ -426,13 +449,13 @@ func verifyWindowsFirstPrivateVerifier(t *testing.T, cli, emptyPath, managed str
 	if err != nil || string(mark) != "[ZoneTransfer]\r\nZoneId=3\r\n" {
 		t.Fatal("private verifier lacks its Internet zone", err)
 	}
-	t.Logf("First private verifier transfer: one download, %d executable bytes, pinned SHA-256 %x, Internet zone 3", size, hash.Sum(nil))
+	t.Logf("First private verifier transfer: %d executable bytes, pinned SHA-256 %x, Internet zone 3", size, hash.Sum(nil))
 
 	repeat := cmd(emptyPath, "install", "--user")
 	repeat.Env = append(repeat.Env, "HTTP_PROXY=http://127.0.0.1:9", "HTTPS_PROXY=http://127.0.0.1:9", "NO_PROXY=127.0.0.1,localhost")
 	diag.Reset()
 	repeat.Stderr = &diag
-	out, err = repeat.Output()
+	out, err := repeat.Output()
 	if err != nil || diag.Len() != 0 || !strings.EqualFold(strings.TrimSpace(string(out)), managed) {
 		t.Fatal("verified cached setup must succeed quietly through a closed proxy", err)
 	}
