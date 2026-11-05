@@ -839,6 +839,8 @@ jobs:
       - name: Reproduce the published 1.50.0 ARM64 launcher upgrade
         if: >-
           !cancelled() && github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.head_ref == 'codex/windows-launcher-upgrade-evidence' &&
           steps.powershell.outcome == 'success' && matrix.goarch == 'arm64' && matrix.powershell == 'current'
         shell: pwsh
         run: ./scripts/test-windows-archive-update.ps1 -StarterTag v1.50.0 -SuccessorTag v1.51.0 -PublicRoute Install.cmd -PublicClient powershell.exe -PrivateVerifier
