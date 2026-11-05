@@ -104,11 +104,10 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 		}
 		_, err = fmt.Fprintf(out, "Authentication configuration (offline; not verified)\n"+
 			"API credential: %s [%s]\nAdmin credential: %s [%s]\n"+
-			"Organization: %s [%s]\nProject: %s [%s]\nBase URL: %s [%s]\n",
+			"Organization: %s\nProject: %s\nBase URL: %s [%s]\n",
 			strings.ReplaceAll(report.API.Type, "_", " "), report.API.Source,
 			strings.ReplaceAll(report.Admin.Type, "_", " "), report.Admin.Source,
-			authStatusTextValue(report.Organization), report.Organization.Source,
-			authStatusTextValue(report.Project), report.Project.Source,
+			authStatusContextText(report.Organization), authStatusContextText(report.Project),
 			endpoint, report.BaseURL.Source)
 	}
 	if err != nil {
@@ -117,10 +116,14 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 	return nil
 }
 
-func authStatusTextValue(value authStatusValue) string {
+func authStatusContextText(value authStatusValue) string {
 	if value.Source == "unset" {
-		return "(unset)"
+		return "not set in CLI"
 	}
+	return authStatusTextValue(value) + " [" + value.Source + "]"
+}
+
+func authStatusTextValue(value authStatusValue) string {
 	if value.Value == "" {
 		return "(empty)"
 	}

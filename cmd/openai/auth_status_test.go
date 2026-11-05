@@ -98,9 +98,12 @@ func TestMainAuthStatusOfflineOutputAndDiagnostics(t *testing.T) {
 				status := decodeAuthStatus(t, ordinary)
 				require.Equal(t, authStatusCredentialResult{true, "api_key", "environment:OPENAI_API_KEY"}, status.APICredential)
 				require.Equal(t, authStatusCredentialResult{true, "admin_api_key", "environment:OPENAI_ADMIN_KEY"}, status.AdminCredential)
+				require.Equal(t, authStatusValueResult{Source: "unset"}, status.Organization)
+				require.Equal(t, authStatusValueResult{Source: "unset"}, status.Project)
 			} else {
 				require.Contains(t, strings.ToLower(ordinary.stdout), "offline")
 				require.Contains(t, strings.ToLower(ordinary.stdout), "not verified")
+				require.Contains(t, ordinary.stdout, "\nOrganization: not set in CLI\nProject: not set in CLI\n")
 			}
 			for _, policy := range [][]string{{"--debug"}, {"--quiet"}, {"--verbose"}, {"--quiet", "--verbose", "--debug"}} {
 				got := runMainDispatchWithEnv(t, "bash", env, append(append([]string{}, args...), policy...)...)
@@ -116,6 +119,14 @@ func TestMainAuthStatusOfflineOutputAndDiagnostics(t *testing.T) {
 		})
 	}
 	require.Zero(t, requests.Load(), "offline status must never contact the API")
+}
+
+func TestMainAuthStatusExplicitlyEmptyContextText(t *testing.T) {
+	env := append(authStatusEnvironment(t), "OPENAI_ORG_ID=")
+	got := runMainDispatchWithEnv(t, "bash", env, "openai", "auth", "status", "--project=")
+	require.Zero(t, got.code, "%s", got.stderr)
+	require.Empty(t, got.stderr)
+	require.Contains(t, got.stdout, "\nOrganization: (empty) [environment:OPENAI_ORG_ID]\nProject: (empty) [flag:--project]\n")
 }
 
 func TestMainAuthStatusCredentialAndContextPrecedence(t *testing.T) {

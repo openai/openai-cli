@@ -12,6 +12,10 @@ openai auth status --format json
 The report shows API credentials and Admin credentials separately.
 Each credential includes its configured state, type, and source. It never includes credential values or fragments.
 Organization, project, and base URL each include their own source.
+If no CLI input selects an organization or project, text output shows `not set in CLI`.
+The offline report cannot identify the organization or project associated with a key.
+JSON reports an absent setting with `"value": ""` and `"source": "unset"`.
+An explicitly empty setting shows `(empty)` in text and retains its flag or environment source in both formats.
 If a displayed setting contains a configured credential, the report replaces that setting with `[redacted]`.
 `offline: true` and `verified: false` describe the JSON report.
 Missing credentials still produce a successful configuration report.
