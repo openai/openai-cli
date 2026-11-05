@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.50.0](https://github.com/openai/openai-cli/compare/v1.49.0...v1.50.0) (2026-11-05)
+
+
+### Features
+
+* **api:** add image complexity, GIF, and SVG flags ([#700](https://github.com/openai/openai-cli/issues/700)) ([7b83508](https://github.com/openai/openai-cli/commit/7b83508ad8930ba4d00f0d8d4599b4ecc9b356d4))
+* **cli:** enable automatic updates for Linux package installs ([#694](https://github.com/openai/openai-cli/issues/694)) ([b774e10](https://github.com/openai/openai-cli/commit/b774e103f3537de9b6257c0d559f9191cfd23824))
+* **cli:** install Windows ZIP releases with automatic updates ([#695](https://github.com/openai/openai-cli/issues/695)) ([6d7760f](https://github.com/openai/openai-cli/commit/6d7760ffd3711828afec015df4863a6e630a0725))
+
+
+### Bug Fixes
+
+* **cli:** preserve Linux package manager permissions during installation ([#697](https://github.com/openai/openai-cli/issues/697)) ([496392e](https://github.com/openai/openai-cli/commit/496392e67acd977bc161a13b5e50e37caeedce81))
+* **installer:** start Linux setup from a verified installer ([#699](https://github.com/openai/openai-cli/issues/699)) ([5d03ac5](https://github.com/openai/openai-cli/commit/5d03ac5c408288377c54ecfc5d3474e3f59cd065))
+* **installer:** wait for Linux release packages and preserve newer installations ([#698](https://github.com/openai/openai-cli/issues/698)) ([334f332](https://github.com/openai/openai-cli/commit/334f332fc6a5f8298b20548d4fbbbb30c940cdc5))
+* keep automatic updates selected in zsh login shells ([#701](https://github.com/openai/openai-cli/issues/701)) ([0dfa36d](https://github.com/openai/openai-cli/commit/0dfa36d48076979241a2b89162ca2f8c5dadf0b1))
+
 ## [1.49.0](https://github.com/openai/openai-cli/compare/v1.48.1...v1.49.0) (2026-11-04)
 
 
