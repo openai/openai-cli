@@ -11,3 +11,11 @@ func CommandExamples(command *cli.Command, path string) []Example {
 	}
 	return append([]Example(nil), source...)
 }
+
+// ExampleInvocation keeps Bash-specific examples copyable in their stated shell.
+func ExampleInvocation(command *cli.Command, fallback, native string) string {
+	if content, _ := command.Metadata["help-content"].(Content); content.BashExamples {
+		return fallback
+	}
+	return native
+}

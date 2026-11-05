@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/openai/openai-cli/internal/terminal"
 )
 
 type nativeShell struct {
@@ -280,7 +282,7 @@ func TestMainFishImageHelpExamples(t *testing.T) {
 		directory, invocation := work, shell.binary
 		if elsewhere {
 			directory = t.TempDir()
-			invocation = "'" + strings.ReplaceAll(filepath.Join(work, binary), "'", "'\\''") + "'"
+			invocation = terminal.FishQuote(filepath.Join(work, binary))
 		}
 		for _, commandHelp := range []bool{false, true} {
 			name, helpArgs := "copy flag-help image example", " images generate --help"

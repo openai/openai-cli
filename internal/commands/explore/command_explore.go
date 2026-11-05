@@ -55,21 +55,30 @@ func Register(root *cli.Command) {
 		Description: command.Description,
 		Examples: []clihelp.Example{
 			{Description: "Open interactive command search:", Command: "explore"},
-			{Description: "Print matching commands without opening the picker:", Command: "explore images"},
+			{Description: "Find a command by describing the task:", Command: `explore "count tokens offline"`},
 		},
 	}
 	root.Commands = append(root.Commands, command)
 }
 
+// Add a phrase when the ordinary command name and description miss or reverse a user task.
+var taskPhrases = map[string][]commandsuggest.TaskPhrase{
+	"tokenizer count": {{Text: "count tokens offline", AnyWordOrder: true}},
+	"speak":           {{Text: "text to speech"}, {Text: "text to audio"}, {Text: "read text aloud"}},
+	"transcribe":      {{Text: "speech to text"}},
+}
+
 func exploreCandidates(root *cli.Command, invocation string) []commandsuggest.Candidate {
-	return commandsuggest.Catalog(root, invocation, clihelp.VisibleCommands, func(command *cli.Command, path string) []commandsuggest.Candidate {
+	native := clihelp.NativeInvocation(root, invocation)
+	return commandsuggest.Catalog(root, native, taskPhrases, clihelp.VisibleCommands, func(command *cli.Command, path string) []commandsuggest.Candidate {
 		// Search examples describe queries, not additional destinations.
 		if path == "explore" {
 			return nil
 		}
+		run := clihelp.ExampleInvocation(command, invocation, native)
 		var candidates []commandsuggest.Candidate
 		for _, example := range clihelp.CommandExamples(command, path) {
-			candidates = append(candidates, commandsuggest.Candidate{Command: invocation + " " + example.Command, Description: example.Description})
+			candidates = append(candidates, commandsuggest.Candidate{Command: run + " " + example.Command, Description: example.Description})
 		}
 		return candidates
 	})
