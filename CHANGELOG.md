@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.51.1](https://github.com/openai/openai-cli/compare/v1.51.0...v1.51.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* show verifier download progress in the Windows ZIP installer ([#710](https://github.com/openai/openai-cli/issues/710)) ([1d88374](https://github.com/openai/openai-cli/commit/1d88374a50c635250c800d1f28ba1bcccc76c62a))
+
 ## [1.51.0](https://github.com/openai/openai-cli/compare/v1.50.0...v1.51.0) (2026-11-05)
 
 
