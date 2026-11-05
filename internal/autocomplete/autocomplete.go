@@ -12,6 +12,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/readable"
+	"github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
 
@@ -146,9 +147,10 @@ func NewShellCompletion(name string, usage string) ShellCompletion {
 type ShellCompletionBehavior int
 
 const (
-	ShellCompletionBehaviorDefault    ShellCompletionBehavior = iota
-	ShellCompletionBehaviorFile                               = 10
-	ShellCompletionBehaviorNoComplete                         = 11
+	ShellCompletionBehaviorDefault     ShellCompletionBehavior = iota
+	ShellCompletionBehaviorFile                                = 10
+	ShellCompletionBehaviorNoComplete                          = 11
+	ShellCompletionBehaviorFileOrStdin                         = 12
 )
 
 type CompletionResult struct {
@@ -159,6 +161,7 @@ type CompletionResult struct {
 	FileValuePrefix string
 	// Older adapters cannot preserve paths for newly enabled file values.
 	requiresFileValueSupport bool
+	offersStdinPath          bool
 }
 
 func isFlag(arg string) bool {
@@ -357,7 +360,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			usedFlags = append(usedFlags, *flag)
 			if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {
 				if i == len(preceding)-1 {
-					return flagValueCompletion(*flag)
+					return flagValueCompletion(cmd, *flag)
 				}
 				i += 2
 			} else {
@@ -412,7 +415,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			result := CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 			if flag := findFlag(flags, name); flag != nil {
 				if doc, ok := (*flag).(cli.DocGenerationFlag); ok && doc.TakesValue() {
-					result = flagValueCompletion(*flag)
+					result = flagValueCompletion(cmd, *flag)
 					if result.Behavior == ShellCompletionBehaviorFile {
 						result.FileValuePrefix = name + "="
 						result.requiresFileValueSupport = true
@@ -439,7 +442,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	if fileFlag != "" && !helpTopics && (literal || !isFlag(current)) {
 		if positionalCount == 0 {
 			if flag := findFlag(flags, fileFlag); flag != nil && !slices.Contains(usedFlags, *flag) {
-				result := flagValueCompletion(*flag)
+				result := flagValueCompletion(cmd, *flag)
 				if result.Behavior == ShellCompletionBehaviorFile {
 					result.requiresFileValueSupport = true
 					return result
@@ -472,7 +475,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	}
 }
 
-func flagValueCompletion(flag cli.Flag) CompletionResult {
+func flagValueCompletion(command *cli.Command, flag cli.Flag) CompletionResult {
 	if wrapped, ok := flag.(interface{ CLIStringFlag() *cli.StringFlag }); ok {
 		flag = wrapped.CLIStringFlag()
 	}
@@ -480,7 +483,7 @@ func flagValueCompletion(flag cli.Flag) CompletionResult {
 		return CompletionResult{Behavior: ShellCompletionBehaviorFile, requiresFileValueSupport: true}
 	}
 	if file, ok := flag.(*cli.StringFlag); ok && file.TakesFile {
-		return CompletionResult{Behavior: ShellCompletionBehaviorFile}
+		return CompletionResult{Behavior: ShellCompletionBehaviorFile, offersStdinPath: file == request.RequestFileFlag(command)}
 	}
 	return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 }
@@ -540,6 +543,12 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	// the marker; older loaded adapters keep their existing completion behavior.
 	if result.requiresFileValueSupport && os.Getenv("OPENAI_CLI_COMPLETION_FILE_VALUES") != "1" {
 		result = CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+	}
+	if result.offersStdinPath && os.Getenv("OPENAI_CLI_COMPLETION_STDIN_PATH") == "1" {
+		value := strings.TrimPrefix(args[len(args)-1], result.FileValuePrefix)
+		if value == "" || value == "-" {
+			result.Behavior = ShellCompletionBehaviorFileOrStdin
+		}
 	}
 	if result.FileValuePrefix != "" {
 		if _, err := fmt.Fprintln(cmd.Writer, result.FileValuePrefix); err != nil {

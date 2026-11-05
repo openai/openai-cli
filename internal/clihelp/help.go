@@ -90,7 +90,14 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	if root.Metadata == nil {
 		root.Metadata = map[string]any{}
 	}
-	root.Metadata["help-invocation"] = Invocation(root.Name, args)
+	invocation, needsQuote := resolveInvocation(root.Name, args)
+	delete(root.Metadata, "help-native-pipe-invocation")
+	if needsQuote {
+		name := invocation
+		invocation = quoteInvocation(name, root.Name)
+		root.Metadata["help-native-pipe-invocation"] = nativePipeInvocation(context.Background(), name, invocation)
+	}
+	root.Metadata["help-invocation"] = invocation
 	root.Metadata["help-legacy-all"] = false
 	root.Metadata["help-welcome"] = len(args) <= 1
 	delete(root.Metadata, "help-selected-command")
@@ -467,12 +474,20 @@ func allowsHelpTopic(command *cli.Command) bool {
 // Invocation returns a copyable executable name for help examples without
 // interpreting argv as shell syntax or displaying terminal controls.
 func Invocation(fallback string, args []string) string {
+	name, needsQuote := resolveInvocation(fallback, args)
+	if needsQuote {
+		return quoteInvocation(name, fallback)
+	}
+	return name
+}
+
+func resolveInvocation(fallback string, args []string) (string, bool) {
 	if len(args) == 0 || args[0] == "" {
-		return fallback
+		return fallback, false
 	}
 	name := args[0]
 	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
-		return fallback
+		return fallback, false
 	}
 	if base := strings.TrimSuffix(filepath.Base(name), ".exe"); base != fallback {
 		// Preview builds can have different names. Trust that spelling only
@@ -480,7 +495,7 @@ func Invocation(fallback string, args []string) string {
 		// bare names so shell builtins and keywords cannot intercept them.
 		running, err := os.Executable()
 		if err != nil {
-			return fallback
+			return fallback, false
 		}
 		if filepath.Base(name) == name {
 			name, err = exec.LookPath(name)
@@ -489,7 +504,7 @@ func Invocation(fallback string, args []string) string {
 			}
 		}
 		if err != nil || !sameExecutable(name, running) {
-			return fallback
+			return fallback, false
 		}
 	}
 	// go run uses either a temporary executable or a cached executable under
@@ -500,9 +515,9 @@ func Invocation(fallback string, args []string) string {
 	temporaryGoRun := filepath.Base(dir) == "exe" && strings.HasPrefix(filepath.Base(filepath.Dir(dir)), "b") && strings.Contains(filepath.ToSlash(name), "/go-build")
 	if temporaryGoRun || cachedGoRun {
 		if _, err := os.Stat("cmd/" + fallback + "/main.go"); err == nil {
-			return "go run ./cmd/" + fallback
+			return "go run ./cmd/" + fallback, false
 		}
-		return fallback
+		return fallback, false
 	}
 	// Installed commands need no directory prefix when PATH selects this same
 	// executable. Keep the invoked path for local builds or other installations.
@@ -510,7 +525,7 @@ func Invocation(fallback string, args []string) string {
 	// when execerrdot=0, which does not match PowerShell's command lookup.
 	if installed, err := exec.LookPath(fallback); err == nil && filepath.IsAbs(installed) &&
 		sameExecutable(name, installed) && !hasPowerShellScriptOnPath(fallback) {
-		return fallback
+		return fallback, false
 	}
 	// PowerShell can supply an absolute argv[0] even for .\openai.exe. When
 	// already in the executable's folder, use the relative form accepted by
@@ -527,10 +542,7 @@ func Invocation(fallback string, args []string) string {
 	needsQuoting := strings.IndexFunc(name, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._:-", r) || runtime.GOOS == "windows" && r == '\\')
 	}) >= 0
-	if needsQuoting {
-		return quoteInvocation(name, fallback)
-	}
-	return name
+	return name, needsQuoting
 }
 
 func hasPowerShellScriptOnPath(name string) bool {

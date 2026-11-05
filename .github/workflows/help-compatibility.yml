@@ -734,6 +734,8 @@ jobs:
               fish_suggestion_cases = {
                   'TestFishFileCompletionPreservesAssignments': [
                       'openai_--file_assets/lo',
+                      'openai_responses_create_--request-file_-',
+                      'openai_responses_create_--request-file=-',
                       'openai_--file=assets/lo',
                       'openai_--image=assets/lo',
                       'openai_--file=assets/a=',

@@ -61,6 +61,30 @@ func TestMainCompletionHelpAndFileInputs(t *testing.T) {
 	}
 }
 
+func TestMainCompletionOffersPipedRequestAlongsideFiles(t *testing.T) {
+	for _, tc := range []struct {
+		args   []string
+		marker string
+		code   int
+		prefix string
+	}{
+		{[]string{"responses", "create", "--request-file", ""}, "1", 12, ""},
+		{[]string{"chat", "completions", "create", "--request-file", "-"}, "1", 12, ""},
+		{[]string{"chat:completions", "create", "--request-file=-"}, "1", 12, "--request-file=\n"},
+		{[]string{"responses", "create", "--request-file", "req"}, "1", 10, ""},
+		{[]string{"responses", "create", "--request-file=-draft"}, "1", 10, "--request-file=\n"},
+		{[]string{"responses", "create", "--request-file", ""}, "", 10, ""},
+		{[]string{"responses", "create", "--request-file="}, "", 10, "--request-file=\n"},
+		{[]string{"--mtls-client-cert-file", ""}, "1", 10, ""},
+	} {
+		env := []string{"OPENAI_CLI_COMPLETION_FILE_VALUES=1", "OPENAI_CLI_COMPLETION_STDIN_PATH=" + tc.marker}
+		got := runMainDispatchWithEnv(t, "zsh", env, mainCompletionArgs("zsh", tc.args...)...)
+		if got != (mainDispatchResult{code: tc.code, stdout: tc.prefix}) {
+			t.Errorf("stdin-path marker %q, args %q: %+v", tc.marker, tc.args, got)
+		}
+	}
+}
+
 func TestMainCompletionPreservesTypedDoubleDash(t *testing.T) {
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
 		t.Run(style, func(t *testing.T) {

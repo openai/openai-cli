@@ -104,8 +104,7 @@ func FlagOptions(
 	}
 
 	stdinConsumedByPipe := false
-	supportsRequestFile, _ := cmd.Metadata[requestFileCapability].(bool)
-	hasRequestFile := supportsRequestFile && cmd.IsSet("request-file")
+	hasRequestFile := RequestFileFlag(cmd) != nil && cmd.IsSet("request-file")
 	if hasRequestFile {
 		object, err := readRequestFile(cmd.String("request-file"), stdin, explicitStdin)
 		if err != nil {

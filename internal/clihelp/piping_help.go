@@ -3,6 +3,7 @@ package clihelp
 import (
 	"context"
 
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -25,8 +26,11 @@ API REQUESTS
        {{suggestFor . (printf "%s responses create --model MODEL --input @- < prompt.txt" $run) "bash" "zsh"}}
        {{suggestFor . (printf "%s files create --purpose user_data --file - < notes.txt" $run) "bash" "zsh"}}
    For responses create and chat completions create, --request-file accepts a JSON or YAML file.
-   Use --request-file - to wait for a piped request. Explicit flags override matching fields.
-       {{suggestFor . (printf "cat request.json | %s responses create --request-file -" $run) "bash" "zsh"}}
+   Use --request-file - to read the request from a pipe.
+       {{suggestFor . (call (index .Metadata "request-pipe-example") $run "responses create") "bash" "zsh"}}
+{{with $native := index .Root.Metadata "help-native-pipe-invocation"}}{{if ne $native $run}}   In your current shell, use this command.
+       {{suggestFor $ (call (index $.Metadata "request-pipe-example") $native "responses create") "fish" "pwsh"}}
+{{end}}{{end}}   Explicit flags override matching fields.
    For other commands accepting whole requests, finish writing the file before redirecting it.
        {{suggestFor . (printf "%s embeddings create < request.json" $run) "bash" "zsh"}}
    Set OPENAI_UNTRUSTED_STDIN=true when the request comes from an untrusted source.
@@ -37,10 +41,35 @@ SCRIPT OUTPUT
        {{suggest . (printf "%s models list --format jsonl" $run)}}
 `
 
+// Keep existing Bash and zsh guide examples copyable when another shell opens help.
+func nativePipeInvocation(ctx context.Context, name, defaultInvocation string) string {
+	switch terminal.ParentShell(ctx) {
+	case "pwsh":
+		return "& " + terminal.PowerShellQuote(name)
+	case "fish":
+		return terminal.FishQuote(name)
+	default:
+		return defaultInvocation
+	}
+}
+
+func requestPipeExample(invocation, path string) string {
+	var body string
+	switch path {
+	case "responses create":
+		body = `{"model":"gpt-5.5","input":"Say hello"}`
+	case "chat completions create", "chat:completions create":
+		body = `{"model":"gpt-5.5","messages":[{"role":"user","content":"Say hello"}]}`
+	default:
+		return ""
+	}
+	return "echo '" + body + "' | " + invocation + " " + path + " --request-file -"
+}
+
 func pipingGuide() *cli.Command {
 	return &cli.Command{
 		Name: "piping", Usage: "Pipe input and choose output for scripts", HideHelpCommand: true,
-		Metadata:           map[string]any{"help-guide": true},
+		Metadata:           map[string]any{"help-guide": true, "request-pipe-example": requestPipeExample},
 		CustomHelpTemplate: pipingHelp,
 		Action: func(_ context.Context, command *cli.Command) error {
 			if command.Args().Present() {
