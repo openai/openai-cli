@@ -83,7 +83,7 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 	completion.Flags = append(completion.Flags,
 		&cli.BoolFlag{Name: "install-picker", Usage: "Enable Tab shortcuts in future shell sessions"},
 		&cli.BoolFlag{Name: "uninstall-picker", Usage: "Remove the managed Tab shortcut setup"},
-		&cli.BoolFlag{Name: "automatic", Usage: "Installer setup for the preferred shell; preserve a previous opt-out"},
+		&cli.BoolFlag{Name: "automatic", Usage: "Requires --install-picker. Omit the shell name and --profile. Setup selects the preferred shell and honors opt-outs."},
 		&cli.StringFlag{Name: "profile", Usage: "Use this startup file; required for zsh unless ZDOTDIR is exported and absolute"},
 	)
 	next := completion.Action

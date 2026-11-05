@@ -1,6 +1,11 @@
 # Current-session command insertion. Ctrl-X, then Tab searches displayed commands.
 # Existing bindings stay intact. Double Tab is a separate opt-in.
-if status is-interactive; and isatty stdin; and isatty stdout; and isatty stderr; and test "$TERM" != dumb
+# Previously installed startup loaders fetch this script at the first prompt.
+# Their local executable variable distinguishes automatic loading from explicit sourcing.
+if set -q ____APPNAME___skip_pending_suggestions; and set -q __openai_startup_executable
+    set --erase --global ____APPNAME___skip_pending_suggestions
+    set --erase --global ____APPNAME___suggestions_loader_loaded
+else if status is-interactive; and isatty stdin; and isatty stdout; and isatty stderr; and test "$TERM" != dumb
 __FISH_EXPLORE_SELECTION__
     function ____APPNAME___suggestions_owns_command
         set -q ____APPNAME___suggestions_wrapper_body; or return 1
@@ -141,7 +146,7 @@ __FISH_EXPLORE_SELECTION__
         ____APPNAME___suggestions_clear
     end
 
-    function __APPNAME___command_insertion_disable
+    function ____APPNAME___suggestions_disable
         set -g ____APPNAME___suggestions_enabled 0
         for keymap in default insert
             for key in \cx\ci \ci\ci
@@ -163,7 +168,17 @@ __FISH_EXPLORE_SELECTION__
         if functions -q __APPNAME__; and not ____APPNAME___suggestions_owns_command; and not begin; functions -q ____APPNAME___package_explore_owns_command; and ____APPNAME___package_explore_owns_command; end
             return 0
         end
+        if functions -q __APPNAME___command_insertion_disable
+            set -l body (functions __APPNAME___command_insertion_disable | string collect)
+            if test "$body" != "$____APPNAME___suggestions_disable_body"; and test "$body" != "$____APPNAME___package_explore_disable_body"
+                return 0
+            end
+        end
         command -q __APPNAME__; or return 0
+        function __APPNAME___command_insertion_disable
+            ____APPNAME___suggestions_disable
+        end
+        set -g ____APPNAME___suggestions_disable_body (functions __APPNAME___command_insertion_disable | string collect)
         function __APPNAME__
             ____APPNAME___suggestions_run $argv
         end

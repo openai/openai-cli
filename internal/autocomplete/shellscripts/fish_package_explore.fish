@@ -8,11 +8,28 @@ if status is-interactive
     function __openai_package_explore_owns_command
         set -q __openai_package_explore_body; and functions -q openai; and test (functions openai | string collect) = "$__openai_package_explore_body"
     end
-    if __openai_package_explore_allowed; and not functions -q __openai_package_explore_on_prompt
+    if __openai_package_explore_allowed; and not functions -q openai_command_insertion_disable; and not functions -q __openai_package_explore_on_prompt
+        # Keep this command available after disabling. Sourcing the vendor file
+        # again must not re-enable insertion in the same shell.
+        function openai_command_insertion_disable
+            functions --erase __openai_package_explore_on_prompt
+            if functions -q __openai_suggestions_load_current
+                set -g __openai_skip_pending_suggestions 1
+            end
+            if __openai_package_explore_owns_command
+                functions --erase openai
+            end
+            set --erase --global __openai_package_explore_body
+            return 0
+        end
+        set -g __openai_package_explore_disable_body (functions openai_command_insertion_disable | string collect)
         function __openai_package_explore_on_prompt --on-event fish_prompt
             functions --erase __openai_package_explore_on_prompt
             __openai_package_explore_allowed; or return
             isatty stdin; and isatty stdout; and isatty stderr; and test -n "$TERM"; and test "$TERM" != dumb; or return
+            # config.fish may have replaced the package disable command.
+            functions -q openai_command_insertion_disable; or return
+            test (functions openai_command_insertion_disable | string collect) = "$__openai_package_explore_disable_body"; or return
             functions -q openai; and return
             functions -q __openai_suggestions_load_current; and return
             command -sq openai; and command /usr/bin/test (command -s openai) -ef /usr/bin/openai 2>/dev/null; or return

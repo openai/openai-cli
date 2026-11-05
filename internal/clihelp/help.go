@@ -99,7 +99,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 		root.Metadata["help-native-invocation"] = quoteNativeInvocation(context.Background(), name, invocation)
 	}
 	root.Metadata["help-invocation"] = invocation
-	root.Metadata["help-legacy-all"] = false
+	delete(root.Metadata, "help-legacy-all")
 	root.Metadata["help-welcome"] = len(args) <= 1
 	delete(root.Metadata, "help-selected-command")
 	if root.Command("help") == nil {
@@ -256,7 +256,7 @@ func rootFlag(root *cli.Command, name string) cli.Flag {
 func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 	chain := []*cli.Command{root}
 	remove := map[int]bool{}
-	help, legacy := false, false
+	help, legacy, all := false, false, false
 	end := len(args)
 	for i := 1; i < len(args); i++ {
 		arg := args[i]
@@ -294,8 +294,10 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 				}
 			}
 			if found == nil && current == root && (spelling == "--all" || spelling == "-all") {
+				all = true
 				if assigned {
-					if _, err := strconv.ParseBool(value); err != nil {
+					var err error
+					if all, err = strconv.ParseBool(value); err != nil {
 						return args, false
 					}
 				}
@@ -343,7 +345,9 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 	}
 	out = append(out, "--help")
 	out = append(out, args[end:]...)
-	root.Metadata["help-legacy-all"] = legacy
+	if legacy {
+		root.Metadata["help-legacy-all"] = all
+	}
 	root.Metadata["help-selected-command"] = chain[len(chain)-1]
 	return out, true
 }
@@ -415,10 +419,11 @@ func installSubcommandHelp() {
 func legacyHelpNotice(command *cli.Command) string {
 	root := command.Root()
 	invocation, configured := root.Metadata["help-invocation"].(string)
-	if !configured {
+	// Completion uses --all for its local flag reference.
+	if !configured || command.Name == "@completion" {
 		return ""
 	}
-	legacy, _ := root.Metadata["help-legacy-all"].(bool)
+	_, legacy := root.Metadata["help-legacy-all"].(bool)
 	if help := root.Command("help"); help != nil {
 		legacy = legacy || help.IsSet("all")
 	}

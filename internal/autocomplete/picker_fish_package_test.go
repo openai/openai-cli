@@ -245,23 +245,41 @@ send -- "\005\025"
 	loader, err := renderInstalledSuggestions(fixture.options.installation())
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(fixture.home, "manual.fish"), loader, 0600))
-	for _, tc := range []struct{ name, before, owner string }{
-		{"personal takeover", "true", "__openai_suggestions_owns_command"},
-		{"custom wrapper", "function openai; true; end", "not functions -q __openai_suggestions_owns_command"},
+	const reloadVendor = `source "$HOME/share/fish/vendor_conf.d/openai-explore.fish"`
+	const loadPersonal = `source "$HOME/manual.fish"`
+	const customDisable = "function openai_command_insertion_disable; set -g called_custom_disable 1; end"
+	const fileCommand = "test (type --type openai) = file"
+	config := filepath.Join(fixture.home, "config", "fish", "config.fish")
+	original, err := os.ReadFile(config)
+	require.NoError(t, err)
+	for _, tc := range []struct{ name, startup, action, verify string }{
+		{"session disable", "", "__openai_package_explore_owns_command; and openai_command_insertion_disable; and openai_command_insertion_disable; and " + reloadVendor, fileCommand},
+		{"disabled before first prompt", "openai_command_insertion_disable", reloadVendor, fileCommand},
+		{"disabled with personal loader pending", loadPersonal + "; openai_command_insertion_disable", fileCommand, "not set -q __openai_suggestions_enabled"},
+		{"explicit takeover after pending disable", loadPersonal + "; openai_command_insertion_disable", fileCommand + "; and " + loadPersonal, "__openai_suggestions_owns_command"},
+		{"custom disable in config", customDisable, reloadVendor, fileCommand + "; and openai_command_insertion_disable; and set -q called_custom_disable"},
+		{"custom command survives disable", "", "function openai; printf custom; end; openai_command_insertion_disable", "test (openai) = custom"},
+		{"personal takeover", "", loadPersonal, "__openai_suggestions_owns_command; and openai_command_insertion_disable; and " + fileCommand},
+		{"custom command before takeover", "", "function openai; printf custom; end; " + loadPersonal, "test (openai) = custom"},
+		{"custom disable before takeover", "", customDisable + "; " + loadPersonal, "__openai_package_explore_owns_command; and openai_command_insertion_disable; and set -q called_custom_disable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.startup != "" {
+				require.NoError(t, os.WriteFile(config, []byte(string(original)+"\n"+tc.startup+"\n"), 0600))
+				t.Cleanup(func() { require.NoError(t, os.WriteFile(config, original, 0600)) })
+			}
 			runSuggestionInstalledShell(t, fixture, `
-send -- {`+tc.before+`; source "$HOME/manual.fish"}
+send -- {`+tc.action+`; and printf 'action\n' >"$HOME/verified"}
 send -- "\r"
 expect -exact "INSTALL_TEST> "
-send -- {`+tc.owner+`; and printf 'verified' >"$HOME/verified"}
+send -- {`+tc.verify+`; and printf 'verified\n' >>"$HOME/verified"}
 send -- "\r"
 expect -exact "INSTALL_TEST> "
 `)
 			evidence := filepath.Join(fixture.home, "verified")
 			got, err := os.ReadFile(evidence)
 			require.NoError(t, err)
-			require.Equal(t, "verified", string(got))
+			require.Equal(t, "action\nverified\n", string(got))
 			require.NoError(t, os.Remove(evidence))
 		})
 	}

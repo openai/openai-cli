@@ -10,11 +10,12 @@ demo_root="$(cd "$demo_source/../.." && pwd)"
 source "$demo_source/capture_and_render.sh"
 # Completion help runs locally. The shared recorder needs no API fixture here.
 demo_prepare_capture "$demo_root" "$1" "$2" "$3" "$4" "$5" /usr/bin/true
-demo_window_size=100x32
+demo_window_size=90x12
 demo_render_options=(--font-family Menlo --font-size 16 --line-height 1.2 --theme dracula --last-frame-duration 2)
 
 cat > "$demo_runtime/scene.sh" <<'SCENE'
 #!/bin/bash
+if [ -z "${ZSH_VERSION:-}" ]; then exec /bin/zsh -f "$DEMO_SCENE_SCRIPT"; fi
 set -euo pipefail
 test -t 0 && test -t 1 && test -t 2
 unset OPENAI_API_KEY
@@ -29,7 +30,8 @@ SCENE
   echo "Baseline: $demo_before_sha"
   echo "Candidate: $demo_after_sha"
   echo 'Command: openai @completion --help'
-  echo 'Bash PTY, 100 columns by 32 rows, dark truecolor, Menlo 16px.'
+  echo 'zsh PTY, 90 columns by 12 rows, dark truecolor, Menlo 16px.'
+  /bin/zsh --version
   demo_capture_metadata
 } > "$demo_output/metadata.txt"
 for scene in before after; do
@@ -37,10 +39,10 @@ for scene in before after; do
   mkdir -p "$demo_runtime/home-$scene"
   demo_capture_scene "$scene" 0 "$demo_runtime/$scene" 'http://127.0.0.1:1' "$label" \
     HOME="$demo_runtime/home-$scene" XDG_CONFIG_HOME="$demo_runtime/home-$scene/config" \
-    COLORTERM=truecolor COLORFGBG='15;0' OPENAI_CLI_NO_UPDATE_CHECK=1
+    SHELL=/bin/zsh COLORTERM=truecolor COLORFGBG='15;0' OPENAI_CLI_NO_UPDATE_CHECK=1
 done
 grep -Fq -- '--debug-body' "$demo_output/before.txt"
-grep -Fq 'START HERE' "$demo_output/after.txt"
-grep -Fq 'PROMPT INSERTION' "$demo_output/after.txt"
-if grep -Fq -- '--debug-body' "$demo_output/after.txt"; then exit 1; fi
+grep -Fq 'openai explore' "$demo_output/after.txt"
+grep -Eq 'help --all "?@completion"?' "$demo_output/after.txt"
+if grep -Eq -- '--(debug-body|install-suggestions|automatic)' "$demo_output/after.txt"; then exit 1; fi
 demo_assemble_capture 200 before after

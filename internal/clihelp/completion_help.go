@@ -1,63 +1,82 @@
 package clihelp
 
 import (
+	"context"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/openai/openai-cli/internal/commandsuggest"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
-// Completion has a local reference. Use the root help layout without its API flags.
+// Completion help describes Explore first. Its full reference lists the declared local flags.
 func completionHelp(command *cli.Command, invocation string, width, navigationWidth int) string {
 	style := commandHelpStyle(command)
 	var out strings.Builder
 	heading := func(title string) { fmt.Fprintln(&out, style.render(style.section, title)) }
 	note := func(text string) { out.WriteString(style.render(style.note, wrapDescription(text, "  ", width))) }
 	native := NativeInvocation(command.Root(), invocation)
-
+	shell := terminal.ParentShell(context.Background())
+	topic := "@completion"
+	if runtime.GOOS == "windows" || shell == "pwsh" {
+		topic = `"@completion"` // Bare @completion is a splatted variable in PowerShell.
+	}
 	heading("Shell completion")
-	out.WriteString(style.synopsis(native+` "@completion"`, []string{"[SHELL]", "[FLAGS]"}, width))
-	out.WriteByte('\n')
+	all, _ := command.Root().Metadata["help-legacy-all"].(bool)
+	if help := command.Root().Command("help"); help != nil && help.IsSet("all") {
+		all = help.Bool("all")
+	}
+	if all {
+		out.WriteString(style.synopsis(native+" "+topic, []string{"[SHELL]", "[FLAGS]"}, width))
+		note("Choose bash, zsh, fish, or pwsh to print its completion script.")
+		out.WriteByte('\n')
+		heading("EXAMPLES")
+		script := native + " " + topic + " zsh"
+		fmt.Fprintln(&out, "  "+commandsuggest.Record(command, script))
+		note("To enable insertion manually, run this command in zsh.")
+		fmt.Fprintln(&out, "  "+commandsuggest.RecordFor(command, "zsh", invocation+` @completion zsh --install-suggestions --profile "${ZDOTDIR-$HOME}/.zshrc"`))
+		out.WriteByte('\n')
+		heading("FLAGS")
+		flags := command.VisibleFlags()
+		names := make([]string, len(flags))
+		descriptions := make([]string, len(flags))
+		for i, flag := range flags {
+			names[i], descriptions[i] = flagReference(command, flag)
+			if doc, ok := flag.(cli.DocGenerationFlag); ok {
+				descriptions[i] = doc.GetUsage()
+			}
+		}
+		column := helpDescriptionColumn(navigationWidth, names)
+		for i, label := range names {
+			name, value, _ := strings.Cut(label, "=")
+			out.WriteString(style.entry(label, descriptions[i], style.flag(name, value), navigationWidth, column))
+		}
+		return out.String()
+	}
 
-	heading("START HERE")
 	explore := native + " explore"
-	script := native + ` "@completion" zsh`
-	column := helpDescriptionColumn(navigationWidth, []string{explore, script})
-	out.WriteString(style.entry(explore, "Choose a command to edit at your prompt.", commandsuggest.Record(command, explore), navigationWidth, column))
-	out.WriteString(style.entry(script, "Print a script for zsh, bash, fish, or pwsh.", commandsuggest.Record(command, script), navigationWidth, column))
+	options := native + " help --all " + topic
+	column := helpDescriptionColumn(navigationWidth, []string{explore, options})
+	out.WriteString(style.entry(explore, "Select a command and press Enter.", commandsuggest.Record(command, explore), navigationWidth, column))
 	out.WriteByte('\n')
-
-	heading("PROMPT INSERTION")
-	note("The shell installer enables insertion.")
-	note("Zsh and fish fill your prompt. In Bash 4.3+, press Ctrl+X, then Tab.")
-	note("Manual zsh setup (for Bash or fish, change the shell and omit --profile):")
-	fmt.Fprintln(&out, "    "+commandsuggest.RecordFor(command, "zsh", invocation+` @completion zsh --install-suggestions --profile "${ZDOTDIR-$HOME}/.zshrc"`))
+	switch shell {
+	case "zsh":
+		note("With the CLI shell installer, zsh fills your prompt automatically.")
+	case "fish":
+		if runtime.GOOS == "linux" {
+			note("With the Linux fish package, selections fill your prompt in new terminals.")
+		} else {
+			note("With shell insertion enabled, fish fills your prompt automatically.")
+		}
+	case "bash":
+		note("With Bash 4.3+ shell setup, press Ctrl+X, then Tab to insert your selection.")
+	default:
+		note("If Explore prints the command, copy it to your prompt.")
+	}
+	note("Edit the command, then press Enter to run it.")
 	out.WriteByte('\n')
-
-	heading("FLAGS")
-	options := []struct{ name, description string }{
-		{"--suggestions-status", "Inspect saved insertion setup."},
-		{"--uninstall-suggestions", "Remove managed insertion setup."},
-		{"--suggestions", "Include insertion in the printed script."},
-		{"--suggestions-double-tab", "With --suggestions or --install-suggestions. May delay Tab."},
-		{"--suggestions-click", "Enable Kitty clicks with zsh and --suggestions."},
-		{"--suggestions-adapter=kitty", "Print the Kitty adapter. Omit the shell name."},
-		{"--picker", "Include image shortcuts in the script."},
-		{"--install-picker", "Install image shortcuts for future shells."},
-		{"--uninstall-picker", "Remove managed image picker shortcuts."},
-		{"--automatic", "With --install-picker, honor opt-outs. Omit the shell."},
-		{"--profile=PATH", "Choose a startup file for setup."},
-		{"--suggest-executable", "Print executable typo suggestions separately."},
-	}
-	names := make([]string, len(options))
-	for i, option := range options {
-		names[i] = option.name
-	}
-	column = helpDescriptionColumn(navigationWidth, names)
-	for _, option := range options {
-		name, value, _ := strings.Cut(option.name, "=")
-		out.WriteString(style.entry(option.name, option.description, style.flag(name, value), navigationWidth, column))
-	}
+	out.WriteString(style.entry(options, "Show setup options.", commandsuggest.Record(command, options), navigationWidth, column))
 	return out.String()
 }
