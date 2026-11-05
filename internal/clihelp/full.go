@@ -37,6 +37,13 @@ func commandFlagUsage(command *cli.Command, flag cli.Flag, usage string) string 
 			}
 		}
 	}
+	if strings.TrimSpace(usage) == "" {
+		body, ok := flag.(interface{ GetBodyPath() string })
+		names := flag.Names()
+		if ok && body.GetBodyPath() == "model" && len(names) > 0 && names[0] == "model" {
+			return pathInputDescription("model")
+		}
+	}
 	return usage
 }
 
@@ -229,6 +236,8 @@ func flagReference(command *cli.Command, flag cli.Flag) (string, string) {
 		!strings.Contains(strings.ToLower(usage), "repeat") {
 		usage += "\nCan be used more than once."
 	}
+	// Generated descriptions often end in a newline. Metadata supplies its own.
+	usage = strings.TrimRight(usage, "\r\n")
 	required, _ := flag.(cli.RequiredFlag)
 	if doc.IsDefaultVisible() && (required == nil || !required.IsRequired()) {
 		value := doc.GetDefaultText()

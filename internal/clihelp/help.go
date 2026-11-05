@@ -103,6 +103,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	delete(root.Metadata, "help-all")
 	root.Metadata["help-welcome"] = len(args) <= 1
 	delete(root.Metadata, "help-selected-command")
+	delete(root.Metadata, "help-selected-flag")
 	if root.Command("help") == nil {
 		root.Commands = append(root.Commands, &cli.Command{
 			Name: "help", Usage: "Get command help or see help piping for shell examples", HideHelpCommand: true,
@@ -258,6 +259,7 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 	remove := map[int]bool{}
 	help, legacy, all := false, false, false
 	completionOption := false
+	subjectIndex := -1
 	end := len(args)
 	for i := 1; i < len(args); i++ {
 		arg := args[i]
@@ -277,6 +279,9 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 				}
 			}
 			remove[i], help = true, true
+			if !assigned && i == len(args)-2 && current.CustomHelpTemplate == commandHelpTemplate && current.Name != "@completion" {
+				subjectIndex = i + 1
+			}
 			continue
 		}
 		if strings.HasPrefix(arg, "-") {
@@ -307,6 +312,19 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 				}
 				remove[i], legacy = true, true
 				continue
+			}
+			if i == subjectIndex && !assigned {
+				// Only consume an advertised spelling in the final argument.
+				// All other options and values still belong to the parser.
+				prefix := "--"
+				if len(name) == 1 {
+					prefix = "-"
+				}
+				if visible, ok := found.(cli.VisibleFlag); ok && visible.IsVisible() && spelling == prefix+name {
+					root.Metadata["help-selected-flag"] = found
+					remove[i] = true
+					continue
+				}
 			}
 			doc, ok := found.(cli.DocGenerationFlag)
 			if !ok {
@@ -357,6 +375,15 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 	}
 	root.Metadata["help-selected-command"] = chain[len(chain)-1]
 	return out, true
+}
+
+func requestedHelpFlag(command *cli.Command) cli.Flag {
+	metadata := command.Root().Metadata
+	if metadata["help-selected-command"] != command {
+		return nil
+	}
+	flag, _ := metadata["help-selected-flag"].(cli.Flag)
+	return flag
 }
 
 var subcommandHelpOnce sync.Once

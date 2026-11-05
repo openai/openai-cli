@@ -252,6 +252,88 @@ func TestRepeatedHelpConfigurationClearsLegacyNotice(t *testing.T) {
 	}
 }
 
+func TestOneFlagHelpSelectsTheVisibleDeclaration(t *testing.T) {
+	var out bytes.Buffer
+	root := completeHelpFixture(&out)
+	leaf := root.Command("images").Command("generate")
+	inherited := &cli.StringFlag{Name: "header", Aliases: []string{"H"}}
+	shadow := &cli.StringFlag{Name: "format", Aliases: []string{"f"}}
+	root.Flags = append(root.Flags, inherited)
+	leaf.Flags = append(leaf.Flags, shadow)
+	for _, tc := range []struct {
+		args []string
+		want cli.Flag
+	}{
+		{[]string{"--help", "--prompt"}, leaf.Flags[1]},
+		{[]string{"-h", "-H"}, inherited},
+		{[]string{"--help", "--format"}, shadow},
+		{[]string{"--help", "-f"}, shadow},
+		{[]string{"sample.png", "--size", "example", "--help", "--format"}, shadow},
+	} {
+		args := append([]string{"openai", "images", "generate"}, tc.args...)
+		normalized, help, err := Configure(root, args)
+		if err != nil || !help {
+			t.Fatalf("%q: help=%t, error=%v", args, help, err)
+		}
+		wantArgs := append(slices.Clone(args[:len(args)-2]), "--help")
+		if !slices.Equal(normalized, wantArgs) {
+			t.Fatalf("%q normalized to %q, want %q", args, normalized, wantArgs)
+		}
+		if err := root.Run(t.Context(), normalized); err != nil {
+			t.Fatal(err)
+		}
+		if requestedHelpFlag(leaf) != tc.want || requestedHelpFlag(root) != nil {
+			t.Fatalf("%q selected the wrong flag or command", args)
+		}
+	}
+}
+
+func TestOneFlagHelpLeavesOtherArgumentsToParser(t *testing.T) {
+	var out bytes.Buffer
+	root := completeHelpFixture(&out)
+	leaf := root.Command("images").Command("generate")
+	leaf.Flags = append(leaf.Flags, &cli.StringFlag{Name: "internal", Hidden: true})
+	for _, tail := range [][]string{
+		{"--help", "--size"}, // Establish a previous selection.
+		{"--help"},
+		{"--help=true", "--size"},
+		{"--help=false", "--size"},
+		{"--help", "--size=sample"},
+		{"--help", "--size", "sample"},
+		{"--help", "-size"},
+		{"--help", "---size"},
+		{"--help", "--", "--size"},
+		{"--prompt", "--help", "--size"},
+		{"--help", "--root-only"},
+		{"--help", "--internal"},
+		{"--help", "--unknown"},
+	} {
+		args := append([]string{"openai", "images", "generate"}, tail...)
+		normalized, _, err := Configure(root, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.Equal(tail, []string{"--help", "--size"}) {
+			if root.Metadata["help-selected-flag"] == nil {
+				t.Fatal("missing initial selection")
+			}
+			continue
+		}
+		if root.Metadata["help-selected-flag"] != nil {
+			t.Fatalf("selected a flag for %q", args)
+		}
+		if len(tail) > 1 && !slices.Contains(normalized, tail[len(tail)-1]) {
+			t.Fatalf("lost final operand: %q => %q", args, normalized)
+		}
+	}
+	leaf.Metadata["local-help-full"] = "authored guide"
+	args := []string{"openai", "images", "generate", "--help", "--size"}
+	normalized, _, err := Configure(root, args)
+	if err != nil || !slices.Equal(normalized, args) || root.Metadata["help-selected-flag"] != nil {
+		t.Fatalf("authored guide intercepted lookup: %q, %v", normalized, err)
+	}
+}
+
 func TestRepeatedHelpDoesNotRetainExpandedFlagDetails(t *testing.T) {
 	var out bytes.Buffer
 	root := completeHelpFixture(&out)

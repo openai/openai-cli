@@ -74,6 +74,9 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	if path == "@completion" {
 		return completionHelp(command, invocation, width, navigationWidth)
 	}
+	if flag := requestedHelpFlag(command); flag != nil {
+		return flagList(command, []cli.Flag{flag}, width)
+	}
 	compact := hasCompactHelp(command) && !fullReferenceRequested(command)
 	var out strings.Builder
 	style := commandHelpStyle(command)
@@ -225,6 +228,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	}
 	if compact {
 		out.WriteByte('\n')
+		out.WriteString(wrapPlainDescription("Add a flag after -h to read its description.", "  ", width))
 		if reference := fullReferenceCommand(command, invocation, path); reference != "" {
 			out.WriteString(wrapPlainDescription("Full flag descriptions:", "  ", width))
 			fmt.Fprintf(&out, "    %s\n", commandsuggest.Record(command, reference))

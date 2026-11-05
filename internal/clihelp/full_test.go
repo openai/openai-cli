@@ -307,6 +307,24 @@ func TestFlagReferenceNormalizesProseWithoutChangingValues(t *testing.T) {
 	}
 }
 
+func TestFlagReferenceSeparatesMetadataWithoutAnExtraBlankLine(t *testing.T) {
+	const usage = "First paragraph.\n\nCopy this example:\n```sh\nopenai models list\n\nopenai --help\n```\r\n\r\n"
+	flags := []cli.Flag{
+		&cli.IntFlag{Name: "limit", Value: 4, Usage: usage},
+		&cli.StringFlag{Name: "mode", HideDefault: true, Usage: "Choose a mode.\n", Sources: cli.EnvVars("OPENAI_TEST_MODE")},
+	}
+	got := fullFlagGroups(&cli.Command{}, flags, 80)
+	for _, want := range []string{
+		"First paragraph.\n\n      Copy this example:",
+		"```sh\n      openai models list\n\n      openai --help\n      ```\n      Default: 4\n\n    --mode",
+		"Choose a mode.\n      Env: OPENAI_TEST_MODE\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in rendered flags:\n%s", want, got)
+		}
+	}
+}
+
 func TestFlagUsageOverrideRequiresDeclaringOwner(t *testing.T) {
 	rootFlag := &cli.StringFlag{Name: "model", Aliases: []string{"m"}, Usage: "Root model."}
 	localFlag := &cli.StringFlag{Name: "model", Usage: "", Value: "declared-model"}
@@ -331,5 +349,21 @@ func TestFlagUsageOverrideRequiresDeclaringOwner(t *testing.T) {
 	delete(leaf.Metadata, "help-flag-usages")
 	if got := fullFlagGroups(leaf, []cli.Flag{localFlag}, 80); strings.Contains(got, "ID of the model") {
 		t.Fatalf("usage override persisted after its metadata was removed: %s", got)
+	}
+}
+
+func TestFlagUsageDescribesOnlyAnUndocumentedRequestModel(t *testing.T) {
+	for _, tc := range []struct {
+		flag *requestflag.Flag[string]
+		want string
+	}{
+		{&requestflag.Flag[string]{Name: "model", BodyPath: "model"}, pathInputDescription("model")},
+		{&requestflag.Flag[string]{Name: "model", BodyPath: "model", Usage: "Choose an audio model.\n"}, "Choose an audio model.\n"},
+		{&requestflag.Flag[string]{Name: "model", QueryPath: "model"}, ""},
+		{&requestflag.Flag[string]{Name: "engine", Aliases: []string{"model"}, BodyPath: "model"}, ""},
+	} {
+		if got := commandFlagUsage(&cli.Command{}, tc.flag, tc.flag.Usage); got != tc.want {
+			t.Errorf("%s flag usage = %q, want %q", tc.flag.Name, got, tc.want)
+		}
 	}
 }

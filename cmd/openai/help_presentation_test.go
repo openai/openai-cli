@@ -19,6 +19,39 @@ func helpSection(text, start, end string) string {
 	return strings.TrimSpace(section)
 }
 
+func TestMainHelpForOneFlag(t *testing.T) {
+	full := runMainDispatch(t, "bash", "openai", "help", "--all", "responses", "create")
+	if full.code != 0 || full.stderr != "" {
+		t.Fatalf("full help failed: %+v", full)
+	}
+	for _, tc := range []struct{ help, flag, want string }{
+		{"-h", "--model", "Model ID."},
+		{"--help", "--stream", "Default: false"},
+		{"-h", "--input", "Text, image, or file inputs"},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			got := runMainDispatch(t, "bash", "openai", "responses", "create", tc.help, tc.flag)
+			if got.code != 0 || got.stderr != "" || !strings.HasPrefix(strings.TrimSpace(got.stdout), tc.flag+"=") {
+				t.Fatalf("single flag help failed: %+v", got)
+			}
+			if !strings.Contains(got.stdout, tc.want) || !strings.Contains(full.stdout, got.stdout) {
+				t.Errorf("single flag help differs from the full entry: %q", got.stdout)
+			}
+		})
+	}
+	got := runMainDispatchWithStdin(t, "bash", []string{"OPENAI_API_KEY=fake-private-env-flag-help"}, nil,
+		"openai", "--api-key", "fake-private-argument-flag-help", "responses", "create", "-h", "--api-key")
+	if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "OPENAI_API_KEY") ||
+		strings.Contains(got.stdout, "fake-private-") || strings.Contains(got.stdout, "SYNOPSIS") {
+		t.Errorf("inherited credential help failed or showed a configured value")
+	}
+	header := runMainDispatch(t, "bash", "openai", "responses", "create", "-h", "-H")
+	if header.code != 0 || header.stderr != "" || !strings.HasPrefix(strings.TrimSpace(header.stdout), "--header=") ||
+		!strings.Contains(header.stdout, "-H=") || strings.Contains(header.stdout, "SYNOPSIS") {
+		t.Errorf("inherited alias lookup failed: %+v", header)
+	}
+}
+
 func TestMainHelpPresentationPreservesDetailsAfterShortName(t *testing.T) {
 	got := runMainDispatch(t, "bash", "openai", "responses", "create", "--help")
 	if got.code != 0 || got.stderr != "" {
