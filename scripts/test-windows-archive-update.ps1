@@ -170,14 +170,6 @@ if (Test-Path -LiteralPath "$PSScriptRoot/tags.json") {
     $observed | Add-Member -NotePropertyName InstallRoute -NotePropertyValue $tags.route
     $observed | Add-Member -NotePropertyName PrivateVerifier -NotePropertyValue ([bool]$tags.privateVerifier)
     $observed | ConvertTo-Json -Compress | Add-Content -LiteralPath "$PSScriptRoot/results/test.log"
-    # Preserve the authenticated upgrade outcome even if the launcher omitted required status text.
-    if ($tags.route -ceq 'Install.cmd') {
-        $report = Get-Content -LiteralPath "$PSScriptRoot/results/launcher.json" -Raw | ConvertFrom-Json
-        if ($report.Exit -ne 0 -or $report.StatusOrder -ne $true -or ($tags.privateVerifier -and $report.Downloads -ne 1)) {
-            Add-Content -LiteralPath "$PSScriptRoot/results/test.log" -Value 'Authenticated upgrade passed. Launcher presentation failed.'
-            throw 'The public upgrade passed but the launcher presentation failed.'
-        }
-    }
     exit 0
 }
 $env:OPENAI_CLI_WINDOWS_ARCHIVE_FIXTURE = '1'
@@ -382,16 +374,33 @@ exit 0
 '@ | Set-Content -LiteralPath "$root/ordinary.ps1" -Encoding utf8
     $credential = New-Object System.Management.Automation.PSCredential(".\$account", $secret)
     $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    function Read-LauncherReport([string]$path) {
+        # A missing or invalid diagnostic must never hide the standard account's actual result.
+        try {
+            $json = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+            if (!$json -or !$json.TrimStart().StartsWith('{')) {return}
+            $report = ConvertFrom-Json -InputObject $json -ErrorAction Stop
+            if ($report.StatusOrder -isnot [bool]) {return}
+            foreach ($field in 'Exit','Width','Starts','Finishes','Downloads') {
+                $n = $report.$field
+                if (($n -isnot [int] -and $n -isnot [long]) -or $n -lt [int]::MinValue -or $n -gt [int]::MaxValue) {return}
+            }
+            if ($report.Width -lt 1 -or $report.Starts -lt 0 -or $report.Finishes -lt 0 -or $report.Downloads -lt 0) {return}
+            return $report
+        } catch {return}
+    }
     function Invoke-StandardQualification([string]$expected, [PSCredential]$runAs = $credential) {
         $logPath = if ($expected -eq 'TestMainWindowsArchiveMachinePathConflict') {"$root/machine-results/test.log"} else {"$root/results/test.log"}
         $child = Start-Process -FilePath $shell -ArgumentList "-NoLogo -NoProfile -NonInteractive -File `"$root\ordinary.ps1`"" -WorkingDirectory $root -Credential $runAs -LoadUserProfile -UseNewEnvironment -Wait -PassThru
         # This independent record survives a failed published enrollment.
         if (Test-Path -LiteralPath "$root/results/paste.log") {Get-Content -LiteralPath "$root/results/paste.log"}
+        $checkLauncher = $published -and $PublicRoute -ceq 'Install.cmd'
         if ($published) {
             if (Test-Path -LiteralPath "$root/results/starter-stage.log") {Get-Content -LiteralPath "$root/results/starter-stage.log"}
-            if (Test-Path -LiteralPath "$root/results/launcher.json") {
-                $r = Get-Content -LiteralPath "$root/results/launcher.json" -Raw | ConvertFrom-Json
-                Write-Output "Install.cmd exit=$([int]$r.Exit) width=$([int]$r.Width) starts=$([int]$r.Starts) finishes=$([int]$r.Finishes) downloads=$([int]$r.Downloads) ordered=$([bool]$r.StatusOrder)"
+            if ($checkLauncher) {
+                $r = Read-LauncherReport "$root/results/launcher.json"
+                if ($null -eq $r) {Write-Output 'launcher report unavailable'}
+                else {Write-Output "Install.cmd exit=$($r.Exit) width=$($r.Width) starts=$($r.Starts) finishes=$($r.Finishes) downloads=$($r.Downloads) ordered=$($r.StatusOrder)"}
             }
         }
         if (!(Test-Path -LiteralPath $logPath)) {throw "The standard account failed before recording CLI evidence (exit $($child.ExitCode))."}
@@ -399,6 +408,10 @@ exit 0
         Write-Output $log
         if ($child.ExitCode -ne 0 -or !$log.Contains('--- PASS: ' + $expected)) {
             throw 'The standard-user entrypoint qualification did not pass.'
+        }
+        if ($checkLauncher -and ($null -eq $r -or $r.Exit -ne 0 -or !$r.StatusOrder -or $r.Starts -ne 1 -or
+            $r.Finishes -ne 1 -or ($PrivateVerifier -and $r.Downloads -ne 1))) {
+            throw 'The authenticated upgrade passed. Launcher presentation failed.'
         }
         if ($expected -ceq 'TestMainWindowsArchiveOrdinarySetup') {
             if (!$log.Contains('--- PASS: TestMainWindowsArchiveBracketedLauncher (')) {throw 'Missing bracketed launcher evidence.'}

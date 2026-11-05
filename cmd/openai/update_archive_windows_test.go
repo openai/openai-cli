@@ -246,9 +246,10 @@ type windowsLauncherReport struct {
 
 func windowsLauncherPresentation(cells []uint16, width int) windowsLauncherReport {
 	report := windowsLauncherReport{Width: width}
-	// Compare complete messages from a row boundary, including padding after the last character.
-	// A full preceding row can continue onto this row. Do not count a suffix of that text.
+	// Count visible message patterns aligned with screen rows, across wraps.
+	// Screen cells cannot distinguish a typed trailing space from console padding.
 	continuation := false
+	ordered := true
 	for len(cells) > 0 {
 		if !continuation {
 			for _, message := range []string{windowsInstallStart, windowsInstallDone, windowsVerifierDownload} {
@@ -263,9 +264,10 @@ func windowsLauncherPresentation(cells []uint16, width int) windowsLauncherRepor
 					report.Starts++
 				case windowsInstallDone:
 					report.Finishes++
-					report.StatusOrder = report.Starts == 1
+					ordered = ordered && report.Starts == 1
 				case windowsVerifierDownload:
 					report.Downloads++
+					ordered = ordered && report.Starts == 1 && report.Finishes == 0
 				}
 				break
 			}
@@ -274,7 +276,7 @@ func windowsLauncherPresentation(cells []uint16, width int) windowsLauncherRepor
 		continuation = row[len(row)-1] != ' '
 		cells = cells[len(row):]
 	}
-	report.StatusOrder = report.StatusOrder && report.Starts == 1 && report.Finishes == 1
+	report.StatusOrder = ordered && report.Starts == 1 && report.Finishes == 1
 	return report
 }
 
@@ -342,6 +344,15 @@ func TestMainWindowsArchiveConsoleCapture(t *testing.T) {
 			report = windowsLauncherPresentation(bad, width)
 			if report.Downloads != 0 || report.StatusOrder {
 				t.Fatalf("accepted embedded text or reversed status at width %d: %+v", width, report)
+			}
+			for _, lines := range [][]string{
+				{windowsVerifierDownload, windowsInstallStart, windowsInstallDone},
+				{windowsInstallStart, windowsInstallDone, windowsVerifierDownload},
+			} {
+				report = windowsLauncherPresentation(rows(lines...), width)
+				if report.Downloads != 1 || report.StatusOrder {
+					t.Fatalf("accepted progress outside setup at width %d: %+v", width, report)
+				}
 			}
 		}
 	})
