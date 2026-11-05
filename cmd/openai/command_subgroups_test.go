@@ -117,13 +117,27 @@ func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 			t.Fatalf("compatibility help failed: %+v", got)
 		}
 	}
-	for _, hidden := range []string{"__complete", "@completion", "@manpages"} {
+	// Completion setup has a user-facing guide even though discovery omits its command.
+	direct := runMainDispatch(t, "bash", "openai", "@completion", "--help")
+	if !strings.HasPrefix(direct.stdout, "Shell completion\n") || direct.code != 0 || direct.stderr != "" {
+		t.Fatalf("completion setup guide failed: %+v", direct)
+	}
+	if topic := runMainDispatch(t, "bash", "openai", "help", "@completion"); topic != direct {
+		t.Fatalf("completion setup topic differs from direct help: %+v", topic)
+	}
+	for _, hidden := range []string{"__complete", "@manpages"} {
 		got := runMainDispatch(t, "bash", "openai", "help", hidden)
 		if got.code == 0 || !strings.Contains(got.stderr, "Unknown help topic") {
 			t.Fatalf("internal command exposed as a help topic: %+v", got)
 		}
 	}
 	got := runMainDispatch(t, "zsh", mainCompletionArgs("zsh", "")...)
+	for record := range strings.SplitSeq(got.stdout, "\n") {
+		name, _, _ := strings.Cut(record, ":")
+		if name == "__complete" || name == "@completion" || name == "@manpages" {
+			t.Fatalf("internal command exposed in root completion: %s", name)
+		}
+	}
 	if strings.Contains(got.stdout, "admin:organization") || !strings.Contains(got.stdout, "admin") {
 		t.Fatalf("root completion does not prefer subgroups: %+v", got)
 	}

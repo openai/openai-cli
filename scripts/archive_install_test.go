@@ -53,6 +53,23 @@ func TestArchiveInstall(t *testing.T) {
 		return
 	}
 
+	t.Run("Bash always uses HOME for startup files", func(t *testing.T) {
+		home := privateInstallDirectory(t)
+		other := filepath.Join(home, "chosen")
+		if err := os.Mkdir(other, 0700); err != nil {
+			t.Fatal(err)
+		}
+		cmd := run(home, path)
+		cmd.Args = append(cmd.Args, "--bash", other)
+		if output, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(output), "Bash startup files") {
+			t.Fatalf("accepted alternate Bash home: %s, error %v", output, err)
+		}
+		entries, err := os.ReadDir(home)
+		if err != nil || len(entries) != 1 || entries[0].Name() != "chosen" {
+			t.Fatalf("installer changed HOME after rejecting the directory: %v, %v", entries, err)
+		}
+	})
+
 	t.Run("GitHub CLI requirements", func(t *testing.T) {
 		t.Cleanup(func() {
 			if err := os.WriteFile(binary, []byte(archiveBinary), 0700); err != nil {
@@ -857,4 +874,60 @@ func TestArchiveProfileProcess(t *testing.T) {
 	}
 	updatenotice.RunUpdateHelper(append([]string{"openai"}, os.Args[len(os.Args)-3:]...))
 	os.Exit(0)
+}
+
+func TestSourcedArchiveRequiresCompletePromptLoader(t *testing.T) {
+	archive := privateInstallDirectory(t)
+	helper, err := os.ReadFile("../openai-enable-updates.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup := filepath.Join(archive, "openai-enable-updates.sh")
+	if err := os.WriteFile(setup, helper, 0600); err != nil {
+		t.Fatal(err)
+	}
+	installer := `#!/bin/sh
+set -eu
+[ "$OPENAI_CLI_SOURCED_INSTALL" = 1 ] && [ "$1" = --require-gh ] && [ "$2" = "--$QA_SHELL" ] && [ "$3" = "$HOME" ] || exit 91
+mkdir -p "$HOME/.openai/bin"
+cp "$QA_RELEASE/openai" "$HOME/.openai/bin/openai"
+`
+	cli := `#!/bin/sh
+[ "$1" = @completion ] && [ "$2" = "$QA_SHELL" ] && [ "$3" = --auto-suggestions ] || exit 92
+[ "$QA_SHELL" = bash ] || { [ "$4" = --profile ] && [ "$5" = "$HOME/.zshrc" ]; } || exit 93
+[ "$QA_MODE" != declined ] || exit 0
+printf '%s\n' 'printf active > "$HOME/activated"'
+[ "$QA_MODE" = incomplete ] || echo '# openai-cli-install-suggestions-complete v1'
+[ "$QA_MODE" != failed ]
+`
+	for name, data := range map[string]string{"install.sh": installer, "openai": cli} {
+		if err := os.WriteFile(filepath.Join(archive, name), []byte(data), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, shell := range []string{"bash", "zsh"} {
+		executable, err := exec.LookPath(shell)
+		if err != nil {
+			continue
+		}
+		capable := shell != "bash" || exec.Command(executable, "-c", `(( BASH_VERSINFO[0] > 4 || BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 3 ))`).Run() == nil
+		for _, mode := range []string{"complete", "incomplete", "failed", "declined"} {
+			t.Run(shell+"/"+mode, func(t *testing.T) {
+				home := privateInstallDirectory(t)
+				command := exec.Command(executable, "-fic", `set -u; source "$QA_RELEASE/openai-enable-updates.sh"`)
+				command.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin", "QA_RELEASE=" + archive, "QA_SHELL=" + shell, "QA_MODE=" + mode}
+				if output, err := command.CombinedOutput(); err != nil {
+					t.Fatalf("source helper failed: %v: %s", err, output)
+				}
+				data, err := os.ReadFile(filepath.Join(home, "activated"))
+				if mode == "complete" && capable {
+					if err != nil || string(data) != "active" {
+						t.Fatalf("valid loader was not active: %q, %v", data, err)
+					}
+				} else if !os.IsNotExist(err) {
+					t.Fatalf("accepted disabled or incomplete loader: %q, %v", data, err)
+				}
+			})
+		}
+	}
 }

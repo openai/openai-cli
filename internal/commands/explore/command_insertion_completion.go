@@ -24,16 +24,18 @@ func ConfigureCompletion(root *cli.Command) {
 		&cli.BoolFlag{Name: "suggestions-click", Usage: "Enable experimental clicking with a configured local Kitty adapter; requires zsh and --suggestions"},
 		&cli.StringFlag{Name: "suggestions-adapter", Usage: "Print the Kitty click adapter without changing terminal settings; use kitty without a shell argument"},
 		&cli.BoolFlag{Name: "install-suggestions", Usage: "Enable command insertion in future terminals; updates follow the installed CLI"},
+		&cli.BoolFlag{Name: "auto-suggestions", Hidden: true},
 		&cli.BoolFlag{Name: "uninstall-suggestions", Usage: "Remove only managed command insertion setup"},
 		&cli.BoolFlag{Name: "suggestions-status", Usage: "Inspect command insertion setup without changing files"},
 		&cli.BoolFlag{Name: "suggestions-only", Hidden: true, Usage: "Generate only insertion hooks; requires --suggestions"},
 	)
 	next := completion.Action
 	completion.Action = func(ctx context.Context, command *cli.Command) error {
-		if command.Bool("suggest-executable") && (command.Bool("suggestions") || command.Bool("suggestions-double-tab") || command.Bool("suggestions-click") || command.IsSet("suggestions-adapter") || command.Bool("suggestions-only") || command.Bool("install-suggestions") || command.Bool("uninstall-suggestions") || command.Bool("suggestions-status")) {
+		setup := command.Bool("install-suggestions") || command.Bool("auto-suggestions") || command.Bool("uninstall-suggestions") || command.Bool("suggestions-status")
+		if command.Bool("suggest-executable") && (command.Bool("suggestions") || command.Bool("suggestions-double-tab") || command.Bool("suggestions-click") || command.IsSet("suggestions-adapter") || command.Bool("suggestions-only") || setup) {
 			return insertionSetupFailure("Print executable typo advice separately from command insertion setup.", nil, 2)
 		}
-		if command.Bool("install-suggestions") || command.Bool("uninstall-suggestions") || command.Bool("suggestions-status") {
+		if setup {
 			return commandInsertionShellSetup(ctx, command)
 		}
 		if command.IsSet("suggestions-adapter") || command.Bool("suggestions-click") || command.Bool("suggestions") || command.Bool("suggestions-double-tab") || command.Bool("suggestions-only") {

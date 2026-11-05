@@ -157,12 +157,36 @@ func TestCommandPickerEditingNavigationAndRenderBounds(t *testing.T) {
 	require.Contains(t, m.View().Content, "Esc cancels")
 }
 
+func TestPickerSetupRequiresVisibleConfirmationAndKeepsSelection(t *testing.T) {
+	m := newCommandPicker([]Candidate{{Command: "openai transcribe"}}, "Explore commands", false)
+	m.setupPrompt = "Add the shell hook to:\n~/.zshrc"
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	require.Contains(t, ansi.Strip(m.View().Content), "› openai transcribe")
+	require.Contains(t, ansi.Strip(m.View().Content), "F2 set up insertion")
+	m.Update(tea.PasteMsg{Content: "transcribe"})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyF2})
+	require.Contains(t, m.View().Content, "~/.zshrc")
+	require.False(t, m.done)
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.False(t, m.confirmSetup)
+	require.Equal(t, "transcribe", string(m.query))
+	m.Update(tea.KeyPressMsg{Code: tea.KeyF2})
+	m.Update(tea.WindowSizeMsg{Width: 25, Height: 10})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.False(t, m.done)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.True(t, m.done)
+	require.True(t, m.enableInsertion)
+	require.Empty(t, m.result)
+}
+
 func TestPickerRejectsNonTerminalAndCanceledContext(t *testing.T) {
-	_, err := Pick(context.Background(), nil, nil, []Candidate{{Command: "openai models list"}}, "Commands", true)
+	_, err := Pick(context.Background(), nil, nil, []Candidate{{Command: "openai models list"}}, "Commands", true, "")
 	require.Error(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = Pick(ctx, nil, nil, nil, "Commands", true)
+	_, err = Pick(ctx, nil, nil, nil, "Commands", true, "")
 	require.ErrorIs(t, err, context.Canceled)
 }
 

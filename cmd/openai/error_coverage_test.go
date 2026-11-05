@@ -144,6 +144,7 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 		"@manpages":   "Parser cases here; destination failures use TestMainRecoveryManpageOutput.",
 	}
 	hiddenFlags := map[string]string{
+		"@completion/--auto-suggestions":                   "Installer-owned insertion-hook setup. Parser errors retain only the declared option name.",
 		"@completion/--suggestions-only":                   "Managed insertion-hook generation; setup and native shell tests cover valid use. Parser errors retain only the declared option name.",
 		"explore/--suggestions":                            "Shell-owned recent-command input; search and native shell tests cover valid use. Parser errors must not echo rejected values.",
 		"explore/--shell-integration":                      "Shell-owned selection protocol; search and native shell tests cover valid use. Parser errors must not echo rejected values.",

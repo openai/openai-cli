@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -18,6 +19,14 @@ type Candidate struct {
 	// Only installed command routes have a path. Examples and shell history carry display text alone.
 	path        string
 	taskPhrases []TaskPhrase
+	// Catalog entries keep the command body separate from shell-specific executable quoting.
+	commandText string
+	browseKey   string
+}
+
+// Example keeps the exact shell invocation for selection and its arguments for discovery.
+func Example(invocation, command, description string) Candidate {
+	return Candidate{Command: invocation + " " + command, Description: description, commandText: command}
 }
 
 // TaskPhrase describes a search for an installed command. Keep the default
@@ -32,13 +41,28 @@ type TaskPhrase struct {
 func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]TaskPhrase, children func(*cli.Command) []*cli.Command, examples func(*cli.Command, string) []Candidate) []Candidate {
 	var result []Candidate
 	seen := map[string]int{}
-	add := func(candidate Candidate) {
+	add := func(candidate Candidate, owner string) {
 		if !validCommand(candidate.Command) {
 			return
 		}
+		if candidate.commandText == "" {
+			candidate.commandText = strings.TrimPrefix(candidate.Command, invocation+" ")
+		}
+		key := candidate.commandText
+		if candidate.path != "" {
+			key = candidate.path
+		} else if strings.HasPrefix(key, "-") {
+			// Keep leading global flags with their documented command. Root flags follow named commands.
+			if owner == "" {
+				owner = "\U0010ffff"
+			}
+			key = owner + " " + key
+		}
+		candidate.browseKey = strings.ToLower(key)
 		if index, ok := seen[candidate.Command]; ok {
 			// An earlier help example can also be the installed command itself.
 			if candidate.path != "" {
+				result[index].browseKey = candidate.browseKey
 				result[index].path = candidate.path
 				result[index].taskPhrases = candidate.taskPhrases
 			}
@@ -51,7 +75,7 @@ func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]Task
 	var walk func(*cli.Command, string)
 	walk = func(command *cli.Command, path string) {
 		for _, candidate := range examples(command, path) {
-			add(candidate)
+			add(candidate, path)
 		}
 		for _, child := range children(command) {
 			if child.Hidden || !safeCatalogName(child.Name) {
@@ -65,7 +89,7 @@ func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]Task
 			// Retired endpoints remain in help, but discovery should offer their
 			// authored replacement examples instead of unavailable operations.
 			if child.Metadata["help-command-section"] != "Retired commands" {
-				add(Candidate{Command: target, Description: child.Usage, path: childPath, taskPhrases: taskPhrases[childPath]})
+				add(Candidate{Command: target, Description: child.Usage, path: childPath, taskPhrases: taskPhrases[childPath]}, childPath)
 			}
 			walk(child, childPath)
 		}
@@ -74,6 +98,29 @@ func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]Task
 		walk(root, "")
 	}
 	return result
+}
+
+// browseOrder sorts catalog entries without changing search ties or the order of shell suggestions.
+func browseOrder(candidates []Candidate) []int {
+	indices := make([]int, len(candidates))
+	for i := range indices {
+		indices[i] = i
+	}
+	slices.SortStableFunc(indices, func(i, j int) int {
+		a, b := candidates[i], candidates[j]
+		if order := strings.Compare(a.browseKey, b.browseKey); order != 0 {
+			return order
+		}
+		// Show the installed route before an example displaying the same bare path.
+		if a.path != "" && b.path == "" {
+			return -1
+		}
+		if b.path != "" && a.path == "" {
+			return 1
+		}
+		return 0
+	})
+	return indices
 }
 
 func safeCatalogName(name string) bool {
