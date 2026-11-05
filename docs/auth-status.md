@@ -17,6 +17,7 @@ The offline report cannot identify the organization or project associated with a
 JSON reports an absent setting with `"value": ""` and `"source": "unset"`.
 An explicitly empty setting shows `(empty)` in text and retains its flag or environment source in both formats.
 If a displayed setting contains a configured credential, the report replaces that setting with `[redacted]`.
+It also masks recognizable OpenAI key strings pasted into a setting, even when no credential is configured.
 `offline: true` and `verified: false` describe the JSON report.
 Missing credentials still produce a successful configuration report.
 

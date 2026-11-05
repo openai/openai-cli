@@ -438,3 +438,19 @@ func TestMainAuthStatusProtectsCopiedCredentialForms(t *testing.T) {
 		})
 	}
 }
+
+func TestMainAuthStatusProtectsMisplacedKeysWithoutConfiguredCredentials(t *testing.T) {
+	for _, prefix := range []string{"sk-proj-", "sk-admin-", "sk-svcacct-", "sk-"} {
+		token := prefix + strings.Repeat("Fixture", 6)
+		for _, format := range []string{"text", "json"} {
+			got := runMainDispatchWithEnv(t, "bash", authStatusEnvironment(t),
+				"openai", "auth", "status", "--project="+token, "--format="+format)
+			require.Zero(t, got.code)
+			assertAuthStatusPrivate(t, got, token)
+			require.Contains(t, got.stdout, "[redacted]")
+		}
+	}
+	got := runMainDispatchWithEnv(t, "bash", authStatusEnvironment(t),
+		"openai", "auth", "status", "--project=sk-project", "--format=json")
+	require.Equal(t, "sk-project", decodeAuthStatus(t, got).Project.Value)
+}
