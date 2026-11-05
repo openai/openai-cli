@@ -6,12 +6,10 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 
+	tea "charm.land/bubbletea/v2"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -52,6 +50,44 @@ type failedImagePickerWriter struct{}
 
 func (failedImagePickerWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
+func TestImagePickerRegistersOnlyExplicitSuccessfulPrint(t *testing.T) {
+	model, err := newImagePicker(imagePickerOptions{Prompt: "reviewed 'prompt'"})
+	require.NoError(t, err)
+	for _, workspace := range []*imagePickerWorkspace{nil, {}} {
+		for _, printOnly := range []bool{false, true} {
+			for _, writeFails := range []bool{false, true} {
+				var output bytes.Buffer
+				var writer io.Writer = &output
+				if writeFails {
+					writer = failedImagePickerWriter{}
+				}
+				var commands []string
+				result := imagePickerResult{Args: model.settings.args(), settings: model.settings, PrintOnly: printOnly, shell: "bash", workspace: workspace}
+				err := finishImagePickerSelection(t.Context(), writer, io.Discard, "", &result, func(text string) error {
+					if _, err := io.WriteString(writer, text+"\n"); err != nil {
+						return err
+					}
+					commands = append(commands, text)
+					return nil
+				})
+				if writeFails && (printOnly || workspace == nil) {
+					require.ErrorIs(t, err, io.ErrClosedPipe)
+				} else {
+					require.NoError(t, err)
+				}
+				if printOnly && !writeFails {
+					require.Equal(t, []string{cliterminal.FormatCommand(result.Args, "bash")}, commands)
+				} else {
+					require.Empty(t, commands)
+				}
+				if workspace != nil && !printOnly {
+					require.Empty(t, output.String(), "retained generation must not print or register the command")
+				}
+			}
+		}
+	}
+}
+
 func TestImagePickerSelectionHistoryFollowsSuccessfulEcho(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "image-picker.json")
@@ -62,7 +98,7 @@ func TestImagePickerSelectionHistoryFollowsSuccessfulEcho(t *testing.T) {
 	require.NoError(t, err)
 	model.settings.prompt = "new prompt\n'絵'"
 	model.settings.quality = "high"
-	result := imagePickerResult{Args: model.settings.args(), settings: model.settings, PrintOnly: true, shell: "bash"}
+	result := imagePickerResult{Args: model.settings.args(), settings: model.settings, PrintOnly: true, shell: "bash", workspace: &imagePickerWorkspace{}}
 	var diagnostic bytes.Buffer
 	err = finishImagePickerSelection(ctx, failedImagePickerWriter{}, &diagnostic, path, &result)
 	require.ErrorIs(t, err, io.ErrClosedPipe)
@@ -80,136 +116,6 @@ func TestImagePickerSelectionHistoryFollowsSuccessfulEcho(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
-func TestImagePickerProfileDisplayRemainsEphemeral(t *testing.T) {
-	for _, shell := range []string{"bash", "zsh", "fish", "pwsh"} {
-		for _, test := range []struct {
-			name, profile string
-			explicit      bool
-		}{
-			{name: "absent"},
-			{name: "empty", explicit: true},
-			{name: "special", profile: "studio '雪' $HOME $(touch NOT_RUN)", explicit: true},
-			{name: "format controls", profile: "studio\u202e\u200b", explicit: true},
-		} {
-			t.Run(shell+"/"+test.name, func(t *testing.T) {
-				options := imagePickerOptions{Prompt: "synthetic scene", Shell: shell}
-				if test.explicit {
-					options.profile = &test.profile
-				}
-				model, err := newImagePicker(options)
-				require.NoError(t, err)
-				requestArgs := model.settings.args()
-				wantArgs := requestArgs
-				if test.explicit {
-					wantArgs = append([]string{"--profile", test.profile}, requestArgs...)
-				}
-				wantCommand := cliterminal.FormatCommand(wantArgs, shell)
-				require.Equal(t, wantCommand, strings.Join(model.commandLines(40), ""))
-				require.NotContains(t, wantCommand, "\u202e")
-				require.NotContains(t, wantCommand, "\u200b")
-				path := filepath.Join(t.TempDir(), "image-picker.json")
-				require.NoError(t, saveImagePickerState(t.Context(), path, model.settings))
-				before, err := os.ReadFile(path)
-				require.NoError(t, err)
-				for _, printOnly := range []bool{false, true} {
-					model.finishSubmission(model.settings, printOnly)
-					result := model.snapshotResult(model.settings)
-					require.Equal(t, options.profile, result.profile)
-					require.Equal(t, requestArgs, result.Args, "the selector must not enter generated request arguments")
-					var output, diagnostics bytes.Buffer
-					require.NoError(t, finishImagePickerSelection(t.Context(), &output, &diagnostics, path, &result))
-					require.Equal(t, wantCommand+"\n", output.String())
-					require.Empty(t, diagnostics.String())
-					after, err := os.ReadFile(path)
-					require.NoError(t, err)
-					require.Equal(t, before, after, "the selector must not change saved draft bytes")
-				}
-				saved, found, err := loadImagePickerState(t.Context(), path)
-				require.NoError(t, err)
-				require.True(t, found)
-				restored, err := newImagePicker(restoreImagePickerDraft(imagePickerOptions{Shell: shell}, saved))
-				require.NoError(t, err)
-				require.Nil(t, restored.profile)
-				require.Equal(t, cliterminal.FormatCommand(requestArgs, shell), strings.Join(restored.commandLines(40), ""))
-				restored, err = newImagePicker(restoreImagePickerDraft(options, saved))
-				require.NoError(t, err)
-				require.Equal(t, wantCommand, strings.Join(restored.commandLines(40), ""))
-			})
-		}
-	}
-}
-
-func TestImagePickerProfileCommandNativeShellRoundTrip(t *testing.T) {
-	for _, shell := range []string{"bash", "zsh", "fish", "pwsh"} {
-		t.Run(shell, func(t *testing.T) {
-			binary, err := exec.LookPath(shell)
-			if err != nil {
-				if strings.Contains(","+os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS")+",", ","+shell+",") {
-					t.Fatalf("required shell %s unavailable", shell)
-				}
-				t.Skipf("%s is not installed", shell)
-			}
-			prefix := "openai() { printf '%s\\0' \"$@\"; }\n"
-			var shellArgs []string
-			switch shell {
-			case "bash":
-				shellArgs = []string{"--noprofile", "--norc", "-c"}
-			case "zsh":
-				shellArgs = []string{"-f", "-c"}
-			case "fish":
-				shellArgs = []string{"--no-config", "-c"}
-				prefix = "function openai; printf '%s\\0' $argv; end\n"
-			case "pwsh":
-				shellArgs = []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-Command"}
-				prefix = "function openai { foreach ($v in $args) { [Console]::Out.Write($v); [Console]::Out.Write([char]0) } }\n"
-			}
-			profiles := []string{"", "-studio", "studio '雪' $HOME $(touch NOT_RUN); & | > [x] {x}\u202e"}
-			var commands, expected bytes.Buffer
-			var requestArgs []string
-			for _, profile := range profiles {
-				model, err := newImagePicker(imagePickerOptions{Prompt: "synthetic scene", Shell: shell, profile: &profile})
-				require.NoError(t, err)
-				model.finishSubmission(model.settings, true)
-				result := model.snapshotResult(model.settings)
-				require.NoError(t, finishImagePickerSelection(t.Context(), &commands, io.Discard, "", &result))
-				requestArgs = model.settings.args()
-				expected.WriteString(strings.Join(append([]string{"--profile", profile}, requestArgs...), "\x00") + "\x00")
-			}
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-			defer cancel()
-			process := exec.CommandContext(ctx, binary, append(shellArgs, prefix+commands.String())...)
-			dir := t.TempDir()
-			process.Dir = dir
-			process.Env = append(os.Environ(), "HOME="+dir, "XDG_CONFIG_HOME="+dir, "OPENAI_API_KEY=synthetic-not-used", "OPENAI_BASE_URL=http://127.0.0.1:9")
-			process.WaitDelay = time.Second
-			var stdout, stderr bytes.Buffer
-			process.Stdout, process.Stderr = &stdout, &stderr
-			require.NoError(t, process.Run(), stderr.String())
-			require.Empty(t, stderr.String())
-			require.Equal(t, expected.String(), stdout.String())
-			parsed := strings.Split(strings.TrimSuffix(stdout.String(), "\x00"), "\x00")
-			for i, profile := range profiles {
-				calls := 0
-				generate := &cli.Command{Name: "generate", SkipFlagParsing: true}
-				root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "images", Commands: []*cli.Command{generate}}}}
-				root.Flags = append(root.Flags, &cli.StringFlag{Name: "profile"})
-				generate.Action = func(context.Context, *cli.Command) error {
-					calls++
-					require.True(t, root.IsSet("profile"))
-					require.Equal(t, profile, root.String("profile"))
-					require.Equal(t, requestArgs[2:], generate.Args().Slice())
-					return nil
-				}
-				count := len(requestArgs) + 2
-				require.NoError(t, root.Run(t.Context(), append([]string{"openai"}, parsed[i*count:(i+1)*count]...)))
-				require.Equal(t, 1, calls)
-			}
-			_, err = os.Stat(filepath.Join(dir, "NOT_RUN"))
-			require.ErrorIs(t, err, os.ErrNotExist)
-		})
-	}
-}
-
 func TestImagePickerOptionalHistoryFailureDoesNotBlockSelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "image-picker.json")
 	invalid := []byte(`{"version":99,"prompt":"private text"}`)
@@ -225,6 +131,38 @@ func TestImagePickerOptionalHistoryFailureDoesNotBlockSelection(t *testing.T) {
 	require.Equal(t, invalid, after)
 	err = finishImagePickerSelection(context.Background(), &output, failedImagePickerWriter{}, path, &result)
 	require.ErrorIs(t, err, io.ErrClosedPipe)
+}
+
+func TestImagePickerPrintOnlyDraftWarningAfterWorkspaceClose(t *testing.T) {
+	for _, warningFails := range []bool{false, true} {
+		t.Run(map[bool]string{false: "visible warning", true: "warning write failure"}[warningFails], func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "image-picker.json")
+			invalid := []byte(`{"version":99,"prompt":"private old draft"}`)
+			require.NoError(t, os.WriteFile(path, invalid, 0600))
+			model := pickerForTest(t)
+			var queued []tea.Msg
+			workspace := &imagePickerWorkspace{send: func(msg tea.Msg) { queued = append(queued, msg) }}
+			result := imagePickerResult{Args: model.settings.args(), settings: model.settings, shell: "bash", PrintOnly: true, workspace: workspace}
+			var output, diagnostics bytes.Buffer
+			var warning io.Writer = &diagnostics
+			if warningFails {
+				warning = failedImagePickerWriter{}
+			}
+			err := finishImagePickerSelection(t.Context(), &output, warning, path, &result)
+			if warningFails {
+				require.ErrorIs(t, err, io.ErrClosedPipe)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, "Could not save the draft.\n", diagnostics.String())
+			}
+			require.Equal(t, cliterminal.FormatCommand(result.Args, "bash")+"\n", output.String())
+			require.False(t, result.draftSaved)
+			require.Empty(t, queued, "the closed workspace cannot display the warning")
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, invalid, after)
+		})
+	}
 }
 
 func TestImagePickerCanceledSelectionHasNoPersistenceOrOutput(t *testing.T) {

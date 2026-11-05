@@ -305,7 +305,7 @@ func withoutInteractiveImageCancellation(err error) error {
 }
 
 func paintInteractiveImage(ctx context.Context, output io.Writer, img image.Image, size interactiveImageSize) error {
-	columns := savedImagePreviewColumns(img.Bounds(), size.width, size.height-1, size.cellWidth, size.cellHeight)
+	columns := interactiveImageColumns(img, size)
 	hint := "q / Esc: close"
 	if columns < 1 {
 		hint = "Enlarge window. q: close"
@@ -321,4 +321,9 @@ func paintInteractiveImage(ctx context.Context, output io.Writer, img image.Imag
 		return err
 	}
 	return terminalimage.Write(ctx, output, img, "iterm-konsole", columns)
+}
+
+// Share the viewer's measured aspect-ratio fit with the picker's expanded view.
+func interactiveImageColumns(img image.Image, size interactiveImageSize) int {
+	return savedImagePreviewColumns(img.Bounds(), size.width, size.height-1, size.cellWidth, size.cellHeight)
 }

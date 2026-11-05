@@ -52,15 +52,35 @@ func TestMainCompletionDescriptionsStayInOneRecord(t *testing.T) {
 
 func TestMainCompletionHelpAndFileInputs(t *testing.T) {
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
-		got := runMainDispatch(t, style, mainCompletionArgs(style, "help", "--all", "responses", "cr")...)
-		if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, "create") || strings.Contains(got.stdout, "setup") {
-			t.Errorf("%s help completion failed: %+v", style, got)
-		}
 		for _, args := range [][]string{{"files", "create", "--file", ""}, {"audio", "transcriptions", "create", "--file", ""}, {"images", "edit", "--image", ""}} {
 			got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_FILE_VALUES=1"}, mainCompletionArgs(style, args...)...)
 			if got.code != 10 || got.stdout != "" || got.stderr != "" {
 				t.Errorf("%s file completion failed for %q: %+v", style, args, got)
 			}
+		}
+	}
+}
+
+func TestMainCompletionOffersPipedRequestAlongsideFiles(t *testing.T) {
+	for _, tc := range []struct {
+		args   []string
+		marker string
+		code   int
+		prefix string
+	}{
+		{[]string{"responses", "create", "--request-file", ""}, "1", 12, ""},
+		{[]string{"chat", "completions", "create", "--request-file", "-"}, "1", 12, ""},
+		{[]string{"chat:completions", "create", "--request-file=-"}, "1", 12, "--request-file=\n"},
+		{[]string{"responses", "create", "--request-file", "req"}, "1", 10, ""},
+		{[]string{"responses", "create", "--request-file=-draft"}, "1", 10, "--request-file=\n"},
+		{[]string{"responses", "create", "--request-file", ""}, "", 10, ""},
+		{[]string{"responses", "create", "--request-file="}, "", 10, "--request-file=\n"},
+		{[]string{"--mtls-client-cert-file", ""}, "1", 10, ""},
+	} {
+		env := []string{"OPENAI_CLI_COMPLETION_FILE_VALUES=1", "OPENAI_CLI_COMPLETION_STDIN_PATH=" + tc.marker}
+		got := runMainDispatchWithEnv(t, "zsh", env, mainCompletionArgs("zsh", tc.args...)...)
+		if got != (mainDispatchResult{code: tc.code, stdout: tc.prefix}) {
+			t.Errorf("stdin-path marker %q, args %q: %+v", tc.marker, tc.args, got)
 		}
 	}
 }

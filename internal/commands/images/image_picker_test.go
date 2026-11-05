@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
@@ -64,7 +65,7 @@ func TestImagePickerUnsupportedShellKeepsGeneration(t *testing.T) {
 			m.focus = "command"
 			require.Contains(t, m.View().Content, imagePickerUnsupportedShell)
 			require.NotContains(t, m.View().Content, "openai images generate")
-			require.NotContains(t, m.View().Content, "Ctrl+P print")
+			require.NotContains(t, ansi.Strip(m.View().Content), "[Ctrl+P] Print command")
 			_, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
 			require.Nil(t, cmd)
 			require.Empty(t, m.result.Args)
@@ -149,18 +150,35 @@ func TestImagePickerSettingsConstraints(t *testing.T) {
 
 func TestImagePickerLivePromptAndCommandUpdate(t *testing.T) {
 	m := pickerForTest(t)
+	m.width, m.height = 80, 24
+	checkVisible := func() {
+		t.Helper()
+		require.Equal(t, "prompt", m.focus)
+		view := ansi.Strip(m.View().Content)
+		width, _ := m.commandDimensions()
+		for _, line := range m.commandLines(width) {
+			require.Contains(t, view, line, "the live command must be visible while typing")
+		}
+		require.Contains(t, view, "[Tab] Switch")
+		require.Contains(t, view, "[Ctrl+G] Generate")
+		require.Contains(t, view, "[Ctrl+C] Quit")
+		require.Empty(t, m.result.Args)
+	}
 	m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 	m.Update(tea.PasteMsg{Content: "A 'purple' robot"})
 	require.Equal(t, "A 'purple' robot", m.settings.prompt)
 	require.Equal(t, "prompt", m.focus)
+	checkVisible()
 	preview, _, _ := m.commandPreview(1000, 1)
 	require.Contains(t, preview[0], "--prompt 'A '\\''purple'\\'' robot'")
 	m.field = "quality"
 	m.apply("max")
+	checkVisible()
 	preview, _, _ = m.commandPreview(1000, 1)
 	require.Contains(t, preview[0], "--quality max")
 	m.field = "model"
 	m.apply(openai.ImageModelGPTImage1Mini)
+	checkVisible()
 	preview, _, _ = m.commandPreview(1000, 1)
 	require.Contains(t, preview[0], "--quality auto")
 	require.Contains(t, preview[0], "--model gpt-image-1-mini")
@@ -417,7 +435,7 @@ func TestImagePickerEmptyPromptPlaceholder(t *testing.T) {
 	m, err := newImagePicker(imagePickerOptions{})
 	require.NoError(t, err)
 	m.width, m.height = 80, 24
-	require.Contains(t, m.View().Content, "Describe your image")
+	require.Contains(t, ansi.Strip(m.View().Content), "Describe your image")
 	pickerKey(m, tea.KeyEnter)
 	require.Equal(t, "settings", m.page)
 	require.Equal(t, "Add a prompt first.", m.note)
@@ -433,9 +451,9 @@ func TestImagePickerBoundedCommandPreviewShowsRange(t *testing.T) {
 	require.Len(t, lines, 2)
 	require.False(t, strings.HasSuffix(lines[1], "…"))
 	m.focus = "command"
-	require.Contains(t, m.View().Content, "↑↓ scroll 1-4/")
-	require.Contains(t, m.View().Content, "Ctrl+P print")
-	require.NotContains(t, m.View().Content, "Command")
+	require.Contains(t, ansi.Strip(m.View().Content), "Command preview · 1–4 of")
+	require.Contains(t, ansi.Strip(m.View().Content), "[Ctrl+P] Print command")
+	require.Contains(t, ansi.Strip(m.View().Content), "[↑↓] Scroll")
 	for _, line := range lines {
 		require.LessOrEqual(t, ansi.StringWidth(line), 40)
 	}
@@ -450,12 +468,12 @@ func TestImagePickerNavigationHintsFitNarrowWindows(t *testing.T) {
 			m.focus = focus
 			lines := strings.Split(ansi.Strip(m.View().Content), "\n")
 			footer := lines[len(lines)-1]
-			require.Contains(t, footer, "Ctrl+C exit", "layout=%s width=%d focus=%s", "compact", width, focus)
-			require.Contains(t, footer, "Enter ")
+			require.Contains(t, footer, "[Ctrl+C] Quit", "layout=%s width=%d focus=%s", "compact", width, focus)
+			require.Contains(t, footer, "[Enter] ")
 			if focus == "prompt" {
-				require.Contains(t, footer, "↓ settings")
+				require.Contains(t, ansi.Strip(m.View().Content), "[Tab] Switch")
 			} else {
-				require.Contains(t, footer, "↑↓ scroll")
+				require.Contains(t, ansi.Strip(m.View().Content), "[↑↓] Scroll")
 			}
 			require.NotContains(t, footer, "…", "essential controls must fit without truncation")
 		}
@@ -496,9 +514,11 @@ func TestImagePickerCommandScrollPreservesEveryCharacter(t *testing.T) {
 			for i, line := range lines {
 				visited[start+i] = line
 			}
-			require.Contains(t, m.View().Content, "↑↓ scroll")
+			require.Contains(t, ansi.Strip(m.View().Content), "[↑↓] Scroll")
 			require.NotContains(t, m.View().Content, "Generate image")
-			require.NotContains(t, m.View().Content, "Print command")
+			if size[0] >= 80 {
+				require.Contains(t, ansi.Strip(m.View().Content), "[Ctrl+P] Print command")
+			}
 			if start+len(lines) == count {
 				break
 			}
@@ -638,7 +658,7 @@ func TestImagePickerViewBoundsAndResize(t *testing.T) {
 			}
 			lines := strings.Split(content, "\n")
 			require.LessOrEqual(t, len(lines), size[1], "page=%s", page)
-			require.LessOrEqual(t, len(lines), 18, "page=%s", page)
+			require.LessOrEqual(t, len(lines), 21, "page=%s", page)
 			if size[1] >= 12 {
 				require.LessOrEqual(t, len(lines), size[1]-3, "leave prior shell context visible")
 			}
@@ -677,7 +697,7 @@ func TestImagePickerInlineRestoresModes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	w := &imagePickerOutput{File: f, cancel: cancel}
-	p := &imagePickerInline{output: w, restoreWrap: true}
+	p := &imagePickerInline{output: w, restoreWrap: true, wrapKnown: true}
 	p.start()
 	p.start() // Repeated capability replies must not start another lifecycle.
 	p.close()
@@ -737,12 +757,30 @@ func TestImagePickerParentContextDuringInput(t *testing.T) {
 		defer control.Close()
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		options := imagePickerOptions{Prompt: "Synthetic context cancellation", Shell: "bash"}
+		if os.Getenv("OPENAI_PICKER_CONTEXT_TEST_MODE") == "workspace failure" {
+			// Fail the workspace writer without closing the terminal that owns
+			// input and mode restoration. Tea exits through private cancellation.
+			output, err := os.CreateTemp(t.TempDir(), "failed-workspace")
+			require.NoError(t, err)
+			require.NoError(t, output.Close())
+			options.workspace = &imagePickerWorkspace{out: output, context: ctx}
+			result, err := runImagePicker(ctx, os.Stdin, os.Stdout, options)
+			require.ErrorIs(t, err, os.ErrClosed)
+			require.NotErrorIs(t, err, context.Canceled)
+			require.False(t, result.Canceled)
+			require.Empty(t, result.Args)
+			var displayErr *localcommands.LocalError
+			require.ErrorAs(t, err, &displayErr)
+			require.Contains(t, displayErr.Error(), "Could not display the image picker.")
+			return
+		}
 		go func() {
 			var data [1]byte
 			_, _ = control.Read(data[:])
 			cancel()
 		}()
-		result, err := runImagePicker(ctx, os.Stdin, os.Stdout, imagePickerOptions{Prompt: "Synthetic context cancellation", Shell: "bash"})
+		result, err := runImagePicker(ctx, os.Stdin, os.Stdout, options)
 		require.ErrorIs(t, err, context.Canceled)
 		require.True(t, result.Canceled)
 		require.Empty(t, result.Args)
@@ -760,7 +798,7 @@ master,slave=pty.openpty()
 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
 initial=termios.tcgetattr(slave)
 control,writer=os.pipe()
-env=dict(os.environ,TERM='xterm-256color',NO_COLOR='1',OPENAI_PICKER_CONTEXT_TEST_FD=str(control))
+env=dict(os.environ,TERM='xterm-256color',TERM_PROGRAM='synthetic-pty',NO_COLOR='1',OPENAI_PICKER_CONTEXT_TEST_FD=str(control),OPENAI_PICKER_CONTEXT_TEST_MODE=sys.argv[2])
 child=subprocess.Popen([sys.argv[1],'-test.run=^TestImagePickerParentContextDuringInput$'],stdin=slave,stdout=slave,stderr=slave,env=env,pass_fds=(control,))
 os.close(control)
 raw=bytearray()
@@ -777,7 +815,7 @@ try:
             sent=True
     while select.select([master],[],[],.05)[0]:
         raw.extend(os.read(master,65536))
-    assert sent, raw
+    assert sent or sys.argv[2]=='workspace failure', raw
     assert child.returncode==0, raw
     restored=termios.tcgetattr(slave)
     if sys.platform=='darwin':
@@ -795,9 +833,13 @@ finally:
     os.close(master)
     os.close(slave)
 `
-	command := exec.Command(python, "-I", "-B", "-c", script, os.Args[0])
-	out, err := command.CombinedOutput()
-	require.NoError(t, err, "%s", out)
+	for _, mode := range []string{"parent cancellation", "workspace failure"} {
+		t.Run(mode, func(t *testing.T) {
+			command := exec.Command(python, "-I", "-B", "-c", script, os.Args[0], mode)
+			out, err := command.CombinedOutput()
+			require.NoError(t, err, "%s", out)
+		})
+	}
 }
 
 func TestImagePickerRejectsUnrepresentablePrompts(t *testing.T) {

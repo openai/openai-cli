@@ -4,7 +4,9 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && -n ${TERM-} && ${TERM-
     emulate -L zsh
     setopt casematch
     local pattern=$'^[ \t]*__APPNAME__[ \t]+images[ \t]+generate[ \t]*$'
-    [[ $BUFFER =~ $pattern && $CURSOR -eq ${#BUFFER} && $(whence -w '__APPNAME__') == '__APPNAME__: command' ]]
+    [[ $BUFFER =~ $pattern && $CURSOR -eq ${#BUFFER} ]] &&
+      { [[ $(whence -w '__APPNAME__') == '__APPNAME__: command' ]] ||
+        { (( $+functions[____APPNAME___suggestions_owns_command] )) && ____APPNAME___suggestions_owns_command; }; }
   }
 
   ____APPNAME___picker_owns_tab() {
@@ -39,7 +41,11 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && -n ${TERM-} && ${TERM-
       # ZLE redirects stdin away from the terminal while running widgets.
       # Stderr was verified above, so duplicate that terminal for the child.
       zle -I
-      OPENAI_PICKER_SHELL=zsh command '__APPNAME__' images generate <&2
+      if (( $+functions[____APPNAME___suggestions_owns_command] )) && ____APPNAME___suggestions_owns_command; then
+        OPENAI_PICKER_SHELL=zsh ____APPNAME___suggestions_run images generate <&2
+      else
+        OPENAI_PICKER_SHELL=zsh command '__APPNAME__' images generate <&2
+      fi
       zle reset-prompt
       return 0
     fi

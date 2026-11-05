@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
-	audiocommands "github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/urfave/cli/v3"
 )
@@ -27,11 +26,7 @@ func SetupImagePickerShellOnFirstRun(ctx context.Context, args []string, roots .
 	}
 	// Read command declarations before the optional worker starts. CLI parsing
 	// may mutate them after the foreground timeout, so the worker borrows none.
-	var root *cli.Command
-	if len(roots) > 0 {
-		root = roots[0]
-	}
-	if audiocommands.SkipFirstRunSetup(root, args) || skipContextFirstRunSetup(root, args) {
+	if len(roots) > 0 && skipFirstRunSetup(roots[0], args) {
 		return
 	}
 	args = append([]string(nil), args...)

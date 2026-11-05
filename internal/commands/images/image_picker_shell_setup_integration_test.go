@@ -3,22 +3,155 @@ package images_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/openai/openai-cli/internal/autocomplete"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/images"
-	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
+
+func TestImagePickerShellSetupCapabilityErrors(t *testing.T) {
+	operation := errors.Join(autocomplete.ErrPickerAtomicRenameUnsupported, syscall.ENOSYS)
+	pathFailure := &os.PathError{Op: "rename", Path: "synthetic-private-startup\x1b", Err: operation}
+	linkFailure := &os.LinkError{Op: "rename", Old: "synthetic-private-old", New: "synthetic-private-new", Err: operation}
+	for _, tc := range []struct {
+		name  string
+		cause error
+	}{
+		{"direct", operation},
+		{"path", pathFailure},
+		{"link", linkFailure},
+		{"wrapped", fmt.Errorf("synthetic-private-wrapper: %w", pathFailure)},
+		{"joined", errors.Join(linkFailure, &os.PathError{Op: "write", Path: "synthetic-private-preference", Err: os.ErrPermission})},
+	} {
+		for _, remove := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/remove=%t", tc.name, remove), func(t *testing.T) {
+				failure := images.TestImagePickerShellSetupFailure(&cli.Command{Name: "openai"}, tc.cause, remove)
+				require.ErrorIs(t, failure, syscall.ENOSYS)
+				require.ErrorIs(t, failure, autocomplete.ErrPickerAtomicRenameUnsupported)
+				require.ErrorIs(t, failure, tc.cause)
+				if tc.name == "joined" {
+					require.ErrorIs(t, failure, os.ErrPermission)
+				}
+				for _, format := range []string{"text", "json"} {
+					command := readableErrorTestCommand(t, "--format-error", format)
+					var output bytes.Buffer
+					require.NoError(t, appconfig.ShowCommandError(command, failure, &output))
+					message := strings.TrimSpace(output.String())
+					if format == "json" {
+						var value struct {
+							Message string `json:"message"`
+						}
+						require.NoError(t, json.Unmarshal(output.Bytes(), &value))
+						message = value.Message
+					}
+					require.Equal(t, failure.Error(), message)
+					assertReadableErrorContainsNoPrivateDetails(t, output.String())
+					require.Contains(t, message, "does not support the required atomic rename")
+					require.Contains(t, message, "Type openai images generate and press Enter")
+					require.Contains(t, message, "Some startup files or preferences may already have changed")
+					require.Contains(t, message, ".openai-picker-recovery-*")
+					require.Contains(t, message, "inspect their original files before manual recovery")
+					if remove {
+						require.Contains(t, message, "Existing shortcuts may remain active")
+					}
+					writerFailure := errors.New("synthetic output failure")
+					require.ErrorIs(t, appconfig.ShowCommandError(command, failure, errorSink{writerFailure}), writerFailure)
+					for _, canceled := range []error{context.Canceled, context.DeadlineExceeded} {
+						combined := images.TestImagePickerShellSetupFailure(command, errors.Join(tc.cause, canceled), remove)
+						require.ErrorIs(t, combined, canceled)
+						require.ErrorIs(t, combined, syscall.ENOSYS)
+						output.Reset()
+						require.NoError(t, appconfig.ShowCommandError(command, combined, &output))
+						require.NotContains(t, output.String(), "atomic rename")
+						assertReadableErrorContainsNoPrivateDetails(t, output.String())
+						if errors.Is(canceled, context.Canceled) {
+							require.Contains(t, output.String(), "Request canceled.")
+						} else {
+							require.Contains(t, output.String(), "request timed out")
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestImagePickerShellSetupRecoveryInvocation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Bash recovery invocation requires a Unix host")
+	}
+	home := images.TestPickerShellSetupHome(t)
+	work := t.TempDir()
+	selectedDirectory := filepath.Join(work, "CLI with ' quotes")
+	otherDirectory := filepath.Join(work, "other")
+	emptyDirectory := filepath.Join(work, "empty")
+	for _, directory := range []string{selectedDirectory, otherDirectory, emptyDirectory} {
+		require.NoError(t, os.Mkdir(directory, 0700))
+	}
+	selected := filepath.Join(selectedDirectory, "openai")
+	require.NoError(t, os.WriteFile(selected, []byte("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\"\n"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(otherDirectory, "openai"), []byte("#!/bin/sh\nexit 94\n"), 0700))
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{"absent from PATH", emptyDirectory},
+		{"competing executable", otherDirectory},
+		{"installed executable", selectedDirectory},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PATH", tc.path)
+			for _, remove := range []bool{false, true} {
+				for _, format := range []string{"text", "json"} {
+					t.Run(fmt.Sprintf("remove=%t/%s", remove, format), func(t *testing.T) {
+						command := readableErrorTestCommand(t, "--format-error", format)
+						_, handled, err := appconfig.ConfigureHelp(command, []string{selected, "@completion", "bash", "--install-picker"})
+						require.NoError(t, err)
+						require.False(t, handled)
+						failure := images.TestImagePickerShellSetupFailure(command, errors.Join(autocomplete.ErrPickerAtomicRenameUnsupported, syscall.ENOSYS), remove)
+						var output bytes.Buffer
+						require.NoError(t, appconfig.ShowCommandError(command, failure, &output))
+						message := strings.TrimSpace(output.String())
+						if format == "json" {
+							var value struct {
+								Message string `json:"message"`
+							}
+							require.NoError(t, json.Unmarshal(output.Bytes(), &value))
+							message = value.Message
+						}
+						_, recovery, found := strings.Cut(message, " Type ")
+						require.True(t, found)
+						recovery, _, found = strings.Cut(recovery, " and press Enter")
+						require.True(t, found)
+						ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+						defer cancel()
+						process := exec.CommandContext(ctx, "/bin/bash", "--noprofile", "--norc", "-c", recovery)
+						process.Dir = emptyDirectory
+						process.Env = []string{"PATH=" + tc.path, "HOME=" + home, "BASH_ENV=/dev/null", "ENV=/dev/null", "LC_ALL=C"}
+						process.WaitDelay = time.Second
+						actual, err := process.Output()
+						require.NoError(t, err, "recovery command: %s", recovery)
+						require.Equal(t, selected+"\nimages\ngenerate\n", string(actual))
+					})
+				}
+			}
+		})
+	}
+}
 
 func runPickerShellSetup(t *testing.T, ctx context.Context, args ...string) (string, error) {
 	t.Helper()

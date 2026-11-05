@@ -85,6 +85,27 @@ def capture(args):
 
             try:
                 picker.ready(terminal)
+                if args.cursor_check:
+                    press("paste cursor fixture", b"\x1b[200~dfd\x1b[201~", "dfd")
+                    checkpoint("cursor-end", prompt="dfd", cursor=3)
+                    for name, key, column in [("Left", b"\x1b[D", 7),
+                                              ("Left", b"\x1b[D", 6),
+                                              ("Left", b"\x1b[D", 5),
+                                              ("Right", b"\x1b[C", 6),
+                                              ("Right", b"\x1b[C", 7)]:
+                        mark = len(terminal.raw)
+                        press(name, key)
+                        checkpoint("cursor-" + name.lower(), prompt="dfd")
+                        frame = terminal.raw[mark:].decode("utf-8")
+                        assert "\x1b[" + str(column) + "G" in frame, "terminal cursor moved to the wrong column"
+                        plain = picker.ANSI.sub("", frame)
+                        assert "▏" not in plain, "cursor must not add a text cell"
+                        assert "\x1b[5 q" in frame, "terminal cursor must use a vertical bar"
+                        assert "\x1b[4m" not in frame, "underline cursor returned"
+                    press("insert between letters", b"x", "dfxd")
+                    checkpoint("cursor-middle", prompt="dfxd", cursor=3)
+                    press("End", picker.END)
+                    press("clear cursor fixture", b"\x15", "Describe your image")
                 press("paste synthetic prompt", b"\x1b[200~A tiny orange robot\x1b[201~",
                       "A tiny orange robot")
                 checkpoint("initial-prompt", focus="prompt", page="settings")
@@ -103,6 +124,18 @@ def capture(args):
                 checkpoint("format-webp-highlighted", checked="JPEG", selected="WEBP")
                 press("Esc to prompt", b"\x1b", "Settings")
                 checkpoint("prompt-after-format", focus="prompt", page="settings")
+                if args.cursor_check:
+                    press("Tab to command", b"\t\t", "Scroll")
+                    checkpoint("command-expanded", focus="command")
+                    mark = len(terminal.raw)
+                    press("Tab to prompt", b"\t", "Settings")
+                    checkpoint("command-visible-while-typing", focus="prompt")
+                    frame = terminal.raw[mark:].decode("utf-8")
+                    assert "[Ctrl+C]" in frame, "typing must keep keyboard controls visible"
+                    if args.width == 80:
+                        plain = picker.ANSI.sub("", frame)
+                        assert "--prompt" in plain, "typing must keep the prompt argument visible"
+                        assert "--output-format jpeg" in plain, "typing must show the changed image format"
                 press("Down to Settings", picker.DOWN, "\u203a Model")
                 press("Down to Images", picker.DOWN * 3, "\u203a Images")
                 press("Enter Choose image count", b"\r", "Choose image count")
@@ -123,6 +156,30 @@ def capture(args):
                 checkpoint("final-settings", focus="options", selected="Model")
                 press("Up to prompt", picker.UP)
                 checkpoint("final-return-prompt", focus="prompt", count="1", format="JPEG")
+                if args.cursor_check:
+                    press("Down to Settings", picker.DOWN, "\u203a Model")
+                    press("Down to Size", picker.DOWN, "\u203a Size")
+                    press("Enter size choices", b"\r", "Model chooses")
+                    checkpoint("auto-size-explanation", focus="options")
+                    press("Esc to prompt", b"\x1b", "Settings")
+                    press("Down to Settings", picker.DOWN, "\u203a Model")
+                    press("Down to Save to", picker.DOWN * 5, "\u203a Save to")
+                    press("Enter Save to", b"\r", "Current folder")
+                    press("Down to Enter path", picker.DOWN * 2, "\u203a Enter path")
+                    press("Enter folder editor", b"\r", "Enter a folder path")
+                    checkpoint("folder-placeholder", focus="path")
+                    mark = len(terminal.raw)
+                    press("type synthetic folder", b"/tmp/synthetic-folder", "/tmp/synthetic-folder")
+                    checkpoint("folder-input", focus="path")
+                    frame = terminal.raw[mark:].decode("utf-8")
+                    assert "Enter a folder path" not in frame, "placeholder must disappear during editing"
+                    assert "▏" not in frame and "\x1b[4m" not in frame, "folder cursor must not alter text"
+                    mark = len(terminal.raw)
+                    press("move folder cursor left", b"\x1b[D")
+                    checkpoint("folder-cursor-middle", focus="path")
+                    assert "\x1b[25G" in terminal.raw[mark:].decode("utf-8"), "folder cursor moved to the wrong column"
+                    press("Esc to folders", b"\x1b", "Current folder")
+                    press("Esc to prompt", b"\x1b", "Settings")
                 terminal.send(b"\x03")
                 actions.append("Ctrl+C")
                 terminal.finish(130)
@@ -147,6 +204,7 @@ def capture(args):
                     "height": height,
                     "baseline": args.baseline,
                     "no_color": args.no_color,
+                    "cursor_check": args.cursor_check,
                     "api_requests": server.request_count,
                     "preferences_written": bool(preferences),
                     "exit_status": terminal.child.returncode,
@@ -177,6 +235,7 @@ def main():
     parser.add_argument("--width", type=int, choices=(40, 80), required=True)
     parser.add_argument("--baseline", action="store_true", help="expect the pre-draft cancellation behavior")
     parser.add_argument("--no-color", action="store_true")
+    parser.add_argument("--cursor-check", action="store_true", help="check cursor spacing and command expansion")
     parser.add_argument("--relay", action="store_true")
     parser.add_argument("--hold", type=float, default=0.15)
     args = parser.parse_args()

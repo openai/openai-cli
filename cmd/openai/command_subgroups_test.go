@@ -43,15 +43,40 @@ func TestMainCommandSubgroupsCoverGeneratedRoutes(t *testing.T) {
 	t.Logf("checked %d original resource routes and their nested actions", count)
 }
 
-func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
-	for _, tc := range []struct{ path, child string }{
+func commandSubgroupBrowseCases() []struct{ path, child string } {
+	return []struct{ path, child string }{
 		{"admin", "projects"}, {"admin organization", "audit-logs"},
 		{"admin organization projects", "service-accounts"},
 		{"admin organization projects service-accounts", "api-keys"},
 		{"chat", "completions"}, {"chat completions", "messages"},
 		{"audio", "transcribe"}, {"beta threads runs", "steps"},
 		{"containers files", "content"}, {"skills versions", "content"},
-	} {
+	}
+}
+
+func TestMainCommandSubgroupsBareInvocation(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "bare subgroup browsing must not send requests", http.StatusBadRequest)
+	}))
+	t.Cleanup(server.Close)
+	for _, tc := range commandSubgroupBrowseCases() {
+		t.Run(tc.path, func(t *testing.T) {
+			args := append([]string{"openai"}, strings.Fields(tc.path)...)
+			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=" + server.URL}, args...)
+			if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, tc.child) {
+				t.Fatalf("bare subgroup browsing failed: %+v", got)
+			}
+			if count := requests.Load(); count != 0 {
+				t.Fatalf("bare subgroup browsing made %d API requests", count)
+			}
+		})
+	}
+}
+
+func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
+	for _, tc := range commandSubgroupBrowseCases() {
 		t.Run(tc.path, func(t *testing.T) {
 			for _, full := range []bool{false, true} {
 				args := []string{"openai"}
@@ -107,7 +132,7 @@ func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 func TestMainCommandSubgroupsLegacyPrefixCompletion(t *testing.T) {
 	summaries := map[string]string{
 		"audio":                         "Transcribe audio, generate speech, and create voices.",
-		"auth":                          "Inspect authentication configuration and identity",
+		"auth":                          "Inspect authentication configuration locally",
 		"audio:transcriptions":          "Convert audio to text.",
 		"audio:translations":            "Translate supported audio to English text.",
 		"admin:organization:audit-logs": "List organization actions and configuration changes.",
@@ -215,7 +240,7 @@ func TestMainCommandSubgroupsPreserveAudioAndErrors(t *testing.T) {
 		}
 	}
 	got = runMainDispatch(t, "bash", "openai", "admin", "organizatio")
-	if got.code != 3 || got.stdout != "" || got.stderr != "Unknown command. Did you mean: openai help admin organization?\nTo run it, correct only the command spelling. Keep your original options and arguments.\n" {
+	if got.code != 3 || got.stdout != "" || got.stderr != "Unknown command. Run this help command to check the spelling.\n  openai help admin organization\nEdit your original command and run it again with the same options and arguments.\n" {
 		t.Fatalf("nested typo suggestion failed: %+v", got)
 	}
 }

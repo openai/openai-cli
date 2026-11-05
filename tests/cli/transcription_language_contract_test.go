@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"slices"
 	"testing"
+
+	"github.com/openai/openai-cli/internal/mocktest"
 )
 
 func TestTranscriptionLanguageFlags(t *testing.T) {
@@ -17,9 +19,7 @@ func TestTranscriptionLanguageFlags(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	if output, err := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../cmd/openai").CombinedOutput(); err != nil {
-		t.Fatalf("building CLI: %v\n%s", err, output)
-	}
+	mocktest.CopyCLI(t, binary)
 	file := filepath.Join(t.TempDir(), "synthetic.wav")
 	if err := os.WriteFile(file, []byte("synthetic audio"), 0o600); err != nil {
 		t.Fatal(err)

@@ -20,8 +20,8 @@ const (
 	releaseInputsArtifact  = "openai-release-inputs"
 	checkoutAction         = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 	setupGoAction          = "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
-	uploadArtifactAction   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-	downloadArtifactAction = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+	uploadArtifactAction   = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+	downloadArtifactAction = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 )
 
 var releaseInputPaths = []string{
@@ -33,6 +33,7 @@ var releaseInputPaths = []string{
 }
 
 type workflow struct {
+	Env         map[string]string      `yaml:"env"`
 	Permissions map[string]string      `yaml:"permissions"`
 	Jobs        map[string]workflowJob `yaml:"jobs"`
 }
@@ -57,6 +58,7 @@ type workflowJob struct {
 
 type workflowStep struct {
 	ContinueOnError bool           `yaml:"continue-on-error"`
+	If              string         `yaml:"if"`
 	Shell           string         `yaml:"shell"`
 	Name            string         `yaml:"name"`
 	Uses            string         `yaml:"uses"`
@@ -154,7 +156,7 @@ func TestSDKSourcePreparationIsIsolatedFromPRCode(t *testing.T) {
 		t.Fatalf("SDK preparation must check out trusted target code without persisting credentials: %#v", checkout)
 	}
 	tokenIndex, token := requireStep(t, job, "Create read-only Go repository token")
-	if token.Uses != "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1" || !reflect.DeepEqual(token.With, map[string]any{
+	if token.Uses != "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510" || !reflect.DeepEqual(token.With, map[string]any{
 		"client-id": "${{ vars.OPENAI_SDKS_APP_CLIENT_ID }}", "private-key": "${{ secrets.OPENAI_SDKS_APP_PRIVATE_KEY }}",
 		"owner": "openai", "repositories": "openai-go-internal", "permission-contents": "read",
 	}) {
@@ -368,30 +370,42 @@ esac
 					failed = "1"
 				}
 				command := exec.Command("bash", "-e", "-c", tag.Run)
-				command.Env = append(os.Environ(),
-					"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
-					"GITHUB_TOKEN="+token,
+				// Keep host credentials and shell startup variables out of the fixture.
+				command.Env = []string{
+					"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+					"HOME=" + bin,
+					"TMPDIR=" + bin,
+					"GITHUB_TOKEN=" + token,
 					"GITHUB_REPOSITORY=openai/openai-cli",
-					"GITHUB_OUTPUT="+filepath.Join(t.TempDir(), "github-output"),
+					"GITHUB_OUTPUT=" + filepath.Join(t.TempDir(), "github-output"),
 					"TAG=v1.2.3",
-					"EXPECTED_TAG_SHA="+tagSHA,
-					"FAKE_TAG_SHA="+tagSHA,
-					"EXPECTED_AUTH_HEADER="+encodedToken,
-					"FAKE_GIT_FAILURE="+failed,
-				)
-				output, err := command.CombinedOutput()
-				if failure && err == nil || !failure && err != nil {
-					t.Fatalf("trusted tag command error=%v, failure=%t, output:\n%s", err, failure, output)
+					"EXPECTED_TAG_SHA=" + tagSHA,
+					"FAKE_TAG_SHA=" + tagSHA,
+					"EXPECTED_AUTH_HEADER=" + encodedToken,
+					"FAKE_GIT_FAILURE=" + failed,
 				}
-				visible := string(output)
-				for _, line := range strings.Split(visible, "\n") {
-					if mask, ok := strings.CutPrefix(line, "::add-mask::"); ok {
-						visible = strings.ReplaceAll(visible, line+"\n", "")
-						visible = strings.ReplaceAll(visible, mask, "***")
+				output, err := command.CombinedOutput()
+				// Apply workflow masking before any diagnostic, including unexpected
+				// exits. A mask directive need not end with a newline.
+				lines := strings.Split(string(output), "\n")
+				var masks []string
+				for i, line := range lines {
+					if mask, ok := strings.CutPrefix(strings.TrimSuffix(line, "\r"), "::add-mask::"); ok {
+						lines[i] = ""
+						if mask != "" {
+							masks = append(masks, mask)
+						}
 					}
 				}
+				visible := strings.Join(lines, "\n")
+				for _, mask := range masks {
+					visible = strings.ReplaceAll(visible, mask, "***")
+				}
 				if strings.Contains(visible, token) || strings.Contains(visible, encodedToken) {
-					t.Fatalf("Git failure exposed a raw or derived credential in workflow logs:\n%s", visible)
+					t.Fatal("Git failure exposed a raw or derived credential in workflow logs (output withheld)")
+				}
+				if failure && err == nil || !failure && err != nil {
+					t.Fatalf("trusted tag command error=%v, failure=%t, sanitized output:\n%s", err, failure, visible)
 				}
 			})
 		}
@@ -707,6 +721,40 @@ func TestCodeQLAnalysisCannotPublish(t *testing.T) {
 	}
 }
 
+func TestCIStatusPublisherBoundary(t *testing.T) {
+	publisher := readWorkflow(t, "codeql-upload.yml").Jobs["ci-status"]
+	if publisher.If != "github.event.workflow_run.path == '.github/workflows/ci.yml' && github.event.workflow_run.event == 'pull_request'" {
+		t.Fatal("CI status publication must only consume pull request CI runs")
+	}
+	if !reflect.DeepEqual(publisher.Permissions, map[string]string{"contents": "read", "actions": "read", "pull-requests": "read", "statuses": "write"}) {
+		t.Fatalf("unexpected CI status publisher permissions: %v", publisher.Permissions)
+	}
+	_, checkout := requireStep(t, publisher, "Check out trusted publisher")
+	if checkout.Uses != checkoutAction || checkout.With["ref"] != "${{ github.workflow_sha }}" || checkout.With["persist-credentials"] != false {
+		t.Fatal("CI status publisher must only execute trusted tooling")
+	}
+	_, publish := requireStep(t, publisher, "Publish verified CI statuses")
+	if len(publisher.Steps) != 2 || publish.Run != "python3 -I .github/scripts/codeql_upload.py publish-ci" {
+		t.Fatal("CI status publisher must not execute candidate code or artifacts")
+	}
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "codeql-upload.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Concurrency struct {
+			Group  string `yaml:"group"`
+			Cancel bool   `yaml:"cancel-in-progress"`
+		} `yaml:"concurrency"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(config.Concurrency.Group, "${{ github.event.workflow_run.workflow_id }}") || config.Concurrency.Cancel {
+		t.Fatal("CI and CodeQL publishers must have separate queues without canceling active publication")
+	}
+}
+
 func TestSDKSnapshotSurvivesFailedProducerRerun(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -758,6 +806,7 @@ func TestCandidateJobsUseOnlySameRunSourceArtifacts(t *testing.T) {
 	for filename, names := range map[string][]string{
 		"ci.yml":                 {"lint", "test-linux", "test-windows-compile", "error-audit", "build-artifacts", "macos-uploads"},
 		"help-compatibility.yml": {"help"}, "codeql.yml": {"analyze"},
+		"tokenizer-stress.yml": {"windows"},
 	} {
 		jobs := readWorkflow(t, filename).Jobs
 		for _, name := range names {
@@ -907,7 +956,8 @@ func TestParallelTestGateRequiresAllJobs(t *testing.T) {
 }
 
 func TestErrorAuditShardsRemainRequired(t *testing.T) {
-	jobs := readWorkflow(t, "ci.yml").Jobs
+	ci := readWorkflow(t, "ci.yml")
+	jobs := ci.Jobs
 	audit := jobs["error-audit"]
 	if audit.ContinueOnError || audit.Strategy.FailFast == nil || *audit.Strategy.FailFast || !reflect.DeepEqual(audit.Strategy.Matrix.Shard, []int{0, 1, 2, 3}) {
 		t.Fatalf("audit must retain four mandatory shards without fail-fast: %+v", audit)
@@ -926,13 +976,27 @@ func TestErrorAuditShardsRemainRequired(t *testing.T) {
 	}
 	linux := jobs["test-linux"]
 	_, validator := requireStep(t, linux, "Check error audit validator")
-	_, bash := requireStep(t, linux, "Check native Bash executable suggestions")
-	_, tests := requireStep(t, linux, "Run tests")
-	if validator.Run != "python3 scripts/test-error-audit.py" || validator.ContinueOnError || bash.ContinueOnError || bash.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"] != "bash" || !strings.Contains(bash.Run, "-run '^TestShellSuggestionsBash'") {
-		t.Fatal("Linux tests must retain the audit validator and mandatory native Bash suggestion checks")
+	bashIndex, bash := requireStep(t, linux, "Check native Bash executable suggestions")
+	launcherIndex, launcher := requireStep(t, linux, "Check test launcher failure handling")
+	testsIndex, tests := requireStep(t, linux, "Run tests")
+	if launcherIndex >= testsIndex || launcher.If != "" || launcher.ContinueOnError || launcher.Run != "go test ./scripts -run '^TestTestRunner$' -count=1" {
+		t.Fatal("Linux tests must check launcher failures independently before running the launcher")
 	}
-	if linux.ContinueOnError || tests.Env["SKIP_WINDOWS_TEST_COMPILE"] != "1" || tests.Run != "./scripts/test -p 1" || tests.ContinueOnError {
-		t.Fatalf("Linux tests must preserve their separate Windows compile contract: %+v", tests)
+	if validator.Run != "python3 scripts/test-error-audit.py" || validator.If != "" || validator.ContinueOnError {
+		t.Fatal("Linux tests must retain the mandatory audit validator")
+	}
+	if bashIndex >= testsIndex || bash.If != "" || bash.ContinueOnError || bash.Env["GOMAXPROCS"] != "2" || bash.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"] != "bash" || bash.Run != "go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsBash' -count=1 -timeout=5m -v" {
+		t.Fatal("Linux tests must run mandatory native Bash suggestion checks before the full suite")
+	}
+	_, workflowRequirement := ci.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"]
+	_, jobRequirement := linux.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"]
+	_, suiteRequirement := tests.Env["OPENAI_CLI_REQUIRE_NATIVE_SHELLS"]
+	if workflowRequirement || jobRequirement || suiteRequirement {
+		t.Fatal("required native shells must be scoped to the dedicated Bash step")
+	}
+	_, suiteCPUOverride := tests.Env["GOMAXPROCS"]
+	if linux.If != "" || linux.ContinueOnError || tests.If != "" || tests.ContinueOnError || suiteCPUOverride || tests.Env["SKIP_WINDOWS_TEST_COMPILE"] != "1" || tests.Run != "./scripts/test -p 1 -skip '^TestShellSuggestionsBash'" {
+		t.Fatalf("Linux tests must exclude only the dedicated Bash roots and preserve Windows compile separation: %+v", tests)
 	}
 	windows := jobs["test-windows-compile"]
 	_, compilation := requireStep(t, windows, "Compile all test packages for Windows")
@@ -941,10 +1005,10 @@ func TestErrorAuditShardsRemainRequired(t *testing.T) {
 	}
 }
 
-func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
+func TestArtifactBuildCacheIsModuleOnlyAndRefreshable(t *testing.T) {
 	job := readWorkflow(t, "ci.yml").Jobs["build-artifacts"]
 	setupIndex, setup := requireStep(t, job, "Set up Go for artifact builds")
-	cacheIndex, cache := requireStep(t, job, "Cache artifact build dependencies and compilation")
+	cacheIndex, cache := requireStep(t, job, "Cache artifact build dependencies")
 	bootstrapIndex, _ := requireStep(t, job, "Bootstrap")
 	buildIndex, _ := requireStep(t, job, "Run GoReleaser")
 	if setup.Uses != setupGoAction || setup.With["cache"] != false {
@@ -953,11 +1017,18 @@ func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
 	if !(setupIndex < cacheIndex && cacheIndex < bootstrapIndex && bootstrapIndex < buildIndex) {
 		t.Errorf("artifact setup/cache/bootstrap/build order=%v, want setup before restore before bootstrap before build", []int{setupIndex, cacheIndex, bootstrapIndex, buildIndex})
 	}
-	prefix := "artifact-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-"
+	prefix := "artifact-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-"
 	if cache.With["key"] != prefix+"${{ github.sha }}" || strings.TrimSpace(fmt.Sprint(cache.With["restore-keys"])) != prefix {
 		t.Errorf("artifact cache inputs=%v, want revision-specific save and compatible artifact-only restore", cache.With)
 	}
-	if cache.Uses != "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830" {
+	pathsIndex, paths := requireStep(t, job, "Locate Go module cache")
+	if pathsIndex <= setupIndex || pathsIndex >= cacheIndex || paths.Run != "echo \"modules=$(go env GOMODCACHE)\" >> \"$GITHUB_OUTPUT\"\n" {
+		t.Errorf("artifact cache discovery must locate only modules after Go setup and before restore: %+v", paths)
+	}
+	if cache.With["path"] != "${{ steps.artifact-cache-paths.outputs.modules }}" {
+		t.Errorf("artifact cache must retain only downloaded modules, not stale compiled archives: %v", cache.With["path"])
+	}
+	if cache.Uses != "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" {
 		t.Errorf("artifact cache action=%q, want reviewed cache action with success-only post-save", cache.Uses)
 	}
 	for _, step := range job.Steps {

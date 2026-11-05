@@ -15,14 +15,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-cli/internal/mocktest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNullableFileReferencesEndToEnd(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "openai.exe")
-	build := exec.Command("go", "build", "-o", binary, "../../cmd/openai")
-	output, err := build.CombinedOutput()
-	require.NoError(t, err, "%s", output)
+	mocktest.CopyCLI(t, binary)
 	path := filepath.ToSlash(filepath.Join(t.TempDir(), "synthetic.txt"))
 	const content = "synthetic instructions"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0600))

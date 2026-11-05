@@ -18,6 +18,7 @@ import (
 	clioutput "github.com/openai/openai-cli/internal/output"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/tokenizer"
+	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -39,6 +40,10 @@ Opens the live editor in a terminal. Use count or inspect for scripts.
 		Metadata:           map[string]any{localcommands.LocalUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools"},
 		Action:             handleTokenizerEditor,
 		Commands: []*cli.Command{
+			{Name: "view", Usage: "Open piped text in the tokenizer editor", HideHelpCommand: true,
+				Description: "Read up to 1 MiB of UTF-8 text from a pipe or redirected file. " +
+					"When input ends, the editor selects the first token. With terminal input, it opens an empty draft.",
+				Action: handleTokenizerEditor},
 			tokenizerInputCommand("count", false), tokenizerInputCommand("inspect", true),
 			{Name: "encodings", Usage: "List the embedded tokenizer encodings", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp, Action: handleTokenizerEncodings},
 			{Name: "licenses", Usage: "Print the bundled tokenizer license notices", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp, Action: handleTokenizerLicenses},
@@ -57,7 +62,7 @@ func tokenizerInputCommand(name string, inspect bool) *cli.Command {
   {{$bin}} tokenizer {{.Name}} --text "Hello, world!"
 
 ` + cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp
-	return &cli.Command{
+	cmd := &cli.Command{
 		Name: name, Usage: usage, HideHelpCommand: true,
 		CustomHelpTemplate: help,
 		Metadata:           map[string]any{"local-help-full": help},
@@ -77,6 +82,12 @@ func tokenizerInputCommand(name string, inspect bool) *cli.Command {
 			return handleTokenizer(ctx, command, inspect)
 		},
 	}
+	if !inspect {
+		cmd.Flags = append(cmd.Flags, &cli.BoolFlag{
+			Name: "number", Aliases: []string{"n"}, Usage: "Print only the token count", OnlyOnce: true,
+		})
+	}
+	return cmd
 }
 
 func tokenizerOutputFormat(command *cli.Command) (string, error) {
@@ -84,7 +95,7 @@ func tokenizerOutputFormat(command *cli.Command) (string, error) {
 		return "", &localcommands.LocalError{Message: "Tokenizer commands take no positional arguments. Use --text or --file for input."}
 	}
 	root := command.Root()
-	if root.IsSet("transform") || root.IsSet("raw-output") {
+	if command.Name != "count" && (root.IsSet("transform") || root.IsSet("raw-output")) {
 		return "", &localcommands.LocalError{Message: "Tokenizer output does not support --transform or --raw-output. Use --format text or json."}
 	}
 	format := strings.ToLower(root.String("format"))
@@ -104,6 +115,14 @@ func handleTokenizer(ctx context.Context, command *cli.Command, inspect bool) er
 	if err != nil {
 		return err
 	}
+	root := command.Root()
+	options := clioutput.FormatOptions{Format: format, Transform: root.String("transform"), RawOutput: root.Bool("raw-output")}
+	if !inspect && command.Bool("number") {
+		if root.IsSet("transform") && options.Transform != "token_count" {
+			return &localcommands.LocalError{Message: "Choose --number or a different --transform field."}
+		}
+		options.Transform = "token_count"
+	}
 	encoding := command.String("encoding")
 	if !tokenizer.IsSupportedEncoding(encoding) {
 		return &localcommands.LocalError{Message: "Choose a tokenizer encoding: " + strings.Join(tokenizer.SupportedEncodings(), ", ") + ". Model names are not encodings."}
@@ -121,7 +140,7 @@ func handleTokenizer(ctx context.Context, command *cli.Command, inspect bool) er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return tokenizerOutputFailure(writeTokenizerResult(ctx, command.Root().Writer, result, inspect, format == "json"))
+	return tokenizerOutputFailure(writeTokenizerResult(ctx, root.Writer, result, inspect, options))
 }
 
 func tokenizerOutputFailure(err error) error {
@@ -225,10 +244,26 @@ type tokenizerToken struct {
 	Text      *string `json:"text,omitempty"`
 }
 
-func writeTokenizerResult(ctx context.Context, writer io.Writer, result tokenizer.Result, inspect, asJSON bool) error {
-	out := bufio.NewWriterSize(clioutput.Writer{Context: ctx, Sink: writer}, 32*1024)
+func writeTokenizerResult(ctx context.Context, writer io.Writer, result tokenizer.Result, inspect bool, options clioutput.FormatOptions) error {
+	sink := clioutput.Writer{Context: ctx, Sink: writer}
+	asJSON := options.Format == "json"
+	extract := options.Transform != "" || options.RawOutput
+	var header string
+	if asJSON || extract {
+		header = fmt.Sprintf(`{"encoding":%q,"input_bytes":%d,"token_count":%d`, result.Encoding, result.InputBytes, result.TokenCount)
+	}
+	if extract {
+		// Only count accepts extraction. Inspect streams its token records below.
+		data, err := clioutput.FormatJSON(gjson.Parse(header+"}"), options, writer, cliterminal.IsWriterTerminal(writer))
+		if err != nil {
+			return err
+		}
+		_, err = sink.Write(data)
+		return err
+	}
+	out := bufio.NewWriterSize(sink, 32*1024)
 	if asJSON {
-		if _, err := fmt.Fprintf(out, `{"encoding":%q,"input_bytes":%d,"token_count":%d`, result.Encoding, result.InputBytes, result.TokenCount); err != nil {
+		if _, err := out.WriteString(header); err != nil {
 			return err
 		}
 		if inspect {

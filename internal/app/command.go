@@ -8,11 +8,14 @@ import (
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-cli/internal/commands/audio"
+	"github.com/openai/openai-cli/internal/commands/auth"
 	"github.com/openai/openai-cli/internal/commands/codex"
+	"github.com/openai/openai-cli/internal/commands/explore"
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/commands/manpages"
 	"github.com/openai/openai-cli/internal/commands/tokenize"
+	"github.com/openai/openai-cli/internal/commands/webhooks"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
@@ -28,8 +31,10 @@ func ConfigureCommand(root *cli.Command) {
 		return
 	}
 	root.Metadata[configuredCommandMetadata] = true
+	root.Flags = append(root.Flags, debugCaptureFlags()...)
 	configureCertificateCompatibility(root)
 	configureAudioVoices(root)
+	configureVectorStoreSearch(root)
 	requestconfig.ConfigureRootFlags(root)
 	// Batch workflows preserve positional path inputs and need the same help annotations.
 	configureBatchCommands(root)
@@ -41,24 +46,36 @@ func ConfigureCommand(root *cli.Command) {
 	images.ConfigureCompletion(root)
 	images.ConfigureShellSetup(root, writeOutputReceipt)
 	configureShellSuggestions(root)
+	explore.ConfigureCompletion(root)
+	explore.Register(root)
 	images.RegisterPreview(root, ImagePreviewOptions())
 	audio.ConfigureText(root)
 	configureReadableSpeech(root)
 	registerAdminSetup(root)
-	admin.ConfigureCredentials(root, func(command *cli.Command) (string, error) {
-		resolved, err := resolvedCommandRequestContext(command)
-		return resolved.BaseURL.Value, err
-	})
+	auth.Register(root)
+	admin.ConfigureCredentials(root)
+	admin.ConfigureProjectLifecycle(root)
+	configureListCommands(root)
+	webhooks.Configure(root, webhookCommandOptions())
+	describeAgentsCommands(root)
+	configureAgentsSessionCreation(root)
+	// Configure both generated resources before compatibility routes clone their flags.
+	for _, name := range []string{"responses", "chat:completions"} {
+		if resource := root.Command(name); resource != nil {
+			if create := resource.Command("create"); create != nil {
+				requestconfig.EnableRequestFile(create)
+			}
+		}
+	}
 	localcommands.ConfigureSubgroups(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
 	filecommands.Configure(root)
+	configureVectorStoreWorkspace(root)
 	tokenize.Register(root)
+	localcommands.RegisterArchiveInstall(root)
 	codex.Register(root)
-	registerProjectLinkCommands(root)
-	registerAuthCommands(root)
-	configureProfileContext(root)
-	registerProfileCommands(root)
+	localcommands.RemoveFineTuningCommands(root)
 	localcommands.ConfigurePresentation(root)
 	manpages.Configure(root, func(command *cli.Command, message string) error {
 		return ReportSaveReceipt(command, os.Stderr, message, nil)
@@ -68,6 +85,9 @@ func ConfigureCommand(root *cli.Command) {
 	root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
 	previousBefore := root.Before
 	root.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
+		if _, err := debugCaptureOptions(command); err != nil {
+			return ctx, err
+		}
 		if previousBefore != nil {
 			var err error
 			ctx, err = previousBefore(ctx, command)

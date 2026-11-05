@@ -109,6 +109,13 @@ func OpenFileUpload(path string) (FileUpload, error) {
 	if err != nil {
 		return FileUpload{}, err
 	}
+	return FileUploadFromFile(file)
+}
+
+// FileUploadFromFile takes ownership of an already-open descriptor.
+// Callers can validate that descriptor without reopening a replaceable path.
+func FileUploadFromFile(file *os.File) (FileUpload, error) {
+	path := file.Name()
 	info, err := file.Stat()
 	if err != nil {
 		return FileUpload{}, errors.Join(err, file.Close())

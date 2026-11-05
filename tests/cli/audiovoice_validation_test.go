@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/mocktest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,9 +24,7 @@ func TestAudioVoiceInputs(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "")
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "openai-test")
-	build := exec.Command("go", "build", "-o", binary, "../../cmd/openai")
-	output, err := build.CombinedOutput()
-	require.NoError(t, err, "%s", output)
+	mocktest.CopyCLI(t, binary)
 
 	sample := filepath.Join(dir, "sample.wav")
 	require.NoError(t, os.WriteFile(sample, []byte("synthetic sample bytes"), 0600))

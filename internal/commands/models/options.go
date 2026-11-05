@@ -9,6 +9,7 @@ import (
 
 // Options supplies application policy without coupling model behavior to assembly.
 type Options struct {
+	ShowPages      func(context.Context, *cli.Command) (bool, error)
 	LoadingAllowed func(*cli.Command) bool
 	// StartFeedback returns a non-nil, idempotent stop function that joins its worker.
 	StartFeedback func(context.Context, *cli.Command) func()

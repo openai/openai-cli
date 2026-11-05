@@ -20,10 +20,11 @@ type outputInvocationKey struct{}
 
 // One synchronous invocation owns this state. Nested actions retain its first identity.
 type outputInvocation struct {
-	command  *cli.Command
-	label    string
-	protocol bool
-	context  context.Context
+	command            *cli.Command
+	label              string
+	protocol           bool
+	context            context.Context
+	defaultAPIResponse bool
 }
 
 // RunWithOutputPolicy reports after the complete CLI run and its cleanup return.
@@ -48,7 +49,11 @@ func RunWithOutputPolicy(ctx context.Context, root *cli.Command, run func(contex
 		ctx = invocation.context
 	}
 	ctx = outputPolicyContext(ctx, invocation.command)
-	return finishOutputPolicy(ctx, invocation.command, invocation.label, invocation.protocol, err, elapsed)
+	err = finishOutputPolicy(ctx, invocation.command, invocation.label, invocation.protocol, err, elapsed)
+	if err == nil && invocation.defaultAPIResponse {
+		updateAfterAPIResponse(ctx, root)
+	}
+	return err
 }
 
 // The framework hides combined Action/After errors behind Errors(), not Unwrap().

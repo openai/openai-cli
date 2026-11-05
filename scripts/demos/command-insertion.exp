@@ -1,0 +1,120 @@
+# Scene driver for record-command-insertion.sh. The shared helper owns media.
+set timeout 12
+match_max 100000
+spawn -noecho /bin/zsh -d -i
+expect_before {
+    -exact "\033\1330c" { send -- "\033\133?1;2c"; exp_continue }
+    -exact "\033\1336n" { send -- "\033\1331;1R"; exp_continue }
+    # Report the Dracula background used by the actual replay renderer.
+    -exact "\033\]11;?\007" { send -- "\033\]11;rgb:2828/2a2a/3636\007"; exp_continue }
+}
+expect_after timeout { puts stderr "command insertion demo timed out"; exit 1 }
+expect -exact "$ "
+
+proc pause {seconds} {
+    global spawn_id
+    # Forward real terminal output while the frame remains visible.
+    expect -timeout $seconds timeout {}
+}
+
+proc type_text {text} {
+    global spawn_id
+    foreach letter [split $text ""] {
+        send -- $letter
+        after 30
+        expect -timeout 0 -re {.+} {} timeout {}
+    }
+}
+
+proc type_line {text} {
+    global spawn_id
+    type_text $text
+    after 200
+    send -- "\r"
+}
+
+proc capture_buffer {expected} {
+    global spawn_id env
+    send -- "\030\007"
+    for {set attempt 0} {$attempt < 100} {incr attempt} {
+        set file [open $env(DEMO_BUFFERS) r]
+        set value [read $file]
+        close $file
+        if {$value eq $expected} { return }
+        after 20
+    }
+    puts stderr "editable command buffer did not match the expected selection"
+    exit 1
+}
+
+proc select_command {expected recent} {
+    global spawn_id
+    send -- "\r"
+    if {$recent} {
+        expect -exact "Command inserted."
+    } else {
+        expect -exact "$ "
+    }
+    # This widget inspects ZLE without submitting the selected command.
+    capture_buffer "$expected\n"
+}
+
+pause 1
+switch -- $env(DEMO_MODE) {
+    before {
+        type_line "openai models --help"
+        expect -exact "Key setup: openai help setup\r\n"
+        expect -exact "$ "
+        capture_buffer "\n"
+        pause 3
+        log_user 0
+    }
+    after-recent {
+        type_line "openai models --help"
+        expect -exact "Key setup: openai help setup\r\n"
+        expect -exact "$ "
+        pause 1
+        type_text "openai --version"
+        send -- "\030\011"
+        expect -exact "Search"
+        type_text "retrieve"
+        pause 2
+        select_command "openai models retrieve --help" 1
+        pause 3
+        # Freeze the visible fill result. Verify restoration before cleanup.
+        log_user 0
+        send -- "\030\022"
+        capture_buffer "openai models retrieve --help\nopenai --version\n"
+    }
+    after-explore - after-picker {
+        type_line "openai explore"
+        expect -exact "Search"
+        type_text "models"
+        pause 2
+        # The broad query ranks images models first on this command tree.
+        # Choose Models help explicitly; the buffer assertion verifies the row.
+        send -- "\033\133B"
+        pause 2
+        if {$env(DEMO_MODE) eq "after-picker"} {
+            # This separate scene supplies the open-picker screenshot.
+            # The full after-explore scene shows the same selection visibly.
+            log_user 0
+        }
+        select_command "openai models --help" 0
+        pause 3
+        log_user 0
+    }
+    default {
+        puts stderr "unsupported command insertion demo scene"
+        exit 2
+    }
+}
+
+# Clear the editable draft before submitting exit. Selection never reaches Enter.
+send -- "\025exit\r"
+expect eof
+set result [wait]
+if {[lindex $result 2] != 0 || [lindex $result 3] != 0} {
+    puts stderr "native zsh demo failed: $result"
+    exit 1
+}

@@ -19,7 +19,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	requestconfig "github.com/openai/openai-cli/internal/request"
-	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -118,12 +117,33 @@ func assertAudioPreviewJSON(t *testing.T, model *audioWorkbench, input []byte) {
 	if model.instructions.Value() != "" {
 		want["instructions"] = model.instructions.Value()
 	}
-	expected, err := json.Marshal(want)
-	require.NoError(t, err)
-	require.Equal(t, expected, input, "shell changed the complete JSON bytes")
+	_, request, ok := strings.Cut(model.commandPreview(), " <<'JSON'\n")
+	require.True(t, ok)
+	require.Equal(t, strings.TrimSuffix(request, "JSON"), string(input), "shell changed the displayed JSON bytes")
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(input, &decoded))
 	require.Equal(t, want, decoded)
+}
+
+func assertAudioPreviewContinuations(t *testing.T, command string) {
+	t.Helper()
+	launcher, request, ok := strings.Cut(command, " <<'JSON'\n")
+	require.True(t, ok)
+	require.True(t, strings.HasSuffix(request, "\n}\nJSON"), "the terminator must occupy its own line")
+	require.True(t, strings.HasPrefix(request, "{\n  \"input\": "))
+	lines := strings.Split(launcher, "\n")
+	require.Greater(t, len(lines), 1)
+	for index, line := range lines {
+		if index < len(lines)-1 {
+			require.True(t, strings.HasSuffix(line, " \\"), "continuation must end line %d without trailing whitespace", index)
+		}
+		if index > 0 {
+			require.True(t, strings.HasPrefix(line, "  "), "continued line %d must retain indentation", index)
+		}
+	}
+	for _, char := range strings.ReplaceAll(command, "\n", "") {
+		require.False(t, unicode.IsControl(char) || unicode.Is(unicode.Cf, char), "data control in copyable command")
+	}
 }
 
 func TestAudioCommandPreviewNativeShellPreservesInputsAndRequestContext(t *testing.T) {
@@ -131,7 +151,7 @@ func TestAudioCommandPreviewNativeShellPreservesInputsAndRequestContext(t *testi
 		t.Run(shell, func(t *testing.T) {
 			binary, directory := audioPreviewExecutable(t, "openai preview's binary")
 			invocation := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
-			for _, input := range []string{"@synthetic/file.txt", `\@synthetic/file.txt`, "世界 says 'hello'\nsecond line with \\\"quoted\\\" text"} {
+			for _, input := range []string{"@synthetic/file.txt", `\@synthetic/file.txt`, "世界 says 'hello'\nsecond line with \\\"quoted\\\" text", "End marker\nJSON\n$(printf should-be-literal)", "Literal \\\n$(printf injected); `printf injected` | # and trailing \\"} {
 				for _, instructions := range []string{"", "Speak 'gently'\nPreserve 世界 and @literal \\@literal"} {
 					model := audioPreviewModel(t, invocation, "--project=proj synthetic's", "--organization=org-世界", "--base-url=https://example.invalid/proxy/v1")
 					model.input.SetValue(input)
@@ -139,6 +159,7 @@ func TestAudioCommandPreviewNativeShellPreservesInputsAndRequestContext(t *testi
 					require.Equal(t, input, model.input.Value())
 					require.Equal(t, instructions, model.instructions.Value())
 					preview := model.commandPreview()
+					assertAudioPreviewContinuations(t, preview)
 					require.NotContains(t, preview, "Bash/zsh:", "label must remain outside executable command")
 					capture := executeAudioPreview(t, shell, preview, directory)
 					require.Equal(t, []string{"--project=proj synthetic's", "--organization=org-世界", "--base-url=https://example.invalid/proxy/v1", "audio", "speak", "--output", "speech.wav"}, capture.args)
@@ -155,14 +176,12 @@ func TestAudioCommandPreviewEscapesControlsWithoutChangingArguments(t *testing.T
 		t.Run(shell, func(t *testing.T) {
 			binary, directory := audioPreviewExecutable(t, "openai")
 			invocation := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
-			project := "proj\x1b[2J\r\u202e's"
+			project := "proj\x1b[2J\r\n\t\u202e's"
 			model := audioPreviewModel(t, invocation, "--project="+project)
-			model.settings.Model = "synthetic\x1b]52;c;fake\a"
+			model.settings.Model = "synthetic\x1b]52;c;fake\a\u0085\u00ad\U000e0001"
 			model.input.SetValue("plain\nUnicode 世界")
 			preview := model.commandPreview()
-			for _, char := range preview {
-				require.False(t, unicode.IsControl(char) || unicode.Is(unicode.Cf, char), "literal control in copyable command")
-			}
+			assertAudioPreviewContinuations(t, preview)
 			capture := executeAudioPreview(t, shell, preview, directory)
 			require.Equal(t, []string{"--project=" + project, "audio", "speak", "--output", "speech.wav"}, capture.args)
 			assertAudioPreviewJSON(t, model, capture.stdin)
@@ -214,7 +233,7 @@ func TestAudioCommandPreviewSuppressesPrivateOverrides(t *testing.T) {
 		model.input.SetValue("SYNTHETIC_PRIVATE_EDITOR_TEXT")
 		preview := model.commandPreview()
 		require.Equal(t, "Command preview unavailable with private request overrides.", preview)
-		for _, private := range []string{"sk-fake", "fake-secret", "/synthetic/private", "SYNTHETIC_PRIVATE_EDITOR_TEXT", "printf", "audio speak"} {
+		for _, private := range []string{"sk-fake", "fake-secret", "/synthetic/private", "SYNTHETIC_PRIVATE_EDITOR_TEXT", "OPENAI_UNTRUSTED_STDIN", "audio speak"} {
 			require.NotContains(t, preview, private)
 		}
 	}
@@ -231,51 +250,65 @@ func TestAudioCommandPreviewFullTextAndVerticalScroll(t *testing.T) {
 	preview := model.commandPreview()
 	require.Contains(t, preview, "INPUT_TAIL_MARKER")
 	require.Contains(t, preview, "INSTRUCTION_TAIL_MARKER")
-	require.Nil(t, audioReviewMore(t, model, "Show command"))
-	require.Equal(t, "info", model.modal)
-	require.Equal(t, preview, model.infoText, "the command modal changed the executable bytes")
+	require.Nil(t, audioReviewMore(t, model, "View command"))
+	require.Empty(t, model.modal)
+	require.Equal(t, audioFocusCommand, model.focus)
+	require.Equal(t, preview, model.commandPreview(), "focusing the command changed executable bytes")
 	initial := model.View().Content
-	require.Contains(t, ansi.Strip(initial), "printf")
-	require.Contains(t, ansi.Strip(initial), "Bash/zsh", "the copyable command must identify its supported shells")
+	require.Contains(t, ansi.Strip(initial), "OPENAI_UNTRUSTED_STDIN")
+	require.Contains(t, ansi.Strip(initial), "Bash/zsh", "the command must identify its supported shells")
 	require.Nil(t, audioReviewKey(model, tea.KeyDown), "scrolling must never generate speech")
-	require.Positive(t, model.infoOffset)
+	require.Positive(t, model.commandOffset)
 	require.NotEqual(t, initial, model.View().Content)
-	for _, marker := range []string{"INPUT_TAIL_MARKER", "INSTRUCTION_TAIL_MARKER"} {
-		require.Nil(t, audioReviewKey(model, tea.KeyHome))
-		found := false
-		for range len(model.infoRows()) {
-			view := audioFeedbackView(t, model)
-			if strings.Contains(view, marker) {
-				found = true
-				break
-			}
+	require.Nil(t, audioReviewKey(model, tea.KeyHome))
+	rows := model.commandDisplayRows()
+	// Inspect each complete display row. Tail markers can span two rows.
+	for row, text := range rows {
+		if row >= model.commandOffset+model.commandViewportHeight() {
 			require.Nil(t, audioReviewKey(model, tea.KeyDown))
-			require.False(t, model.busy)
 		}
-		require.True(t, found, "complete command must remain reachable through vertical scrolling: %s", marker)
+		require.Contains(t, ansi.Strip(model.View().Content), ansi.Strip(text), "command row %d became unreachable", row)
+		require.False(t, model.busy)
 	}
 	require.Nil(t, audioReviewKey(model, tea.KeyHome))
-	require.Zero(t, model.infoOffset)
+	require.Zero(t, model.commandOffset)
 	require.Nil(t, audioReviewKey(model, tea.KeyEnter), "viewing a command must not generate speech")
 	require.False(t, model.busy)
-	require.Equal(t, "info", model.modal)
+	require.False(t, model.quit)
+	require.Empty(t, model.modal)
+	require.Equal(t, audioFocusCommand, model.focus)
 }
 
-func TestAudioCommandPreviewSupportsInformationScrollKeys(t *testing.T) {
+func TestAudioCommandPreviewSupportsInlineScrollKeys(t *testing.T) {
 	model := audioPreviewModel(t, "openai")
-	model.input.SetValue(strings.Repeat("Synthetic speech ", 130))
+	model.input.SetValue(strings.Repeat("Synthetic speech ", 260))
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	require.Nil(t, audioReviewMore(t, model, "Show command"))
+	require.Nil(t, audioReviewMore(t, model, "View command"))
 	first := model.View().Content
-	for _, key := range []rune{tea.KeyDown, tea.KeyUp} {
-		require.Nil(t, audioReviewKey(model, key), "command scrolling generated speech")
+	page := model.commandViewportHeight()
+	limit := len(model.commandDisplayRows()) - page
+	require.Greater(t, limit, page)
+	for _, step := range []struct {
+		key    rune
+		offset int
+	}{
+		{tea.KeyDown, 1}, {tea.KeyUp, 0}, {tea.KeyPgDown, page},
+		{tea.KeyPgUp, 0}, {tea.KeyEnd, limit}, {tea.KeyDown, limit},
+		{tea.KeyHome, 0}, {tea.KeyUp, 0},
+	} {
+		require.Nil(t, audioReviewKey(model, step.key), "command scrolling generated speech")
+		require.Equal(t, step.offset, model.commandOffset)
 		require.False(t, model.busy)
-		if key == tea.KeyDown {
-			require.NotEqual(t, first, model.View().Content)
+		require.False(t, model.quit)
+	}
+	require.Equal(t, first, model.View().Content)
+	for _, focus := range []int{0, 1, 2} {
+		model.focusSection(focus)
+		for _, key := range []rune{tea.KeyPgDown, tea.KeyPgUp, tea.KeyEnd, tea.KeyHome} {
+			model.Update(tea.KeyPressMsg{Code: key})
+			require.Zero(t, model.commandOffset, "another section changed the command scroll offset")
 		}
 	}
-	require.Zero(t, model.infoOffset)
-	require.Equal(t, first, model.View().Content)
 }
 
 func TestAudioCommandPrintNativeShellPreservesPrintedBytes(t *testing.T) {
@@ -289,10 +322,10 @@ func TestAudioCommandPrintNativeShellPreservesPrintedBytes(t *testing.T) {
 				model.input.SetValue(strings.Repeat("A", 60) + "\n世界 says 'hello' @literal \\@literal")
 				model.instructions.SetValue("Preserve   spaces and 'quotes'.")
 				preview := model.commandPreview()
-				model.openInformation(audioCommandTitle, preview, "more")
-				require.Greater(t, len(model.infoRows()), 1)
+				assertAudioPreviewContinuations(t, preview)
+				require.Nil(t, model.focusCommand())
+				require.Greater(t, len(model.commandDisplayRows()), 1)
 				require.Contains(t, ansi.Strip(model.View().Content), "Ctrl+P print/exit")
-				require.Nil(t, audioReviewKey(model, tea.KeyEnter))
 				require.False(t, model.quit)
 				_, quit := model.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
 				require.NotNil(t, quit)
@@ -317,7 +350,7 @@ func TestAudioCommandPrintNativeShellPreservesPrintedBytes(t *testing.T) {
 }
 
 func TestAudioCommandPrintPreservesGuardsAndCancellation(t *testing.T) {
-	for _, mode := range []string{"form", "help", "busy", "tiny", "private", "cancel"} {
+	for _, mode := range []string{"help", "busy", "tiny", "private", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			flags := []string{}
 			if mode == "private" {
@@ -326,12 +359,10 @@ func TestAudioCommandPrintPreservesGuardsAndCancellation(t *testing.T) {
 			model := audioPreviewModel(t, "openai", flags...)
 			model.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 			model.input.SetValue("Synthetic print guard")
-			model.openInformation(audioCommandTitle, model.commandPreview(), "more")
+			require.Nil(t, model.focusCommand())
 			switch mode {
-			case "form":
-				model.modal = ""
 			case "help":
-				model.infoTitle = "Help"
+				model.openHelp("")
 			case "busy":
 				model.busy = true
 			case "tiny":
@@ -359,7 +390,7 @@ func TestAudioCommandPrintPreservesFailedActionAndStopsPlayback(t *testing.T) {
 	playbackCanceled := false
 	model.playing = true
 	model.playCancel = func() { playbackCanceled = true }
-	model.openInformation(audioCommandTitle, model.commandPreview(), "more")
+	require.Nil(t, model.focusCommand())
 	_, quit := model.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
 	require.NotNil(t, quit)
 	require.IsType(t, tea.QuitMsg{}, quit())
@@ -437,136 +468,5 @@ func TestAudioCommandPrintCancelsBlockedContextWriter(t *testing.T) {
 		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(5 * time.Second):
 		t.Fatal("print did not stop after cancellation")
-	}
-}
-
-// Parse the same public root-selection contract consumed by Audio previews.
-// Files tests retain the real profile selector; these tests exercise Audio's consumer.
-func audioProfilePreviewModel(t *testing.T, invocation, environment string, childProfile bool, arguments []string) *audioWorkbench {
-	t.Helper()
-	t.Setenv("OPENAI_PROFILE", environment)
-	t.Setenv("OPENAI_API_KEY", "sk-fake-inherited")
-	for _, name := range []string{"OPENAI_ADMIN_KEY", "OPENAI_WEBHOOK_SECRET", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", "OPENAI_BASE_URL", "OPENAI_CUSTOM_HEADERS", requestconfig.MTLSClientCertFileEnv, requestconfig.MTLSClientKeyFileEnv} {
-		t.Setenv(name, "")
-		require.NoError(t, os.Unsetenv(name))
-	}
-	var model *audioWorkbench
-	leaf := &cli.Command{Name: "probe", Action: func(ctx context.Context, command *cli.Command) error {
-		model = newAudioWorkbench(ctx, command, nil, audiohistory.Store{})
-		return nil
-	}}
-	if childProfile {
-		leaf.Flags = append(leaf.Flags, &cli.StringFlag{Name: "profile"})
-	}
-	root := &cli.Command{Name: "synthetic-profile-preview", Writer: io.Discard, ErrWriter: io.Discard,
-		Metadata:       map[string]any{"help-invocation": invocation},
-		ExitErrHandler: func(context.Context, *cli.Command, error) {},
-		Flags:          []cli.Flag{&cli.StringFlag{Name: "profile"}, &cli.StringFlag{Name: "base-url"}, requestconfig.NewRequestHeaderFlag()},
-		Commands:       []*cli.Command{leaf},
-	}
-	for _, pair := range [][2]string{{"api-key", "OPENAI_API_KEY"}, {"admin-api-key", "OPENAI_ADMIN_KEY"}, {"webhook-secret", "OPENAI_WEBHOOK_SECRET"}, {"organization", "OPENAI_ORG_ID"}, {"project", "OPENAI_PROJECT_ID"}} {
-		root.Flags = append(root.Flags, &requestflag.Flag[string]{Name: pair[0], Sources: cli.EnvVars(pair[1])})
-	}
-	root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
-	requestconfig.ConfigureRootFlags(root)
-	require.NoError(t, root.Run(t.Context(), append([]string{"synthetic-profile-preview"}, arguments...)))
-	require.NotNil(t, model, "Audio preview action must run")
-	return model
-}
-
-func TestAudioProfileRequestContext(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		flags []string
-		want  []string
-		omit  bool
-	}{
-		{"environment credentials", nil, nil, false},
-		{"explicit profile", []string{"--profile=selected"}, []string{"--profile=selected"}, false},
-		{"explicit empty profile", []string{"--profile="}, []string{"--profile="}, false},
-		{"profile and request selection", []string{"--profile=selected", "--project=project-one"}, []string{"--profile=selected", "--project=project-one"}, false},
-		{"request selection", []string{"--project=project-one", "--organization=org-one", "--base-url=https://example.invalid/proxy/v1"}, []string{"--project=project-one", "--organization=org-one", "--base-url=https://example.invalid/proxy/v1"}, false},
-		{"explicit empty project", []string{"--project="}, []string{"--project="}, false},
-		{"same inherited key", []string{"--api-key=sk-fake-inherited"}, nil, false},
-		{"different key", []string{"--api-key=sk-fake-override"}, nil, true},
-		{"empty key override", []string{"--api-key="}, nil, true},
-		{"admin key override", []string{"--admin-api-key=sk-fake-admin"}, nil, true},
-		{"webhook secret override", []string{"--webhook-secret=fake-secret"}, nil, true},
-		{"header override", []string{"-H", "Authorization: Bearer fake-secret"}, nil, true},
-		{"certificate override", []string{"--mtls-client-cert-file=/synthetic/private/cert.pem"}, nil, true},
-		{"private key override", []string{"--mtls-client-key-file=/synthetic/private/key.pem"}, nil, true},
-		{"URL user info", []string{"--base-url=https://fake:secret@example.invalid"}, nil, true},
-		{"URL query", []string{"--base-url=https://example.invalid/v1?key=fake-secret"}, nil, true},
-		{"URL fragment", []string{"--base-url=https://example.invalid/v1#fake-secret"}, nil, true},
-		{"URL empty query", []string{"--base-url=https://example.invalid/v1?"}, nil, true},
-		{"invalid project", []string{"--project=proj\x00name"}, nil, true},
-		{"invalid profile NUL", []string{"--profile=bad\x00name"}, nil, true},
-		{"invalid profile UTF-8", []string{"--profile=bad\xffname"}, nil, true},
-		{"profile with secret override", []string{"--profile=selected", "--api-key=sk-fake-override"}, nil, true},
-		{"profile with private URL", []string{"--profile=selected", "--base-url=https://example.invalid/v1?key=fake-secret"}, nil, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			model := audioProfilePreviewModel(t, "openai", "inherited-profile", false, append([]string{"probe"}, tc.flags...))
-			requestArgs, omit := requestconfig.NextCommandOptions(model.command.Root())
-			require.Equal(t, tc.want, requestArgs)
-			require.Equal(t, tc.omit, omit)
-			model.input.SetValue("SYNTHETIC_PRIVATE_EDITOR_TEXT")
-			preview := model.commandPreview()
-			if tc.omit {
-				require.Equal(t, "Command preview unavailable with private request overrides.", preview)
-				require.NotContains(t, preview, "SYNTHETIC_PRIVATE_EDITOR_TEXT")
-			} else {
-				require.Contains(t, preview, "OPENAI_UNTRUSTED_STDIN=true")
-			}
-			for _, secret := range []string{"sk-fake", "fake-secret", "/synthetic/private/", "inherited-profile"} {
-				require.NotContains(t, preview, secret)
-			}
-		})
-	}
-}
-
-func TestAudioCopiedCommandsPreserveProfileSelector(t *testing.T) {
-	for _, shell := range []string{"bash", "zsh"} {
-		t.Run(shell, func(t *testing.T) {
-			binary, directory := audioPreviewExecutable(t, "openai preview's binary")
-			for _, tc := range []struct {
-				name, environment, rootFlag, childFlag string
-				want                                   []string
-			}{
-				{"explicit", "inherited-profile", "--profile=team's \"$(printf altered)\" 世界\u202e", "", []string{"--profile=team's \"$(printf altered)\" 世界\u202e"}},
-				{"explicit empty", "inherited-profile", "--profile=", "", []string{"--profile="}},
-				{"inherited", "inherited-profile", "", "", nil},
-				{"inherited empty", "", "", "", nil},
-				{"child ownership", "inherited-profile", "", "--profile=/synthetic/private/child", nil},
-				{"root and child ownership", "inherited-profile", "--profile=selected", "--profile=/synthetic/private/child", []string{"--profile=selected"}},
-			} {
-				t.Run(tc.name, func(t *testing.T) {
-					var args []string
-					if tc.rootFlag != "" {
-						args = append(args, tc.rootFlag)
-					}
-					args = append(args, "probe")
-					if tc.childFlag != "" {
-						args = append(args, tc.childFlag)
-					}
-					model := audioProfilePreviewModel(t, audioShellQuote(binary), tc.environment, tc.childFlag != "", args)
-					requestArgs, omit := requestconfig.NextCommandOptions(model.command.Root())
-					require.Equal(t, tc.want, requestArgs)
-					require.False(t, omit)
-					model.settings.Format = "wav"
-					model.input.SetValue("@synthetic 'literal' text")
-					preview := model.commandPreview()
-					require.NotContains(t, preview, "/synthetic/private/")
-					require.NotContains(t, preview, "inherited-profile")
-					for _, character := range strings.TrimSpace(preview) {
-						require.False(t, unicode.IsControl(character) || unicode.Is(unicode.Cf, character), "literal control in copied command")
-					}
-					capture := executeAudioPreview(t, shell, preview, directory)
-					require.Equal(t, append(append([]string{}, tc.want...), "audio", "speak", "--output", "speech.wav"), capture.args)
-					require.Equal(t, "true", capture.protected)
-					assertAudioPreviewJSON(t, model, capture.stdin)
-				})
-			}
-		})
 	}
 }

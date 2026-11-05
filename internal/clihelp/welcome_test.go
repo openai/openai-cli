@@ -398,15 +398,12 @@ func TestWelcomeRepeatedConfigurationInteractive(t *testing.T) {
 		if err := root.Run(t.Context(), normalized); err != nil {
 			t.Fatal(err)
 		}
-		want := 0
-		if len(args) <= 1 {
-			want = 1
+		wantBanner := len(args) <= 1
+		if got := strings.Count(out.String(), welcomeTagline); got != 0 && !wantBanner || got != 1 && wantBanner {
+			t.Fatalf("args=%q: banner count=%d, want banner=%t", args, got, wantBanner)
 		}
-		if got := strings.Count(out.String(), welcomeTagline); got != want {
-			t.Fatalf("args=%q: got %d banners; want %d", args, got, want)
-		}
-		if !strings.Contains(out.String(), "models") || want == 1 && !strings.Contains(out.String(), "v9.8.7") {
-			t.Fatalf("missing command or version: %q", out.String())
+		if !strings.Contains(out.String(), "models") || !strings.Contains(ansi.Strip(out.String()), "USAGE\n") {
+			t.Fatalf("missing complete reference: %q", out.String())
 		}
 	}
 }

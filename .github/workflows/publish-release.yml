@@ -83,7 +83,7 @@ jobs:
         fi
         go run ./cmd/openai/main.go @manpages -o man
     - name: Stage isolated release inputs
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: openai-release-inputs
         path: |
@@ -160,7 +160,7 @@ jobs:
       run: |
         "$RUNNER_TEMP/openai-cli-govulncheck" "$GITHUB_WORKSPACE"
     - name: Download isolated release inputs
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: openai-release-inputs
         path: ${{ runner.temp }}/openai-release-inputs
@@ -223,16 +223,30 @@ jobs:
 
         exclude_file="$(git rev-parse --git-path info/exclude)"
         printf '/%s\n' "${inputs[@]}" >> "$exclude_file"
+    - name: Stage versioned Linux installer
+      if: ${{ hashFiles('scripts/install-linux-release.sh') != '' }}
+      env:
+        RELEASE_TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+        [[ -f scripts/install-linux-release.sh && ! -L scripts/install-linux-release.sh ]]
+        mkdir -m 0700 .release-installers
+        installer=.release-installers/install-linux-release.sh
+        test "$(grep -Fxc "  tag=''" scripts/install-linux-release.sh)" = 1
+        sed "s/^  tag=''$/  tag='$RELEASE_TAG'/" scripts/install-linux-release.sh > "$installer"
+        printf '/%s\n' "$installer" >> "$(git rev-parse --git-path info/exclude)"
+        printf 'OPENAI_LINUX_RELEASE_INSTALLER=%s\n' "$installer" >> "$GITHUB_ENV"
     - name: Create release app token for this repo
       id: app-token
-      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
       with:
         app-id: ${{ secrets.RELEASE_APP_ID }}
         private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
         permission-contents: write
     - name: Create release app token for homebrew-tools
       id: tap-token
-      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
       with:
         app-id: ${{ secrets.RELEASE_APP_ID }}
         private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -253,8 +267,17 @@ jobs:
         MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
         MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
         MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+    - name: Include the published Linux installer in release attestations
+      if: ${{ env.OPENAI_LINUX_RELEASE_INSTALLER != '' }}
+      env:
+        RELEASE_TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        install -m 0644 "$OPENAI_LINUX_RELEASE_INSTALLER" dist/install-linux-release.sh
+        cd dist
+        grep -Fxq "$(shasum -a 256 install-linux-release.sh)" "openai_${RELEASE_TAG#v}_checksums.txt"
     - name: Stage release artifacts for attestation
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: release-artifacts
         path: dist/*
@@ -271,7 +294,7 @@ jobs:
       id-token: write
     steps:
     - name: Download release artifacts
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: release-artifacts
         path: dist

@@ -15,7 +15,7 @@ import (
 func TestMainDispatchFiniteJSONListMutationRoutes(t *testing.T) {
 	const first = `{"id":"item_a","object":"synthetic","unknown":{"large":9007199254740993,"text":"資料-é"}}`
 	const second = `{"id":"item_b","object":"synthetic","unknown":{"preserved":true}}`
-	const invalid = "{\"id\":\"synthetic-private-permission\",\"unknown\":\"synthetic-private-value_\xff\"}"
+	const invalid = "{\"id\":\"synthetic-private-certificate\",\"unknown\":\"synthetic-private-value_\xff\"}"
 	const failureMessage = "The API returned an invalid JSON list item. Output may be incomplete. Check the response source before repeating the command."
 	for _, tc := range []struct {
 		name, path, body, items string
@@ -33,19 +33,14 @@ func TestMainDispatchFiniteJSONListMutationRoutes(t *testing.T) {
 			args: []string{"admin:organization:projects:certificates", "deactivate", "proj_synthetic", "--certificate-id", "cert_a", "--certificate-id", "cert_b"},
 		},
 		{
-			name: "checkpoint permission creation", path: "/fine_tuning/checkpoints/ft_synthetic/permissions",
-			body: `{"project_ids":["proj_a","proj_b"]}`, items: first + "," + second,
-			args: []string{"fine-tuning:checkpoints:permissions", "create", "ft_synthetic", "--project-id", "proj_a", "--project-id", "proj_b"},
+			name: "zero limit still activates certificates", path: "/organization/certificates/activate",
+			body: `{"certificate_ids":["cert_a"]}`, items: first + "," + second, zero: true,
+			args: []string{"admin:organization:certificates", "activate", "--certificate-id", "cert_a", "--max-items", "0"},
 		},
 		{
-			name: "zero limit still creates permissions", path: "/fine_tuning/checkpoints/ft_synthetic/permissions",
-			body: `{"project_ids":["proj_a"]}`, items: first + "," + second, zero: true,
-			args: []string{"fine-tuning:checkpoints:permissions", "create", "ft_synthetic", "--project-id", "proj_a", "--max-items", "0"},
-		},
-		{
-			name: "invalid permission does not repeat mutation", path: "/fine_tuning/checkpoints/ft_synthetic/permissions",
-			body: `{"project_ids":["proj_a"]}`, items: first + "," + invalid, invalid: true,
-			args: []string{"fine-tuning:checkpoints:permissions", "create", "ft_synthetic", "--project-id", "proj_a"},
+			name: "invalid certificate does not repeat mutation", path: "/organization/certificates/activate",
+			body: `{"certificate_ids":["cert_a"]}`, items: first + "," + invalid, invalid: true,
+			args: []string{"admin:organization:certificates", "activate", "--certificate-id", "cert_a"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,7 +79,7 @@ func TestMainDispatchFiniteJSONListMutationRoutes(t *testing.T) {
 				if !reflect.DeepEqual(actual, map[string]any{"message": failureMessage}) {
 					t.Fatalf("mutation failure guidance=%#v", actual)
 				}
-				for _, private := range []string{"synthetic-private-permission", "synthetic-private-value", "\xff"} {
+				for _, private := range []string{"synthetic-private-certificate", "synthetic-private-value", "\xff"} {
 					if strings.Contains(got.stdout+got.stderr, private) {
 						t.Fatalf("invalid mutation response exposed fixture content %q", private)
 					}

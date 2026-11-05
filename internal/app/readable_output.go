@@ -39,6 +39,7 @@ func configureReadableOutput(root *cli.Command) {
 
 // Assembly supplies destination classification and the current diagnostic policy.
 func readableOutputOptions(opts ShowJSONOpts) clioutput.ReadableOptions {
+	emptyText, _ := vectorStoreSearchEmptyText(opts)
 	return clioutput.ReadableOptions{
 		Context:            opts.Context,
 		Route:              transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind},
@@ -47,5 +48,6 @@ func readableOutputOptions(opts ShowJSONOpts) clioutput.ReadableOptions {
 		Stderr:             opts.Stderr,
 		Terminal:           isTerminal(opts.Stdout),
 		DiagnosticsAllowed: outputDiagnosticsAllowed(opts.Context),
+		EmptyText:          emptyText,
 	}
 }

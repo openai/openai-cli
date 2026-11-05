@@ -16,7 +16,7 @@ import (
 
 func TestResourceSummaryNoticePreservesFinalErrors(t *testing.T) {
 	const hint = "Full data: --format json."
-	item := outputJSON{gjson.Parse(`{"id":"file_summary","object":"file","created_at":17}`)}
+	item := outputJSON{Result: gjson.Parse(`{"id":"file_summary","object":"file","created_at":17}`)}
 	upstreamErr := errors.New("synthetic page failure")
 	writeErr := errors.New("synthetic notice failure")
 	for _, tc := range []struct {

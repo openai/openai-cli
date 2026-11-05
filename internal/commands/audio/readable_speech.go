@@ -15,6 +15,7 @@ import (
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
+	"github.com/openai/openai-go/v3"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -34,12 +35,12 @@ func ConfigureSpeech(root *cli.Command, presentation func(context.Context, *cli.
 		"The form retains audio, text, and instructions in private local history. " +
 		"Use audio history, inspect, play, and export for retained results. " +
 		"Explicit flags and pipes preserve direct output."
-	next := command.Action
+	// The workbench also needs presentation policy while it handles failures.
+	next := audioWorkbenchWorkflow(command.Action)
 	command.Action = func(ctx context.Context, command *cli.Command) error {
 		opts := presentation(ctx, command)
 		return next(context.WithValue(ctx, speechOutputKey{}, opts), command)
 	}
-	command.Action = audioWorkbenchWorkflow(command.Action)
 }
 
 // WriteSpeech intercepts only this command's capture or SSE response on the shared download path.
@@ -242,9 +243,15 @@ func (it *speechEventIterator) readLine() (string, error) {
 func (it *speechEventIterator) Current() clioutput.JSON { return it.current }
 func (it *speechEventIterator) Err() error              { return errors.Join(it.err, it.resultErr) }
 
-// SpeechPresentation captures output policy for a single generated speech action.
+// SpeechPresentation supplies speech output and safe authentication guidance.
 // Render receives the response context and owns formatted event presentation.
 type SpeechPresentation struct {
-	Raw    bool
-	Render func(context.Context, io.Writer, jsonview.Iterator[clioutput.JSON]) error
+	Raw                    bool
+	Render                 func(context.Context, io.Writer, jsonview.Iterator[clioutput.JSON]) error
+	AuthenticationGuidance func(*cli.Command, *openai.Error) AuthenticationGuidance
+}
+
+// AuthenticationGuidance supplies a cause and short recovery steps.
+type AuthenticationGuidance struct {
+	Summary, Action string
 }

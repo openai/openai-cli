@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/mocktest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,8 +21,7 @@ func TestLiveSIPRequestContract(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	output, err := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../cmd/openai").CombinedOutput()
-	require.NoError(t, err, "building CLI: %s", output)
+	mocktest.CopyCLI(t, binary)
 
 	tests := []struct {
 		name   string

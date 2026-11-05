@@ -14,6 +14,7 @@ import (
 
 // Persistence belongs to the interactive session, never direct API commands.
 func runImagePickerSession(ctx context.Context, input, output *os.File, options imagePickerOptions) (imagePickerResult, error) {
+	diagnostics := imagePickerDiagnostics(ctx)
 	if options.Shell == "" {
 		options.Shell = os.Getenv("OPENAI_PICKER_SHELL")
 	}
@@ -43,20 +44,28 @@ func runImagePickerSession(ctx context.Context, input, output *os.File, options 
 			options.initialNote = "Could not read the draft. Keeping this session's choices."
 		}
 	}
-	result, err := runImagePicker(ctx, input, output, options)
 	// Unknown, corrupt, or inaccessible state remains untouched this session.
 	if stateErr != nil {
 		path = ""
 	}
+	if generate := options.generate; generate != nil {
+		options.generate = func(requestCtx context.Context, result *imagePickerResult) error {
+			if err := finishImagePickerSelection(requestCtx, output, diagnostics, path, result); err != nil {
+				return err
+			}
+			return generate(requestCtx, result)
+		}
+	}
+	result, err := runImagePicker(ctx, input, output, options)
 	if err != nil || result.Canceled {
 		if result.changed {
-			result.draftSaved = saveImagePickerExitDraft(ctx, os.Stderr, path, result.settings)
+			result.draftSaved = saveImagePickerExitDraft(ctx, diagnostics, path, result.settings)
 		}
 		return result, err
 	}
-	err = finishImagePickerSelection(ctx, output, os.Stderr, path, &result)
+	err = finishImagePickerSelection(ctx, output, diagnostics, path, &result, options.printCommand)
 	if err != nil && result.changed {
-		result.draftSaved = saveImagePickerExitDraft(ctx, os.Stderr, path, result.settings)
+		result.draftSaved = saveImagePickerExitDraft(ctx, diagnostics, path, result.settings)
 	}
 	return result, err
 }
@@ -88,9 +97,10 @@ func saveImagePickerExitDraft(parent context.Context, diagnostics io.Writer, pat
 	return false
 }
 
-// Echo before saving the submitted draft or starting a request. Saving here
-// means a slower API response cannot overwrite a newer interactive selection.
-func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writer, path string, result *imagePickerResult) error {
+// Show the command before saving the submitted draft or starting a request.
+// The retained busy form already displays it; print-only selections still echo.
+// Saving now prevents a slower API response from overwriting newer selections.
+func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writer, path string, result *imagePickerResult, printers ...func(string) error) error {
 	result.draftSaved = false
 	if err := ctx.Err(); err != nil {
 		return err
@@ -98,13 +108,17 @@ func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writ
 	if result.Canceled || len(result.Args) < 4 || (len(result.Args)-2)%2 != 0 {
 		return fmt.Errorf("no image request was selected")
 	}
-	command := cliterminal.FormatCommand(imagePickerDisplayArgs(result.Args, result.profile), result.shell)
+	command := cliterminal.FormatCommand(result.Args, result.shell)
 	if command == "" {
 		if result.PrintOnly {
 			return imageSavingFailure(imagePickerUnsupportedShell, nil)
 		}
-	} else {
-		if _, err := fmt.Fprintln(output, command); err != nil {
+	} else if result.PrintOnly || result.workspace == nil {
+		printCommand := func(text string) error { _, err := fmt.Fprintln(output, text); return err }
+		if result.PrintOnly && len(printers) > 0 && printers[0] != nil {
+			printCommand = printers[0]
+		}
+		if err := printCommand(command); err != nil {
 			return imageSavingFailure("Could not print the command. No image request was started.", err)
 		}
 	}
@@ -115,6 +129,12 @@ func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writ
 		if canceled := ctx.Err(); canceled != nil {
 			return canceled
 		}
+		if result.workspace != nil && !result.PrintOnly {
+			result.workspace.send(imagePickerWorkspaceRows{[]string{"Could not save the draft."}})
+			return nil
+		}
+		// Print-only exits close the workspace before saving the draft.
+		// Send their warning to diagnostics, which remain available after exit.
 		// Storage is optional. Do not expose stored prompts or raw filesystem
 		// errors, and do not prevent an otherwise valid image request.
 		if _, err := fmt.Fprintln(diagnostics, "Could not save the draft."); err != nil {

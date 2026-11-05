@@ -27,7 +27,7 @@ func TestInteractiveListOutputScope(t *testing.T) {
 		"(resource) batches > (method) list":                     true,
 		"(resource) admin.organization.projects > (method) list": true,
 		"(resource) vector_stores > (method) list":               false,
-		"(resource) models > (method) list":                      false,
+		"(resource) models > (method) list":                      true,
 		"(resource) files > (method) retrieve":                   false,
 		"unknown":                                                false,
 		"":                                                       false,

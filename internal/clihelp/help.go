@@ -15,6 +15,8 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/openai/openai-cli/internal/commandsuggest"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -28,21 +30,21 @@ const setupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up your
 
    Bash or zsh (macOS / Linux)
      Run this line, paste your key (hidden), then press Enter:
-       read -rs OPENAI_API_KEY
+       {{suggestFor . "read -rs OPENAI_API_KEY" "bash" "zsh"}}
      Then run this line so the CLI can read the key:
-       export OPENAI_API_KEY
-       printf '\n'
+       {{suggestFor . "export OPENAI_API_KEY" "bash" "zsh"}}
+       {{suggestFor . "printf '\\n'" "bash" "zsh"}}
 
    PowerShell (Windows, macOS, or Linux)
      Run this line, paste your key (hidden), then press Enter:
-       $openaiKey = Read-Host "API key" -AsSecureString
+       {{suggestFor . "$openaiKey = Read-Host \"API key\" -AsSecureString" "pwsh"}}
      Then run these lines:
-       $env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new("", $openaiKey).Password
-       Remove-Variable openaiKey
+       {{suggestFor . "$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new(\"\", $openaiKey).Password" "pwsh"}}
+       {{suggestFor . "Remove-Variable openaiKey" "pwsh"}}
 
-   Using Command Prompt (cmd.exe)? Run powershell first, then use the
+   Using Command Prompt (cmd.exe)? Run {{suggestFor . "powershell" "cmd"}} first, then use the
    PowerShell steps above. Run the CLI in that same PowerShell session.
-   Using Fish? Run bash first, then use the Bash steps above.
+   Using Fish? Run {{suggestFor . "bash" "fish"}} first, then use the Bash steps above.
 
    Windows command examples use PowerShell syntax. In cmd.exe, run
    openai from PATH or .\openai.exe from the folder containing the CLI.
@@ -50,9 +52,32 @@ const setupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up your
    These steps set the key for this shell session. A new window needs it again.
 
 3. TRY A COMMAND
-   {{$run}} models list
+   {{suggest . (printf "%s models list" $run)}}
+
+ALREADY HAVE A KEY?
+   An HTTP 401 means the server did not accept authentication.
+   It does not identify which credential or setting caused the failure.
+   Enter the appropriate key again using the hidden-input steps above.
+   Keep the key in the same shell session where you run the CLI.
+   A supplied --api-key overrides OPENAI_API_KEY, even when its value is empty.
+   Remove that override if you want to use the environment key.
+
+   For organization administration commands, use OPENAI_ADMIN_KEY instead of
+   OPENAI_API_KEY in the steps above. --admin-api-key overrides OPENAI_ADMIN_KEY.
+   Ask an organization owner for an admin key or the required access.
+
+   Match --project and --organization to the key's project and organization.
+   Their environment settings are OPENAI_PROJECT_ID and OPENAI_ORG_ID.
+   Explicit values, including empty values, override those environment settings.
+
+   A supplied --header Authorization overrides key options.
+   OPENAI_CUSTOM_HEADERS can also configure Authorization; key options can replace it.
+   Check the error's guidance before changing these settings.
+   Custom endpoints can require different credentials. Check their authentication instructions.
 
 This is a guide only. No key has been entered or checked by showing this page.
+
+Admin key setup: {{suggest . (printf "%s help setup admin" $run)}}
 `
 
 // Configure keeps onboarding in CLI help, never in a shell startup file or
@@ -66,18 +91,27 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	if root.Metadata == nil {
 		root.Metadata = map[string]any{}
 	}
-	root.Metadata["help-invocation"] = Invocation(root.Name, args)
+	invocation, needsQuote := resolveInvocation(root.Name, args)
+	delete(root.Metadata, "help-native-invocation")
+	if needsQuote {
+		name := invocation
+		invocation = quoteInvocation(name, root.Name)
+		root.Metadata["help-native-invocation"] = quoteNativeInvocation(context.Background(), name, invocation)
+	}
+	root.Metadata["help-invocation"] = invocation
 	root.Metadata["help-legacy-all"] = false
+	root.Metadata["help-welcome"] = len(args) <= 1
 	delete(root.Metadata, "help-selected-command")
 	if root.Command("help") == nil {
 		root.Commands = append(root.Commands, &cli.Command{
-			Name: "help", Usage: "Get help: help [command...]", HideHelpCommand: true,
+			Name: "help", Usage: "Get command help or see help piping for shell examples", HideHelpCommand: true,
 			Metadata:           map[string]any{"help-command-section": "Help", "help-command-rank": 100000, "help-topic-command": true},
 			CustomHelpTemplate: `{{call (index .Root.Metadata "complete-help")}}`,
 			Flags:              []cli.Flag{&cli.BoolFlag{Name: "all", Usage: "Use help without --all", HideDefault: true, Hidden: true}},
 			Action:             showHelpTopics,
 			Commands: []*cli.Command{{
 				Name: "setup", Usage: "Learn how to enter your API key", HideHelpCommand: true,
+				Metadata:           map[string]any{"help-guide": true},
 				CustomHelpTemplate: setupHelp,
 				Action: func(_ context.Context, command *cli.Command) error {
 					if command.Args().Present() {
@@ -86,7 +120,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 					cli.HelpPrinter(command.Root().Writer, setupHelp, command)
 					return nil
 				},
-			}},
+			}, pipingGuide()},
 		})
 		requestSetup := root.Before
 		root.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
@@ -108,10 +142,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	}
 	configureCommandHelp(root, root.Metadata["help-invocation"].(string), "")
 	if len(args) <= 1 {
-		// Preserve original invocation intent before normalizing bare startup
-		// to help. Each Configure call installs a fresh, unwrapped callback.
-		complete := root.Metadata["complete-help"].(func() string)
-		root.Metadata["complete-help"] = func() string { return welcomeHeader(root) + complete() }
+		// Bare startup adds the existing terminal banner to the complete reference.
 		return []string{root.Name, "--help"}, true, nil
 	}
 	if args[1] == "__complete" {
@@ -329,6 +360,12 @@ func installSubcommandHelp() {
 				if notice := legacyHelpNotice(command); notice != "" {
 					_, _ = fmt.Fprintln(writer, notice)
 				}
+				if command.Metadata["help-guide"] == true {
+					var text strings.Builder
+					printer(&text, template, data)
+					_, _ = io.WriteString(writer, formatGuide(command, text.String()))
+					return
+				}
 			}
 			printer(writer, template, data)
 		}
@@ -344,6 +381,25 @@ func installSubcommandHelp() {
 				return cli.ShowRootCommandHelp(command)
 			}
 			return commandHelp(ctx, command.Lineage()[1], command.Name)
+		}
+		customPrinter := cli.HelpPrinterCustom
+		cli.HelpPrinterCustom = func(out io.Writer, template string, data any, functions map[string]any) {
+			local := make(map[string]any, len(functions)+2)
+			for name, function := range functions {
+				local[name] = function
+			}
+			local["suggest"] = commandsuggest.Record
+			local["suggestFor"] = func(command *cli.Command, text string, shells ...string) string {
+				rendered := text
+				for _, shell := range shells {
+					if candidate := commandsuggest.RecordFor(command, shell, text); candidate != text {
+						rendered = candidate
+					}
+				}
+				return rendered
+			}
+			customPrinter(out, template, data, local)
+
 		}
 		fallback := cli.ShowSubcommandHelp
 		cli.ShowSubcommandHelp = func(command *cli.Command) error {
@@ -416,15 +472,60 @@ func allowsHelpTopic(command *cli.Command) bool {
 	return !command.Hidden || compatibility
 }
 
+// NativeInvocation returns the executable spelling for a command copied into the current shell.
+func NativeInvocation(root *cli.Command, fallback string) string {
+	if native, ok := root.Metadata["help-native-invocation"].(string); ok {
+		return native
+	}
+	return fallback
+}
+
+func quoteNativeInvocation(ctx context.Context, name, defaultInvocation string) string {
+	switch terminal.ParentShell(ctx) {
+	case "pwsh":
+		return "& " + terminal.PowerShellQuote(name)
+	case "fish":
+		return terminal.FishQuote(name)
+	default:
+		return defaultInvocation
+	}
+}
+
 // Invocation returns a copyable executable name for help examples without
 // interpreting argv as shell syntax or displaying terminal controls.
 func Invocation(fallback string, args []string) string {
+	name, needsQuote := resolveInvocation(fallback, args)
+	if needsQuote {
+		return quoteInvocation(name, fallback)
+	}
+	return name
+}
+
+func resolveInvocation(fallback string, args []string) (string, bool) {
 	if len(args) == 0 || args[0] == "" {
-		return fallback
+		return fallback, false
 	}
 	name := args[0]
+	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return fallback, false
+	}
 	if base := strings.TrimSuffix(filepath.Base(name), ".exe"); base != fallback {
-		return fallback
+		// Preview builds can have different names. Trust that spelling only
+		// when it identifies this process, never an arbitrary argv[0]. Resolve
+		// bare names so shell builtins and keywords cannot intercept them.
+		running, err := os.Executable()
+		if err != nil {
+			return fallback, false
+		}
+		if filepath.Base(name) == name {
+			name, err = exec.LookPath(name)
+			if err == nil {
+				name, err = filepath.Abs(name)
+			}
+		}
+		if err != nil || !sameExecutable(name, running) {
+			return fallback, false
+		}
 	}
 	// go run uses either a temporary executable or a cached executable under
 	// <two hex digits>/<64 hex digits>-d. Neither path is a stable invocation.
@@ -434,12 +535,9 @@ func Invocation(fallback string, args []string) string {
 	temporaryGoRun := filepath.Base(dir) == "exe" && strings.HasPrefix(filepath.Base(filepath.Dir(dir)), "b") && strings.Contains(filepath.ToSlash(name), "/go-build")
 	if temporaryGoRun || cachedGoRun {
 		if _, err := os.Stat("cmd/" + fallback + "/main.go"); err == nil {
-			return "go run ./cmd/" + fallback
+			return "go run ./cmd/" + fallback, false
 		}
-		return fallback
-	}
-	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
-		return fallback
+		return fallback, false
 	}
 	// Installed commands need no directory prefix when PATH selects this same
 	// executable. Keep the invoked path for local builds or other installations.
@@ -447,7 +545,7 @@ func Invocation(fallback string, args []string) string {
 	// when execerrdot=0, which does not match PowerShell's command lookup.
 	if installed, err := exec.LookPath(fallback); err == nil && filepath.IsAbs(installed) &&
 		sameExecutable(name, installed) && !hasPowerShellScriptOnPath(fallback) {
-		return fallback
+		return fallback, false
 	}
 	// PowerShell can supply an absolute argv[0] even for .\openai.exe. When
 	// already in the executable's folder, use the relative form accepted by
@@ -455,18 +553,16 @@ func Invocation(fallback string, args []string) string {
 	if filepath.IsAbs(name) {
 		if local, err := filepath.Abs(filepath.Base(name)); err == nil && sameExecutable(name, local) {
 			if runtime.GOOS == "windows" {
-				return `.\` + filepath.Base(name)
+				name = `.\` + filepath.Base(name)
+			} else {
+				name = "./" + filepath.Base(name)
 			}
-			return "./" + filepath.Base(name)
 		}
 	}
 	needsQuoting := strings.IndexFunc(name, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._:-", r) || runtime.GOOS == "windows" && r == '\\')
 	}) >= 0
-	if needsQuoting {
-		return quoteInvocation(name, fallback)
-	}
-	return name
+	return name, needsQuoting
 }
 
 func hasPowerShellScriptOnPath(name string) bool {

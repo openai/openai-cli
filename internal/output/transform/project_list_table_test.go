@@ -44,9 +44,9 @@ func TestProjectListTableKnownResources(t *testing.T) {
 	}{
 		{
 			"files",
-			`{"id":"file_exact:identifier-001","object":"file","filename":"training data.jsonl","purpose":"fine-tune","bytes":1536,"status":"processed","status_details":null,"created_at":123,"expires_at":456}`,
+			`{"id":"file_exact:identifier-001","object":"file","filename":"research data.jsonl","purpose":"user_data","bytes":1536,"status":"processed","status_details":null,"created_at":123,"expires_at":456}`,
 			[]string{"ID", "FILENAME", "PURPOSE", "SIZE", "STATUS"},
-			[]string{"file_exact:identifier-001", "training data.jsonl", "fine-tune", "1.5 KiB", "processed"},
+			[]string{"file_exact:identifier-001", "research data.jsonl", "user_data", "1.5 KiB", "processed"},
 		},
 		{
 			"batches",

@@ -21,7 +21,7 @@ func fileReceiptShell(ctx context.Context, invocation fileInvocation) string {
 		return ""
 	}
 	shell := fileReceiptShellName(ctx, invocation.goRun, name, func() (string, error) {
-		return fileReceiptGoCallerName(pid)
+		return cliterminal.GoCallerName(pid)
 	})
 	if os.Getppid() != pid {
 		return ""

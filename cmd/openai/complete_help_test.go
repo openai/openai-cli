@@ -118,7 +118,7 @@ func TestMainCompleteHelpTypedLegacyCompletion(t *testing.T) {
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
 		for _, flag := range []string{"--all", "-all", "--all=false", "-all=true"} {
 			got := runMainDispatch(t, style, mainCompletionArgs(style, "help", flag, "responses", "cr")...)
-			if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, "create") {
+			if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, "create") || strings.Contains(got.stdout, "setup") {
 				t.Errorf("%s lost supported legacy %q completion: %+v", style, flag, got)
 			}
 		}
@@ -170,10 +170,10 @@ func TestMainCompleteHelpGlobalMetadata(t *testing.T) {
 		t.Fatalf("root help failed: %+v", got)
 	}
 	for _, heading := range []string{
-		"--api-key KEY", "--admin-api-key KEY", "--organization ID", "--project ID", "--webhook-secret SECRET",
-		"--header, -H 'NAME: VALUE'", "--base-url URL", "--mtls-client-cert-file PATH", "--mtls-client-key-file PATH",
+		"--api-key=KEY", "--admin-api-key=KEY", "--organization=ID", "--project=ID", "--webhook-secret=SECRET",
+		"--header='NAME: VALUE', -H='NAME: VALUE'", "--base-url=URL", "--mtls-client-cert-file=PATH", "--mtls-client-key-file=PATH",
 	} {
-		if !strings.Contains(got.stdout, "\n   "+heading+"\n") {
+		if !strings.Contains(got.stdout, "\n    "+heading+"\n") {
 			t.Errorf("missing semantic flag heading %q", heading)
 		}
 	}

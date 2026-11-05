@@ -10,7 +10,8 @@ import (
 )
 
 func (m *audioWorkbench) rememberFailure(operation string, failure error) {
-	m.failure = audioFailureFeedback(m.command, operation, failure)
+	m.retainedGenerationFailure = false
+	m.failure = m.failureFeedback(operation, failure)
 	m.failureNote = m.note
 	m.failureOffset = 0
 	m.openRecovery()
@@ -19,12 +20,12 @@ func (m *audioWorkbench) rememberFailure(operation string, failure error) {
 // A later status or validation message owns the visible feedback, even when
 // lastErr must remain available for the command's eventual exit status.
 func (m *audioWorkbench) activeFailure() bool {
-	return m.failure.Summary != "" && m.note == m.failureNote
+	return m.failure.Summary != "" && (m.retainedGenerationFailure || m.note == m.failureNote)
 }
 
 func (m *audioWorkbench) failureSummaryRows() []string {
-	width := max(1, m.audioWidth()-2)
-	rows := []string{m.strong().Render("! " + ansi.Truncate(readable.Text(m.failure.Summary), width, "…"))}
+	width := m.failureTextWidth()
+	rows := []string{m.failureStyle().Render("! " + ansi.Truncate(readable.Text(m.failure.Summary), width, "…"))}
 	action := strings.Split(ansi.Wrap(readable.Text(m.failure.Action), width, ""), "\n")
 	for i, line := range action[:min(2, len(action))] {
 		if i == 1 && len(action) > 2 {
@@ -36,46 +37,61 @@ func (m *audioWorkbench) failureSummaryRows() []string {
 }
 
 func (m *audioWorkbench) failureDetailRows() []string {
-	values := []string{m.failure.Summary, "", m.failure.Action}
-	if m.failure.StatusCode != 0 {
-		values = append(values, "", fmt.Sprintf("HTTP status: %d", m.failure.StatusCode))
+	values := []string{m.failure.Summary}
+	actions := strings.FieldsFunc(m.failure.Action, func(r rune) bool { return r == '\n' })
+	if len(actions) > 0 {
+		values = append(values, "")
 	}
-	if m.failure.RequestID != "" {
-		values = append(values, "", "Request ID: "+m.failure.RequestID)
+	for i, action := range actions {
+		if len(actions) > 1 {
+			action = fmt.Sprintf("%d. %s", i+1, action)
+		}
+		values = append(values, action)
 	}
 	var rows []string
 	for _, value := range values {
-		rows = append(rows, strings.Split(ansi.Wrap(readable.Text(value), m.audioWidth(), ""), "\n")...)
+		rows = append(rows, strings.Split(ansi.Wrap(readable.Text(value), m.failureTextWidth(), ""), "\n")...)
 	}
 	return rows
 }
 
-func (m *audioWorkbench) failureDetailHeight() int { return max(1, m.height-5) }
+func (m *audioWorkbench) failureTextWidth() int {
+	if m.height < 24 || m.width < 60 {
+		return m.audioWidth()
+	}
+	return max(1, m.audioWidth()-2)
+}
+
+func (m *audioWorkbench) failureIndent() string {
+	if m.height < 24 || m.width < 60 {
+		return ""
+	}
+	return "  "
+}
+
+func (m *audioWorkbench) failureFooter() []string {
+	hints := [][2]string{{"Esc", "back"}}
+	if len(m.failureDetailRows()) > m.failureDetailHeight() {
+		hints = append(hints, [2]string{"↑↓", "scroll"})
+	}
+	return []string{m.hintLine(hints...)}
+}
+
+func (m *audioWorkbench) failureDetailHeight() int {
+	return max(1, m.audioHeight()-4)
+}
 
 func (m *audioWorkbench) failureView() tea.View {
 	rows := m.failureDetailRows()
 	height := m.failureDetailHeight()
 	start := min(m.failureOffset, max(0, len(rows)-height))
-	lines := []string{m.strong().Render("Error details"), ""}
-	lines = append(lines, rows[start:min(len(rows), start+height)]...)
-	lines = append(lines, "", m.muted().Render("↑↓ scroll · Esc back"))
-	return tea.NewView(m.fitAudio(lines))
-}
-
-func (m *audioWorkbench) recoveryView() tea.View {
-	items := m.recoveryItems()
-	lines := strings.Split(ansi.Wrap(m.strong().Render(readable.Text(m.failure.Summary)), m.audioWidth(), ""), "\n")
-	lines = append(lines, "")
-	lines = append(lines, strings.Split(ansi.Wrap(readable.Text(m.failure.Action), m.audioWidth(), ""), "\n")...)
-	// Keep every action reachable when long guidance consumes a small terminal.
-	budget := m.height - 2 - len(items)
-	if len(lines) > budget {
-		lines = lines[:max(1, budget)]
-		lines[len(lines)-1] = ansi.Truncate(lines[len(lines)-1], max(1, m.audioWidth()-1), "") + "…"
+	lines := []string{m.failureIndent() + m.failureStyle().Render("Error details"), ""}
+	for _, row := range rows[start:min(len(rows), start+height)] {
+		lines = append(lines, m.failureIndent()+row)
 	}
 	lines = append(lines, "")
-	for index, item := range items {
-		lines = append(lines, m.label(item, m.recoveryChoice == index))
+	for _, row := range m.failureFooter() {
+		lines = append(lines, m.failureIndent()+row)
 	}
-	return tea.NewView(m.fitAudio(lines))
+	return tea.NewView(m.fitAudio(lines, 1))
 }

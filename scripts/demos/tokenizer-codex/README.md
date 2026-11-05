@@ -346,3 +346,21 @@ DEMO_DETAILS_PRESENTATION=models DEMO_COLUMNS=80 DEMO_THEME=dark \
 Repeat with `DEMO_COLUMNS=40 DEMO_THEME=no-color` for the compact monochrome comparison.
 Both binaries exit with status 130. Exact encoding names remain in scripting output.
 Byte count and starting offset replace the half-open range in the interactive Details panel.
+
+## Tokenizer studio comparison
+
+The studio recorder drives both public binaries in a 120×30 PTY.
+It selects the second “blue” in “The blue door is beside the blue window.”
+The GIF shows Tab returning to that occurrence and inserts “ bright” before it.
+Each editor exits with Ctrl+C and shell status 130.
+
+Build one CLI from the PR merge base and another from the feature branch.
+Run the recipe with Python 3.9 or later, Bash, agg, and FFmpeg on your PATH.
+
+```sh
+python3 -I -B scripts/demos/tokenizer-codex/record-studio.py \
+  /path/to/openai-before /path/to/openai-after /path/outside/the/repository/demo
+```
+
+The output contains `before.png`, `after.png`, `demo.gif`, and their terminal recordings.
+Set `DEMO_FONT` to select an installed monospace font for rendering.

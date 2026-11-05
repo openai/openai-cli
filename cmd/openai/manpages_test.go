@@ -62,7 +62,7 @@ func TestMainDispatchOutputManpagesDeepSubgroups(t *testing.T) {
 			t.Errorf("missing full-path heading for %s", path)
 		}
 	}
-	for _, hidden := range []string{"@manpages", "__complete", "__preview", "__output", "admin:organization", "\n.SH admin organization", "\n.SH audio transcriptions"} {
+	for _, hidden := range []string{"@manpages", "__complete", "__preview", "__output", "\n.SH fine-tuning", "admin:organization", "\n.SH admin organization", "\n.SH audio transcriptions"} {
 		if strings.Contains(string(text), hidden) {
 			t.Errorf("hidden command %s leaked into manpage", hidden)
 		}

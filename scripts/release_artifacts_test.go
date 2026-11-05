@@ -4,6 +4,7 @@ package scripts_test
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"io"
 	"os"
@@ -129,8 +130,19 @@ func TestLocalReleasePreflight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	installer, err := os.ReadFile("../install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, err := os.ReadFile("../openai-enable-updates.zsh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	root := t.TempDir()
 	files := map[string]string{
+		"install.sh":                          string(installer),
+		"openai-enable-updates.zsh":           string(selection),
 		".gitignore":                          string(ignore),
 		"scripts/generate-release-artifacts":  string(generator),
 		"go.mod":                              "module example.com/local-release\n\ngo 1.25.0\n",
@@ -171,6 +183,8 @@ archives:
     files:
       - completions/*
       - man/*/*
+      - install.sh
+      - openai-enable-updates.zsh
 `,
 	}
 	for name, contents := range files {
@@ -206,6 +220,9 @@ archives:
 	if err != nil {
 		t.Fatalf("documented local artifact preparation failed: %v; output:\n%s", err, output)
 	}
+	expected := readReleaseSupportFiles(t, root)
+	expected["install.sh"] = installer
+	expected["openai-enable-updates.zsh"] = selection
 	release := func() *exec.Cmd {
 		command := exec.Command(goreleaser, "release", "--clean")
 		command.Dir = root
@@ -216,7 +233,7 @@ archives:
 	if err != nil {
 		t.Fatalf("documented local non-snapshot release rejected prepared artifacts: %v; output:\n%s", err, output)
 	}
-	assertReleaseArchiveIncludesSupportFiles(t, root, "local")
+	assertReleaseArchiveIncludesSupportFiles(t, root, "local", expected)
 
 	for _, unexpected := range []string{
 		"completions/unexpected.sh",
@@ -311,6 +328,7 @@ archives:
 	if err := manpage.Close(); err != nil {
 		t.Fatal(err)
 	}
+	expected := readReleaseSupportFiles(t, root)
 
 	release := func() *exec.Cmd {
 		command := exec.Command(goreleaser, "release", "--clean", "--skip=publish,before")
@@ -351,10 +369,30 @@ archives:
 		t.Fatal("historical application-executing hook was not skipped")
 	}
 
-	assertReleaseArchiveIncludesSupportFiles(t, root, "historical")
+	assertReleaseArchiveIncludesSupportFiles(t, root, "historical", expected)
 }
 
-func assertReleaseArchiveIncludesSupportFiles(t *testing.T, root, scenario string) {
+func readReleaseSupportFiles(t *testing.T, root string) map[string][]byte {
+	t.Helper()
+
+	// Capture the prepared bytes before GoReleaser can change the fixture.
+	expected := make(map[string][]byte)
+	for _, name := range []string{
+		"completions/openai.bash",
+		"completions/openai.zsh",
+		"completions/openai.fish",
+		"man/man1/openai.1.gz",
+	} {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+		if err != nil || len(data) == 0 {
+			t.Fatalf("prepared release file %s is empty or unreadable: %v", name, err)
+		}
+		expected[name] = data
+	}
+	return expected
+}
+
+func assertReleaseArchiveIncludesSupportFiles(t *testing.T, root, scenario string, expected map[string][]byte) {
 	t.Helper()
 
 	archives, err := filepath.Glob(filepath.Join(root, "dist", "*.tar.gz"))
@@ -372,7 +410,7 @@ func assertReleaseArchiveIncludesSupportFiles(t *testing.T, root, scenario strin
 	}
 	defer decompressed.Close()
 	reader := tar.NewReader(decompressed)
-	found := make(map[string]bool)
+	found := make(map[string]int)
 	for {
 		header, err := reader.Next()
 		if err != nil {
@@ -381,16 +419,28 @@ func assertReleaseArchiveIncludesSupportFiles(t *testing.T, root, scenario strin
 			}
 			t.Fatal(err)
 		}
-		found[header.Name] = true
+		want, required := expected[header.Name]
+		if !required {
+			continue
+		}
+		found[header.Name]++
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			t.Errorf("%s release archive file %s is not regular: type %d", scenario, header.Name, header.Typeflag)
+		}
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(data, want) {
+			t.Errorf("%s release archive changed %s: got %d bytes, want %d prepared bytes", scenario, header.Name, len(data), len(want))
+		}
 	}
-	for _, artifact := range []string{
-		"completions/openai.bash",
-		"completions/openai.zsh",
-		"completions/openai.fish",
-		"man/man1/openai.1.gz",
-	} {
-		if !found[artifact] {
-			t.Errorf("%s release archive omitted %s", scenario, artifact)
+	if _, err := io.Copy(io.Discard, decompressed); err != nil {
+		t.Fatal(err)
+	}
+	for artifact := range expected {
+		if found[artifact] != 1 {
+			t.Errorf("%s release archive contains %d entries for %s, want one", scenario, found[artifact], artifact)
 		}
 	}
 }
@@ -432,8 +482,14 @@ func TestGoReleaserPreservesArtifactsWithoutApplicationHooks(t *testing.T) {
 		t.Fatalf("release archives = %d, want Linux, macOS, and Windows", len(config.Archives))
 	}
 	for _, archive := range config.Archives {
-		if !slices.Equal(archive.Files, []string{"completions/*", "man/*/*"}) {
-			t.Errorf("archive %q files = %v, want existing completion and man-page paths", archive.ID, archive.Files)
+		want := []string{"completions/*", "man/*/*"}
+		if archive.ID == "linux-archive" || archive.ID == "macos-archive" {
+			want = append(want, "install.sh", "openai-enable-updates.zsh")
+		} else if archive.ID == "windows-archive" {
+			want = append(want, "Install.cmd")
+		}
+		if !slices.Equal(archive.Files, want) {
+			t.Errorf("archive %q files = %v, want %v", archive.ID, archive.Files, want)
 		}
 	}
 	if len(config.Notarize.MacOS) != 1 {
@@ -443,6 +499,10 @@ func TestGoReleaserPreservesArtifactsWithoutApplicationHooks(t *testing.T) {
 		t.Fatal("Homebrew cask publishing configuration was removed")
 	}
 	cask := config.HomebrewCasks[0]
+	if !slices.Equal(cask.Binaries, []string{"openai", "openai-enable-updates.zsh"}) ||
+		!strings.Contains(cask.Caveats, `source "$(brew --prefix)/bin/openai-enable-updates.zsh"`) {
+		t.Errorf("Homebrew setup command or instructions missing: %v %s", cask.Binaries, cask.Caveats)
+	}
 	if len(cask.Hooks.Pre) != 0 || len(cask.Hooks.Post) != 0 {
 		t.Fatal("Homebrew cask must leave picker setup to the existing first-run path")
 	}
@@ -601,6 +661,8 @@ type goReleaserConfig struct {
 		MacOS []any `yaml:"macos"`
 	} `yaml:"notarize"`
 	HomebrewCasks []struct {
+		Binaries   []string `yaml:"binaries"`
+		Caveats    string   `yaml:"caveats"`
 		Repository struct {
 			Name  string `yaml:"name"`
 			Token string `yaml:"token"`

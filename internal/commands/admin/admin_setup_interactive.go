@@ -39,7 +39,7 @@ Do not ask the owner to share a key.
 Setup requires a terminal and text output. Ctrl+C cancels.
 Interactive entry is available on macOS, Linux, and Windows.
 Verification stops after 15 seconds, without retries or redirects.
-The displayed destination follows --base-url, OPENAI_BASE_URL, or the selected profile.
+The displayed destination follows --base-url or OPENAI_BASE_URL.
 HTTPS is required except for a local loopback server.
 The pasted key replaces the Authorization header for this request.
 Debug logging and structured output are unavailable during interactive setup.
@@ -82,6 +82,7 @@ func RegisterSetup(root *cli.Command, policy Options) {
 	if setup == nil {
 		setup = &cli.Command{
 			Name: "setup", Usage: "Verify credentials interactively", HideHelpCommand: true,
+			Metadata:           map[string]any{"help-guide": true},
 			CustomHelpTemplate: adminSetupRootHelp,
 		}
 		root.Commands = append(root.Commands, setup)
@@ -89,6 +90,7 @@ func RegisterSetup(root *cli.Command, policy Options) {
 	if setup.Command("admin") == nil {
 		setup.Commands = append(setup.Commands, &cli.Command{
 			Name: "admin", Usage: "Enter an admin key securely and verify access",
+			Metadata:        map[string]any{"help-guide": true},
 			HideHelpCommand: true, CustomHelpTemplate: adminSetupInteractiveHelp,
 			Action: func(ctx context.Context, command *cli.Command) error { return handleAdminSetup(ctx, command, policy) },
 		})
@@ -157,9 +159,12 @@ func handleAdminSetup(ctx context.Context, command *cli.Command, policy Options)
 }
 
 func adminSetupRequestOptions(command *cli.Command, defaultOptions func(*cli.Command) []option.RequestOption) ([]option.RequestOption, string, error) {
-	baseURL, err := effectiveBaseURL(command)
-	if err != nil {
-		return nil, "", err
+	baseURL := command.String("base-url")
+	if baseURL == "" {
+		baseURL = os.Getenv("OPENAI_BASE_URL")
+	}
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
 	}
 	endpoint, err := url.Parse(baseURL)
 	if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {

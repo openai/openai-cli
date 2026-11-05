@@ -28,10 +28,10 @@ func TestRenderListNavigationPageHintPolicy(t *testing.T) {
 				items := []gjson.Result{gjson.Parse(resource.input)}
 				original := append([]gjson.Result(nil), items...)
 				opts := ShowJSONOpts{Context: t.Context(), Operation: "(resource) " + resource.name + " > (method) list", OutputKind: OutputPageItem}
-				_, fits, err := listview.RenderTable(t.Context(), opts.Operation, items, layout.width, outputDiagnosticsAllowed(t.Context()))
+				_, fits, err := listview.RenderTable(t.Context(), opts.Operation, items, layout.width, outputDiagnosticsAllowed(t.Context()), listview.Style{})
 				require.NoError(t, err)
 				require.Equal(t, layout.table, fits, "the fixture must exercise the selected renderer")
-				ordinary, err := renderListNavigationPage(opts, items, layout.width)
+				ordinary, err := renderListNavigationPage(opts, items, layout.width, outputDiagnosticsAllowed(opts.Context), listview.Style{})
 				require.NoError(t, err)
 				require.Contains(t, ordinary, items[0].Get("id").String())
 				require.Contains(t, ordinary, resource.selected)
@@ -45,6 +45,9 @@ func TestRenderListNavigationPageHintPolicy(t *testing.T) {
 				}
 				require.Equal(t, hintCount, strings.Count(ordinary, clioutput.ResourceSummaryHint))
 				data := strings.TrimSuffix(ordinary, clioutput.ResourceSummaryHint+"\n")
+				paged, err := listViewerOptions(opts).RenderPage(items, layout.width)
+				require.NoError(t, err)
+				require.Equal(t, data, paged, "pager guidance must not create a separate navigation step")
 				for _, policy := range []struct {
 					name  string
 					flags []string
@@ -66,7 +69,7 @@ func TestRenderListNavigationPageHintPolicy(t *testing.T) {
 							selected := opts
 							selected.Context = outputPolicyContext(t.Context(), command)
 							var err error
-							content, err = renderListNavigationPage(selected, items, layout.width)
+							content, err = renderListNavigationPage(selected, items, layout.width, outputDiagnosticsAllowed(selected.Context), listview.Style{})
 							return err
 						})
 						root.Metadata = map[string]any{"synthetic-marker": "unchanged"}
@@ -102,7 +105,7 @@ func TestRenderListNavigationPageCancelsProjection(t *testing.T) {
 			content, err := renderListNavigationPage(ShowJSONOpts{
 				Context: controlled, Operation: "(resource) " + test.resource + " > (method) list",
 				OutputKind: OutputPageItem,
-			}, []gjson.Result{item}, 80)
+			}, []gjson.Result{item}, 80, true, listview.Style{})
 			require.ErrorIs(t, err, context.Canceled)
 			require.Empty(t, content, "Cancellation must not return a partial table or trigger labeled fallback.")
 			require.Equal(t, test.input, item.Raw)

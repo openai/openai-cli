@@ -17,7 +17,21 @@ func Play(ctx context.Context, file *os.File, format string, offset time.Duratio
 	return play(ctx, file, format, offset, systemHelpers())
 }
 
+// PlayWithProgress reports positions from FFplay's audio clock in the original
+// recording. The player estimates device buffering; reports are not exact audible
+// positions. No report arrives until the player supplies a usable clock.
+// Reports run serially, must return promptly, and stop before this function returns.
+// Callers must reject stale reports when replacing playback and handle no reports.
+// A nil report preserves Play's behavior. The caller still owns the file.
+func PlayWithProgress(ctx context.Context, file *os.File, format string, offset time.Duration, report func(time.Duration)) error {
+	return playWithProgress(ctx, file, format, offset, report, systemHelpers())
+}
+
 func play(ctx context.Context, file *os.File, format string, offset time.Duration, h helpers) error {
+	return playWithProgress(ctx, file, format, offset, nil, h)
+}
+
+func playWithProgress(ctx context.Context, file *os.File, format string, offset time.Duration, report func(time.Duration), h helpers) error {
 	if offset < 0 {
 		return ErrInvalidAudio
 	}
@@ -38,7 +52,7 @@ func play(ctx context.Context, file *os.File, format string, offset time.Duratio
 		if skipped == size {
 			return nil
 		}
-		return playReader(ctx, io.NewSectionReader(file, skipped, size-skipped), "pcm", h)
+		return playReader(ctx, io.NewSectionReader(file, skipped, size-skipped), "pcm", frameOffset(skipped/2, 24000), report, h)
 	case "wav":
 		wave, err := readWave(ctx, file, size)
 		if errors.Is(err, errNativeUnsupported) {
@@ -76,9 +90,14 @@ func play(ctx context.Context, file *os.File, format string, offset time.Duratio
 		if length%2 != 0 {
 			readers = append(readers, bytes.NewReader([]byte{0}))
 		}
-		return playReader(ctx, io.MultiReader(readers...), "wav", h)
+		return playReader(ctx, io.MultiReader(readers...), "wav", frameOffset(skipped/int64(wave.pcm.align), wave.pcm.rate), report, h)
 	}
-	return playDecoded(ctx, file, size, format, offset, h)
+	return playDecoded(ctx, file, size, format, offset, report, h)
+}
+
+// frames comes from offsetFrames, so the result cannot exceed the valid offset.
+func frameOffset(frames int64, rate uint32) time.Duration {
+	return time.Duration(frames/int64(rate))*time.Second + time.Duration(frames%int64(rate))*time.Second/time.Duration(rate)
 }
 
 func offsetFrames(offset time.Duration, rate uint32, frames int64) int64 {

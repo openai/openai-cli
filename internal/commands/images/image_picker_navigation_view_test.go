@@ -49,12 +49,12 @@ func TestImagePickerResumedFocusKeepsLayoutStable(t *testing.T) {
 		for _, note := range []string{"", "All images saved. Edit your prompt or settings to create more."} {
 			t.Run(fmt.Sprintf("%dx%d/note=%t", size[0], size[1], note != ""), func(t *testing.T) {
 				m := pickerForTest(t)
-				m.width, m.height, m.hidePromptHint = size[0], size[1], true
+				m.width, m.height = size[0], size[1]
 				m.insertPrompt(strings.Repeat(" orange robot", 8))
 				m.note = note
 				before := ansi.Strip(m.View().Content)
 				beforeCommand, _ := pickerNavigationLine(t, before, "openai images generate")
-				require.NotContains(t, before, "Ctrl+C exit")
+				require.Contains(t, before, "[Ctrl+C] Quit")
 				pickerKey(m, tea.KeyDown)
 				after := ansi.Strip(m.View().Content)
 				afterCommand, _ := pickerNavigationLine(t, after, "openai images generate")
@@ -63,7 +63,7 @@ func TestImagePickerResumedFocusKeepsLayoutStable(t *testing.T) {
 				for _, row := range m.rows() {
 					require.Equal(t, strings.Contains(before, row.label), strings.Contains(after, row.label))
 				}
-				require.Contains(t, after, "Ctrl+C exit")
+				require.Contains(t, after, "[Ctrl+C] Quit")
 				pickerKey(m, tea.KeyUp)
 				require.Equal(t, before, ansi.Strip(m.View().Content))
 				require.Empty(t, m.result.Args)

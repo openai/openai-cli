@@ -196,7 +196,7 @@ func tokenizerPreviewEncoding(encoding string) (byte, error) {
 	}
 }
 
-// These bounds come from the pinned tokenizer v0.8.1 codec vocabularies.
+// These bounds come from the pinned tokenizer vocabularies.
 // p50k reserves 50256 for a special marker; ordinary encoding never emits it.
 func tokenizerPreviewValidID(encoding byte, id uint64) bool {
 	switch encoding {
@@ -340,6 +340,10 @@ func readTokenizerPreviewOutput(input io.Reader, inputBytes int, encoding byte) 
 // This action runs only in the disposable helper process. Returning ends that
 // process even if its synchronous encoder has not observed parent termination.
 func serveTokenizerPreview(ctx context.Context, input io.ReadCloser, out io.Writer) error {
+	return serveTokenizerPreviewWithEncoder(ctx, input, out, tokenizer.Encode)
+}
+
+func serveTokenizerPreviewWithEncoder(ctx context.Context, input io.ReadCloser, out io.Writer, encode func(string, string, bool) (tokenizer.Result, error)) error {
 	defer input.Close()
 	var header [12]byte
 	if _, err := io.ReadFull(input, header[:]); err != nil {
@@ -374,7 +378,7 @@ func serveTokenizerPreview(ctx context.Context, input io.ReadCloser, out io.Writ
 	// Do not join its lifeline reader here: returning exits this helper process.
 	done := make(chan error, 1)
 	go func() {
-		result, err := tokenizer.Encode(string(data), encoding, true)
+		result, err := encode(string(data), encoding, true)
 		if err == nil {
 			err = writeTokenizerPreviewOutput(out, result, encodingID)
 		}

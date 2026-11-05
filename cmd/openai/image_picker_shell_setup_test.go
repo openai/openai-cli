@@ -20,6 +20,115 @@ func pickerSetupProcessConfig(home string) string {
 	return filepath.Join(home, "config")
 }
 
+func TestMainPickerShellSetupNativeContract(t *testing.T) {
+	contract := os.Getenv("OPENAI_CLI_PICKER_SETUP_CONTRACT")
+	if contract == "" {
+		contract = "supported"
+	}
+	if contract != "supported" && contract != "refused" {
+		t.Fatalf("unknown native setup contract %q", contract)
+	}
+	for _, existing := range []bool{false, true} {
+		name := "absent"
+		if existing {
+			name = "existing"
+		}
+		for _, format := range []string{"text", "json"} {
+			t.Run(name+"_"+format, func(t *testing.T) {
+				home := t.TempDir()
+				profile := filepath.Join(home, "private startup with spaces")
+				original := "# preserved personal startup\n"
+				var before os.FileInfo
+				if existing {
+					if err := os.WriteFile(profile, []byte(original), 0600); err != nil {
+						t.Fatal(err)
+					}
+					var err error
+					before, err = os.Stat(profile)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				env := pickerSetupProcessEnv(home)
+				for range 2 {
+					got := runMainDispatchWithEnv(t, "bash", env, "openai", "--format-error", format, "@completion", "bash", "--install-picker", "--profile", profile)
+					if got.stdout != "" {
+						t.Fatalf("setup wrote stdout: %+v", got)
+					}
+					data, err := os.ReadFile(profile)
+					if contract == "supported" {
+						// Machine error output suppresses optional success receipts.
+						wantDiagnostic := ""
+						if format == "text" {
+							wantDiagnostic = "Tab setup saved for future terminals. Existing custom bindings are preserved.\n"
+						}
+						if got.code != 0 || got.stderr != wantDiagnostic {
+							t.Fatalf("positive installation contract failed: %+v", got)
+						}
+						if err != nil || strings.Count(string(data), "# >>> openai image picker") != 1 {
+							t.Fatalf("positive installation lost its managed block: %q, %v", data, err)
+						}
+						continue
+					}
+					if got.code != 1 || strings.Contains(got.stderr, home) || strings.ContainsAny(got.stderr, "\x1b\a") {
+						t.Fatalf("refusal lost status or exposed a private path: %+v", got)
+					}
+					message := strings.TrimSpace(got.stderr)
+					if format == "json" {
+						var value struct {
+							Message string `json:"message"`
+						}
+						if err := json.Unmarshal([]byte(got.stderr), &value); err != nil {
+							t.Fatalf("refusal is not one structured error: %v, %q", err, got.stderr)
+						}
+						message = value.Message
+					}
+					for _, part := range []string{"does not support the required atomic rename", "Type openai images generate and press Enter", "Some startup files or preferences may already have changed", "inspect their original files before manual recovery"} {
+						if !strings.Contains(message, part) {
+							t.Fatalf("refusal lost guidance %q: %q", part, message)
+						}
+					}
+					if existing {
+						if err != nil || string(data) != original {
+							t.Fatalf("refusal changed startup bytes: %q, %v", data, err)
+						}
+						after, err := os.Stat(profile)
+						if err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
+							t.Fatalf("refusal changed startup identity: %v", err)
+						}
+					} else if !os.IsNotExist(err) {
+						t.Fatalf("refusal created the absent profile: %q, %v", data, err)
+					}
+					scripts, err := filepath.Glob(filepath.Join(pickerSetupProcessConfig(home), "openai", "shell", "picker-*.bash"))
+					if err != nil || len(scripts) != 0 {
+						t.Fatalf("refusal retained an uncommitted script: %v, %v", scripts, err)
+					}
+				}
+				completion := runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--picker")
+				if completion.code != 0 || completion.stderr != "" || !strings.Contains(completion.stdout, "__openai_bash_autocomplete") {
+					t.Fatalf("completion output failed after setup: %+v", completion)
+				}
+				removed := runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--uninstall-picker", "--profile", profile)
+				if removed.code != 0 || removed.stdout != "" || removed.stderr != "Tab shortcut setup removed. Open a new terminal to finish.\n" {
+					t.Fatalf("safe removal failed: %+v", removed)
+				}
+				data, err := os.ReadFile(profile)
+				if existing {
+					if err != nil || string(data) != original {
+						t.Fatalf("safe removal changed original startup: %q, %v", data, err)
+					}
+				} else if !os.IsNotExist(err) {
+					t.Fatalf("safe removal did not preserve absence: %q, %v", data, err)
+				}
+				marker, err := os.ReadFile(filepath.Join(home, ".openai", "shell", "image-picker.tab-off-bash"))
+				if err != nil || len(marker) != 0 {
+					t.Fatalf("safe removal lost its opt-out: %q, %v", marker, err)
+				}
+			})
+		}
+	}
+}
+
 func TestMainPickerShellSetupRoundTrip(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh", "fish"} {
 		t.Run(shell, func(t *testing.T) {

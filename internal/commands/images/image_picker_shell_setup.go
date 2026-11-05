@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/autocomplete"
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
@@ -110,7 +111,7 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 		}
 		targets, err := imagePickerShellTarget(ctx, shell, command.Bool("automatic"), command.String("profile"))
 		if err != nil {
-			return imageSavingFailure("Could not choose a supported shell startup file. Use openai @completion SHELL --install-picker with an explicit shell and --profile PATH when needed.", err)
+			return imageSavingFailure("Could not choose a supported shell startup file. Use openai @completion SHELL --install-picker with an explicit shell and --profile PATH when needed.", err, "openai @completion SHELL --install-picker")
 		}
 		if len(targets) == 0 {
 			return nil
@@ -145,7 +146,7 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 				err = errors.Join(migrationErr, declineImagePickerTab(ctx, string(targets[0].Shell)))
 			}
 			if setupErr := changeImagePickerShellSetup(ctx, targets, remove); setupErr != nil {
-				return imageSavingFailure("Could not finish Tab shortcut setup. Some startup files may already be configured; rerunning this command is safe.", errors.Join(setupErr, err))
+				return imagePickerShellSetupFailure(command, errors.Join(setupErr, err), remove)
 			}
 			if !remove {
 				err = clearImagePickerTabDecline(string(targets[0].Shell))
@@ -166,6 +167,21 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 		}
 		return receipt(ctx, message)
 	}
+}
+
+func imagePickerShellSetupFailure(command *cli.Command, err error, remove bool) error {
+	message := "Could not finish Tab shortcut setup. Some startup files may already be configured; rerunning this command is safe."
+	if errors.Is(err, autocomplete.ErrPickerAtomicRenameUnsupported) {
+		message = "Could not finish Tab shortcut setup: this environment does not support the required atomic rename."
+		if remove {
+			message = "Could not finish Tab shortcut removal: this environment does not support the required atomic rename. Existing shortcuts may remain active."
+		}
+		message += " Type " + clihelp.DisplayInvocation(command.Root()) + " images generate and press Enter to use the picker." +
+			" Some startup files or preferences may already have changed." +
+			" Keep any .openai-picker-recovery-* directories beside the startup file; inspect their original files before manual recovery." +
+			" Persistent setup needs a filesystem with atomic rename support."
+	}
+	return imageSavingFailure(message, err)
 }
 
 func changeImagePickerShellSetup(ctx context.Context, targets []autocomplete.PickerInstallation, remove bool) error {

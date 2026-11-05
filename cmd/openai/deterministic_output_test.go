@@ -159,23 +159,19 @@ func TestMainDispatchOutputHelpGroupsLongFlagsAndPreservesVersion(t *testing.T) 
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("root help failed: %+v", got)
 		}
-		_, globals, ok := strings.Cut(got.stdout, "\nGLOBAL OPTIONS:")
+		_, globals, ok := strings.Cut(got.stdout, "\nGLOBAL FLAGS\n")
 		if !ok {
 			t.Fatalf("root help lost global options: %q", got.stdout)
 		}
-		_, outputAndRest, ok := strings.Cut(globals, "\n   Output\n")
+		output, _, ok := strings.Cut(globals, "\nNOTES\n")
 		if !ok {
-			t.Fatalf("root help lost the Output group: %q", globals)
-		}
-		output, _, ok := strings.Cut(outputAndRest, "\n\n   Request options\n")
-		if !ok {
-			t.Fatalf("Output group boundary is missing: %q", outputAndRest)
+			t.Fatal("global flag reference boundary is missing")
 		}
 		for _, name := range []string{"--quiet", "--verbose"} {
 			// A complete definition line also rejects short aliases or value labels.
-			definition := "\n   " + name + "\n"
+			definition := "\n    " + name + "\n"
 			if strings.Count(got.stdout, definition) != 1 || strings.Count(output, definition) != 1 {
-				t.Errorf("%s must appear once, long-only, inside Output: %q", name, got.stdout)
+				t.Errorf("%s must appear once, long-only, inside GLOBAL FLAGS: %q", name, got.stdout)
 			}
 		}
 	})

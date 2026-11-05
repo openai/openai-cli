@@ -2,20 +2,23 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/commands/models"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
-	"github.com/tidwall/gjson"
+	"github.com/openai/openai-go/v3"
 	"github.com/urfave/cli/v3"
 )
 
 func configureModelsList(root *cli.Command) {
 	models.Configure(root, models.Options{
+		ShowPages: showInteractiveModelsList,
 		LoadingAllowed: func(command *cli.Command) bool {
 			root := command.Root()
 			format := strings.ToLower(root.String("format"))
@@ -38,6 +41,31 @@ func configureModelsList(root *cli.Command) {
 	})
 }
 
+// Explicit formats and bounded selection retain their existing single-response ordering.
+func showInteractiveModelsList(ctx context.Context, cmd *cli.Command) (bool, error) {
+	root := cmd.Root()
+	opts := ShowJSONOpts{
+		Context: ctx, Operation: "(resource) models > (method) list", OutputKind: OutputPageItem,
+		Format: root.String("format"), RawOutput: root.Bool("raw-output"), Transform: root.String("transform"),
+		Title: "models list",
+	}
+	if root.IsSet("format") || cmd.IsSet("max-items") && cmd.Value("max-items").(int64) != -1 || !InteractiveListOutput(opts) {
+		return false, nil
+	}
+	if args := cmd.Args().Slice(); len(args) != 0 {
+		return true, fmt.Errorf("Unexpected extra arguments: %v", args)
+	}
+	options, err := FlagOptions(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, EmptyBody, false)
+	if err != nil {
+		return true, err
+	}
+	client := openai.NewClient(GetDefaultRequestOptions(cmd)...)
+	opts.setDefaults()
+	return true, runInteractiveList(opts, func(opts ShowJSONOpts) error {
+		return models.ShowPages(listViewerOptions(opts), client, options, outputDiagnosticsAllowed(opts.Context))
+	})
+}
+
 func showModelsListSelection[T any](source jsonview.Iterator[T], maximum int64, opts ShowJSONOpts) (bool, error) {
 	if opts.Operation != "(resource) models > (method) list" || opts.OutputKind != OutputPageItem {
 		return false, nil
@@ -54,10 +82,6 @@ func stopModelsListLoading(opts ShowJSONOpts) {
 	if opts.Operation == "(resource) models > (method) list" {
 		models.StopLoading(opts.Context)
 	}
-}
-
-func renderModelsListTable(opts ShowJSONOpts, items []gjson.Result, width int) (string, bool, error) {
-	return models.RenderTable(opts.Context, items, width, outputDiagnosticsAllowed(opts.Context))
 }
 
 // Models use the SDK's single-response Page, whose GetNextPage always returns
@@ -77,7 +101,9 @@ func showModelsListViewer[T any](source jsonview.Iterator[T], iter *clioutput.It
 		return false, nil
 	}
 	if opts.Stdout == os.Stdout {
-		return true, clioutput.StreamToStdout(func(*os.File) error { return models.WriteList(iter, listViewerOptions(opts), width, height) })
+		return true, clioutput.StreamToStdout(func(*os.File) error {
+			return models.WriteList(iter, listViewerOptions(opts), width, height, outputDiagnosticsAllowed(opts.Context))
+		})
 	}
-	return true, models.WriteList(iter, listViewerOptions(opts), width, height)
+	return true, models.WriteList(iter, listViewerOptions(opts), width, height, outputDiagnosticsAllowed(opts.Context))
 }

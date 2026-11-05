@@ -18,6 +18,8 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 	configureGlobalFlagDescriptions(root)
 	configureHelpGroups(root)
 	configureImageHelpContent(root)
+	configureLocalHelpContent(root)
+	configureBatchHelpContent(root)
 	args, handled, err := clihelp.Configure(root, args)
 	admin.ConfigureSetupHelp(root)
 	return args, handled, err
@@ -97,7 +99,8 @@ func configureGlobalFlagDescriptions(root *cli.Command) {
 			case "raw-output":
 				flag.Usage = "Print string results without JSON quotes. Useful with --transform. Does not change error output."
 			case "debug":
-				flag.Usage = "Write HTTP request and response diagnostics to stderr for troubleshooting. May include sensitive data."
+				flag.Usage = "Log redacted HTTP headers and per-attempt timing to stderr.\n" +
+					"Use --debug-body or --debug-sse for bounded, redacted payload inspection. Review logs before sharing."
 			}
 		case *requestconfig.HeaderFlag:
 			flag.Usage = "Add an HTTP request header as 'Name: Value'.\n" +
@@ -195,18 +198,71 @@ func setCompleteHelpContent(command *cli.Command, content clihelp.Content) {
 	command.CustomHelpTemplate = ""
 }
 
+// Known local utilities use the shared layout while retaining their authored
+// descriptions, examples, and restrictions. Unrelated custom guides stay intact.
+func configureLocalHelpContent(root *cli.Command) {
+	localOutput := "Local output supports --format auto, text, or json. It does not support --transform or --raw-output."
+	for _, path := range [][]string{{"codex"}, {"tokenizer"}, {"tokenizer", "view"}, {"tokenizer", "count"}, {"tokenizer", "inspect"}, {"tokenizer", "encodings"}, {"tokenizer", "licenses"}} {
+		command := root
+		for _, name := range path {
+			command = command.Command(name)
+			if command == nil {
+				break
+			}
+		}
+		if command == nil {
+			continue
+		}
+		content := clihelp.Content{
+			Description:       command.Description,
+			GlobalOptionsNote: localOutput,
+			Notes:             "This command runs locally. No API key or internet is required.",
+		}
+		switch strings.Join(path, " ") {
+		case "codex":
+			content.Examples = []clihelp.Example{{Description: "Show the Codex configuration guide URL:", Command: "codex --destination config"}}
+		case "tokenizer":
+			command.Metadata["help-optional-command"] = true
+			content.GlobalOptionsNote = "The editor supports --format auto or text. For JSON, use tokenizer count or inspect. --transform and --raw-output are unsupported."
+			content.Description = "Opens the live editor in a terminal. Pipe text into tokenizer view to explore it. Use count or inspect for scripts.\n\n" + content.Description
+			content.Examples = []clihelp.Example{
+				{Description: "Open the live tokenizer editor:", Command: "tokenizer"},
+				{Description: "Count tokens in text:", Command: `tokenizer count --text "hello world"`},
+				{Description: "See piping examples:", Command: "help piping"},
+			}
+		case "tokenizer view":
+			content.GlobalOptionsNote = "The editor requires --format auto and an interactive terminal. Use tokenizer count or inspect for script output."
+			content.BashExamples = true
+			content.Examples = []clihelp.Example{{Description: "Explore a UTF-8 file in Bash or zsh", Command: "tokenizer view < draft.txt"}}
+		case "tokenizer count", "tokenizer inspect":
+			content.Examples = []clihelp.Example{{Description: "Tokenize literal text:", Command: strings.Join(path, " ") + ` --text "Hello, world!"`}}
+			if command.Name == "count" {
+				content.GlobalOptionsNote = "Count supports --format auto, text, or json. Use --transform to select token_count, input_bytes, or encoding. Use --raw-output for unquoted strings."
+				content.Examples = append(content.Examples, clihelp.Example{Description: "Print only the token count:", Command: `tokenizer count -n --text "Hello, world!"`})
+			}
+			labels, _ := command.Metadata["help-flag-labels"].([]clihelp.FlagLabel)
+			command.Metadata["help-flag-labels"] = append(labels, clihelp.FlagLabel{Owner: command, Names: []string{"encoding"}, Label: "ENCODING"})
+		}
+		delete(command.Metadata, "local-help-full")
+		setCompleteHelpContent(command, content)
+	}
+}
+
 func configureHelpGroups(root *cli.Command) {
+	batchCommands := root.Command("batches")
 	groups := []clihelp.FlagGroup{
 		{Title: "Authentication", Names: []string{"api-key", "admin-api-key", "webhook-secret", "mtls-client-cert-file", "mtls-client-key-file"}, Owner: root},
 		{Title: "Output", Names: []string{"format", "format-error", "transform", "transform-error", "raw-output", "quiet", "verbose"}, Owner: root},
 		{Title: "Request options", Names: []string{"organization", "project", "base-url", "header"}, Owner: root},
-		{Title: "Troubleshooting", Names: []string{"debug"}, Owner: root},
+		{Title: "Troubleshooting", Names: []string{"debug", debugBodyFlag, debugSSEFlag, debugEventTimingFlag, debugMaxBytesFlag, debugMaxEventsFlag}, Owner: root},
 	}
 	labels := []clihelp.FlagLabel{
 		{Owner: root, Names: []string{"api-key", "admin-api-key"}, Label: "KEY"},
 		{Owner: root, Names: []string{"organization", "project"}, Label: "ID"},
 		{Owner: root, Names: []string{"webhook-secret"}, Label: "SECRET"},
 		{Owner: root, Names: []string{"header"}, Label: "'NAME: VALUE'"},
+		{Owner: root, Names: []string{debugMaxBytesFlag}, Label: "BYTES"},
+		{Owner: root, Names: []string{debugMaxEventsFlag}, Label: "COUNT"},
 	}
 	var visit func(*cli.Command, bool)
 	visit = func(command *cli.Command, image bool) {
@@ -226,6 +282,19 @@ func configureHelpGroups(root *cli.Command) {
 		}
 		command.Metadata["help-flag-groups"] = sections
 		commandLabels := append([]clihelp.FlagLabel(nil), labels...)
+		if batchCommands != nil && (command == batchCommands.Command("create") || command == batchCommands.Command("submit")) {
+			commandLabels = append(commandLabels, clihelp.FlagLabel{
+				Owner: command, Names: []string{"metadata", "output-expires-after"}, Label: "JSON",
+			})
+			for _, flag := range command.Flags {
+				if metadata, ok := flag.(*requestflag.Flag[map[string]any]); ok && metadata.Name == "metadata" {
+					const example = "Use a JSON object, for example: --metadata '{\"scenario\":\"example\"}'.\n\n"
+					if !strings.HasPrefix(metadata.Usage, example) {
+						metadata.Usage = example + metadata.Usage
+					}
+				}
+			}
+		}
 		if positional, ok := command.Metadata["help-positional-flags"].([]string); ok {
 			for _, name := range positional {
 				commandLabels = append(commandLabels, clihelp.FlagLabel{

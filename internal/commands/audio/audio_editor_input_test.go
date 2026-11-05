@@ -35,12 +35,14 @@ func TestAudioEditorAcceptsExactSpeedWithoutGeneration(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.focus, m.setting = 2, 3
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	require.Equal(t, "speed", m.modal)
+	require.Empty(t, m.modal)
+	require.True(t, m.speedEditing)
 	for _, value := range []string{"NaN", "+Inf", "0.24", "4.01", "invalid"} {
 		m.speedInput.SetValue(value)
 		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		require.Nil(t, cmd)
-		require.Equal(t, "speed", m.modal)
+		require.Empty(t, m.modal)
+		require.True(t, m.speedEditing)
 		require.Equal(t, float64(1), m.settings.Speed)
 	}
 	m.speedInput.SetValue("1.23")
@@ -49,6 +51,7 @@ func TestAudioEditorAcceptsExactSpeedWithoutGeneration(t *testing.T) {
 	require.Empty(t, m.modal)
 	require.Empty(t, m.note)
 	require.False(t, m.busy)
+	require.False(t, m.speedEditing)
 	require.Equal(t, 1.23, m.settings.Speed)
 }
 
@@ -56,7 +59,11 @@ func TestAudioEditorNarrowValidationRemainsVisible(t *testing.T) {
 	m := newAudioWorkbench(t.Context(), &cli.Command{Name: "openai"}, nil, audiohistory.Store{})
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 	m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
-	require.Contains(t, m.View().Content, "Enter text before generating speech.")
+	view := audioFeedbackView(t, m)
+	require.Contains(t, view, "Text to speech")
+	require.Contains(t, view, "Enter text before generating speech.")
+	require.Empty(t, m.modal)
+	require.True(t, m.input.Focused())
 	require.False(t, m.busy)
 }
 
@@ -69,13 +76,14 @@ func TestAudioEditorSaveValidationRemainsVisible(t *testing.T) {
 		m.Update(tea.KeyPressMsg{Code: 's'})
 		require.Equal(t, "save", m.modal)
 		require.NotContains(t, m.View().Content, "Previous result status")
+		require.Nil(t, audioReviewKey(m, tea.KeyEnter)) // Finish choosing the folder.
 		for _, value := range []string{"", "-", "/dev/stdout"} {
 			m.path.SetValue(value)
 			_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			require.Nil(t, cmd)
 			require.Equal(t, "save", m.modal)
 			require.Equal(t, value, m.path.Value())
-			require.Contains(t, m.View().Content, "Enter a file path for saving.")
+			require.Contains(t, m.View().Content, "Enter a filename for saving.")
 			require.False(t, m.busy)
 		}
 	}
