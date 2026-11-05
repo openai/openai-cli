@@ -11,11 +11,11 @@ import (
 )
 
 func helpSection(text, start, end string) string {
-	_, section, found := strings.Cut(text, start+":\n")
+	_, section, found := strings.Cut(text, start+"\n")
 	if !found {
 		return ""
 	}
-	section, _, _ = strings.Cut(section, "\n"+end+":")
+	section, _, _ = strings.Cut(section, "\n"+end+"\n")
 	return strings.TrimSpace(section)
 }
 
@@ -25,7 +25,7 @@ func TestMainHelpPresentationPreservesDetailsAfterShortName(t *testing.T) {
 		t.Fatalf("help failed: %+v", got)
 	}
 	name := helpSection(got.stdout, "NAME", "SYNOPSIS")
-	if strings.Contains(name, "https://") || !strings.Contains(name, "Creates a model response.") {
+	if strings.Contains(name, "https://") || !strings.Contains(name, "Creates a model response") {
 		t.Fatalf("NAME is not a short command summary: %s", name)
 	}
 	description := helpSection(got.stdout, "DESCRIPTION", "EXAMPLES")
@@ -53,10 +53,10 @@ func TestMainHelpPresentationConcreteSyntaxAndLabels(t *testing.T) {
 		path []string
 		want []string
 	}{
-		{[]string{"models", "retrieve"}, []string{"[MODEL | --model MODEL]", "Model ID.", "JSON/YAML keys: model."}},
+		{[]string{"models", "retrieve"}, []string{"[MODEL | --model=MODEL]", "Model ID.", "JSON/YAML keys: model."}},
 		{[]string{"files", "upload"}, []string{"[PATH | --file PATH] --purpose PURPOSE [options]", "A path is required: use PATH or --file PATH.", "Choose --purpose explicitly.", "The existing piped JSON/YAML keys are file and purpose."}},
-		{[]string{"files", "create"}, []string{"[--file PATH]", "[--purpose TEXT]", "Required request inputs: --file, --purpose."}},
-		{[]string{"images", "generate"}, []string{"--size SIZE", "--quality QUALITY", "--background BACKGROUND", "--output-format FORMAT", "--inline MODE"}},
+		{[]string{"files", "create"}, []string{"[--file=PATH]", "[--purpose=TEXT]", "Required request inputs: --file, --purpose."}},
+		{[]string{"images", "generate"}, []string{"--size=SIZE", "--quality=QUALITY", "--background=BACKGROUND", "--output-format=FORMAT", "--inline=MODE"}},
 	} {
 		got := runMainDispatch(t, "bash", append(append([]string{"openai"}, tc.path...), "--help")...)
 		if got.code != 0 || got.stderr != "" {
@@ -81,8 +81,8 @@ func TestMainHelpPresentationCompactGlobalsAndLocalRestrictions(t *testing.T) {
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("help failed: %+v", got)
 		}
-		_, globals, found := strings.Cut(got.stdout, "GLOBAL OPTIONS:\n")
-		if !found || !strings.Contains(globals, "Global option details: openai --help") {
+		_, globals, found := strings.Cut(got.stdout, "GLOBAL FLAGS\n")
+		if !found || !strings.Contains(globals, "Run $ openai --help for details.") {
 			t.Fatalf("global option reference missing: %s", got.stdout)
 		}
 		for _, name := range []string{"--format", "--format-error", "--transform", "--raw-output", "-r", "--header", "-H", "--base-url"} {

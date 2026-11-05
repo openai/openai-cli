@@ -1,7 +1,7 @@
 # Shell and file input
 
-Explicit stdin references select one request parameter.
-Without an explicit reference, the CLI keeps its existing whole-request JSON/YAML behavior.
+Run `openai help piping` for examples.
+Use `@-` for one text field or `--file -` for a binary upload.
 
 ```sh
 printf 'hello\n' | openai responses create --model MODEL --input @-
@@ -67,14 +67,29 @@ The API still determines whether those values are valid.
 
 ## Whole-request input
 
+`responses create` and `chat completions create` accept one JSON or YAML object through `--request-file`.
+Use a filename on any shell. Use `-` to wait until the producer closes stdin.
+The CLI rejects an empty, malformed, or multi-document request before sending it.
+
 ```sh
-printf '%s' '{"model":"MODEL","input":"hello"}' | openai responses create
-printf 'model: MODEL\ninput: hello\n' | openai responses create
+openai responses create --request-file request.json
+printf '%s' '{"model":"MODEL","input":"hello","store":false}' | openai responses create --request-file -
 ```
 
-Explicit request flags override matching piped fields.
+Explicit flags override matching document fields.
+A regular request file leaves stdin available for an explicit field such as `--input @-`.
+Each command can use stdin once.
+Both file and stdin documents honor `OPENAI_UNTRUSTED_STDIN`.
+
+Other generated API commands check briefly for implicit whole-request input.
+A producer that starts later can miss this check. In Bash or Zsh, finish writing the document before redirecting it.
+
+```sh
+openai embeddings create < request.json
+```
+
 Unknown body fields and explicit nulls retain their existing encoding behavior.
-Empty stdin contributes no whole-request fields.
+Empty implicit stdin contributes no fields.
 Required request fields still apply.
 
 A final Boolean `stream: true` selects stream dispatch for supported JSON and multipart commands.
@@ -105,8 +120,13 @@ A nonzero exit status remains necessary when checking a transfer.
 
 An explicit file destination stages the complete download before changing an existing ordinary file.
 A failed network transfer leaves the existing file unchanged.
-Successful completion preserves its inode, permissions, symlinks, and hardlinks.
+Successful completion preserves its inode, permissions, and hardlinks.
 Linked names therefore continue to expose the saved bytes.
+
+The final output entry must not be a symlink, including a dangling symlink or a chain.
+To save through a link, select the target path explicitly instead.
+Parent directories remain caller-trusted and retain normal symlink traversal;
+this rule does not confine writes against attacker-controlled parents or hardlinks.
 
 On Windows, new explicit file destinations use protected permissions for the current user, SYSTEM, and Administrators.
 Existing files retain their access-control lists.

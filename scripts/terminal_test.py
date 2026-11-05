@@ -13,11 +13,12 @@ import termios
 import time
 
 
-def kitty_images(captured):
+def kitty_images(captured, *, allow_cursor_deletes=False):
     """Validate complete CLI Kitty transmissions and return their PNG bytes.
 
     One image can span several frames, including small Darwin tty frames.
     Interrupted transmissions belong in cancellation checks, not this parser.
+    Workspace fixtures can opt into exact cursor-delete commands.
     """
     frames = re.findall(rb'\x1b_G([^;\x1b]*);([^\x1b]*)\x1b\\', captured)
     assert len(frames) == captured.count(b'\x1b_G'), 'incomplete Kitty frame'
@@ -28,6 +29,11 @@ def kitty_images(captured):
         fields = dict(pairs)
         assert len(fields) == len(pairs), 'duplicate Kitty option'
         assert fields.get(b'q') == b'2', 'Kitty replies must stay disabled'
+        if allow_cursor_deletes and fields.get(b'a') == b'd':
+            assert fields == {b'a': b'd', b'd': b'C', b'q': b'2'}, 'unexpected Kitty deletion options'
+            assert not chunk, 'Kitty deletion carried image data'
+            assert payload is None, 'Kitty deletion interrupted an image'
+            continue
         assert fields.get(b'm') in (b'0', b'1'), 'invalid Kitty continuation'
         if payload is None:
             assert fields.get(b'a') == b'T' and fields.get(b'f') == b'100', 'expected a PNG transmission'

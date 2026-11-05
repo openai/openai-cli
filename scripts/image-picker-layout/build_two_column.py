@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("output", type=Path)
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[2]
-source = root / "pkg/custom/image_picker_view.go"
+source = root / "internal/commands/images/image_picker_view.go"
 patch = Path(__file__).with_name("two-column.patch")
 with tempfile.TemporaryDirectory(prefix="image-layout-prototype-") as temporary:
     directory = Path(temporary)

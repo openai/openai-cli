@@ -1691,11 +1691,11 @@ paths:
       - Audio
       summary: Create voice
       description: |
-        Create a custom voice you can use for audio output (for example, in Text-to-Speech and the Realtime API). This requires an audio sample and a previously uploaded consent recording.
+        Creates a voice from a text prompt or from a consent recording and an audio sample.
 
-        Send `name`, `audio_sample`, and the `consent` recording ID as multipart form data. The optional `type` defaults to `audio_sample`.
+        For prompt-based creation, send `type: "prompt"` with a `name` and `prompt` as JSON or multipart form data. For creation from an audio sample, send `type: "audio_sample"` with a `name`, `audio_sample`, and `consent` recording ID as multipart form data. The type defaults to `audio_sample` when omitted.
 
-        Returns the saved voice's metadata. See the [custom voices guide](https://developers.openai.com/api/docs/guides/text-to-speech#custom-voices) for requirements and best practices. Custom voices are limited to eligible customers.
+        Returns the saved voice's metadata. Voices created from text prompts are supported only in Live, not in Realtime or the speech endpoint. The response does not include preview audio.
       requestBody:
         required: true
         content:
@@ -1710,7 +1710,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/VoiceResource'
         '400':
-          description: Invalid voice request, consent recording, or audio sample.
+          description: Invalid voice request, prompt, script hint, model, consent recording, or audio sample.
           content:
             application/json:
               schema:
@@ -1735,9 +1735,13 @@ paths:
               curl https://api.openai.com/v1/audio/voices \
                 -X POST \
                 -H "Authorization: Bearer $OPENAI_API_KEY" \
-                -F "name=My new voice" \
-                -F "consent=cons_1234" \
-                -F "audio_sample=@audio_sample.wav;type=audio/x-wav"
+                -H "Content-Type: application/json" \
+                -d '{
+                  "type": "prompt",
+                  "name": "Warm narrator",
+                  "prompt": "A warm, calm narrator with a clear, measured delivery.",
+                  "model": "auto"
+                }'
   /batches:
     post:
       summary: Create batch
@@ -9613,7 +9617,7 @@ paths:
                 -H "Authorization: Bearer $OPENAI_API_KEY" \
                 -d '{
                   "model": "omni-moderation-latest",
-                  "input": "I want to kill them."
+                  "input": "...text to classify goes here..."
                 }'
             python: |
               from openai import OpenAI
@@ -9621,7 +9625,7 @@ paths:
 
               moderation = client.moderations.create(
                   model="omni-moderation-latest",
-                  input="I want to kill them.",
+                  input="...text to classify goes here...",
               )
               print(moderation)
             javascript: |
@@ -9632,7 +9636,7 @@ paths:
               async function main() {
                 const moderation = await openai.moderations.create({
                   model: "omni-moderation-latest",
-                  input: "I want to kill them.",
+                  input: "...text to classify goes here...",
                 });
 
                 console.log(moderation);
@@ -9649,88 +9653,7 @@ paths:
                   apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
               );
 
-              ClientResult<ModerationResult> moderation = client.ClassifyText("I want to kill them.");
-          response: |
-            {
-              "id": "modr-AB8CjOTu2jiq12hp1AQPfeqFWaORR",
-              "model": "omni-moderation-latest",
-              "results": [
-                {
-                  "flagged": true,
-                  "categories": {
-                    "sexual": false,
-                    "hate": false,
-                    "harassment": true,
-                    "self-harm": false,
-                    "sexual/minors": false,
-                    "hate/threatening": false,
-                    "violence/graphic": false,
-                    "self-harm/intent": false,
-                    "self-harm/instructions": false,
-                    "harassment/threatening": true,
-                    "violence": true,
-                    "illicit": false,
-                    "illicit/violent": false
-                  },
-                  "category_scores": {
-                    "sexual": 1.1726012417057063e-05,
-                    "hate": 0.22706663608551025,
-                    "harassment": 0.5215635299682617,
-                    "self-harm": 2.227119921371923e-06,
-                    "sexual/minors": 7.107352217872176e-08,
-                    "hate/threatening": 0.023547329008579254,
-                    "violence/graphic": 3.391829886822961e-05,
-                    "self-harm/intent": 1.646940972932498e-06,
-                    "self-harm/instructions": 1.1198755256458526e-09,
-                    "harassment/threatening": 0.5694745779037476,
-                    "violence": 0.9971134662628174,
-                    "illicit": 0.001,
-                    "illicit/violent": 0.001
-                  },
-                  "category_applied_input_types": {
-                    "sexual": [
-                      "text"
-                    ],
-                    "hate": [
-                      "text"
-                    ],
-                    "harassment": [
-                      "text"
-                    ],
-                    "self-harm": [
-                      "text"
-                    ],
-                    "sexual/minors": [
-                      "text"
-                    ],
-                    "hate/threatening": [
-                      "text"
-                    ],
-                    "violence/graphic": [
-                      "text"
-                    ],
-                    "self-harm/intent": [
-                      "text"
-                    ],
-                    "self-harm/instructions": [
-                      "text"
-                    ],
-                    "harassment/threatening": [
-                      "text"
-                    ],
-                    "violence": [
-                      "text"
-                    ],
-                    "illicit": [
-                      "text"
-                    ],
-                    "illicit/violent": [
-                      "text"
-                    ]
-                  }
-                }
-              ]
-            }
+              ClientResult<ModerationResult> moderation = client.ClassifyText("...text to classify goes here...");
         - title: Image and text
           request:
             curl: |
@@ -12996,10 +12919,12 @@ paths:
       - AdminApiKeyAuth: []
       summary: Delete project API key
       description: |
-        Deletes an API key from the project.
+        Deletes an API key from the project, including keys owned by service accounts.
 
-        Returns confirmation of the key deletion, or an error if the key belonged to
-        a service account.
+        Requires permission to write project API keys. Deleting a service-account key
+        does not delete the service account or its other keys.
+
+        Returns confirmation of the key deletion.
       operationId: delete-project-api-key
       tags:
       - Projects
@@ -16790,7 +16715,8 @@ paths:
                                 "object": "organization.usage.completions.result",
                                 "input_tokens": 1000,
                                 "input_cached_tokens": 400,
-                                "input_cache_write_tokens": 75,
+                                "input_cache_write_tokens": 100,
+                                "input_cache_write_30m_tokens": 75,
                                 "input_cache_write_12h_tokens": 25,
                                 "input_uncached_tokens": 500,
                                 "output_tokens": 500,
@@ -27701,12 +27627,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        '409':
-          description: The service account already has an API key and cannot create another.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '429':
           description: Too many management requests. Reduce the request rate and try again later.
           content:
@@ -32467,7 +32387,7 @@ paths:
     post:
       operationId: updateAgentSession
       summary: Update an agent session
-      description: Updates session metadata, model, reasoning effort, or service tier. Model settings apply to subsequent turns. Omitted fields are unchanged. See [managing sessions](https://developers.openai.com/api/docs/guides/agents-api/sessions/manage).
+      description: Updates session tools, metadata, model, reasoning effort, or service tier. Model settings apply to subsequent turns. Omitted fields are unchanged. See [managing sessions](https://developers.openai.com/api/docs/guides/agents-api/sessions/manage).
       tags:
       - Agents
       parameters:
@@ -36587,6 +36507,177 @@ paths:
               "object": "response.input_tokens",
               "input_tokens": 11
             }
+  /audio/voices/{voice_id}:
+    delete:
+      operationId: deleteVoice
+      tags:
+      - Audio
+      summary: Delete voice
+      description: |
+        Deletes a voice created from a text prompt or an audio sample.
+
+        Requires voice write permission and access to the voice's project. Access to voices created from recordings is limited to eligible customers. See the [custom voices guide](https://developers.openai.com/api/docs/guides/custom-voices).
+
+        Deleting a voice does not delete its consent recording. Deleting an already deleted voice returns a 404 error.
+      parameters:
+      - in: path
+        name: voice_id
+        required: true
+        schema:
+          type: string
+        description: The ID of the voice to delete.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceDeletedResource'
+        '400':
+          description: Invalid voice ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: The endpoint is unavailable or the voice was not found in the requested project.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      x-oaiMeta:
+        group: audio
+        examples:
+          request:
+            curl: |
+              curl https://api.openai.com/v1/audio/voices/voice_1234 \
+                -X DELETE \
+                -H "Authorization: Bearer $OPENAI_API_KEY"
+          response: |
+            {
+              "id": "voice_1234",
+              "object": "audio.voice.deleted",
+              "deleted": true
+            }
+  /organization/external_keys:
+    post:
+      summary: Add an external key config for an organization
+      description: Add an external key config for an organization
+      operationId: Addanexternalkeyconfigforanorganization
+      parameters: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/V1OrganizationExternalKeysPostRequest'
+        required: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalKeyResource'
+      security:
+      - AdminApiKeyAuth: []
+    get:
+      summary: List the external key configs registered on the user's organization
+      description: List the external key configs registered on the user's organization
+      operationId: Listtheexternalkeyconfigsregisteredontheuser'sorganization
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 100
+      - name: order
+        in: query
+        required: false
+        schema:
+          $ref: '#/components/schemas/OrderEnum'
+      - name: after
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+      - name: purpose
+        in: query
+        description: Filter by key purpose. When omitted, returns keys of all purposes.
+        required: false
+        schema:
+          $ref: '#/components/schemas/ExternalKeyPurpose'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListExternalKeysResource'
+      security:
+      - AdminApiKeyAuth: []
+  /organization/external_keys/{external_key_id}:
+    get:
+      summary: Retrieve an external key registration
+      description: Retrieve a stored external key registration for the user's organization.
+      operationId: Retrieveanexternalkeyregistration
+      parameters:
+      - name: external_key_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalKeyResource'
+      security:
+      - AdminApiKeyAuth: []
+    delete:
+      summary: Delete an external key config for the user's organization
+      description: Delete an external key config for the user's organization
+      operationId: Deleteanexternalkeyconfigfortheuser'sorganization
+      parameters:
+      - name: external_key_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalKeyResource'
+      security:
+      - AdminApiKeyAuth: []
+  /organization/external_keys/{external_key_id}/validate:
+    post:
+      summary: Validate an external key config for the user's organization
+      description: Validate an external key config for the user's organization
+      operationId: Validateanexternalkeyconfigfortheuser'sorganization
+      parameters:
+      - name: external_key_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateExternalKeyResource'
+      security:
+      - AdminApiKeyAuth: []
 webhooks:
   agent_environment_expired:
     post:
@@ -37012,7 +37103,36 @@ webhooks:
           description: Return any 2xx status code to acknowledge receipt. A 410 Gone response also stops retries; other non-2xx responses are retried.
 components:
   schemas:
+    CacheWriteTokensDetails:
+      properties:
+        ttl_30m_tokens:
+          type: integer
+          description: The number of input tokens written with 30-minute retention.
+        ttl_12h_tokens:
+          type: integer
+          description: The number of input tokens written with 12-hour retention.
+      type: object
+      required:
+      - ttl_30m_tokens
+      - ttl_12h_tokens
+    BetaCacheWriteTokensDetails:
+      properties:
+        ttl_30m_tokens:
+          type: integer
+          description: The number of input tokens written with 30-minute retention.
+        ttl_12h_tokens:
+          type: integer
+          description: The number of input tokens written with 12-hour retention.
+      type: object
+      required:
+      - ttl_30m_tokens
+      - ttl_12h_tokens
     UpdateProjectApiKeyBody:
+      anyOf:
+      - required:
+        - scopes
+      - required:
+        - expires_in_seconds
       properties:
         expires_in_seconds:
           type: integer
@@ -41542,7 +41662,7 @@ components:
                   `alloy`, `ash`, `ballad`, `coral`, `echo`, `fable`, `nova`, `onyx`,
                   `sage`, `shimmer`, `marin`, and `cedar`. You may also provide a
                   custom voice object with an `id`, for example `{ "id": "voice_1234" }`.
-                  Custom voices must be created from audio samples.
+                  Custom voices must be created from audio samples. Voices created from text prompts are supported only in Live.
               format:
                 type: string
                 enum:
@@ -41717,6 +41837,8 @@ components:
             maxItems: 128
             items:
               $ref: '#/components/schemas/ChatCompletionFunctions'
+          prompt_cache_options:
+            $ref: '#/components/schemas/PromptCacheOptionsParam'
         required:
         - model
         - messages
@@ -43250,12 +43372,12 @@ components:
           description: |
             The image(s) to edit. Must be a supported image file or an array of images.
 
-            For the GPT image models (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`,
+            For the GPT image models (`gpt-image-1-mini`, `gpt-image-1.5`,
             `gpt-image-2`, `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`,
-            `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`,
-            `gpt-image-2.5-flare-2026-09-08`, and `chatgpt-image-latest`), each image
-            should be a `png`, `webp`, or `jpg` file less than 50MB. You can provide up to
-            16 images.
+            `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`, and
+            `gpt-image-2.5-flare-2026-09-08`), each image should be a `png`, `webp`, or `jpg`
+            file less than 50MB. You can provide up to 16 images. `chatgpt-image-latest`
+            follows the same input constraints as GPT image models.
           x-oaiMeta:
             exampleFilePath: otter.png
         prompt:
@@ -43301,17 +43423,30 @@ components:
             - gpt-image-2.5-sunburst-2026-09-08
             - gpt-image-2.5-flare
             - gpt-image-2.5-flare-2026-09-08
+            - gpt-image-2.6-sunburst
+            - gpt-image-2.6-flare
             - gpt-image-1
             - gpt-image-1-mini
             - chatgpt-image-latest
             - dall-e-2
             x-openai-enum-deprecations:
+              gpt-image-1:
+                message: GPT Image 1 was shut down on October 23, 2026. Use gpt-image-2.5-sunburst or gpt-image-2.5-flare instead.
               dall-e-2:
                 message: This model was retired on May 12, 2026. Use a GPT image model instead.
             x-stainless-const: true
           x-oaiTypeLabel: string
           example: gpt-image-1.5
-          description: The GPT image model to use for image editing (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`, `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`, `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`, `gpt-image-2.5-flare-2026-09-08`, or `chatgpt-image-latest`).
+          description: |
+            The GPT image model to use for image editing
+            (`gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`,
+            `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`,
+            `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`,
+            `gpt-image-2.5-flare-2026-09-08`, `gpt-image-2.6-sunburst`, `gpt-image-2.6-flare`,
+            or `chatgpt-image-latest`).
+
+            `gpt-image-1` was shut down on October 23, 2026. Use
+            `gpt-image-2.5-sunburst` or `gpt-image-2.5-flare` instead.
           nullable: true
         n:
           type:
@@ -43358,12 +43493,13 @@ components:
             - png
             - jpeg
             - webp
+            - gif
           - type: 'null'
           default: png
           example: png
           description: |
             The format in which the generated images are returned. This parameter is
-            only supported for the GPT image models. Must be one of `png`, `jpeg`, or `webp`.
+            only supported for the GPT image models.
             The default value is `png`.
         output_compression:
           type:
@@ -43378,8 +43514,8 @@ components:
         user:
           type: string
           example: user-1234
-          description: |
-            A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
+          description: 'Deprecated: use `safety_identifier` instead. This parameter remains accepted for backward compatibility and is used when `safety_identifier` is omitted, null, or empty. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).'
+          deprecated: true
         input_fidelity:
           anyOf:
           - $ref: '#/components/schemas/InputFidelity'
@@ -43414,12 +43550,35 @@ components:
           example: high
           description: |
             The quality of the image that will be generated for GPT image models. The GPT image models support `low`, `medium`, and `high`. `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare`, including their `2026-09-08` snapshots, also support `xhigh` and `max`. Defaults to `auto`.
+        safety_identifier:
+          type:
+          - string
+          - 'null'
+          maxLength: 128
+          example: user-1234
+          description: A stable identifier for an end user in your organization, used for safety monitoring and abuse detection. Hash a username or email address to avoid sending identifying information. A non-empty value takes precedence over the deprecated `user` parameter. If omitted, null, or empty, the API uses `user` when available. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
+        markup:
+          $ref: '#/components/schemas/markup'
+        frame_duration_ms:
+          $ref: '#/components/schemas/frame_duration_ms'
+        complexity:
+          $ref: '#/components/schemas/complexity'
+        frame_count:
+          $ref: '#/components/schemas/frame_count'
       required:
       - prompt
       - image
     CreateImageRequest:
       type: object
       properties:
+        frame_count:
+          $ref: '#/components/schemas/frame_count'
+        frame_duration_ms:
+          $ref: '#/components/schemas/frame_duration_ms'
+        complexity:
+          $ref: '#/components/schemas/complexity'
+        svg:
+          $ref: '#/components/schemas/svg'
         prompt:
           description: A text description of the desired image(s). The maximum length is 32000 characters.
           type: string
@@ -43436,12 +43595,16 @@ components:
             - gpt-image-2.5-sunburst-2026-09-08
             - gpt-image-2.5-flare
             - gpt-image-2.5-flare-2026-09-08
+            - gpt-image-2.6-sunburst
+            - gpt-image-2.6-flare
             - gpt-image-1
             - gpt-image-1-mini
             - chatgpt-image-latest
             - dall-e-2
             - dall-e-3
             x-openai-enum-deprecations:
+              gpt-image-1:
+                message: GPT Image 1 was shut down on October 23, 2026. Use gpt-image-2.5-sunburst or gpt-image-2.5-flare instead.
               dall-e-2:
                 message: This model was retired on May 12, 2026. Use a GPT image model instead.
               dall-e-3:
@@ -43449,7 +43612,16 @@ components:
             x-stainless-nominal: false
           x-oaiTypeLabel: string
           example: gpt-image-2.5-flare
-          description: The GPT image model to use for image generation. Specify a model explicitly. Supported models include `gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`, `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`, `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`, `gpt-image-2.5-flare-2026-09-08`, and `chatgpt-image-latest`.
+          description: |
+            The GPT image model to use for image generation. Specify a model explicitly.
+            Supported models include `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`,
+            `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`,
+            `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`,
+            `gpt-image-2.5-flare-2026-09-08`, `gpt-image-2.6-sunburst`, `gpt-image-2.6-flare`,
+            and `chatgpt-image-latest`.
+
+            `gpt-image-1` was shut down on October 23, 2026. Use
+            `gpt-image-2.5-sunburst` or `gpt-image-2.5-flare` instead.
           nullable: true
         n:
           type:
@@ -43505,10 +43677,12 @@ components:
             - png
             - jpeg
             - webp
+            - gif
+            - svg
           - type: 'null'
           default: png
           example: png
-          description: The format in which the generated images are returned. This parameter is only supported for the GPT image models. Must be one of `png`, `jpeg`, or `webp`.
+          description: The format in which the generated images are returned. This parameter is only supported for the GPT image models.
         output_compression:
           type:
           - integer
@@ -43595,11 +43769,18 @@ components:
           example: vivid
           deprecated: true
           description: Legacy style parameter for retired image models. Unsupported for GPT image models; describe the desired style in the prompt instead.
+        safety_identifier:
+          type:
+          - string
+          - 'null'
+          maxLength: 128
+          example: user-1234
+          description: A stable identifier for an end user in your organization, used for safety monitoring and abuse detection. Hash a username or email address to avoid sending identifying information. A non-empty value takes precedence over the deprecated `user` parameter. If omitted, null, or empty, the API uses `user` when available. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
         user:
           type: string
           example: user-1234
-          description: |
-            A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
+          deprecated: true
+          description: 'Deprecated: use `safety_identifier` instead. This parameter remains accepted for backward compatibility and is used when `safety_identifier` is omitted, null, or empty. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).'
       required:
       - prompt
     CreateImageVariationRequest:
@@ -43724,8 +43905,6 @@ components:
       - $ref: '#/components/schemas/ModelResponseProperties'
       - type: object
         properties:
-          prompt_cache_options:
-            $ref: '#/components/schemas/PromptCacheOptionsParam'
           top_logprobs:
             description: |
               An integer between 0 and 20 specifying the maximum number of most likely
@@ -43746,13 +43925,13 @@ components:
           - type: string
             description: A string of text to classify for moderation.
             default: ''
-            example: I want to kill them.
+            example: '...text to classify goes here...'
           - type: array
             description: An array of strings to classify for moderation.
             items:
               type: string
               default: ''
-              example: I want to kill them.
+              example: '...text to classify goes here...'
           - type: array
             description: An array of multi-modal inputs to the moderation model.
             items:
@@ -44383,7 +44562,7 @@ components:
           description: Control the voice of your generated audio with additional instructions. Does not work with `tts-1` or `tts-1-hd`.
           maxLength: 4096
         voice:
-          description: 'The voice to use when generating the audio. Supported built-in voices are `alloy`, `ash`, `ballad`, `coral`, `echo`, `fable`, `onyx`, `nova`, `sage`, `shimmer`, `verse`, `marin`, and `cedar`. You may also provide a custom voice object with an `id`, for example `{ "id": "voice_1234" }`. Previews of the voices are available in the [Text to speech guide](https://developers.openai.com/api/docs/guides/text-to-speech#voice-options). Custom voices must be created from audio samples.'
+          description: 'The voice to use when generating the audio. Supported built-in voices are `alloy`, `ash`, `ballad`, `coral`, `echo`, `fable`, `onyx`, `nova`, `sage`, `shimmer`, `verse`, `marin`, and `cedar`. You may also provide a custom voice object with an `id`, for example `{ "id": "voice_1234" }`. Previews of the voices are available in the [Text to speech guide](https://developers.openai.com/api/docs/guides/text-to-speech#voice-options). Custom voices must be created from audio samples. Voices created from text prompts are supported only in Live.'
           title: Voice
           anyOf:
           - anyOf:
@@ -45275,9 +45454,11 @@ components:
         propertyName: type
         mapping:
           audio_sample: '#/components/schemas/CreateVoiceFromConsentRequest'
+          prompt: '#/components/schemas/CreateVoicePromptRequest'
       x-oai-default-discriminator-value: audio_sample
       anyOf:
       - $ref: '#/components/schemas/CreateVoiceFromConsentRequest'
+      - $ref: '#/components/schemas/CreateVoicePromptRequest'
     CustomToolCall:
       type: object
       title: Custom tool call
@@ -45746,14 +45927,27 @@ components:
             - gpt-image-2.5-sunburst-2026-09-08
             - gpt-image-2.5-flare
             - gpt-image-2.5-flare-2026-09-08
+            - gpt-image-2.6-sunburst
+            - gpt-image-2.6-flare
             - gpt-image-1
             - gpt-image-1-mini
             - chatgpt-image-latest
+            x-openai-enum-deprecations:
+              gpt-image-1:
+                message: GPT Image 1 was shut down on October 23, 2026. Use gpt-image-2.5-sunburst or gpt-image-2.5-flare instead.
           - type: 'null'
           x-oaiTypeLabel: string
           default: gpt-image-2.5-sunburst
           example: gpt-image-2.5-sunburst
-          description: The GPT image model to use for image editing, including `gpt-image-2`, its dated snapshot `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`, `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`, and `gpt-image-2.5-flare-2026-09-08`. Defaults to `gpt-image-2.5-sunburst`.
+          description: |
+            The GPT image model to use for image editing, including `gpt-image-2`, its dated
+            snapshot `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`,
+            `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`,
+            `gpt-image-2.5-flare-2026-09-08`, `gpt-image-2.6-sunburst`, and `gpt-image-2.6-flare`.
+            Defaults to `gpt-image-2.5-sunburst`.
+
+            `gpt-image-1` was shut down on October 23, 2026. Use
+            `gpt-image-2.5-sunburst` or `gpt-image-2.5-flare` instead.
         images:
           type: array
           minItems: 1
@@ -45804,7 +45998,7 @@ components:
             - high
             - low
           - type: 'null'
-          description: Control how much effort the model will exert to match the style and features, especially facial features, of input images. Supports `high` and `low` on `gpt-image-1` and `gpt-image-1.5`; `gpt-image-1-mini` supports only `low`. For `gpt-image-2`, omit this parameter. Defaults to `low` on supported models.
+          description: Control how much effort the model will exert to match the style and features, especially facial features, of input images. Supports `high` and `low` on `gpt-image-1.5`; `gpt-image-1-mini` supports only `low`. For `gpt-image-2`, omit this parameter. Defaults to `low` on supported models.
         size:
           anyOf:
           - type: string
@@ -45821,9 +46015,8 @@ components:
         user:
           type: string
           example: user-1234
-          description: |
-            A unique identifier representing your end-user, which can help OpenAI
-            monitor and detect abuse.
+          description: 'Deprecated: use `safety_identifier` instead. This parameter remains accepted for backward compatibility and is used when `safety_identifier` is omitted, null, or empty. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).'
+          deprecated: true
         output_format:
           anyOf:
           - type: string
@@ -45831,6 +46024,7 @@ components:
             - png
             - jpeg
             - webp
+            - gif
           - type: 'null'
           default: png
           example: png
@@ -45873,6 +46067,22 @@ components:
           description: Stream partial image results as events.
         partial_images:
           $ref: '#/components/schemas/PartialImages'
+        safety_identifier:
+          type:
+          - string
+          - 'null'
+          maxLength: 128
+          example: user-1234
+          description: A stable identifier for an end user in your organization, used for safety monitoring and abuse detection. Hash a username or email address to avoid sending identifying information. A non-empty value takes precedence over the deprecated `user` parameter. If omitted, null, or empty, the API uses `user` when available. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
+        markup:
+          $ref: '#/components/schemas/ImageRefParam'
+          description: A transparent PNG overlaid on the first image, referenced by file ID, HTTPS URL, or base64 data URL. Must match that image's dimensions after orientation and contain transparent pixels. Supports GPT Image 2.5 and 2.6. Cannot be combined with mask.
+        frame_duration_ms:
+          $ref: '#/components/schemas/frame_duration_ms'
+        complexity:
+          $ref: '#/components/schemas/complexity'
+        frame_count:
+          $ref: '#/components/schemas/frame_count'
       required:
       - images
       - prompt
@@ -49168,6 +49378,11 @@ components:
           - jpeg
         usage:
           $ref: '#/components/schemas/ImagesUsage'
+        safety_identifier:
+          type:
+          - string
+          - 'null'
+          description: The effective safety identifier used for safety monitoring and abuse detection. This is the non-empty `safety_identifier` from the request, or the deprecated `user` value when `safety_identifier` is omitted, null, or empty.
       required:
       - type
       - b64_json
@@ -49352,6 +49567,11 @@ components:
           - jpeg
         usage:
           $ref: '#/components/schemas/ImagesUsage'
+        safety_identifier:
+          type:
+          - string
+          - 'null'
+          description: The effective safety identifier used for safety monitoring and abuse detection. This is the non-empty `safety_identifier` from the request, or the deprecated `user` value when `safety_identifier` is omitted, null, or empty.
       required:
       - type
       - b64_json
@@ -49501,16 +49721,38 @@ components:
             - gpt-image-2.5-sunburst-2026-09-08
             - gpt-image-2.5-flare
             - gpt-image-2.5-flare-2026-09-08
+            - gpt-image-2.6-sunburst
+            - gpt-image-2.6-flare
             - gpt-image-1.5
             - chatgpt-image-latest
+            x-openai-enum-deprecations:
+              gpt-image-1:
+                message: GPT Image 1 was shut down on October 23, 2026. Use gpt-image-2.5-sunburst or gpt-image-2.5-flare instead.
             description: |
-              The image generation model to use. One of `gpt-image-1`,
-              `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`,
+              The image generation model to use. One of `gpt-image-1-mini`,
+              `gpt-image-1.5`, `gpt-image-2`,
               `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`,
               `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`,
-              `gpt-image-2.5-flare-2026-09-08`, or `chatgpt-image-latest`. Default:
-              `gpt-image-1`.
-            default: gpt-image-1
+              `gpt-image-2.5-flare-2026-09-08`, `gpt-image-2.6-sunburst`,
+              `gpt-image-2.6-flare`, or `chatgpt-image-latest`. Default:
+              `gpt-image-2`.
+
+              `gpt-image-1` was shut down on October 23, 2026. Use
+              `gpt-image-2.5-sunburst` or `gpt-image-2.5-flare` instead.
+            default: gpt-image-2
+        complexity:
+          type: string
+          enum:
+          - low
+          - medium
+          - high
+          description: |
+            Computation spent planning the image, independently of rendering quality.
+            Overrides the outer response's `reasoning.effort` for image generation.
+            When omitted, inherits a supported outer reasoning effort or uses the
+            image model's configured default.
+            For SVG output, controls the reference image, not the SVG author's
+            reasoning.
         quality:
           type: string
           enum:
@@ -49543,10 +49785,38 @@ components:
           - png
           - webp
           - jpeg
+          - gif
+          - svg
           description: |
-            The output format of the generated image. One of `png`, `webp`, or
-            `jpeg`. Default: `png`.
+            The output format of the generated image. One of `png`, `webp`, `jpeg`,
+            `gif`, or `svg`. Default: `png`. GIF and SVG output require a model
+            that supports the selected format. GIF output does not support
+            partial image streaming (`partial_images` greater than `0`),
+            `input_image_mask`, or custom `output_compression`.
+            Responses lifecycle events can still be streamed for GIF output.
           default: png
+        frame_count:
+          type: integer
+          minimum: 2
+          maximum: 16
+          default: 9
+          description: |
+            Number of GIF frames. Requires `output_format` to be `gif`. Default: 9.
+        frame_duration_ms:
+          type: integer
+          minimum: 20
+          maximum: 2000
+          default: 200
+          description: |
+            Duration of each GIF frame in milliseconds, rounded to 10 ms.
+            Requires `output_format` to be `gif`. Default: 200.
+        svg:
+          description: |
+            SVG author model settings. Requires `output_format` to be `svg`.
+            When SVG model selection is enabled, omitting this object uses the
+            outer response model. Otherwise, the default SVG author is used and
+            explicit model overrides are unavailable.
+          $ref: '#/components/schemas/SvgParam'
         output_compression:
           type: integer
           minimum: 0
@@ -49644,6 +49914,31 @@ components:
       title: Image generation response
       description: The response from the image generation endpoint.
       properties:
+        svg_usage:
+          type: object
+          description: Token usage for the model that authored the SVG, separate from image rendering usage.
+          properties:
+            model:
+              type: string
+            input_tokens:
+              type: integer
+            output_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+            reasoning_tokens:
+              type: integer
+          required:
+          - model
+          - input_tokens
+          - output_tokens
+          - total_tokens
+          - reasoning_tokens
+        safety_identifier:
+          type:
+          - string
+          - 'null'
+          description: The effective safety identifier used for safety monitoring and abuse detection. This is the non-empty `safety_identifier` from the request, or the deprecated `user` value when `safety_identifier` is omitted, null, or empty.
         created:
           type: integer
           format: unixtime
@@ -49661,11 +49956,13 @@ components:
           - opaque
         output_format:
           type: string
-          description: The output format of the image generation. Either `png`, `webp`, or `jpeg`.
+          description: The output format of the generated image.
           enum:
           - png
           - webp
           - jpeg
+          - gif
+          - svg
         size:
           anyOf:
           - type: string
@@ -50623,6 +50920,8 @@ components:
           default: live
           x-stainless-const: true
           description: The session type. Always `live`.
+        triggers:
+          $ref: '#/components/schemas/triggers'
       required:
       - model
       - type
@@ -50666,6 +50965,9 @@ components:
       - $ref: '#/components/schemas/LiveInstructionsAppendParam'
       - $ref: '#/components/schemas/LiveThinkingAppendParam'
       - $ref: '#/components/schemas/LiveCommentaryAppendParam'
+      - $ref: '#/components/schemas/LiveDecisionCreateParam'
+      - $ref: '#/components/schemas/LiveDecisionItemCreateParam'
+      - $ref: '#/components/schemas/LiveDecisionItemDeleteParam'
       - $ref: '#/components/schemas/LiveResponseItemCreateParam'
       - $ref: '#/components/schemas/LiveResponseCreateParam'
       - $ref: '#/components/schemas/LiveSessionCloseParam'
@@ -50724,6 +51026,9 @@ components:
       - $ref: '#/components/schemas/LiveInstructionsAppendParam'
       - $ref: '#/components/schemas/LiveThinkingAppendParam'
       - $ref: '#/components/schemas/LiveCommentaryAppendParam'
+      - $ref: '#/components/schemas/LiveDecisionCreateParam'
+      - $ref: '#/components/schemas/LiveDecisionItemCreateParam'
+      - $ref: '#/components/schemas/LiveDecisionItemDeleteParam'
       - $ref: '#/components/schemas/LiveResponseItemCreateParam'
       - $ref: '#/components/schemas/LiveResponseCreateParam'
       - $ref: '#/components/schemas/LiveSessionCloseParam'
@@ -50778,6 +51083,8 @@ components:
           $ref: '#/components/schemas/input'
         client:
           $ref: '#/components/schemas/LiveClientConfigParam'
+        triggers:
+          $ref: '#/components/schemas/triggers'
       required:
       - model
       additionalProperties: false
@@ -50916,9 +51223,13 @@ components:
       - $ref: '#/components/schemas/LiveInputAudioMuteParam'
       - $ref: '#/components/schemas/LiveInputAudioUnmuteParam'
       - $ref: '#/components/schemas/LiveOutputAudioFixturePlayParam'
+      - $ref: '#/components/schemas/LiveTransportDTMFSendParam'
       - $ref: '#/components/schemas/LiveInstructionsAppendParam'
       - $ref: '#/components/schemas/LiveThinkingAppendParam'
       - $ref: '#/components/schemas/LiveCommentaryAppendParam'
+      - $ref: '#/components/schemas/LiveDecisionCreateParam'
+      - $ref: '#/components/schemas/LiveDecisionItemCreateParam'
+      - $ref: '#/components/schemas/LiveDecisionItemDeleteParam'
       - $ref: '#/components/schemas/LiveResponseItemCreateParam'
       - $ref: '#/components/schemas/LiveResponseCreateParam'
       - $ref: '#/components/schemas/LiveSessionCloseParam'
@@ -50940,7 +51251,7 @@ components:
           type: string
           description: The ID of the existing Live session to attach to.
     LiveSidebandServerEvent:
-      description: Server events received by an attached Live sideband WebSocket. Audio deltas are delivered over the primary connection.
+      description: Server events received by an attached Live sideband WebSocket, including reflected input and output audio and transport notifications.
       discriminator:
         propertyName: type
       anyOf:
@@ -50956,11 +51267,22 @@ components:
       - $ref: '#/components/schemas/LiveInputTranscriptDelta'
       - $ref: '#/components/schemas/LiveOutputTranscriptDelta'
       - $ref: '#/components/schemas/LiveDelegationCreated'
+      - $ref: '#/components/schemas/LiveDecisionEvent'
+      - $ref: '#/components/schemas/LiveDecisionItemCreated'
+      - $ref: '#/components/schemas/LiveDecisionItemDeleted'
       - $ref: '#/components/schemas/LiveResponseEvent'
       - $ref: '#/components/schemas/LiveSessionUsageUpdated'
       - $ref: '#/components/schemas/LiveSessionClosed'
       - $ref: '#/components/schemas/LiveErrorEvent'
       - $ref: '#/components/schemas/LiveInfoEvent'
+      - $ref: '#/components/schemas/LiveInputAudioAppend'
+      - $ref: '#/components/schemas/LiveOutputAudioDelta'
+      - $ref: '#/components/schemas/LiveTransportDTMFReceived'
+      - $ref: '#/components/schemas/LiveTransportDTMFSend'
+      - $ref: '#/components/schemas/LiveTransportDTMFSent'
+      - $ref: '#/components/schemas/LiveTransportRinging'
+      - $ref: '#/components/schemas/LiveTransportAnswered'
+      - $ref: '#/components/schemas/LiveTransportFailed'
     LiveWebRTCTransport:
       type: object
       description: WebRTC transport carrying the offer SDP in a creation request or answer SDP in its response.
@@ -52218,6 +52540,7 @@ components:
         - gpt-daybreak-red-latest
         - gpt-5.6-cyber
         - gpt-rosalind-research
+        - gpt-6-rosalind
         x-openai-enum-deprecations:
           o1-pro:
             message: 'Announced shutdown date: 2026-10-23. See https://developers.openai.com/api/docs/deprecations for details and recommended replacements.'
@@ -54904,7 +55227,7 @@ components:
             `marin`, and `cedar`. You may also provide a custom voice object with an
             `id`, for example `{ "id": "voice_1234" }`. Voice cannot be changed during
             the session once the model has responded with audio at least once.
-            Custom voices must be created from audio samples.
+            Custom voices must be created from audio samples. Voices created from text prompts are supported only in Live.
         output_audio_format:
           type: string
           enum:
@@ -58248,7 +58571,7 @@ components:
                     `marin`, and `cedar`. You may also provide a custom voice object with
                     an `id`, for example `{ "id": "voice_1234" }`. Voice cannot be changed
                     during the session once the model has responded with audio at least once.
-                    Custom voices must be created from audio samples.
+                    Custom voices must be created from audio samples. Voices created from text prompts are supported only in Live.
                     We recommend `marin` and `cedar` for best quality.
         tools:
           type: array
@@ -58687,7 +59010,7 @@ components:
         logprobs:
           anyOf:
           - type: array
-            description: 'The log probabilities of the transcription. These can be enabled by configurating the session with `"include": ["item.input_audio_transcription.logprobs"]`. Each entry in the array corresponds a log probability of which token would be selected for this chunk of transcription. This can help to identify if it was possible there were multiple valid options for a given chunk of transcription.'
+            description: 'The log probabilities of the transcription. These can be enabled by configuring the session with `"include": ["item.input_audio_transcription.logprobs"]`. Each entry in the array corresponds a log probability of which token would be selected for this chunk of transcription. This can help to identify if it was possible there were multiple valid options for a given chunk of transcription.'
             items:
               $ref: '#/components/schemas/LogProbProperties'
           - type: 'null'
@@ -58909,7 +59232,7 @@ components:
       description: |
         Returned when an error occurs, which could be a client problem or a server
         problem. Most errors are recoverable and the session will stay open, we
-        recommend to implementors to monitor and log error messages by default.
+        recommend to implementers to monitor and log error messages by default.
       properties:
         event_id:
           type: string
@@ -60821,7 +61144,7 @@ components:
             `marin`, and `cedar`. You may also provide a custom voice object with an
             `id`, for example `{ "id": "voice_1234" }`. Voice cannot be changed during
             the session once the model has responded with audio at least once.
-            Custom voices must be created from audio samples.
+            Custom voices must be created from audio samples. Voices created from text prompts are supported only in Live.
         input_audio_format:
           type: string
           description: |
@@ -61101,7 +61424,7 @@ components:
                     `marin`, and `cedar`. You may also provide a custom voice object with
                     an `id`, for example `{ "id": "voice_1234" }`. Voice cannot be changed
                     during the session once the model has responded with audio at least once.
-                    Custom voices must be created from audio samples.
+                    Custom voices must be created from audio samples. Voices created from text prompts are supported only in Live.
                     We recommend `marin` and `cedar` for best quality.
                 speed:
                   type: number
@@ -63518,8 +63841,8 @@ components:
     ResponseConfigurationUpdate:
       type: object
       description: |
-        A configuration update that applies to subsequent responses until it is
-        replaced by another configuration update.
+        A configuration update for subsequent responses. Each setting stays in effect
+        until a later update replaces that setting.
       properties:
         id:
           type: string
@@ -63541,15 +63864,27 @@ components:
               description: |
                 The reasoning effort used for subsequent responses until another
                 configuration update replaces it.
+        text:
+          type: object
+          description: The text output configuration for subsequent responses.
+          properties:
+            format:
+              description: Use a JSON schema for structured output or text to return to plain text.
+              discriminator:
+                propertyName: type
+              anyOf:
+              - $ref: '#/components/schemas/ResponseFormatText'
+              - $ref: '#/components/schemas/TextResponseFormatJsonSchema'
+          required:
+          - format
       required:
       - id
       - type
     ResponseConfigurationUpdateItemParam:
       type: object
       description: |
-        An update to the conversation's response configuration. The configuration
-        remains in effect for subsequent responses until it is replaced by another
-        configuration update.
+        An update to the conversation's response configuration. Supply reasoning,
+        text, or both. Each setting stays in effect until a later update replaces it.
       properties:
         id:
           anyOf:
@@ -63573,6 +63908,19 @@ components:
               description: |
                 The reasoning effort to use for subsequent responses until another
                 configuration update replaces it.
+        text:
+          type: object
+          description: The text output configuration for subsequent responses.
+          properties:
+            format:
+              description: Use a JSON schema for structured output or text to return to plain text.
+              discriminator:
+                propertyName: type
+              anyOf:
+              - $ref: '#/components/schemas/ResponseFormatText'
+              - $ref: '#/components/schemas/TextResponseFormatJsonSchema'
+          required:
+          - format
       required:
       - type
     ResponseContentPartAddedEvent:
@@ -66442,6 +66790,8 @@ components:
             cache_write_tokens:
               type: integer
               description: The number of input tokens that were written to the cache.
+            cache_write_tokens_details:
+              $ref: '#/components/schemas/CacheWriteTokensDetails'
           required:
           - cached_tokens
           - cache_write_tokens
@@ -69147,12 +69497,12 @@ components:
         Setting to `{ "type": "json_object" }` enables the older JSON mode, which
         ensures the message the model generates is valid JSON. Using `json_schema`
         is preferred for models that support it.
+      discriminator:
+        propertyName: type
       anyOf:
       - $ref: '#/components/schemas/ResponseFormatText'
       - $ref: '#/components/schemas/TextResponseFormatJsonSchema'
       - $ref: '#/components/schemas/ResponseFormatJsonObject'
-      discriminator:
-        propertyName: type
     TextResponseFormatJsonSchema:
       x-openai-structured-output: json_schema_default_strict
       type: object
@@ -70272,7 +70622,7 @@ components:
           description: The aggregated number of cached input tokens used across text, audio, and image inputs. For customers subscribed to Scale Tier, this includes Scale Tier tokens.
         input_cache_write_tokens:
           type: integer
-          description: The aggregated number of input tokens written to the cache with a 30-minute retention period.
+          description: The aggregated number of input tokens written to the cache across 30-minute and 12-hour retention periods.
         input_cache_write_12h_tokens:
           type: integer
           description: The aggregated number of input tokens written to the cache with a 12-hour retention period.
@@ -70342,6 +70692,11 @@ components:
           - type: string
             description: When `group_by=service_tier`, this field provides the service tier of the grouped usage result.
           - type: 'null'
+        input_cache_write_30m_tokens:
+          anyOf:
+          - type: integer
+            description: The aggregated number of input tokens written to the cache with a 30-minute retention period. May be absent or null for older responses.
+          - type: 'null'
       required:
       - object
       - input_tokens
@@ -70354,7 +70709,8 @@ components:
               "object": "organization.usage.completions.result",
               "input_tokens": 5000,
               "input_cached_tokens": 1800,
-              "input_cache_write_tokens": 150,
+              "input_cache_write_tokens": 200,
+              "input_cache_write_30m_tokens": 150,
               "input_cache_write_12h_tokens": 50,
               "input_uncached_tokens": 3000,
               "output_tokens": 1000,
@@ -71725,7 +72081,7 @@ components:
     VoiceResource:
       type: object
       title: Voice
-      description: A custom voice that can be used for audio output.
+      description: A custom voice that can be used for audio output. Voices created from text prompts are supported only in Live.
       additionalProperties: false
       properties:
         object:
@@ -71742,6 +72098,10 @@ components:
           type: string
           enum:
           - audio_sample
+          - prompt
+        prompt:
+          type: string
+          description: The original text prompt used to create the voice. Present for prompt-generated voices with a stored prompt; omitted for audio-sample voices and older voices without a stored prompt.
         name:
           type: string
           description: The name of the voice.
@@ -73705,7 +74065,7 @@ components:
       type: object
       required: []
       title: Prompt cache options
-      description: Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`, which is currently the only supported value. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.
+      description: Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`. Supported lifetimes depend on the API. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.
     PromptCacheBreakpointParam:
       properties:
         mode:
@@ -73715,11 +74075,18 @@ components:
           description: The breakpoint mode. Always `explicit`.
           default: explicit
           x-stainless-const: true
+        ttl:
+          type: string
+          enum:
+          - 30m
+          - 12h
+          description: The minimum lifetime of this cache breakpoint. Defaults to the request TTL.
       type: object
       required:
       - mode
       title: Prompt cache breakpoint
-      description: Marks the exact end of a reusable prompt prefix. The breakpoint inherits its TTL from the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      description: Marks the exact end of a reusable prompt prefix. When `ttl` is omitted, the breakpoint inherits the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      x-stainless-go-constant-constructor: true
     ModerationMode:
       type: string
       enum:
@@ -73939,11 +74306,18 @@ components:
           description: The breakpoint mode. Always `explicit`.
           default: explicit
           x-stainless-const: true
+        ttl:
+          type: string
+          enum:
+          - 30m
+          - 12h
+          description: The minimum lifetime of this cache breakpoint. Defaults to the request TTL.
       type: object
       required:
       - mode
       title: Prompt cache breakpoint
-      description: Marks the exact end of a reusable prompt prefix. The breakpoint inherits its TTL from the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      description: Marks the exact end of a reusable prompt prefix. When `ttl` is omitted, the breakpoint inherits the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      x-stainless-go-constant-constructor: true
     InputTextContent:
       properties:
         type:
@@ -73958,6 +74332,7 @@ components:
           description: The text input to the model.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/PromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -74233,6 +74608,7 @@ components:
           description: The detail level of the image to be sent to the model. One of `high`, `low`, `auto`, or `original`. Defaults to `auto`.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/PromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -74264,6 +74640,7 @@ components:
           description: The detail level of the screenshot image to be sent to the model. One of `high`, `low`, `auto`, or `original`. Defaults to `auto`.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/PromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -74301,6 +74678,7 @@ components:
             The content of the file to be sent to the model.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/PromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
         file_url:
           type: string
           format: uri
@@ -74475,11 +74853,10 @@ components:
       - png
       - webp
       - jpeg
+      - gif
+      - svg
     ImageGenToolCall:
       properties:
-        error:
-          $ref: '#/components/schemas/ImageGenToolCallError'
-          description: Details of a moderation failure, when available.
         type:
           type: string
           enum:
@@ -74502,6 +74879,9 @@ components:
           - type: string
             description: The generated image encoded in base64.
           - type: 'null'
+        error:
+          $ref: '#/components/schemas/ImageGenToolCallError'
+          description: Details of a moderation failure, when available.
         size:
           anyOf:
           - anyOf:
@@ -74543,6 +74923,8 @@ components:
             description: The output format used for generation.
           - type: 'null'
           x-openai-go-optional-enum: true
+        svg_usage:
+          $ref: '#/components/schemas/SvgUsage'
         revised_prompt:
           anyOf:
           - type: string
@@ -75086,7 +75468,7 @@ components:
       enum:
       - high
       - low
-      description: Control how much effort the model will exert to match the style and features, especially facial features, of input images. Supports `high` and `low` on `gpt-image-1` and `gpt-image-1.5`; `gpt-image-1-mini` supports only `low`. For `gpt-image-2`, omit this parameter. Defaults to `low` on supported models.
+      description: Control how much effort the model will exert to match the style and features, especially facial features, of input images. Supports `high` and `low` on `gpt-image-1.5`; `gpt-image-1-mini` supports only `low`. For `gpt-image-2`, omit this parameter. Defaults to `low` on supported models.
     LocalShellToolParam:
       properties:
         type:
@@ -76247,6 +76629,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/PromptCacheBreakpointParam'
           - type: 'null'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -76284,6 +76667,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/PromptCacheBreakpointParam'
           - type: 'null'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -76334,6 +76718,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/PromptCacheBreakpointParam'
           - type: 'null'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -77296,6 +77681,11 @@ components:
           type: string
           enum:
           - client
+        acknowledgement_delay_ms:
+          description: Milliseconds to wait before requesting an automatic spoken acknowledgement for a delegation. The model may still speak before this delay. Any commentary or thinking appended to the session cancels all pending acknowledgements, including those for other delegations. Defaults to 400 for Decisions sessions and 0 (request immediately) for other sessions. Omission in a session update preserves the current value. Updates apply to subsequent delegations.
+          type: integer
+          minimum: 0
+          maximum: 800
       required:
       - type
     LiveResponsesServiceTier:
@@ -77746,6 +78136,36 @@ components:
       - auto
       - none
       - required
+    LiveTransportDTMFSend:
+      description: Legacy SIP DTMF delivery notification retained for SDK compatibility and saved events. Current servers confirm delivery with transport.dtmf.sent; transport.dtmf.send is now the client command.
+      example:
+        type: transport.dtmf.send
+        event_id: event_dtmf_2
+        event: '#'
+      type: object
+      properties:
+        type:
+          default: transport.dtmf.send
+          x-stainless-const: true
+          type: string
+          enum:
+          - transport.dtmf.send
+        event_id:
+          type: string
+        event:
+          type: string
+          minLength: 1
+          maxLength: 1
+          pattern: ^[0-9A-D*#]$
+      required:
+      - type
+      - event_id
+      - event
+      x-oaiMeta:
+        example:
+          type: transport.dtmf.send
+          event_id: event_dtmf_2
+          event: '#'
     LegacyComputerAction:
       discriminator:
         propertyName: type
@@ -77759,42 +78179,6 @@ components:
       - $ref: '#/components/schemas/ScrollParam'
       - $ref: '#/components/schemas/TypeParam'
       - $ref: '#/components/schemas/WaitParam'
-    CodeInterpreterContainerAuto:
-      properties:
-        type:
-          type: string
-          enum:
-          - auto
-          description: Always `auto`.
-          default: auto
-          x-stainless-const: true
-        file_ids:
-          items:
-            type: string
-            example: file-123
-          type: array
-          maxItems: 50
-          description: An optional list of uploaded files to make available to your code.
-        memory_limit:
-          anyOf:
-          - $ref: '#/components/schemas/ContainerMemoryLimit'
-            description: The memory limit for the code interpreter container.
-          - type: 'null'
-        network_policy:
-          discriminator:
-            propertyName: type
-          description: Network access policy for the container.
-          anyOf:
-          - $ref: '#/components/schemas/ContainerNetworkPolicyDisabledParam'
-          - $ref: '#/components/schemas/ContainerNetworkPolicyAllowlistParam'
-      type: object
-      required:
-      - type
-      title: CodeInterpreterToolAuto
-      description: Configuration for a code interpreter container. Optionally specify the IDs of the files to run the code on.
-      x-stainless-naming:
-        go:
-          type_name: ToolCodeInterpreterContainerCodeInterpreterContainerAuto
     LiveSpecificFileSearchParam:
       type: object
       properties:
@@ -78010,12 +78394,37 @@ components:
             anyOf:
             - $ref: '#/components/schemas/LiveFunctionToolInputParam'
             - $ref: '#/components/schemas/LiveWebSearchToolInputParam'
+            - $ref: '#/components/schemas/LiveFileSearchToolInputParam'
+            - $ref: '#/components/schemas/LiveCodeInterpreterToolInputParam'
+            - $ref: '#/components/schemas/LiveHostedShellToolInputParam'
+            - $ref: '#/components/schemas/LiveImageGenerationToolInputParam'
+            - $ref: '#/components/schemas/LiveMCPToolInputParam'
+            - $ref: '#/components/schemas/LiveCustomToolInputParam'
+            - $ref: '#/components/schemas/LiveNamespaceToolInputParam'
+            - $ref: '#/components/schemas/LiveToolSearchToolInputParam'
+            - $ref: '#/components/schemas/LiveProgrammaticToolInputParam'
+            - $ref: '#/components/schemas/LiveComputerToolInputParam'
+            - $ref: '#/components/schemas/LiveApplyPatchToolInputParam'
         tool_choice:
           description: Controls which tool the Responses backend uses when handling a task delegated by the Live model.
           anyOf:
           - $ref: '#/components/schemas/LiveToolChoiceEnum'
-          - $ref: '#/components/schemas/LiveFunctionToolChoiceParam'
-          - $ref: '#/components/schemas/LiveMCPToolChoiceParam'
+          - discriminator:
+              propertyName: type
+            anyOf:
+            - $ref: '#/components/schemas/LiveFunctionToolChoiceParam'
+            - $ref: '#/components/schemas/LiveMCPToolChoiceParam'
+            - $ref: '#/components/schemas/LiveSpecificFileSearchParam'
+            - $ref: '#/components/schemas/LiveSpecificWebSearchParam'
+            - $ref: '#/components/schemas/LiveSpecificWebSearchPreviewParam'
+            - $ref: '#/components/schemas/LiveSpecificImageGenParam'
+            - $ref: '#/components/schemas/LiveSpecificComputerParam'
+            - $ref: '#/components/schemas/LiveSpecificCodeInterpreterParam'
+            - $ref: '#/components/schemas/LiveSpecificProgrammaticToolCallingParam'
+            - $ref: '#/components/schemas/LiveSpecificFunctionShellParam'
+            - $ref: '#/components/schemas/LiveSpecificCustomToolParam'
+            - $ref: '#/components/schemas/LiveSpecificApplyPatchParam'
+          - $ref: '#/components/schemas/LiveAllowedToolsChoiceParam'
         parallel_tool_calls:
           anyOf:
           - description: Whether the delegated Responses model may request multiple tool calls in a single response.
@@ -78038,17 +78447,23 @@ components:
           description: Backend model, prompt, and tools used when the Live session delegates a task to Responses.
           $ref: '#/components/schemas/LiveResponsesDelegationSettingsInputParam'
           x-stainless-go-json: omitzero
+        acknowledgement_delay_ms:
+          description: Milliseconds to wait before requesting an automatic spoken acknowledgement for a delegation. The model may still speak before this delay. Any commentary or thinking appended to the session cancels all pending acknowledgements, including those for other delegations. Defaults to 400 for Decisions sessions and 0 (request immediately) for other sessions. Omission in a session update preserves the current value. Updates apply to subsequent delegations.
+          type: integer
+          minimum: 0
+          maximum: 800
       required:
       - type
       - responses
     delegation:
       anyOf:
-      - description: Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` to let the API manage a Responses backend.
+      - description: Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` or `decisions` to delegate to the corresponding API.
         discriminator:
           propertyName: type
         anyOf:
         - $ref: '#/components/schemas/LiveClientDelegationParam'
         - $ref: '#/components/schemas/LiveResponsesDelegationParam'
+        - $ref: '#/components/schemas/LiveDecisionsDelegationParam'
       - type: 'null'
     store:
       description: Whether to store the session for later forking and recording download. Defaults to false for new sessions.
@@ -78235,7 +78650,7 @@ components:
       - $ref: '#/components/schemas/LiveInitialUserMessageItemParam'
       - $ref: '#/components/schemas/LiveInitialAssistantMessageItemParam'
     input:
-      description: Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and 8,192 rendered tokens in total.
+      description: Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and a configured rendered-token limit (8,192 by default).
       type: array
       items:
         $ref: '#/components/schemas/LiveInitialItem'
@@ -78360,12 +78775,37 @@ components:
             anyOf:
             - $ref: '#/components/schemas/LiveFunctionToolInputParam'
             - $ref: '#/components/schemas/LiveWebSearchToolInputParam'
+            - $ref: '#/components/schemas/LiveFileSearchToolInputParam'
+            - $ref: '#/components/schemas/LiveCodeInterpreterToolInputParam'
+            - $ref: '#/components/schemas/LiveHostedShellToolInputParam'
+            - $ref: '#/components/schemas/LiveImageGenerationToolInputParam'
+            - $ref: '#/components/schemas/LiveMCPToolInputParam'
+            - $ref: '#/components/schemas/LiveCustomToolInputParam'
+            - $ref: '#/components/schemas/LiveNamespaceToolInputParam'
+            - $ref: '#/components/schemas/LiveToolSearchToolInputParam'
+            - $ref: '#/components/schemas/LiveProgrammaticToolInputParam'
+            - $ref: '#/components/schemas/LiveComputerToolInputParam'
+            - $ref: '#/components/schemas/LiveApplyPatchToolInputParam'
         tool_choice:
           description: Controls which tool the Responses backend uses when handling a task delegated by the Live model.
           anyOf:
           - $ref: '#/components/schemas/LiveToolChoiceEnum'
-          - $ref: '#/components/schemas/LiveFunctionToolChoiceParam'
-          - $ref: '#/components/schemas/LiveMCPToolChoiceParam'
+          - discriminator:
+              propertyName: type
+            anyOf:
+            - $ref: '#/components/schemas/LiveFunctionToolChoiceParam'
+            - $ref: '#/components/schemas/LiveMCPToolChoiceParam'
+            - $ref: '#/components/schemas/LiveSpecificFileSearchParam'
+            - $ref: '#/components/schemas/LiveSpecificWebSearchParam'
+            - $ref: '#/components/schemas/LiveSpecificWebSearchPreviewParam'
+            - $ref: '#/components/schemas/LiveSpecificImageGenParam'
+            - $ref: '#/components/schemas/LiveSpecificComputerParam'
+            - $ref: '#/components/schemas/LiveSpecificCodeInterpreterParam'
+            - $ref: '#/components/schemas/LiveSpecificProgrammaticToolCallingParam'
+            - $ref: '#/components/schemas/LiveSpecificFunctionShellParam'
+            - $ref: '#/components/schemas/LiveSpecificCustomToolParam'
+            - $ref: '#/components/schemas/LiveSpecificApplyPatchParam'
+          - $ref: '#/components/schemas/LiveAllowedToolsChoiceParam'
         parallel_tool_calls:
           anyOf:
           - description: Whether the delegated Responses model may request multiple tool calls in a single response.
@@ -78386,6 +78826,11 @@ components:
         responses:
           description: Responses backend settings to update. Omitted settings keep their existing values.
           $ref: '#/components/schemas/LiveResponsesDelegationSettingsUpdateInputParam'
+        acknowledgement_delay_ms:
+          description: Milliseconds to wait before requesting an automatic spoken acknowledgement for a delegation. The model may still speak before this delay. Any commentary or thinking appended to the session cancels all pending acknowledgements, including those for other delegations. Defaults to 400 for Decisions sessions and 0 (request immediately) for other sessions. Omission in a session update preserves the current value. Updates apply to subsequent delegations.
+          type: integer
+          minimum: 0
+          maximum: 800
       required:
       - type
     target_uri:
@@ -78582,8 +79027,11 @@ components:
     ResponsePromptCacheOptionsParam:
       properties:
         ttl:
-          $ref: '#/components/schemas/PromptCacheTTLEnum'
-          description: The minimum lifetime applied to every implicit and explicit cache breakpoint written by the request. Defaults to `30m`, which is currently the only supported value. The backend may retain cache entries for longer.
+          description: The minimum lifetime applied to every implicit and explicit cache breakpoint written by the request. Supported values are `30m` (the default) and `12h`. The backend may retain cache entries for longer.
+          type: string
+          enum:
+          - 30m
+          - 12h
         mode:
           $ref: '#/components/schemas/PromptCacheModeEnum'
           description: Controls whether OpenAI automatically creates an implicit cache breakpoint. Defaults to `implicit`. With `implicit`, OpenAI creates one implicit breakpoint and writes up to the latest three explicit breakpoints in the request. With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit breakpoints. If there are no explicit breakpoints, the request does not use prompt caching.
@@ -78599,7 +79047,7 @@ components:
       type: object
       required: []
       title: Prompt cache options
-      description: Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`, which is currently the only supported value. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.
+      description: Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`. Supported lifetimes depend on the API. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.
     ReasoningModeEnum:
       anyOf:
       - type: string
@@ -78643,8 +79091,11 @@ components:
     PromptCacheOptions:
       properties:
         ttl:
-          $ref: '#/components/schemas/PromptCacheTTLEnum'
           description: The minimum lifetime applied to each cache breakpoint.
+          type: string
+          enum:
+          - 30m
+          - 12h
         mode:
           $ref: '#/components/schemas/PromptCacheModeEnum'
           description: Whether implicit prompt-cache breakpoints were enabled.
@@ -79174,7 +79625,7 @@ components:
         input_cache_write_tokens:
           anyOf:
           - type: integer
-            description: The aggregated number of input tokens written to the cache with a 30-minute retention period.
+            description: The aggregated number of input tokens written to the cache across 30-minute and 12-hour retention periods.
           - type: 'null'
         input_cache_write_12h_tokens:
           anyOf:
@@ -79266,6 +79717,11 @@ components:
           anyOf:
           - type: string
             description: When `group_by=service_tier`, this field provides the service tier of the grouped usage result.
+          - type: 'null'
+        input_cache_write_30m_tokens:
+          anyOf:
+          - type: integer
+            description: The aggregated number of input tokens written to the cache with a 30-minute retention period.
           - type: 'null'
       type: object
       required:
@@ -81837,6 +82293,10 @@ components:
           type: string
           minLength: 0
           maxLength: 10485760
+        prompt_cache_breakpoint:
+          anyOf:
+          - $ref: '#/components/schemas/DecisionPromptCacheBreakpoint'
+          - type: 'null'
       required:
       - type
       - text
@@ -81869,6 +82329,10 @@ components:
           - input_image
           default: input_image
           x-stainless-const: true
+        prompt_cache_breakpoint:
+          anyOf:
+          - $ref: '#/components/schemas/DecisionPromptCacheBreakpoint'
+          - type: 'null'
       required:
       - image_url
       - type
@@ -81880,18 +82344,21 @@ components:
         x-oai-discriminator-values:
         - input_text
         - input_image
+        - input_json
         discriminator:
           propertyName: type
           mapping:
             input_text: '#/components/schemas/DecisionInputText'
             input_image: '#/components/schemas/DecisionInputImage'
+            input_json: '#/components/schemas/DecisionInputJson'
         anyOf:
         - $ref: '#/components/schemas/DecisionInputText'
         - $ref: '#/components/schemas/DecisionInputImage'
+        - $ref: '#/components/schemas/DecisionInputJson'
       minItems: 0
       maxItems: 16384
     DecisionInputContent:
-      description: Text evidence or an ordered list of text and image parts.
+      description: A text string or an ordered list of text, image, and JSON parts.
       anyOf:
       - type: string
         minLength: 0
@@ -81900,28 +82367,25 @@ components:
         title: Parts
     DecisionInputMessage:
       type: object
-      properties:
-        role:
-          type: string
-          enum:
-          - user
-          default: user
-          x-stainless-const: true
-        content:
-          $ref: '#/components/schemas/DecisionInputContent'
-        type:
-          type: string
-          enum:
-          - message
-          default: message
-          x-stainless-const: true
-      required:
-      - role
-      - content
-      additionalProperties: false
-      description: A user message containing text or images.
+      discriminator:
+        propertyName: role
+        mapping:
+          user: '#/components/schemas/DecisionInputUserMessage'
+          developer: '#/components/schemas/DecisionInputDeveloperMessage'
+          system: '#/components/schemas/DecisionInputSystemMessage'
+          assistant: '#/components/schemas/DecisionInputAssistantMessage'
+      x-oai-discriminator-values:
+      - user
+      - developer
+      - system
+      - assistant
+      anyOf:
+      - $ref: '#/components/schemas/DecisionInputUserMessage'
+      - $ref: '#/components/schemas/DecisionInputDeveloperMessage'
+      - $ref: '#/components/schemas/DecisionInputSystemMessage'
+      - $ref: '#/components/schemas/DecisionInputAssistantMessage'
     DecisionInput:
-      description: The text or images to evaluate for every question. Provide a text string or user messages containing text and images. Images can be base64 data URLs or publicly accessible HTTP(S) URLs; at most 128 images are allowed across all messages in one request. Files, audio, tools, and item references are not supported.
+      description: The input to evaluate for every question. Provide a text string or an ordered array of messages.
       anyOf:
       - type: string
         minLength: 0
@@ -81954,9 +82418,15 @@ components:
           minLength: 0
           maxLength: 1048576
         instructions:
-          type: string
-          minLength: 0
-          maxLength: 1048576
+          anyOf:
+          - type: string
+            minLength: 0
+            maxLength: 1048576
+          - type: array
+            items:
+              $ref: '#/components/schemas/DecisionQuestionInputPart'
+            minItems: 1
+            maxItems: 16384
       required:
       - type
       - instructions
@@ -81996,9 +82466,15 @@ components:
           minLength: 0
           maxLength: 1048576
         instructions:
-          type: string
-          minLength: 0
-          maxLength: 1048576
+          anyOf:
+          - type: string
+            minLength: 0
+            maxLength: 1048576
+          - type: array
+            items:
+              $ref: '#/components/schemas/DecisionQuestionInputPart'
+            minItems: 1
+            maxItems: 16384
         choices:
           type: array
           items:
@@ -82041,9 +82517,15 @@ components:
           minLength: 0
           maxLength: 1048576
         instructions:
-          type: string
-          minLength: 0
-          maxLength: 1048576
+          anyOf:
+          - type: string
+            minLength: 0
+            maxLength: 1048576
+          - type: array
+            items:
+              $ref: '#/components/schemas/DecisionQuestionInputPart'
+            minItems: 1
+            maxItems: 16384
         levels:
           type: array
           items:
@@ -82083,12 +82565,12 @@ components:
         input:
           $ref: '#/components/schemas/DecisionInput'
         questions:
-          description: Ask 1–200 questions about the input. Each question can be a predicate, choice, or score. Answers come back in the same order.
+          description: Ask 1–400 questions about the input. Each question can be a predicate, choice, or score. Answers come back in the same order.
           type: array
           items:
             $ref: '#/components/schemas/QuestionParam'
           minItems: 1
-          maxItems: 200
+          maxItems: 400
         safety_identifier:
           type:
           - string
@@ -82096,6 +82578,37 @@ components:
           minLength: 0
           maxLength: 128
           description: Opaque caller-provided end-user identifier, scoped by the verified org. Match Responses' limit; this is never the authenticated user identity.
+        prompt_cache_key:
+          type:
+          - string
+          - 'null'
+          minLength: 0
+          maxLength: 64
+          description: Partition prompt cache reuse by caller-provided key.
+        prompt_cache_options:
+          type:
+          - object
+          - 'null'
+          properties:
+            ttl:
+              type: string
+              enum:
+              - 30m
+              default: 30m
+              x-stainless-const: true
+              description: The minimum lifetime applied to every implicit and explicit cache breakpoint written by the request. Defaults to `30m`, which is currently the only supported value. The backend may retain cache entries for longer.
+            mode:
+              type:
+              - string
+              - 'null'
+              enum:
+              - implicit
+              - explicit
+              - null
+              description: Controls whether OpenAI automatically creates an implicit cache breakpoint. Defaults to `implicit`. With `implicit`, OpenAI creates one implicit breakpoint and writes up to the latest three explicit breakpoints in the request. With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit breakpoints. If there are no explicit breakpoints, the request does not use prompt caching.
+          additionalProperties: false
+          title: Prompt cache options
+          description: Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`, which is currently the only supported value. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.
       required:
       - model
       - input
@@ -85460,6 +85973,9 @@ components:
         multi_agent:
           $ref: '#/components/schemas/MultiAgentConfigResource'
           description: The resolved configuration for creating and coordinating subagents.
+        compaction:
+          $ref: '#/components/schemas/CompactionResource'
+          description: The effective context compaction settings.
       required:
       - id
       - object
@@ -86105,6 +86621,11 @@ components:
           - $ref: '#/components/schemas/MultiAgentConfigCurrentParam'
           - type: 'null'
           description: Configuration for creating and coordinating subagents. Subagent tools are disabled by default.
+        compaction:
+          anyOf:
+          - $ref: '#/components/schemas/CompactionParam'
+          - type: 'null'
+          description: Context compaction settings. Omission or null enables background compaction.
       required:
       - model
       additionalProperties: false
@@ -86175,6 +86696,11 @@ components:
           minItems: 0
           maxItems: 2000
           description: Replaces the tool list. Omit to leave it unchanged, or pass null to clear it. The replacement must fit within 3 MiB (3,145,728 bytes) of compact UTF-8 JSON.
+        compaction:
+          anyOf:
+          - $ref: '#/components/schemas/CompactionParam'
+          - type: 'null'
+          description: Context compaction settings. Omit to keep the current settings. A supplied object replaces the settings; null or an empty object enables background compaction.
       additionalProperties: false
       description: Fields to replace on an existing reusable agent.
     DeletedAgentResource:
@@ -87244,6 +87770,9 @@ components:
         multi_agent:
           $ref: '#/components/schemas/MultiAgentConfigResource'
           description: Configuration for creating and coordinating subagents.
+        compaction:
+          $ref: '#/components/schemas/CompactionResource'
+          description: The effective context compaction settings.
       required:
       - id
       - name
@@ -87291,13 +87820,13 @@ components:
           type: string
           minLength: 0
           description: The public ID of the environment.
-        container_size:
-          anyOf:
-          - $ref: '#/components/schemas/ContainerSizeResource'
-          - type: 'null'
-          description: The effective CPU and memory tier, or null when unknown or outside the public tiers.
-          x-stainless-skip:
-          - cli
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/HostedEnvironmentFileResource'
+          minItems: 0
+          maxItems: 50
+          description: Files available in the environment, excluding their contents.
         packages:
           $ref: '#/components/schemas/EnvironmentPackagesResource'
           description: Packages installed in the environment.
@@ -87329,13 +87858,6 @@ components:
           minItems: 0
           maxItems: 2000
           description: Plugins installed in the environment, excluding their archive contents.
-        files:
-          type: array
-          items:
-            $ref: '#/components/schemas/HostedEnvironmentFileResource'
-          minItems: 0
-          maxItems: 50
-          description: Files available in the environment, excluding their contents.
       required:
       - type
       - id
@@ -87471,6 +87993,9 @@ components:
           - $ref: '#/components/schemas/TokenUsageResource'
           - type: 'null'
           description: Best-effort token usage for the session, or null if unknown. Recorded usage may change.
+        review:
+          $ref: '#/components/schemas/SessionReviewResource'
+          description: Review applied to eligible actions in this session. Omitted when review is none and automatic review is not enabled. Omission means none.
       required:
       - metadata
       - id
@@ -87922,6 +88447,11 @@ components:
           minItems: 0
           maxItems: 16384
           description: Tools available to the agent. Omit to inherit, or pass null to clear them. The resolved tool list must fit within 3 MiB (3,145,728 bytes) of compact UTF-8 JSON.
+        compaction:
+          anyOf:
+          - $ref: '#/components/schemas/CompactionParam'
+          - type: 'null'
+          description: Context compaction settings. Omit to keep the current settings. A supplied object replaces the settings; null or an empty object enables background compaction.
       additionalProperties: false
       description: Agent configuration for a session. Omitted fields inherit from `agent_id` when supplied. Supplied objects and arrays replace the whole field; null resets nullable fields.
     EnvironmentParamNone:
@@ -88044,11 +88574,6 @@ components:
           minLength: 0
           maxLength: 64
           description: A reusable hosted template applied before inline session configuration. Omitted fields inherit the template; network overrides cannot broaden its policy.
-        container_size:
-          $ref: '#/components/schemas/ContainerSizeParam'
-          description: The hosted container size. Omission selects the medium tier.
-          x-stainless-skip:
-          - cli
       required:
       - type
       additionalProperties: false
@@ -88273,6 +88798,9 @@ components:
           type: boolean
           default: false
           description: Whether to stream session events as server-sent events. Defaults to `false`.
+        review:
+          $ref: '#/components/schemas/SessionReviewParam'
+          description: Action review mode. Omit to use none.
       required:
       - environment
       additionalProperties: false
@@ -89878,8 +90406,17 @@ components:
           - type: 'null'
           description: Omit to keep the current tier. Null resets it to auto.
           x-openai-go-optional-enum: true
+        tools:
+          type:
+          - array
+          - 'null'
+          items:
+            $ref: '#/components/schemas/AgentToolConfigParam'
+          minItems: 0
+          maxItems: 16384
+          description: Replaces the session tools. Functions and MCP servers change on the next model call. Built-in tools change by the next turn. Omit to keep the current tools, or pass null or an empty array to clear them.
       additionalProperties: false
-      description: Model settings that can change after session creation.
+      description: Agent settings that can change after session creation.
     UpdateAgentSessionParams:
       type: object
       properties:
@@ -89890,7 +90427,7 @@ components:
           description: Omit to retain the limit; null or a null limit removes it without resetting spend.
         agent:
           $ref: '#/components/schemas/UpdateSessionAgentParam'
-          description: Model settings for subsequent turns. Omitted fields stay unchanged.
+          description: Agent settings to update on this session. Omitted fields stay unchanged.
         metadata:
           type:
           - object
@@ -89906,6 +90443,9 @@ components:
           minProperties: 0
           maxProperties: 16
           description: Replaces all metadata. Omit to leave unchanged, or pass null or {} to clear it. Up to 16 string key-value pairs, with keys up to 64 and values up to 512 characters.
+        review:
+          $ref: '#/components/schemas/SessionReviewParam'
+          description: Default action review for new root turns. Existing turns and their subagents keep their review mode.
       additionalProperties: false
       description: Fields to update on an existing session.
     DeletedSessionResource:
@@ -91891,7 +92431,7 @@ components:
             type: string
           - type: 'null'
         input:
-          description: Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and 8,192 rendered tokens in total.
+          description: Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and a configured rendered-token limit (8,192 by default).
           type: array
           items:
             $ref: '#/components/schemas/LiveInitialItem'
@@ -91901,12 +92441,13 @@ components:
           $ref: '#/components/schemas/LiveInitialSessionAudioParam'
         delegation:
           anyOf:
-          - description: Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` to let the API manage a Responses backend.
+          - description: Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` or `decisions` to delegate to the corresponding API.
             discriminator:
               propertyName: type
             anyOf:
             - $ref: '#/components/schemas/LiveClientDelegationParam'
             - $ref: '#/components/schemas/LiveResponsesDelegationParam'
+            - $ref: '#/components/schemas/LiveDecisionsDelegationParam'
           - type: 'null'
         store:
           description: Whether to store the session for later forking and recording download. Defaults to false for new sessions.
@@ -91914,6 +92455,12 @@ components:
         client:
           description: Startup-only capabilities for an untrusted frontend attached to a unified WebRTC session. Trusted sideband connections are unaffected.
           $ref: '#/components/schemas/LiveClientConfigParam'
+        triggers:
+          description: At most one Decisions trigger per transcript event type. Triggers run independently of delegation. On update, omit triggers to keep the current configuration, send a list to replace it, or send an empty list to disable triggers.
+          type: array
+          items:
+            $ref: '#/components/schemas/LiveDecisionTriggerInputParam'
+          maxItems: 2
       required:
       - model
     LiveSessionStartEvent:
@@ -91969,7 +92516,7 @@ components:
             delegation:
               type: client
     LiveSessionUpdateParams:
-      description: Changes to an active Live session. Only delegation backend settings can be updated after startup.
+      description: Changes to an active Live session's delegation settings and transcript triggers.
       type: object
       properties:
         delegation:
@@ -91980,10 +92527,13 @@ components:
             anyOf:
             - $ref: '#/components/schemas/LiveClientDelegationParam'
             - $ref: '#/components/schemas/LiveResponsesDelegationUpdateParam'
+            - $ref: '#/components/schemas/LiveDecisionsDelegationUpdateParam'
           - type: 'null'
+        triggers:
+          $ref: '#/components/schemas/LiveSessionCreateParams/properties/triggers'
       required: []
     LiveSessionUpdateParam:
-      description: Update the delegation settings of an active Live session. The server acknowledges accepted changes with `session.updated`.
+      description: Update the delegation settings or transcript triggers of an active Live session. The server acknowledges accepted changes with `session.updated`.
       example:
         type: session.update
         event_id: evt_update_001
@@ -92009,7 +92559,7 @@ components:
           enum:
           - session.update
         session:
-          description: Sparse delegation updates. Omitted settings retain their values. The delegation type cannot change, including resetting Responses delegation to null or client. Model, frontend instructions, audio, and startup input are immutable.
+          description: Sparse delegation and trigger updates. Omitted settings retain their values. The delegation type cannot change. Model, frontend instructions, audio, and startup input are immutable.
           $ref: '#/components/schemas/LiveSessionUpdateParams'
       required:
       - type
@@ -92424,7 +92974,7 @@ components:
             type: string
           - type: 'null'
         input:
-          description: Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and 8,192 rendered tokens in total.
+          description: Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and a configured rendered-token limit (8,192 by default).
           type: array
           items:
             $ref: '#/components/schemas/LiveInitialItem'
@@ -92434,12 +92984,13 @@ components:
           $ref: '#/components/schemas/LiveInitialSessionAudioParam'
         delegation:
           anyOf:
-          - description: Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` to let the API manage a Responses backend.
+          - description: Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` or `decisions` to delegate to the corresponding API.
             discriminator:
               propertyName: type
             anyOf:
             - $ref: '#/components/schemas/LiveClientDelegationParam'
             - $ref: '#/components/schemas/LiveResponsesDelegationParam'
+            - $ref: '#/components/schemas/LiveDecisionsDelegationParam'
           - type: 'null'
         store:
           description: Whether to store the session for later forking and recording download. Defaults to false for new sessions.
@@ -92460,6 +93011,8 @@ components:
           type: string
           enum:
           - active
+        triggers:
+          $ref: '#/components/schemas/LiveSessionCreateParams/properties/triggers'
       required:
       - model
       - id
@@ -92985,11 +93538,11 @@ components:
           start_ms: 5400
           end_ms: 7200
     LiveDelegationItem:
-      description: Metadata for work delegated by the Live model. Client delegations are handled by your application; Responses delegations run on the configured backend.
+      description: Metadata for work delegated by the Live model to your application, Responses, or Decisions.
       type: object
       properties:
         id:
-          description: The unique ID of the delegation. Use this as delegation_id when replying to client-owned work or correlating Responses events.
+          description: The unique ID of the delegation. Use this as delegation_id when replying to client-owned work or correlating backend events.
           type: string
         type:
           description: The object type, always `delegation`.
@@ -92999,7 +93552,7 @@ components:
           enum:
           - delegation
         target:
-          description: 'Where the Live model delegated the work: `client` for your application, or `responses` for the configured Responses backend.'
+          description: 'Where the Live model delegated the work: `client`, `responses`, or `decisions`.'
           anyOf:
           - default: client
             x-stainless-const: true
@@ -93011,6 +93564,11 @@ components:
             type: string
             enum:
             - responses
+          - default: decisions
+            x-stainless-const: true
+            type: string
+            enum:
+            - decisions
         response_id:
           description: The ID of the Responses API response associated with a Responses delegation. Omitted for client delegations.
           type: string
@@ -93019,7 +93577,7 @@ components:
       - type
       - target
     LiveDelegationCreated:
-      description: Returned when the Live model delegates work to your application or a Responses backend. Contains delegation metadata and the position on the session timeline where the work was delegated.
+      description: Returned when the Live model delegates work to your application, Responses, or Decisions. Contains delegation metadata and the position on the session timeline where the work was delegated.
       example:
         type: session.delegation.created
         event_id: evt_delegation_001
@@ -93414,41 +93972,6 @@ components:
           type: transport.dtmf.received
           event_id: event_dtmf_1
           event: '5'
-    LiveTransportDTMFSend:
-      description: A SIP DTMF keypress successfully sent to the SIP trunk. Delivered only to sideband observers; this is not a client command.
-      example:
-        type: transport.dtmf.send
-        event_id: event_dtmf_2
-        event: '#'
-      type: object
-      properties:
-        type:
-          default: transport.dtmf.send
-          x-stainless-const: true
-          type: string
-          enum:
-          - transport.dtmf.send
-        event_id:
-          type: string
-        event:
-          type: string
-          minLength: 1
-          maxLength: 1
-          pattern: ^[0-9A-D*#]$
-        client_event_id:
-          description: The event_id of the client command, when supplied.
-          type: string
-          x-stainless-skip:
-          - cli
-      required:
-      - type
-      - event_id
-      - event
-      x-oaiMeta:
-        example:
-          type: transport.dtmf.send
-          event_id: event_dtmf_2
-          event: '#'
     LiveTransportRinging:
       description: The outbound SIP provider leg is ringing or providing early media. Delivered only to sideband observers.
       example:
@@ -93586,6 +94109,9 @@ components:
       - $ref: '#/components/schemas/LiveInputTranscriptDelta'
       - $ref: '#/components/schemas/LiveOutputTranscriptDelta'
       - $ref: '#/components/schemas/LiveDelegationCreated'
+      - $ref: '#/components/schemas/LiveDecisionEvent'
+      - $ref: '#/components/schemas/LiveDecisionItemCreated'
+      - $ref: '#/components/schemas/LiveDecisionItemDeleted'
       - $ref: '#/components/schemas/LiveResponseEvent'
       - $ref: '#/components/schemas/LiveSessionUsageUpdated'
       - $ref: '#/components/schemas/LiveSessionClosed'
@@ -93593,6 +94119,7 @@ components:
       - $ref: '#/components/schemas/LiveInfoEvent'
       - $ref: '#/components/schemas/LiveTransportDTMFReceived'
       - $ref: '#/components/schemas/LiveTransportDTMFSend'
+      - $ref: '#/components/schemas/LiveTransportDTMFSent'
       - $ref: '#/components/schemas/LiveTransportRinging'
       - $ref: '#/components/schemas/LiveTransportAnswered'
       - $ref: '#/components/schemas/LiveTransportFailed'
@@ -94136,12 +94663,12 @@ components:
         Setting to `{ "type": "json_object" }` enables the older JSON mode, which
         ensures the message the model generates is valid JSON. Using `json_schema`
         is preferred for models that support it.
+      discriminator:
+        propertyName: type
       anyOf:
       - $ref: '#/components/schemas/BetaResponseFormatText'
       - $ref: '#/components/schemas/BetaTextResponseFormatJsonSchema'
       - $ref: '#/components/schemas/BetaResponseFormatJsonObject'
-      discriminator:
-        propertyName: type
     BetaResponseFormatJsonObject:
       type: object
       title: JSON object
@@ -94846,16 +95373,38 @@ components:
             - gpt-image-2.5-sunburst-2026-09-08
             - gpt-image-2.5-flare
             - gpt-image-2.5-flare-2026-09-08
+            - gpt-image-2.6-sunburst
+            - gpt-image-2.6-flare
             - gpt-image-1.5
             - chatgpt-image-latest
+            x-openai-enum-deprecations:
+              gpt-image-1:
+                message: GPT Image 1 was shut down on October 23, 2026. Use gpt-image-2.5-sunburst or gpt-image-2.5-flare instead.
             description: |
-              The image generation model to use. One of `gpt-image-1`,
-              `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`,
+              The image generation model to use. One of `gpt-image-1-mini`,
+              `gpt-image-1.5`, `gpt-image-2`,
               `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`,
               `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`,
-              `gpt-image-2.5-flare-2026-09-08`, or `chatgpt-image-latest`. Default:
-              `gpt-image-1`.
-            default: gpt-image-1
+              `gpt-image-2.5-flare-2026-09-08`, `gpt-image-2.6-sunburst`,
+              `gpt-image-2.6-flare`, or `chatgpt-image-latest`. Default:
+              `gpt-image-2`.
+
+              `gpt-image-1` was shut down on October 23, 2026. Use
+              `gpt-image-2.5-sunburst` or `gpt-image-2.5-flare` instead.
+            default: gpt-image-2
+        complexity:
+          type: string
+          enum:
+          - low
+          - medium
+          - high
+          description: |
+            Computation spent planning the image, independently of rendering quality.
+            Overrides the outer response's `reasoning.effort` for image generation.
+            When omitted, inherits a supported outer reasoning effort or uses the
+            image model's configured default.
+            For SVG output, controls the reference image, not the SVG author's
+            reasoning.
         quality:
           type: string
           enum:
@@ -94888,10 +95437,38 @@ components:
           - png
           - webp
           - jpeg
+          - gif
+          - svg
           description: |
-            The output format of the generated image. One of `png`, `webp`, or
-            `jpeg`. Default: `png`.
+            The output format of the generated image. One of `png`, `webp`, `jpeg`,
+            `gif`, or `svg`. Default: `png`. GIF and SVG output require a model
+            that supports the selected format. GIF output does not support
+            partial image streaming (`partial_images` greater than `0`),
+            `input_image_mask`, or custom `output_compression`.
+            Responses lifecycle events can still be streamed for GIF output.
           default: png
+        frame_count:
+          type: integer
+          minimum: 2
+          maximum: 16
+          default: 9
+          description: |
+            Number of GIF frames. Requires `output_format` to be `gif`. Default: 9.
+        frame_duration_ms:
+          type: integer
+          minimum: 20
+          maximum: 2000
+          default: 200
+          description: |
+            Duration of each GIF frame in milliseconds, rounded to 10 ms.
+            Requires `output_format` to be `gif`. Default: 200.
+        svg:
+          description: |
+            SVG author model settings. Requires `output_format` to be `svg`.
+            When SVG model selection is enabled, omitting this object uses the
+            outer response model. Otherwise, the default SVG author is used and
+            explicit model overrides are unavailable.
+          $ref: '#/components/schemas/BetaSvgParam'
         output_compression:
           type: integer
           minimum: 0
@@ -94969,7 +95546,7 @@ components:
       enum:
       - high
       - low
-      description: Control how much effort the model will exert to match the style and features, especially facial features, of input images. Supports `high` and `low` on `gpt-image-1` and `gpt-image-1.5`; `gpt-image-1-mini` supports only `low`. For `gpt-image-2`, omit this parameter. Defaults to `low` on supported models.
+      description: Control how much effort the model will exert to match the style and features, especially facial features, of input images. Supports `high` and `low` on `gpt-image-1.5`; `gpt-image-1-mini` supports only `low`. For `gpt-image-2`, omit this parameter. Defaults to `low` on supported models.
     BetaProgrammaticToolCallingParam:
       properties:
         type:
@@ -95894,6 +96471,7 @@ components:
             The content of the file to be sent to the model.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/BetaPromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
         file_url:
           type: string
           format: uri
@@ -95921,11 +96499,18 @@ components:
           description: The breakpoint mode. Always `explicit`.
           default: explicit
           x-stainless-const: true
+        ttl:
+          type: string
+          enum:
+          - 30m
+          - 12h
+          description: The minimum lifetime of this cache breakpoint. Defaults to the request TTL.
       type: object
       required:
       - mode
       title: Prompt cache breakpoint
-      description: Marks the exact end of a reusable prompt prefix. The breakpoint inherits its TTL from the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      description: Marks the exact end of a reusable prompt prefix. When `ttl` is omitted, the breakpoint inherits the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      x-stainless-go-constant-constructor: true
     BetaInputImageContent:
       properties:
         type:
@@ -95951,6 +96536,7 @@ components:
           description: The detail level of the image to be sent to the model. One of `high`, `low`, `auto`, or `original`. Defaults to `auto`.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/BetaPromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -95978,6 +96564,7 @@ components:
           description: The text input to the model.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/BetaPromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -96907,9 +97494,6 @@ components:
       description: The logs output from the code interpreter.
     BetaImageGenToolCall:
       properties:
-        error:
-          $ref: '#/components/schemas/BetaImageGenToolCallError'
-          description: Details of a moderation failure, when available.
         agent:
           anyOf:
           - $ref: '#/components/schemas/BetaAgentTag'
@@ -96937,6 +97521,9 @@ components:
           - type: string
             description: The generated image encoded in base64.
           - type: 'null'
+        error:
+          $ref: '#/components/schemas/BetaImageGenToolCallError'
+          description: Details of a moderation failure, when available.
         size:
           anyOf:
           - anyOf:
@@ -96978,6 +97565,8 @@ components:
             description: The output format used for generation.
           - type: 'null'
           x-openai-go-optional-enum: true
+        svg_usage:
+          $ref: '#/components/schemas/BetaSvgUsage'
         revised_prompt:
           anyOf:
           - type: string
@@ -96997,6 +97586,8 @@ components:
       - png
       - webp
       - jpeg
+      - gif
+      - svg
     BetaImageBackground:
       type: string
       enum:
@@ -97136,9 +97727,8 @@ components:
     BetaResponseConfigurationUpdateItemParam:
       type: object
       description: |
-        An update to the conversation's response configuration. The configuration
-        remains in effect for subsequent responses until it is replaced by another
-        configuration update.
+        An update to the conversation's response configuration. Supply reasoning,
+        text, or both. Each setting stays in effect until a later update replaces it.
       properties:
         agent:
           anyOf:
@@ -97167,6 +97757,19 @@ components:
               description: |
                 The reasoning effort to use for subsequent responses until another
                 configuration update replaces it.
+        text:
+          type: object
+          description: The text output configuration for subsequent responses.
+          properties:
+            format:
+              description: Use a JSON schema for structured output or text to return to plain text.
+              discriminator:
+                propertyName: type
+              anyOf:
+              - $ref: '#/components/schemas/BetaResponseFormatText'
+              - $ref: '#/components/schemas/BetaTextResponseFormatJsonSchema'
+          required:
+          - format
       required:
       - type
     BetaAdditionalToolsItemParam:
@@ -97712,6 +98315,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/BetaPromptCacheBreakpointParam'
           - type: 'null'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -97726,11 +98330,18 @@ components:
           description: The breakpoint mode. Always `explicit`.
           default: explicit
           x-stainless-const: true
+        ttl:
+          type: string
+          enum:
+          - 30m
+          - 12h
+          description: The minimum lifetime of this cache breakpoint. Defaults to the request TTL.
       type: object
       required:
       - mode
       title: Prompt cache breakpoint
-      description: Marks the exact end of a reusable prompt prefix. The breakpoint inherits its TTL from the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      description: Marks the exact end of a reusable prompt prefix. When `ttl` is omitted, the breakpoint inherits the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+      x-stainless-go-constant-constructor: true
     BetaDetailEnum:
       type: string
       enum:
@@ -97755,6 +98366,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/BetaPromptCacheBreakpointParam'
           - type: 'null'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -97874,6 +98486,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/BetaPromptCacheBreakpointParam'
           - type: 'null'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -99058,7 +99671,7 @@ components:
       type: object
       required: []
       title: Prompt cache options
-      description: Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`, which is currently the only supported value. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.
+      description: Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`. Supported lifetimes depend on the API. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.
     BetaPromptCacheModeEnum:
       type: string
       enum:
@@ -99880,8 +100493,8 @@ components:
     BetaResponseConfigurationUpdate:
       type: object
       description: |
-        A configuration update that applies to subsequent responses until it is
-        replaced by another configuration update.
+        A configuration update for subsequent responses. Each setting stays in effect
+        until a later update replaces that setting.
       properties:
         agent:
           $ref: '#/components/schemas/BetaAgentTag'
@@ -99906,6 +100519,19 @@ components:
               description: |
                 The reasoning effort used for subsequent responses until another
                 configuration update replaces it.
+        text:
+          type: object
+          description: The text output configuration for subsequent responses.
+          properties:
+            format:
+              description: Use a JSON schema for structured output or text to return to plain text.
+              discriminator:
+                propertyName: type
+              anyOf:
+              - $ref: '#/components/schemas/BetaResponseFormatText'
+              - $ref: '#/components/schemas/BetaTextResponseFormatJsonSchema'
+          required:
+          - format
       required:
       - id
       - type
@@ -100196,6 +100822,7 @@ components:
           description: The detail level of the screenshot image to be sent to the model. One of `high`, `low`, `auto`, or `original`. Defaults to `auto`.
         prompt_cache_breakpoint:
           $ref: '#/components/schemas/BetaPromptCacheBreakpointConfig'
+          x-stainless-go-constant-constructor: true
       type: object
       required:
       - type
@@ -100465,6 +101092,8 @@ components:
             cache_write_tokens:
               type: integer
               description: The number of input tokens that were written to the cache.
+            cache_write_tokens_details:
+              $ref: '#/components/schemas/BetaCacheWriteTokensDetails'
           required:
           - cached_tokens
           - cache_write_tokens
@@ -101097,8 +101726,11 @@ components:
     BetaPromptCacheOptions:
       properties:
         ttl:
-          $ref: '#/components/schemas/BetaPromptCacheTTLEnum'
           description: The minimum lifetime applied to each cache breakpoint.
+          type: string
+          enum:
+          - 30m
+          - 12h
         mode:
           $ref: '#/components/schemas/BetaPromptCacheModeEnum'
           description: Whether implicit prompt-cache breakpoints were enabled.
@@ -106191,8 +106823,11 @@ components:
     BetaResponsePromptCacheOptionsParam:
       properties:
         ttl:
-          $ref: '#/components/schemas/BetaPromptCacheTTLEnum'
-          description: The minimum lifetime applied to every implicit and explicit cache breakpoint written by the request. Defaults to `30m`, which is currently the only supported value. The backend may retain cache entries for longer.
+          description: The minimum lifetime applied to every implicit and explicit cache breakpoint written by the request. Supported values are `30m` (the default) and `12h`. The backend may retain cache entries for longer.
+          type: string
+          enum:
+          - 30m
+          - 12h
         mode:
           $ref: '#/components/schemas/BetaPromptCacheModeEnum'
           description: Controls whether OpenAI automatically creates an implicit cache breakpoint. Defaults to `implicit`. With `implicit`, OpenAI creates one implicit breakpoint and writes up to the latest three explicit breakpoints in the request. With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit breakpoints. If there are no explicit breakpoints, the request does not use prompt caching.
@@ -106208,7 +106843,7 @@ components:
       type: object
       required: []
       title: Prompt cache options
-      description: Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`, which is currently the only supported value. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.
+      description: Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`. Supported lifetimes depend on the API. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.
     BetaAccessProgramsParam:
       properties:
         cyber:
@@ -106223,8 +106858,6 @@ components:
       - $ref: '#/components/schemas/BetaModelResponseProperties'
       - type: object
         properties:
-          prompt_cache_options:
-            $ref: '#/components/schemas/BetaPromptCacheOptionsParam'
           top_logprobs:
             description: |
               An integer between 0 and 20 specifying the maximum number of most likely
@@ -106300,6 +106933,1514 @@ components:
       - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDoneEvent'
       discriminator:
         propertyName: type
+    DecisionPromptCacheBreakpoint:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum:
+          - explicit
+          default: explicit
+          x-stainless-const: true
+          description: The breakpoint mode. Always `explicit`.
+      required:
+      - mode
+      additionalProperties: false
+      title: Prompt cache breakpoint
+      description: Marks the exact end of a reusable prompt prefix. The breakpoint inherits its TTL from the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+    CreateVoicePromptRequest:
+      type: object
+      title: Prompt
+      description: Creates a synthetic voice from a text description. Supports application/json or multipart/form-data.
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum:
+          - prompt
+          description: Set to `prompt` to create a voice from a text description.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: The name of the new voice.
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: A description of the desired voice. Must not contain only whitespace.
+        script_hint:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Optional text for the voice to speak during creation. If omitted, a script is generated from the prompt. Must not be blank after trimming whitespace; scripts that are too short are rejected.
+        model:
+          anyOf:
+          - type: string
+          - type: string
+            enum:
+            - auto
+            - 2026-10-08
+          default: auto
+          description: The voice creation model to use. Defaults to `auto`.
+      required:
+      - type
+      - name
+      - prompt
+    LiveDecisionChoiceParam:
+      type: object
+      properties:
+        value:
+          anyOf:
+          - type: string
+          - type: boolean
+        description:
+          type: string
+      required:
+      - value
+    LiveDecisionChoiceQuestionParam:
+      type: object
+      properties:
+        type:
+          default: choice
+          x-stainless-const: true
+          type: string
+          enum:
+          - choice
+        name:
+          type: string
+        instructions:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/LiveDecisionChoiceParam'
+          minItems: 2
+          maxItems: 255
+      required:
+      - type
+      - instructions
+      - choices
+    LiveDecisionPredicateQuestionParam:
+      type: object
+      properties:
+        type:
+          default: predicate
+          x-stainless-const: true
+          type: string
+          enum:
+          - predicate
+        name:
+          type: string
+        instructions:
+          type: string
+      required:
+      - type
+      - instructions
+    LiveDecisionScoreLevelParam:
+      type: object
+      properties:
+        label:
+          type: string
+        description:
+          type: string
+      required:
+      - label
+    LiveDecisionScoreQuestionParam:
+      type: object
+      properties:
+        type:
+          default: score
+          x-stainless-const: true
+          type: string
+          enum:
+          - score
+        name:
+          type: string
+        instructions:
+          type: string
+        levels:
+          type: array
+          items:
+            $ref: '#/components/schemas/LiveDecisionScoreLevelParam'
+          minItems: 2
+          maxItems: 10
+      required:
+      - type
+      - instructions
+      - levels
+    LiveDecisionQuestion:
+      discriminator:
+        propertyName: type
+      anyOf:
+      - $ref: '#/components/schemas/LiveDecisionChoiceQuestionParam'
+      - $ref: '#/components/schemas/LiveDecisionPredicateQuestionParam'
+      - $ref: '#/components/schemas/LiveDecisionScoreQuestionParam'
+    LiveDecisionsSettingsInputParam:
+      type: object
+      properties:
+        questions:
+          description: Native Decision API questions evaluated together, in order.
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionParam'
+          minItems: 1
+          maxItems: 64
+        model:
+          type: string
+          minLength: 1
+      required:
+      - questions
+      - model
+    LiveDecisionsDelegationParam:
+      type: object
+      properties:
+        type:
+          default: decisions
+          x-stainless-const: true
+          type: string
+          enum:
+          - decisions
+        decisions:
+          $ref: '#/components/schemas/LiveDecisionsSettingsInputParam'
+        acknowledgement_delay_ms:
+          description: Milliseconds to wait before requesting an automatic spoken acknowledgement for a delegation. The model may still speak before this delay. Any commentary or thinking appended to the session cancels all pending acknowledgements, including those for other delegations. Defaults to 400. Updates apply to subsequent delegations.
+          type: integer
+          minimum: 0
+          maximum: 800
+      required:
+      - type
+      - decisions
+    LiveDecisionQuestionsInputParam:
+      description: Questions evaluated using the current transcript and the session's shared Decision items.
+      type: object
+      properties:
+        questions:
+          description: Native Decision API questions evaluated together, in order.
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionParam'
+          minItems: 1
+          maxItems: 64
+      required:
+      - questions
+    LiveDecisionTriggerInputParam:
+      type: object
+      properties:
+        type:
+          default: decisions
+          x-stainless-const: true
+          type: string
+          enum:
+          - decisions
+        event_type:
+          type: string
+          enum:
+          - session.input_transcript.delta
+          - session.output_transcript.delta
+        decisions:
+          description: Questions evaluated using the current transcript and the session's shared Decision items.
+          $ref: '#/components/schemas/LiveDecisionQuestionsInputParam'
+      required:
+      - type
+      - event_type
+      - decisions
+      additionalProperties: false
+    triggers:
+      description: At most one Decisions trigger per transcript event type. Triggers run independently of delegation. On update, omit triggers to keep the current configuration, send a list to replace it, or send an empty list to disable triggers.
+      type: array
+      items:
+        $ref: '#/components/schemas/LiveDecisionTriggerInputParam'
+      maxItems: 2
+    LiveDecisionsSettingsInputParam-2:
+      type: object
+      properties:
+        questions:
+          description: Native Decision API questions evaluated together, in order.
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionParam'
+          minItems: 1
+          maxItems: 64
+        model:
+          type: string
+          minLength: 1
+      required:
+      - questions
+      - model
+    LiveDecisionsDelegationParam-2:
+      type: object
+      properties:
+        type:
+          default: decisions
+          x-stainless-const: true
+          type: string
+          enum:
+          - decisions
+        decisions:
+          $ref: '#/components/schemas/LiveDecisionsSettingsInputParam-2'
+        acknowledgement_delay_ms:
+          description: Milliseconds to wait before requesting an automatic spoken acknowledgement for a delegation. The model may still speak before this delay. Any commentary or thinking appended to the session cancels all pending acknowledgements, including those for other delegations. Defaults to 400. Updates apply to subsequent delegations.
+          type: integer
+          minimum: 0
+          maximum: 800
+      required:
+      - type
+      - decisions
+    LiveDecisionQuestionsInputParam-2:
+      description: Questions evaluated using the current transcript and the session's shared Decision items.
+      type: object
+      properties:
+        questions:
+          description: Native Decision API questions evaluated together, in order.
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionParam'
+          minItems: 1
+          maxItems: 64
+      required:
+      - questions
+    LiveDecisionTriggerInputParam-2:
+      type: object
+      properties:
+        type:
+          default: decisions
+          x-stainless-const: true
+          type: string
+          enum:
+          - decisions
+        event_type:
+          type: string
+          enum:
+          - session.input_transcript.delta
+          - session.output_transcript.delta
+        decisions:
+          description: Questions evaluated using the current transcript and the session's shared Decision items.
+          $ref: '#/components/schemas/LiveDecisionQuestionsInputParam-2'
+      required:
+      - type
+      - event_type
+      - decisions
+      additionalProperties: false
+    LiveDecisionsSettingsUpdateParam:
+      type: object
+      properties:
+        model:
+          type: string
+          minLength: 1
+        questions:
+          description: Native Decision API questions evaluated together, in order.
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionParam'
+          minItems: 1
+          maxItems: 64
+      required: []
+    LiveDecisionsDelegationUpdateParam:
+      type: object
+      properties:
+        type:
+          default: decisions
+          x-stainless-const: true
+          type: string
+          enum:
+          - decisions
+        decisions:
+          $ref: '#/components/schemas/LiveDecisionsSettingsUpdateParam'
+        acknowledgement_delay_ms:
+          description: Milliseconds to wait before requesting an automatic spoken acknowledgement for a delegation. The model may still speak before this delay. Any commentary or thinking appended to the session cancels all pending acknowledgements, including those for other delegations. Defaults to 400 for Decisions sessions and 0 (request immediately) for other sessions. Omission in a session update preserves the current value. Updates apply to subsequent delegations.
+          type: integer
+          minimum: 0
+          maximum: 800
+      required:
+      - type
+    LiveDecisionCreateParam:
+      description: Evaluate the configured questions using the current conversation and Decision inputs. Reusing an event_id is rejected for the lifetime of the session.
+      example:
+        type: decision.create
+        event_id: decision_1
+      type: object
+      properties:
+        event_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        type:
+          default: decision.create
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.create
+      required:
+      - event_id
+      - type
+      x-oaiMeta:
+        example:
+          type: decision.create
+          event_id: decision_1
+    LiveDecisionInputTextParam:
+      type: object
+      properties:
+        type:
+          description: The type of the input item. Always `input_text`.
+          default: input_text
+          x-stainless-const: true
+          type: string
+          enum:
+          - input_text
+        text:
+          description: The text input to the model.
+          type: string
+          maxLength: 10485760
+      required:
+      - type
+      - text
+    LiveDetailEnum:
+      type: string
+      enum:
+      - low
+      - high
+      - auto
+      - original
+    LiveDecisionInputImageParam:
+      type: object
+      properties:
+        type:
+          description: The type of the input item. Always `input_image`.
+          default: input_image
+          x-stainless-const: true
+          type: string
+          enum:
+          - input_image
+        image_url:
+          description: An inline image encoded as a data URL.
+          type: string
+          maxLength: 20971520
+          pattern: '^data:'
+        detail:
+          anyOf:
+          - description: The detail level of the image to be sent to the model. One of `high`, `low`, `auto`, or `original`. Defaults to `auto`.
+            $ref: '#/components/schemas/LiveDetailEnum'
+          - type: 'null'
+      required:
+      - type
+      - image_url
+    LiveDecisionInputItemParam:
+      type: object
+      properties:
+        id:
+          anyOf:
+          - description: The unique ID of this message item.
+            type: string
+          - type: 'null'
+        type:
+          default: message
+          x-stainless-const: true
+          type: string
+          enum:
+          - message
+        role:
+          description: The message role. Always `user`.
+          default: user
+          x-stainless-const: true
+          type: string
+          enum:
+          - user
+        content:
+          anyOf:
+          - description: The text input to the model.
+            type: string
+            maxLength: 10485760
+          - type: array
+            items:
+              discriminator:
+                propertyName: type
+              anyOf:
+              - $ref: '#/components/schemas/LiveDecisionInputTextParam'
+              - $ref: '#/components/schemas/LiveDecisionInputImageParam'
+            x-stainless-variantName: parts
+      required:
+      - role
+      - content
+    LiveDecisionItemCreateParam:
+      description: Append an input item for future decisions without starting an evaluation or changing Live voice context.
+      example:
+        type: decision.item.create
+        event_id: browser_1
+        item:
+          type: message
+          role: user
+          content:
+          - type: input_text
+            text: Wikipedia is open.
+      type: object
+      properties:
+        event_id:
+          anyOf:
+          - description: Optional client identifier for correlating this command with a server event's client_event_id or error.client_event_id.
+            type: string
+            maxLength: 512
+          - type: 'null'
+        type:
+          default: decision.item.create
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.item.create
+        item:
+          $ref: '#/components/schemas/LiveDecisionInputItemParam'
+      required:
+      - type
+      - item
+      x-oaiMeta:
+        example:
+          type: decision.item.create
+          event_id: browser_1
+          item:
+            type: message
+            role: user
+            content:
+            - type: input_text
+              text: Wikipedia is open.
+    LiveDecisionItemDeleteParam:
+      description: Delete an input item from future decisions without starting an evaluation or changing Live voice context.
+      example:
+        type: decision.item.delete
+        event_id: remove_browser_1
+        item_id: msg_browser_1
+      type: object
+      properties:
+        event_id:
+          anyOf:
+          - description: Optional client identifier for correlating this command with a server event's client_event_id or error.client_event_id.
+            type: string
+            maxLength: 512
+          - type: 'null'
+        type:
+          default: decision.item.delete
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.item.delete
+        item_id:
+          type: string
+          minLength: 1
+      required:
+      - type
+      - item_id
+      x-oaiMeta:
+        example:
+          type: decision.item.delete
+          event_id: remove_browser_1
+          item_id: msg_browser_1
+    LiveDecisionCompleted:
+      type: object
+      properties:
+        type:
+          default: decision.completed
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.completed
+        decision:
+          description: The native Decision API response, including its model, ordered answers, and token usage.
+          $ref: '#/components/schemas/DecisionResponse'
+      required:
+      - type
+      - decision
+    LiveDecisionEvent:
+      description: A Decision API event for a Live delegation or transcript trigger. For a trigger, source_event_id identifies the transcript delta that caused this evaluation.
+      example:
+        type: decision.event
+        event_id: evt_decision_1
+        delegation_id: del_abc123
+        trigger_id: null
+        source_event_type: null
+        source_event_id: null
+        event:
+          type: decision.completed
+          decision:
+            model: gpt-6-luna
+            answers:
+            - type: predicate
+              name: damaged
+              probability: 0.95
+            usage:
+              input_tokens: 42
+              input_tokens_details:
+                cached_tokens: 0
+                cache_write_tokens: 0
+              output_tokens: 0
+              output_tokens_details:
+                reasoning_tokens: 0
+              total_tokens: 42
+      type: object
+      properties:
+        type:
+          default: decision.event
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.event
+        event_id:
+          description: The unique ID of this Live server event.
+          type: string
+        delegation_id:
+          anyOf:
+          - description: The Live delegation ID, or null for a transcript trigger.
+            type: string
+          - type: 'null'
+        trigger_id:
+          anyOf:
+          - description: The Live-assigned ID of this trigger firing, or null for a delegation.
+            type: string
+          - type: 'null'
+        source_event_type:
+          anyOf:
+          - anyOf:
+            - default: session.input_transcript.delta
+              x-stainless-const: true
+              type: string
+              enum:
+              - session.input_transcript.delta
+            - default: session.output_transcript.delta
+              x-stainless-const: true
+              type: string
+              enum:
+              - session.output_transcript.delta
+          - type: 'null'
+        source_event_id:
+          anyOf:
+          - description: The event_id of the transcript delta that fired this trigger, or null for a delegation.
+            type: string
+          - type: 'null'
+        event:
+          $ref: '#/components/schemas/LiveDecisionCompleted'
+      required:
+      - type
+      - event_id
+      - delegation_id
+      - trigger_id
+      - source_event_type
+      - source_event_id
+      - event
+      x-oaiMeta:
+        example:
+          type: decision.event
+          event_id: evt_decision_1
+          delegation_id: del_abc123
+          trigger_id: null
+          source_event_type: null
+          source_event_id: null
+          event:
+            type: decision.completed
+            decision:
+              model: gpt-6-luna
+              answers:
+              - type: predicate
+                name: damaged
+                probability: 0.95
+              usage:
+                input_tokens: 42
+                input_tokens_details:
+                  cached_tokens: 0
+                  cache_write_tokens: 0
+                output_tokens: 0
+                output_tokens_details:
+                  reasoning_tokens: 0
+                total_tokens: 42
+    LiveDecisionStoredInputItemParam:
+      type: object
+      properties:
+        id:
+          description: The ID of the stored Decision input item.
+          type: string
+        type:
+          default: message
+          x-stainless-const: true
+          type: string
+          enum:
+          - message
+        role:
+          description: The message role. Always `user`.
+          default: user
+          x-stainless-const: true
+          type: string
+          enum:
+          - user
+        content:
+          anyOf:
+          - description: The text input to the model.
+            type: string
+            maxLength: 10485760
+          - type: array
+            items:
+              discriminator:
+                propertyName: type
+              anyOf:
+              - $ref: '#/components/schemas/LiveDecisionInputTextParam'
+              - $ref: '#/components/schemas/LiveDecisionInputImageParam'
+            x-stainless-variantName: parts
+      required:
+      - id
+      - role
+      - content
+    LiveDecisionItemCreated:
+      description: An input item was appended for future decisions.
+      example:
+        type: decision.item.created
+        event_id: evt_item_1
+        client_event_id: browser_1
+        item:
+          id: msg_browser_1
+          type: message
+          role: user
+          content:
+          - type: input_text
+            text: Wikipedia is open.
+      type: object
+      properties:
+        event_id:
+          description: The unique ID of the Live server event.
+          type: string
+        client_event_id:
+          description: The event_id of the client command associated with this server event, when supplied.
+          type: string
+        type:
+          default: decision.item.created
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.item.created
+        item:
+          $ref: '#/components/schemas/LiveDecisionStoredInputItemParam'
+      required:
+      - event_id
+      - type
+      - item
+      x-oaiMeta:
+        example:
+          type: decision.item.created
+          event_id: evt_item_1
+          client_event_id: browser_1
+          item:
+            id: msg_browser_1
+            type: message
+            role: user
+            content:
+            - type: input_text
+              text: Wikipedia is open.
+    LiveDecisionItemDeleted:
+      description: An input item was removed from future decisions.
+      example:
+        type: decision.item.deleted
+        event_id: evt_item_deleted_1
+        client_event_id: remove_browser_1
+        item_id: msg_browser_1
+      type: object
+      properties:
+        event_id:
+          description: The unique ID of the Live server event.
+          type: string
+        client_event_id:
+          description: The event_id of the client command associated with this server event, when supplied.
+          type: string
+        type:
+          default: decision.item.deleted
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.item.deleted
+        item_id:
+          type: string
+      required:
+      - event_id
+      - type
+      - item_id
+      x-oaiMeta:
+        example:
+          type: decision.item.deleted
+          event_id: evt_item_deleted_1
+          client_event_id: remove_browser_1
+          item_id: msg_browser_1
+    VoiceDeletedResource:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: The voice identifier.
+          example: voice_1234
+        object:
+          type: string
+          enum:
+          - audio.voice.deleted
+          x-stainless-const: true
+          description: The object type, which is always `audio.voice.deleted`.
+        deleted:
+          type: boolean
+          description: Whether the voice was deleted.
+      required:
+      - id
+      - object
+      - deleted
+      x-oaiMeta:
+        name: The voice deletion object
+        example: |
+          {
+            "id": "voice_1234",
+            "object": "audio.voice.deleted",
+            "deleted": true
+          }
+    DecisionInputAssistantContent:
+      description: A text string or an ordered list of output text and refusal parts.
+      anyOf:
+      - type: string
+        minLength: 0
+        maxLength: 10485760
+      - $ref: '#/components/schemas/DecisionInputAssistantContentParts'
+        title: Parts
+    DecisionInputAssistantContentParts:
+      type: array
+      items:
+        x-oai-discriminator-values:
+        - output_text
+        - refusal
+        discriminator:
+          propertyName: type
+          mapping:
+            output_text: '#/components/schemas/DecisionInputOutputText'
+            refusal: '#/components/schemas/DecisionInputRefusal'
+        anyOf:
+        - $ref: '#/components/schemas/DecisionInputOutputText'
+        - $ref: '#/components/schemas/DecisionInputRefusal'
+      minItems: 0
+      maxItems: 16384
+    DecisionInputAssistantMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+          - assistant
+          default: assistant
+          x-stainless-const: true
+        content:
+          $ref: '#/components/schemas/DecisionInputAssistantContent'
+        phase:
+          anyOf:
+          - $ref: '#/components/schemas/MessagePhaseParam'
+          - type: 'null'
+          description: The phase of an assistant message.
+        type:
+          type: string
+          enum:
+          - message
+          default: message
+          x-stainless-const: true
+      required:
+      - role
+      - content
+      additionalProperties: false
+      description: An assistant message containing output text or refusals.
+    DecisionInputDeveloperContent:
+      description: A text string or an ordered list of input text parts.
+      anyOf:
+      - type: string
+        minLength: 0
+        maxLength: 10485760
+      - $ref: '#/components/schemas/DecisionInputDeveloperContentParts'
+        title: Parts
+    DecisionInputDeveloperContentParts:
+      type: array
+      items:
+        $ref: '#/components/schemas/DecisionInputText'
+      minItems: 0
+      maxItems: 16384
+    DecisionInputDeveloperMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+          - developer
+          default: developer
+          x-stainless-const: true
+        content:
+          $ref: '#/components/schemas/DecisionInputDeveloperContent'
+        type:
+          type: string
+          enum:
+          - message
+          default: message
+          x-stainless-const: true
+      required:
+      - role
+      - content
+      additionalProperties: false
+      description: A developer message containing input text.
+    DecisionInputJson:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - input_json
+          default: input_json
+          x-stainless-const: true
+        data:
+          anyOf:
+          - type: object
+            additionalProperties:
+              anyOf:
+              - {}
+              - type: 'null'
+            propertyNames:
+              type: string
+              minLength: 0
+            minProperties: 0
+          - type: array
+            items:
+              type: object
+              additionalProperties:
+                anyOf:
+                - {}
+                - type: 'null'
+              propertyNames:
+                type: string
+                minLength: 0
+              minProperties: 0
+            minItems: 0
+      required:
+      - type
+      - data
+      additionalProperties: false
+      description: A JSON object or an array of objects rendered as text. Nested values may be any JSON value. Limited to 32 container levels, 10,000 values, and 256 KiB of compact UTF-8 JSON.
+    DecisionInputSystemMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+          - system
+          default: system
+          x-stainless-const: true
+        content:
+          $ref: '#/components/schemas/DecisionInputDeveloperContent'
+        type:
+          type: string
+          enum:
+          - message
+          default: message
+          x-stainless-const: true
+      required:
+      - role
+      - content
+      additionalProperties: false
+      description: A system message containing input text.
+    DecisionInputUserMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+          - user
+          default: user
+          x-stainless-const: true
+        content:
+          $ref: '#/components/schemas/DecisionInputContent'
+        type:
+          type: string
+          enum:
+          - message
+          default: message
+          x-stainless-const: true
+      required:
+      - role
+      - content
+      additionalProperties: false
+      description: A user message containing input text, images, or JSON.
+    DecisionQuestionInputImage:
+      type: object
+      properties:
+        image_url:
+          type: string
+          minLength: 0
+          maxLength: 1073741824
+          pattern: ^(data:|https?://)
+          description: A base64-encoded image in a data URL or a publicly accessible HTTP(S) image URL.
+        detail:
+          anyOf:
+          - $ref: '#/components/schemas/ImageDetailParam'
+          - type: 'null'
+          description: The image detail level, using the selected model's image profile. Defaults to auto.
+          default: auto
+        type:
+          type: string
+          enum:
+          - input_image
+          default: input_image
+          x-stainless-const: true
+      required:
+      - image_url
+      - type
+      additionalProperties: false
+      description: An image provided as a base64 data URL or a publicly accessible HTTP(S) URL. File IDs are not supported.
+    DecisionQuestionInputPart:
+      description: A text, image, or JSON content part in a question instruction.
+      discriminator:
+        propertyName: type
+        mapping:
+          input_text: '#/components/schemas/DecisionQuestionInputText'
+          input_image: '#/components/schemas/DecisionQuestionInputImage'
+          input_json: '#/components/schemas/DecisionInputJson'
+      x-oai-discriminator-values:
+      - input_text
+      - input_image
+      - input_json
+      anyOf:
+      - $ref: '#/components/schemas/DecisionQuestionInputText'
+      - $ref: '#/components/schemas/DecisionQuestionInputImage'
+      - $ref: '#/components/schemas/DecisionInputJson'
+    DecisionQuestionInputText:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - input_text
+          default: input_text
+          x-stainless-const: true
+        text:
+          type: string
+          minLength: 0
+          maxLength: 10485760
+      required:
+      - type
+      - text
+      additionalProperties: false
+    DecisionInputOutputText:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - output_text
+          default: output_text
+          x-stainless-const: true
+        text:
+          type: string
+          minLength: 0
+          maxLength: 10485760
+      required:
+      - type
+      - text
+      additionalProperties: false
+    DecisionInputRefusal:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - refusal
+          default: refusal
+          x-stainless-const: true
+        refusal:
+          type: string
+          minLength: 0
+          maxLength: 10485760
+      required:
+      - type
+      - refusal
+      additionalProperties: false
+    MessagePhaseParam:
+      type: string
+      enum:
+      - commentary
+      - final_answer
+    AwsExternalKeyParams:
+      properties:
+        name:
+          type: string
+          description: A friendly name to identify this config
+        type:
+          type: string
+          enum:
+          - aws
+          default: aws
+          x-stainless-const: true
+        role_arn:
+          type: string
+          pattern: ^arn:aws:iam::\d{12}:role/.+$
+          description: The Role ARN that OpenAI will assume to call your KMS
+          example: arn:aws:iam::123456789012:role/example-role
+        kms_arn:
+          type: string
+          description: The Key Management System ARN for the master key you manage
+        external_id:
+          type: string
+          description: The ExternalID that OpenAI will pass in the AssumeRole call for the customer's AWS account. This must be the OpenAI organization ID or an API project ID that belongs to the organization.
+        purpose:
+          $ref: '#/components/schemas/ExternalKeyPurpose'
+      type: object
+      required:
+      - name
+      - type
+      - role_arn
+      - kms_arn
+      - external_id
+    AzureExternalKeyParams:
+      properties:
+        name:
+          type: string
+          description: A friendly name to identify this config
+        type:
+          type: string
+          enum:
+          - azure
+          default: azure
+          x-stainless-const: true
+        tenant_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          description: Your Azure tenant UUID
+        vault_uri:
+          type: string
+          pattern: ^https://.+\.vault\.azure\.net/?$
+          description: The URI of the Azure vault containing the master key you manage
+        key_name:
+          type: string
+          maxLength: 127
+          pattern: ^org-[0-9a-zA-Z-]*--[0-9a-zA-Z-]*$
+          description: The name of the Azure Key Vault master key that you manage
+        purpose:
+          $ref: '#/components/schemas/ExternalKeyPurpose'
+        key_version:
+          type: string
+          pattern: ^[0-9a-fA-F]{32}$
+          description: An exact Azure Key Vault key version. Required for PSP decryption; not accepted for EKM.
+      type: object
+      required:
+      - name
+      - type
+      - tenant_id
+      - vault_uri
+      - key_name
+    ExternalKeyPurpose:
+      type: string
+      enum:
+      - ekm
+      - psp_decryption
+    ExternalKeyResource:
+      properties:
+        object:
+          type: string
+        id:
+          type: string
+        type:
+          type: string
+        purpose:
+          $ref: '#/components/schemas/ExternalKeyPurpose'
+        name:
+          type: string
+        api_project_ids:
+          items:
+            type: string
+          type: array
+        workspace_id:
+          type: string
+        created_at:
+          type: integer
+        role_arn:
+          type: string
+        external_id:
+          type: string
+        kms_arn:
+          type: string
+        workload_identity_project_number:
+          type: string
+        workload_identity_pool_id:
+          type: string
+        workload_identity_provider_id:
+          type: string
+        audience:
+          type: string
+        kms_project_id:
+          type: string
+        kms_key_ring_name:
+          type: string
+        kms_key_name:
+          type: string
+        kms_key_location:
+          type: string
+        kms_key_version:
+          type: string
+        tenant_id:
+          type: string
+        vault_uri:
+          type: string
+        key_name:
+          type: string
+        key_version:
+          type: string
+      type: object
+      required:
+      - object
+      - id
+      - type
+      - name
+      - api_project_ids
+      - workspace_id
+      - created_at
+    GcpExternalKeyParams:
+      properties:
+        name:
+          type: string
+          description: A friendly name to identify this config
+        type:
+          type: string
+          enum:
+          - gcp
+          default: gcp
+          x-stainless-const: true
+        workload_identity_project_number:
+          type: string
+          pattern: ^[0-9]{1,19}$
+          description: The numeric GCP project number where you registered OpenAI's workload identity
+        workload_identity_pool_id:
+          type: string
+          description: The pool containing the Workload Identity provider that you registered for OpenAI
+        workload_identity_provider_id:
+          type: string
+          description: The Workload Identity provider that you registered for OpenAI
+        kms_project_id:
+          type: string
+          description: The string GCP project name where your KMS resides
+        kms_key_ring_name:
+          type: string
+          description: The Key Management System key ring for the master key you manage
+        kms_key_name:
+          type: string
+          description: The name of the Key Management System master key you manage
+        kms_key_location:
+          type: string
+          description: The region where your Key Management System master key is located
+        audience:
+          type: string
+          description: The aud field in the identity token OpenAI will pass in the call to the customer's GCP STS. This must be the OpenAI organization ID or an API project ID that belongs to the organization.
+        purpose:
+          $ref: '#/components/schemas/ExternalKeyPurpose'
+        kms_key_version:
+          type: string
+          pattern: ^[1-9][0-9]*$
+          description: An exact CryptoKeyVersion number. Required for PSP decryption; not accepted for EKM.
+      type: object
+      required:
+      - name
+      - type
+      - workload_identity_project_number
+      - workload_identity_pool_id
+      - workload_identity_provider_id
+      - kms_project_id
+      - kms_key_ring_name
+      - kms_key_name
+      - kms_key_location
+      - audience
+    ListExternalKeysResource:
+      properties:
+        object:
+          type: string
+          enum:
+          - list
+          default: list
+          x-stainless-const: true
+        data:
+          items:
+            $ref: '#/components/schemas/ExternalKeyResource'
+          type: array
+        first_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+        last_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+        has_more:
+          type: boolean
+      type: object
+      required:
+      - object
+      - data
+      - first_id
+      - last_id
+      - has_more
+    V1OrganizationExternalKeysPostRequest:
+      discriminator:
+        propertyName: type
+      anyOf:
+      - $ref: '#/components/schemas/AwsExternalKeyParams'
+      - $ref: '#/components/schemas/GcpExternalKeyParams'
+      - $ref: '#/components/schemas/AzureExternalKeyParams'
+    ValidateExternalKeyResource:
+      properties:
+        status:
+          type: string
+      type: object
+      required:
+      - status
+    LiveTransportDTMFSendParam:
+      description: Send one DTMF keypress to the SIP trunk through a Live sideband connection. This command is supported only for SIP calls. A successful send emits `transport.dtmf.sent` on sideband. If you provide `event_id`, the success notification includes it as `client_event_id`; a failure includes it as `error.client_event_id`. Send separate events for multiple keypresses.
+      example:
+        type: transport.dtmf.send
+        event_id: evt_dtmf_001
+        event: '#'
+      type: object
+      properties:
+        event_id:
+          anyOf:
+          - description: Optional client identifier for correlating this command with a server event's client_event_id or error.client_event_id.
+            type: string
+            maxLength: 512
+          - type: 'null'
+        type:
+          default: transport.dtmf.send
+          x-stainless-const: true
+          type: string
+          enum:
+          - transport.dtmf.send
+        event:
+          description: 'The DTMF key to send: one of `0`–`9`, `A`–`D`, `*`, or `#`.'
+          type: string
+          minLength: 1
+          maxLength: 1
+          pattern: ^[0-9A-D*#]$
+      required:
+      - type
+      - event
+      x-oaiMeta:
+        example:
+          type: transport.dtmf.send
+          event_id: evt_dtmf_001
+          event: '#'
+    LiveTransportDTMFSent:
+      description: A SIP DTMF keypress successfully sent to the SIP trunk. Delivered only to sideband observers; this is not a client command.
+      example:
+        type: transport.dtmf.sent
+        event_id: event_dtmf_2
+        event: '#'
+      type: object
+      properties:
+        type:
+          default: transport.dtmf.sent
+          x-stainless-const: true
+          type: string
+          enum:
+          - transport.dtmf.sent
+        event_id:
+          type: string
+        event:
+          type: string
+          minLength: 1
+          maxLength: 1
+          pattern: ^[0-9A-D*#]$
+        client_event_id:
+          description: The event_id of the client command, when supplied.
+          type: string
+      required:
+      - type
+      - event_id
+      - event
+      x-oaiMeta:
+        example:
+          type: transport.dtmf.sent
+          event_id: event_dtmf_2
+          event: '#'
+    CompactionParam:
+      type: object
+      properties:
+        async:
+          type:
+          - boolean
+          - 'null'
+          description: Whether to compact context in the background. Omission or null defaults to true. Set to false to use blocking compaction. Background compaction may increase token usage.
+      additionalProperties: false
+      description: Settings for compacting the agent's context.
+    CompactionResource:
+      type: object
+      properties:
+        async:
+          type: boolean
+          description: Whether context is compacted in the background. Defaults to true.
+      required:
+      - async
+      additionalProperties: false
+      description: The effective settings for compacting the agent's context.
+    markup:
+      type: string
+      format: binary
+      description: A transparent PNG overlaid on the first image to guide the edit. Must match that image's dimensions after orientation and contain transparent pixels. Supports GPT Image 2.5 and 2.6. Cannot be combined with mask.
+    SessionReviewParam:
+      type: string
+      enum:
+      - none
+      - auto_review
+      x-enumDescriptions:
+      - Keep the existing execution behavior without automatic action review.
+      - Review eligible actions automatically. Deny manual approval fallbacks.
+      description: Review applied to eligible actions in a session.
+    SessionReviewResource:
+      type: string
+      enum:
+      - none
+      - auto_review
+      description: The configured action review mode.
+    SvgUsage:
+      properties:
+        model:
+          type: string
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        reasoning_tokens:
+          type: integer
+      type: object
+      required:
+      - model
+      - input_tokens
+      - output_tokens
+      - total_tokens
+      - reasoning_tokens
+    ReasoningEffortEnum:
+      type: string
+      enum:
+      - none
+      - minimal
+      - low
+      - medium
+      - high
+      - xhigh
+      - max
+    SvgReasoningParam:
+      properties:
+        effort:
+          anyOf:
+          - $ref: '#/components/schemas/ReasoningEffortEnum'
+            description: Controls how much effort the model should spend on reasoning for this request.
+      type: object
+      required: []
+      description: Reasoning effort for SVG authoring. When omitted, uses the author model's default in both Images and Responses.
+    SvgParam:
+      properties:
+        model:
+          type: string
+          minLength: 1
+        reasoning:
+          anyOf:
+          - $ref: '#/components/schemas/SvgReasoningParam'
+            description: Reasoning effort for SVG authoring. When omitted, uses the author model's default in both Images and Responses.
+          - type: 'null'
+      type: object
+      required: []
+    frame_count:
+      type:
+      - integer
+      - 'null'
+      minimum: 2
+      maximum: 16
+      description: Number of frames for GIF output. Accepts integers from 2 through 16. Defaults to 9 when omitted. Only supported with output_format=gif. The requested size must satisfy the selected model's GIF size limits. GIF output does not support streaming, partial images, masks, or custom output compression. Requires access to the GIF preview for the selected model.
+    frame_duration_ms:
+      type:
+      - integer
+      - 'null'
+      minimum: 20
+      description: Requested delay per GIF frame, in milliseconds. Defaults to 200 when omitted. GIF output rounds to the nearest 10 ms and caps the encoded delay at 655,350 ms per frame. Only supported with output_format=gif.
+    complexity:
+      type:
+      - string
+      - 'null'
+      enum:
+      - low
+      - medium
+      - high
+      - null
+      description: Computation spent planning the image, independently of rendering quality. Uses the image model's configured default when omitted. For SVG output, controls the reference image, independently of the SVG author's reasoning.
+    svg:
+      type:
+      - object
+      - 'null'
+      description: Selects the model and reasoning effort used to author SVG output. Requires output_format=svg and access to SVG model selection. When model selection is enabled, supply svg.model. When model selection is disabled, omit this object. The top-level model selects the image model that creates the reference image. SVG generation requires n=1 and does not support streaming, partial images, prompt_rewriter, or output_compression. SVG edits are not supported.
+      properties:
+        model:
+          type: string
+          minLength: 1
+          description: Model used to author the SVG. Required when SVG model selection is enabled.
+        reasoning:
+          type:
+          - object
+          - 'null'
+          description: Reasoning settings for the SVG author, independent of image complexity. Omitted or null effort uses the author model's default. Supported efforts depend on the selected author model.
+          properties:
+            effort:
+              anyOf:
+              - $ref: '#/components/schemas/ReasoningEffortEnum'
+              - type: 'null'
+              description: Controls how much effort the SVG author spends on reasoning. Uses the author model's default when omitted or null.
+      required:
+      - model
+    BetaSvgParam:
+      properties:
+        model:
+          type: string
+          minLength: 1
+        reasoning:
+          anyOf:
+          - $ref: '#/components/schemas/BetaSvgReasoningParam'
+            description: Reasoning effort for SVG authoring. When omitted, uses the author model's default in both Images and Responses.
+          - type: 'null'
+      type: object
+      required: []
+    BetaSvgReasoningParam:
+      properties:
+        effort:
+          anyOf:
+          - $ref: '#/components/schemas/BetaReasoningEffortEnum'
+            description: Controls how much effort the model should spend on reasoning for this request.
+      type: object
+      required: []
+      description: Reasoning effort for SVG authoring. When omitted, uses the author model's default in both Images and Responses.
+    BetaReasoningEffortEnum:
+      type: string
+      enum:
+      - none
+      - minimal
+      - low
+      - medium
+      - high
+      - xhigh
+      - max
+    BetaSvgUsage:
+      properties:
+        model:
+          type: string
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        reasoning_tokens:
+          type: integer
+      type: object
+      required:
+      - model
+      - input_tokens
+      - output_tokens
+      - total_tokens
+      - reasoning_tokens
     OAuthErrorCode:
       anyOf:
       - enum:
@@ -106367,7 +108508,7 @@ components:
         text:
           description: A string of text to classify.
           type: string
-          example: I want to kill them
+          example: '...text to classify goes here...'
       required:
       - type
       - text
@@ -106454,6 +108595,7 @@ components:
       enum:
       - gpt-6-astra
       - gpt-6.1-sol
+      - gpt-6.1-terra
       - gpt-6-sol
       - gpt-6-luna
       - gpt-5.6-sol
@@ -106984,6 +109126,42 @@ components:
       - completed
       - incomplete
       - expired
+    CodeInterpreterContainerAuto:
+      properties:
+        type:
+          type: string
+          enum:
+          - auto
+          description: Always `auto`.
+          default: auto
+          x-stainless-const: true
+        file_ids:
+          items:
+            type: string
+            example: file-123
+          type: array
+          maxItems: 50
+          description: An optional list of uploaded files to make available to your code.
+        memory_limit:
+          anyOf:
+          - $ref: '#/components/schemas/ContainerMemoryLimit'
+            description: The memory limit for the code interpreter container.
+          - type: 'null'
+        network_policy:
+          discriminator:
+            propertyName: type
+          description: Network access policy for the container.
+          anyOf:
+          - $ref: '#/components/schemas/ContainerNetworkPolicyDisabledParam'
+          - $ref: '#/components/schemas/ContainerNetworkPolicyAllowlistParam'
+      type: object
+      required:
+      - type
+      title: CodeInterpreterToolAuto
+      description: Configuration for a code interpreter container. Optionally specify the IDs of the files to run the code on.
+      x-stainless-naming:
+        go:
+          type_name: ToolCodeInterpreterContainerCodeInterpreterContainerAuto
     LiveFunctionToolChoiceParam:
       type: object
       properties:
@@ -108040,6 +110218,15 @@ x-oaiMeta:
       key: LiveCommentaryAppendParam
       path: <auto>
     - type: object
+      key: LiveDecisionCreateParam
+      path: <auto>
+    - type: object
+      key: LiveDecisionItemCreateParam
+      path: <auto>
+    - type: object
+      key: LiveDecisionItemDeleteParam
+      path: <auto>
+    - type: object
       key: LiveResponseItemCreateParam
       path: <auto>
     - type: object
@@ -108100,6 +110287,15 @@ x-oaiMeta:
       path: <auto>
     - type: object
       key: LiveDelegationCreated
+      path: <auto>
+    - type: object
+      key: LiveDecisionEvent
+      path: <auto>
+    - type: object
+      key: LiveDecisionItemCreated
+      path: <auto>
+    - type: object
+      key: LiveDecisionItemDeleted
       path: <auto>
     - type: object
       key: LiveResponseEvent

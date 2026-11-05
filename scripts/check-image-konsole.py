@@ -295,7 +295,7 @@ def main():
             tty('explicit-off', generate + ['--inline', 'off'], widths=())
             raw, _ = tty('remember-off', ['images', 'inline', 'off'], home_name='preferences', widths=(), saved=0,
                          expected_stderr=b'Automatic image previews off.\nOverride once: --inline auto|on|off\n'
-                                         b'View a saved image: openai images preview FILE\n')
+                                         b'Image preview help: openai images preview --help\n')
             require(not raw, 'preference confirmation contaminated stdout')
             tty('persisted-off', generate, home_name='preferences', widths=())
             tty('override-off-with-on', generate + ['--inline', 'on'], home_name='preferences', saved=2)

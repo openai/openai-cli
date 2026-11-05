@@ -1,7 +1,90 @@
 # Batch requests
 
-Prepare requests locally, upload the file, then create a batch.
+Prepare requests locally, then submit the file with one command.
 Waiting and downloading use existing Batches and Files APIs.
+
+## Find your way around
+
+Use the command guide without contacting the API:
+
+```sh
+openai batches
+openai explore batches
+```
+
+`batches` explains the workflow and lists available actions.
+`explore batches` searches the CLI's commands and examples locally.
+Add `--help` to any command for its options.
+
+Open the interactive browser to choose an existing batch without copying its ID:
+
+```sh
+openai batches browse
+```
+
+Choose a batch to read its results, errors, input requests, or details.
+Expand Save a file to choose output, error, or input files.
+Press Enter to save the suggested filename. Press Ctrl+L to choose another folder.
+The next file from that batch uses the selected folder. You can also type a full path.
+Search applies to the loaded page. Use Next page to reach older batches.
+Press Ctrl+R to reload the first page.
+Escape returns to batch actions or the batch list.
+At the batch list, Escape exits. Ctrl+C exits from any screen.
+Downloads ask for a destination and never overwrite an existing file.
+The browser uses your configured connection, API key, and project.
+Press Ctrl+N to start guided creation from a local JSONL file, an uploaded input, or a CSV.
+With **Input file** selected, type or paste a local file path. Press Enter to use it.
+Press Enter on an empty field to browse CSV and JSONL files in the displayed folder.
+Type a filename to filter. Press Enter on a folder to open it.
+With the filter empty, Backspace goes up one folder. Ctrl+L opens a path directly.
+Relative paths start in the displayed folder. **Choose an uploaded file** opens the project file list.
+Set **Metadata** and **Output expiration** directly on **Create batch**. Enter applies an edit. Esc cancels it.
+Choosing JSONL opens **Review batch** directly. The browser reads the endpoint from the file unless you chose one yourself.
+Review the request count, endpoint, and project before submitting.
+Press Enter or Ctrl+S on **Review batch** to submit. Press Esc to edit.
+The browser opens the new batch and updates progress every ten seconds while you view its actions.
+The browser does not cancel remote batches.
+
+Search requests by ID or content. Short answers appear beside their request IDs.
+Press Enter to expand the selected request in the list. Use ↑ or ↓ to inspect another request.
+A single request error opens expanded. It shows the API message and available recovery steps.
+Use the HTTP status, error code, and request ID to investigate further.
+Press → to open the full record. Press `j` there to switch between Readable and Raw JSON.
+Press `p` in batch details or a request record to print it into shell scrollback.
+
+For scripts, use `list`, `retrieve`, `results`, and `--format json`.
+The browser requires an interactive terminal and readable output.
+
+## Start from a CSV
+
+For example, a support team can classify tickets from a CSV with `ticket_id` and `message` columns.
+
+1. Open `openai batches browse`.
+2. Press Ctrl+N.
+3. Type the path to your UTF-8 CSV in **Input file**.
+4. Press Enter.
+5. On **Set up CSV**, choose the text column, such as `message`. The browser selects a single column automatically.
+6. Describe the task, such as “Classify each ticket as billing, login, or other.”
+7. Enter a Responses model available to your project.
+8. On **Review batch**, check the row count and first input.
+9. Press Enter to submit the batch.
+10. When processing ends, open **View rows with answers**.
+11. To save a copy, press `s`. Ctrl+S lets you choose another filename or folder.
+
+CSV preparation runs locally. The browser uses the API to list existing batches.
+Confirmation uploads one Responses request per row and starts a batch that can incur charges.
+Each request contains the selected text, model, instructions, and a fingerprint derived from the entire row, its position, and headings.
+The spreadsheet's other columns do not become prompt text.
+
+Keep the original CSV. After restarting the browser, open **View results** or **View input** for the completed batch.
+Press Ctrl+O when **original CSV** appears. Choose the original spreadsheet.
+The browser verifies each row before displaying its answer. Row order stays the same when answers arrive out of order.
+The saved CSV adds result and error columns.
+Failed or missing answers appear on their original rows.
+The suggested destination is a new file beside the original, such as `tickets-results.csv`.
+Export never overwrites an existing file. It prefixes formula-like cells with an apostrophe for spreadsheet safety.
+If a filename already exists, enter another name or press Ctrl+L to choose another folder.
+Use the [local synthetic demo](../scripts/demos/batches/README.md) to try this without an API key or charges.
 
 ## Prepare and submit
 
@@ -16,7 +99,45 @@ This example uses two synthetic requests:
 ```
 
 Save these lines as `requests.jsonl`.
-Upload the file with purpose `batch`:
+Upload and create one batch with one command:
+
+```sh
+openai batches submit requests.jsonl
+```
+
+`submit` requires an existing regular JSONL request file. It does not write requests.
+An omitted endpoint comes from the file's request URLs. An omitted completion window defaults to `24h`.
+Explicit flags override these defaults. `--file requests.jsonl` remains available instead of the positional path.
+Create, wait, and save without copying the batch ID:
+
+```sh
+openai batches submit requests.jsonl --wait --output-dir ./results
+```
+
+It accepts the same request fields as `create`, except `input_file_id`.
+You can provide those fields through flags or piped JSON/YAML.
+Stdin remains available for request fields; `--file -` is not supported.
+Use `files upload` followed by `batches create` for stdin or custom input-file retention.
+
+The CLI validates local request fields before uploading.
+The API performs content and account validation.
+Upload and creation each run once, without automatic retries.
+If creation fails, the CLI keeps the uploaded file and reports its ID.
+Direct HTTP 401/403 responses report an access rejection.
+Correct access before retrying the failed operation.
+If upload succeeded, reuse its file ID with `create` instead of repeating `submit`.
+Transport failures, server failures, and redirected access failures can leave the mutation outcome uncertain.
+Check `files list` after an uncertain upload, or `batches list` after uncertain creation.
+Reuse the same connection and project settings.
+Then use `create --input-file-id` if you confirm that no batch exists.
+Structured submission errors include the original error under `error` and recovery data under `batch_submission`.
+If local waiting stops before completion, resume with `batches wait` and the returned batch ID.
+If the batch has finished, inspect its status, results, and errors instead of waiting again.
+Keep saved files. Download only missing files after a partial download failure.
+Use the same connection and project settings. Do not repeat `submit` to recover results.
+
+You can also upload separately:
+
 
 ```sh
 openai files upload --file requests.jsonl --purpose batch
@@ -118,38 +239,37 @@ For example, extract the exact ID without copying labels:
 openai --transform id --raw-output batches retrieve batch_example
 ```
 
-The following optional view recipes use `jq` or Python 3.
-Neither tool is a CLI dependency.
-In Bash or zsh scripts, use `set -o pipefail` to retain failures from upstream commands.
+Readable output includes UTC lifecycle dates, the completion window, and metadata.
+Completed batches include the duration from creation to completion.
+Explicit formats and extraction retain the original timestamps and API fields.
 
-Refresh all listed batches every ten seconds in Bash or zsh:
-
-```sh
-(
-  while :; do
-    openai batches list --limit 100 --max-items -1 || exit "$?"
-    sleep 10 || exit "$?"
-  done
-)
-```
-
-Each refresh prints another snapshot. API failures stop the loop with a nonzero exit.
-This recipe does not clear terminal history or provide an atomic snapshot across pages.
-
-Show chronological lifecycle events, retaining Unix timestamps:
+Refresh the selected Batch list every ten seconds:
 
 ```sh
-openai --format json batches retrieve batch_example |
-  jq 'to_entries | map(select(.key != "expires_at" and (.key | endswith("_at")) and (.value | type == "number"))) | sort_by(.value)'
+openai batches list --watch --limit 100 --max-items -1
 ```
 
-This includes returned lifecycle timestamps and excludes the expiration deadline.
-Show elapsed completion time in seconds, or null before completion:
+Each refresh prints another snapshot without clearing terminal history.
+Pagination runs serially within each refresh.
+Each refresh uses private temporary storage for its records and pagination cursors.
+Memory use depends on one API page and one rendered record, instead of the complete Batch history.
+Temporary storage must hold the current snapshot and its index.
+The command removes this storage before the next refresh, including after failure or handled interruption.
+The API does not provide an atomic snapshot across pages.
+API failures stop watching with a nonzero exit.
+A partial snapshot is marked as incomplete.
+Ctrl+C stops local watching without changing remote batches.
+
+Use JSONL for machine consumption:
 
 ```sh
-openai --format json batches retrieve batch_example |
-  jq 'if (.completed_at | type) == "number" then .completed_at - .created_at else null end'
+openai --format jsonl batches list --watch --poll-interval 5s --watch-count 3
 ```
+
+Each line contains `object`, `sequence`, `observed_at`, `complete`, and the `data` array.
+`--watch-count 0` watches until interrupted.
+Watch supports readable output and JSONL.
+Omit `--watch` for other formats, extraction, or raw output.
 
 Add `--wait` to poll until the batch reaches a terminal status:
 
@@ -281,30 +401,87 @@ openai --format json files get file_example
 ```
 
 The response includes filename, byte size, purpose, creation time, expiration, and any returned status details.
-Browse existing files before selecting an input ID:
+Find existing Batch input files by filename or ID:
 
 ```sh
-openai --format json files list --order desc --max-items -1
+openai batches inputs --search requests --max-items -1
 ```
 
-Add `--purpose batch` to select uploaded batch inputs.
-`--format json` returns one array. Use `--format jsonl` for independent records.
-Search filenames with a case-insensitive literal substring:
+Search uses a case-insensitive literal substring.
+The command searches subsequent pages until it finds the requested number of matches or reaches the end.
+The default limit is 100 matching files; `-1` searches all pages.
+Files retain their newest-first order and complete metadata.
+
+Select one file interactively:
 
 ```sh
-openai --format jsonl files list --order desc --max-items -1 |
-  python3 -c '
-import json, sys
-needle = sys.argv[1].strip().lower()
-for line in sys.stdin:
-    item = json.loads(line)
-    if needle in (item.get("filename") or "").lower():
-        print(json.dumps(item, ensure_ascii=False))
-' 'requests'
+openai batches inputs --select
 ```
 
-This streams local filtering across all returned pages, including Unicode filenames.
-It preserves the server's newest-first ordering.
+Selection requires terminal stdin and stderr.
+The picker returns the selected File metadata without creating a batch.
+Use its ID with `batches create --input-file-id`.
+For structured stdout, explicitly keep picker errors readable:
+
+```sh
+openai --format json --format-error text batches inputs --select
+```
+
+Browse a batch's JSONL records without a separate download:
+
+```sh
+openai batches results batch_example --file input
+openai batches results batch_example --custom-id example-1 --match-input
+openai --format explore batches results batch_example --match-input
+```
+
+`--file` defaults to `output`; it also accepts `input` and `error`.
+`--custom-id` filters by an exact, case-sensitive ID.
+`--match-input` groups inputs and selected results by `custom_id`, never by row position.
+Each group includes `inputs`, `results`, a `match` status, and any `issues`.
+Duplicate IDs remain grouped and visibly ambiguous.
+Missing IDs and unmatched records remain visible.
+Without matching, records retain their original order.
+
+Default readable results show the request outcome and its meaningful content.
+The CLI reports refusals and incomplete answers separately from HTTP success.
+Multiple answers, tool calls, annotations, and unfamiliar content remain visible.
+`--match-input` also shows the original input instructions and content.
+Duplicate IDs do not create artificial input/result pairs.
+Missing results refer only to the selected file, not the complete batch.
+Inspecting a failed record successfully exits zero; this does not mean the request succeeded.
+The default output remains readable when piped.
+
+Use explicit JSON when you need every API field:
+
+```sh
+openai --format json batches results batch_example --custom-id example-1 --match-input
+```
+
+Readable results omit reviewed configuration fields that repeat request settings.
+JSON, JSONL, raw output, and extraction retain the complete selected data.
+Large records and unfamiliar structures use a labeled detailed view.
+The detailed view preserves complete content without imposing a new size limit.
+
+The response contains a `data` array and supports normal output formats and extraction.
+The explorer supports interactive inspection when a terminal is available.
+The command reports unavailable files and malformed JSONL without submitting requests again.
+Use `batches download` when you need exact file bytes.
+Non-matching results emit each validated record in text, JSON, JSONL, and raw formats.
+Ordinary records use bounded memory without temporary files.
+Oversized records use one reusable private file, with temporary space proportional to the largest record.
+Matching and browser navigation use indexed temporary storage for the selected files.
+Large object labels can also use temporary storage during readable rendering.
+The command removes owned temporary storage after success, failure, or handled interruption.
+JSON, JSONL, and raw output retain one envelope containing the complete selected `data` array.
+A late read or validation failure returns a nonzero exit status and can leave incomplete output.
+After an error, the CLI briefly drains queued output before stopping a blocked destination.
+Always check the exit status before using formatted results.
+Readable projections buffer at most 256 KiB per record before switching to streaming detail.
+Matching keeps groups on disk and renders their records separately.
+Large IDs and object keys do not have new size limits.
+Extraction, terminal exploration, pretty output, and YAML retain the selected document in memory.
+Use `--custom-id` to reduce that document before these operations.
 
 Files also provides explicit deletion:
 
@@ -331,4 +508,12 @@ Batches and Files are not eligible for Zero Data Retention.
 Availability, model access, retention, and residency remain server-side policies.
 
 Authentication, permission, validation, conflict, and transport errors retain the CLI's normal error presentation.
+Readable Batch errors state the outcome, the supported cause, and the next safe action.
+Unknown submission outcomes remain explicit because a disconnected request can still reach the API.
+Missing receipt IDs identify which response was incomplete.
+Check existing files or batches before repeating a submission.
+Connection failures suggest checking the connection, proxy, and `--base-url` setting.
+Partial input lists retain received records and identify the incomplete result.
+Retry that read-only search with the same connection and project settings.
+Explicit machine errors preserve API fields; submission errors add the documented recovery envelope.
 Local synthetic tests verify client behavior; they do not establish account entitlements or live server policy.

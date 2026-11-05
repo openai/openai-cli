@@ -10,7 +10,7 @@ import (
 
 func TestListTableKeepsIDsAndFitsWidth(t *testing.T) {
 	headers := []string{"ID", "FILENAME", "PURPOSE", "SIZE", "STATUS"}
-	rows := [][]string{{"file-example-1", "training-東京-👩🏽‍💻-" + strings.Repeat("x", 100) + ".jsonl", "fine-tune", "1 KiB", "processed"}, {"file-example-2", "short.jsonl", "batch", "0 B", "uploaded"}}
+	rows := [][]string{{"file-example-1", "requests-東京-👩🏽‍💻-" + strings.Repeat("x", 100) + ".jsonl", "user_data", "1 KiB", "processed"}, {"file-example-2", "short.jsonl", "batch", "0 B", "uploaded"}}
 	for _, width := range []int{58, 80, 110} {
 		text, ok := ListTable(headers, rows, width)
 		require.True(t, ok)

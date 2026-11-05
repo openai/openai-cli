@@ -9,7 +9,9 @@
       "duplicate",
       "validation"
     ],
-    "TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue": [],
+    "TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue": []
+  },
+  "images": {
     "TestImageInlinePreferencePrecedence": [
       "absent/",
       "absent/#01",

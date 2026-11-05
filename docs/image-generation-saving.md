@@ -22,6 +22,15 @@ An optional [Tab shortcut](image-picker-shortcuts.md) opens the same picker in
 Bash 4.3+, zsh and fish. Other shells use Enter.
 
 After generation, the picker keeps your prompt and settings below the saved result.
+Focus **Images** and press Enter to **Expand** the selected image.
+In supported Konsole sessions, Expand uses a temporary screen with native image pixels.
+Resize the terminal while Expand is open to refit the image.
+Press Esc to return to the picker with your draft, settings, and selection intact.
+New results stay available without replacing the image you are viewing.
+Disabled previews remain disabled. **Open file** retains its existing behavior.
+The expanded image does not remain in terminal history after you close Expand.
+Expand does not require a patched Konsole build or `OPENAI_KONSOLE_IMAGES=1`.
+
 Reopening restores your latest draft, including the prompt, image settings, and
 chosen save folder. Drafts save before deliberate requests and when you exit
 after editing. Clearing the prompt also clears the saved description.
@@ -304,9 +313,9 @@ An observer releases the final response only after both partial previews arrive.
 Build and run them without API credentials:
 
 ```sh
-go test -c -o /tmp/image-progress-custom.test ./pkg/custom
+go test -c -o /tmp/image-progress-images.test ./internal/commands/images
 go test -c -o /tmp/image-progress-main.test ./cmd/openai
-python3 scripts/check-image-progress.py /tmp/image-progress-custom.test /tmp/image-progress-main.test /tmp/image-progress-evidence
+python3 scripts/check-image-progress.py /tmp/image-progress-images.test /tmp/image-progress-main.test /tmp/image-progress-evidence
 ```
 
 `scripts/demos/record-image-progress.sh` records a before/after comparison using

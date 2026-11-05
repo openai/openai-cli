@@ -1,6 +1,6 @@
 //go:build windows
 
-// Package windowsfile creates exclusive Windows files and directories with private permissions.
+// Package windowsfile handles private creation and non-following Windows file opens.
 package windowsfile
 
 import (

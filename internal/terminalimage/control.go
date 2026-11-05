@@ -20,3 +20,14 @@ func WriteControl(ctx context.Context, out io.Writer, control string) error {
 		return err
 	})
 }
+
+// WriteFrame preserves native graphics reset handling for a caller-owned view.
+// Text and image rows must already contain escaped text or prepared image bytes.
+func WriteFrame(ctx context.Context, out io.Writer, frame string, protocol string) error {
+	if protocol == "kitty" {
+		return writeKittyOutput(ctx, out, func(destination io.Writer) error {
+			return writeKittyView(ctx, destination, frame)
+		})
+	}
+	return WriteControl(ctx, out, frame)
+}

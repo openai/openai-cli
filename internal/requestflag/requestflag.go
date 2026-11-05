@@ -189,7 +189,7 @@ func applyStdinDataToFlags(cmd *cli.Command, data map[string]any, onSet func(cli
 			}
 			setVal, err := formatForFlagSet(val)
 			if err != nil {
-				return fmt.Errorf("cannot format piped value for flag %q: %w", flag.Names()[0], err)
+				return stdinValueError(flag, fmt.Errorf("cannot format piped value for flag %q: %w", flag.Names()[0], err))
 			}
 			if err := setFlagFromStdin(flag, setVal, onSet); err != nil {
 				return err

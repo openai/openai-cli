@@ -1,0 +1,214 @@
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
+
+package commands
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/openai/openai-cli/internal/mocktest"
+	"github.com/openai/openai-cli/internal/requestflag"
+)
+
+func TestImagesCreateVariation(t *testing.T) {
+	t.Run("regular flags", func(t *testing.T) {
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"images", "create-variation",
+			"--image", mocktest.TestFile(t, "Example data"),
+			"--model", "gpt-image-1.5",
+			"--n", "1",
+			"--response-format", "url",
+			"--size", "1024x1024",
+			"--user", "user-1234",
+		)
+	})
+
+	t.Run("piping data", func(t *testing.T) {
+		testFile := mocktest.TestFile(t, "Example data")
+		// Test piping YAML data over stdin
+		pipeDataStr := "" +
+			"image: Example data\n" +
+			"model: gpt-image-1.5\n" +
+			"'n': 1\n" +
+			"response_format: url\n" +
+			"size: 1024x1024\n" +
+			"user: user-1234\n"
+		pipeDataStr = strings.ReplaceAll(pipeDataStr, "Example data", testFile)
+		pipeData := []byte(pipeDataStr)
+		mocktest.TestRunMockTestWithPipeAndFlags(
+			t, pipeData,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"images", "create-variation",
+		)
+	})
+}
+
+func TestImagesEdit(t *testing.T) {
+	t.Run("regular flags", func(t *testing.T) {
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"images", "edit",
+			"--max-items", "10",
+			"--image", mocktest.TestFile(t, "Example data"),
+			"--prompt", "A cute baby sea otter wearing a beret",
+			"--background", "transparent",
+			"--complexity", "low",
+			"--frame-count", "2",
+			"--frame-duration-ms", "20",
+			"--input-fidelity", "high",
+			"--markup", mocktest.TestFile(t, "Example data"),
+			"--mask", mocktest.TestFile(t, "Example data"),
+			"--model", "gpt-image-1.5",
+			"--n", "1",
+			"--output-compression", "100",
+			"--output-format", "png",
+			"--partial-images", "1",
+			"--quality", "high",
+			"--response-format", "url",
+			"--safety-identifier", "user-1234",
+			"--size", "1024x1024",
+			"--stream=false",
+			"--user", "user-1234",
+		)
+	})
+
+	t.Run("piping data", func(t *testing.T) {
+		testFile := mocktest.TestFile(t, "Example data")
+		// Test piping YAML data over stdin
+		pipeDataStr := "" +
+			"image: Example data\n" +
+			"prompt: A cute baby sea otter wearing a beret\n" +
+			"background: transparent\n" +
+			"complexity: low\n" +
+			"frame_count: 2\n" +
+			"frame_duration_ms: 20\n" +
+			"input_fidelity: high\n" +
+			"markup: Example data\n" +
+			"mask: Example data\n" +
+			"model: gpt-image-1.5\n" +
+			"'n': 1\n" +
+			"output_compression: 100\n" +
+			"output_format: png\n" +
+			"partial_images: 1\n" +
+			"quality: high\n" +
+			"response_format: url\n" +
+			"safety_identifier: user-1234\n" +
+			"size: 1024x1024\n" +
+			"stream: false\n" +
+			"user: user-1234\n"
+		pipeDataStr = strings.ReplaceAll(pipeDataStr, "Example data", testFile)
+		pipeData := []byte(pipeDataStr)
+		mocktest.TestRunMockTestWithPipeAndFlags(
+			t, pipeData,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"images", "edit",
+			"--max-items", "10",
+		)
+	})
+}
+
+func TestImagesGenerate(t *testing.T) {
+	t.Run("regular flags", func(t *testing.T) {
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"images", "generate",
+			"--max-items", "10",
+			"--prompt", "A cute baby sea otter",
+			"--background", "transparent",
+			"--complexity", "low",
+			"--frame-count", "2",
+			"--frame-duration-ms", "20",
+			"--model", "gpt-image-2.5-flare",
+			"--moderation", "low",
+			"--n", "1",
+			"--output-compression", "100",
+			"--output-format", "png",
+			"--partial-images", "1",
+			"--quality", "medium",
+			"--response-format", "url",
+			"--safety-identifier", "user-1234",
+			"--size", "1024x1024",
+			"--stream=false",
+			"--style", "vivid",
+			"--svg", "{model: x, reasoning: {effort: none}}",
+			"--user", "user-1234",
+		)
+	})
+
+	t.Run("inner flags", func(t *testing.T) {
+		// Check that inner flags have been set up correctly
+		requestflag.CheckInnerFlags(imagesGenerate)
+
+		// Alternative argument passing style using inner flags
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"images", "generate",
+			"--max-items", "10",
+			"--prompt", "A cute baby sea otter",
+			"--background", "transparent",
+			"--complexity", "low",
+			"--frame-count", "2",
+			"--frame-duration-ms", "20",
+			"--model", "gpt-image-2.5-flare",
+			"--moderation", "low",
+			"--n", "1",
+			"--output-compression", "100",
+			"--output-format", "png",
+			"--partial-images", "1",
+			"--quality", "medium",
+			"--response-format", "url",
+			"--safety-identifier", "user-1234",
+			"--size", "1024x1024",
+			"--stream=false",
+			"--style", "vivid",
+			"--svg.model", "x",
+			"--svg.reasoning", "{effort: none}",
+			"--user", "user-1234",
+		)
+	})
+
+	t.Run("piping data", func(t *testing.T) {
+		// Test piping YAML data over stdin
+		pipeData := []byte("" +
+			"prompt: A cute baby sea otter\n" +
+			"background: transparent\n" +
+			"complexity: low\n" +
+			"frame_count: 2\n" +
+			"frame_duration_ms: 20\n" +
+			"model: gpt-image-2.5-flare\n" +
+			"moderation: low\n" +
+			"'n': 1\n" +
+			"output_compression: 100\n" +
+			"output_format: png\n" +
+			"partial_images: 1\n" +
+			"quality: medium\n" +
+			"response_format: url\n" +
+			"safety_identifier: user-1234\n" +
+			"size: 1024x1024\n" +
+			"stream: false\n" +
+			"style: vivid\n" +
+			"svg:\n" +
+			"  model: x\n" +
+			"  reasoning:\n" +
+			"    effort: none\n" +
+			"user: user-1234\n")
+		mocktest.TestRunMockTestWithPipeAndFlags(
+			t, pipeData,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"images", "generate",
+			"--max-items", "10",
+		)
+	})
+}

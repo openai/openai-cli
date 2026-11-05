@@ -3,8 +3,11 @@ package requestflag
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"unicode/utf8"
 
 	"github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/parser"
 )
 
 // UnmarshalYAMLOrJSON decodes YAML or JSON input into v.
@@ -20,6 +23,25 @@ func UnmarshalYAMLOrJSON(data []byte, v any) error {
 	// decodes it as content (https://github.com/goccy/go-yaml/issues/906).
 	data = bytes.TrimPrefix(data, utf8BOM)
 	return yaml.Unmarshal(addJSONExponentFractions(data), v)
+}
+
+// UnmarshalRequestObject requires exactly one object for an explicit request file.
+// Parser errors can quote private data from the input document.
+func UnmarshalRequestObject(data []byte) (map[string]any, error) {
+	invalid := errors.New("--request-file requires one JSON or YAML object")
+	if !utf8.Valid(data) {
+		return nil, invalid
+	}
+	// The stream decoder skips empty YAML documents. Count them before decoding.
+	file, err := parser.ParseBytes(addJSONExponentFractions(bytes.TrimPrefix(data, utf8BOM)), 0)
+	if err != nil || len(file.Docs) != 1 || file.Docs[0].Body == nil {
+		return nil, invalid
+	}
+	var object map[string]any
+	if err := yaml.NodeToValue(file.Docs[0].Body, &object); err != nil || object == nil {
+		return nil, invalid
+	}
+	return object, nil
 }
 
 // utf8BOM is U+FEFF encoded as UTF-8.

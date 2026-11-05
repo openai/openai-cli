@@ -1,9 +1,15 @@
 package main
 
 import (
+	"context"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +35,70 @@ func TestMainTokenizerEditorNeverCapturesRedirectedInput(t *testing.T) {
 		})
 	}
 	require.Zero(t, requests.Load())
+}
+
+func TestMainTokenizerViewChecksOutputBeforeReadingDraft(t *testing.T) {
+	server, requests := localUtilitiesRequestTrap(t)
+	env := append(localUtilitiesEnvironment(t), "OPENAI_BASE_URL="+server.URL, "TERM=xterm-256color", "CI=0")
+	input, producer, err := os.Pipe()
+	require.NoError(t, err)
+	defer input.Close()
+	defer producer.Close()
+	const draft = "synthetic-private-draft"
+	_, err = producer.WriteString(draft)
+	require.NoError(t, err)
+	// A redirected output cannot display the editor. The producer remains open.
+	got := runMainDispatchWithStdin(t, "bash", env, input, "openai", "tokenizer", "view")
+	require.NotZero(t, got.code)
+	require.Empty(t, got.stdout)
+	require.Contains(t, strings.ToLower(got.stderr), "terminal")
+	require.NotContains(t, got.stderr, draft)
+	require.NoError(t, producer.Close())
+	remaining, err := io.ReadAll(input)
+	require.NoError(t, err)
+	require.Equal(t, draft, string(remaining))
+	require.Zero(t, requests.Load())
+}
+
+func TestMainTokenizerViewReadsDraftAndKeysSeparately(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("this probe requires a POSIX PTY")
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		if runtime.GOOS == "darwin" {
+			t.Fatal("native macOS tokenizer PTY check requires python3", err)
+		}
+		t.Skip("native tokenizer PTY check requires python3")
+	}
+	work, binary := buildNativeShellCLI(t)
+	const probe = `
+import os, sys, time
+sys.path.insert(0, sys.argv[2])
+from image_picker_harness import Terminal
+
+read, write = os.pipe()
+with os.fdopen(write, "wb") as producer:
+    producer.write(b"hi\x03\nok")
+with os.fdopen(read, "rb") as draft:
+    term = Terminal(sys.argv[1], ["tokenizer", "view"], os.environ, 120, 30,
+                    input_file=draft, deadline=time.monotonic() + 12)
+    try:
+        term.wait("› Token 1 of 4")
+        term.wait(r"\u0003")
+        term.send(b"\x1b[C")
+        term.wait("› Token 2 of 4")
+        term.send(b"\x03")
+        term.finish(130)
+    finally:
+        term.close()
+`
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, python, "-I", "-B", "-c", probe, filepath.Join(work, binary), "../../scripts")
+	cmd.Env = append(localUtilitiesEnvironment(t), "TERM=xterm-256color", "NO_COLOR=1", "LANG=en_US.UTF-8")
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
 }
 
 func TestMainTokenizerEditorPlainFallbackEnvironments(t *testing.T) {
@@ -79,7 +149,7 @@ func TestMainTokenizerEditorHelpAndDiscoveryStayNonInteractive(t *testing.T) {
 			got := runMainDispatchWithEnv(t, "bash", env, args...)
 			require.Zero(t, got.code, "%s", got.stderr)
 			require.Empty(t, got.stderr)
-			for _, name := range []string{"count", "inspect", "encodings", "licenses"} {
+			for _, name := range []string{"view", "count", "inspect", "encodings", "licenses"} {
 				require.Regexp(t, `(?m)^\s+`+name+`\s+\S`, got.stdout)
 			}
 			require.NotContains(t, got.stdout, "Key setup:")
@@ -91,6 +161,7 @@ func TestMainTokenizerEditorHelpAndDiscoveryStayNonInteractive(t *testing.T) {
 	rootHelp := runMainDispatchWithEnv(t, "bash", env, "openai", "--help")
 	require.Zero(t, rootHelp.code, "%s", rootHelp.stderr)
 	require.Contains(t, rootHelp.stdout, "LOCAL TOOLS")
+	require.Contains(t, rootHelp.stdout, "SHORTCUTS")
 	require.Contains(t, rootHelp.stdout, "tokenizer")
 	require.Contains(t, rootHelp.stdout, "codex")
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {

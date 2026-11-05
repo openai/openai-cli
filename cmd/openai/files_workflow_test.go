@@ -489,7 +489,7 @@ func TestMainFilesWorkflowHelpIncludesExamples(t *testing.T) {
 			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=invalid-files-help-url"}, "openai", "files", tc.command, "--help")
 			require.Zero(t, got.code, "%+v", got)
 			require.Empty(t, got.stderr)
-			require.Contains(t, got.stdout, "EXAMPLES:")
+			require.Contains(t, got.stdout, "EXAMPLES")
 			require.Contains(t, got.stdout, tc.example)
 		})
 	}
@@ -529,7 +529,7 @@ func TestMainFilesWorkflowHelpAfterOperands(t *testing.T) {
 		got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=invalid-files-help-url"}, append([]string{"openai"}, args...)...)
 		require.Zero(t, got.code, "%+v", got)
 		require.Empty(t, got.stderr)
-		require.Contains(t, got.stdout, "SYNOPSIS:")
+		require.Contains(t, got.stdout, "SYNOPSIS")
 		require.Contains(t, got.stdout, "openai files "+args[1])
 	}
 }

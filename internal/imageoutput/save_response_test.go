@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -39,7 +40,7 @@ func TestSaveResponseFormatsAndUniqueNames(t *testing.T) {
 			if saved.SHA256 != sha256.Sum256(fixtures[i]) {
 				t.Fatalf("image %d digest differs from the response bytes", i)
 			}
-			if filepath.Dir(path) != directory || filepath.Ext(path) != []string{".png", ".jpeg", ".webp"}[i] {
+			if filepath.Dir(path) != directory || filepath.Ext(path) != []string{".png", ".jpeg", ".webp", ".gif", ".svg"}[i] {
 				t.Fatalf("wrong output path: %q", path)
 			}
 			contents, err := os.ReadFile(path)
@@ -72,7 +73,7 @@ func TestSaveResponseFormatsAndUniqueNames(t *testing.T) {
 
 func TestSaveResponseNormalizesExactlyOneExtension(t *testing.T) {
 	for input, want := range map[string]string{
-		"robot.PNG": "robot.png", "robot.jpeg": "robot.png", "robot.png.jpeg": "robot.png.png",
+		"robot.GIF": "robot.png", "robot.svg": "robot.png", "robot.PNG": "robot.png", "robot.jpeg": "robot.png", "robot.png.jpeg": "robot.png.png",
 	} {
 		paths, err := SaveResponse(t.Context(), imageResponse(t, imageFixtures(t)[0]), t.TempDir(), input)
 		if err != nil || len(paths) != 1 || filepath.Base(paths[0].Path) != want {
@@ -287,18 +288,20 @@ func TestSaveResponseRejectsInvalidDataAndCleansUp(t *testing.T) {
 	large := append(append([]byte(nil), imageFixtures(t)[0]...), bytes.Repeat([]byte{1}, 64*1024)...)
 	invalidLate := base64.StdEncoding.EncodeToString(large) + "!"
 	cases := map[string][]byte{
-		"empty body":        nil,
-		"invalid JSON":      []byte(`{"data":`),
-		"empty response":    []byte(`{}`),
-		"empty data":        []byte(`{"data":[]}`),
-		"wrong data type":   []byte(`{"data":{}}`),
-		"URL response":      []byte(`{"data":[{"url":"https://example.invalid/image.png"}]}`),
-		"empty base64":      []byte(`{"data":[{"b64_json":""}]}`),
-		"invalid base64":    encodedResponse(t, "not base64!"),
-		"unsupported bytes": imageResponse(t, []byte("not an image")),
-		"truncated header":  imageResponse(t, []byte("\x89PNG")),
-		"bad second image":  encodedResponse(t, valid, invalidLate),
-		"missing second":    encodedResponse(t, valid, ""),
+		"empty body":          nil,
+		"invalid JSON":        []byte(`{"data":`),
+		"empty response":      []byte(`{}`),
+		"empty data":          []byte(`{"data":[]}`),
+		"wrong data type":     []byte(`{"data":{}}`),
+		"URL response":        []byte(`{"data":[{"url":"https://example.invalid/image.png"}]}`),
+		"empty base64":        []byte(`{"data":[{"b64_json":""}]}`),
+		"invalid base64":      encodedResponse(t, "not base64!"),
+		"nested SVG":          imageResponse(t, []byte(`<html><svg/></html>`)),
+		"other XML namespace": imageResponse(t, []byte(`<svg xmlns="urn:unrelated"/>`)),
+		"unsupported bytes":   imageResponse(t, []byte("not an image")),
+		"truncated header":    imageResponse(t, []byte("\x89PNG")),
+		"bad second image":    encodedResponse(t, valid, invalidLate),
+		"missing second":      encodedResponse(t, valid, ""),
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -374,6 +377,25 @@ func TestSaveResponseCancellation(t *testing.T) {
 			t.Fatalf("cancellation left incomplete files: %v, %v", entries, readErr)
 		}
 	})
+}
+
+func TestSaveResponseSVGWithLongPrefix(t *testing.T) {
+	padding := strings.Repeat("x", 1<<20)
+	for name, svg := range map[string]string{
+		"comment":   "<!--" + padding + "--><svg/>",
+		"attribute": "<svg data-label='" + padding + "'/>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := []byte(svg)
+			saved, err := SaveResponse(t.Context(), imageResponse(t, fixture), t.TempDir(), "large")
+			if err != nil || len(saved) != 1 {
+				t.Fatalf("saving SVG: files=%v err=%v", saved, err)
+			}
+			if filepath.Base(saved[0].Path) != "large.svg" || saved[0].SHA256 != sha256.Sum256(fixture) {
+				t.Fatal("expected the original SVG saved as large.svg")
+			}
+		})
+	}
 }
 
 func TestSaveResponseLargeBase64(t *testing.T) {
@@ -482,7 +504,12 @@ func imageFixtures(t *testing.T) [][]byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return [][]byte{pngBytes.Bytes(), jpegBytes.Bytes(), webpBytes}
+	var gifBytes bytes.Buffer
+	if err := gif.Encode(&gifBytes, pixel, nil); err != nil {
+		t.Fatal(err)
+	}
+	svgBytes := []byte("\uFEFF" + `<?xml version="1.0"?><!-- fixture --><svg xmlns="http://www.w3.org/2000/svg"/>`)
+	return [][]byte{pngBytes.Bytes(), jpegBytes.Bytes(), webpBytes, gifBytes.Bytes(), svgBytes}
 }
 
 func imageResponse(t *testing.T, images ...[]byte) []byte {
@@ -510,7 +537,7 @@ func encodedResponse(t *testing.T, images ...string) []byte {
 func TestSaveResponseLongNamesKeepRoomForBatchAndCollisions(t *testing.T) {
 	fixtures := imageFixtures(t)
 	for _, stem := range []string{strings.Repeat("x", 230), strings.Repeat("é", 115)} {
-		for i, extension := range []string{".png", ".jpeg", ".webp"} {
+		for i, extension := range []string{".png", ".jpeg", ".webp", ".gif", ".svg"} {
 			t.Run(fmt.Sprintf("%s/%s", stem[:2], extension), func(t *testing.T) {
 				directory := t.TempDir()
 				if err := CheckName(t.Context(), directory, stem); err != nil {

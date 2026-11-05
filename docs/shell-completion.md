@@ -30,7 +30,7 @@ openai @completion fish | source
 PowerShell:
 
 ```powershell
-openai @completion pwsh | Out-String | Invoke-Expression
+openai '@completion' pwsh | Out-String | Invoke-Expression
 ```
 
 These commands refresh the current shell session.

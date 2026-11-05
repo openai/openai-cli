@@ -37,7 +37,8 @@ URL user information can provide HTTP Basic authentication when the effective Au
 The report identifies this as `url_basic_auth`, without displaying the username or password.
 Base URLs omit user information, queries, fragments, and custom paths.
 Only the origin and known `/` or `/v1` paths remain visible. `redacted` identifies omitted components.
-Malformed effective URLs produce a fixed error without repeating the URL.
+The CLI requires a hostname. Use HTTPS for remote servers. Localhost and loopback IP addresses also support HTTP.
+If the address fails validation, the command reports an error without printing the address.
 
 ## Output
 

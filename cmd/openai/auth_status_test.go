@@ -278,7 +278,34 @@ func TestMainAuthStatusSanitizesURLsAndTerminalControls(t *testing.T) {
 		status := decodeAuthStatus(t, runMainDispatchWithEnv(t, "bash", env, "openai", "auth", "status", "--format", "json"))
 		require.Equal(t, authStatusValueResult{Value: "", Source: "environment:OPENAI_BASE_URL"}, status.BaseURL)
 	})
+	t.Run("valid flag overrides invalid environment endpoint", func(t *testing.T) {
+		env := append(authStatusEnvironment(t), "OPENAI_BASE_URL=http://remote.example/v1")
+		for _, endpoint := range []string{"https://private.example/v1", "http://[::1]:8080/v1"} {
+			status := decodeAuthStatus(t, runMainDispatchWithEnv(t, "bash", env,
+				"openai", "--base-url", endpoint, "auth", "status", "--format", "json"))
+			require.Equal(t, authStatusValueResult{Value: endpoint, Source: "flag:--base-url"}, status.BaseURL)
+		}
+	})
 	require.Zero(t, requests.Load())
+}
+
+func TestMainAuthStatusRedactsCredentialsInContext(t *testing.T) {
+	const apiKey = "synthetic-copied-api-key"
+	const headerToken = "synthetic-copied-header-token"
+	const password = "synthetic-copied-url-password"
+	env := append(authStatusEnvironment(t),
+		"OPENAI_API_KEY="+apiKey, "OPENAI_ORG_ID="+apiKey, "OPENAI_PROJECT_ID=proj_"+headerToken,
+		"OPENAI_CUSTOM_HEADERS=Authorization: Bearer "+headerToken,
+		"OPENAI_BASE_URL=https://user:"+password+"@"+password+".example/v1")
+	for _, format := range []string{"text", "json"} {
+		got := runMainDispatchWithEnv(t, "bash", env, "openai", "auth", "status", "--api-key=synthetic-override", "--format", format)
+		require.Zero(t, got.code, "%s", got.stderr)
+		assertAuthStatusPrivate(t, got, apiKey, headerToken, password, "synthetic-override")
+		require.Equal(t, 3, strings.Count(got.stdout, "[redacted]"))
+		if format == "json" {
+			require.True(t, decodeAuthStatus(t, got).BaseURL.Redacted)
+		}
+	}
 }
 
 func TestMainAuthStatusErrorsRemainPrivate(t *testing.T) {
@@ -298,6 +325,10 @@ func TestMainAuthStatusErrorsRemainPrivate(t *testing.T) {
 		{"header control", nil, []string{"--header", "Authorization: " + secret + "\r\nInjected: value"}},
 		{"invalid environment URL", []string{"OPENAI_BASE_URL=://" + secret}, nil},
 		{"invalid flag URL", nil, []string{"--base-url", "://" + secret}},
+		{"remote HTTP in environment", []string{"OPENAI_BASE_URL=http://user:" + secret + "@remote.example/v1"}, nil},
+		{"remote HTTP flag", nil, []string{"--base-url", "http://remote.example/" + secret}},
+		{"missing host in environment", []string{"OPENAI_BASE_URL=https://:443/v1?token=" + secret}, nil},
+		{"missing host in flag", nil, []string{"--base-url", "https://:443/" + secret}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := append(authStatusEnvironment(t), "OPENAI_BASE_URL="+server.URL,

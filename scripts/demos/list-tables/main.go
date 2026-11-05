@@ -132,7 +132,7 @@ func listPage(scenario, resource string, page int) map[string]any {
 		case "files":
 			items = []map[string]any{
 				{"id": "file-demo-support", "object": "file", "filename": "support-evals.jsonl", "purpose": "batch", "bytes": 18432, "status": "processed", "created_at": 1704067200},
-				{"id": "file-demo-research-20261007", "object": "file", "filename": "評測-東京-🚀-résumé-and-a-long-dataset-name.jsonl", "purpose": "fine-tune", "bytes": 2097152, "status": "uploaded", "created_at": 1704067200},
+				{"id": "file-demo-research-20261007", "object": "file", "filename": "評測-東京-🚀-résumé-and-a-long-dataset-name.jsonl", "purpose": "user_data", "bytes": 2097152, "status": "uploaded", "created_at": 1704067200},
 			}
 		case "batches":
 			items = []map[string]any{

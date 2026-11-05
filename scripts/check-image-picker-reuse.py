@@ -145,11 +145,14 @@ def main():
                 terminal.send(b'\x07')
                 picker.wait_for_request(terminal, server.request_started)
                 picker.wait_resumed(terminal, mark, prompt)
-                # Capture submission output before the resumed picker's own
-                # teardown becomes the final bracketed-paste marker.
+                picker.wait_submit_guard(terminal)
+                terminal.send(picker.PRINT)
+                terminal.finish(0)
                 flags = picker.printed_flags(terminal)
-                terminal.send(b'\x03')
-                terminal.finish(130)
+                assert flags == {'--model': model, '--size': '1024x1024', '--quality': 'auto',
+                                 '--output-format': 'png', '--background': 'auto', '--count': '1',
+                                 '--output-dir': str(folder), '--prompt': prompt}, flags
+                picker.check_receipts(terminal, folder.glob('*.png'))
                 assert len(server.requests) == before+1
                 check_body(server.requests[-1], prompt, model)
                 check_images(folder, 1)
@@ -178,6 +181,7 @@ def main():
                 assert len(server.requests) == before
                 assert not list(next_cwd.iterdir())
 
+            previous_images = set(folder.glob('*.png'))
             with terminal_case('restore-generation-changed-cwd', env, cwd=next_cwd) as terminal:
                 terminal.wait(print_prompt)
                 picker.wait_submit_guard(terminal)
@@ -190,6 +194,7 @@ def main():
                 picker.wait_resumed(terminal, mark, next_prompt)
                 terminal.send(b'\x03')
                 terminal.finish(130)
+                picker.check_receipts(terminal, set(folder.glob('*.png')) - previous_images)
                 assert len(server.requests) == before+1
                 check_body(server.requests[-1], next_prompt, model)
                 check_images(folder, 2)

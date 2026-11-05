@@ -355,7 +355,7 @@ func TestMainImageUploadHelpIsOffline(t *testing.T) {
 					require.Contains(t, got.stdout, flag)
 				}
 			} else {
-				require.Contains(t, got.stdout, "OPTIONS:")
+				require.Contains(t, got.stdout, "FLAGS")
 				require.Contains(t, got.stdout, "--output-dir")
 			}
 			require.Contains(t, strings.ToLower(got.stdout), "save")

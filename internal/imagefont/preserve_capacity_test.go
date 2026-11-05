@@ -16,7 +16,7 @@ func TestPreservedGlyphCapacityUsesFontAndBitmapLimits(t *testing.T) {
 		name                       string
 		count, width, height, want int
 	}{
-		{"private character range", 96, 8, 16, MaxGlyphs},
+		{"bitmap limit beyond legacy characters", 96, 8, 16, 32768},
 		{"source glyph boundary", 65535 - 1024, 8, 16, 1024},
 		{"source glyph exhausted", 65535, 8, 16, 0},
 		{"bitmap boundary", 96, 64, 64, 1024},
@@ -62,7 +62,7 @@ func TestPreservedGlyphCapacityIncludesCFFStrings(t *testing.T) {
 		{"last image glyph names", 4, 8, 16, 4},
 		{"progress and final boundary", 1032, 8, 16, 1032},
 		{"exhausted image glyph names", 0, 8, 16, 0},
-		{"private characters remain limiting", 8000, 8, 16, MaxGlyphs},
+		{"CFF names beyond legacy characters", 8000, 8, 16, 8000},
 		{"bitmap budget remains limiting", 2048, 64, 64, 1024},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -140,10 +140,10 @@ func TestPreservedGlyphCapacityStopsBeforeSourceCharacters(t *testing.T) {
 	}{
 		{"first image character", uint32(FirstSupplementaryCodepoint), 1, 0},
 		{"middle image character", uint32(FirstSupplementaryCodepoint) + 768, 1, 768},
-		{"last image character", uint32(LastSupplementaryCodepoint), 1, MaxGlyphs - 1},
-		{"before image range", uint32(FirstSupplementaryCodepoint) - 1, 1, MaxGlyphs},
-		{"after image range", uint32(LastSupplementaryCodepoint) + 1, 1, MaxGlyphs},
-		{"missing glyph is not occupied", uint32(FirstSupplementaryCodepoint), 0, MaxGlyphs},
+		{"last image character", uint32(LastSupplementaryCodepoint), 1, 30840},
+		{"before image range", uint32(FirstSupplementaryCodepoint) - 1, 1, 30840},
+		{"after image range", uint32(LastSupplementaryCodepoint) + 1, 1, 30840},
+		{"missing glyph is not occupied", uint32(FirstSupplementaryCodepoint), 0, 30840},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := preservationSource(t)

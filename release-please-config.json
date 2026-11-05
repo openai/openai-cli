@@ -59,7 +59,7 @@
   ],
   "release-type": "simple",
   "extra-files": [
-    "pkg/custom/version.go",
+    "internal/app/version.go",
     "README.md"
   ]
 }

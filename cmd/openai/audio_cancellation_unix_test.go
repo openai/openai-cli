@@ -65,15 +65,6 @@ func requireAudioSignalExit(t *testing.T, done <-chan error, ctx context.Context
 	}
 }
 
-func requireNoAudioSnapshots(t *testing.T, store audiohistory.Store) {
-	t.Helper()
-	entries, err := os.ReadDir(store.Directory)
-	require.NoError(t, err)
-	for _, entry := range entries {
-		require.False(t, strings.HasPrefix(entry.Name(), ".snapshot-"), "cancellation retained a private snapshot")
-	}
-}
-
 func TestMainAudioWorkbenchPlayerCancellationStatusAndCleanup(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

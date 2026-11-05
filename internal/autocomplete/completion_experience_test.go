@@ -14,7 +14,7 @@ import (
 )
 
 func TestCompletionHelpTopicsFollowCommandTree(t *testing.T) {
-	root := &cli.Command{Name: "openai", Commands: []*cli.Command{
+	root := &cli.Command{Name: "openai", Flags: []cli.Flag{&cli.StringFlag{Name: "format"}}, Commands: []*cli.Command{
 		{Name: "responses", Commands: []*cli.Command{{Name: "create"}, {Name: "input-items", Commands: []*cli.Command{{Name: "list"}}}}},
 		{Name: "legacy:responses", Hidden: true, Metadata: map[string]any{"command-compatibility-alias": true}, Commands: []*cli.Command{{Name: "create"}}},
 		{Name: "internal", Hidden: true},
@@ -25,7 +25,9 @@ func TestCompletionHelpTopicsFollowCommandTree(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{[]string{"help", ""}, []string{"responses", "setup"}},
+		{[]string{"help", ""}, []string{"responses", "setup", "piping"}},
+		{[]string{"help", "pip"}, []string{"piping"}},
+		{[]string{"help", "piping", "--for"}, []string{"--format"}},
 		{[]string{"help", "responses", ""}, []string{"create", "input-items"}},
 		{[]string{"help", "--all", "responses", "input-items", ""}, []string{"list"}},
 		{[]string{"responses", "help", "input-items", ""}, []string{"list"}},

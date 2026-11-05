@@ -22,7 +22,7 @@ import time
 
 
 TEST = "TestSavedImageCancellationPreservesRecovery"
-PACKAGE = "github.com/openai/openai-cli/pkg/custom"
+PACKAGE = "github.com/openai/openai-cli/internal/commands/images"
 PATTERN = re.compile(
     r'interrupted=false status_contract=(\d+) kept_bytes=(\d+) '
     r'canceled_second_bytes=(\d+) receipt_bytes=(\d+) diagnostic=("(?:[^"\\]|\\.)*")\n$')

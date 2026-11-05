@@ -17,8 +17,14 @@ var directionalControls = strings.NewReplacer(
 	"\u2068", `\u2068`, "\u2069", `\u2069`,
 )
 
+// EscapeDirectionalControls quotes directional marks and line separators without
+// changing terminal styling. The caller must handle untrusted terminal escapes.
+func EscapeDirectionalControls(text string) string {
+	return directionalControls.Replace(text)
+}
+
 func sanitize(text string) string {
-	return directionalControls.Replace(jsonview.SanitizeTerminalString(text))
+	return EscapeDirectionalControls(jsonview.SanitizeTerminalString(text))
 }
 
 // Text escapes terminal controls and directional marks while preserving ordinary

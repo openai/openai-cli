@@ -23,9 +23,9 @@ func TestMainNormalHelpOutputOptions(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("normal help failed: %+v", got)
 			}
-			wantOptions := []string{"GLOBAL OPTIONS:", "--format", "--transform", "--raw-output", "Global option details: openai --help"}
+			wantOptions := []string{"GLOBAL FLAGS", "--format", "--transform", "--raw-output", "Run $ openai --help for details."}
 			if len(args) == 0 {
-				wantOptions = []string{"\n   Output\n", "--format FORMAT", "--transform PATH", "--raw-output"}
+				wantOptions = []string{"\nGLOBAL FLAGS\n", "--format=FORMAT", "--transform=PATH", "--raw-output"}
 			}
 			for _, want := range wantOptions {
 				if !strings.Contains(got.stdout, want) {
@@ -53,7 +53,7 @@ func TestMainNormalHelpModelsLimit(t *testing.T) {
 	for _, args := range [][]string{{"models", "list", "--help"}, {"help", "models", "list"}} {
 		got := runMainDispatch(t, "bash", append([]string{"openai"}, args...)...)
 		text := strings.Join(strings.Fields(got.stdout), " ")
-		if got.code != 0 || got.stderr != "" || !strings.Contains(text, "--max-items INTEGER") ||
+		if got.code != 0 || got.stderr != "" || !strings.Contains(text, "--max-items=INTEGER") ||
 			!strings.Contains(text, "omit or use -1 for unlimited, or use 0 for no items") {
 			t.Fatalf("help does not explain the limit contract: %+v", got)
 		}
@@ -126,14 +126,14 @@ func TestMainNormalHelpNativeModelExamples(t *testing.T) {
 						t.Fatalf("normal help failed or made a request: %+v", help)
 					}
 					var examples []string
-					_, exampleSection, found := strings.Cut(help.stdout, "EXAMPLES:\n")
+					_, exampleSection, found := strings.Cut(help.stdout, "EXAMPLES\n")
 					if !found {
 						t.Fatal("model help omitted examples")
 					}
-					exampleSection, _, _ = strings.Cut(exampleSection, "\nOPTIONS:")
+					exampleSection, _, _ = strings.Cut(exampleSection, "\nFLAGS")
 					for line := range strings.SplitSeq(exampleSection, "\n") {
-						if strings.HasPrefix(strings.TrimSpace(line), printedInvocation+" models list") {
-							examples = append(examples, strings.TrimSpace(line))
+						if strings.HasPrefix(strings.TrimSpace(line), "$ "+printedInvocation+" models list") {
+							examples = append(examples, strings.TrimPrefix(strings.TrimSpace(line), "$ "))
 						}
 					}
 					if len(examples) != 3 {

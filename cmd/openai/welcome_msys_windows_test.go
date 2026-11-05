@@ -26,9 +26,10 @@ import (
 func TestMainDispatchWelcomeMSYSPipes(t *testing.T) {
 	server, requests := localUtilitiesRequestTrap(t)
 	control := runWelcomeMSYSPipes(t, server.URL, "msys", "", "", []string{"--help"}, nil)
-	if control.code != 0 || control.stderr != "" || !strings.HasPrefix(control.stdout, "NAME:\n") {
+	if control.code != 0 || control.stderr != "" || !strings.HasPrefix(ansi.Strip(control.stdout), "OpenAI CLI") || !strings.Contains(ansi.Strip(control.stdout), "\nUse the OpenAI API from your terminal.") {
 		t.Fatalf("MSYS explicit-help control failed: %+v", control)
 	}
+	control.stdout = ansi.Strip(control.stdout)
 	for _, tc := range []struct {
 		name, prefix, suffix, redirect string
 		args, env                      []string
@@ -50,6 +51,10 @@ func TestMainDispatchWelcomeMSYSPipes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := runWelcomeMSYSPipes(t, server.URL, tc.prefix, tc.suffix, tc.redirect, tc.args, tc.env)
+			want := control
+			if tc.redirect == "stdout" || tc.prefix == "ordinary" {
+				want.stdout = strings.TrimSuffix(want.stdout, "\n")
+			}
 			if tc.banner {
 				header, rest, found := strings.Cut(got.stdout, "\n\n")
 				plain := ansi.Strip(header)
@@ -63,9 +68,11 @@ func TestMainDispatchWelcomeMSYSPipes(t *testing.T) {
 					}
 				}
 				got.stdout = rest
+				_, want.stdout, _ = strings.Cut(control.stdout, "\n")
 			}
-			if got != control {
-				t.Fatalf("MSYS invocation changed complete help or status: got=%+v want=%+v", got, control)
+			got.stdout = ansi.Strip(got.stdout)
+			if got != want {
+				t.Fatalf("MSYS invocation changed complete help or status: got=%+v want=%+v", got, want)
 			}
 		})
 	}

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -121,7 +122,18 @@ func saveImage(ctx context.Context, encoded, directory, stem string) (saved Save
 	}
 	extension := imageExtension(header[:n])
 	if extension == "" {
-		return saved, errors.New("unsupported image data; expected PNG, JPEG, or WebP")
+		// An SVG can start with an XML declaration or comments before its root.
+		// Probe a separate decoder so every original byte is saved and hashed.
+		probe := contextReader{ctx, base64.NewDecoder(base64.StdEncoding.Strict(), strings.NewReader(encoded))}
+		if hasSVGRoot(probe) {
+			extension = ".svg"
+		}
+		if err := ctx.Err(); err != nil {
+			return saved, err
+		}
+	}
+	if extension == "" {
+		return saved, errors.New("unsupported image data; expected PNG, JPEG, WebP, GIF, or SVG")
 	}
 	file, err := createImageFile(ctx, directory, stem, extension)
 	if err != nil {
@@ -191,6 +203,8 @@ func imageExtension(header []byte) string {
 		return ".png"
 	case bytes.HasPrefix(header, []byte{0xff, 0xd8, 0xff}):
 		return ".jpeg"
+	case bytes.HasPrefix(header, []byte("GIF87a")), bytes.HasPrefix(header, []byte("GIF89a")):
+		return ".gif"
 	case len(header) >= 16 && string(header[:4]) == "RIFF" && string(header[8:12]) == "WEBP":
 		switch string(header[12:16]) {
 		case "VP8 ", "VP8L", "VP8X":
@@ -198,6 +212,25 @@ func imageExtension(header []byte) string {
 		}
 	}
 	return ""
+}
+
+// Read through the root element to identify SVG, leaving the rest of the document unparsed.
+func hasSVGRoot(r io.Reader) bool {
+	decoder := xml.NewDecoder(r)
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		switch t := token.(type) {
+		case xml.StartElement:
+			return t.Name.Local == "svg" && (t.Name.Space == "" || t.Name.Space == "http://www.w3.org/2000/svg")
+		case xml.CharData:
+			if len(bytes.TrimSpace(bytes.TrimPrefix(t, []byte("\uFEFF")))) != 0 {
+				return false
+			}
+		}
+	}
 }
 
 type contextReader struct {
