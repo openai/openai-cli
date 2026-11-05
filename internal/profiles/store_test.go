@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -396,7 +397,8 @@ func TestProfileStoreSnapshotRejectsReplacementAndRewrite(t *testing.T) {
 }
 
 func TestProfileStoreRejectsReplacementBeforeCommit(t *testing.T) {
-	for _, kind := range []string{"registry", "registry-symlink", "rewrite", "lock", "directory", "new-registry"} {
+	t.Run("directory", testProfileDirectoryReplacement)
+	for _, kind := range []string{"registry", "registry-symlink", "rewrite", "lock", "new-registry"} {
 		t.Run(kind, func(t *testing.T) {
 			path := RegistryTestPath(t)
 			if kind != "new-registry" {
@@ -415,9 +417,6 @@ func TestProfileStoreRejectsReplacementBeforeCommit(t *testing.T) {
 				switch kind {
 				case "registry-symlink":
 					require.NoError(t, os.Rename(path+"-replacement", path))
-				case "directory":
-					require.NoError(t, os.Rename(filepath.Dir(path), filepath.Dir(path)+"-old"))
-					writeProfileRegistryTestFile(t, path, before)
 				case "lock":
 					lockPath := filepath.Join(filepath.Dir(path), ".profiles.json.lock")
 					require.NoError(t, os.Rename(lockPath, lockPath+"-old"))
@@ -443,6 +442,71 @@ func TestProfileStoreRejectsReplacementBeforeCommit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testProfileDirectoryReplacement(t *testing.T) {
+	path := RegistryTestPath(t)
+	writeProfileRegistryTestFile(t, path, emptyProfileJSON)
+	directory := filepath.Dir(path)
+	displaced := directory + "-old"
+	lock := filepath.Join(directory, ".profiles.json.lock")
+	const replacementJSON = emptyProfileJSON + " \n"
+
+	// Stat through an open descriptor to capture the Windows file ID immediately.
+	// Close that descriptor before attempting the rename so only the store holds handles.
+	identity := func(path string) os.FileInfo {
+		t.Helper()
+		file, err := os.Open(path)
+		require.NoError(t, err)
+		info, err := file.Stat()
+		require.NoError(t, file.Close())
+		require.NoError(t, err)
+		return info
+	}
+
+	var renameErr error
+	var originalDirectory, originalLock os.FileInfo
+	_, err := Update(t.Context(), path, func(registry *Registry) error {
+		registry.Profiles["discard"] = Values{}
+		originalDirectory, originalLock = identity(directory), identity(lock)
+		renameErr = os.Rename(directory, displaced)
+		if renameErr != nil {
+			return renameErr
+		}
+		writeProfileRegistryTestFile(t, path, replacementJSON)
+		return nil
+	})
+	if renameErr == nil {
+		require.ErrorIs(t, err, ErrChanged)
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, replacementJSON, string(data))
+		return
+	}
+
+	const windowsSharingViolation = syscall.Errno(32) // Win32 ERROR_SHARING_VIOLATION
+	require.Equal(t, "windows", runtime.GOOS)
+	require.ErrorIs(t, renameErr, windowsSharingViolation)
+	require.ErrorIs(t, err, renameErr)
+	require.True(t, os.SameFile(originalDirectory, identity(directory)))
+	require.True(t, os.SameFile(originalLock, identity(lock)))
+	_, err = os.Lstat(displaced)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, emptyProfileJSON, string(data))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	_, err = Update(ctx, path, func(registry *Registry) error {
+		registry.Profiles["next"] = Values{}
+		return nil
+	})
+	require.NoError(t, err)
+	registry, err := Load(ctx, path)
+	require.NoError(t, err)
+	require.Equal(t, map[string]Values{"next": {}}, registry.Profiles)
+	require.True(t, os.SameFile(originalLock, identity(lock)))
 }
 
 func TestProfileStoreMissingRegistryPreservesConfiguration(t *testing.T) {
