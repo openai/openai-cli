@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/urfave/cli/v3"
@@ -90,6 +91,11 @@ func appendHeaderCredentials(secrets []string, line string) []string {
 	return secrets
 }
 
+// Recognize long OpenAI key forms even when a user pasted one into a setting
+// instead of a credential source. Short labels such as "sk-project" remain valid.
+// Other credential formats are protected by comparing to the configured inputs.
+var openAIKeyPattern = regexp.MustCompile(`(?:^|[^A-Za-z0-9])sk-(?:(?:proj|admin|svcacct)-[A-Za-z0-9_-]{32,}|[A-Za-z0-9]{32,})`)
+
 func ContainsCredential(value string, secrets []string) bool {
 	for _, secret := range secrets {
 		// HTTP trims surrounding whitespace. Protect the usable value even when
@@ -98,5 +104,5 @@ func ContainsCredential(value string, secrets []string) bool {
 			return true
 		}
 	}
-	return false
+	return strings.Contains(value, "sk-") && openAIKeyPattern.MatchString(value)
 }
