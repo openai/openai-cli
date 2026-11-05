@@ -121,6 +121,8 @@ func configureImageHelpContent(root *cli.Command) {
 		"It cannot use --transform or --raw-output."
 	for name, content := range map[string]clihelp.Content{
 		"generate": {
+			CompactNote: "Run without flags to open the image picker. You can also supply --prompt or pipe JSON/YAML. Images save to ~/Downloads/gpt-images/. " +
+				"For API data without saving, use --format json without --name or --output-dir.",
 			InputNote: "Supply the prompt with --prompt or piped JSON/YAML (key: prompt).\n" +
 				"Run without flags to enter it in the interactive picker.",
 			Description: "Run without flags to choose settings in an interactive terminal.\n" +
@@ -131,6 +133,8 @@ func configureImageHelpContent(root *cli.Command) {
 			Examples: []clihelp.Example{{Description: "Generate and save an image:", Command: `images generate --prompt "A tiny cat" --name cat`}},
 		},
 		"edit": {
+			CompactNote: "Edits save to ~/Downloads/gpt-images/ and preserve your source image. " +
+				"For API data without saving, use --format json without --name or --output-dir.",
 			Description: "Replace photo.png with your image's path and the prompt with your changes.\n" +
 				"Keeps your original. Saves to ~/Downloads/gpt-images/.\n" +
 				"Use --output-dir to choose an existing folder.\n" +
@@ -139,12 +143,15 @@ func configureImageHelpContent(root *cli.Command) {
 			Examples: []clihelp.Example{{Description: "Edit and save an image:", Command: `images edit --image "photo.png" --prompt "Make the sky purple" --name purple-sky`}},
 		},
 		"create-variation": {
+			InputNote:   "Use images edit to create a new variation.",
+			CompactNote: "Use images edit with a GPT Image model instead. Edits save to ~/Downloads/gpt-images/.",
 			Description: "This endpoint is retired and no longer available. Use images edit with a GPT Image model and a prompt.\n" +
 				"Replace photo.png with your image's path. Edits save to ~/Downloads/gpt-images/.\n" +
 				"The options below describe the legacy variations contract.",
 			Examples: []clihelp.Example{{Description: "Create a variation with images edit:", Command: `images edit --image "photo.png" --prompt "Create a variation of this image" --name variation`}},
 		},
 		"preview": {
+			CompactNote: "Preview a local PNG, JPEG, or WebP in a supported terminal. The preview limit is 64 MiB and 16 megapixels.",
 			Description: imagecommands.PreviewDetails + "\nReplace photo.png with your saved image's path.\n" +
 				"Pipes, CI and terminals without supported graphics or color cannot display previews.\n" +
 				"Preview limits: 64 MiB and 16 megapixels. Larger originals are still kept.",
@@ -152,6 +159,7 @@ func configureImageHelpContent(root *cli.Command) {
 			GlobalOptionsNote: localOutput,
 		},
 		"models": {
+			CompactNote: "Use --offline to skip API checks. Model visibility does not guarantee generation permissions or quota.",
 			Description: "Shows exact model names and checks metadata visibility with your key.\n" +
 				"Checks known image models individually, without loading the full API model list.\n" +
 				"No images are generated. Checks stop after 15 seconds, with no retries.\n" +
@@ -235,6 +243,7 @@ func configureLocalHelpContent(root *cli.Command) {
 			content.BashExamples = true
 			content.Examples = []clihelp.Example{{Description: "Explore a UTF-8 file in Bash or zsh", Command: "tokenizer view < draft.txt"}}
 		case "tokenizer count", "tokenizer inspect":
+			content.CompactNote = "Supply UTF-8 with --text, --file, or stdin. Input is limited to 1 MiB. Ctrl+C stops long inputs."
 			content.Examples = []clihelp.Example{{Description: "Tokenize literal text:", Command: strings.Join(path, " ") + ` --text "Hello, world!"`}}
 			if command.Name == "count" {
 				content.GlobalOptionsNote = "Count supports --format auto, text, or json. Use --transform to select token_count, input_bytes, or encoding. Use --raw-output for unquoted strings."
@@ -250,6 +259,15 @@ func configureLocalHelpContent(root *cli.Command) {
 
 func configureHelpGroups(root *cli.Command) {
 	batchCommands := root.Command("batches")
+	if models := root.Command("models"); models != nil {
+		if list := models.Command("list"); list != nil {
+			setCompleteHelpContent(list, clihelp.Content{
+				Description: list.Description,
+				Examples:    clihelp.CommandExamples(list, "models list"),
+				CompactNote: "In the pager, Space moves forward, b moves back, and q quits. Use --format json for complete model records.",
+			})
+		}
+	}
 	groups := []clihelp.FlagGroup{
 		{Title: "Authentication", Names: []string{"api-key", "admin-api-key", "webhook-secret", "mtls-client-cert-file", "mtls-client-key-file"}, Owner: root},
 		{Title: "Output", Names: []string{"format", "format-error", "transform", "transform-error", "raw-output", "quiet", "verbose"}, Owner: root},
@@ -268,6 +286,16 @@ func configureHelpGroups(root *cli.Command) {
 	visit = func(command *cli.Command, image bool) {
 		if command.Metadata == nil {
 			command.Metadata = map[string]any{}
+		}
+		if localcommands.ResourceName(command) == "chat:completions" {
+			if create := command.Command("create"); create != nil {
+				setCompleteHelpContent(create, clihelp.Content{
+					Summary:     "Generate a chat completion from a conversation.",
+					Description: create.Description,
+					Examples: []clihelp.Example{{Description: "Send one message:",
+						Command: `chat completions create --model gpt-5.5 --message '{role: user, content: Hi}'`}},
+				})
+			}
 		}
 		sections := append([]clihelp.FlagGroup(nil), groups...)
 		if image {

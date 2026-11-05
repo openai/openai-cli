@@ -43,11 +43,17 @@ func newHelpStyle(profile colorprofile.Profile) helpStyle {
 	if welcomeDarkBackground(os.Getenv("COLORFGBG")) {
 		accent, muted = "#8AA8FF", "#A4ACC2"
 	}
+	// A 16-color light terminal can map both brand colors to the same blue.
+	// Its own text color keeps descriptions distinct from headings and flags.
+	secondary := lipgloss.NewStyle()
+	if profile >= colorprofile.ANSI256 {
+		secondary = secondary.Foreground(lipgloss.Color(muted))
+	}
 	return helpStyle{
 		profile: profile,
 		section: lipgloss.NewStyle().Foreground(lipgloss.Color(accent)),
-		note:    lipgloss.NewStyle().Foreground(lipgloss.Color(muted)),
-		value:   lipgloss.NewStyle().Foreground(lipgloss.Color(muted)),
+		note:    secondary,
+		value:   secondary,
 	}
 }
 
@@ -63,7 +69,9 @@ func (s helpStyle) render(style lipgloss.Style, text string) string {
 		if i > 0 {
 			_, _ = writer.WriteString("\n")
 		}
-		_, _ = writer.WriteString(style.Render(line))
+		if line != "" {
+			_, _ = writer.WriteString(style.Render(line))
+		}
 	}
 	return out.String()
 }
@@ -114,8 +122,9 @@ func wrapEntryDescription(description, indent string, width int) string {
 }
 
 func (s helpStyle) flag(name, value string) string {
+	name = s.render(s.section, name)
 	if value != "" {
-		name += "=" + s.render(s.value, value)
+		name += s.render(s.value, "="+value)
 	}
 	return name
 }

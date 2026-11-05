@@ -166,6 +166,7 @@ func TestNavigationSuggestionsCheckActualAncestorNames(t *testing.T) {
 			}
 			// The automatic footer must preserve its plain text without offering
 			// the same unsafe ancestor through a second insertion surface.
+			root.Metadata["help-all"] = true
 			parent.Metadata["help-content"] = Content{Examples: []Example{{Command: "models list"}}}
 			help := commandHelpAtWidth(parent, "openai", name+" safe-parent", 80)
 			if !strings.Contains(help, "Command help: openai "+name+" safe-parent COMMAND --help") {

@@ -64,7 +64,7 @@ func TestCompleteHelpGroupsAreCompleteAndHideInternalCommands(t *testing.T) {
 		command.Commands = append(command.Commands, &cli.Command{Name: fmt.Sprintf("command-%02d", i), Usage: "A short description. Extra details."})
 	}
 	got := commandHelpAtWidth(command, "./openai", "group", 80)
-	for _, want := range []string{"command-00", "command-09", "command-10", "command-11", "./openai group COMMAND --help"} {
+	for _, want := range []string{"command-00", "command-09", "command-10", "command-11", "./openai group COMMAND"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -143,13 +143,9 @@ func TestCommandNameKeepsLongUsageInDescription(t *testing.T) {
 		Description: "Keep the authored caveat.",
 	}
 	got := commandHelpAtWidth(command, "openai", "responses create", 80)
-	name, rest, found := strings.Cut(got, "\nSYNOPSIS")
+	name, description, found := strings.Cut(got, "\nDESCRIPTION\n")
 	if !found || !strings.Contains(name, "Create a response") || strings.Contains(name, "restriction") {
-		t.Fatalf("NAME is not a short command identity: %s", name)
-	}
-	_, description, found := strings.Cut(rest, "\nDESCRIPTION\n")
-	if !found {
-		t.Fatal("long usage has no DESCRIPTION")
+		t.Fatalf("missing short introduction or complete description: %s", got)
 	}
 	if strings.Contains(description, "Create a response.") {
 		t.Fatalf("DESCRIPTION repeats the command identity: %s", description)
@@ -169,7 +165,7 @@ func TestAuthoredSummaryPreservesUsageAndContentContract(t *testing.T) {
 		}},
 	}
 	got := commandHelpAtWidth(command, "openai", "items create", 100)
-	name, _, _ := strings.Cut(got, "\nSYNOPSIS")
+	name, _, _ := strings.Cut(got, "\nDESCRIPTION")
 	if !strings.Contains(name, "Create an item") || strings.Contains(name, "existing usage") {
 		t.Fatalf("authored summary was not used: %s", name)
 	}
@@ -222,7 +218,7 @@ func TestInheritedGlobalIndexKeepsEveryNameAndRootReference(t *testing.T) {
 	for i := range 12 {
 		root.Flags = append(root.Flags, &cli.BoolFlag{Name: fmt.Sprintf("future-%02d", i), Usage: "Keep future flags visible."})
 	}
-	args, _, err := Configure(root, []string{"/tmp/CLI build/openai", "run", "--help"})
+	args, _, err := Configure(root, []string{"/tmp/CLI build/openai", "help", "--all", "run"})
 	if err != nil {
 		t.Fatal(err)
 	}

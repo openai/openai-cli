@@ -1,6 +1,11 @@
 package clihelp
 
-import "github.com/urfave/cli/v3"
+import (
+	"context"
+
+	"github.com/openai/openai-cli/internal/terminal"
+	"github.com/urfave/cli/v3"
+)
 
 // CommandExamples returns the same declared examples that complete help renders.
 // The returned slice can be modified without changing help's definitions.
@@ -18,4 +23,16 @@ func ExampleInvocation(command *cli.Command, fallback, native string) string {
 		return fallback
 	}
 	return native
+}
+
+// Use the detected shell only when a launcher contains characters that need
+// shell-specific escapes. An unrecognized shell cannot safely copy that path.
+func commandHelpInvocations(command *cli.Command, invocation string) (native, example string) {
+	root := command.Root()
+	shell := ""
+	if root.Metadata["help-control-launcher"] == true {
+		shell = terminal.ParentShell(context.Background())
+	}
+	native, bash := helpInvocations(root, invocation, shell)
+	return native, ExampleInvocation(command, bash, native)
 }

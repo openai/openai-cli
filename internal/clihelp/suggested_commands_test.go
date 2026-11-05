@@ -89,7 +89,6 @@ func TestSuggestedCommandsRegisterOnlyRenderedHelp(t *testing.T) {
 	}
 	want := helpSuggestionRecorder{
 		{"", `openai responses create --model gpt-5.5 --input "Say hello"`},
-		{"", "openai help setup"},
 	}
 	if !reflect.DeepEqual(recorder, want) {
 		t.Fatalf("suggestions = %#v; want %#v", recorder, want)
@@ -144,7 +143,7 @@ func TestSuggestedHelpRegistersTypedExamplesWithoutInspectingProse(t *testing.T)
 	if err := root.Run(t.Context(), args); err != nil {
 		t.Fatal(err)
 	}
-	if want := (helpSuggestionRecorder{{"", "openai " + example}, {"", "openai help setup"}}); !reflect.DeepEqual(recorder, want) {
+	if want := (helpSuggestionRecorder{{"", "openai " + example}}); !reflect.DeepEqual(recorder, want) {
 		t.Fatalf("help captured undeclared or undisplayed commands: %#v", recorder)
 	}
 	if !strings.Contains(out.String(), "openai widgets delete") || !strings.Contains(out.String(), "openai "+example) {

@@ -27,7 +27,11 @@ func TestMainPipingDiscovery(t *testing.T) {
 		"chat completions create": `{"model":"gpt-5.5","messages":[{"role":"user","content":"Say hello"}]}`,
 	} {
 		args := append(strings.Fields("openai "+path), "--help")
-		got := runMainDispatchWithEnv(t, "bash", env, args...)
+		short := runMainDispatchWithEnv(t, "bash", env, args...)
+		if short.code != 0 || short.stderr != "" || !strings.Contains(short.stdout, "openai help --all "+path) {
+			t.Fatalf("%s omitted its full reference", path)
+		}
+		got := runMainDispatchWithEnv(t, "bash", env, strings.Fields("openai help --all "+path)...)
 		intro, flags, ok := strings.Cut(got.stdout, "\nFLAGS\n")
 		if got.code != 0 || got.stderr != "" || !ok || !strings.Contains(flags, "--request-file=PATH|-") ||
 			!strings.Contains(intro, "echo '"+body+"' | openai "+path+" --request-file -") {
@@ -60,8 +64,8 @@ func TestMainPipingHelpExamplesRunAsPrinted(t *testing.T) {
 				invocation = "& " + invocation
 			}
 			for _, tc := range []struct{ help, endpoint, body string }{
-				{"responses create --help", "/responses", `{"model":"gpt-5.5","input":"Say hello"}`},
-				{"chat completions create --help", "/chat/completions", `{"model":"gpt-5.5","messages":[{"role":"user","content":"Say hello"}]}`},
+				{"help --all responses create", "/responses", `{"model":"gpt-5.5","input":"Say hello"}`},
+				{"help --all chat completions create", "/chat/completions", `{"model":"gpt-5.5","messages":[{"role":"user","content":"Say hello"}]}`},
 				{"help piping", "/responses", `{"model":"gpt-5.5","input":"Say hello"}`},
 			} {
 				t.Run(tc.help, func(t *testing.T) {

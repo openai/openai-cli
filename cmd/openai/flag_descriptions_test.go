@@ -40,7 +40,7 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 	for _, path := range [][]string{nil, {"models", "list"}, {"images"}, {"images", "generate"}} {
 		t.Run(strings.Join(append([]string{"root"}, path...), "/"), func(t *testing.T) {
 			args := []string{"openai", "help"}
-			if slices.Equal(path, []string{"images", "generate"}) {
+			if len(path) > 0 {
 				args = append(args, "--all")
 			}
 			args = append(args, path...)
@@ -174,8 +174,10 @@ func TestMainGlobalFlagHelpHidesConfiguredValues(t *testing.T) {
 					require.Contains(t, got.stdout, "OPENAI_BASE_URL")
 				} else if slices.Contains(route, "images") && !slices.Contains(route, "--all") {
 					require.Contains(t, got.stdout, "openai help --all images generate")
-				} else {
+				} else if slices.Contains(route, "--all") {
 					require.Contains(t, got.stdout, "Run $ openai --help for details.")
+				} else {
+					require.Contains(t, got.stdout, "openai help --all models list")
 				}
 			})
 		}

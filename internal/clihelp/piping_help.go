@@ -6,8 +6,8 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const pipingHelp = `{{$run := index .Root.Metadata "help-invocation"}}Shell input and output
-
+const pipingHelp = `{{$run := call (index .Metadata "bash-invocation") .}}Shell input and output
+{{if $run}}
 Examples use Bash or Zsh.
 {{if eq $run "go run ./cmd/openai"}}Run these examples from the CLI repository root.
 {{end}}
@@ -37,10 +37,15 @@ API REQUESTS
 SCRIPT OUTPUT
    Use --format json for structured results. For API lists, use --format jsonl for one item per line.
    Results go to stdout. Errors go to stderr.
-       {{suggest . (printf "%s models list --format jsonl" $run)}}
-`
+       {{suggestFor . (printf "%s models list --format jsonl" $run) "bash" "zsh"}}
+{{else}}
+Use a printable executable path to copy the Bash and zsh pipeline examples.
+{{end}}`
 
 func requestPipeExample(invocation, path string) string {
+	if invocation == "" {
+		return ""
+	}
 	var body string
 	switch path {
 	case "responses create":
@@ -56,7 +61,15 @@ func requestPipeExample(invocation, path string) string {
 func pipingGuide() *cli.Command {
 	return &cli.Command{
 		Name: "piping", Usage: "Pipe input and choose output for scripts", HideHelpCommand: true,
-		Metadata:           map[string]any{"help-guide": true, "request-pipe-example": requestPipeExample},
+		Metadata: map[string]any{
+			"help-guide": true, "request-pipe-example": requestPipeExample,
+			"bash-invocation": func(command *cli.Command) string {
+				root := command.Root()
+				run, _ := root.Metadata["help-invocation"].(string)
+				_, bash := helpInvocations(root, run, "bash")
+				return bash
+			},
+		},
 		CustomHelpTemplate: pipingHelp,
 		Action: func(_ context.Context, command *cli.Command) error {
 			if command.Args().Present() {

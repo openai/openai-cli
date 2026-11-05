@@ -10,36 +10,39 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func TestCompactFlagGroupsKeepRequiredInputAndOptionalAliases(t *testing.T) {
-	file := &requestflag.Flag[string]{Name: "file", Aliases: []string{"f"}, Required: true, BodyPath: "file",
-		FileInput: true, Usage: "Path to the input file. Only WAV and FLAC files are accepted."}
-	output := &cli.StringFlag{Name: "output-path", Aliases: []string{"o"}, Usage: "An optional output path.", TakesFile: true}
-	level := &cli.IntFlag{Name: "level", Usage: "Choose a level.", Value: 5}
-	quiet := &cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}}
-	flags := []cli.Flag{output, level, quiet, file}
-	command := &cli.Command{Name: "create", Flags: flags, Metadata: map[string]any{
-		"help-flag-groups": []FlagGroup{{Title: "Output settings", Names: []string{"o", "level"}}},
+func TestCommonFlagRowsPrioritizeRequiredAndExampleFlags(t *testing.T) {
+	file := &requestflag.Flag[string]{Name: "file", Required: true, BodyPath: "file", Usage: "Path to the input file. Only WAV and FLAC files are accepted."}
+	output := &cli.StringFlag{Name: "output-path", Aliases: []string{"o"}, Usage: "Save the result."}
+	command := &cli.Command{Name: "create", Flags: []cli.Flag{
+		&cli.IntFlag{Name: "level", Usage: "Choose a level.", Value: 5},
+		&cli.IntFlag{Name: "size", Usage: "Image size."},
+		&cli.StringFlag{Name: "model", Usage: "Model ID."},
+		&cli.StringFlag{Name: "quality", Usage: "Image quality."},
+		output, file,
 	}}
 	for _, width := range []int{24, 40, 80} {
-		got := compactFlagGroups(command, flags, width)
-		plain := strings.Join(strings.Fields(got), " ")
-		for _, want := range []string{"Required inputs", "--file=PATH", "-f=PATH", "Path to the input file.",
-			"Output settings", "--output-path=PATH", "-o=PATH", "--level=INTEGER", "Other options", "--quiet", "-q"} {
+		rows, _ := commonFlagRows(command, "files create", "files create -o output.wav", width)
+		plain := strings.Join(strings.Fields(rows), " ")
+		if !strings.HasPrefix(plain, "--file Path to the input file. --output-path Save the result.") {
+			t.Fatalf("width %d: inputs in wrong order or without descriptions: %s", width, rows)
+		}
+		for _, want := range []string{"--model Model ID.", "--size Image size.", "--quality Image quality."} {
 			if !strings.Contains(plain, want) {
-				t.Errorf("width %d: missing %q in %s", width, want, got)
+				t.Errorf("width %d: missing %q: %s", width, want, rows)
 			}
 		}
-		for _, line := range strings.Split(got, "\n") {
+		for _, absent := range []string{"--level", "Only WAV", "Default:"} {
+			if strings.Contains(rows, absent) {
+				t.Errorf("width %d: unexpected %q: %s", width, absent, rows)
+			}
+		}
+		for _, line := range strings.Split(rows, "\n") {
 			if ansi.StringWidth(line) > width {
 				t.Errorf("width %d: row too wide: %q", width, line)
 			}
 		}
-		if strings.Index(got, "Required inputs") > strings.Index(got, "Output settings") ||
-			strings.Contains(got, "WAV and FLAC") || strings.Contains(got, "An optional output path.") || strings.Contains(got, "Default:") {
-			t.Errorf("width %d: unexpected compact flag details: %s", width, got)
-		}
 	}
-	if full := fullFlagGroups(command, flags, 80); !strings.Contains(full, "Only WAV and FLAC") || !strings.Contains(full, "Default: 5") {
+	if full := fullFlagGroups(command, command.Flags, 80); !strings.Contains(full, "Only WAV and FLAC") || !strings.Contains(full, "Default: 5") {
 		t.Errorf("full flag reference lost details: %s", full)
 	}
 }
@@ -63,12 +66,15 @@ func TestFlagAliasesWrapWithoutSplittingValues(t *testing.T) {
 	}
 }
 
-func TestCompactIndexKeepsLongFlagAndCompoundValueIntact(t *testing.T) {
-	flag := &requestflag.Flag[map[string]string]{Name: "long-option-name", Aliases: []string{"m"}}
-	got := compactFlagGroups(&cli.Command{}, []cli.Flag{flag}, 20)
-	want := "  --long-option-name=TEXT=TEXT\n  -m=TEXT=TEXT\n"
-	if got != want {
-		t.Errorf("compact index split an option or its value: got %q, want %q", got, want)
+func TestCommonFlagRowsKeepAllRequiredInputs(t *testing.T) {
+	command := &cli.Command{Name: "create"}
+	for _, name := range []string{"project", "model", "file", "format", "type", "region"} {
+		command.Flags = append(command.Flags, &cli.StringFlag{Name: name, Required: true, Usage: "Required input."})
+	}
+	command.Flags = append(command.Flags, &cli.StringFlag{Name: "extra", Usage: "Additional option."})
+	rows, _ := commonFlagRows(command, "create", "create --extra example", 80)
+	if strings.Count(rows, "Required input.") != 6 || strings.Contains(rows, "--extra") {
+		t.Fatalf("all required inputs must appear before optional flags: %s", rows)
 	}
 }
 

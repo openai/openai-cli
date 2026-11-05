@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/urfave/cli/v3"
 )
@@ -29,6 +30,7 @@ func TestStyledHelpPreservesContentAndColorOptOuts(t *testing.T) {
 		{name: "256 colors", key: "COLORTERM", color: true},
 		{name: "16 colors", key: "TERM", value: "ansi", color: true},
 		{name: "no color", key: "NO_COLOR", value: "1"},
+		{name: "nonempty NO_COLOR", key: "NO_COLOR", value: "0"},
 		{name: "force disabled", key: "FORCE_COLOR", value: "0"},
 		{name: "clicolor disabled", key: "CLICOLOR", value: "0"},
 		{name: "CI", key: "CI", value: "1"},
@@ -81,6 +83,34 @@ func TestStyledHelpPreservesContentAndColorOptOuts(t *testing.T) {
 				if strings.Contains(got, "\n\n\n") {
 					t.Fatal("help contains redundant blank rows")
 				}
+			}
+		})
+	}
+}
+
+func TestFlagHelpThemeSeparatesNamesAndValues(t *testing.T) {
+	for _, tc := range []struct {
+		name, background, accent, muted string
+		profile                         colorprofile.Profile
+	}{
+		{"dark", "15;0", "\x1b[38;2;138;168;255m", "\x1b[38;2;164;172;194m", colorprofile.TrueColor},
+		{"light", "0;15", "\x1b[38;2;49;89;188m", "\x1b[38;2;101;112;135m", colorprofile.TrueColor},
+		{"16-color dark", "15;0", "\x1b[94m", "", colorprofile.ANSI},
+		{"16-color light", "0;15", "\x1b[34m", "", colorprofile.ANSI},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("COLORFGBG", tc.background)
+			style := newHelpStyle(tc.profile)
+			label := style.flag("--model", "MODEL")
+			if !strings.HasPrefix(label, tc.accent+"--model\x1b[") || !strings.Contains(label, tc.muted+"=MODEL") || ansi.Strip(label) != "--model=MODEL" {
+				t.Errorf("unexpected flag styling: %q", label)
+			}
+			if tc.muted == "" && !strings.HasSuffix(label, "=MODEL") {
+				t.Errorf("16-color value must use the terminal foreground: %q", label)
+			}
+			details := style.render(style.note, "Model ID.\n\n")
+			if !strings.HasSuffix(details, "\n\n") || ansi.Strip(details) != "Model ID.\n\n" {
+				t.Errorf("empty rows picked up style: %q", details)
 			}
 		})
 	}

@@ -529,7 +529,6 @@ func TestMainFilesWorkflowHelpAfterOperands(t *testing.T) {
 		got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=invalid-files-help-url"}, append([]string{"openai"}, args...)...)
 		require.Zero(t, got.code, "%+v", got)
 		require.Empty(t, got.stderr)
-		require.Contains(t, got.stdout, "SYNOPSIS")
-		require.Contains(t, got.stdout, "openai files "+args[1])
+		require.True(t, strings.HasPrefix(got.stdout, "openai files "+args[1]+" "), got.stdout)
 	}
 }

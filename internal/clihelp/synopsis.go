@@ -42,7 +42,7 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 	if optional, _ := command.Metadata["help-optional-command"].(bool); optional && len(arguments) > 0 {
 		arguments[0] = "[" + arguments[0] + "]"
 	}
-	flags := command.VisibleFlags()
+	flags := commandHelpFlags(command)
 	positionals := positionalHelpFlags(command, flags)
 	for _, flag := range positionals {
 		label := commandFlagValueLabel(command, flag)
@@ -86,10 +86,27 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 	}
 	if compact {
 		arguments = append(arguments, "["+style.render(style.value, "FLAGS")+"]")
-	} else if len(command.VisiblePersistentFlags()) > 0 {
+	} else if fullReferenceRequested(command) && len(command.VisiblePersistentFlags()) > 0 {
 		arguments = append(arguments, "["+style.render(style.value, "GLOBAL FLAG ...")+"]")
 	}
 	return style.synopsis(style.render(style.section, name), arguments, width)
+}
+
+// On a help page, the framework's own “show help” entry adds no information.
+// The full reference still lists it alongside the other accepted options.
+func commandHelpFlags(command *cli.Command) []cli.Flag {
+	flags := command.VisibleFlags()
+	if command == command.Root() || fullReferenceRequested(command) {
+		return flags
+	}
+	if standard, ok := cli.HelpFlag.(*cli.BoolFlag); ok {
+		for i, flag := range flags {
+			if option, ok := flag.(*cli.BoolFlag); ok && option.Name == standard.Name && option.Usage == standard.Usage {
+				return slices.Delete(slices.Clone(flags), i, i+1)
+			}
+		}
+	}
+	return flags
 }
 
 // Wrap complete arguments without splitting command names or quoted paths.

@@ -122,9 +122,11 @@ func TestMainNativeShell(t *testing.T) {
 				}
 			}
 			for _, tc := range []struct{ args, want string }{
-				{"help images generate", "--output-compression"},
-				{"help admin organization audit-logs list", "--event-type"},
-				{"help admin:organization:audit-logs list", "--event-type"},
+				{"help images generate", "COMMON FLAGS"},
+				{"help --all images generate", "--output-compression"},
+				{"help admin organization audit-logs list", "--limit"},
+				{"help admin:organization:audit-logs list", "--limit"},
+				{"help --all admin:organization:audit-logs list", "--event-type"},
 				{"help setup", "OPENAI_API_KEY"},
 			} {
 				t.Run(tc.args, func(t *testing.T) {
@@ -349,7 +351,7 @@ func testNativeShellDifferentExecutable(t *testing.T, shell nativeShell, home, i
 func followNativeImageHelp(t *testing.T, shell nativeShell, directory, home, invocation string) mainDispatchResult {
 	t.Helper()
 	short := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" images generate --help")
-	_, reference, found := strings.Cut(strings.ReplaceAll(short.stdout, "\r\n", "\n"), "Full flag descriptions:\n")
+	_, reference, found := strings.Cut(strings.ReplaceAll(short.stdout, "\r\n", "\n"), "\nALL FLAGS\n")
 	command, _, _ := strings.Cut(strings.TrimSpace(reference), "\n")
 	if short.code != 0 || short.stderr != "" || !found || !strings.HasSuffix(command, " help --all images generate") {
 		t.Fatalf("image help lacks its full reference: %+v", short)
@@ -439,14 +441,9 @@ func testNativeShellImageExample(t *testing.T, shell nativeShell, directory, inv
 	home := t.TempDir()
 	short := runNativeShell(t, shell, directory, home, "not-a-url", invocation+helpArgs)
 	var command string
-	_, examples, found := strings.Cut(short.stdout, "EXAMPLES\n")
-	if !found {
-		t.Fatalf("help omitted its executable examples: %+v", short)
-	}
-	examples, _, _ = strings.Cut(examples, "\nFLAGS")
-	for line := range strings.SplitSeq(examples, "\n") {
-		if strings.Contains(line, " images generate --prompt ") {
-			command = strings.TrimPrefix(strings.TrimSpace(line), "$ ")
+	for line := range strings.SplitSeq(short.stdout, "\n") {
+		if example, found := strings.CutPrefix(strings.TrimSpace(line), "$ "); found && strings.Contains(example, " images generate --prompt ") {
+			command = example
 			break
 		}
 	}

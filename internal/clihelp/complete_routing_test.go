@@ -23,8 +23,8 @@ func completeHelpFixture(out *bytes.Buffer) *cli.Command {
 	}
 }
 
-func TestCompleteHelpEntrypointsAndLegacyMigration(t *testing.T) {
-	var reference string
+func TestHelpSpellingsSelectTheSamePage(t *testing.T) {
+	references := map[bool]string{}
 	for _, args := range [][]string{
 		{"openai", "images", "generate", "--help"},
 		{"openai", "images", "generate", "-h"},
@@ -55,20 +55,14 @@ func TestCompleteHelpEntrypointsAndLegacyMigration(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := out.String()
-			legacy := slices.Contains(args, "--all") || slices.Contains(args, "--all=false") ||
-				slices.Contains(args, "-all") || slices.Contains(args, "-all=false")
-			notice := "Use openai help images generate; --all is no longer needed.\n"
-			if legacy {
-				if !strings.HasPrefix(got, notice) {
-					t.Fatalf("missing migration pointer: %s", got)
-				}
-				got = strings.TrimPrefix(got, notice)
+			full := slices.Contains(args, "--all") || slices.Contains(args, "-all")
+			if strings.Contains(got, "\nGLOBAL FLAGS\n") != full || strings.Contains(got, "no longer needed") {
+				t.Fatalf("incorrect help mode for %q:\n%s", args, got)
 			}
-			if reference == "" {
-				reference = got
-			}
-			if got != reference {
+			if reference, ok := references[full]; ok && got != reference {
 				t.Fatalf("help differs for %q:\n%s\nwant:\n%s", normalized, got, reference)
+			} else {
+				references[full] = got
 			}
 			if strings.Contains(got, "--root-only") {
 				t.Fatal("root-only flag advertised on leaf")
@@ -225,7 +219,7 @@ func TestHelpFlagFalseAndLiteralAssignmentsRemainData(t *testing.T) {
 	}
 }
 
-func TestRepeatedHelpConfigurationClearsLegacyNotice(t *testing.T) {
+func TestRepeatedHelpConfigurationResetsFullReference(t *testing.T) {
 	var out bytes.Buffer
 	root := completeHelpFixture(&out)
 	for _, args := range [][]string{
@@ -245,9 +239,9 @@ func TestRepeatedHelpConfigurationClearsLegacyNotice(t *testing.T) {
 		if err := root.Run(t.Context(), normalized); err != nil {
 			t.Fatal(err)
 		}
-		legacy := slices.Contains(args, "--all") || slices.Contains(args, "-all") || slices.Contains(args, "--all=false")
-		if got := strings.Contains(out.String(), "no longer needed"); got != legacy {
-			t.Fatalf("migration intent leaked between invocations %q: %s", args, out.String())
+		full := slices.Contains(args, "--all") || slices.Contains(args, "-all")
+		if strings.Contains(out.String(), "\nGLOBAL FLAGS\n") != full || strings.Contains(out.String(), "no longer needed") {
+			t.Fatalf("help mode leaked between invocations %q: %s", args, out.String())
 		}
 	}
 }
@@ -343,9 +337,9 @@ func TestRepeatedHelpDoesNotRetainExpandedFlagDetails(t *testing.T) {
 	var out bytes.Buffer
 	root := completeHelpFixture(&out)
 	leaf := root.Command("images").Command("generate")
-	const detail = "Inspect a synthetic image option."
+	const detail = "Keep the full reference constraint."
 	for _, name := range strings.Fields("alpha beta gamma delta epsilon theta eta iota kappa lambda") {
-		leaf.Flags = append(leaf.Flags, &cli.BoolFlag{Name: name, Usage: detail})
+		leaf.Flags = append(leaf.Flags, &cli.BoolFlag{Name: name, Usage: "Inspect a synthetic image option. " + detail})
 	}
 	for _, test := range []struct {
 		args []string

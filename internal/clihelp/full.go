@@ -48,14 +48,6 @@ func commandFlagUsage(command *cli.Command, flag cli.Flag, usage string) string 
 }
 
 func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
-	return renderFlagGroups(command, flags, width, false)
-}
-
-func compactFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
-	return renderFlagGroups(command, flags, width, true)
-}
-
-func renderFlagGroups(command *cli.Command, flags []cli.Flag, width int, compact bool) string {
 	style := commandHelpStyle(command)
 	groups := []FlagGroup{{Title: "Required inputs"}}
 	if configured, ok := command.Metadata["help-flag-groups"].([]FlagGroup); ok {
@@ -89,9 +81,6 @@ func renderFlagGroups(command *cli.Command, flags []cli.Flag, width int, compact
 		grouped[group] = append(grouped[group], flag)
 	}
 	if options := grouped["Other options"]; len(grouped) == 1 && len(options) > 0 {
-		if compact {
-			return compactFlagIndex(command, options, "  ", width, style)
-		}
 		if rows := compactFlagList(command, options, width, style); rows != "" {
 			return rows
 		}
@@ -107,32 +96,137 @@ func renderFlagGroups(command *cli.Command, flags []cli.Flag, width int, compact
 			out.WriteByte('\n')
 		}
 		fmt.Fprintf(&out, "  %s\n", style.render(style.section, group.Title))
-		switch {
-		case !compact:
-			out.WriteString(flagList(command, flags, width))
-		case group.Title == "Required inputs":
-			for _, flag := range flags {
-				heading, description := flagReference(command, flag)
-				writeFlagLabels(&out, styledFlagLabels(heading, style), "    ", width)
-				out.WriteString(wrapPlainDescription(shortDescription(description), "      ", width))
-			}
-		default:
-			out.WriteString(compactFlagIndex(command, flags, "    ", width, style))
-		}
+		out.WriteString(flagList(command, flags, width))
 		delete(grouped, group.Title)
 	}
 	return out.String()
 }
 
-func compactFlagIndex(command *cli.Command, flags []cli.Flag, indent string, width int, style helpStyle) string {
-	var labels []string
-	for _, flag := range flags {
-		heading, _ := flagReference(command, flag)
-		labels = append(labels, styledFlagLabels(heading, style)...)
+// Prefer the inputs someone needs to run the command, then the flags in its
+// first example. Fill the remaining space with common controls, up to five.
+func commonFlagRows(command *cli.Command, path, example string, width int) (string, bool) {
+	// Replacement examples use the supported command's options. The old
+	// options remain documented in the explicit full reference.
+	if command.Metadata["help-command-section"] == "Retired commands" {
+		return "", true
 	}
+	const preferredCount = 5
+	flags := command.VisibleFlags()
+	localCount := 0
+	var selected []cli.Flag
+	byName := make(map[string]cli.Flag, len(flags))
+	for _, flag := range flags {
+		if names := flag.Names(); len(names) == 0 || names[0] == "help" {
+			continue
+		}
+		localCount++
+		for _, name := range flag.Names() {
+			byName[name] = flag
+		}
+		if isRequired(flag) {
+			selected = append(selected, flag)
+		}
+	}
+	add := func(flag cli.Flag) {
+		if len(selected) < preferredCount && flag != nil && !slices.Contains(selected, flag) {
+			selected = append(selected, flag)
+		}
+	}
+	for _, word := range strings.Fields(example) {
+		if strings.HasPrefix(word, "-") {
+			name, _, _ := strings.Cut(strings.TrimLeft(word, "-"), "=")
+			add(byName[name])
+		}
+	}
+	for _, name := range []string{
+		"end-time", "bucket-width", "group-by", "limit",
+		"input", "model", "instructions", "size", "quality", "language", "response-format",
+		"stream", "max-output-tokens", "max-completion-tokens", "temperature", "name",
+	} {
+		add(byName[name])
+	}
+	for _, flag := range flags {
+		names := flag.Names()
+		if len(names) != 0 && names[0] != "help" && (localCount <= preferredCount || names[0] != "request-file" && names[0] != "max-items") {
+			add(flag)
+		}
+	}
+
+	names := make([]string, len(selected))
+	for i, flag := range selected {
+		name := flag.Names()[0]
+		names[i] = "--" + name
+		if len(name) == 1 {
+			names[i] = "-" + name
+		}
+	}
+	style := commandHelpStyle(command)
+	column := helpDescriptionColumn(width, names)
 	var out strings.Builder
-	writeFlagLabels(&out, labels, indent, width)
-	return out.String()
+	for i, flag := range selected {
+		out.WriteString(style.entry(names[i], commonFlagDescription(command, path, flag), style.flag(names[i], ""), width, column))
+	}
+	return out.String(), localCount == len(selected)
+}
+
+func commonFlagDescription(command *cli.Command, path string, flag cli.Flag) string {
+	// The Responses reference includes SDK-oriented paragraphs. Describe its
+	// primary inputs directly here, and keep the full text in single-flag help.
+	switch strings.ReplaceAll(path, ":", " ") {
+	case "models list":
+		switch flag.Names()[0] {
+		case "filter":
+			return "Match model IDs with id=VALUE or id~REGEX."
+		case "sort-by":
+			return "Sort model IDs ascending (id) or descending (~id)."
+		case "max-items":
+			return "Maximum models to return."
+		}
+	case "chat completions create":
+		switch flag.Names()[0] {
+		case "message":
+			return "A message in the conversation."
+		case "model":
+			return "Model ID to use."
+		case "stream":
+			return "Stream the reply as it is generated."
+		case "max-completion-tokens":
+			return "Output token limit, including reasoning tokens."
+		case "temperature":
+			return "Sampling temperature, from 0 to 2."
+		}
+	case "images generate", "images edit":
+		switch flag.Names()[0] {
+		case "image":
+			return "Source image to edit."
+		case "prompt":
+			return "Describe the image you want."
+		case "name":
+			return "Filename for the saved image."
+		case "model":
+			return "Image model to use."
+		case "size":
+			return "Image dimensions."
+		case "quality":
+			return "Image quality."
+		}
+	case "responses create", "beta responses create":
+		switch flag.Names()[0] {
+		case "model":
+			return "Model ID to use."
+		case "input":
+			return "Text, image, or file input."
+		case "instructions":
+			return "System or developer instructions."
+		case "stream":
+			return "Stream the response as it is generated."
+		case "max-output-tokens":
+			return "Output token limit, including reasoning tokens."
+		}
+	}
+	_, description := flagReference(command, flag)
+	usage, _, _ := strings.Cut(description, "\nDefault:")
+	return shortDescription(usage)
 }
 
 // Use the navigation layout only when every flag fits on one line. Keep

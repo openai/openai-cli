@@ -92,8 +92,23 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 		root.Metadata = map[string]any{}
 	}
 	invocation, needsQuote := resolveInvocation(root.Name, args)
+	// The usage header identifies the program. Runnable examples still use the
+	// resolved invocation so an explicit path cannot refer to another install.
+	delete(root.Metadata, "help-display-invocation")
+	if filepath.IsAbs(invocation) {
+		base := filepath.Base(invocation)
+		if base == root.Name || runtime.GOOS == "windows" && strings.EqualFold(base, root.Name+".exe") {
+			root.Metadata["help-display-invocation"] = root.Name
+		}
+	}
 	root.Metadata["help-control-launcher"] = len(args) > 0 && (unsafeHelpLauncher(args[0]) || invocation != args[0] && unsafeHelpLauncher(invocation))
 	delete(root.Metadata, "help-native-invocation")
+	if root.Metadata["help-control-launcher"] == true {
+		// Never display raw control or direction-changing characters in command titles.
+		// Runnable help examples obtain shell-specific quoting from helpInvocations.
+		invocation, needsQuote = root.Name, false
+		root.Metadata["help-display-invocation"] = root.Name
+	}
 	if needsQuote {
 		name := invocation
 		invocation = quoteInvocation(name, root.Name)
@@ -498,7 +513,7 @@ func legacyHelpNotice(command *cli.Command) string {
 	root := command.Root()
 	invocation, configured := root.Metadata["help-invocation"].(string)
 	// Completion uses --all for its local flag reference.
-	if !configured || command.Name == "@completion" {
+	if !configured || command.Name == "@completion" || root.Metadata["help-control-launcher"] == true {
 		return ""
 	}
 	_, legacy := root.Metadata["help-all"].(bool)
@@ -506,7 +521,7 @@ func legacyHelpNotice(command *cli.Command) string {
 		legacy = legacy || help.IsSet("all")
 	}
 	content, _ := command.Metadata["help-content"].(Content)
-	if !legacy || hasCompactHelp(command) || content.GlobalOptionsNote != "" {
+	if !legacy || (command != root && command.CustomHelpTemplate == commandHelpTemplate) || content.GlobalOptionsNote != "" {
 		return ""
 	}
 	var path []string
@@ -578,6 +593,9 @@ func quoteNativeInvocation(ctx context.Context, name, defaultInvocation string) 
 // interpreting argv as shell syntax or displaying terminal controls.
 func Invocation(fallback string, args []string) string {
 	name, needsQuote := resolveInvocation(fallback, args)
+	if unsafeHelpLauncher(name) {
+		return fallback
+	}
 	if needsQuote {
 		return quoteInvocation(name, fallback)
 	}

@@ -47,10 +47,9 @@ func TestMainHelpCommandRoutes(t *testing.T) {
 			if want.code != 0 || want.stderr != "" || want.stdout == "" {
 				t.Fatalf("command help failed: %+v", want)
 			}
-			for _, heading := range []string{"NAME", "SYNOPSIS"} {
-				if !strings.Contains(want.stdout, heading) {
-					t.Errorf("complete help lacks %q: %s", heading, want.stdout)
-				}
+			synopsis, _, _ := strings.Cut(want.stdout, "\n")
+			if !strings.Contains(synopsis, " "+strings.Join(path, " ")+" ") {
+				t.Errorf("command help must start with its invocation: %s", want.stdout)
 			}
 			for _, stale := range []string{"Full help:", "more in full help", "no longer needed"} {
 				if strings.Contains(want.stdout, stale) {
@@ -74,29 +73,29 @@ func TestMainHelpCommandRoutes(t *testing.T) {
 				routes = append(routes, append([]string{"openai", path[0], "help", "--"}, path[1:]...))
 			}
 			if slices.Equal(path, []string{"images", "generate"}) {
-				for _, text := range []string{"--prompt=TEXT", "-n=INTEGER", "--count=INTEGER", "openai help --all images generate"} {
-					if !strings.Contains(want.stdout, text) {
-						t.Errorf("concise help lost label %q", text)
-					}
+				common := helpSection(want.stdout, "COMMON FLAGS", "ALL FLAGS")
+				if !strings.Contains(common, "--prompt") || !strings.Contains(common, "--model") ||
+					strings.Contains(common, "--count") || !strings.Contains(want.stdout, "openai help --all images generate") {
+					t.Errorf("concise help must show frequent inputs and a path to every flag: %s", want.stdout)
 				}
 				for _, text := range []string{"--prompt dall-e-2", "-n dall-e-3", "--size gpt-image-2"} {
 					if strings.Contains(want.stdout, text) {
 						t.Errorf("misleading value label %q", text)
 					}
 				}
-				flagNames := fullHelpFlagNames(want.stdout)
-				for _, flag := range commands.Command.Command("images").Command("generate").VisibleFlags() {
-					for _, name := range flag.Names() {
-						if !flagNames["--"+name] && !flagNames["-"+name] {
-							t.Errorf("concise help lost option %q", name)
-						}
-					}
-				}
 				full := runMainDispatch(t, "bash", "openai", "help", "--all", "images", "generate")
 				if full.code != 0 || full.stderr != "" {
 					t.Fatalf("full help failed: %+v", full)
 				}
-				for _, text := range []string{"Default: auto", "Default: 1", "Default: png", "Default: 100", "Default: 0", "32000 characters", "Legacy response format parameter for retired image models", "base64-encoded images", "divisible by 16"} {
+				flagNames := fullHelpFlagNames(full.stdout)
+				for _, flag := range commands.Command.Command("images").Command("generate").VisibleFlags() {
+					for _, name := range flag.Names() {
+						if !flagNames["--"+name] && !flagNames["-"+name] {
+							t.Errorf("full help lost option %q", name)
+						}
+					}
+				}
+				for _, text := range []string{"-n=INTEGER", "--count=INTEGER", "Default: auto", "Default: 1", "Default: png", "Default: 100", "Default: 0", "32000 characters", "Legacy response format parameter for retired image models", "base64-encoded images", "divisible by 16"} {
 					if !strings.Contains(strings.Join(strings.Fields(full.stdout), " "), text) {
 						t.Errorf("full reference lost detail %q", text)
 					}
@@ -325,7 +324,7 @@ func TestMainHelpDoesNotAdvertiseUnshippedFeatures(t *testing.T) {
 		}
 	}
 	imageHelp := runMainDispatch(t, "bash", "openai", "help", "images", "generate")
-	for _, text := range []string{"--model", "--prompt", "JSON", "~/Downloads/gpt-images/", "--output-dir", "--name", "--count"} {
+	for _, text := range []string{"--model", "--prompt", "--format json", "~/Downloads/gpt-images/", "--output-dir", "--name", "openai help --all images generate"} {
 		if !strings.Contains(imageHelp.stdout, text) {
 			t.Errorf("image help does not explain the existing command's %q: %s", text, imageHelp.stdout)
 		}

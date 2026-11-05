@@ -146,8 +146,8 @@ func TestMainAudioVoicePreflight(t *testing.T) {
 						help := runMainDispatchWithEnv(t, "", env, strings.Fields(copied)...)
 						require.Zero(t, help.code, help.stderr)
 						require.Empty(t, help.stderr)
-						require.True(t, strings.HasPrefix(help.stdout, "NAME\n  openai "+strings.Join(route, " ")+" - "))
-						for _, text := range []string{"\nSYNOPSIS\n", "\nFLAGS", "--name", "--type", "--consent", "--audio-sample"} {
+						require.True(t, strings.HasPrefix(help.stdout, "openai "+strings.Join(route, " ")+" "), help.stdout)
+						for _, text := range []string{"\nFLAGS", "--name", "--type", "--consent", "--audio-sample"} {
 							require.Contains(t, help.stdout, text)
 						}
 						require.Zero(t, requests.Load())

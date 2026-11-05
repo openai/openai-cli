@@ -32,6 +32,12 @@ func configureBatchHelpContent(root *cli.Command) {
 		Command:     "batches submit requests.jsonl",
 	})
 	setCompleteHelpContent(batches, group)
+	compactNotes := map[string]string{
+		"browse":  "Ctrl+N starts a new batch. Review the request before submitting it. Leaving the browser keeps remote batches running.",
+		"list":    "In the pager, Space moves forward, b moves back, and q quits.",
+		"results": "Use --match-input to match by custom ID. Late failures can leave partial output. Use batches download for exact file bytes.",
+		"submit":  "Uploads one JSONL file and creates one batch. Add --wait to follow completion. Mutations never retry automatically.",
+	}
 	for name, examples := range map[string][]clihelp.Example{
 		"browse": {{Description: "Choose a batch without copying its ID:", Command: "batches browse"}},
 		"list": {
@@ -54,7 +60,7 @@ func configureBatchHelpContent(root *cli.Command) {
 		"cancel":   {{Description: "Request cancellation of an active batch:", Command: "batches cancel batch_example"}},
 	} {
 		if command := batches.Command(name); command != nil {
-			setCompleteHelpContent(command, clihelp.Content{Description: command.Description, Examples: examples})
+			setCompleteHelpContent(command, clihelp.Content{Description: command.Description, Examples: examples, CompactNote: compactNotes[name]})
 		}
 	}
 }

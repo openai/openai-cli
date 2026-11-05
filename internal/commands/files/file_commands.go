@@ -59,7 +59,7 @@ func Configure(root *cli.Command) {
 		}
 		upload.Metadata["completion-positional-file"] = "file"
 		upload.Usage = "Upload a local file with an explicit purpose, such as a JSONL file for a future batch job."
-		upload.UsageText = clihelp.Invocation(root.Name, os.Args) + " files upload [PATH | --file PATH] --purpose PURPOSE [options]"
+		upload.UsageText = "openai files upload [PATH | --file PATH] --purpose PURPOSE [options]"
 		upload.Description = "Pass a plain local path. Paths with spaces need quotes.\nA leading @ is part of the filename; do not add @ to a plain path.\nUse --purpose PURPOSE -- -name for a filename starting with a dash.\nThe API validates file types and purposes. Upload success does not mean processing is complete."
 		upload.Metadata["help-content"] = clihelp.Content{
 			InputNote: "A path is required: use PATH or --file PATH. Choose --purpose explicitly. " +

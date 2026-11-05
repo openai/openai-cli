@@ -19,6 +19,57 @@ func helpSection(text, start, end string) string {
 	return strings.TrimSpace(section)
 }
 
+func TestMainSpeechHelpDistinguishesPrivateFormAndDirectRequests(t *testing.T) {
+	for _, path := range [][]string{{"audio", "speak"}, {"speak"}} {
+		got := runMainDispatch(t, "bash", append(append([]string{"openai"}, path...), "--help")...)
+		text := strings.Join(strings.Fields(got.stdout), " ")
+		if got.code != 0 || got.stderr != "" {
+			t.Fatalf("%v help failed: %+v", path, got)
+		}
+		for _, want := range []string{
+			"Run without command flags in a terminal to open speech controls.",
+			"The form retains audio, text, and instructions in private local history.",
+			"For direct output, supply --input, --model, and --voice through flags or piped JSON/YAML.",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%v lost %q: %s", path, want, got.stdout)
+			}
+		}
+		if strings.Contains(text, "Required request inputs:") {
+			t.Errorf("%v incorrectly marks interactive form inputs as required", path)
+		}
+	}
+}
+
+func TestMainReferenceSizedHelpWithFewFlags(t *testing.T) {
+	short := runMainDispatch(t, "bash", "openai", "models", "list", "--help")
+	full := runMainDispatch(t, "bash", "openai", "help", "--all", "models", "list")
+	if short.code != 0 || full.code != 0 || short.stderr != "" || full.stderr != "" {
+		t.Fatalf("help failed: %v / %v", short, full)
+	}
+	for _, want := range []string{"$ openai models list", "--filter", "--sort-by", "--max-items", "q quits", "openai help --all models list"} {
+		if !strings.Contains(short.stdout, want) {
+			t.Errorf("brief models list help omitted %q: %s", want, short.stdout)
+		}
+	}
+	const grammar = "Filter escapes are decoded before RE2."
+	if strings.Contains(strings.Join(strings.Fields(short.stdout), " "), grammar) ||
+		!strings.Contains(strings.Join(strings.Fields(full.stdout), " "), grammar) {
+		t.Fatal("the detailed filter grammar belongs in the full reference")
+	}
+}
+
+func TestMainCompactHelpExplainsRequiredInputs(t *testing.T) {
+	for _, path := range [][]string{{"audio", "transcribe"}, {"admin", "usage", "audio-speeches"}} {
+		got := runMainDispatch(t, "bash", append(append([]string{"openai"}, path...), "--help")...)
+		flat := strings.Join(strings.Fields(got.stdout), " ")
+		if got.code != 0 || got.stderr != "" || !strings.Contains(flat, "Required request inputs:") ||
+			!strings.Contains(flat, "Supply them through flags or piped JSON/YAML.") {
+			t.Fatalf("%s help lost required input guidance: %s", strings.Join(path, " "), got.stdout)
+		}
+	}
+}
+
 func TestMainHelpForOneFlag(t *testing.T) {
 	full := runMainDispatch(t, "bash", "openai", "help", "--all", "responses", "create")
 	if full.code != 0 || full.stderr != "" {
@@ -92,19 +143,34 @@ func TestMainHelpPresentationPreservesDetailsAfterShortName(t *testing.T) {
 	if got.code != 0 || got.stderr != "" {
 		t.Fatalf("help failed: %+v", got)
 	}
-	name := helpSection(got.stdout, "NAME", "SYNOPSIS")
-	if strings.Contains(name, "https://") || !strings.Contains(name, "Creates a model response") {
-		t.Fatalf("NAME is not a short command summary: %s", name)
+	overview, _, _ := strings.Cut(got.stdout, "\nEXAMPLE\n")
+	if !strings.Contains(overview, "openai responses create [FLAGS]") || strings.Count(overview, "Creates a model response") != 1 {
+		t.Fatalf("missing usage or one-line purpose: %s", overview)
 	}
-	description := helpSection(got.stdout, "DESCRIPTION", "FLAGS")
-	if strings.Contains(description, "https://") || !strings.Contains(strings.Join(strings.Fields(description), " "), "Provide text or image inputs") {
-		t.Fatalf("compact description lost its meaning or includes raw documentation URLs: %s", description)
+	for _, absent := range []string{"https://", "NAME\n", "SYNOPSIS\n", "DESCRIPTION\n", "--access-programs=", "echo '"} {
+		if strings.Contains(got.stdout, absent) {
+			t.Errorf("ordinary help included %q", absent)
+		}
+	}
+	rows := helpSection(got.stdout, "COMMON FLAGS", "ALL FLAGS")
+	for _, name := range []string{"--model", "--input", "--instructions", "--stream", "--max-output-tokens"} {
+		found := false
+		for _, line := range strings.Split(rows, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) > 1 && fields[0] == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("no explained row for %s in %s", name, rows)
+		}
 	}
 	got = runMainDispatch(t, "bash", "openai", "help", "--all", "responses", "create")
 	if got.code != 0 || got.stderr != "" {
 		t.Fatalf("full reference failed: %+v", got)
 	}
-	description = helpSection(got.stdout, "DESCRIPTION", "EXAMPLES")
+	description := helpSection(got.stdout, "DESCRIPTION", "EXAMPLES")
 	for _, want := range []string{"guides/text", "guides/images-vision", "guides/structured-outputs", "guides/function-calling", "guides/tools", "guides/tools-web-search", "guides/tools-file-search"} {
 		if !strings.Contains(description, want) {
 			t.Errorf("DESCRIPTION lost reference %q", want)
@@ -134,7 +200,11 @@ func TestMainHelpPresentationConcreteSyntaxAndLabels(t *testing.T) {
 		{[]string{"files", "create"}, []string{"[--file=PATH]", "[--purpose=TEXT]", "Required request inputs: --file, --purpose."}},
 		{[]string{"images", "generate"}, []string{"--size=SIZE", "--quality=QUALITY", "--background=BACKGROUND", "--output-format=FORMAT", "--inline=MODE"}},
 	} {
-		got := runMainDispatch(t, "bash", append(append([]string{"openai"}, tc.path...), "--help")...)
+		args := append(append([]string{"openai"}, tc.path...), "--help")
+		if tc.path[0] == "images" {
+			args = append([]string{"openai", "help", "--all"}, tc.path...)
+		}
+		got := runMainDispatch(t, "bash", args...)
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("help failed: %+v", got)
 		}
@@ -144,7 +214,7 @@ func TestMainHelpPresentationConcreteSyntaxAndLabels(t *testing.T) {
 				t.Errorf("%q omitted %q: %s", tc.path, want, got.stdout)
 			}
 		}
-		if strings.Contains(helpSection(got.stdout, "SYNOPSIS", "DESCRIPTION"), "[OPTIONS]") {
+		if strings.Contains(got.stdout, "[OPTIONS]") {
 			t.Errorf("%q retained a generic synopsis", tc.path)
 		}
 	}
@@ -157,30 +227,34 @@ func TestMainHelpPresentationCompactGlobalsAndLocalRestrictions(t *testing.T) {
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("help failed: %+v", got)
 		}
-		_, globals, found := strings.Cut(got.stdout, "GLOBAL FLAGS\n")
-		if !found || !strings.Contains(globals, "Run $ openai --help for details.") {
-			t.Fatalf("global option reference missing: %s", got.stdout)
+		wantReference := "Global flags: openai --help"
+		if path[0] == "models" || path[1] == "preview" {
+			wantReference = "openai help --all " + strings.Join(path, " ")
 		}
-		if strings.Contains(globals, "Choose how results are displayed") || strings.Contains(globals, "- json: full JSON") {
-			t.Error("global index repeated full or inapplicable format descriptions")
+		if !strings.Contains(got.stdout, wantReference) {
+			t.Fatalf("global flag reference missing: %s", got.stdout)
+		}
+		for _, unrelated := range []string{"--header", "--base-url", "Key setup:", "Choose how results are displayed"} {
+			if strings.Contains(got.stdout, unrelated) {
+				t.Errorf("ordinary help for %v included %q", path, unrelated)
+			}
 		}
 		if path[0] == "images" {
-			flat := strings.Join(strings.Fields(globals), " ")
+			flat := strings.Join(strings.Fields(got.stdout), " ")
 			for _, note := range []string{"--format auto or text only", "cannot use --transform or --raw-output"} {
 				if !strings.Contains(flat, note) {
-					t.Errorf("local restriction missing beside global index: %s", note)
+					t.Errorf("local restriction missing: %s", note)
 				}
 			}
-			for _, unrelated := range []string{"--header", "--base-url", "Key setup:"} {
-				if strings.Contains(globals, unrelated) {
-					t.Errorf("local help included %s", unrelated)
-				}
-			}
-		} else {
-			for _, name := range []string{"--format", "--format-error", "--transform", "--raw-output", "-r", "--header", "-H", "--base-url"} {
-				if !strings.Contains(globals, name) {
-					t.Errorf("global option index lost %s", name)
-				}
+		}
+		full := runMainDispatch(t, "bash", append([]string{"openai", "help", "--all"}, path...)...)
+		if full.code != 0 || full.stderr != "" {
+			t.Fatalf("full reference failed for %v: %+v", path, full)
+		}
+		_, globals, _ := strings.Cut(full.stdout, "GLOBAL FLAGS\n")
+		for _, name := range []string{"--format", "--format-error", "--transform", "--raw-output", "-r", "--header", "-H", "--base-url"} {
+			if !strings.Contains(globals, name) {
+				t.Errorf("full global index lost %s", name)
 			}
 		}
 	}

@@ -165,7 +165,7 @@ openai admin organization --help
 ```
 
 `openai help COMMAND` and `openai COMMAND --help` show the same page.
-Commands with many options list every local flag in a compact index.
+Commands with many options show required inputs and a short list of common flags.
 To read about one flag, append it after `-h`, as in `openai responses create -h --stream`.
 For every flag's description, use `openai help --all responses create`.
 Existing colon-separated commands, such as `openai admin:organization:usage completions`,
