@@ -397,7 +397,7 @@ func batchBrowserReview(cmd *cli.Command, draft *batchBrowserDraft, snapshot os.
 		}
 	}
 	if project == "" {
-		project = "Key's default project"
+		project = "not set in CLI"
 	} else if requestconfig.ContainsCredential(project, requestconfig.ConfiguredCredentials(root, os.LookupEnv)) {
 		project = "[redacted]"
 	}

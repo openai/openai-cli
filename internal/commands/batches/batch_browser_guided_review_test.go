@@ -223,6 +223,7 @@ func TestBatchBrowserGuidedReviewOmitsConnectionSecrets(t *testing.T) {
 		Flags: []cli.Flag{&cli.StringFlag{Name: "project"}, &cli.StringFlag{Name: "base-url"}, requestconfig.NewRequestHeaderFlag()},
 		Action: func(_ context.Context, command *cli.Command) error {
 			view := strings.Join(batchBrowserReview(command, &batchBrowserDraft{inputID: "file_synthetic", endpoint: "/v1/responses"}, nil, 0), "\n")
+			require.Contains(t, view, "Project: not set in CLI")
 			if !strings.Contains(view, "Connection: https://gateway.example.invalid") {
 				t.Errorf("connection origin missing: %s", view)
 			}
