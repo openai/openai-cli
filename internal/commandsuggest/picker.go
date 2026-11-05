@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/terminal"
 )
 
 // ErrCanceled means that the picker returned no selection.
@@ -290,17 +291,17 @@ func (m *commandPicker) View() tea.View {
 		frameRows = 2
 	}
 	strong := lipgloss.NewStyle().Bold(true)
-	muted, border, selected := lipgloss.NewStyle(), lipgloss.NewStyle(), strong
+	muted, selected := lipgloss.NewStyle(), strong
 	control := lipgloss.NewStyle()
-	if m.color && m.backgroundKnown {
-		fill, accent, secondary, edge := "#E9EFFE", "#3159BC", "#657087", "#BAC4D8"
-		if m.dark {
-			fill, accent, secondary, edge = "#343D58", "#8AA8FF", "#A4ACC2", "#51566B"
-		}
+	fill, accent, secondary, edge := "#E9EFFE", "#3159BC", "#657087", "#BAC4D8"
+	if m.dark {
+		fill, accent, secondary, edge = "#343D58", "#8AA8FF", "#A4ACC2", "#51566B"
+	}
+	colors := m.color && m.backgroundKnown
+	if colors {
 		selected = selected.Foreground(lipgloss.Color(accent)).Background(lipgloss.Color(fill))
 		control = control.Foreground(lipgloss.Color(accent))
 		muted = muted.Foreground(lipgloss.Color(secondary))
-		border = border.Foreground(lipgloss.Color(edge))
 		frame = frame.BorderForeground(lipgloss.Color(edge))
 	}
 	action := "selects"
@@ -349,7 +350,7 @@ func (m *commandPicker) View() tea.View {
 		queryText = muted.Render(queryText)
 	}
 	queryLine = control.Render("Search") + "  " + queryText
-	rule := border.Render(strings.Repeat("─", width))
+	rule := terminal.SectionDivider(width, colors, fill, edge, secondary)
 	words := strings.Fields(strings.ToLower(string(m.query)))
 	lines := make([]string, leadingRows)
 	lines = append(lines, header, queryLine, rule)
