@@ -26,8 +26,7 @@ func FormatCommand(args []string, shell string) string {
 	if quote == nil {
 		return ""
 	}
-	words := make([]string, 0, len(args)+1)
-	words = append(words, "openai")
+	words := []string{"openai"}
 	for _, arg := range args {
 		words = append(words, quote(arg))
 	}

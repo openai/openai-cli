@@ -66,6 +66,7 @@ func ConfigureCommand(root *cli.Command) {
 		}
 	}
 	localcommands.ConfigureSubgroups(root)
+	registerLimitsCommands(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
 	filecommands.Configure(root)
