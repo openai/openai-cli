@@ -73,6 +73,7 @@ Paste this block into Bash or zsh. Enter your system password if sudo prompts du
 
 The installer verifies the package checksum before installation. It waits up to 30 minutes for missing release files.
 Press Ctrl-C to cancel. The helper selects your automatically updated copy in this shell and future shells.
+In packages with prompt insertion support, Explore fills the editable zsh prompt. Bash 4.3+ uses Ctrl+X, then Tab.
 The package manager owns `/usr/bin/openai`.
 
 For an offline installation, verify your chosen package against its official release checksum first.
@@ -138,7 +139,13 @@ Open **Assets** for the newest stable release with downloads for your computer. 
 Choose the macOS ZIP, Linux tarball, or Windows ZIP. GitHub’s source code archives require a separate build.
 On a Mac, the filename ends in `macos_arm64.zip` for Apple silicon or `macos_amd64.zip` for Intel.
 Extract the archive into a dedicated directory.
-On macOS and Linux, you can keep that directory as your manual installation.
+On macOS and Linux, source the bundled installer to set up updates and Explore in Bash or zsh.
+
+```sh
+source ./openai-enable-updates.sh
+```
+
+For a portable installation, keep the extracted directory.
 From inside it, paste this block into Bash or zsh.
 
 ```sh

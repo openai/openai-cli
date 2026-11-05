@@ -56,6 +56,9 @@ func commandHelpAtWidth(command *cli.Command, invocation, path string, width int
 }
 
 func commandHelpAtWidths(command *cli.Command, invocation, path string, width, navigationWidth int) string {
+	if path == "@completion" {
+		return completionHelp(command, invocation, width, navigationWidth)
+	}
 	var out strings.Builder
 	style := commandHelpStyle(command)
 	heading := func(text string) string { return style.render(style.section, text) }

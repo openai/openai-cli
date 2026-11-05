@@ -13,6 +13,12 @@ import (
 
 // The installer runs the transaction from a private copy of the new release.
 func runPackageInstallHelper(argv []string) bool {
+	if len(argv) == 5 && argv[1] == "__openai_archive_shell_profile" && os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") == "1" {
+		if enableInteractiveProfile(argv[2], argv[3], argv[4]) {
+			fmt.Println("ready")
+		}
+		return true
+	}
 	if len(argv) != 2 || os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") != "1" ||
 		(argv[1] != "__openai_package_current" && argv[1] != "__openai_package_install") {
 		return false

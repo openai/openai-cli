@@ -139,10 +139,16 @@ func TestLocalReleasePreflight(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	shellSetup, err := os.ReadFile("../openai-enable-updates.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	root := t.TempDir()
 	files := map[string]string{
 		"install.sh":                          string(installer),
 		"openai-enable-updates.zsh":           string(selection),
+		"openai-enable-updates.sh":            string(shellSetup),
 		".gitignore":                          string(ignore),
 		"scripts/generate-release-artifacts":  string(generator),
 		"go.mod":                              "module example.com/local-release\n\ngo 1.25.0\n",
@@ -184,6 +190,7 @@ archives:
       - completions/*
       - man/*/*
       - install.sh
+      - openai-enable-updates.sh
       - openai-enable-updates.zsh
 `,
 	}
@@ -223,6 +230,7 @@ archives:
 	expected := readReleaseSupportFiles(t, root)
 	expected["install.sh"] = installer
 	expected["openai-enable-updates.zsh"] = selection
+	expected["openai-enable-updates.sh"] = shellSetup
 	release := func() *exec.Cmd {
 		command := exec.Command(goreleaser, "release", "--clean")
 		command.Dir = root
@@ -484,7 +492,7 @@ func TestGoReleaserPreservesArtifactsWithoutApplicationHooks(t *testing.T) {
 	for _, archive := range config.Archives {
 		want := []string{"completions/*", "man/*/*"}
 		if archive.ID == "linux-archive" || archive.ID == "macos-archive" {
-			want = append(want, "install.sh", "openai-enable-updates.zsh")
+			want = append(want, "install.sh", "openai-enable-updates.sh", "openai-enable-updates.zsh")
 		} else if archive.ID == "windows-archive" {
 			want = append(want, "Install.cmd")
 		}

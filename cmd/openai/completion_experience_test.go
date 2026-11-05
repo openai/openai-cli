@@ -5,6 +5,35 @@ import (
 	"testing"
 )
 
+func TestMainCompletionSetupHelp(t *testing.T) {
+	var first string
+	for _, args := range [][]string{
+		{"openai", "@completion", "--help"},
+		{"openai", "@completion", "-h"},
+		{"openai", "help", "@completion"},
+		{"openai", "@completion", "zsh", "--install-suggestions", "--help"},
+	} {
+		got := runMainDispatchWithEnv(t, "zsh", []string{"OPENAI_BASE_URL=invalid"}, args...)
+		if got.code != 0 || got.stderr != "" {
+			t.Fatalf("help %q: %+v", args, got)
+		}
+		if first != "" && got.stdout != first {
+			t.Fatalf("help %q differs from @completion --help: %s", args, got.stdout)
+		}
+		first = got.stdout
+	}
+	for _, text := range []string{`openai "@completion" [SHELL] [FLAGS]`, "\nSTART HERE\n", "\nFLAGS\n", "The shell installer enables insertion.", `openai @completion zsh --install-suggestions --profile "${ZDOTDIR-$HOME}/.zshrc"`, "--suggestions-status", "--uninstall-suggestions", "pwsh"} {
+		if !strings.Contains(first, text) {
+			t.Errorf("missing %q in %s", text, first)
+		}
+	}
+	for _, unrelated := range []string{"\x1b", "--api-key", "--debug", "--mtls-client-key-file", "--suggestions-only"} {
+		if strings.Contains(first, unrelated) {
+			t.Errorf("unexpected %q in completion help", unrelated)
+		}
+	}
+}
+
 func TestMainCompletionStaysLocalWithInvalidRequestConfiguration(t *testing.T) {
 	env := []string{
 		"OPENAI_BASE_URL=invalid-completion-url",

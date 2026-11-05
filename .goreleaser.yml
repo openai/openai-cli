@@ -48,6 +48,7 @@ archives:
       - completions/*
       - man/*/*
       - install.sh
+      - openai-enable-updates.sh
       - openai-enable-updates.zsh
   - id: macos-archive
     ids: [macos]
@@ -57,6 +58,7 @@ archives:
       - completions/*
       - man/*/*
       - install.sh
+      - openai-enable-updates.sh
       - openai-enable-updates.zsh
   - id: windows-archive
     ids: [windows]
@@ -99,6 +101,14 @@ nfpms:
         dst: /usr/share/man/man1/
       - src: completions/picker/openai.fish
         dst: /usr/share/fish/vendor_conf.d/openai-picker.fish
+        file_info:
+          mode: 0644
+      - src: internal/autocomplete/shellscripts/fish_package_explore.fish
+        dst: /usr/share/fish/vendor_conf.d/openai-explore.fish
+        file_info:
+          mode: 0644
+      - src: internal/autocomplete/shellscripts/fish_explore_selection.fish
+        dst: /usr/share/openai-cli/explore-selection.fish
         file_info:
           mode: 0644
       - src: install.sh

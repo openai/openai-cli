@@ -465,11 +465,10 @@ func (e *UnknownTopicError) Error() string {
 
 func (*UnknownTopicError) ExitCode() int { return 3 }
 
-// Compatibility aliases stay out of discovery but retain explicitly requested
-// help. Internal commands remain unavailable as help topics.
+// Completion setup and compatibility aliases can be requested explicitly.
 func allowsHelpTopic(command *cli.Command) bool {
 	compatibility, _ := command.Metadata["command-compatibility-alias"].(bool)
-	return !command.Hidden || compatibility
+	return !command.Hidden || compatibility || command.Name == "@completion"
 }
 
 // NativeInvocation returns the executable spelling for a command copied into the current shell.
