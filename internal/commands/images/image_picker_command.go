@@ -25,22 +25,31 @@ func (s imagePickerSettings) args() []string {
 
 const imagePickerUnsupportedShell = "Command printing needs Bash, zsh, fish or PowerShell 7."
 
-type imagePickerProfile struct {
-	argument string
-	unsafe   bool
+type imagePickerConnection struct {
+	invocation string
+	args       []string
+	unsafe     bool
 }
 
-// Keep the selector out of saved drafts and generated request arguments.
-func (p imagePickerProfile) display(args []string, shell string) (command, unavailable string) {
-	if p.unsafe {
-		return "", "Command hidden because the selected profile name contains a credential."
+// Connection options belong in the displayed command only. The current request already has them.
+func (p imagePickerConnection) display(args []string, shell string) (command, unavailable string) {
+	if why := p.unavailable(shell); why != "" {
+		return "", why
 	}
-	if p.argument != "" {
-		args = append([]string{p.argument}, args...)
-	}
+	args = append(p.args[:len(p.args):len(p.args)], args...)
 	command = cliterminal.FormatCommand(args, shell)
-	if command == "" {
-		return "", imagePickerUnsupportedShell
+	if p.invocation != "" {
+		command = p.invocation + strings.TrimPrefix(command, "openai")
 	}
 	return command, ""
+}
+
+func (p imagePickerConnection) unavailable(shell string) string {
+	if p.unsafe {
+		return "Command hidden because it requires private request options."
+	}
+	if cliterminal.ShellQuoter(shell) == nil {
+		return imagePickerUnsupportedShell
+	}
+	return ""
 }

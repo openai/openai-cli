@@ -69,11 +69,10 @@ type imageModelsReport struct {
 }
 
 // ModelsError keeps discovery's local guidance identifiable without retaining API errors or
-// rejected arguments. Only failure categories and the local help invocation
-// contribute to its message.
+// rejected arguments. Recovery suggestions retain only copyable request settings.
 type ModelsError struct {
 	results        []imagemodels.Result
-	invocation     string
+	invocation     imageModelInvocation
 	extraArguments bool
 }
 
@@ -85,13 +84,16 @@ func (e *ModelsError) Error() string {
 func (e *ModelsError) ReadableMessage(command *cli.Command, output ...io.Writer) string {
 	record := func(text string) string { return clihelp.SuggestedCommand(command, output, text) }
 	if e.extraArguments {
-		return fmt.Sprintf("use %s to see image model names; no additional arguments are needed", record(e.invocation+" images models"))
+		if e.invocation.omit {
+			return "Remove the additional arguments and retry with the same connection settings."
+		}
+		return fmt.Sprintf("use %s to see image model names; no additional arguments are needed", record(e.invocation.command("images models")))
 	}
 	return imageModelsFailureMessage(e.results, e.invocation, record)
 }
 
 func handleImagesModels(ctx context.Context, command *cli.Command, opts ModelOptions) error {
-	invocation := imageModelsInvocation(command)
+	invocation := imageModelsRequestInvocation(ctx, command)
 	if command.Args().Present() {
 		return &ModelsError{invocation: invocation, extraArguments: true}
 	}
@@ -163,7 +165,7 @@ func writeImageModelsData(ctx context.Context, command *cli.Command, report imag
 	return opts.ShowData(context.WithoutCancel(ctx), command, obj, stderr)
 }
 
-func writeImageModels(out io.Writer, report imageModelsReport, all bool, invocation string, hints io.Writer, commands ...*cli.Command) error {
+func writeImageModels(out io.Writer, report imageModelsReport, all bool, invocation imageModelInvocation, hints io.Writer, commands ...*cli.Command) error {
 	var command *cli.Command
 	if len(commands) > 0 {
 		command = commands[0]
@@ -201,10 +203,12 @@ func writeImageModels(out io.Writer, report imageModelsReport, all bool, invocat
 	}
 	if hidden > 0 {
 		fmt.Fprintf(&text, "\n%d retired or not visible.\n", hidden)
-		fmt.Fprintf(&guidance, "Include them and dated versions: %s\n", clihelp.SuggestedCommand(command, []io.Writer{presenter}, invocation+" images models --all"))
 	}
-	if choice != "" {
-		fmt.Fprintf(&guidance, "Choose a model:\n  %s\n", clihelp.SuggestedCommand(command, []io.Writer{presenter}, fmt.Sprintf("%s images generate --prompt \"A tiny orange robot\" --model %s", invocation, choice)))
+	if hidden > 0 && !invocation.omit {
+		fmt.Fprintf(&guidance, "Include them and dated versions: %s\n", clihelp.SuggestedCommand(command, []io.Writer{presenter}, invocation.command("images models --all")))
+	}
+	if choice != "" && !invocation.omit {
+		fmt.Fprintf(&guidance, "Choose a model:\n  %s\n", clihelp.SuggestedCommand(command, []io.Writer{presenter}, invocation.command("images generate --prompt \"A tiny orange robot\" --model "+choice)))
 	}
 
 	text.WriteString("\nKnown image IDs from this CLI; newly released models may not be listed.\n")
@@ -249,7 +253,7 @@ func imageModelStatusText(model imagemodels.Result) string {
 	}
 }
 
-func imageModelsFailureMessage(results []imagemodels.Result, invocation string, recorders ...func(string) string) string {
+func imageModelsFailureMessage(results []imagemodels.Result, invocation imageModelInvocation, recorders ...func(string) string) string {
 	record := func(text string) string { return text }
 	if len(recorders) > 0 {
 		record = recorders[0]
@@ -263,7 +267,8 @@ func imageModelsFailureMessage(results []imagemodels.Result, invocation string, 
 	message := "Some model checks could not be completed. Unchecked models have not been verified."
 	switch {
 	case failures[imagemodels.FailureAuthentication]:
-		message = "The API did not accept authentication for a model check. Check your key or endpoint credentials.\nAPI key setup: " + record(invocation+" help setup")
+		message = "The API did not accept authentication for a model check. Check your key or endpoint credentials."
+		message += "\nAPI key setup: " + record(invocation.binary+" help setup")
 	case failures[imagemodels.FailureRateLimit]:
 		message = "The API rate-limited model checks. Wait briefly before trying again."
 	case failures[imagemodels.FailureTimeout] || failures[imagemodels.FailureServer]:
@@ -275,14 +280,24 @@ func imageModelsFailureMessage(results []imagemodels.Result, invocation string, 
 	case failures[imagemodels.FailureInvalidResponse]:
 		message = "The API returned an unexpected model response. Those models have not been verified."
 	}
-	return message + "\nBrowse known names without an API check: " + record(invocation+" images models --offline")
+	if invocation.omit {
+		return message
+	}
+	return message + "\nBrowse known names without an API check: " + record(invocation.command("images models --offline"))
 }
 
-// Use the help system's already quoted executable name for runnable examples.
-func imageModelsInvocation(command *cli.Command) string {
-	invocation, _ := command.Root().Metadata["help-invocation"].(string)
-	if invocation == "" {
-		return "openai"
-	}
+// Keep command-line overrides when a reader copies a suggestion into another process.
+type imageModelInvocation struct {
+	binary, options string
+	omit            bool
+}
+
+func (i imageModelInvocation) command(operation string) string {
+	return i.binary + " " + operation + i.options
+}
+
+func imageModelsRequestInvocation(ctx context.Context, command *cli.Command) imageModelInvocation {
+	invocation := imageModelInvocation{binary: clihelp.NativeInvocation(command.Root(), clihelp.DisplayInvocation(command.Root()))}
+	invocation.options, invocation.omit = requestconfig.NextCommandSuffix(ctx, command.Root())
 	return invocation
 }

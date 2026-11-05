@@ -40,6 +40,8 @@ func TestFileReceiptRequestContext(t *testing.T) {
 		{"URL query", []string{"--base-url=https://example.invalid/v1?key=fake-secret"}, nil, true},
 		{"URL fragment", []string{"--base-url=https://example.invalid/v1#fake-secret"}, nil, true},
 		{"URL empty query", []string{"--base-url=https://example.invalid/v1?"}, nil, true},
+		{"project contains inherited key", []string{"--project=proj-sk-fake-inherited"}, nil, true},
+		{"encoded key in endpoint path", []string{"--base-url=https://example.invalid/sk-%66ake-inherited/v1"}, nil, true},
 		{"invalid project", []string{"--project=proj\x00name"}, nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

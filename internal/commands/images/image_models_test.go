@@ -21,7 +21,7 @@ func TestImageModelsPresentationPartialAndHidden(t *testing.T) {
 		imageModelTestRow("dall-e-2", imagemodels.StatusRetired, ""),
 	}}
 	var out strings.Builder
-	if err := writeImageModels(&out, report, false, "openai", &out); err != nil {
+	if err := writeImageModels(&out, report, false, imageModelInvocation{binary: "openai"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "Could not check (timeout)", "2 retired or not visible", "openai images models --all", `openai images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst`, "generation permissions can differ"} {
@@ -35,7 +35,7 @@ func TestImageModelsPresentationPartialAndHidden(t *testing.T) {
 		}
 	}
 	out.Reset()
-	if err := writeImageModels(&out, report, true, "openai", &out); err != nil {
+	if err := writeImageModels(&out, report, true, imageModelInvocation{binary: "openai"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "gpt-image-1") || !strings.Contains(out.String(), "dall-e-2") {
@@ -52,7 +52,7 @@ func TestImageModelsSuggestsOnlyVisibleOrUncheckedNames(t *testing.T) {
 			}
 			for _, all := range []bool{false, true} {
 				var out strings.Builder
-				if err := writeImageModels(&out, report, all, "openai", &out); err != nil {
+				if err := writeImageModels(&out, report, all, imageModelInvocation{binary: "openai"}, &out); err != nil {
 					t.Fatal(err)
 				}
 				eligible := status == imagemodels.StatusVisible || status == imagemodels.StatusNotChecked
@@ -93,7 +93,7 @@ func TestImageModelsStatusAndFailureGuidance(t *testing.T) {
 		imagemodels.FailureRateLimit: "rate-limited", imagemodels.FailureTimeout: "timed out", imagemodels.FailureServer: "API could not complete",
 		imagemodels.FailureNetwork: "Could not reach", imagemodels.FailureInvalidResponse: "unexpected model response", imagemodels.FailureCanceled: "could not be completed",
 	} {
-		message := imageModelsFailureMessage([]imagemodels.Result{{Status: imagemodels.StatusUnknown, Failure: failure}}, "openai")
+		message := imageModelsFailureMessage([]imagemodels.Result{{Status: imagemodels.StatusUnknown, Failure: failure}}, imageModelInvocation{binary: "openai"})
 		if !strings.Contains(message, want) || !strings.Contains(message, "openai images models --offline") {
 			t.Errorf("failure %s: %s", failure, message)
 		}
@@ -111,7 +111,7 @@ func TestImageModelsWriteErrors(t *testing.T) {
 		if expected == nil {
 			expected = io.ErrShortWrite
 		}
-		if got := writeImageModels(imageModelsFailWriter{failure}, imageModelsReport{}, false, "openai", nil); !errors.Is(got, expected) {
+		if got := writeImageModels(imageModelsFailWriter{failure}, imageModelsReport{}, false, imageModelInvocation{binary: "openai"}, nil); !errors.Is(got, expected) {
 			t.Fatalf("error=%v; want %v", got, expected)
 		}
 	}

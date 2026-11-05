@@ -1,12 +1,14 @@
 package request
 
 import (
+	"context"
 	"net/url"
 	"os"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -28,23 +30,43 @@ func NextCommandOptions(root *cli.Command) (args []string, omit bool) {
 			return nil, true
 		}
 	}
-	if profile, unsafe := CopiedProfile(root); unsafe {
-		return nil, true
-	} else if profile != "" {
-		args = append(args, profile)
+	secrets := ConfiguredCredentials(root, os.LookupEnv)
+	selection, configured := ConfiguredProjectContext(root)
+	usesSavedValues := strings.HasPrefix(selection.Project.Source, "profile:") || strings.HasPrefix(selection.Organization.Source, "profile:")
+	// An initially unset field must stay unset if a profile becomes active before paste.
+	unsetField := selection.Project.Source == "unset" || selection.Organization.Source == "unset"
+	if root.IsSet("profile") || usesSavedValues || unsetField {
+		name := root.String("profile")
+		if !utf8.ValidString(name) || strings.ContainsRune(name, 0) || ContainsCredential(name, secrets) {
+			return nil, true
+		}
+		if configured {
+			// The request already resolved this profile. Pasting the receipt must still
+			// select the same values after a profile is edited, activated, or deleted.
+			name = ""
+		}
+		args = append(args, "--profile="+name)
 	}
-	for _, name := range []string{"project", "organization", "base-url"} {
-		if !root.IsSet(name) {
+	for _, setting := range []struct {
+		name  string
+		field ContextValue
+	}{
+		{"project", selection.Project}, {"organization", selection.Organization}, {"base-url", ContextValue{}},
+	} {
+		name := setting.name
+		value := root.String(name)
+		if configured && setting.field.Source != "" && setting.field.Source != "unset" {
+			value = setting.field.Value
+		} else if !root.IsSet(name) {
 			continue
 		}
-		value := root.String(name)
-		if !utf8.ValidString(value) || strings.ContainsRune(value, 0) {
+		if !utf8.ValidString(value) || strings.ContainsRune(value, 0) || ContainsCredential(value, secrets) {
 			return nil, true
 		}
 		if name == "base-url" && value != "" {
 			endpoint, err := url.Parse(value)
 			if err != nil || strings.IndexFunc(value, unicode.IsControl) >= 0 || endpoint.Host == "" || endpoint.User != nil ||
-				endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" ||
+				ContainsCredential(endpoint.Path, secrets) || endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" ||
 				(endpoint.Scheme != "http" && endpoint.Scheme != "https") {
 				return nil, true
 			}
@@ -54,15 +76,25 @@ func NextCommandOptions(root *cli.Command) (args []string, omit bool) {
 	return args, false
 }
 
-// CopiedProfile preserves one-shot selectors, including --profile=. Suppress the command
-// if an earlier profile's name happens to include a configured credential.
-func CopiedProfile(root *cli.Command) (argument string, unsafe bool) {
-	if !root.IsSet("profile") {
-		return "", false
-	}
-	name := root.String("profile")
-	if !utf8.ValidString(name) || strings.ContainsRune(name, 0) || ContainsCredential(name, ConfiguredCredentials(root, os.LookupEnv)) {
+// NextCommandSuffix quotes non-secret request settings for a runnable suggestion.
+func NextCommandSuffix(ctx context.Context, root *cli.Command) (string, bool) {
+	options, omit := NextCommandOptions(root)
+	if omit {
 		return "", true
 	}
-	return "--profile=" + name, false
+	for i, arg := range options {
+		// Typical IDs and URLs have the same literal spelling in all supported shells.
+		if plain, _ := terminal.QuoteProperties(strings.ReplaceAll(arg, "=", "")); plain {
+			continue
+		}
+		quote := terminal.ShellQuoter(terminal.ParentShell(ctx))
+		if quote == nil {
+			return "", true
+		}
+		options[i] = quote(arg)
+	}
+	if len(options) == 0 {
+		return "", false
+	}
+	return " " + strings.Join(options, " "), false
 }

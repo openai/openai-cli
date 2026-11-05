@@ -340,35 +340,9 @@ func ShowNextCommand(batch gjson.Result, opts HintOptions) error {
 			return nil
 		}
 	}
-	if batchHintNeedsRequestOptions(cmd.Root()) {
+	suffix, omit := requestconfig.NextCommandSuffix(opts.Context, cmd.Root())
+	if omit {
 		return readable.WriteText(opts.Stderr, "To wait for this batch, reuse the same connection and authentication options with batches retrieve --wait.")
 	}
-	return readable.WriteText(opts.Stderr, fmt.Sprintf("Follow this batch:\n  %s batches retrieve --batch-id=%s --wait", clihelp.DisplayInvocation(cmd.Root()), id))
-}
-
-// A new process inherits environment configuration but loses command-line
-// overrides. Compare effective values without ever printing private options.
-func batchHintNeedsRequestOptions(root *cli.Command) bool {
-	if root.IsSet("header") || root.IsSet("profile") {
-		return true
-	}
-	// Startup may temporarily normalize an invalid environment URL to this
-	// explicit override. The next process would inherit the original value.
-	if root.String("base-url") != "" {
-		return true
-	}
-	for _, setting := range []struct{ flag, environment string }{
-		{"api-key", "OPENAI_API_KEY"},
-		{"admin-api-key", "OPENAI_ADMIN_KEY"},
-		{"organization", "OPENAI_ORG_ID"},
-		{"project", "OPENAI_PROJECT_ID"},
-		{"webhook-secret", "OPENAI_WEBHOOK_SECRET"},
-		{requestconfig.MTLSClientCertFileFlag, requestconfig.MTLSClientCertFileEnv},
-		{requestconfig.MTLSClientKeyFileFlag, requestconfig.MTLSClientKeyFileEnv},
-	} {
-		if root.IsSet(setting.flag) && root.String(setting.flag) != os.Getenv(setting.environment) {
-			return true
-		}
-	}
-	return false
+	return readable.WriteText(opts.Stderr, fmt.Sprintf("Follow this batch:\n  %s batches retrieve --batch-id=%s --wait%s", clihelp.NativeInvocation(cmd.Root(), clihelp.DisplayInvocation(cmd.Root())), id, suffix))
 }

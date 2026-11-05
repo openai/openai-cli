@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	requestconfig "github.com/openai/openai-cli/internal/request"
@@ -50,14 +51,14 @@ func TestBatchHintRetainsOnlyReproducibleRequestContext(t *testing.T) {
 	for _, tc := range []struct {
 		name, flag, environment, inherited string
 		args                               []string
-		needsOptions                       bool
+		omitHint                           bool
 	}{
 		{"environment key", "api-key", "OPENAI_API_KEY", "synthetic-env-key", nil, false},
 		{"matching key", "api-key", "OPENAI_API_KEY", "synthetic-env-key", []string{"--api-key", "synthetic-env-key"}, false},
 		{"different key", "api-key", "OPENAI_API_KEY", "synthetic-env-key", []string{"--api-key", "synthetic-override-key"}, true},
 		{"empty key override", "api-key", "OPENAI_API_KEY", "synthetic-env-key", []string{"--api-key="}, true},
-		{"project", "project", "OPENAI_PROJECT_ID", "proj_env", []string{"--project", "proj_override"}, true},
-		{"organization", "organization", "OPENAI_ORG_ID", "org_env", []string{"--organization", "org_override"}, true},
+		{"project", "project", "OPENAI_PROJECT_ID", "proj_env", []string{"--project", "proj_override"}, false},
+		{"organization", "organization", "OPENAI_ORG_ID", "org_env", []string{"--organization", "org_override"}, false},
 		{"admin key", "admin-api-key", "OPENAI_ADMIN_KEY", "", []string{"--admin-api-key", "synthetic-admin-key"}, true},
 		{"secret", "webhook-secret", "OPENAI_WEBHOOK_SECRET", "", []string{"--webhook-secret", "synthetic-secret"}, true},
 		{"certificate", requestconfig.MTLSClientCertFileFlag, requestconfig.MTLSClientCertFileEnv, "", []string{"--mtls-client-cert-file", "private-cert.pem"}, true},
@@ -65,8 +66,8 @@ func TestBatchHintRetainsOnlyReproducibleRequestContext(t *testing.T) {
 		{"header", "unused", "OPENAI_CUSTOM_HEADERS", "X-Example: inherited", []string{"--header", "X-Example: override"}, true},
 		{"environment headers", "unused", "OPENAI_CUSTOM_HEADERS", "X-Example: inherited", nil, false},
 		{"environment endpoint", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", nil, false},
-		{"explicit endpoint", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", []string{"--base-url", "http://127.0.0.1:1"}, true},
-		{"different endpoint", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", []string{"--base-url", "http://127.0.0.1:2"}, true},
+		{"explicit endpoint", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", []string{"--base-url", "http://127.0.0.1:1"}, false},
+		{"different endpoint", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", []string{"--base-url", "http://127.0.0.1:2"}, false},
 		{"empty endpoint fallback", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", []string{"--base-url="}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -76,9 +77,24 @@ func TestBatchHintRetainsOnlyReproducibleRequestContext(t *testing.T) {
 					&requestflag.Flag[string]{Name: tc.flag, Sources: cli.EnvVars(tc.environment)},
 					&cli.StringFlag{Name: "base-url"}, requestconfig.NewRequestHeaderFlag(),
 				},
-				Action: func(_ context.Context, cmd *cli.Command) error {
-					if got := batchHintNeedsRequestOptions(cmd); got != tc.needsOptions {
-						t.Errorf("needs options = %v; want %v", got, tc.needsOptions)
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					var receipt strings.Builder
+					err := ShowNextCommand(gjson.Parse(`{"id":"batch_123"}`), HintOptions{
+						Context: context.WithValue(ctx, batchCreateContextKey{}, cmd),
+						Route:   "(resource) batches > (method) create", Response: true, Terminal: true, Format: "text", Stderr: &receipt,
+						HumanTerminal: func(context.Context, *cli.Command) bool { return true },
+					})
+					if err != nil {
+						return err
+					}
+					shown := strings.Contains(receipt.String(), "openai batches retrieve --batch-id=batch_123 --wait")
+					if shown == tc.omitHint {
+						t.Fatalf("unexpected batch receipt: %q", receipt.String())
+					}
+					if shown && len(tc.args) == 2 && (tc.flag == "project" || tc.flag == "organization" || tc.args[0] == "--base-url") {
+						if !strings.Contains(receipt.String(), tc.args[0]+"="+tc.args[1]) {
+							t.Errorf("batch receipt lost routing: %q", receipt.String())
+						}
 					}
 					return nil
 				},

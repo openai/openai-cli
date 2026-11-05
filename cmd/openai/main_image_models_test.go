@@ -94,6 +94,98 @@ func TestMainImageModelsJSONAndHeaders(t *testing.T) {
 	}
 }
 
+func TestMainImageModelsHintsKeepRequestSettings(t *testing.T) {
+	const key = "synthetic-model-hint-key"
+	for _, test := range []struct {
+		project  string
+		wantHint bool
+	}{{"proj_staging", true}, {key, false}} {
+		got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=" + key + " "},
+			"openai", "--project="+test.project, "--organization=org_team", "--base-url=http://127.0.0.1:1/v1", "images", "models", "--offline")
+		if got.code != 0 || strings.Contains(got.stdout+got.stderr, key) {
+			t.Fatalf("unsafe or failed report: %+v", got)
+		}
+		if test.wantHint {
+			want := `openai images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst --project=proj_staging --organization=org_team --base-url=http://127.0.0.1:1/v1`
+			if !strings.Contains(got.stderr, want) {
+				t.Fatalf("wrong follow-up command: %s", got.stderr)
+			}
+		} else if strings.Contains(got.stderr, "images generate") {
+			t.Fatalf("private override produced a copyable command: %s", got.stderr)
+		}
+	}
+}
+
+func TestMainCopiedImageCommandSurvivesProfileChanges(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("requires Bash to execute the printed command")
+	}
+	for _, test := range []struct{ name, org, project string }{
+		{"active", "org_team", "proj_staging"}, {"one-shot", "org_team", "proj_staging"},
+		{"no profile", "", ""}, {"only project", "", "proj_explicit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("OpenAI-Project") != test.project || r.Header.Get("OpenAI-Organization") != test.org {
+					t.Errorf("wrong target on %s %s: project=%q organization=%q", r.Method, r.URL.Path, r.Header.Get("OpenAI-Project"), r.Header.Get("OpenAI-Organization"))
+				}
+				if r.Method == http.MethodPost {
+					http.Error(w, "fixture rejects generation", http.StatusBadRequest)
+					return
+				}
+				mainImageModelResponse(w, r.URL.Path, "null")
+			})
+			env := append(profileProcessEnvironment(t.TempDir()), "OPENAI_API_KEY=synthetic-model-hint-key", "OPENAI_BASE_URL="+server.URL)
+			run := func(args ...string) mainDispatchResult {
+				return runMainDispatchWithEnv(t, "bash", env, append([]string{"openai"}, args...)...)
+			}
+			setup := func(args ...string) {
+				t.Helper()
+				if got := run(args...); got.code != 0 {
+					t.Fatal(got.stderr)
+				}
+			}
+			setup("profile", "create", "staging")
+			setup("profile", "set", "staging", "--project=proj_staging", "--organization=org_team")
+			args := []string{"images", "models", "--format=text"}
+			switch test.name {
+			case "active":
+				setup("profile", "activate", "staging")
+			case "one-shot":
+				args = append([]string{"--profile=staging"}, args...)
+			case "only project":
+				args = append([]string{"--project=" + test.project}, args...)
+			}
+			got := run(args...)
+			if got.code != 0 {
+				t.Fatal(got.stderr)
+			}
+			var hint string
+			for line := range strings.SplitSeq(got.stderr, "\n") {
+				if strings.Contains(line, " images generate ") {
+					hint = strings.TrimSpace(line)
+					break
+				}
+			}
+			if hint == "" {
+				t.Fatal("no generation hint", got.stderr)
+			}
+			setup("profile", "set", "staging", "--project=proj_changed", "--organization=org_changed")
+			setup("profile", "activate", "staging")
+			// Let Bash parse the exact hint, then dispatch through a fresh CLI process.
+			parsed, err := exec.CommandContext(t.Context(), bash, "-c", `openai() { printf '%s\0' "$@"; }; `+hint).Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			copied := strings.Split(strings.TrimSuffix(string(parsed), "\x00"), "\x00")
+			if result := run(copied...); result.code != 1 || requests()["POST /images/generations"] != 1 {
+				t.Fatalf("copy did not reach fixture: %+v %v", result, requests())
+			}
+		})
+	}
+}
+
 func TestMainImageModelsAllIncludesExactSnapshotNames(t *testing.T) {
 	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
 		mainImageModelResponse(w, r.URL.Path, "null")
@@ -165,7 +257,7 @@ func TestMainImageModelsExploreFallbackWarning(t *testing.T) {
 			if format == "explore" {
 				wantWarning = "Warning: Output format 'explore' not supported for non-terminal output; falling back to 'json'\n"
 			} else if format == "auto" {
-				wantWarning = "Choose a model:\n  openai images generate --prompt \"A tiny orange robot\" --model gpt-image-2.5-sunburst\n"
+				wantWarning = "Choose a model:\n  openai images generate --prompt \"A tiny orange robot\" --model gpt-image-2.5-sunburst --profile= --base-url=" + server.URL + "\n"
 			}
 			if got.stderr != wantWarning {
 				t.Errorf("stderr = %q; want %q", got.stderr, wantWarning)

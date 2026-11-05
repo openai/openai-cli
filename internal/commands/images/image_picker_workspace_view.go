@@ -118,7 +118,7 @@ func (m *imagePicker) workspaceView(view tea.View, prompt string, strong, muted,
 // scrollable preview; command printing always retains the original bytes.
 func (m *imagePicker) workspaceCommandLines(width int, text, muted, accent lipgloss.Style) []string {
 	if m.focus != "command" {
-		command, unavailable := m.profile.display(m.settings.args(), m.shell)
+		command, unavailable := m.connection.display(m.settings.args(), m.shell)
 		if command == "" {
 			command = unavailable
 		}

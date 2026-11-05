@@ -338,7 +338,7 @@ func (m *imagePicker) footer(width int, keyStyle, muted lipgloss.Style) []string
 	case "command":
 		enter = "Generate"
 		primary = [][2]string{{"Enter", enter}, {"↑↓", "Scroll"}}
-		if cliterminal.ShellQuoter(m.shell) != nil {
+		if m.connection.unavailable(m.shell) == "" {
 			primary = append(primary, [2]string{"Ctrl+P", "Print command"})
 		}
 	case "path":
@@ -392,7 +392,7 @@ func (m *imagePicker) commandPreview(width, height int) ([]string, int, int) {
 }
 
 func (m *imagePicker) commandLines(width int) []string {
-	command, unavailable := m.profile.display(m.settings.args(), m.shell)
+	command, unavailable := m.connection.display(m.settings.args(), m.shell)
 	if command == "" {
 		command = unavailable
 	}
