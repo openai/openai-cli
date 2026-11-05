@@ -28,10 +28,19 @@ func searchCandidates(candidates []Candidate, query string) []int {
 		// tier prefer whole words, contiguous phrases, and shorter commands.
 		rank [5]int
 	}
+	var tasks []int
 	var matches []match
 	for index, candidate := range candidates {
 		if len(words) == 0 {
 			matches = append(matches, match{index: index})
+			continue
+		}
+		// Match an ordered task while the user types its last word. Single words
+		// keep the usual keyword ranking.
+		if len(words) > 1 && candidate.path != query && slices.ContainsFunc(candidate.taskPhrases, func(phrase string) bool {
+			return strings.HasPrefix(phrase, query)
+		}) {
+			tasks = append(tasks, index)
 			continue
 		}
 		command := strings.ToLower(candidate.Command)
@@ -92,9 +101,14 @@ func searchCandidates(candidates []Candidate, query string) []int {
 		}
 		return 0
 	})
-	var result []int
+	result := tasks
 	for _, match := range matches {
-		result = append(result, match.index)
+		// If a task phrase overlaps a literal route, keep that route first.
+		if len(tasks) > 0 && candidates[match.index].path == query {
+			result = slices.Insert(result, 0, match.index)
+		} else {
+			result = append(result, match.index)
+		}
 	}
 	return result
 }

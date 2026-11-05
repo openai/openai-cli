@@ -3,7 +3,6 @@ package clihelp
 import (
 	"context"
 
-	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -28,7 +27,7 @@ API REQUESTS
    For responses create and chat completions create, --request-file accepts a JSON or YAML file.
    Use --request-file - to read the request from a pipe.
        {{suggestFor . (call (index .Metadata "request-pipe-example") $run "responses create") "bash" "zsh"}}
-{{with $native := index .Root.Metadata "help-native-pipe-invocation"}}{{if ne $native $run}}   In your current shell, use this command.
+{{with $native := index .Root.Metadata "help-native-invocation"}}{{if ne $native $run}}   In your current shell, use this command.
        {{suggestFor $ (call (index $.Metadata "request-pipe-example") $native "responses create") "fish" "pwsh"}}
 {{end}}{{end}}   Explicit flags override matching fields.
    For other commands accepting whole requests, finish writing the file before redirecting it.
@@ -40,18 +39,6 @@ SCRIPT OUTPUT
    Results go to stdout. Errors go to stderr.
        {{suggest . (printf "%s models list --format jsonl" $run)}}
 `
-
-// Keep existing Bash and zsh guide examples copyable when another shell opens help.
-func nativePipeInvocation(ctx context.Context, name, defaultInvocation string) string {
-	switch terminal.ParentShell(ctx) {
-	case "pwsh":
-		return "& " + terminal.PowerShellQuote(name)
-	case "fish":
-		return terminal.FishQuote(name)
-	default:
-		return defaultInvocation
-	}
-}
 
 func requestPipeExample(invocation, path string) string {
 	var body string

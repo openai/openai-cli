@@ -225,9 +225,14 @@ func configureLocalHelpContent(root *cli.Command) {
 			command.Metadata["help-optional-command"] = true
 			content.GlobalOptionsNote = "The editor supports --format auto or text. For JSON, use tokenizer count or inspect. --transform and --raw-output are unsupported."
 			content.Description = "Opens the live editor in a terminal. Pipe text into tokenizer view to explore it. Use count or inspect for scripts.\n\n" + content.Description
-			content.Examples = []clihelp.Example{{Description: "Open the live tokenizer editor:", Command: "tokenizer"}}
+			content.Examples = []clihelp.Example{
+				{Description: "Open the live tokenizer editor:", Command: "tokenizer"},
+				{Description: "Count tokens in text:", Command: `tokenizer count --text "hello world"`},
+				{Description: "See piping examples:", Command: "help piping"},
+			}
 		case "tokenizer view":
 			content.GlobalOptionsNote = "The editor requires --format auto and an interactive terminal. Use tokenizer count or inspect for script output."
+			content.BashExamples = true
 			content.Examples = []clihelp.Example{{Description: "Explore a UTF-8 file in Bash or zsh", Command: "tokenizer view < draft.txt"}}
 		case "tokenizer count", "tokenizer inspect":
 			content.Examples = []clihelp.Example{{Description: "Tokenize literal text:", Command: strings.Join(path, " ") + ` --text "Hello, world!"`}}

@@ -152,6 +152,9 @@ func TestMainTokenizerEditorHelpAndDiscoveryStayNonInteractive(t *testing.T) {
 			for _, name := range []string{"view", "count", "inspect", "encodings", "licenses"} {
 				require.Regexp(t, `(?m)^\s+`+name+`\s+\S`, got.stdout)
 			}
+			require.Contains(t, got.stdout, "    $ openai tokenizer\n")
+			require.Contains(t, got.stdout, `    $ openai tokenizer count --text "hello world"`)
+			require.Contains(t, got.stdout, "    $ openai help piping\n")
 			require.NotContains(t, got.stdout, "Key setup:")
 			require.NotContains(t, got.stdout, "__preview")
 			require.NotContains(t, got.stdout, "__output")

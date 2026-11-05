@@ -1,8 +1,13 @@
 package main
 
 import (
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/openai/openai-cli/internal/terminal"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMainExploreRootHelpIntroducesOfflineSearch(t *testing.T) {
@@ -89,8 +94,15 @@ func TestMainExploreQueryWorksOfflineInPipes(t *testing.T) {
 	}
 }
 
-func TestMainExploreDistinguishesBatchUploadFromSubmission(t *testing.T) {
+func TestMainExploreRanksCommandsForCommonTasks(t *testing.T) {
 	for _, tc := range []struct{ query, first string }{
+		{"explore text", "tokenizer --help"},
+		{"count tokens offline", "tokenizer count"},
+		{"  COUNT   tokens off  ", "tokenizer count"},
+		{"text to speec", "speak"},
+		{"text to audio", "speak"},
+		{"read text aloud", "speak"},
+		{"speech to text", "transcribe"},
 		{"upload a JSONL file", "files upload"},
 		{"upload a file for a future batch", "files upload"},
 		{"start a batch", "batches submit requests.jsonl"},
@@ -109,7 +121,7 @@ func TestMainExploreDistinguishesBatchUploadFromSubmission(t *testing.T) {
 
 func TestMainExploreHelpAndStructuredErrors(t *testing.T) {
 	help := runMainDispatch(t, "zsh", "openai", "explore", "--help")
-	if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, "openai explore") {
+	if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, `openai explore "count tokens offline"`) {
 		t.Fatalf("explore help failed: %+v", help)
 	}
 	got := runMainDispatch(t, "zsh", "openai", "--format", "json", "explore")
@@ -131,4 +143,38 @@ func TestMainExploreExplicitMachineErrorsStayStructured(t *testing.T) {
 	if !strings.Contains(payload["message"].(string), "error output") {
 		t.Fatalf("missing error-format guidance: %#v", payload)
 	}
+}
+
+// PowerShell needs its call operator when the executable path is quoted.
+func TestMainExploreCopiesTaskFromHelpInPowerShell(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("PowerShell unavailable")
+	}
+	work, binary := buildNativeShellCLI(t)
+	shell := nativeShell{name: "pwsh", executable: pwsh, args: []string{"-NoProfile", "-NonInteractive", "-Command"}}
+	directory, home := t.TempDir(), t.TempDir()
+	run := func(command string) string {
+		result := runNativeShell(t, shell, directory, home, "invalid-for-requests", command)
+		require.Zero(t, result.code, result.stderr)
+		require.Empty(t, result.stderr)
+		return strings.ReplaceAll(result.stdout, "\r\n", "\n")
+	}
+	invocation := "& " + terminal.PowerShellQuote(filepath.Join(work, binary))
+	help := run(invocation + " explore --help")
+	var example string
+	for line := range strings.SplitSeq(help, "\n") {
+		if strings.HasSuffix(line, ` explore "count tokens offline"`) {
+			example = strings.TrimPrefix(strings.TrimSpace(line), "$ ")
+			break
+		}
+	}
+	require.NotEmpty(t, example)
+	output := run(example)
+	_, results, found := strings.Cut(output, "MATCHING COMMANDS\n")
+	require.True(t, found)
+	first, _, _ := strings.Cut(results, "\n")
+	command, _, _ := strings.Cut(strings.TrimSpace(first), "  ")
+	require.Equal(t, invocation+" tokenizer count", command)
+	require.Equal(t, "1", strings.TrimSpace(run(command+" -n --text hello")))
 }

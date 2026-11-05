@@ -114,7 +114,10 @@ openai_command_insertion_disable
 Run `openai explore` to search the CLI command tree and declared examples.
 The catalog updates with the installed CLI. Search uses no API calls or model requests.
 Use words such as `files upload`, `models`, or `response` to filter commands and descriptions.
-Search ranks command names before arguments and descriptions. It matches whole words and word prefixes, in any order.
+Try `openai explore "count tokens offline"` to find `openai tokenizer count`.
+For common tasks such as `text to speech` and `speech to text`, search uses word order.
+An exact command path takes precedence over a matching task. Other keyword matches follow.
+Keyword search ranks command names before arguments and descriptions. It matches whole words and word prefixes, in any order.
 Every search word must match. One-letter and two-letter description searches require whole words, such as `ID`.
 Unrelated word fragments and documentation URLs do not produce description matches.
 Discovery omits retired operations. Syntax guides such as `COMMAND --help` are not selectable suggestions.
