@@ -28,6 +28,11 @@ func NextCommandOptions(root *cli.Command) (args []string, omit bool) {
 			return nil, true
 		}
 	}
+	if profile, unsafe := CopiedProfile(root); unsafe {
+		return nil, true
+	} else if profile != "" {
+		args = append(args, profile)
+	}
 	for _, name := range []string{"project", "organization", "base-url"} {
 		if !root.IsSet(name) {
 			continue
@@ -47,4 +52,17 @@ func NextCommandOptions(root *cli.Command) (args []string, omit bool) {
 		args = append(args, "--"+name+"="+value)
 	}
 	return args, false
+}
+
+// CopiedProfile preserves one-shot selectors, including --profile=. Suppress the command
+// if an earlier profile's name happens to include a configured credential.
+func CopiedProfile(root *cli.Command) (argument string, unsafe bool) {
+	if !root.IsSet("profile") {
+		return "", false
+	}
+	name := root.String("profile")
+	if !utf8.ValidString(name) || strings.ContainsRune(name, 0) || ContainsCredential(name, ConfiguredCredentials(root, os.LookupEnv)) {
+		return "", true
+	}
+	return "--profile=" + name, false
 }

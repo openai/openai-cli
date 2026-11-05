@@ -261,7 +261,7 @@ func (m *imagePicker) submitWithFolder(printOnly bool) tea.Cmd {
 }
 
 func (m *imagePicker) finishSubmission(settings imagePickerSettings, printOnly bool) tea.Cmd {
-	m.result = imagePickerResult{Args: settings.args(), PrintOnly: printOnly, settings: settings, shell: m.shell}
+	m.result = imagePickerResult{Args: settings.args(), PrintOnly: printOnly, settings: settings, shell: m.shell, profile: m.profile}
 	return tea.Quit
 }
 

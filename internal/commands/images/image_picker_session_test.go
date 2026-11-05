@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -207,4 +208,43 @@ func TestImagePickerUnsupportedShellSelection(t *testing.T) {
 			require.ErrorIs(t, finishImagePickerSelection(ctx, &output, &diagnostics, path, &result), context.Canceled)
 		})
 	}
+}
+
+func TestImagePickerCopiedCommandKeepsProfileOutOfDraft(t *testing.T) {
+	for _, profile := range []string{"", "work 'demo'"} {
+		model, err := newImagePicker(imagePickerOptions{Prompt: "synthetic scene", Shell: "bash", profile: imagePickerProfile{argument: "--profile=" + profile}})
+		require.NoError(t, err)
+		model.finishSubmission(model.settings, true)
+		result := model.snapshotResult(model.settings)
+		var output bytes.Buffer
+		path := filepath.Join(t.TempDir(), "draft.json")
+		require.NoError(t, finishImagePickerSelection(t.Context(), &output, io.Discard, path, &result))
+		require.Equal(t, cliterminal.FormatCommand(append([]string{"--profile=" + profile}, model.settings.args()...), "bash")+"\n", output.String())
+		require.Equal(t, model.settings.args(), result.Args)
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.NotContains(t, string(data), "profile")
+	}
+}
+
+func TestImagePickerSensitiveProfileSuppressesCopies(t *testing.T) {
+	const credential = "synthetic-key-in-preview-profile"
+	t.Setenv("OPENAI_API_KEY", credential)
+	root := &cli.Command{Name: "openai", Flags: []cli.Flag{&cli.StringFlag{Name: "profile"}}}
+	root.Action = func(ctx context.Context, command *cli.Command) error {
+		profile := explicitPickerProfile(command)
+		model, err := newImagePicker(imagePickerOptions{Prompt: "synthetic scene", Shell: "bash", profile: profile})
+		require.NoError(t, err)
+		preview := strings.Join(model.commandLines(120), "")
+		require.NotContains(t, preview, credential)
+		require.Contains(t, preview, "Command hidden")
+		model.finishSubmission(model.settings, true)
+		result := model.snapshotResult(model.settings)
+		var output bytes.Buffer
+		err = finishImagePickerSelection(ctx, &output, io.Discard, "", &result)
+		require.ErrorContains(t, err, "Command hidden")
+		require.Empty(t, output.String())
+		return nil
+	}
+	require.NoError(t, root.Run(t.Context(), []string{"openai", "--profile=" + credential}))
 }

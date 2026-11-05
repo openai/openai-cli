@@ -9,22 +9,24 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// Classify local auth and audio routes before launching the optional setup worker.
+// Classify local auth, profile, and audio routes before launching the optional setup worker.
 // Read declarations without running parser callbacks or retaining the command tree.
 func skipFirstRunSetup(root *cli.Command, args []string) bool {
 	if root == nil || len(args) < 2 {
 		return false
 	}
-	auth, audio := root.Command("auth"), root.Command("audio")
+	auth, audio, profile := root.Command("auth"), root.Command("audio"), root.Command("profile")
 	// Help normalization resolves legacy switches and operands after "--".
 	// Use its selected command for auth help and keep the ordinary audio policy.
-	if selected, ok := root.Metadata["help-selected-command"].(*cli.Command); ok && auth != nil {
-		if selected == auth || selected == auth.Command("status") {
-			return true
+	if selected, ok := root.Metadata["help-selected-command"].(*cli.Command); ok {
+		for _, group := range []*cli.Command{auth, profile} {
+			if group != nil && selected != nil && (selected == group || group.Command(selected.Name) == selected) {
+				return true
+			}
 		}
-		auth = nil
+		auth, profile = nil, nil
 	}
-	if auth == nil && audio == nil {
+	if auth == nil && audio == nil && profile == nil {
 		return false
 	}
 	current := root
@@ -80,7 +82,7 @@ func skipFirstRunSetup(root *cli.Command, args []string) bool {
 			return false
 		}
 		// Keep auth errors offline even when a boolean flag has an invalid value.
-		if current == root && child == auth {
+		if current == root && (child == auth || child == profile) {
 			return true
 		}
 		if invalidBool || (current == root && child != audio) {

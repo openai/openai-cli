@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
+
 	"net/url"
 	"os"
 	"strings"
@@ -90,7 +90,7 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 	if format != "auto" && format != "text" && format != "json" {
 		return &commands.LocalError{Message: "Auth status supports --format auto, text, or json."}
 	}
-	report, err := resolveAuthStatus(root, os.LookupEnv)
+	report, err := resolveAuthStatus(ctx, root, os.LookupEnv)
 	if err != nil {
 		return err
 	}
@@ -120,7 +120,7 @@ func authStatusContextText(value authStatusValue) string {
 	if value.Source == "unset" {
 		return "not set in CLI"
 	}
-	return authStatusTextValue(value) + " [" + value.Source + "]"
+	return authStatusTextValue(value) + " [" + readable.Text(value.Source) + "]"
 }
 
 func authStatusTextValue(value authStatusValue) string {
@@ -133,9 +133,9 @@ func authStatusTextValue(value authStatusValue) string {
 
 // Match the CLI and SDK option layers without constructing an SDK client or request.
 // Snapshot the relevant environment inputs once; never enumerate unrelated secrets.
-func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (authStatusReport, error) {
-	environment := make(map[string]authStatusValue, 7)
-	for _, name := range []string{"OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_WEBHOOK_SECRET", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", "OPENAI_BASE_URL", "OPENAI_CUSTOM_HEADERS"} {
+func resolveAuthStatus(ctx context.Context, root *cli.Command, lookup func(string) (string, bool)) (authStatusReport, error) {
+	environment := make(map[string]authStatusValue, 8)
+	for _, name := range []string{"OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_WEBHOOK_SECRET", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", "OPENAI_BASE_URL", "OPENAI_CUSTOM_HEADERS", "OPENAI_PROFILE"} {
 		if value, present := lookup(name); present {
 			environment[name] = authStatusValue{Value: value, Source: "environment:" + name}
 		}
@@ -144,13 +144,7 @@ func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (a
 	if err != nil {
 		return authStatusReport{}, &commands.LocalError{Message: "Invalid --" + err.Error() + ".", Cause: err}
 	}
-	// The SDK ignores environment lines without a colon and trims names and values.
-	inherited := make(http.Header)
-	for line := range strings.SplitSeq(environment["OPENAI_CUSTOM_HEADERS"].Value, "\n") {
-		if name, value, found := strings.Cut(line, ":"); found {
-			inherited.Set(strings.TrimSpace(name), strings.TrimSpace(value))
-		}
-	}
+	inherited := request.EnvironmentHeaders(environment["OPENAI_CUSTOM_HEADERS"].Value)
 	setting := func(flag, variable string) authStatusValue {
 		if root.IsSet(flag) {
 			value := root.String(flag)
@@ -202,42 +196,21 @@ func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (a
 		}
 		return result
 	}
-	contextValue := func(flag, variable, header string) authStatusValue {
-		if literal.Values(header) != nil {
-			return authStatusValue{Value: literal.Get(header), Source: "flag:--header"}
-		}
-		value := setting(flag, variable)
-		if value.Source != "unset" {
-			return value
-		}
-		if inherited.Values(header) != nil {
-			return authStatusValue{Value: inherited.Get(header), Source: "environment:OPENAI_CUSTOM_HEADERS"}
-		}
-		return value
+	env := func(key string) (string, bool) { value, present := environment[key]; return value.Value, present }
+	name, profile, err := request.SelectedProfile(ctx, root, env)
+	if err != nil {
+		return authStatusReport{}, err
 	}
+	selection := request.ResolveProjectContext(root, env, literal, inherited, name, profile)
 	report := authStatusReport{
 		Offline:      true,
 		API:          credential("api-key", "OPENAI_API_KEY", "api_key"),
 		Admin:        credential("admin-api-key", "OPENAI_ADMIN_KEY", "admin_api_key"),
-		Organization: contextValue("organization", "OPENAI_ORG_ID", "OpenAI-Organization"),
-		Project:      contextValue("project", "OPENAI_PROJECT_ID", "OpenAI-Project"),
+		Organization: authStatusValue(selection.Organization),
+		Project:      authStatusValue(selection.Project),
 		BaseURL:      endpoint,
 	}
-	// A copied key can also occur in an otherwise printable project, organization, or host.
-	secrets := []string{environment["OPENAI_API_KEY"].Value, environment["OPENAI_ADMIN_KEY"].Value, environment["OPENAI_WEBHOOK_SECRET"].Value,
-		root.String("api-key"), root.String("admin-api-key"), root.String("webhook-secret")}
-	if password, ok := userinfo.Password(); ok {
-		secrets = append(secrets, password)
-	}
-	if userinfo != nil {
-		secrets = append(secrets, userinfo.Username())
-	}
-	for _, line := range root.StringSlice("header") {
-		secrets = appendHeaderCredentials(secrets, line)
-	}
-	for line := range strings.SplitSeq(environment["OPENAI_CUSTOM_HEADERS"].Value, "\n") {
-		secrets = appendHeaderCredentials(secrets, line)
-	}
+	secrets := request.ConfiguredCredentials(root, env)
 	report.Organization.redact(secrets)
 	report.Project.redact(secrets)
 	if report.BaseURL.authStatusValue.redact(secrets) {
@@ -246,31 +219,13 @@ func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (a
 	return report, nil
 }
 
-// Include overridden headers since their credentials may still appear in displayed settings.
-func appendHeaderCredentials(secrets []string, line string) []string {
-	name, value, ok := strings.Cut(line, ":")
-	if !ok {
-		return secrets
-	}
-	value = strings.TrimSpace(value)
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "authorization", "proxy-authorization":
-		if i := strings.IndexAny(value, " \t"); i >= 0 {
-			secrets = append(secrets, strings.TrimSpace(value[i:]))
-		}
-		return append(secrets, value)
-	case "api-key", "x-api-key":
-		return append(secrets, value)
-	}
-	return secrets
-}
-
 func (field *authStatusValue) redact(secrets []string) bool {
-	for _, secret := range secrets {
-		if secret != "" && strings.Contains(field.Value, secret) {
-			field.Value = "[redacted]"
-			return true
-		}
+	if name, ok := strings.CutPrefix(field.Source, "profile:"); ok && request.ContainsCredential(name, secrets) {
+		field.Source = "profile:[redacted]"
+	}
+	if request.ContainsCredential(field.Value, secrets) {
+		field.Value = "[redacted]"
+		return true
 	}
 	return false
 }

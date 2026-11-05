@@ -57,6 +57,10 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	var adminCredentialsFailure *admin.CredentialsError
 	var adminSetupFailure *admin.SetupError
 	var utilityFailure *localcommands.LocalError
+	var profileCommit interface {
+		error
+		CommittedProfileChange()
+	}
 	var downloadFailure *clioutput.DownloadSaveError
 	var receiptFailure *clioutput.ReceiptError
 	var navigationFailure *listview.PaginationError
@@ -77,6 +81,8 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 		return receiptFailure.Error()
 	case errors.As(failure, &webhookCanceled):
 		return webhookCanceled.Error()
+	case errors.As(failure, &profileCommit):
+		return profileCommit.Error()
 	case errors.Is(failure, context.Canceled):
 		if errors.As(failure, &imageFailure) && imageFailure.PreserveOnCancel() {
 			return imageFailure.ReadableMessage(root, output...)

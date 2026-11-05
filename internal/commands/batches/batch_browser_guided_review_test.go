@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/openai/openai-cli/internal/profiles"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -182,6 +183,37 @@ func TestBatchBrowserGuidedReviewMatchesProjectHeader(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBatchBrowserGuidedReviewUsesRequestSnapshot(t *testing.T) {
+	directory := t.TempDir()
+	for _, key := range []string{"HOME", "APPDATA", "XDG_CONFIG_HOME"} {
+		t.Setenv(key, directory)
+	}
+	t.Setenv("OPENAI_PROJECT_ID", "")
+	require.NoError(t, os.Unsetenv("OPENAI_PROJECT_ID"))
+	t.Setenv("OPENAI_PROFILE", "work")
+	t.Setenv("OPENAI_CUSTOM_HEADERS", "")
+	path, err := profiles.Path()
+	require.NoError(t, err)
+	project := "proj_selected"
+	_, err = profiles.Update(t.Context(), path, func(registry *profiles.Registry) error {
+		registry.Profiles["work"] = profiles.Values{Project: &project}
+		return nil
+	})
+	require.NoError(t, err)
+	root := &cli.Command{Name: "review", Metadata: map[string]any{}, Flags: []cli.Flag{requestconfig.NewProfileFlag(), requestconfig.NewRequestHeaderFlag()}}
+	require.NoError(t, requestconfig.ConfigureProjectContext(t.Context(), root))
+	t.Setenv("OPENAI_PROJECT_ID", "proj_later")
+
+	view := strings.Join(batchBrowserReview(root, &batchBrowserDraft{inputID: "file_synthetic", endpoint: "/v1/responses"}, nil, 0), "\n")
+	require.Contains(t, view, "proj_selected")
+	require.NotContains(t, view, "proj_later")
+
+	t.Setenv("OPENAI_API_KEY", project)
+	view = strings.Join(batchBrowserReview(root, &batchBrowserDraft{inputID: "file_synthetic", endpoint: "/v1/responses"}, nil, 0), "\n")
+	require.Contains(t, view, "Project: [redacted]")
+	require.NotContains(t, view, project)
 }
 
 func TestBatchBrowserGuidedReviewOmitsConnectionSecrets(t *testing.T) {

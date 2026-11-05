@@ -52,3 +52,6 @@ If the address fails validation, the command reports an error without printing t
 The command rejects positional arguments, other output formats, `--transform`, and `--raw-output`.
 Existing error-format, quiet, and diagnostic policies remain in effect.
 Output failures return an error. The report does not test network connectivity or account access.
+
+Saved profiles can supply organization and project defaults. Their source appears as
+`profile:NAME`. See [local profiles](profiles.md) for selection and precedence.

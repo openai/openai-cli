@@ -1,6 +1,10 @@
 package images
 
-import "strings"
+import (
+	"strings"
+
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
+)
 
 func (s imagePickerSettings) args() []string {
 	prompt := s.prompt
@@ -20,3 +24,23 @@ func (s imagePickerSettings) args() []string {
 }
 
 const imagePickerUnsupportedShell = "Command printing needs Bash, zsh, fish or PowerShell 7."
+
+type imagePickerProfile struct {
+	argument string
+	unsafe   bool
+}
+
+// Keep the selector out of saved drafts and generated request arguments.
+func (p imagePickerProfile) display(args []string, shell string) (command, unavailable string) {
+	if p.unsafe {
+		return "", "Command hidden because the selected profile name contains a credential."
+	}
+	if p.argument != "" {
+		args = append([]string{p.argument}, args...)
+	}
+	command = cliterminal.FormatCommand(args, shell)
+	if command == "" {
+		return "", imagePickerUnsupportedShell
+	}
+	return command, ""
+}

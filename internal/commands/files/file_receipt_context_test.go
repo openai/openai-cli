@@ -24,6 +24,9 @@ func TestFileReceiptRequestContext(t *testing.T) {
 	}{
 		{"environment credentials", nil, nil, false},
 		{"request selection", []string{"--project=project-one", "--organization=org-one", "--base-url=https://example.invalid/proxy/v1"}, []string{"--project=project-one", "--organization=org-one", "--base-url=https://example.invalid/proxy/v1"}, false},
+		{"profile", []string{"--profile=work"}, []string{"--profile=work"}, false},
+		{"empty profile", []string{"--profile="}, []string{"--profile="}, false},
+		{"credential in profile name", []string{"--profile=sk-fake-inherited"}, nil, true},
 		{"explicit empty project", []string{"--project="}, []string{"--project="}, false},
 		{"same inherited key", []string{"--api-key=sk-fake-inherited"}, nil, false},
 		{"different key", []string{"--api-key=sk-fake-override"}, nil, true},
@@ -62,6 +65,7 @@ func TestFileReceiptRequestContext(t *testing.T) {
 			for _, pair := range [][2]string{{"api-key", "OPENAI_API_KEY"}, {"admin-api-key", "OPENAI_ADMIN_KEY"}, {"webhook-secret", "OPENAI_WEBHOOK_SECRET"}, {"organization", "OPENAI_ORG_ID"}, {"project", "OPENAI_PROJECT_ID"}} {
 				root.Flags = append(root.Flags, &requestflag.Flag[string]{Name: pair[0], Sources: cli.EnvVars(pair[1])})
 			}
+			root.Flags = append(root.Flags, requestconfig.NewProfileFlag())
 			root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
 			requestconfig.ConfigureRootFlags(root)
 			localcommands.ConfigureTasks(root)

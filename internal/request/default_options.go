@@ -61,13 +61,22 @@ func DefaultOptions(cmd *cli.Command, version string, middlewares ...option.Midd
 	if cmd.IsSet("admin-api-key") {
 		opts = append(opts, option.WithAdminAPIKey(cmd.String("admin-api-key")))
 	}
-	if cmd.IsSet("organization") {
-		opts = append(opts, option.WithOrganization(cmd.String("organization")))
-	}
-	// Endpoint body fields named project must not select the request's project context.
+	// Endpoint request fields named project do not select the request context.
 	root := cmd.Root()
-	if root.IsSet("project") {
-		opts = append(opts, option.WithProject(root.String("project")))
+	if selection, configured := ConfiguredProjectContext(root); configured {
+		if selection.Organization.Source != "unset" {
+			opts = append(opts, option.WithOrganization(selection.Organization.Value))
+		}
+		if selection.Project.Source != "unset" {
+			opts = append(opts, option.WithProject(selection.Project.Value))
+		}
+	} else {
+		if cmd.IsSet("organization") {
+			opts = append(opts, option.WithOrganization(cmd.String("organization")))
+		}
+		if root.IsSet("project") {
+			opts = append(opts, option.WithProject(root.String("project")))
+		}
 	}
 	if cmd.IsSet("webhook-secret") {
 		opts = append(opts, option.WithWebhookSecret(cmd.String("webhook-secret")))

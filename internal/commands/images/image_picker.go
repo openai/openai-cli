@@ -31,6 +31,7 @@ type imagePickerOptions struct {
 	Prompt string
 	// Shell selects quoting for the displayed command, never execution.
 	Shell        string
+	profile      imagePickerProfile
 	initial      *imagePickerSettings
 	resuming     bool
 	initialNote  string
@@ -49,6 +50,7 @@ type imagePickerResult struct {
 	ExitCode   int
 	settings   imagePickerSettings
 	shell      string
+	profile    imagePickerProfile
 	changed    bool
 	draftSaved bool
 	workspace  *imagePickerWorkspace
@@ -275,6 +277,7 @@ type imagePicker struct {
 	settings       imagePickerSettings
 	page, field    string
 	shell          string
+	profile        imagePickerProfile
 	focus          string
 	returnPage     string
 	returnSelected int
@@ -313,6 +316,7 @@ func newImagePicker(options imagePickerOptions) (*imagePicker, error) {
 		m.settings.prompt = options.Prompt
 	}
 	m.shell = options.Shell
+	m.profile = options.profile
 	m.note = options.initialNote
 	return m, nil
 }

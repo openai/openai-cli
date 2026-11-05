@@ -392,9 +392,9 @@ func (m *imagePicker) commandPreview(width, height int) ([]string, int, int) {
 }
 
 func (m *imagePicker) commandLines(width int) []string {
-	command := cliterminal.FormatCommand(m.settings.args(), m.shell)
+	command, unavailable := m.profile.display(m.settings.args(), m.shell)
 	if command == "" {
-		command = imagePickerUnsupportedShell
+		command = unavailable
 	}
 	var lines []string
 	var line strings.Builder

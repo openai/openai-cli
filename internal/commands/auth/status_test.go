@@ -174,8 +174,8 @@ func TestAuthStatusEndpointAndSingleEnvironmentSnapshot(t *testing.T) {
 			authStatusTestEnvironment(t, tc.env)
 			root := authStatusTestRoot(io.Discard)
 			calls := map[string]int{}
-			root.Command("auth").Command("status").Action = func(_ context.Context, command *cli.Command) error {
-				result, err := resolveAuthStatus(command.Root(), func(name string) (string, bool) {
+			root.Command("auth").Command("status").Action = func(ctx context.Context, command *cli.Command) error {
+				result, err := resolveAuthStatus(ctx, command.Root(), func(name string) (string, bool) {
 					calls[name]++
 					value, ok := tc.env[name]
 					return value, ok
@@ -190,7 +190,7 @@ func TestAuthStatusEndpointAndSingleEnvironmentSnapshot(t *testing.T) {
 				return nil
 			}
 			require.NoError(t, root.Run(t.Context(), append([]string{"openai", "auth", "status"}, tc.args...)))
-			require.Len(t, calls, 7)
+			require.Len(t, calls, 8)
 			for _, count := range calls {
 				require.Equal(t, 1, count)
 			}

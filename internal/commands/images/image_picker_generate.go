@@ -19,6 +19,7 @@ import (
 	"github.com/openai/openai-cli/internal/commandsuggest"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
+	"github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/terminalimage"
@@ -74,7 +75,7 @@ func imagePickerWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 			defer func() { resultErr = errors.Join(resultErr, closeWorkspaceOutput()) }()
 			workspace := &imagePickerWorkspace{out: out, root: command.Root(), context: workspaceCtx}
 			defer func() { resultErr = errors.Join(resultErr, workspace.close()) }()
-			result, err := runImagePickerSession(workspaceCtx, os.Stdin, out, imagePickerOptions{workspace: workspace, printCommand: func(text string) error {
+			result, err := runImagePickerSession(workspaceCtx, os.Stdin, out, imagePickerOptions{profile: explicitPickerProfile(command), workspace: workspace, printCommand: func(text string) error {
 				return commandsuggest.WriteLine(command, out, text)
 			}, generate: func(requestCtx context.Context, result *imagePickerResult) error {
 				return runImagePickerAction(requestCtx, command, result.Args, next)
@@ -101,7 +102,7 @@ func imagePickerWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 // selection from the picker; restoring text never starts generation.
 func runImagePickerDrafts(ctx context.Context, command *cli.Command, next cli.ActionFunc, diagnostics io.Writer, pick func(imagePickerOptions) (imagePickerResult, error)) error {
 	printCommand := func(text string) error { return commandsuggest.WriteLine(command, command.Root().Writer, text) }
-	options := imagePickerOptions{printCommand: printCommand}
+	options := imagePickerOptions{profile: explicitPickerProfile(command), printCommand: printCommand}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -123,7 +124,7 @@ func runImagePickerDrafts(ctx context.Context, command *cli.Command, next cli.Ac
 		if result.PrintOnly {
 			return nil
 		}
-		options = imagePickerOptions{printCommand: printCommand, Prompt: result.settings.prompt, initial: &result.settings, resuming: true}
+		options = imagePickerOptions{profile: options.profile, printCommand: printCommand, Prompt: result.settings.prompt, initial: &result.settings, resuming: true}
 		requestCtx := context.WithValue(ctx, imagePickerLoadingPromptKey{}, result.settings.prompt)
 		requestErr := runImagePickerAction(requestCtx, command, result.Args, next)
 		if err := requestErr; err != nil {
@@ -317,4 +318,9 @@ func imagePickerRequested(command *cli.Command) bool {
 		}
 	}
 	return true
+}
+
+func explicitPickerProfile(command *cli.Command) imagePickerProfile {
+	argument, unsafe := request.CopiedProfile(command.Root())
+	return imagePickerProfile{argument: argument, unsafe: unsafe}
 }

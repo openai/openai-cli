@@ -379,21 +379,27 @@ func (w workflow) createBatchInBrowser(ctx context.Context, cmd *cli.Command, cl
 func batchBrowserReview(cmd *cli.Command, draft *batchBrowserDraft, snapshot os.FileInfo, requests int) []string {
 	root := cmd.Root()
 	project := root.String("project")
-	if !root.IsSet("project") && project == "" {
-		project = os.Getenv("OPENAI_PROJECT_ID")
-		for line := range strings.SplitSeq(os.Getenv("OPENAI_CUSTOM_HEADERS"), "\n") {
-			if name, value, ok := strings.Cut(line, ":"); ok && strings.EqualFold(strings.TrimSpace(name), "OpenAI-Project") {
-				project = strings.TrimSpace(value)
+	if selection, ok := requestconfig.ConfiguredProjectContext(root); ok {
+		project = selection.Project.Value
+	} else {
+		if !root.IsSet("project") && project == "" {
+			project = os.Getenv("OPENAI_PROJECT_ID")
+			for line := range strings.SplitSeq(os.Getenv("OPENAI_CUSTOM_HEADERS"), "\n") {
+				if name, value, ok := strings.Cut(line, ":"); ok && strings.EqualFold(strings.TrimSpace(name), "OpenAI-Project") {
+					project = strings.TrimSpace(value)
+				}
 			}
 		}
-	}
-	if headers, err := requestconfig.Headers(cmd); err == nil {
-		if values, ok := headers["Openai-Project"]; ok && len(values) > 0 {
-			project = values[len(values)-1]
+		if headers, err := requestconfig.Headers(cmd); err == nil {
+			if values, ok := headers["Openai-Project"]; ok && len(values) > 0 {
+				project = values[len(values)-1]
+			}
 		}
 	}
 	if project == "" {
 		project = "Key's default project"
+	} else if requestconfig.ContainsCredential(project, requestconfig.ConfiguredCredentials(root, os.LookupEnv)) {
+		project = "[redacted]"
 	}
 	base := cmd.String("base-url")
 	if base == "" {

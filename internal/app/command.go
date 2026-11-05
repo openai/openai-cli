@@ -53,6 +53,8 @@ func ConfigureCommand(root *cli.Command) {
 	configureReadableSpeech(root)
 	registerAdminSetup(root)
 	auth.Register(root)
+	root.Flags = append(root.Flags, requestconfig.NewProfileFlag())
+	auth.RegisterProfiles(root)
 	admin.ConfigureCredentials(root)
 	admin.ConfigureProjectLifecycle(root)
 	configureListCommands(root)
@@ -103,6 +105,9 @@ func ConfigureCommand(root *cli.Command) {
 			baseURL, source = os.Getenv("OPENAI_BASE_URL"), "OPENAI_BASE_URL"
 		}
 		if err := requestconfig.ValidateBaseURL(baseURL, source); err != nil {
+			return ctx, err
+		}
+		if err := requestconfig.ConfigureProjectContext(ctx, command.Root()); err != nil {
 			return ctx, err
 		}
 		return requestconfig.ConfigureMTLS(ctx, command.Root())
