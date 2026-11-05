@@ -110,7 +110,11 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	if request.RequestFileFlag(command) != nil {
 		out.WriteByte('\n')
 		out.WriteString(wrapDescription("Read JSON or YAML from a pipe with --request-file -. Example for Bash, zsh, Fish, or PowerShell:", "  ", width))
-		if example := requestPipeExample(invocation, path); example != "" {
+		run := invocation
+		if native, ok := command.Root().Metadata["help-native-pipe-invocation"].(string); ok {
+			run = native
+		}
+		if example := requestPipeExample(run, path); example != "" {
 			fmt.Fprintf(&out, "    $ %s\n", commandsuggest.Record(command, example))
 		}
 	}

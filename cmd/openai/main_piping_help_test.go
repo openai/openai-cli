@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -44,6 +45,9 @@ func TestMainPipingHelpExamplesRunAsPrinted(t *testing.T) {
 		{name: "pwsh", args: []string{"-NoProfile", "-NonInteractive", "-Command"}},
 	} {
 		t.Run(shell.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && shell.name != "pwsh" {
+				t.Skip("Windows command examples use PowerShell")
+			}
 			path, err := exec.LookPath(shell.name)
 			if err != nil {
 				t.Skipf("%s is unavailable", shell.name)
@@ -67,7 +71,6 @@ func TestMainPipingHelpExamplesRunAsPrinted(t *testing.T) {
 					for line := range strings.SplitSeq(help.stdout, "\n") {
 						if strings.Contains(line, " | ") && strings.HasSuffix(strings.TrimSpace(line), "--request-file -") {
 							pipeline = strings.TrimPrefix(strings.TrimSpace(line), "$ ")
-							break
 						}
 					}
 					require.NotEmpty(t, pipeline)
@@ -77,6 +80,23 @@ func TestMainPipingHelpExamplesRunAsPrinted(t *testing.T) {
 					req := globalFlagsOneRequest(t, requests)
 					require.Equal(t, tc.endpoint, req.path)
 					require.JSONEq(t, tc.body, string(req.body))
+					if tc.help == "help piping" && runtime.GOOS != "windows" && (shell.name == "pwsh" || shell.name == "fish") {
+						bash, err := exec.LookPath("bash")
+						if err != nil {
+							t.Skip("Bash is unavailable for the cross-shell guide check")
+						}
+						var count string
+						for line := range strings.SplitSeq(help.stdout, "\n") {
+							if strings.HasSuffix(strings.TrimSpace(line), " tokenizer count -n") {
+								count = strings.TrimSpace(line)
+								break
+							}
+						}
+						require.NotEmpty(t, count)
+						result := runNativeShell(t, nativeShell{name: "bash", executable: bash, args: []string{"-c"}}, directory, home, "invalid-for-requests", count)
+						require.Zero(t, result.code, result.stderr)
+						require.Equal(t, "1", strings.TrimSpace(result.stdout))
+					}
 				})
 			}
 		})
