@@ -257,7 +257,8 @@ func TestOneFlagHelpSelectsTheVisibleDeclaration(t *testing.T) {
 	root := completeHelpFixture(&out)
 	leaf := root.Command("images").Command("generate")
 	inherited := &cli.StringFlag{Name: "header", Aliases: []string{"H"}}
-	shadow := &cli.StringFlag{Name: "format", Aliases: []string{"f"}}
+	shadow := &cli.StringFlag{Name: "format", Aliases: []string{"f"}, Usage: "Local image format."}
+	leaf.Metadata = map[string]any{"help-content": Content{GlobalOptionsNote: "Use --format text for output."}}
 	root.Flags = append(root.Flags, inherited)
 	leaf.Flags = append(leaf.Flags, shadow)
 	for _, tc := range []struct {
@@ -285,6 +286,10 @@ func TestOneFlagHelpSelectsTheVisibleDeclaration(t *testing.T) {
 		if requestedHelpFlag(leaf) != tc.want || requestedHelpFlag(root) != nil {
 			t.Fatalf("%q selected the wrong flag or command", args)
 		}
+		if tc.want == shadow && !strings.Contains(out.String(), "Local image format.") {
+			t.Fatalf("inherited restrictions replaced the local flag description for %q", args)
+		}
+		out.Reset()
 	}
 }
 

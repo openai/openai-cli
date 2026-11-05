@@ -52,6 +52,41 @@ func TestMainHelpForOneFlag(t *testing.T) {
 	}
 }
 
+func TestMainHelpForOneFlagUsesLocalOutputGuidance(t *testing.T) {
+	for _, tc := range []struct {
+		path       []string
+		flag, want string
+	}{
+		{[]string{"explore"}, "--format", "Search supports auto or text for --format and --format-error."},
+		{[]string{"explore"}, "--format-error", "Search supports auto or text for --format and --format-error."},
+		{[]string{"images", "preview"}, "--format", "supports --format auto or text only"},
+		{[]string{"images", "preview"}, "-r", "cannot use --transform or --raw-output"},
+	} {
+		args := append([]string{"openai"}, tc.path...)
+		got := runMainDispatch(t, "bash", append(args, "-h", tc.flag)...)
+		if got.code != 0 || got.stderr != "" || !strings.Contains(strings.Join(strings.Fields(got.stdout), " "), tc.want) ||
+			strings.Contains(got.stdout, "json") || strings.Contains(got.stdout, "SYNOPSIS") {
+			t.Errorf("scoped flag help for %v %s: %+v", tc.path, tc.flag, got)
+		}
+	}
+	// --format is not the --format-error mentioned in the playback guidance.
+	for _, tc := range []struct {
+		path []string
+		flag string
+	}{
+		{[]string{"audio", "play"}, "--format"},
+		{[]string{"explore"}, "--api-key"},
+	} {
+		args := append([]string{"openai"}, tc.path...)
+		want := runMainDispatch(t, "bash", append(args, "--help")...)
+		got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=synthetic-private-scoped-help"}, append(args, "-h", tc.flag)...)
+		if got.code != 0 || got.stderr != "" || want.code != 0 || got.stdout != want.stdout ||
+			strings.Contains(got.stdout, "synthetic-private-scoped-help") {
+			t.Errorf("scoped help for %v %s did not fall back to its ordinary page", tc.path, tc.flag)
+		}
+	}
+}
+
 func TestMainHelpPresentationPreservesDetailsAfterShortName(t *testing.T) {
 	got := runMainDispatch(t, "bash", "openai", "responses", "create", "--help")
 	if got.code != 0 || got.stderr != "" {

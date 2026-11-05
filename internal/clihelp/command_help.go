@@ -3,7 +3,9 @@ package clihelp
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/commandsuggest"
@@ -74,9 +76,6 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	if path == "@completion" {
 		return completionHelp(command, invocation, width, navigationWidth)
 	}
-	if flag := requestedHelpFlag(command); flag != nil {
-		return flagList(command, []cli.Flag{flag}, width)
-	}
 	compact := hasCompactHelp(command) && !fullReferenceRequested(command)
 	var out strings.Builder
 	style := commandHelpStyle(command)
@@ -89,6 +88,21 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	content, supplied := command.Metadata["help-content"].(Content)
 	if !supplied {
 		content = Content{Description: command.Description, Examples: examples[path]}
+	}
+	if flag := requestedHelpFlag(command); flag != nil {
+		if content.GlobalOptionsNote == "" || slices.Contains(command.Flags, flag) {
+			return flagList(command, []cli.Flag{flag}, width)
+		}
+		// An inherited option can have a different meaning on a local command.
+		// Show its local guidance, or fall back to the ordinary command page.
+		words := strings.FieldsFunc(content.GlobalOptionsNote, func(r rune) bool {
+			return r != '-' && !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		})
+		for _, word := range words {
+			if strings.HasPrefix(word, "-") && slices.Contains(flag.Names(), strings.TrimLeft(word, "-")) {
+				return wrapDescription(content.GlobalOptionsNote, "  ", width)
+			}
+		}
 	}
 	plainUsage := terminalProse(usage)
 	summary := terminalProse(content.Summary)
