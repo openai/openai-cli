@@ -17,12 +17,19 @@ type Candidate struct {
 	Description string
 	// Only installed command routes have a path. Examples and shell history carry display text alone.
 	path        string
-	taskPhrases []string
+	taskPhrases []TaskPhrase
+}
+
+// TaskPhrase describes a search for an installed command. Keep the default
+// word order when reversing the words could change the requested operation.
+type TaskPhrase struct {
+	Text         string
+	AnyWordOrder bool
 }
 
 // Catalog derives discovery from the current command tree on every invocation.
 // The callbacks reuse help's ordering and authored examples without rendering help.
-func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]string, children func(*cli.Command) []*cli.Command, examples func(*cli.Command, string) []Candidate) []Candidate {
+func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]TaskPhrase, children func(*cli.Command) []*cli.Command, examples func(*cli.Command, string) []Candidate) []Candidate {
 	var result []Candidate
 	seen := map[string]int{}
 	add := func(candidate Candidate) {

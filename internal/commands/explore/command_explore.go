@@ -62,10 +62,10 @@ func Register(root *cli.Command) {
 }
 
 // Add a phrase when the ordinary command name and description miss or reverse a user task.
-var taskPhrases = map[string][]string{
-	"tokenizer count": {"count tokens offline"},
-	"speak":           {"text to speech", "text to audio", "read text aloud"},
-	"transcribe":      {"speech to text"},
+var taskPhrases = map[string][]commandsuggest.TaskPhrase{
+	"tokenizer count": {{Text: "count tokens offline", AnyWordOrder: true}},
+	"speak":           {{Text: "text to speech"}, {Text: "text to audio"}, {Text: "read text aloud"}},
+	"transcribe":      {{Text: "speech to text"}},
 }
 
 func exploreCandidates(root *cli.Command, invocation string) []commandsuggest.Candidate {

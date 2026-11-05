@@ -48,6 +48,33 @@ func TestCommandSearchRejectsUnrelatedFragmentsAndURLMatches(t *testing.T) {
 	}
 }
 
+func TestCommandSearchReordersOnlyDeclaredIndependentWords(t *testing.T) {
+	candidates := []Candidate{
+		{Command: "openai inventory", path: "inventory", taskPhrases: []TaskPhrase{{Text: "Count stored files", AnyWordOrder: true}}},
+		{Command: "openai archive", path: "archive", taskPhrases: []TaskPhrase{{Text: "file count stored locally"}}},
+		{Command: "openai audit", path: "audit", taskPhrases: []TaskPhrase{{Text: "file count stored"}}},
+		{Command: "openai file count", path: "file count"},
+		{Command: "openai check", Description: "Check each stored file count"},
+	}
+	for _, tc := range []struct {
+		query string
+		want  []int
+	}{
+		{"file count stored", []int{2, 1, 0, 4}}, // Exact phrase, ordered prefix, reordered terms, usual keywords.
+		{"file count", []int{3, 1, 2, 0, 4}},     // The literal route wins.
+		{"stored files co", []int{0}},
+		{"stored file", []int{0, 4}},
+		{"files files count", nil},
+		{"stored file count remotely", nil},
+		{"stored fil count", []int{4}}, // An unfinished middle word only qualifies for usual keyword search.
+		{"files", nil},                 // Single words still use ordinary command search.
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			require.Equal(t, tc.want, searchCandidates(candidates, tc.query))
+		})
+	}
+}
+
 func TestCommandSearchPrefixesPunctuationAndLiteralSelection(t *testing.T) {
 	for _, tc := range []struct{ command, description, query string }{
 		{"openai models list", "", "model"},

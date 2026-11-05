@@ -24,24 +24,28 @@ func searchCandidates(candidates []Candidate, query string) []int {
 	query = strings.Join(words, " ")
 	type match struct {
 		index int
+		task  taskMatch
 		// Prefer command names, then arguments, then descriptions. Within each
 		// tier prefer whole words, contiguous phrases, and shorter commands.
 		rank [5]int
 	}
-	var tasks []int
+	hasTaskMatch := false
 	var matches []match
 	for index, candidate := range candidates {
 		if len(words) == 0 {
 			matches = append(matches, match{index: index})
 			continue
 		}
-		// Match an ordered task while the user types its last word. Single words
-		// keep the usual keyword ranking.
-		if len(words) > 1 && candidate.path != query && slices.ContainsFunc(candidate.taskPhrases, func(phrase string) bool {
-			return strings.HasPrefix(phrase, query)
-		}) {
-			tasks = append(tasks, index)
-			continue
+		entry := match{index: index}
+		if len(words) > 1 && candidate.path != query {
+			for _, phrase := range candidate.taskPhrases {
+				entry.task = max(entry.task, phrase.match(query, words))
+			}
+			if entry.task != noTaskMatch {
+				hasTaskMatch = true
+				matches = append(matches, entry)
+				continue
+			}
 		}
 		command := strings.ToLower(candidate.Command)
 		path, arguments, hasFlags := strings.Cut(command, " -")
@@ -57,7 +61,6 @@ func searchCandidates(candidates []Candidate, query string) []int {
 			}
 		}
 		prose := strings.Join(description, " ")
-		entry := match{index: index}
 		matched := true
 		for _, word := range words {
 			partial := searchWord(path, word)
@@ -94,6 +97,9 @@ func searchCandidates(candidates []Candidate, query string) []int {
 		matches = append(matches, entry)
 	}
 	slices.SortStableFunc(matches, func(a, b match) int {
+		if order := cmp.Compare(b.task, a.task); order != 0 {
+			return order
+		}
 		for i := range a.rank {
 			if order := cmp.Compare(a.rank[i], b.rank[i]); order != 0 {
 				return order
@@ -101,16 +107,52 @@ func searchCandidates(candidates []Candidate, query string) []int {
 		}
 		return 0
 	})
-	result := tasks
+	var result []int
 	for _, match := range matches {
 		// If a task phrase overlaps a literal route, keep that route first.
-		if len(tasks) > 0 && candidates[match.index].path == query {
+		if hasTaskMatch && candidates[match.index].path == query {
 			result = slices.Insert(result, 0, match.index)
 		} else {
 			result = append(result, match.index)
 		}
 	}
 	return result
+}
+
+type taskMatch int
+
+const (
+	noTaskMatch taskMatch = iota
+	reorderedTask
+	orderedTaskPrefix
+	exactTask
+)
+
+func (p TaskPhrase) match(query string, words []string) taskMatch {
+	terms := strings.Fields(strings.ToLower(p.Text))
+	text := strings.Join(terms, " ")
+	if text == query {
+		return exactTask
+	}
+	if strings.HasPrefix(text, query) {
+		return orderedTaskPrefix
+	}
+	if !p.AnyWordOrder || len(words) > len(terms) {
+		return noTaskMatch
+	}
+	for i, word := range words {
+		// Consume a distinct term for each word. Only the last word can
+		// still be incomplete while the user types in the picker.
+		index := slices.IndexFunc(terms, func(term string) bool {
+			return strings.TrimSuffix(term, "s") == strings.TrimSuffix(word, "s") ||
+				(i == len(words)-1 && strings.HasPrefix(term, word))
+		})
+		if index < 0 {
+			return noTaskMatch
+		}
+		terms = slices.Delete(terms, index, index+1)
+	}
+	return reorderedTask
 }
 
 // Match whole words or word prefixes, including hyphenated command names.

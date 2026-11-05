@@ -45,7 +45,7 @@ func TestCatalogRanksTaskPhrasesOnInstalledRoutes(t *testing.T) {
 			{Command: "openai speak --help", Description: "Read aloud options"},
 		}
 	}
-	phrases := map[string][]string{"speak": {"read aloud"}, "hidden": {"read aloud"}}
+	phrases := map[string][]TaskPhrase{"speak": {{Text: "read aloud"}}, "hidden": {{Text: "read aloud"}}}
 	catalog := Catalog(root, "openai", phrases, (*cli.Command).VisibleCommands, examples)
 
 	commands := func(query string) []string {
