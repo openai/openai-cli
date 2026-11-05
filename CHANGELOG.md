@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.51.0](https://github.com/openai/openai-cli/compare/v1.50.0...v1.51.0) (2026-11-05)
+
+
+### Features
+
+* **api:** add a model option for Responses ([#707](https://github.com/openai/openai-cli/issues/707)) ([9e2019d](https://github.com/openai/openai-cli/commit/9e2019d85a6e019b6c009d6eedef9178033966df))
+
 ## [1.50.0](https://github.com/openai/openai-cli/compare/v1.49.0...v1.50.0) (2026-11-05)
 
 
