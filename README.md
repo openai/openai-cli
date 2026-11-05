@@ -44,6 +44,7 @@ source "$(brew --prefix)/bin/openai-enable-updates.zsh"
 ### Linux
 
 On Debian, Ubuntu, or Fedora, paste the block below into Bash or zsh. It picks the package for your computer.
+Enter your password if sudo asks.
 
 <details>
 <summary>Show the Linux install command</summary>
@@ -71,7 +72,7 @@ On Debian, Ubuntu, or Fedora, paste the block below into Bash or zsh. It picks t
 
 1. Open the [Windows installer](scripts/install-windows-release.ps1).
 2. Select **Copy raw file**.
-3. Paste it into PowerShell.
+3. Paste it into PowerShell without administrator privileges.
 
 The installer downloads the matching ZIP and makes `openai` available in this terminal. [Install with File Explorer](docs/installation.md#windows)
 
@@ -79,10 +80,10 @@ The installer downloads the matching ZIP and makes `openai` available in this te
 
 ## Authentication
 
-Check the installation without an API key.
+To check your installation, run the CLI in your terminal. It lists commands without an API key.
 
 ```sh
-openai --help
+openai
 ```
 
 To make API requests, follow the instructions this command prints for your shell.
