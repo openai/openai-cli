@@ -83,7 +83,7 @@ func TestMainFilesReceiptErrorOptionsIndependent(t *testing.T) {
 			require.Empty(t, got.stderr)
 			if tc.output == "receipt" {
 				want := "Uploaded upload space.txt (13 B)\nID: " + filesWorkflowID + "\nPurpose: user_data\n\n" +
-					"Inspect it: openai files get " + filesWorkflowID + "\n"
+					"Inspect it: openai '--profile=' files get " + filesWorkflowID + "\n"
 				require.Equal(t, want, got.stdout, "error options must not change successful stdout")
 				return
 			}

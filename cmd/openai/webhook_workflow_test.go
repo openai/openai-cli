@@ -602,10 +602,17 @@ func TestMainWebhookWorkflowPTYCreateAPIFailureStages(t *testing.T) {
 			if creates.Load() != 1 || !strings.Contains(got.stderr, "Webhook creation is unconfirmed.") || strings.Contains(got.stderr, "No endpoint was created.") {
 				t.Fatalf("confirmed create lost uncertainty: %+v, creates=%d", got, creates.Load())
 			}
-			if !strings.Contains(got.stderr, "List endpoints: openai webhooks list\n") {
-				t.Fatalf("guided create omitted read-only recovery: %q", got.stderr)
+			var recovery string
+			for line := range strings.SplitSeq(got.stderr, "\n") {
+				if hint, ok := strings.CutPrefix(line, "List endpoints: "); ok {
+					recovery = hint
+					break
+				}
 			}
-			listed := runWebhookWorkflowInput(t, server, "", "webhooks", "list")
+			if recovery != "openai --profile= webhooks list" {
+				t.Fatalf("wrong read-only recovery command: %q", recovery)
+			}
+			listed := runWebhookWorkflowInput(t, server, "", strings.Fields(recovery)[1:]...)
 			if listed.code != 0 || lists.Load() != 1 || creates.Load() != 1 || !strings.Contains(listed.stdout, "whe_existing") {
 				t.Fatalf("guided recovery failed or repeated create: %+v, creates=%d lists=%d", listed, creates.Load(), lists.Load())
 			}
