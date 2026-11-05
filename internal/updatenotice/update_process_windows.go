@@ -18,7 +18,7 @@ import (
 
 const windowsWorkerImage = "worker.exe"
 
-func enableZshPath(string, string) bool { return false }
+func enableZshPath(string, string, bool) bool { return false }
 
 func automaticPlatform() bool {
 	token := windows.GetCurrentProcessToken()

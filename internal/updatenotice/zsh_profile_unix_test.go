@@ -17,6 +17,15 @@ func TestArchiveZshProfile(t *testing.T) {
 	const selection = `export PATH="$HOME/.openai/bin:$PATH"`
 	selected := t.TempDir()
 	t.Chdir(selected)
+	// Setup requires directory search and write access. It need not list the directory.
+	if err := os.Chmod(selected, 0300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(selected, 0700); err != nil {
+			t.Error(err)
+		}
+	})
 	id := func(path string) string {
 		t.Helper()
 		info, err := os.Lstat(path)
@@ -26,10 +35,13 @@ func TestArchiveZshProfile(t *testing.T) {
 		return profileID(info)
 	}
 	dir := id(".") + "/"
-	if enableZshPath(t.TempDir(), dir+"new") {
+	if enableZshPath(t.TempDir(), dir+"new", false) {
 		t.Fatal("accepted a replaced profile directory")
 	}
-	if !enableZshPath(selected, dir+"new") {
+	if enableZshPath(selected, dir+"new", true) {
+		t.Fatal("created an absent .zlogin")
+	}
+	if !enableZshPath(selected, dir+"new", false) {
 		t.Fatal("failed to create the selected profile")
 	}
 	identity := dir + id(".zshrc")
@@ -37,7 +49,7 @@ func TestArchiveZshProfile(t *testing.T) {
 	if err := os.WriteFile(".zshrc", []byte(before), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if !enableZshPath(selected, identity) || !enableZshPath(selected, identity) {
+	if !enableZshPath(selected, identity, false) || !enableZshPath(selected, identity, false) {
 		t.Fatal("failed to enroll or repeat enrollment")
 	}
 	data, err := os.ReadFile(".zshrc")
@@ -60,7 +72,7 @@ func TestArchiveZshProfile(t *testing.T) {
 		if err := replace(); err != nil {
 			t.Fatal(err)
 		}
-		if enableZshPath(selected, identity) || enableZshPath(selected, dir+"new") {
+		if enableZshPath(selected, identity, false) || enableZshPath(selected, dir+"new", false) {
 			t.Fatal("accepted a replacement")
 		}
 		if err := os.Remove(".zshrc"); err != nil {

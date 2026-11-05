@@ -15,19 +15,29 @@ import (
 
 // enableZshPath runs inside the profile directory selected by the installer.
 // Both identities come from its ownership and ACL preflight before installation.
-func enableZshPath(profileDir, identity string) bool {
+func enableZshPath(profileDir, identity string, login bool) bool {
+	if login {
+		// Reorder only the managed directory. Preserve all other PATH entries, including empty entries.
+		const line = `if [[ -o interactive && ${(t)path} != *readonly* && ${(t)PATH} != *readonly* ]]; then path=("$HOME/.openai/bin" "${(@)path[@]:#"$HOME/.openai/bin"}"); fi`
+		return !strings.HasSuffix(identity, "/new") && appendProfilePath(profileDir, identity, ".zlogin", line)
+	}
 	return appendProfilePath(profileDir, identity, ".zshrc", `export PATH="$HOME/.openai/bin:$PATH"`)
 }
 
 func appendProfilePath(profileDir, identity, name, line string) bool {
 	directory, expected, ok := strings.Cut(identity, "/")
-	parent, err := os.Stat(".")
+	dir, err := os.OpenFile(".", profileDirectoryAccess|unix.O_DIRECTORY, 0)
+	if err != nil {
+		return false
+	}
+	defer dir.Close()
+	parent, err := dir.Stat()
 	if !automaticPlatform() || !filepath.IsAbs(profileDir) || !ok || err != nil || !parent.IsDir() || !ownedUpdatePath(parent) || profileID(parent) != directory {
 		return false
 	}
 	directorySelected := func() bool {
 		selected, err := os.Stat(profileDir)
-		return err == nil && selected.IsDir() && ownedUpdatePath(selected) && os.SameFile(parent, selected)
+		return err == nil && selected.IsDir() && ownedUpdatePath(selected) && os.SameFile(parent, selected) && profileACLAllowed(dir)
 	}
 	if !directorySelected() {
 		return false
@@ -51,7 +61,7 @@ func appendProfilePath(profileDir, identity, name, line string) bool {
 	}
 	current := func() bool {
 		named, err := os.Lstat(name)
-		return directorySelected() && err == nil && named.Mode().IsRegular() && ownedUpdatePath(named) && os.SameFile(info, named)
+		return directorySelected() && err == nil && named.Mode().IsRegular() && ownedUpdatePath(named) && os.SameFile(info, named) && profileACLAllowed(file)
 	}
 	// A later PATH assignment can shadow an earlier copy of this line.
 	// Read only the tail, even when a generated profile is very large.

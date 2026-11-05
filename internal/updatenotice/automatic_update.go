@@ -181,8 +181,8 @@ func RunUpdateHelper(argv []string) bool {
 	if runPackageInstallHelper(argv) || runLinuxPackageHelper(argv) || runHomebrewVerifierHelper(argv) {
 		return true
 	}
-	if len(argv) == 4 && argv[1] == "__openai_archive_zsh_profile" && os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") == "1" {
-		if enableZshPath(argv[2], argv[3]) {
+	if len(argv) == 4 && (argv[1] == "__openai_archive_zsh_profile" || argv[1] == "__openai_zsh_login_profile") && os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") == "1" {
+		if enableZshPath(argv[2], argv[3], argv[1] == "__openai_zsh_login_profile") {
 			fmt.Fprintln(os.Stdout, "ready")
 		}
 		return true

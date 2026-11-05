@@ -126,6 +126,10 @@ if [ -n "$profile_dir" ]; then
             [ ! -e "$profile_dir/$login_profile" ] && [ ! -L "$profile_dir/$login_profile" ] || break
         done
         login_id=$(profile_identity "$login_profile")
+    elif [ -e "$profile_dir/.zlogin" ] || [ -L "$profile_dir/.zlogin" ]; then
+        # A login shell reads .zlogin after .zshrc. Never create this optional file.
+        login_profile=.zlogin
+        login_id=$(profile_identity "$login_profile" 2>/dev/null) || login_id=
     fi
 fi
 for directory in .openai bin; do
@@ -270,17 +274,25 @@ check_destination() {
 check_destination || fail 'The installed executable changed. Check which copy you want before enabling updates.'
 if [ -n "$profile_dir" ]; then
     update_profile() {
-        if [ "$package" = true ]; then
+        [ -n "$2" ] || return 1
+        if [ "$1" = .zlogin ]; then
+            set -- __openai_zsh_login_profile "$profile_dir" "$2"
+        elif [ "$package" = true ]; then
             set -- __openai_linux_package_profile "$profile_dir" "$2" "$1"
         else
             set -- __openai_archive_zsh_profile "$profile_dir" "$2"
         fi
         result=$(cd -P "$profile_dir" && env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 \
             "$selected_cli" "$@") || result=
-        [ "$result" = ready ] || fail 'The CLI is installed. Check your shell profile and rerun setup.'
+        [ "$result" = ready ]
     }
-    update_profile "$profile_name" "$profile_id"
-    if [ -n "$login_profile" ]; then update_profile "$login_profile" "$login_id"; fi
+    profile_error='The CLI is installed. Check your shell profile and rerun setup.'
+    update_profile "$profile_name" "$profile_id" || fail "$profile_error"
+    if [ -n "$login_profile" ] && ! update_profile "$login_profile" "$login_id"; then
+        [ "$login_profile" = .zlogin ] || fail "$profile_error"
+        printf '%s\n' 'Setup could not safely configure ${ZDOTDIR:-$HOME}/.zlogin. A new login shell may select another openai.' \
+            'Use "$HOME/.openai/bin/openai" directly, or make .zlogin a private, writable regular file and rerun setup.' >&2
+    fi
     check_destination || fail 'The installed executable changed during setup. Check the selected copy.'
 fi
 clean_stage "$stage"
