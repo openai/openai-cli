@@ -90,7 +90,7 @@ func TestSuggestCommandRealTree(t *testing.T) {
 		t.Run(strings.Join(append(tc.path, tc.provided), " "), func(t *testing.T) {
 			want := ""
 			if tc.want != "" {
-				want = fmt.Sprintf("Did you mean '%s'?", tc.want)
+				want = fmt.Sprintf("The closest command is '%s'.", tc.want)
 			}
 			if got := cli.SuggestCommand(findCommand(t, tc.path...).Commands, tc.provided); got != want {
 				t.Errorf("got %q, want %q", got, want)
@@ -128,7 +128,7 @@ func TestSuggestCommandRealTreeSingleEdits(t *testing.T) {
 						continue typos
 					}
 				}
-				want := fmt.Sprintf("Did you mean '%s'?", name)
+				want := fmt.Sprintf("The closest command is '%s'.", name)
 				if got := cli.SuggestCommand(parent.Commands, typo); got != want {
 					t.Errorf("%s: SuggestCommand(%q) = %q, want %q", parent.Name, typo, got, want)
 				}

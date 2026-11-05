@@ -78,7 +78,7 @@ function command_not_found_handler {
               ${functions[__APPNAME__]-} == "$____APPNAME___suggestions_wrapper_body" ]] &&
            __openai_suggestions_target=$(builtin whence -p '__APPNAME__'); }; } &&
        [[ -f $__openai_suggestions_target && -x $__openai_suggestions_target ]]; then
-        builtin printf '%s\n' 'Command not found. Did you mean: __APPNAME__?' \
+        builtin printf '%s\n' 'Command not found. Try __APPNAME__ as the command name.' \
             'Keep the remaining arguments unchanged.' >&2
     else
         builtin printf '%s\n' 'zsh: command not found' >&2

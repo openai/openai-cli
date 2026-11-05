@@ -99,7 +99,7 @@ func jaroWinkler(a, b string) float64 {
 }
 
 // suggestionThreshold is the minimum jaro-winkler similarity required before we
-// will print a "Did you mean" suggestion. Below this, the closest match is too
+// will print a spelling suggestion. Below this, the closest match is too
 // dissimilar to be a useful guess, so we stay silent rather than mislead.
 // 0.7 matches the boostThreshold used by jaroWinkler above — the prefix boost
 // only kicks in past that, so it's a natural "plausibly the same word" cutoff.
@@ -146,7 +146,7 @@ func SuggestCommand(commands []*cli.Command, provided string) string {
 		parts = append(parts, command.Name)
 	}
 	slices.Reverse(parts)
-	return fmt.Sprintf("Did you mean '%s'?", strings.Join(parts, " "))
+	return fmt.Sprintf("The closest command is '%s'.", strings.Join(parts, " "))
 }
 
 func suggestCommandTarget(commands []*cli.Command, provided string) *cli.Command {

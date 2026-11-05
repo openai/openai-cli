@@ -74,8 +74,8 @@ for phase in before after; do
   test ! -e "$demo_runtime/home-$phase/backend-called"
 done
 grep -F 'command not found: opneai' "$demo_output/before.txt"
-if grep -F 'Did you mean:' "$demo_output/before.txt"; then exit 1; fi
-grep -F 'Command not found. Did you mean: openai?' "$demo_output/after.txt"
+if grep -F 'Keep the remaining arguments unchanged.' "$demo_output/before.txt"; then exit 1; fi
+grep -F 'Command not found. Try openai as the command name.' "$demo_output/after.txt"
 grep -F 'Keep the remaining arguments unchanged.' "$demo_output/after.txt"
 demo_assemble_capture 250 before after
 test "$(git -C "$root" rev-parse HEAD)" = "$demo_after_sha"

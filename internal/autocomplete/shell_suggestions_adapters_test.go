@@ -272,7 +272,7 @@ close $errors
 finish 0
 `
 
-const suggestionAdvice = "Command not found. Did you mean: openai?\nKeep the remaining arguments unchanged.\n"
+const suggestionAdvice = "Command not found. Try openai as the command name.\nKeep the remaining arguments unchanged.\n"
 
 func TestShellSuggestionsFishMatcherAndPrivacy(t *testing.T) {
 	for _, tc := range []struct {
