@@ -8,9 +8,44 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestMainManpagesHelpIsReadOnly(t *testing.T) {
+	work := t.TempDir()
+	t.Chdir(work)
+	destination := filepath.Join(work, "manuals")
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"@manpages", "--output", destination, "--help"}, []string{`openai "@manpages" [-o DIRECTORY]`, `$ openai "@manpages" --output docs`, `openai help --all "@manpages"`, "--gzip, -z", "--text"}},
+		{[]string{"help", "@manpages"}, []string{"Generate the OpenAI CLI man page.", `openai help --all "@manpages"`}},
+		{[]string{"help", "--all", "@manpages"}, []string{"--output=DIRECTORY, -o=DIRECTORY", `Default: "man"`, "--gzip, -z", "--text"}},
+		{[]string{"@manpages", "-h", "-o"}, []string{"--output=DIRECTORY, -o=DIRECTORY", `Default: "man"`}},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=invalid-for-requests"}, append([]string{"openai"}, tc.args...)...)
+			if got.code != 0 || got.stderr != "" {
+				t.Fatalf("help failed: %+v", got)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(got.stdout, want) {
+					t.Errorf("missing %q in %s", want, got.stdout)
+				}
+			}
+			if !slices.Contains(tc.args, "--all") && strings.Contains(got.stdout, "--api-key") {
+				t.Fatal("local help included unrelated API options")
+			}
+			entries, err := os.ReadDir(work)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("help wrote files: entries=%v err=%v", entries, err)
+			}
+		})
+	}
+}
 
 func TestMainDispatchOutputManpagesDeepSubgroups(t *testing.T) {
 	dir := t.TempDir()

@@ -23,7 +23,7 @@ func TestCommonFlagRowsPrioritizeRequiredAndExampleFlags(t *testing.T) {
 	for _, width := range []int{24, 40, 80} {
 		rows, _ := commonFlagRows(command, "files create", "files create -o output.wav", width)
 		plain := strings.Join(strings.Fields(rows), " ")
-		if !strings.HasPrefix(plain, "--file Path to the input file. --output-path Save the result.") {
+		if !strings.HasPrefix(plain, "--file Path to the input file. --output-path, -o Save the result.") {
 			t.Fatalf("width %d: inputs in wrong order or without descriptions: %s", width, rows)
 		}
 		for _, want := range []string{"--model Model ID.", "--size Image size.", "--quality Image quality."} {

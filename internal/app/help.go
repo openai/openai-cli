@@ -7,6 +7,7 @@ import (
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/admin"
 	imagecommands "github.com/openai/openai-cli/internal/commands/images"
+	"github.com/openai/openai-cli/internal/commands/manpages"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -17,6 +18,7 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 	localcommands.OrderImages(root)
 	configureGlobalFlagDescriptions(root)
 	configureHelpGroups(root)
+	manpages.ConfigureHelp(root)
 	configureImageHelpContent(root)
 	configureLocalHelpContent(root)
 	configureBatchHelpContent(root)
@@ -287,7 +289,21 @@ func configureHelpGroups(root *cli.Command) {
 		if command.Metadata == nil {
 			command.Metadata = map[string]any{}
 		}
-		if localcommands.ResourceName(command) == "chat:completions" {
+		resource := localcommands.ResourceName(command)
+		if resource == "" {
+			resource = command.Name
+		}
+		switch resource {
+		case "responses", "beta:responses":
+			if create := command.Command("create"); create != nil {
+				path := strings.ReplaceAll(resource, ":", " ") + " create"
+				setCompleteHelpContent(create, clihelp.Content{
+					Summary:     "Creates a model response.",
+					Description: create.Description,
+					Examples:    clihelp.CommandExamples(create, path),
+				})
+			}
+		case "chat:completions":
 			if create := command.Command("create"); create != nil {
 				setCompleteHelpContent(create, clihelp.Content{
 					Summary:     "Generate a chat completion from a conversation.",

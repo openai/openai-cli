@@ -17,6 +17,11 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 		for _, line := range strings.Split(command.UsageText, "\n") {
 			if suffix, found := strings.CutPrefix(line, "openai "); found {
 				line = invocation + " " + suffix
+				title := invocation
+				if line == name || strings.HasPrefix(line, name+" ") {
+					title = name
+				}
+				line = style.render(style.section, title) + style.render(style.value, strings.TrimPrefix(line, title))
 			}
 			lines = append(lines, "  "+line)
 		}

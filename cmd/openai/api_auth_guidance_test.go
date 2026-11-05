@@ -237,10 +237,16 @@ func TestMainAPIAuthGuidanceNativeCopiedSetup(t *testing.T) {
 						failure := runNativeShell(t, shell, directory, home, server.URL, shell.setKey+invocation+" models retrieve --model synthetic-model")
 						assertAuthGuidanceFailure(t, failure)
 						help := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" webhooks create --help")
-						if help.code != 0 || help.stderr != "" {
-							t.Fatalf("renamed executable help failed: %+v", help)
+						_, reference, found := strings.Cut(help.stdout, "\nFULL REFERENCE\n")
+						reference, _, _ = strings.Cut(strings.TrimSpace(reference), "\n")
+						if help.code != 0 || help.stderr != "" || !found || !strings.HasSuffix(reference, " help --all webhooks create") {
+							t.Fatalf("renamed executable help omitted the full reference: %+v", help)
 						}
-						for _, output := range []string{failure.stderr, help.stdout} {
+						full := runNativeShell(t, shell, directory, home, "not-a-url", reference)
+						if full.code != 0 || full.stderr != "" {
+							t.Fatalf("copied reference %q failed: %+v", reference, full)
+						}
+						for _, output := range []string{failure.stderr, full.stdout} {
 							command := authGuidanceSetupCommand(t, output)
 							copied := runNativeShell(t, shell, directory, home, "not-a-url", command)
 							if copied.code != 0 || copied.stderr != "" || !strings.Contains(copied.stdout, "OPENAI_API_KEY") || strings.Contains(copied.stdout, "wrong executable") {

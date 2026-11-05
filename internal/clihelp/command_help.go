@@ -33,31 +33,6 @@ type Example struct {
 
 const commandHelpTemplate = `{{call (index .Metadata "complete-help")}}`
 
-// Open reference-sized commands on a useful first page. Count only local
-// declarations. Inherited flags belong to the root reference.
-func hasCompactHelp(command *cli.Command, content Content) bool {
-	if command == command.Root() || command.Name == "@completion" || command.CustomHelpTemplate != commandHelpTemplate {
-		return false
-	}
-	if len(VisibleCommands(command)) != 0 {
-		return false
-	}
-	count, referenceWords := 0, 0
-	for _, flag := range command.VisibleFlags() {
-		if names := flag.Names(); len(names) == 0 || names[0] == "help" {
-			continue
-		}
-		count++
-		if doc, ok := flag.(cli.DocGenerationFlag); ok {
-			referenceWords += len(strings.Fields(doc.GetUsage()))
-		}
-	}
-	// A handful of API fields can still carry several screens of schema prose.
-	// A shared first-page budget also covers long guides and example collections.
-	return content.CompactNote != "" || count >= 10 || referenceWords >= 150 || len(content.Examples) >= 3 ||
-		count > 0 && (len(strings.Fields(content.Description)) >= 75 || len(strings.Fields(command.Usage)) >= 100)
-}
-
 // Configure callbacks now, but enumerate flags only when the framework renders help.
 // Parent links, inherited flags, and automatic help flags do not exist here yet.
 func configureCommandHelp(command *cli.Command, invocation, path string) {
@@ -116,11 +91,19 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	}
 	plainUsage := terminalProse(usage)
 	summary := terminalProse(content.Summary)
+	// Every action has the same overview, regardless of how many flags or
+	// descriptions it declares. Groups keep their child-command navigation.
+	if path != "" && command != command.Root() && len(VisibleCommands(command)) == 0 &&
+		!fullReferenceRequested(command) && command.CustomHelpTemplate == commandHelpTemplate {
+		if summary == "" {
+			// Later sentences in the opening paragraph can qualify an action's
+			// effects or preconditions. Keep them together on the overview.
+			summary = commandParagraph(plainUsage)
+		}
+		return compactCommandHelp(command, invocation, path, summary, content, supplied, width)
+	}
 	if summary == "" {
 		summary = commandSummary(plainUsage)
-	}
-	if !fullReferenceRequested(command) && hasCompactHelp(command, content) {
-		return compactCommandHelp(command, invocation, path, summary, content, supplied, width, navigationWidth)
 	}
 	native, exampleRun := commandHelpInvocations(command, invocation)
 	if path == "" {
@@ -231,8 +214,10 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	}
 	full := fullReferenceRequested(command)
 	if flags := command.VisiblePersistentFlags(); len(flags) > 0 {
-		if full || content.GlobalOptionsNote != "" {
+		if full {
 			out.WriteString("\n" + heading("GLOBAL FLAGS") + "\n")
+		} else if content.GlobalOptionsNote != "" {
+			out.WriteString("\n" + heading("OUTPUT") + "\n")
 		}
 		if full {
 			out.WriteString(globalFlagIndex(flags, width))
@@ -286,7 +271,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 
 // Keep the first page useful on a terminal. The full reference owns secondary
 // examples, generated API prose, and the complete list of flags.
-func compactCommandHelp(command *cli.Command, invocation, path, summary string, content Content, supplied bool, width, navigationWidth int) string {
+func compactCommandHelp(command *cli.Command, invocation, path, summary string, content Content, supplied bool, width int) string {
 	var out strings.Builder
 	style := commandHelpStyle(command)
 	out.WriteString(commandIntroduction(command, invocation, path, summary, width))
@@ -310,6 +295,12 @@ func compactCommandHelp(command *cli.Command, invocation, path, summary string, 
 	}
 	// Handwritten guidance can describe saving, interactive inputs or other
 	// operational constraints that users need before running the example.
+	if !supplied && content.Description != "" {
+		if note := commandSummary(descriptionAfterSummary(terminalProse(content.Description), summary)); note != "" {
+			out.WriteByte('\n')
+			out.WriteString(wrapPlainDescription(note, "  ", width))
+		}
+	}
 	if supplied {
 		notes := terminalProse(content.CompactNote)
 		if notes == "" {
@@ -322,17 +313,22 @@ func compactCommandHelp(command *cli.Command, invocation, path, summary string, 
 			}
 		}
 	}
-	if len(VisibleCommands(command)) != 0 {
-		out.WriteByte('\n')
-		out.WriteString(commandList(command, navigationWidth, navigationSuggestions(command, native, path)))
-	}
 	referenceTitle := "FULL REFERENCE"
-	if rows, complete := commonFlagRows(command, path, example, width); rows != "" {
+	rows, complete := commonFlagRows(command, path, example, width)
+	if rows != "" {
 		section := "FLAGS"
 		if !complete {
 			section, referenceTitle = "COMMON FLAGS", "ALL FLAGS"
 		}
 		out.WriteString("\n" + style.render(style.section, section) + "\n" + rows)
+	}
+	// If the overview already contains the command's entire local guidance,
+	// there is no additional reference for its user to discover.
+	if rows == "" && len(content.Examples) <= 1 && content.CompactNote == "" &&
+		command.Metadata["help-command-section"] != "Retired commands" &&
+		descriptionAfterSummary(terminalProse(command.Usage), summary) == "" &&
+		(supplied || strings.TrimSpace(command.Description) == "") {
+		return out.String()
 	}
 	out.WriteString("\n" + style.render(style.section, referenceTitle) + "\n")
 	if reference := fullReferenceCommand(command, invocation, path); reference != "" {
@@ -377,7 +373,7 @@ func writeCommandIdentity(out *strings.Builder, name, summary string, width int)
 	out.WriteByte('\n')
 }
 
-func commandSummary(usage string) string {
+func commandParagraph(usage string) string {
 	paragraph, _, _ := strings.Cut(usage, "\n\n")
 	// The complete description retains references. Summaries name the operation
 	// without allowing documentation URLs to overwhelm command indexes.
@@ -399,7 +395,12 @@ func commandSummary(usage string) string {
 			start = end + 1
 		}
 	}
-	paragraph = strings.Join(strings.Fields(paragraph), " ")
+	// A trailing "Learn more" link belongs in the reference with its URL.
+	return strings.TrimSuffix(strings.Join(strings.Fields(paragraph), " "), " Learn more.")
+}
+
+func commandSummary(usage string) string {
+	paragraph := commandParagraph(usage)
 	for i := range len(paragraph) - 1 {
 		if strings.ContainsRune(".!?", rune(paragraph[i])) && paragraph[i+1] == ' ' {
 			if strings.HasSuffix(paragraph[:i+1], "i.e.") || strings.HasSuffix(paragraph[:i+1], "e.g.") {

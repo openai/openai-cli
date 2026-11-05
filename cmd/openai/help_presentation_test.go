@@ -138,6 +138,32 @@ func TestMainHelpForOneFlagUsesLocalOutputGuidance(t *testing.T) {
 	}
 }
 
+func TestMainActionHelpPreservesConsequencesAndPreconditions(t *testing.T) {
+	for _, tc := range []struct{ path, detail string }{
+		{"conversations delete", "Items in the conversation will not be deleted."},
+		{"vector-stores files delete", "the file itself will not be deleted. To delete the file, use the delete file endpoint."},
+		{"admin external-storage delete", "Repeating a deletion also completes any interrupted retention update. Cloud storage is unchanged."},
+		{"batches cancel", "it will have partial results (if any) available in the output file."},
+		{"responses cancel", "Only responses created with the background parameter set to true can be cancelled."},
+		{"admin projects archive", "Archived projects cannot be used or updated."},
+		{"projects archive", "Archived projects cannot be used or updated."},
+		{"admin projects create", "Projects can be created and archived, but cannot be deleted."},
+		{"projects create", "Projects can be created and archived, but cannot be deleted."},
+		{"admin projects service-accounts create", "this also returns an unredacted API key for the service account."},
+		{"admin invites delete", "If the invite has already been accepted, it cannot be deleted."},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			args := append([]string{"openai"}, strings.Fields(tc.path)...)
+			got := runMainDispatch(t, "bash", append(args, "--help")...)
+			summary, _, _ := strings.Cut(got.stdout, "\n\n")
+			plain := strings.Join(strings.Fields(summary), " ")
+			if got.code != 0 || got.stderr != "" || !strings.Contains(plain, tc.detail) || strings.Contains(plain, "https://") || strings.Contains(plain, " Learn more.") {
+				t.Fatalf("action overview lost its documented meaning: %+v", got)
+			}
+		})
+	}
+}
+
 func TestMainHelpPresentationPreservesDetailsAfterShortName(t *testing.T) {
 	got := runMainDispatch(t, "bash", "openai", "responses", "create", "--help")
 	if got.code != 0 || got.stderr != "" {
@@ -147,7 +173,7 @@ func TestMainHelpPresentationPreservesDetailsAfterShortName(t *testing.T) {
 	if !strings.Contains(overview, "openai responses create [FLAGS]") || strings.Count(overview, "Creates a model response") != 1 {
 		t.Fatalf("missing usage or one-line purpose: %s", overview)
 	}
-	for _, absent := range []string{"https://", "NAME\n", "SYNOPSIS\n", "DESCRIPTION\n", "--access-programs=", "echo '"} {
+	for _, absent := range []string{"https://", "NAME\n", "SYNOPSIS\n", "DESCRIPTION\n", "web search", "--access-programs=", "echo '"} {
 		if strings.Contains(got.stdout, absent) {
 			t.Errorf("ordinary help included %q", absent)
 		}
@@ -196,7 +222,7 @@ func TestMainHelpPresentationConcreteSyntaxAndLabels(t *testing.T) {
 		want []string
 	}{
 		{[]string{"models", "retrieve"}, []string{"[MODEL | --model=MODEL]", "Model ID.", "JSON/YAML keys: model."}},
-		{[]string{"files", "upload"}, []string{"[PATH | --file PATH] --purpose PURPOSE [options]", "A path is required: use PATH or --file PATH.", "Choose --purpose explicitly.", "The existing piped JSON/YAML keys are file and purpose."}},
+		{[]string{"files", "upload"}, []string{"[PATH | --file PATH] --purpose PURPOSE [options]", "Use PATH or --file PATH and set --purpose explicitly.", "A leading @ is part of the filename.", "Piped JSON/YAML accepts file and purpose."}},
 		{[]string{"files", "create"}, []string{"[--file=PATH]", "[--purpose=TEXT]", "Required request inputs: --file, --purpose."}},
 		{[]string{"images", "generate"}, []string{"--size=SIZE", "--quality=QUALITY", "--background=BACKGROUND", "--output-format=FORMAT", "--inline=MODE"}},
 	} {
@@ -227,12 +253,9 @@ func TestMainHelpPresentationCompactGlobalsAndLocalRestrictions(t *testing.T) {
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("help failed: %+v", got)
 		}
-		wantReference := "Global flags: openai --help"
-		if path[0] == "models" || path[1] == "preview" {
-			wantReference = "openai help --all " + strings.Join(path, " ")
-		}
-		if !strings.Contains(got.stdout, wantReference) {
-			t.Fatalf("global flag reference missing: %s", got.stdout)
+		// The inline toggle has no additional command-specific options.
+		if path[1] != "inline" && !strings.Contains(got.stdout, "openai help --all "+strings.Join(path, " ")) {
+			t.Fatalf("full command reference missing: %s", got.stdout)
 		}
 		for _, unrelated := range []string{"--header", "--base-url", "Key setup:", "Choose how results are displayed"} {
 			if strings.Contains(got.stdout, unrelated) {

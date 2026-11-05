@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
 
@@ -152,19 +153,30 @@ func commonFlagRows(command *cli.Command, path, example string, width int) (stri
 		}
 	}
 
-	names := make([]string, len(selected))
+	labels := make([]string, len(selected))
 	for i, flag := range selected {
-		name := flag.Names()[0]
-		names[i] = "--" + name
-		if len(name) == 1 {
-			names[i] = "-" + name
+		var names []string
+		for _, name := range flag.Names() {
+			if len(name) == 1 {
+				names = append(names, "-"+name)
+			} else {
+				names = append(names, "--"+name)
+			}
 		}
+		labels[i] = strings.Join(names, ", ")
 	}
 	style := commandHelpStyle(command)
-	column := helpDescriptionColumn(width, names)
+	column := helpDescriptionColumn(width, labels)
 	var out strings.Builder
 	for i, flag := range selected {
-		out.WriteString(style.entry(names[i], commonFlagDescription(command, path, flag), style.flag(names[i], ""), width, column))
+		description := commonFlagDescription(command, path, flag)
+		label := labels[i]
+		if column == 0 && ansi.StringWidth(label)+2 > width {
+			writeFlagLabels(&out, styledFlagLabels(label, style), "  ", width)
+			out.WriteString(style.render(style.note, wrapPlainDescription(description, "    ", width)))
+			continue
+		}
+		out.WriteString(style.entry(label, description, style.flag(label, ""), width, column))
 	}
 	return out.String(), localCount == len(selected)
 }
@@ -226,7 +238,28 @@ func commonFlagDescription(command *cli.Command, path string, flag cli.Flag) str
 	}
 	_, description := flagReference(command, flag)
 	usage, _, _ := strings.Cut(description, "\nDefault:")
-	return shortDescription(usage)
+	brief := shortDescription(usage)
+	if brief != "" && brief != "Can be used more than once." && !strings.HasPrefix(brief, "Default:") && !strings.HasPrefix(brief, "Env:") {
+		return brief
+	}
+	// An undocumented schema field still has a declared destination. Explain
+	// what it sets without guessing server behavior or showing runtime values.
+	if field, ok := flag.(requestflag.InRequest); ok {
+		switch {
+		case field.GetPathParam() != "":
+			return pathInputDescription(field.GetPathParam())
+		case field.GetBodyPath() != "":
+			return "Sets the " + field.GetBodyPath() + " request body field."
+		case field.GetQueryPath() != "":
+			return "Sets the " + field.GetQueryPath() + " query parameter."
+		case field.GetHeaderPath() != "":
+			return "Sets the " + field.GetHeaderPath() + " request header."
+		}
+	}
+	if label := commandFlagValueLabel(command, flag); label != "" {
+		return "Accepts " + label + "."
+	}
+	return "Enable this option."
 }
 
 // Use the navigation layout only when every flag fits on one line. Keep

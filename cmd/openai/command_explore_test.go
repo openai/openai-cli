@@ -15,7 +15,7 @@ func TestMainExploreHelpShowsLocalOptions(t *testing.T) {
 	if got.code != 0 || got.stderr != "" {
 		t.Fatalf("Explore help failed: %+v", got)
 	}
-	for _, want := range []string{"--format", "--format-error", "openai --help"} {
+	for _, want := range []string{"--format", "--format-error", "openai help --all explore"} {
 		if !strings.Contains(got.stdout, want) {
 			t.Errorf("Explore help omitted %q", want)
 		}
@@ -156,8 +156,12 @@ func TestMainExploreRanksCommandsForCommonTasks(t *testing.T) {
 
 func TestMainExploreHelpAndStructuredErrors(t *testing.T) {
 	help := runMainDispatch(t, "zsh", "openai", "explore", "--help")
-	if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, `openai explore "count tokens offline"`) {
+	if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, "$ openai explore\n") {
 		t.Fatalf("explore help failed: %+v", help)
+	}
+	full := runMainDispatch(t, "zsh", "openai", "help", "--all", "explore")
+	if full.code != 0 || full.stderr != "" || !strings.Contains(full.stdout, `openai explore "count tokens offline"`) {
+		t.Fatalf("full Explore help omitted the search example: %+v", full)
 	}
 	got := runMainDispatch(t, "zsh", "openai", "--format", "json", "explore")
 	if got.code != 2 || got.stdout != "" {
@@ -196,7 +200,12 @@ func TestMainExploreCopiesTaskFromHelpInPowerShell(t *testing.T) {
 		return strings.ReplaceAll(result.stdout, "\r\n", "\n")
 	}
 	invocation := "& " + terminal.PowerShellQuote(filepath.Join(work, binary))
-	help := run(invocation + " explore --help")
+	short := run(invocation + " explore --help")
+	_, reference, found := strings.Cut(short, "\nFULL REFERENCE\n")
+	require.True(t, found)
+	reference, _, _ = strings.Cut(strings.TrimSpace(reference), "\n")
+	require.Equal(t, invocation+" help --all explore", reference)
+	help := run(reference)
 	var example string
 	for line := range strings.SplitSeq(help, "\n") {
 		if strings.HasSuffix(line, ` explore "count tokens offline"`) {

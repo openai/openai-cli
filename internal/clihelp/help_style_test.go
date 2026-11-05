@@ -67,6 +67,13 @@ func TestStyledHelpPreservesContentAndColorOptOuts(t *testing.T) {
 					want += "\n" // Separate terminal help from the next shell prompt.
 				}
 				got := commandHelpAtWidth(root, "openai", "", width)
+				root.UsageText = "openai models [NAME | --model NAME]"
+				authored := commandSynopsis(root, "openai models", "openai", width)
+				root.UsageText = ""
+				if ansi.Strip(authored) != "  openai models [NAME | --model NAME]\n" ||
+					strings.Contains(authored, "\x1b") != tc.color {
+					t.Fatalf("authored usage lost syntax or terminal styling: %q", authored)
+				}
 				if ansi.Strip(got) != want {
 					t.Fatalf("width %d: styling changed help text or alignment", width)
 				}

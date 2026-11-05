@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
@@ -18,6 +19,15 @@ func ConfigureVoices(root *cli.Command, policy VoiceOptions) {
 		return
 	}
 	if create := voices.Command("create"); create != nil {
+		if create.Metadata == nil {
+			create.Metadata = map[string]any{}
+		}
+		create.Metadata["help-content"] = clihelp.Content{
+			Description: create.Description,
+			InputNote: "With --type audio_sample (the default), supply --name, --audio-sample, and --consent.\n" +
+				"With --type prompt, supply --name and --prompt. Both methods accept piped JSON or YAML.",
+			Examples: []clihelp.Example{{Description: "Create a voice from a description:", Command: `audio voices create --type prompt --name Calm --prompt "Warm and clear."`}},
+		}
 		create.Action = func(ctx context.Context, cmd *cli.Command) error { return createAudioVoice(ctx, cmd, policy) }
 	}
 }

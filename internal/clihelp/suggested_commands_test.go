@@ -89,6 +89,7 @@ func TestSuggestedCommandsRegisterOnlyRenderedHelp(t *testing.T) {
 	}
 	want := helpSuggestionRecorder{
 		{"", `openai responses create --model gpt-5.5 --input "Say hello"`},
+		{"", "openai help --all responses create"},
 	}
 	if !reflect.DeepEqual(recorder, want) {
 		t.Fatalf("suggestions = %#v; want %#v", recorder, want)
@@ -100,7 +101,7 @@ func TestSuggestedSetupCommandsKeepShellAnnotations(t *testing.T) {
 	root := &cli.Command{Name: "openai", Writer: &out}
 	var recorder helpSuggestionRecorder
 	commandsuggest.SetRecorder(root, &recorder)
-	args, _, err := Configure(root, []string{"openai", "help", "setup"})
+	args, _, err := Configure(root, []string{"openai", "help", "--all", "setup"})
 	if err != nil {
 		t.Fatal(err)
 	}

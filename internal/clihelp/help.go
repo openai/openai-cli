@@ -21,39 +21,44 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const setupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up your API key
+const setupHelp = `{{$guide := setupGuide .}}{{$run := $guide.Run}}Set up your API key
 
 1. CREATE A KEY
    https://platform.openai.com/settings/organization/api-keys
 
 2. ENTER IT IN YOUR SHELL
-   Bash or zsh (macOS / Linux)
+{{if or $guide.Full (eq $guide.Shell "bash") (eq $guide.Shell "zsh")}}   Bash or zsh (macOS / Linux)
      Run this line, paste your key (hidden), then press Enter:
        {{suggestFor . "read -rs OPENAI_API_KEY" "bash" "zsh"}}
      Then run this line so the CLI can read the key:
        {{suggestFor . "export OPENAI_API_KEY" "bash" "zsh"}}
        {{suggestFor . "printf '\\n'" "bash" "zsh"}}
 
-   PowerShell (Windows, macOS, or Linux)
+{{end}}{{if or $guide.Full (eq $guide.Shell "fish")}}   Fish
+     Run this line, paste your key (hidden), then press Enter:
+       {{suggestFor . "read --silent --global --export OPENAI_API_KEY" "fish"}}
+
+{{end}}{{if or $guide.Full (eq $guide.Shell "pwsh")}}   PowerShell (Windows, macOS, or Linux)
      Run this line, paste your key (hidden), then press Enter:
        {{suggestFor . "$openaiKey = Read-Host \"API key\" -AsSecureString" "pwsh"}}
      Then run these lines:
        {{suggestFor . "$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new(\"\", $openaiKey).Password" "pwsh"}}
        {{suggestFor . "Remove-Variable openaiKey" "pwsh"}}
 
-   Using Command Prompt (cmd.exe)? Run {{suggestFor . "powershell" "cmd"}} first, then use the
+{{end}}{{if $guide.Full}}   Using Command Prompt (cmd.exe)? Run {{suggestFor . "powershell" "cmd"}} first, then use the
    PowerShell steps above. Run the CLI in that same PowerShell session.
-   Using Fish? Run {{suggestFor . "bash" "fish"}} first, then use the Bash steps above.
 
    Windows command examples use PowerShell syntax. In cmd.exe, run
    openai from PATH or .\openai.exe from the folder containing the CLI.
 
-   These steps set the key for this shell session. A new window needs it again.
+{{end}}   These steps set the key for this shell session. A new window needs it again.
 
 3. TRY A COMMAND
-   {{suggest . (printf "%s models list" $run)}}
+{{if $run}}   {{suggest . (printf "%s models list" $run)}}
+{{else}}   Run the same executable with models list.
+{{end}}
 
-ALREADY HAVE A KEY?
+{{if $guide.Full}}ALREADY HAVE A KEY?
    An HTTP 401 means the server did not accept authentication.
    It does not identify which credential or setting caused the failure.
    Enter the appropriate key again using the hidden-input steps above.
@@ -77,7 +82,12 @@ ALREADY HAVE A KEY?
 This is a guide only. No key has been entered or checked by showing this page.
 
 Admin key setup:
-   {{suggest . (printf "%s help setup admin" $run)}}
+{{if $run}}   {{suggest . (printf "%s help setup admin" $run)}}
+{{else}}   Use the same executable with help setup admin.
+{{end}}{{else}}TROUBLESHOOTING AND OTHER SHELLS
+{{if $run}}   {{suggest . (printf "%s help --all setup" $run)}}
+{{else}}   Use the same executable with help --all setup.
+{{end}}{{end}}
 `
 
 // Configure keeps onboarding in CLI help, never in a shell startup file or
@@ -128,7 +138,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 			Action:             showHelpTopics,
 			Commands: []*cli.Command{{
 				Name: "setup", Usage: "Learn how to enter your API key", HideHelpCommand: true,
-				Metadata:           map[string]any{"help-guide": true},
+				Metadata:           map[string]any{"help-guide": true, "help-detailed-guide": true},
 				CustomHelpTemplate: setupHelp,
 				Action: func(_ context.Context, command *cli.Command) error {
 					if command.Args().Present() {
@@ -437,10 +447,11 @@ func installSubcommandHelp() {
 		}
 		customPrinter := cli.HelpPrinterCustom
 		cli.HelpPrinterCustom = func(out io.Writer, template string, data any, functions map[string]any) {
-			local := make(map[string]any, len(functions)+2)
+			local := make(map[string]any, len(functions)+3)
 			for name, function := range functions {
 				local[name] = function
 			}
+			local["setupGuide"] = setupGuide
 			local["suggest"] = commandsuggest.Record
 			local["suggestFor"] = func(command *cli.Command, text string, shells ...string) string {
 				rendered := text
@@ -505,6 +516,8 @@ func fullReferenceCommand(command *cli.Command, invocation, path string) string 
 	}
 	if path == "@completion" {
 		path = completionTopic(shell)
+	} else if path == "@manpages" {
+		path = `"@manpages"`
 	}
 	return strings.TrimSpace(native + " help --all " + path)
 }
@@ -513,7 +526,7 @@ func legacyHelpNotice(command *cli.Command) string {
 	root := command.Root()
 	invocation, configured := root.Metadata["help-invocation"].(string)
 	// Completion uses --all for its local flag reference.
-	if !configured || command.Name == "@completion" || root.Metadata["help-control-launcher"] == true {
+	if !configured || command.Name == "@completion" || command.Metadata["help-detailed-guide"] == true || root.Metadata["help-control-launcher"] == true {
 		return ""
 	}
 	_, legacy := root.Metadata["help-all"].(bool)
@@ -564,10 +577,10 @@ func (e *UnknownTopicError) Error() string {
 
 func (*UnknownTopicError) ExitCode() int { return 3 }
 
-// Completion setup and compatibility aliases can be requested explicitly.
+// Documented utilities and compatibility aliases can be requested explicitly.
 func allowsHelpTopic(command *cli.Command) bool {
 	compatibility, _ := command.Metadata["command-compatibility-alias"].(bool)
-	return !command.Hidden || compatibility || command.Name == "@completion"
+	return !command.Hidden || compatibility || command.Name == "@completion" || command.Name == "@manpages"
 }
 
 // NativeInvocation returns the executable spelling for a command copied into the current shell.

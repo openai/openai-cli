@@ -133,33 +133,50 @@ func TestCompleteHelpDoesNotRetireCommandOwnedAll(t *testing.T) {
 	}
 }
 
-func TestLegacyRootHelpAndSetupKeepCanonicalBody(t *testing.T) {
-	for _, path := range [][]string{nil, {"setup"}} {
-		var want string
-		for _, all := range []bool{false, true} {
-			var out bytes.Buffer
-			root := completeHelpFixture(&out)
-			args := []string{"openai", "help"}
-			if all {
-				args = append(args, "--all=false")
-			}
-			args = append(args, path...)
-			args, _, err := Configure(root, args)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := root.Run(t.Context(), args); err != nil {
-				t.Fatal(err)
-			}
-			got := out.String()
-			if !all {
-				want = got
-				continue
-			}
-			line, body, found := strings.Cut(got, "\n")
-			if !found || !strings.Contains(line, "no longer needed") || body != want {
-				t.Fatalf("legacy guide differs: %s", got)
-			}
+func TestSetupGuideHonorsLastExplicitHelpMode(t *testing.T) {
+	var out bytes.Buffer
+	root := completeHelpFixture(&out)
+	for _, tc := range []struct {
+		args []string
+		full bool
+	}{
+		{[]string{"help", "--all", "setup"}, true},
+		{[]string{"help", "setup"}, false},
+		{[]string{"help", "--all", "--all=false", "setup"}, false},
+		{[]string{"help", "--all=false", "--all", "setup"}, true},
+	} {
+		out.Reset()
+		argv, _, err := Configure(root, append([]string{"openai"}, tc.args...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Run(t.Context(), argv); err != nil {
+			t.Fatal(err)
+		}
+		got := out.String()
+		if strings.Contains(got, "ALREADY HAVE A KEY?") != tc.full ||
+			strings.Contains(got, "openai help --all setup") == tc.full || strings.Contains(got, "no longer needed") {
+			t.Fatalf("wrong guide for %v: %s", tc.args, got)
+		}
+	}
+}
+
+func TestRootHelpLegacyFlagKeepsCanonicalBody(t *testing.T) {
+	var want string
+	for _, args := range [][]string{{"openai", "help"}, {"openai", "help", "--all=false"}} {
+		var out bytes.Buffer
+		root := completeHelpFixture(&out)
+		argv, _, err := Configure(root, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Run(t.Context(), argv); err != nil {
+			t.Fatal(err)
+		}
+		if want == "" {
+			want = out.String()
+		} else if line, body, found := strings.Cut(out.String(), "\n"); !found || !strings.Contains(line, "no longer needed") || body != want {
+			t.Fatalf("legacy root guide differs: %s", out.String())
 		}
 	}
 }

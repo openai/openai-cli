@@ -143,6 +143,9 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 				}
 				return
 			}
+			if len(path) != 0 && len(command.VisibleCommands()) == 0 && command.Metadata["help-guide"] != true {
+				checkActionOverview(t, path)
+			}
 			flagNames := fullHelpFlagNames(got.stdout)
 			for _, flag := range flags {
 				for _, name := range flag.Names() {
@@ -190,6 +193,34 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 	visit(commands.Command, nil, nil)
 	if visited < 100 {
 		t.Fatalf("complete-help coverage visited only %d commands", visited)
+	}
+}
+
+// Exercise every declared action through the executable, including future API
+// additions. A short command can still have a flag with several pages of prose.
+func checkActionOverview(t *testing.T, path []string) {
+	t.Helper()
+	argv := append(append([]string{"openai"}, path...), "--help")
+	result := runMainDispatch(t, "bash", argv...)
+	if result.code != 0 || result.stderr != "" {
+		t.Fatalf("action overview failed: %+v", result)
+	}
+	title, _, _ := strings.Cut(result.stdout, "\n")
+	command := "openai " + strings.Join(path, " ")
+	if title != command && !strings.HasPrefix(title, command+" ") {
+		t.Errorf("action overview should start with its usage: %q", title)
+	}
+	for _, manual := range []string{"\nSYNOPSIS\n", "\nDESCRIPTION\n", "\nGLOBAL FLAGS\n"} {
+		if strings.Contains(result.stdout, manual) {
+			t.Errorf("action overview includes reference layout %q", manual)
+		}
+	}
+	_, flags, _ := strings.Cut(result.stdout, "\nFLAGS\n")
+	if strings.HasPrefix(flags, "    --") || strings.Contains(flags, "\n    --") {
+		t.Error("action overview uses full reference blocks for its flag descriptions")
+	}
+	if strings.Contains(result.stdout, "\nCOMMON FLAGS\n") && !strings.Contains(result.stdout, "openai help --all "+strings.Join(path, " ")) {
+		t.Error("action overview lists a subset of flags without a link to the full reference")
 	}
 }
 
@@ -368,15 +399,24 @@ func TestMainHelpSetupIsReadOnly(t *testing.T) {
 	env := []string{"HOME=" + home, "USERPROFILE=" + home, "OPENAI_BASE_URL=" + server.URL, "OPENAI_API_KEY=fake-key-must-not-be-printed"}
 	for _, args := range [][]string{
 		{"openai", "help", "setup"}, {"openai", "help", "setup", "--help"},
-		{"openai", "--debug", "help", "setup"},
+		{"openai", "--debug", "help", "setup"}, {"openai", "help", "--all", "setup"},
 	} {
 		got := runMainDispatchWithEnv(t, "bash", env, args...)
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("setup guide failed: %+v", got)
 		}
-		for _, text := range []string{"https://platform.openai.com/", "/api-keys", "read -rs OPENAI_API_KEY", "export OPENAI_API_KEY", "-AsSecureString", "PowerShell",
-			"OPENAI_ADMIN_KEY", "--api-key overrides OPENAI_API_KEY", "--header Authorization overrides key options",
-			"OPENAI_CUSTOM_HEADERS", "OPENAI_PROJECT_ID", "OPENAI_ORG_ID", "Custom endpoints"} {
+		wants := []string{"https://platform.openai.com/", "/api-keys", "OPENAI_API_KEY", "openai models list"}
+		if slices.Contains(args, "--all") {
+			wants = append(wants, "read -rs OPENAI_API_KEY", "export OPENAI_API_KEY", "-AsSecureString", "PowerShell",
+				"OPENAI_ADMIN_KEY", "--api-key overrides OPENAI_API_KEY", "--header Authorization overrides key options",
+				"OPENAI_CUSTOM_HEADERS", "OPENAI_PROJECT_ID", "OPENAI_ORG_ID", "Custom endpoints")
+		} else {
+			wants = append(wants, "openai help --all setup")
+			if strings.Contains(got.stdout, "ALREADY HAVE A KEY?") || strings.Contains(got.stdout, "OPENAI_CUSTOM_HEADERS") {
+				t.Fatal("ordinary setup includes detailed troubleshooting")
+			}
+		}
+		for _, text := range wants {
 			if !strings.Contains(got.stdout, text) {
 				t.Errorf("setup guide lacks %q", text)
 			}

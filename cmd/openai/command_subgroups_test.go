@@ -125,11 +125,8 @@ func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 	if topic := runMainDispatch(t, "bash", "openai", "help", "@completion"); topic != direct {
 		t.Fatalf("completion setup topic differs from direct help: %+v", topic)
 	}
-	for _, hidden := range []string{"__complete", "@manpages"} {
-		got := runMainDispatch(t, "bash", "openai", "help", hidden)
-		if got.code == 0 || !strings.Contains(got.stderr, "Unknown help topic") {
-			t.Fatalf("internal command exposed as a help topic: %+v", got)
-		}
+	if got := runMainDispatch(t, "bash", "openai", "help", "__complete"); got.code == 0 || !strings.Contains(got.stderr, "Unknown help topic") {
+		t.Fatalf("completion protocol exposed as a help topic: %+v", got)
 	}
 	got := runMainDispatch(t, "zsh", mainCompletionArgs("zsh", "")...)
 	for record := range strings.SplitSeq(got.stdout, "\n") {

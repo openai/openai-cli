@@ -6,15 +6,19 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const adminSetupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up an admin API key
+const adminSetupHelp = `{{$guide := setupGuide .}}{{$run := $guide.Run}}Set up an admin API key
 
-Admin commands manage organization projects, members, and settings.
+{{if $guide.Full}}Admin commands manage organization projects, members, and settings.
 A project API key cannot run these commands.
 API key setup for model requests:
-   {{$run}} help setup
+{{if $run}}   {{$run}} help setup
+{{else}}   Use the same executable with help setup.
+{{end}}
 
 QUICK VERIFICATION
-   {{$run}} setup admin
+{{if $run}}   {{$run}} setup admin
+{{else}}   Use the same executable with setup admin.
+{{end}}
    Paste your key at the hidden prompt, then press Enter.
    The CLI verifies access automatically. The key stays in that process.
    Later commands still need authentication.
@@ -71,7 +75,9 @@ MANUAL SETUP FOR SCRIPTS OR REPEATED COMMANDS
 
 7. TEST THE KEY
    Run this command in the same terminal:
-      {{$run}} --format text admin organization projects list
+{{if $run}}      {{$run}} --format text admin organization projects list
+{{else}}      Run the same executable with --format text admin organization projects list.
+{{end}}
    This command lists projects. It does not change them.
    Success: project details with ID and Name, or "No results." when the list is empty.
 {{if eq $run "go run ./cmd/openai"}}   Run this example from the CLI repository directory.
@@ -94,6 +100,19 @@ MANUAL SETUP FOR SCRIPTS OR REPEATED COMMANDS
    This removes the key from this terminal. It does not revoke the key.
 
 This page only shows instructions. No key has been entered or checked yet.
+{{else}}1. CREATE AN ADMIN KEY
+   An organization owner can create the key here:
+   https://platform.openai.com/settings/organization/admin-keys
+
+2. VERIFY THE KEY
+{{if $run}}   {{$run}} setup admin
+{{else}}   Use the same executable with setup admin.
+{{end}}   Paste your key at the hidden prompt. The CLI verifies access and keeps the key only for this process.
+
+USE OPENAI_ADMIN_KEY IN SCRIPTS
+{{if $run}}   {{$run}} help --all setup admin
+{{else}}   Use the same executable with help --all setup admin.
+{{end}}{{end}}
 `
 
 // ConfigureSetupHelp adds the admin guide after clihelp creates help/setup.
@@ -108,7 +127,7 @@ func ConfigureSetupHelp(root *cli.Command) {
 	}
 	setup.Commands = append(setup.Commands, &cli.Command{
 		Name: "admin", Usage: "Create an admin key and test it safely", HideHelpCommand: true,
-		Metadata:           map[string]any{"help-guide": true},
+		Metadata:           map[string]any{"help-guide": true, "help-detailed-guide": true},
 		CustomHelpTemplate: adminSetupHelp,
 		Action: func(_ context.Context, command *cli.Command) error {
 			if command.Args().Present() {

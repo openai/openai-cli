@@ -35,14 +35,18 @@ func TestMainAdminSetupOfflineRoutes(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("admin setup depends on request configuration: %+v", got)
 			}
-			for _, want := range []string{
-				"https://platform.openai.com/settings/organization/admin-keys",
-				"organization owner", "OPENAI_ADMIN_KEY",
-				"read -rs OPENAI_ADMIN_KEY", "export OPENAI_ADMIN_KEY",
-				"-AsSecureString", "PowerShell",
-				"openai --format text admin organization projects list",
-				"unset OPENAI_ADMIN_KEY", "Remove-Item Env:OPENAI_ADMIN_KEY",
-			} {
+			full := slices.Contains(args, "--all")
+			wants := []string{"https://platform.openai.com/settings/organization/admin-keys", "organization owner", "OPENAI_ADMIN_KEY", "openai setup admin"}
+			if full {
+				wants = append(wants, "read -rs OPENAI_ADMIN_KEY", "export OPENAI_ADMIN_KEY", "-AsSecureString", "PowerShell",
+					"openai --format text admin organization projects list", "unset OPENAI_ADMIN_KEY", "Remove-Item Env:OPENAI_ADMIN_KEY")
+			} else {
+				wants = append(wants, "hidden prompt", "openai help --all setup admin")
+				if strings.Contains(got.stdout, "MANUAL SETUP FOR SCRIPTS") {
+					t.Error("ordinary help included the entire setup manual")
+				}
+			}
+			for _, want := range wants {
 				if !strings.Contains(got.stdout, want) {
 					t.Errorf("admin setup lacks %q", want)
 				}
@@ -95,7 +99,7 @@ func TestMainAdminSetupIsReadOnly(t *testing.T) {
 
 func TestMainAdminSetupPreservesOrdinarySetup(t *testing.T) {
 	got := runMainDispatch(t, "bash", "openai", "help", "setup")
-	if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "read -rs OPENAI_API_KEY") || !strings.Contains(got.stdout, "openai models list") {
+	if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "OPENAI_API_KEY") || !strings.Contains(got.stdout, "openai models list") {
 		t.Fatalf("ordinary API key setup changed: %+v", got)
 	}
 }
@@ -196,6 +200,16 @@ func TestMainAdminSetupCopiedVerificationCommand(t *testing.T) {
 				t.Fatalf("setup returned an unexpected capability diagnostic: %q", setup.stderr)
 			}
 			guide := runNativeShell(t, shell, directory, home, "not-a-request-url", guideCommand)
+			var manual string
+			for line := range strings.SplitSeq(guide.stdout, "\n") {
+				if line = strings.TrimSpace(line); strings.HasSuffix(line, " help --all setup admin") {
+					manual = line
+				}
+			}
+			if guide.code != 0 || guide.stderr != "" || manual != invocation+" help --all setup admin" {
+				t.Fatalf("guide lacks the exact full-reference command: %+v", guide)
+			}
+			guide = runNativeShell(t, shell, directory, home, "not-a-request-url", manual)
 			var command string
 			for line := range strings.SplitSeq(guide.stdout, "\n") {
 				line = strings.TrimSpace(line)

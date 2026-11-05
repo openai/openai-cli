@@ -147,8 +147,9 @@ func TestMainAudioVoicePreflight(t *testing.T) {
 						require.Zero(t, help.code, help.stderr)
 						require.Empty(t, help.stderr)
 						require.True(t, strings.HasPrefix(help.stdout, "openai "+strings.Join(route, " ")+" "), help.stdout)
-						for _, text := range []string{"\nFLAGS", "--name", "--type", "--consent", "--audio-sample"} {
-							require.Contains(t, help.stdout, text)
+						overview := strings.Join(strings.Fields(help.stdout), " ")
+						for _, text := range []string{"--type audio_sample (the default), supply --name, --audio-sample, and --consent", "--type prompt, supply --name and --prompt", `audio voices create --type prompt --name Calm --prompt "Warm and clear."`} {
+							require.Contains(t, overview, text)
 						}
 						require.Zero(t, requests.Load())
 					}
@@ -171,7 +172,7 @@ func TestMainAudioVoiceMergedInputs(t *testing.T) {
 				values      map[string][]string
 				sample      bool
 			}{
-				{name: "prompt flags", flags: []string{"--type", "prompt", "--name", "Synthetic", "--prompt", "Synthetic narrator"}, values: map[string][]string{"type": {"prompt"}, "name": {"Synthetic"}, "prompt": {"Synthetic narrator"}}},
+				{name: "documented prompt example", flags: []string{"--type", "prompt", "--name", "Calm", "--prompt", "Warm and clear."}, values: map[string][]string{"type": {"prompt"}, "name": {"Calm"}, "prompt": {"Warm and clear."}}},
 				{name: "ready JSON", input: `{"type":"prompt","name":"Synthetic","prompt":"Synthetic narrator","extra":"retained"}`, values: map[string][]string{"type": {"prompt"}, "name": {"Synthetic"}, "prompt": {"Synthetic narrator"}, "extra": {"retained"}}},
 				{name: "ready YAML", input: "name: Synthetic\ntype: audio_sample\nconsent: cons_synthetic\nextra: retained\n", flags: []string{"--audio-sample", sample}, values: map[string][]string{"type": {"audio_sample"}, "name": {"Synthetic"}, "consent": {"cons_synthetic"}, "extra": {"retained"}}, sample: true},
 				{name: "explicit prompt overrides sample", input: `{"type":"audio_sample","name":"Piped","extra":"retained"}`, flags: []string{"--type", "prompt", "--name", "Synthetic", "--prompt", "Synthetic narrator"}, values: map[string][]string{"type": {"prompt"}, "name": {"Synthetic"}, "prompt": {"Synthetic narrator"}, "extra": {"retained"}}},

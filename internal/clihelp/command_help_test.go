@@ -16,6 +16,56 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+func TestEveryActionUsesTheSameOverview(t *testing.T) {
+	const extra = "Expressions may include quoted filter operands."
+	render := func(name string, flags []cli.Flag, args ...string) string {
+		t.Helper()
+		var output bytes.Buffer
+		action := &cli.Command{Name: name, Usage: "Inspect a fixture.", Flags: flags}
+		root := &cli.Command{Name: "openai", Commands: []*cli.Command{action}, Writer: &output}
+		argv, _, err := Configure(root, append([]string{"openai"}, args...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Run(t.Context(), argv); err != nil {
+			t.Fatal(err)
+		}
+		return output.String()
+	}
+	flags := []cli.Flag{&cli.StringFlag{Name: "filter", Aliases: []string{"f"}, Usage: "Filter the results. " + extra}}
+	short := render("inspect", flags, "inspect", "--help")
+	full := render("inspect", flags, "help", "--all", "inspect")
+	for _, want := range []string{"--filter, -f", "Filter the results.", "openai help --all inspect"} {
+		if !strings.Contains(short, want) {
+			t.Errorf("short action help lost %q: %s", want, short)
+		}
+	}
+	if strings.Contains(short, extra) || !strings.Contains(full, extra) {
+		t.Fatal("detailed flag explanation belongs in the full reference")
+	}
+	plain := render("status", nil, "status", "--help")
+	if strings.TrimSpace(plain) != "openai status\n  Inspect a fixture." {
+		t.Fatalf("empty sections or redundant reference on action without options: %q", plain)
+	}
+}
+
+func TestCommonFlagRowsExplainUndocumentedRequestFields(t *testing.T) {
+	command := &cli.Command{Name: "create", Flags: []cli.Flag{
+		&requestflag.Flag[string]{Name: "name", BodyPath: "display_name"},
+		&requestflag.Flag[int64]{Name: "limit", QueryPath: "limit"},
+		&requestflag.Flag[string]{Name: "group", HeaderPath: "X-Group"},
+	}}
+	rows, complete := commonFlagRows(command, "create", "", 79)
+	if !complete {
+		t.Fatal("all three flags fit on the overview")
+	}
+	for _, want := range []string{"Sets the display_name request body field.", "Sets the limit query parameter.", "Sets the X-Group request header."} {
+		if !strings.Contains(rows, want) {
+			t.Errorf("overview omitted declared field binding %q: %s", want, rows)
+		}
+	}
+}
+
 func TestCompleteHelpPreservesCommandAndFlagDefinitions(t *testing.T) {
 	model := &requestflag.Flag[string]{Name: "model", Aliases: []string{"m"}, Required: true, BodyPath: "model", Usage: "Choose the model. Keep this complete constraint."}
 	quality := &requestflag.Flag[string]{Name: "quality", Default: "auto", BodyPath: "quality", Usage: "Choose quality."}
