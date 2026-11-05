@@ -108,7 +108,7 @@ func TestRootHelpKeepsOneIntroductionAndFooter(t *testing.T) {
 	if strings.Count(got, "openai help setup") != 1 || strings.Count(got, "Command help:") != 1 {
 		t.Fatal("root help repeats setup or command guidance")
 	}
-	if !strings.Contains(got, "--format=FORMAT\n      Choose output.") {
+	if !strings.Contains(strings.Join(strings.Fields(got), " "), "--format=FORMAT Choose output.") {
 		t.Fatal("flag definitions lost their full description")
 	}
 	if strings.Index(got, "ACTIONS\n") > strings.Index(got, "GLOBAL FLAGS\n") {

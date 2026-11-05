@@ -396,7 +396,7 @@ func TestMainDebugCaptureStreamLimitsKeepOwnership(t *testing.T) {
 }
 
 func TestMainDebugCapturePublicHelp(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"responses", "create", "--help"}} {
+	for _, args := range [][]string{{"--help"}, {"help", "--all", "responses", "create"}} {
 		got := runMainDispatch(t, "bash", append([]string{"openai"}, args...)...)
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("debug help failed: %+v", got)

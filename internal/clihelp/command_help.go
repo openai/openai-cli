@@ -18,8 +18,8 @@ type Content struct {
 	InputNote         string
 	Description       string
 	Examples          []Example
-	BashExamples      bool // Examples explicitly labeled for Bash or zsh keep their authored shell syntax.
-	GlobalOptionsNote string
+	BashExamples      bool   // Examples explicitly labeled for Bash or zsh keep their authored shell syntax.
+	GlobalOptionsNote string // Local commands describe their supported output options instead of listing API flags.
 	Notes             string
 }
 
@@ -29,6 +29,21 @@ type Example struct {
 }
 
 const commandHelpTemplate = `{{call (index .Metadata "complete-help")}}`
+
+// A long flag reference can bury the command's examples. Keep every local flag
+// on the first page and expand its documentation on explicit request.
+func hasCompactHelp(command *cli.Command) bool {
+	if command == command.Root() || command.Name == "@completion" || command.CustomHelpTemplate != commandHelpTemplate {
+		return false
+	}
+	count := 0
+	for _, flag := range command.VisibleFlags() {
+		if names := flag.Names(); len(names) > 0 && names[0] != "help" {
+			count++
+		}
+	}
+	return count >= 10
+}
 
 // Configure callbacks now, but enumerate flags only when the framework renders help.
 // Parent links, inherited flags, and automatic help flags do not exist here yet.
@@ -59,6 +74,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	if path == "@completion" {
 		return completionHelp(command, invocation, width, navigationWidth)
 	}
+	compact := hasCompactHelp(command) && !fullReferenceRequested(command)
 	var out strings.Builder
 	style := commandHelpStyle(command)
 	heading := func(text string) string { return style.render(style.section, text) }
@@ -111,24 +127,33 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 		out.WriteByte('\n')
 		out.WriteString(wrapDescription(note, "  ", width))
 	}
+	var pipeExample string
 	if request.RequestFileFlag(command) != nil {
-		out.WriteByte('\n')
-		out.WriteString(wrapDescription("Read JSON or YAML from a pipe with --request-file -. Example for Bash, zsh, Fish, or PowerShell:", "  ", width))
+		pipeNote := "Read JSON or YAML from a pipe with --request-file -."
 		run := NativeInvocation(command.Root(), invocation)
 		if example := requestPipeExample(run, path); example != "" {
-			fmt.Fprintf(&out, "    $ %s\n", commandsuggest.Record(command, example))
+			pipeExample = wrapDescription(pipeNote, "  ", width) + "    $ " + commandsuggest.Record(command, example) + "\n"
+			if !compact {
+				out.WriteByte('\n')
+				out.WriteString(pipeExample)
+				pipeExample = ""
+			}
+		} else {
+			out.WriteByte('\n')
+			out.WriteString(wrapDescription(pipeNote, "  ", width))
 		}
 	}
 	description := content.Description
 	if strings.Join(strings.Fields(plainUsage), " ") != strings.Join(strings.Fields(summary), " ") {
 		description = joinHelpDescriptions(usage, description)
 	}
-	if description == "" {
-		description = usage
+	description = descriptionAfterSummary(renderTerminalProse(description, !compact), summary)
+	var descriptionSection string
+	if description != "" {
+		descriptionSection = "\n" + heading("DESCRIPTION") + "\n" + wrapPlainDescription(description, "  ", width)
 	}
-	if description != "" && (path != "" || description != usage) {
-		out.WriteString("\n" + heading("DESCRIPTION") + "\n")
-		out.WriteString(wrapDescription(description, "  ", width))
+	if !compact {
+		out.WriteString(descriptionSection)
 	}
 	if path == "" {
 		content.Examples = []Example{{"Set up your API key:", "help setup"}, {"List available models:", "models list"}}
@@ -139,7 +164,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 			content.Examples = append(content.Examples, Example{"Pipe text, files, and API requests:", "help piping"})
 		}
 	}
-	if len(content.Examples) > 0 {
+	if len(content.Examples) > 0 || pipeExample != "" {
 		run := ExampleInvocation(command, invocation, NativeInvocation(command.Root(), invocation))
 		var names []string
 		for _, child := range VisibleCommands(command) {
@@ -172,6 +197,15 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 		if !supplied && (path == "files create" || path == "files upload") {
 			out.WriteString(wrapDescription("example.txt is the path to your existing file. Replace it with your file's path.", "  ", width))
 		}
+		if pipeExample != "" {
+			if len(content.Examples) > 0 {
+				out.WriteByte('\n')
+			}
+			out.WriteString(pipeExample)
+		}
+	}
+	if compact {
+		out.WriteString(descriptionSection)
 	}
 	if len(VisibleCommands(command)) > 0 {
 		out.WriteByte('\n')
@@ -183,19 +217,40 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 			title = "GLOBAL FLAGS"
 		}
 		out.WriteString("\n" + heading(title) + "\n")
-		out.WriteString(fullFlagGroups(command, flags, width))
+		if compact {
+			out.WriteString(compactFlagGroups(command, flags, width))
+		} else {
+			out.WriteString(fullFlagGroups(command, flags, width))
+		}
 	}
-	if flags := command.VisiblePersistentFlags(); len(flags) > 0 {
+	if compact {
+		out.WriteByte('\n')
+		if reference := fullReferenceCommand(command, invocation, path); reference != "" {
+			out.WriteString(wrapPlainDescription("Full flag descriptions:", "  ", width))
+			fmt.Fprintf(&out, "    %s\n", commandsuggest.Record(command, reference))
+		} else {
+			out.WriteString(wrapPlainDescription("For full flag descriptions, use the same executable with help --all "+path+".", "  ", width))
+		}
+	}
+	if flags := command.VisiblePersistentFlags(); len(flags) > 0 && (!compact || content.GlobalOptionsNote != "") {
 		out.WriteString("\n" + heading("GLOBAL FLAGS") + "\n")
-		out.WriteString(globalFlagIndex(flags, width))
+		if content.GlobalOptionsNote == "" || fullReferenceRequested(command) {
+			out.WriteString(globalFlagIndex(flags, width))
+			if content.GlobalOptionsNote != "" {
+				out.WriteByte('\n')
+			}
+		}
 		if content.GlobalOptionsNote != "" {
-			out.WriteByte('\n')
 			out.WriteString(wrapDescription(content.GlobalOptionsNote, "  ", width))
 		}
 		fmt.Fprintf(&out, "\n  Run $ %s for details.\n", commandsuggest.Record(command, invocation+" --help"))
 	}
-	out.WriteString("\n" + heading("NOTES") + "\n")
-	if len(VisibleCommands(command)) > 0 {
+	hasChildren := len(VisibleCommands(command)) > 0
+	showKeySetup := path != "" && !compact && content.GlobalOptionsNote == "" && content.Notes == ""
+	if hasChildren || path == "" || showKeySetup || content.Notes != "" {
+		out.WriteString("\n" + heading("NOTES") + "\n")
+	}
+	if hasChildren {
 		if ansi.StringWidth("  Command help: "+name+" COMMAND --help") <= width {
 			fmt.Fprintf(&out, "  Command help: %s COMMAND --help\n", name)
 		} else {
@@ -206,7 +261,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 		out.WriteString(style.render(style.note, wrapDescription(content.Notes, "  ", width)))
 	} else if path == "" {
 		out.WriteString(style.render(style.note, wrapDescription("Help needs no API key or internet.", "  ", width)))
-	} else {
+	} else if showKeySetup {
 		fmt.Fprintf(&out, "  Key setup: %s\n", commandsuggest.Record(command, invocation+" help setup"))
 	}
 	output := command.Root().Writer
@@ -285,6 +340,22 @@ func joinHelpDescriptions(descriptions ...string) string {
 		}
 	}
 	return strings.Join(paragraphs, "\n\n")
+}
+
+// Remove the sentence already shown in NAME. Keep references and any details
+// attached to that sentence when the complete text differs from the summary.
+func descriptionAfterSummary(description, summary string) string {
+	if summary == "" {
+		return description
+	}
+	first, rest, _ := strings.Cut(description, "\n")
+	if strings.TrimSuffix(first, ".") == strings.TrimSuffix(summary, ".") {
+		return strings.TrimLeft(rest, "\n")
+	}
+	if !strings.HasSuffix(summary, ".") && !strings.HasSuffix(summary, "?") && !strings.HasSuffix(summary, "!") {
+		summary += "."
+	}
+	return strings.TrimPrefix(description, summary+" ")
 }
 
 func globalFlagIndex(flags []cli.Flag, width int) string {

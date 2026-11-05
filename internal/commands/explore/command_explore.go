@@ -43,7 +43,7 @@ func Register(root *cli.Command) {
 		Metadata:    map[string]any{localcommands.LocalUtilityMetadata: true, "help-command-section": "Local tools"},
 		Usage:       "Search local CLI commands and examples without running them.",
 		ArgsUsage:   "[SEARCH_TERMS...]",
-		Description: "Pass search terms to print matching commands and examples, ranked by relevance. Search works offline and in pipes. Use auto or text formats for search output and errors.\n\nWithout search terms, browse commands alphabetically. Type to search. Arrow keys choose a command. Enter selects it. Escape cancels.\nWith shell integration, zsh and fish put the selection at your prompt. In Bash 4.3+, press Ctrl+X, then Tab to insert it. If you installed a standalone binary, press F2 when offered to set up insertion.",
+		Description: "Pass search terms to print matching commands and examples, ranked by relevance. Search works offline and in pipes.\n\nWithout search terms, browse commands alphabetically. Type to search. Arrow keys choose a command. Enter selects it. Escape cancels.\nWith shell integration, zsh and fish put the selection at your prompt. In Bash 4.3+, press Ctrl+X, then Tab to insert it. If you installed a standalone binary, press F2 when offered to set up insertion.",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "suggestions", Hidden: true},
 			&cli.BoolFlag{Name: "shell-integration", Hidden: true},
@@ -52,7 +52,8 @@ func Register(root *cli.Command) {
 		Action: commandExplore,
 	}
 	command.Metadata["help-content"] = clihelp.Content{
-		Description: command.Description,
+		Description:       command.Description,
+		GlobalOptionsNote: "Search supports auto or text for --format and --format-error.",
 		Examples: []clihelp.Example{
 			{Description: "Open interactive command search:", Command: "explore"},
 			{Description: "Find a command by describing the task:", Command: `explore "count tokens offline"`},

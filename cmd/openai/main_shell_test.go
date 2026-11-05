@@ -111,7 +111,7 @@ func TestMainNativeShell(t *testing.T) {
 				for _, command := range []string{"", "images generate "} {
 					t.Run(command+flag, func(t *testing.T) {
 						got := runNativeShell(t, shell, work, home, "not-a-url", shell.binary+" "+command+flag)
-						heading := "GLOBAL FLAGS"
+						heading := "FLAGS"
 						if command == "" {
 							heading = "GLOBAL FLAGS"
 						}
@@ -150,20 +150,20 @@ func TestMainNativeShell(t *testing.T) {
 					}
 				}
 				t.Run(name, func(t *testing.T) {
-					short := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" images generate --help")
+					full := followNativeImageHelp(t, shell, directory, home, invocation)
 					for _, link := range []struct{ label, content string }{
 						{"Key setup: ", "OPENAI_API_KEY"},
 						{"Run $ ", "--api-key=KEY"},
 					} {
 						var command string
-						for line := range strings.SplitSeq(short.stdout, "\n") {
+						for line := range strings.SplitSeq(full.stdout, "\n") {
 							if after, ok := strings.CutPrefix(strings.TrimSpace(line), link.label); ok {
 								command = strings.TrimSuffix(after, " for details.")
 								break
 							}
 						}
-						if short.code != 0 || command == "" {
-							t.Fatalf("help lacks a copyable %s command: %+v", link.label, short)
+						if command == "" {
+							t.Fatalf("help lacks a copyable %s command: %+v", link.label, full)
 						}
 						got := runNativeShell(t, shell, directory, home, "not-a-url", command)
 						if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, link.content) {
@@ -174,7 +174,7 @@ func TestMainNativeShell(t *testing.T) {
 				for _, full := range []bool{false, true} {
 					exampleName, helpArgs, prompt := "copy flag-help image example", " images generate --help", "A tiny cat"
 					if full {
-						exampleName, helpArgs, prompt = "copy command-help image example", " help images generate", "A tiny cat"
+						exampleName, helpArgs, prompt = "copy full-help image example", " help --all images generate", "A tiny cat"
 					}
 					if elsewhere {
 						exampleName += " from another directory"
@@ -287,7 +287,7 @@ func TestMainFishImageHelpExamples(t *testing.T) {
 		for _, commandHelp := range []bool{false, true} {
 			name, helpArgs := "copy flag-help image example", " images generate --help"
 			if commandHelp {
-				name, helpArgs = "copy command-help image example", " help images generate"
+				name, helpArgs = "copy full-help image example", " help --all images generate"
 			}
 			if elsewhere {
 				name += " from another directory"
@@ -346,6 +346,21 @@ func testNativeShellDifferentExecutable(t *testing.T, shell nativeShell, home, i
 	}
 }
 
+func followNativeImageHelp(t *testing.T, shell nativeShell, directory, home, invocation string) mainDispatchResult {
+	t.Helper()
+	short := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" images generate --help")
+	_, reference, found := strings.Cut(strings.ReplaceAll(short.stdout, "\r\n", "\n"), "Full flag descriptions:\n")
+	command, _, _ := strings.Cut(strings.TrimSpace(reference), "\n")
+	if short.code != 0 || short.stderr != "" || !found || !strings.HasSuffix(command, " help --all images generate") {
+		t.Fatalf("image help lacks its full reference: %+v", short)
+	}
+	full := runNativeShell(t, shell, directory, home, "not-a-url", command)
+	if full.code != 0 || full.stderr != "" || !strings.Contains(full.stdout, "GLOBAL FLAGS") {
+		t.Fatalf("printed command %q failed to open the full reference: %+v", command, full)
+	}
+	return full
+}
+
 func testNativeShellInstalledInvocation(t *testing.T, shell nativeShell, work, home, invocation string) {
 	t.Helper()
 	t.Setenv("PATH", work+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -356,7 +371,7 @@ func testNativeShellInstalledInvocation(t *testing.T, shell nativeShell, work, h
 			t.Fatalf("installed %s includes a path or fails: %+v", topic, got)
 		}
 	}
-	got := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" images generate --help")
+	got := followNativeImageHelp(t, shell, directory, home, invocation)
 	for line := range strings.SplitSeq(got.stdout, "\n") {
 		if command, found := strings.CutPrefix(strings.TrimSpace(line), "Key setup: "); found {
 			if command != "openai help setup" {
@@ -382,16 +397,16 @@ func testNativeShellImplicitLookup(t *testing.T, shell nativeShell, work, home, 
 	elsewhere := t.TempDir()
 	for _, searchPath := range []string{elsewhere, ".", string(os.PathListSeparator) + elsewhere} {
 		t.Setenv("PATH", searchPath)
-		short := runNativeShell(t, shell, work, home, "not-a-url", invocation+" images generate --help")
+		full := followNativeImageHelp(t, shell, work, home, invocation)
 		var command string
-		for line := range strings.SplitSeq(short.stdout, "\n") {
+		for line := range strings.SplitSeq(full.stdout, "\n") {
 			if after, found := strings.CutPrefix(strings.TrimSpace(line), "Key setup: "); found {
 				command = after
 				break
 			}
 		}
-		if short.code != 0 || short.stderr != "" || command != shell.binary+" help setup" {
-			t.Fatalf("local help with PATH=%q must retain its relative path: %+v", searchPath, short)
+		if command != shell.binary+" help setup" {
+			t.Fatalf("local help with PATH=%q must retain its relative path: %+v", searchPath, full)
 		}
 		copied := runNativeShell(t, shell, work, home, "not-a-url", command)
 		if copied.code != 0 || copied.stderr != "" || !strings.Contains(copied.stdout, "OPENAI_API_KEY") {

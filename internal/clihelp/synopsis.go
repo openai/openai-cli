@@ -51,6 +51,7 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 	if command.ArgsUsage != "" {
 		arguments = append(arguments, style.render(style.value, command.ArgsUsage))
 	}
+	var localFlags, requiredFlags []cli.Flag
 	for _, flag := range flags {
 		if slices.Contains(positionals, flag) || len(flag.Names()) == 0 {
 			continue
@@ -60,6 +61,19 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 			// FLAGS still documents every visible nested field separately.
 			continue
 		}
+		localFlags = append(localFlags, flag)
+		if isRequired(flag) {
+			requiredFlags = append(requiredFlags, flag)
+		}
+	}
+	// List up to four optional flags inline. Longer lists belong in FLAGS
+	// so the synopsis keeps required inputs visible at every terminal width.
+	const maxOptionalFlags = 4
+	compact := len(localFlags)-len(requiredFlags) > maxOptionalFlags
+	if compact {
+		localFlags = requiredFlags
+	}
+	for _, flag := range localFlags {
 		argument := synopsisFlag(command, flag)
 		required, _ := flag.(cli.RequiredFlag)
 		if required == nil || !required.IsRequired() {
@@ -70,7 +84,9 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 		}
 		arguments = append(arguments, argument)
 	}
-	if len(command.VisiblePersistentFlags()) > 0 {
+	if compact {
+		arguments = append(arguments, "["+style.render(style.value, "FLAGS")+"]")
+	} else if len(command.VisiblePersistentFlags()) > 0 {
 		arguments = append(arguments, "["+style.render(style.value, "GLOBAL FLAG ...")+"]")
 	}
 	return style.synopsis(style.render(style.section, name), arguments, width)

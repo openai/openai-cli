@@ -1,6 +1,7 @@
 package clihelp
 
 import (
+	"os"
 	"strings"
 	"unicode"
 
@@ -28,11 +29,24 @@ func formatGuide(command *cli.Command, text string) string {
 		plain := ansi.Strip(trimmed)
 		if spaces >= 6 || strings.HasPrefix(plain, invocation+" ") {
 			out.WriteString(indent + trimmed + "\n")
-		} else if spaces == 0 && (out.Len() == 0 || strings.ToUpper(plain) == plain && strings.IndexFunc(plain, unicode.IsLetter) >= 0) {
-			out.WriteString(style.render(style.section, wrapPlainDescription(trimmed, indent, width)))
-		} else {
-			out.WriteString(wrapPlainDescription(trimmed, indent, width))
+			continue
 		}
+		wrapped := strings.TrimSuffix(wrapPlainDescription(trimmed, indent, width), "\n")
+		switch {
+		case spaces == 0 && (out.Len() == 0 || strings.ToUpper(plain) == plain && strings.IndexFunc(plain, unicode.IsLetter) >= 0):
+			wrapped = style.render(style.section, wrapped)
+		case strings.HasSuffix(plain, ":"):
+			wrapped = style.render(style.note, wrapped)
+		}
+		out.WriteString(wrapped)
+		out.WriteByte('\n')
+	}
+	output := command.Root().Writer
+	if output == nil {
+		output = os.Stdout
+	}
+	if out.Len() > 0 && welcomeTerminal(output) && !strings.HasSuffix(out.String(), "\n\n") {
+		out.WriteByte('\n')
 	}
 	return out.String()
 }

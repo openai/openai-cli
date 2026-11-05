@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/updatenotice"
 	"github.com/urfave/cli/v3"
 )
@@ -13,11 +14,14 @@ import (
 // RegisterArchiveInstall keeps the portable release usable until its owner
 // explicitly requests a per-user installation.
 func RegisterArchiveInstall(root *cli.Command) {
+	const description = "Print the managed executable path. Setup reuses an existing managed installation."
 	root.Commands = append(root.Commands, &cli.Command{
 		Name:        "install",
 		Usage:       "Install this Windows ZIP for your user and enable automatic updates",
-		Description: "Print the managed executable path. Setup reuses an existing managed installation.",
-		Metadata:    map[string]any{LocalUtilityMetadata: true, "help-command-section": "Local tools"},
+		Description: description,
+		Metadata: map[string]any{LocalUtilityMetadata: true, "help-command-section": "Local tools", "help-content": clihelp.Content{
+			Description: description, GlobalOptionsNote: "Use --format-error json for machine-readable installation errors.",
+		}},
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "user", Usage: "Set up the current user in an ordinary terminal", Required: true, OnlyOnce: true},
 		},

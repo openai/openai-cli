@@ -3,10 +3,8 @@ package clihelp
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/commandsuggest"
 	"github.com/openai/openai-cli/internal/terminal"
@@ -18,33 +16,11 @@ const completionReferenceArguments = "Use the same executable with the arguments
 // CompletionSetupGuidance preserves the launching executable when suggesting setup help.
 func CompletionSetupGuidance(ctx context.Context, root *cli.Command) string {
 	shell := terminal.ParentShell(ctx)
-	native, _ := completionInvocations(root, DisplayInvocation(root), shell)
+	native, _ := helpInvocations(root, DisplayInvocation(root), shell)
 	if native == "" {
 		return completionReferenceArguments
 	}
 	return "Run " + native + " help --all " + completionTopic(shell) + " for setup options."
-}
-
-func unsafeCompletionPath(name string) bool {
-	_, control := terminal.QuoteProperties(name)
-	return control || !utf8.ValidString(name)
-}
-
-func completionInvocations(root *cli.Command, invocation, shell string) (native, bash string) {
-	if root.Metadata["help-control-launcher"] != true {
-		return NativeInvocation(root, invocation), invocation
-	}
-	// A display escape cannot identify a filename. Quote the actual executable for this shell.
-	quote := terminal.ShellQuoter(shell)
-	name, err := os.Executable()
-	if quote == nil || err != nil || !utf8.ValidString(name) {
-		return "", ""
-	}
-	native = quote(name)
-	if shell == "pwsh" {
-		native = "& " + native
-	}
-	return native, terminal.ShellQuote(name)
 }
 
 func completionTopic(shell string) string {
@@ -61,14 +37,10 @@ func completionHelp(command *cli.Command, invocation string, width, navigationWi
 	heading := func(title string) { fmt.Fprintln(&out, style.render(style.section, title)) }
 	note := func(text string) { out.WriteString(style.render(style.note, wrapDescription(text, "  ", width))) }
 	shell := terminal.ParentShell(context.Background())
-	native, bash := completionInvocations(command.Root(), invocation, shell)
+	native, bash := helpInvocations(command.Root(), invocation, shell)
 	topic := completionTopic(shell)
 	heading("Shell completion")
-	all, _ := command.Root().Metadata["help-all"].(bool)
-	if help := command.Root().Command("help"); help != nil && help.IsSet("all") {
-		all = help.Bool("all")
-	}
-	if all {
+	if fullReferenceRequested(command) {
 		if native == "" {
 			note("Pass @completion and a shell name to this executable to print its completion script.")
 		} else {

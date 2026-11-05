@@ -85,9 +85,9 @@ func TestMainHelpCompleteImageExamples(t *testing.T) {
 func TestMainHelpImagePagesAreComplete(t *testing.T) {
 	for _, operation := range []string{"generate", "edit", "create-variation", "preview"} {
 		t.Run(operation, func(t *testing.T) {
-			got := runMainDispatch(t, "bash", "openai", "images", operation, "--help")
+			got := runMainDispatch(t, "bash", "openai", "help", "--all", "images", operation)
 			if got.code != 0 || got.stderr != "" {
-				t.Fatalf("short help failed: %+v", got)
+				t.Fatalf("full help failed: %+v", got)
 			}
 			for _, heading := range []string{"SYNOPSIS", "EXAMPLES", "FLAGS", "GLOBAL FLAGS"} {
 				if !strings.Contains(got.stdout, heading) {

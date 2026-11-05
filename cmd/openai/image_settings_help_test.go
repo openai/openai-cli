@@ -38,10 +38,14 @@ func TestMainImageSettingsHelpScope(t *testing.T) {
 				}
 			}
 
-			full := runMainDispatchWithEnv(t, "bash", env, "openai", "help", "images", operation)
+			full := runMainDispatchWithEnv(t, "bash", env, "openai", "help", "--all", "images", operation)
 			require.Zero(t, full.code, full.stderr)
 			require.Empty(t, full.stderr)
-			require.Equal(t, short.stdout, full.stdout)
+			if operation == "create-variation" {
+				require.Equal(t, "Use openai help images create-variation; --all is no longer needed.\n"+short.stdout, full.stdout)
+			} else {
+				require.Contains(t, short.stdout, "openai help --all images "+operation)
+			}
 			_, description, found := strings.Cut(full.stdout, "\nDESCRIPTION\n")
 			require.True(t, found, "full help must include the command description")
 			description, _, found = strings.Cut(description, "\nEXAMPLES")
@@ -100,7 +104,7 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 				}
 				settings[strings.TrimPrefix(flag, "--")] = value
 			}
-			help := runMainDispatch(t, "bash", "openai", "help", "images", tc.helpTopic)
+			help := runMainDispatch(t, "bash", "openai", "help", "--all", "images", tc.helpTopic)
 			require.Zero(t, help.code, help.stderr)
 			require.Contains(t, help.stdout, example.String(), "the exact example must remain copyable")
 			home := t.TempDir()

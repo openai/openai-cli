@@ -151,7 +151,10 @@ func TestCommandNameKeepsLongUsageInDescription(t *testing.T) {
 	if !found {
 		t.Fatal("long usage has no DESCRIPTION")
 	}
-	for _, want := range []string{"Create a response. Preserve the complete API restriction.", "the guide (https://example.invalid/guide)", "Keep the authored caveat."} {
+	if strings.Contains(description, "Create a response.") {
+		t.Fatalf("DESCRIPTION repeats the command identity: %s", description)
+	}
+	for _, want := range []string{"Preserve the complete API restriction.", "the guide (https://example.invalid/guide)", "Keep the authored caveat."} {
 		if !strings.Contains(description, want) {
 			t.Errorf("DESCRIPTION lost %q: %s", want, description)
 		}
@@ -209,9 +212,7 @@ func TestInputNoteOverridesOnlySynopsisGuidance(t *testing.T) {
 
 func TestInheritedGlobalIndexKeepsEveryNameAndRootReference(t *testing.T) {
 	var out bytes.Buffer
-	leaf := &cli.Command{Name: "run", Flags: []cli.Flag{&cli.StringFlag{Name: "project", Usage: "Local project field."}},
-		Metadata: map[string]any{"help-content": Content{GlobalOptionsNote: "This command supports text output only."}},
-	}
+	leaf := &cli.Command{Name: "run", Flags: []cli.Flag{&cli.StringFlag{Name: "project", Usage: "Local project field."}}}
 	root := &cli.Command{Name: "openai", Writer: &out, Commands: []*cli.Command{leaf}, Flags: []cli.Flag{
 		&cli.StringFlag{Name: "root-option", Aliases: []string{"r"}, Usage: "Complete inherited explanation."},
 		&cli.StringFlag{Name: "project", Usage: "Root project explanation."},
@@ -237,7 +238,7 @@ func TestInheritedGlobalIndexKeepsEveryNameAndRootReference(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		rootReference = "Run $ & '/tmp/CLI build/openai' --help for details."
 	}
-	for _, want := range []string{"--root-option, -r", "--future-00", "--future-11", rootReference, "This command supports text output only."} {
+	for _, want := range []string{"--root-option, -r", "--future-00", "--future-11", rootReference} {
 		if !strings.Contains(index, want) {
 			t.Errorf("global index lost %q: %s", want, index)
 		}

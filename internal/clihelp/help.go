@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/commandsuggest"
 	"github.com/openai/openai-cli/internal/terminal"
@@ -26,8 +27,6 @@ const setupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up your
    https://platform.openai.com/settings/organization/api-keys
 
 2. ENTER IT IN YOUR SHELL
-   Choose the instructions for the shell you use.
-
    Bash or zsh (macOS / Linux)
      Run this line, paste your key (hidden), then press Enter:
        {{suggestFor . "read -rs OPENAI_API_KEY" "bash" "zsh"}}
@@ -77,7 +76,8 @@ ALREADY HAVE A KEY?
 
 This is a guide only. No key has been entered or checked by showing this page.
 
-Admin key setup: {{suggest . (printf "%s help setup admin" $run)}}
+Admin key setup:
+   {{suggest . (printf "%s help setup admin" $run)}}
 `
 
 // Configure keeps onboarding in CLI help, never in a shell startup file or
@@ -92,7 +92,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 		root.Metadata = map[string]any{}
 	}
 	invocation, needsQuote := resolveInvocation(root.Name, args)
-	root.Metadata["help-control-launcher"] = len(args) > 0 && (unsafeCompletionPath(args[0]) || invocation != args[0] && unsafeCompletionPath(invocation))
+	root.Metadata["help-control-launcher"] = len(args) > 0 && (unsafeHelpLauncher(args[0]) || invocation != args[0] && unsafeHelpLauncher(invocation))
 	delete(root.Metadata, "help-native-invocation")
 	if needsQuote {
 		name := invocation
@@ -108,7 +108,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 			Name: "help", Usage: "Get command help or see help piping for shell examples", HideHelpCommand: true,
 			Metadata:           map[string]any{"help-command-section": "Help", "help-command-rank": 100000, "help-topic-command": true},
 			CustomHelpTemplate: `{{call (index .Root.Metadata "complete-help")}}`,
-			Flags:              []cli.Flag{&cli.BoolFlag{Name: "all", Usage: "Use help without --all", HideDefault: true, Hidden: true}},
+			Flags:              []cli.Flag{&cli.BoolFlag{Name: "all", Usage: "Show the full command reference", HideDefault: true, Hidden: true}},
 			Action:             showHelpTopics,
 			Commands: []*cli.Command{{
 				Name: "setup", Usage: "Learn how to enter your API key", HideHelpCommand: true,
@@ -135,9 +135,8 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	if help := root.Command("help"); help != nil && help.Metadata["help-topic-command"] == true {
 		for _, declared := range help.Flags {
 			if flag, ok := declared.(*cli.BoolFlag); ok && flag.Name == "all" {
-				// urfave retains IsSet between runs. Reset only our migration
-				// flag so another Configure call cannot retain an old notice.
-				*flag = cli.BoolFlag{Name: "all", Usage: "Use help without --all", HideDefault: true, Hidden: true}
+				// urfave retains IsSet between runs. Reset this flag before choosing a help mode.
+				*flag = cli.BoolFlag{Name: "all", Usage: "Show the full command reference", HideDefault: true, Hidden: true}
 			}
 		}
 	}
@@ -424,6 +423,50 @@ func installSubcommandHelp() {
 	})
 }
 
+func unsafeHelpLauncher(name string) bool {
+	_, control := terminal.QuoteProperties(name)
+	return control || !utf8.ValidString(name)
+}
+
+func helpInvocations(root *cli.Command, invocation, shell string) (native, bash string) {
+	if root.Metadata["help-control-launcher"] != true {
+		return NativeInvocation(root, invocation), invocation
+	}
+	// A display escape cannot identify a filename. Quote the actual executable for this shell.
+	quote := terminal.ShellQuoter(shell)
+	name, err := os.Executable()
+	if quote == nil || err != nil || !utf8.ValidString(name) {
+		return "", ""
+	}
+	native = quote(name)
+	if shell == "pwsh" {
+		native = "& " + native
+	}
+	return native, terminal.ShellQuote(name)
+}
+
+func fullReferenceRequested(command *cli.Command) bool {
+	root := command.Root()
+	if help := root.Command("help"); help != nil && help.IsSet("all") {
+		return help.Bool("all")
+	}
+	all, _ := root.Metadata["help-all"].(bool)
+	return all
+}
+
+// Use the same shell-specific executable spelling as completion help.
+func fullReferenceCommand(command *cli.Command, invocation, path string) string {
+	shell := terminal.ParentShell(context.Background())
+	native, _ := helpInvocations(command.Root(), invocation, shell)
+	if native == "" || !ShellSafeCommandPath(command) {
+		return ""
+	}
+	if path == "@completion" {
+		path = completionTopic(shell)
+	}
+	return strings.TrimSpace(native + " help --all " + path)
+}
+
 func legacyHelpNotice(command *cli.Command) string {
 	root := command.Root()
 	invocation, configured := root.Metadata["help-invocation"].(string)
@@ -435,7 +478,8 @@ func legacyHelpNotice(command *cli.Command) string {
 	if help := root.Command("help"); help != nil {
 		legacy = legacy || help.IsSet("all")
 	}
-	if !legacy {
+	content, _ := command.Metadata["help-content"].(Content)
+	if !legacy || hasCompactHelp(command) || content.GlobalOptionsNote != "" {
 		return ""
 	}
 	var path []string

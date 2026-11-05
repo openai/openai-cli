@@ -251,3 +251,38 @@ func TestRepeatedHelpConfigurationClearsLegacyNotice(t *testing.T) {
 		}
 	}
 }
+
+func TestRepeatedHelpDoesNotRetainExpandedFlagDetails(t *testing.T) {
+	var out bytes.Buffer
+	root := completeHelpFixture(&out)
+	leaf := root.Command("images").Command("generate")
+	const detail = "Inspect a synthetic image option."
+	for _, name := range strings.Fields("alpha beta gamma delta epsilon theta eta iota kappa lambda") {
+		leaf.Flags = append(leaf.Flags, &cli.BoolFlag{Name: name, Usage: detail})
+	}
+	for _, test := range []struct {
+		args []string
+		full bool
+	}{
+		{[]string{"help", "--all", "images", "generate"}, true},
+		{[]string{"images", "generate", "--help"}, false},
+		{[]string{"--all=true", "--help", "images", "generate"}, true},
+		{[]string{"images", "help", "--all=false", "generate"}, false},
+		{[]string{"help", "--all=false", "--all", "images", "generate"}, true},
+		{[]string{"--all", "--all=false", "images", "generate", "-h"}, false},
+		{[]string{"images", "generate", "--prompt", "--all", "--help"}, false},
+	} {
+		out.Reset()
+		argv := append([]string{"openai"}, test.args...)
+		normalized, _, err := Configure(root, argv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Run(t.Context(), normalized); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out.String(), detail) != test.full || strings.Contains(out.String(), "no longer needed") {
+			t.Fatalf("wrong help mode for %q:\n%s", argv, out.String())
+		}
+	}
+}

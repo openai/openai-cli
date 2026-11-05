@@ -2,6 +2,7 @@ package clihelp
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -26,5 +27,26 @@ func TestGuideHelpWrapsProseAndPreservesShellLines(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(strings.Fields(got), " "), strings.Join(strings.Fields(prose), " ")) {
 		t.Fatal("guide lost instruction words")
+	}
+}
+
+func TestGuideHelpStylesLabelsAndSeparatesTerminalPrompt(t *testing.T) {
+	const guide = "Shell setup\n\nChoose a command:\n   openai help setup admin\n"
+	const plain = "Shell setup\n\nChoose a command:\n  openai help setup admin\n"
+	root := &cli.Command{Name: "openai", Writer: &bytes.Buffer{}}
+	if got := formatGuide(root, guide); got != plain {
+		t.Fatalf("piped guide = %q, want %q", got, plain)
+	}
+	if !welcomeTerminal(os.Stdout) {
+		t.Skip("terminal styles and prompt spacing require a PTY")
+	}
+	root.Writer = &welcomeTerminalBuffer{}
+	style := commandHelpStyle(root)
+	want := style.render(style.section, "Shell setup") + "\n\n" +
+		style.render(style.note, "Choose a command:") + "\n  openai help setup admin\n\n"
+	for _, source := range []string{guide, guide + "\n"} {
+		if got := formatGuide(root, source); got != want {
+			t.Fatalf("terminal guide = %q, want %q", got, want)
+		}
 	}
 }

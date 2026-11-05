@@ -5,9 +5,44 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
+
+func TestCompactFlagGroupsKeepRequiredInputAndOptionalAliases(t *testing.T) {
+	file := &requestflag.Flag[string]{Name: "file", Aliases: []string{"f"}, Required: true, BodyPath: "file",
+		FileInput: true, Usage: "Path to the input file. Only WAV and FLAC files are accepted."}
+	output := &cli.StringFlag{Name: "output-path", Aliases: []string{"o"}, Usage: "An optional output path.", TakesFile: true}
+	level := &cli.IntFlag{Name: "level", Usage: "Choose a level.", Value: 5}
+	quiet := &cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}}
+	flags := []cli.Flag{output, level, quiet, file}
+	command := &cli.Command{Name: "create", Flags: flags, Metadata: map[string]any{
+		"help-flag-groups": []FlagGroup{{Title: "Output settings", Names: []string{"o", "level"}}},
+	}}
+	for _, width := range []int{24, 40, 80} {
+		got := compactFlagGroups(command, flags, width)
+		plain := strings.Join(strings.Fields(got), " ")
+		for _, want := range []string{"Required inputs", "--file=PATH", "-f=PATH", "Path to the input file.",
+			"Output settings", "--output-path=PATH", "-o=PATH", "--level=INTEGER", "Other options", "--quiet", "-q"} {
+			if !strings.Contains(plain, want) {
+				t.Errorf("width %d: missing %q in %s", width, want, got)
+			}
+		}
+		for _, line := range strings.Split(got, "\n") {
+			if ansi.StringWidth(line) > width {
+				t.Errorf("width %d: row too wide: %q", width, line)
+			}
+		}
+		if strings.Index(got, "Required inputs") > strings.Index(got, "Output settings") ||
+			strings.Contains(got, "WAV and FLAC") || strings.Contains(got, "An optional output path.") || strings.Contains(got, "Default:") {
+			t.Errorf("width %d: unexpected compact flag details: %s", width, got)
+		}
+	}
+	if full := fullFlagGroups(command, flags, 80); !strings.Contains(full, "Only WAV and FLAC") || !strings.Contains(full, "Default: 5") {
+		t.Errorf("full flag reference lost details: %s", full)
+	}
+}
 
 func TestFlagAliasesWrapWithoutSplittingValues(t *testing.T) {
 	command := &cli.Command{Writer: &bytes.Buffer{}}
@@ -25,6 +60,15 @@ func TestFlagAliasesWrapWithoutSplittingValues(t *testing.T) {
 		if len(line) > 30 {
 			t.Fatalf("alias separator exceeds terminal width: %q", line)
 		}
+	}
+}
+
+func TestCompactIndexKeepsLongFlagAndCompoundValueIntact(t *testing.T) {
+	flag := &requestflag.Flag[map[string]string]{Name: "long-option-name", Aliases: []string{"m"}}
+	got := compactFlagGroups(&cli.Command{}, []cli.Flag{flag}, 20)
+	want := "  --long-option-name=TEXT=TEXT\n  -m=TEXT=TEXT\n"
+	if got != want {
+		t.Errorf("compact index split an option or its value: got %q, want %q", got, want)
 	}
 }
 
@@ -189,14 +233,37 @@ func TestFullHelpGroupingKeepsEachFlagAndItsDetails(t *testing.T) {
 	}
 }
 
-func TestFullHelpSeparatesFlagEntries(t *testing.T) {
+func TestFullHelpAlignsShortFlagEntries(t *testing.T) {
 	flags := []cli.Flag{
 		&cli.StringFlag{Name: "first", Usage: "First setting."},
 		&cli.StringFlag{Name: "second", Usage: "Second setting."},
 	}
 	got := fullFlagGroups(&cli.Command{}, flags, 80)
-	if !strings.Contains(got, "First setting.\n\n    --second=TEXT\n") {
-		t.Fatalf("flag entries lack a blank line: %q", got)
+	if got != "  --first=TEXT            First setting.\n  --second=TEXT           Second setting.\n" {
+		t.Fatalf("short flags must use navigation columns: %q", got)
+	}
+	if narrow := fullFlagGroups(&cli.Command{}, flags, 40); !strings.Contains(narrow, "First setting.\n\n    --second=TEXT\n") {
+		t.Fatalf("narrow flags must keep the stacked reference: %q", narrow)
+	}
+}
+
+func TestFullHelpStacksTheWholeFlagListWhenDetailsNeedSpace(t *testing.T) {
+	command := &cli.Command{}
+	for _, flag := range []cli.Flag{
+		&cli.StringFlag{Name: "path", Usage: "Read the guide at https://example.invalid/file."},
+		&cli.IntFlag{Name: "count", Value: 5},
+		&cli.StringFlag{Name: "mode", Sources: cli.EnvVars("OPENAI_TEST_MODE")},
+		&cli.StringFlag{Name: "details", Usage: "First paragraph.\n\nSecond paragraph."},
+		&cli.StringFlag{Name: "wide", Usage: strings.Repeat("界", 28)},
+	} {
+		flags := []cli.Flag{&cli.StringFlag{Name: "simple", Usage: "Short option."}, flag}
+		if err := flag.PreParse(); err != nil {
+			t.Fatal(err)
+		}
+		got := fullFlagGroups(command, flags, 80)
+		if want := flagList(command, flags, 80); got != want {
+			t.Errorf("%s: got %q, want the complete reference %q", flag.Names(), got, want)
+		}
 	}
 }
 

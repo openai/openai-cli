@@ -12,6 +12,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/openai/openai-cli/internal/audiomedia"
+	"github.com/openai/openai-cli/internal/clihelp"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -35,11 +36,20 @@ func RegisterLocal(root *cli.Command, options LocalOptions) {
 		{Name: "export", Usage: "Save original retained audio bytes to a file", ArgsUsage: "ID", Flags: []cli.Flag{&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: "Save original audio to PATH, or - for stdout", Required: true, TakesFile: true}}, Action: workflow.handleAudioExport},
 	} {
 		command.HideHelpCommand = true
-		command.Metadata = map[string]any{LocalMetadata: true}
 		command.Description = "Uses local audio history without API requests. The speech form retains audio, text, instructions, and settings privately."
-		if command.Name == "licenses" {
+		output := "Use --format json for structured output. Use --transform to select fields."
+		switch command.Name {
+		case "licenses":
 			command.Description = "Prints the embedded dependency notice without credentials, history access, or network requests."
+			output = "Use --transform licenses --raw-output to print the license text."
+		case "play":
+			output = "Use --format-error json for machine-readable playback errors."
+		case "export":
+			output = "Use --quiet to suppress the saved-file message."
 		}
+		command.Metadata = map[string]any{LocalMetadata: true, "help-content": clihelp.Content{
+			Description: command.Description, GlobalOptionsNote: output,
+		}}
 		command.Action = audioLocalAction(command.Action)
 		group.Commands = append(group.Commands, command)
 	}

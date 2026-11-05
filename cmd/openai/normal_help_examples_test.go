@@ -26,6 +26,17 @@ func TestMainNormalHelpOutputOptions(t *testing.T) {
 			wantOptions := []string{"GLOBAL FLAGS", "--format", "--transform", "--raw-output", "Run $ openai --help for details."}
 			if len(args) == 0 {
 				wantOptions = []string{"\nGLOBAL FLAGS\n", "--format=FORMAT", "--transform=PATH", "--raw-output"}
+			} else if args[0] == "responses" {
+				full := runMainDispatch(t, "bash", "openai", "help", "--all", "responses", "create")
+				if full.code != 0 || full.stderr != "" {
+					t.Fatalf("full help failed: %+v", full)
+				}
+				for _, option := range wantOptions {
+					if !strings.Contains(full.stdout, option) {
+						t.Errorf("full help lacks %q", option)
+					}
+				}
+				wantOptions = []string{"[FLAGS]", "--input=VALUE", "--model=MODEL", "openai help --all responses create"}
 			}
 			for _, want := range wantOptions {
 				if !strings.Contains(got.stdout, want) {

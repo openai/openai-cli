@@ -10,6 +10,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMainExploreHelpShowsLocalOptions(t *testing.T) {
+	got := runMainDispatch(t, "zsh", "openai", "explore", "--help")
+	if got.code != 0 || got.stderr != "" {
+		t.Fatalf("Explore help failed: %+v", got)
+	}
+	for _, want := range []string{"--format", "--format-error", "openai --help"} {
+		if !strings.Contains(got.stdout, want) {
+			t.Errorf("Explore help omitted %q", want)
+		}
+	}
+	for _, unrelated := range []string{"--api-key", "--mtls-client-key-file", "Key setup:", "\nNOTES\n"} {
+		if strings.Contains(got.stdout, unrelated) {
+			t.Errorf("Explore help included %q", unrelated)
+		}
+	}
+}
+
 func TestMainExploreRootHelpIntroducesOfflineSearch(t *testing.T) {
 	for _, args := range [][]string{{"openai"}, {"openai", "--help"}, {"openai", "help"}, {"openai", "help", "--all"}} {
 		t.Run(strings.Join(args, "/"), func(t *testing.T) {

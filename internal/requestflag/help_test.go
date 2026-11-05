@@ -52,6 +52,30 @@ func TestHelpDefaultDoesNotDependOnParsing(t *testing.T) {
 	}
 }
 
+func TestHelpDistinguishesUnsetAndExplicitArrayDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		flag cli.DocGenerationFlag
+		want string
+	}{
+		{"unset strings", &Flag[[]string]{}, ""},
+		{"unset objects", &Flag[[]map[string]any]{}, ""},
+		{"empty objects", &Flag[[]map[string]any]{Default: []map[string]any{}}, "[]\n"},
+		{"populated strings", &Flag[[]string]{Default: []string{"segment"}}, "[segment]"},
+		{"authored text", &Flag[[]string]{DefaultText: "automatic"}, "automatic"},
+		{"constant", &Flag[[]string]{Const: true}, "[]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.flag.GetDefaultText(); got != tc.want {
+				t.Errorf("default text = %q, want %q", got, tc.want)
+			}
+			if got := tc.flag.IsDefaultVisible(); got != (tc.want != "") {
+				t.Errorf("default visible = %t for %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestHelpPreservesNullableRequestSemantics(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string

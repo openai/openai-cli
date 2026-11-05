@@ -9,17 +9,21 @@ import (
 // terminalProse normalizes authored help, never request values or runtime data.
 // Keep code blocks and commands literal; preserve malformed or escaped markup.
 func terminalProse(text string) string {
+	return renderTerminalProse(text, true)
+}
+
+func renderTerminalProse(text string, showLinkURLs bool) string {
 	lines := reflowDescription(text)
 	var fence descriptionFence
 	for i, line := range lines {
 		if !fence.contains(line) && !isCodeLine(line) {
-			lines[i] = terminalInlineProse(line)
+			lines[i] = terminalInlineProse(line, showLinkURLs)
 		}
 	}
 	return strings.Join(lines, "\n")
 }
 
-func terminalInlineProse(text string) string {
+func terminalInlineProse(text string, showLinkURLs bool) string {
 	var out strings.Builder
 	for i := 0; i < len(text); {
 		switch text[i] {
@@ -33,7 +37,7 @@ func terminalInlineProse(text string) string {
 				out.WriteString(text[i:])
 				return out.String()
 			}
-			if reference, ok := quotedProseReference(text, i, next); ok {
+			if reference, ok := quotedProseReference(text, i, next, showLinkURLs); ok {
 				out.WriteString(reference)
 			} else {
 				out.WriteString(text[i:next])
@@ -55,7 +59,7 @@ func terminalInlineProse(text string) string {
 				return out.String()
 			}
 			if end > start {
-				out.WriteString(terminalInlineProse(text[start:end]))
+				out.WriteString(terminalInlineProse(text[start:end], showLinkURLs))
 			} else {
 				out.WriteString(text[i:next])
 			}
@@ -78,11 +82,8 @@ func terminalInlineProse(text string) string {
 				return out.String()
 			}
 			label, destination := text[i+1:labelEnd], text[next+1:destinationEnd]
-			if strings.HasPrefix(destination, "<") && strings.HasSuffix(destination, ">") {
-				destination = destination[1 : len(destination)-1]
-			}
-			out.WriteString(terminalInlineProse(label))
-			out.WriteString(" (" + destination + ")")
+			out.WriteString(terminalInlineProse(label, showLinkURLs))
+			out.WriteString(proseLinkSuffix(label, destination, showLinkURLs))
 			i = destinationEnd + 1
 		default:
 			out.WriteByte(text[i])
@@ -94,7 +95,7 @@ func terminalInlineProse(text string) string {
 
 // A quoted prose reference names the value, not its Markdown source. Keep flag
 // arguments, assignments, query strings, and authored command examples literal.
-func quotedProseReference(text string, start, next int) (string, bool) {
+func quotedProseReference(text string, start, next int, showLinkURLs bool) (string, bool) {
 	if next-start < 4 || text[start+1] != '[' {
 		return "", false
 	}
@@ -116,11 +117,18 @@ func quotedProseReference(text string, start, next int) (string, bool) {
 		return "", false
 	}
 	label, destination := link[1:labelEnd], link[labelEnd+2:len(link)-1]
+	quote := text[start : start+1]
+	return quote + terminalInlineProse(label, showLinkURLs) + quote + proseLinkSuffix(label, destination, showLinkURLs), true
+}
+
+func proseLinkSuffix(label, destination string, showLinkURLs bool) string {
 	if strings.HasPrefix(destination, "<") && strings.HasSuffix(destination, ">") {
 		destination = destination[1 : len(destination)-1]
 	}
-	quote := text[start : start+1]
-	return quote + terminalInlineProse(label) + quote + " (" + destination + ")", true
+	if !showLinkURLs && strings.TrimSpace(label) != "" && (strings.HasPrefix(destination, "https://") || strings.HasPrefix(destination, "http://")) {
+		return ""
+	}
+	return " (" + destination + ")"
 }
 
 // Only prose-boundary spans are emphasis. Ambiguous path and wildcard tokens

@@ -165,6 +165,8 @@ openai admin organization --help
 ```
 
 `openai help COMMAND` and `openai COMMAND --help` show the same page.
+Commands with many options list every local flag in a compact index.
+For example, `openai help --all images generate` shows flag descriptions, defaults, and accepted values.
 Existing colon-separated commands, such as `openai admin:organization:usage completions`,
 also work.
 

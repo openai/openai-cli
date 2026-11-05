@@ -41,6 +41,14 @@ func commandFlagUsage(command *cli.Command, flag cli.Flag, usage string) string 
 }
 
 func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
+	return renderFlagGroups(command, flags, width, false)
+}
+
+func compactFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
+	return renderFlagGroups(command, flags, width, true)
+}
+
+func renderFlagGroups(command *cli.Command, flags []cli.Flag, width int, compact bool) string {
 	style := commandHelpStyle(command)
 	groups := []FlagGroup{{Title: "Required inputs"}}
 	if configured, ok := command.Metadata["help-flag-groups"].([]FlagGroup); ok {
@@ -73,6 +81,15 @@ func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
 		}
 		grouped[group] = append(grouped[group], flag)
 	}
+	if options := grouped["Other options"]; len(grouped) == 1 && len(options) > 0 {
+		if compact {
+			return compactFlagIndex(command, options, "  ", width, style)
+		}
+		if rows := compactFlagList(command, options, width, style); rows != "" {
+			return rows
+		}
+		return flagList(command, options, width)
+	}
 	var out strings.Builder
 	for _, group := range groups {
 		flags := grouped[group.Title]
@@ -83,10 +100,71 @@ func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
 			out.WriteByte('\n')
 		}
 		fmt.Fprintf(&out, "  %s\n", style.render(style.section, group.Title))
-		out.WriteString(flagList(command, flags, width))
+		switch {
+		case !compact:
+			out.WriteString(flagList(command, flags, width))
+		case group.Title == "Required inputs":
+			for _, flag := range flags {
+				heading, description := flagReference(command, flag)
+				writeFlagLabels(&out, styledFlagLabels(heading, style), "    ", width)
+				out.WriteString(wrapPlainDescription(shortDescription(description), "      ", width))
+			}
+		default:
+			out.WriteString(compactFlagIndex(command, flags, "    ", width, style))
+		}
 		delete(grouped, group.Title)
 	}
 	return out.String()
+}
+
+func compactFlagIndex(command *cli.Command, flags []cli.Flag, indent string, width int, style helpStyle) string {
+	var labels []string
+	for _, flag := range flags {
+		heading, _ := flagReference(command, flag)
+		labels = append(labels, styledFlagLabels(heading, style)...)
+	}
+	var out strings.Builder
+	writeFlagLabels(&out, labels, indent, width)
+	return out.String()
+}
+
+// Use the navigation layout only when every flag fits on one line. Keep
+// metadata, links and longer explanations in the complete reference layout.
+func compactFlagList(command *cli.Command, flags []cli.Flag, width int, style helpStyle) string {
+	headings, descriptions := make([]string, len(flags)), make([]string, len(flags))
+	longestDescription := 0
+	for i, flag := range flags {
+		heading, description := flagReference(command, flag)
+		if strings.ContainsAny(heading+description, "\n\t") || strings.Contains(description, "://") ||
+			strings.HasPrefix(description, "Default:") || strings.HasPrefix(description, "Env:") {
+			return ""
+		}
+		headings[i], descriptions[i] = heading, description
+		longestDescription = max(longestDescription, ansi.StringWidth(description))
+	}
+	column := helpDescriptionColumn(width, headings)
+	if column == 0 || column+longestDescription > width {
+		return ""
+	}
+	var out strings.Builder
+	for i, heading := range headings {
+		label := strings.Join(styledFlagLabels(heading, style), ", ")
+		out.WriteString(style.entry(heading, descriptions[i], label, width, column))
+	}
+	return out.String()
+}
+
+func styledFlagLabels(heading string, style helpStyle) []string {
+	labels := strings.Split(heading, ", ")
+	for i, label := range labels {
+		name, value, hasValue := strings.Cut(label, "=")
+		if hasValue && value == "" {
+			labels[i] = style.render(style.section, label)
+		} else {
+			labels[i] = style.flag(name, value)
+		}
+	}
+	return labels
 }
 
 func flagList(command *cli.Command, flags []cli.Flag, width int) string {
@@ -97,37 +175,33 @@ func flagList(command *cli.Command, flags []cli.Flag, width int) string {
 			out.WriteByte('\n')
 		}
 		heading, description := flagReference(command, flag)
-		var labels []string
-		for _, label := range strings.Split(heading, ", ") {
-			name, value, hasValue := strings.Cut(label, "=")
-			if hasValue && value == "" {
-				labels = append(labels, style.render(style.section, label))
-			} else {
-				labels = append(labels, style.flag(name, value))
-			}
-		}
-		out.WriteString("    ")
-		column := 4
-		for i, label := range labels {
-			if i > 0 {
-				if column+2+ansi.StringWidth(label) > width {
-					if column < width {
-						out.WriteByte(',')
-					}
-					out.WriteString("\n    ")
-					column = 4
-				} else {
-					out.WriteString(", ")
-					column += 2
-				}
-			}
-			out.WriteString(label)
-			column += ansi.StringWidth(label)
-		}
-		out.WriteByte('\n')
+		writeFlagLabels(&out, styledFlagLabels(heading, style), "    ", width)
 		writeFlagDescription(&out, description, width, style)
 	}
 	return out.String()
+}
+
+// Wrap only between complete labels, including aliases and compound values.
+func writeFlagLabels(out *strings.Builder, labels []string, indent string, width int) {
+	out.WriteString(indent)
+	column := len(indent)
+	for i, label := range labels {
+		if i > 0 {
+			if column+2+ansi.StringWidth(label) > width {
+				if column < width {
+					out.WriteByte(',')
+				}
+				out.WriteString("\n" + indent)
+				column = len(indent)
+			} else {
+				out.WriteString(", ")
+				column += 2
+			}
+		}
+		out.WriteString(label)
+		column += ansi.StringWidth(label)
+	}
+	out.WriteByte('\n')
 }
 
 // Use documentation interfaces for defaults and environment names. Preserve a

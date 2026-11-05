@@ -28,10 +28,10 @@ func TestMainPipingDiscovery(t *testing.T) {
 	} {
 		args := append(strings.Fields("openai "+path), "--help")
 		got := runMainDispatchWithEnv(t, "bash", env, args...)
-		intro, _, ok := strings.Cut(got.stdout, "\nDESCRIPTION\n")
-		if got.code != 0 || !ok || !strings.Contains(intro, "--request-file=PATH|-") ||
+		intro, flags, ok := strings.Cut(got.stdout, "\nFLAGS\n")
+		if got.code != 0 || got.stderr != "" || !ok || !strings.Contains(flags, "--request-file=PATH|-") ||
 			!strings.Contains(intro, "echo '"+body+"' | openai "+path+" --request-file -") {
-			t.Errorf("%s omitted the request pipe from its synopsis:\n%s", path, intro)
+			t.Errorf("%s must show the pipe example before the request-file option:\n%s", path, got.stdout)
 		}
 	}
 }

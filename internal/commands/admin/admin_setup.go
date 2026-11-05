@@ -10,7 +10,8 @@ const adminSetupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up
 
 Admin commands manage organization projects, members, and settings.
 A project API key cannot run these commands.
-For model requests, use {{$run}} help setup instead.
+API key setup for model requests:
+   {{$run}} help setup
 
 QUICK VERIFICATION
    {{$run}} setup admin

@@ -28,7 +28,15 @@ func TestMainHelpPresentationPreservesDetailsAfterShortName(t *testing.T) {
 	if strings.Contains(name, "https://") || !strings.Contains(name, "Creates a model response") {
 		t.Fatalf("NAME is not a short command summary: %s", name)
 	}
-	description := helpSection(got.stdout, "DESCRIPTION", "EXAMPLES")
+	description := helpSection(got.stdout, "DESCRIPTION", "FLAGS")
+	if strings.Contains(description, "https://") || !strings.Contains(strings.Join(strings.Fields(description), " "), "Provide text or image inputs") {
+		t.Fatalf("compact description lost its meaning or includes raw documentation URLs: %s", description)
+	}
+	got = runMainDispatch(t, "bash", "openai", "help", "--all", "responses", "create")
+	if got.code != 0 || got.stderr != "" {
+		t.Fatalf("full reference failed: %+v", got)
+	}
+	description = helpSection(got.stdout, "DESCRIPTION", "EXAMPLES")
 	for _, want := range []string{"guides/text", "guides/images-vision", "guides/structured-outputs", "guides/function-calling", "guides/tools", "guides/tools-web-search", "guides/tools-file-search"} {
 		if !strings.Contains(description, want) {
 			t.Errorf("DESCRIPTION lost reference %q", want)
@@ -85,11 +93,6 @@ func TestMainHelpPresentationCompactGlobalsAndLocalRestrictions(t *testing.T) {
 		if !found || !strings.Contains(globals, "Run $ openai --help for details.") {
 			t.Fatalf("global option reference missing: %s", got.stdout)
 		}
-		for _, name := range []string{"--format", "--format-error", "--transform", "--raw-output", "-r", "--header", "-H", "--base-url"} {
-			if !strings.Contains(globals, name) {
-				t.Errorf("global option index lost %s", name)
-			}
-		}
 		if strings.Contains(globals, "Choose how results are displayed") || strings.Contains(globals, "- json: full JSON") {
 			t.Error("global index repeated full or inapplicable format descriptions")
 		}
@@ -98,6 +101,17 @@ func TestMainHelpPresentationCompactGlobalsAndLocalRestrictions(t *testing.T) {
 			for _, note := range []string{"--format auto or text only", "cannot use --transform or --raw-output"} {
 				if !strings.Contains(flat, note) {
 					t.Errorf("local restriction missing beside global index: %s", note)
+				}
+			}
+			for _, unrelated := range []string{"--header", "--base-url", "Key setup:"} {
+				if strings.Contains(globals, unrelated) {
+					t.Errorf("local help included %s", unrelated)
+				}
+			}
+		} else {
+			for _, name := range []string{"--format", "--format-error", "--transform", "--raw-output", "-r", "--header", "-H", "--base-url"} {
+				if !strings.Contains(globals, name) {
+					t.Errorf("global option index lost %s", name)
 				}
 			}
 		}
