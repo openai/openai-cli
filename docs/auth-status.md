@@ -10,7 +10,7 @@ openai auth status --format json
 ```
 
 The report shows API credentials and Admin credentials separately.
-Each credential includes its configured state, type, and source. It never includes credential values or fragments.
+Each credential includes its configured state, type, and source. The credential fields contain only this metadata.
 Organization, project, and base URL each include their own source.
 If no CLI input selects an organization or project, text output shows `not set in CLI`.
 The offline report cannot identify the organization or project associated with a key.

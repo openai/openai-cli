@@ -223,21 +223,10 @@ func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (a
 		Project:      contextValue("project", "OPENAI_PROJECT_ID", "OpenAI-Project"),
 		BaseURL:      endpoint,
 	}
-	// A copied key can also occur in an otherwise printable project, organization, or host.
-	secrets := []string{environment["OPENAI_API_KEY"].Value, environment["OPENAI_ADMIN_KEY"].Value, environment["OPENAI_WEBHOOK_SECRET"].Value,
-		root.String("api-key"), root.String("admin-api-key"), root.String("webhook-secret")}
-	if password, ok := userinfo.Password(); ok {
-		secrets = append(secrets, password)
-	}
-	if userinfo != nil {
-		secrets = append(secrets, userinfo.Username())
-	}
-	for _, line := range root.StringSlice("header") {
-		secrets = appendHeaderCredentials(secrets, line)
-	}
-	for line := range strings.SplitSeq(environment["OPENAI_CUSTOM_HEADERS"].Value, "\n") {
-		secrets = appendHeaderCredentials(secrets, line)
-	}
+	secrets := request.ConfiguredCredentials(root, func(key string) (string, bool) {
+		value, present := environment[key]
+		return value.Value, present
+	})
 	report.Organization.redact(secrets)
 	report.Project.redact(secrets)
 	if report.BaseURL.authStatusValue.redact(secrets) {
@@ -246,31 +235,10 @@ func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (a
 	return report, nil
 }
 
-// Include overridden headers since their credentials may still appear in displayed settings.
-func appendHeaderCredentials(secrets []string, line string) []string {
-	name, value, ok := strings.Cut(line, ":")
-	if !ok {
-		return secrets
-	}
-	value = strings.TrimSpace(value)
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "authorization", "proxy-authorization":
-		if i := strings.IndexAny(value, " \t"); i >= 0 {
-			secrets = append(secrets, strings.TrimSpace(value[i:]))
-		}
-		return append(secrets, value)
-	case "api-key", "x-api-key":
-		return append(secrets, value)
-	}
-	return secrets
-}
-
 func (field *authStatusValue) redact(secrets []string) bool {
-	for _, secret := range secrets {
-		if secret != "" && strings.Contains(field.Value, secret) {
-			field.Value = "[redacted]"
-			return true
-		}
+	if request.ContainsCredential(field.Value, secrets) {
+		field.Value = "[redacted]"
+		return true
 	}
 	return false
 }
@@ -291,7 +259,7 @@ func authStatusBaseURL(base authStatusValue, source string) (authStatusEndpoint,
 	parsed, _ := url.Parse(base.Value) // ValidateBaseURL has already parsed the same string.
 	redacted := parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != ""
 	// Custom paths can contain credentials. Display only the origin and known public API paths.
-	path := parsed.Path
+	path := parsed.EscapedPath()
 	if path == "" {
 		path = "/"
 	}

@@ -76,6 +76,13 @@ func FlagOptions(
 
 	if cmd.Bool("debug") {
 		sensitiveHeaders := slices.Collect(maps.Keys(headers))
+		root := cmd.Root()
+		secrets := ConfiguredCredentials(root, os.LookupEnv)
+		for _, name := range []string{"organization", "project"} {
+			if ContainsCredential(root.String(name), secrets) {
+				sensitiveHeaders = append(sensitiveHeaders, "OpenAI-"+name)
+			}
+		}
 		// The SDK reads environment headers. Match its name parsing so these
 		// values receive the same redaction as explicit header flags.
 		for line := range strings.SplitSeq(os.Getenv("OPENAI_CUSTOM_HEADERS"), "\n") {
