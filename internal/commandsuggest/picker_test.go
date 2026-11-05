@@ -13,7 +13,7 @@ import (
 )
 
 func TestCommandPickerSearchSelectAndCancel(t *testing.T) {
-	candidates := []Candidate{{"openai models list", "List models"}, {"openai help setup", "Configure credentials"}}
+	candidates := []Candidate{{Command: "openai models list", Description: "List models"}, {Command: "openai help setup", Description: "Configure credentials"}}
 	m := newCommandPicker(candidates, "Recent commands", true)
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.Update(tea.PasteMsg{Content: "credentials"})
@@ -51,7 +51,7 @@ func TestCommandPickerHighlightsSearchWithoutChangingSelectedCommand(t *testing.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, color := range []bool{false, true} {
-				m := newCommandPicker([]Candidate{{tc.command, tc.description}, {tc.command + " --format json", tc.description}}, "Commands", true)
+				m := newCommandPicker([]Candidate{{Command: tc.command, Description: tc.description}, {Command: tc.command + " --format json", Description: tc.description}}, "Commands", true)
 				m.color, m.backgroundKnown = color, true
 				m.Update(tea.WindowSizeMsg{Width: 94, Height: 15})
 				m.Update(tea.PasteMsg{Content: tc.query})
@@ -137,7 +137,7 @@ func TestCommandPickerNoMatchesAndSmallWindowCannotSelect(t *testing.T) {
 }
 
 func TestCommandPickerEditingNavigationAndRenderBounds(t *testing.T) {
-	m := newCommandPicker([]Candidate{{"openai models list", "List models"}, {"openai help setup", "Setup"}, {"openai files list", "Files"}}, "Explore commands", true)
+	m := newCommandPicker([]Candidate{{Command: "openai models list", Description: "List models"}, {Command: "openai help setup", Description: "Setup"}, {Command: "openai files list", Description: "Files"}}, "Explore commands", true)
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	require.Equal(t, 1, m.selected)
@@ -232,9 +232,9 @@ func TestCommandPickerResponsiveRenderBounds(t *testing.T) {
 		candidates  []Candidate
 		empty       bool
 	}{
-		{"short", "", []Candidate{{"openai models list", "List available models"}, {"openai files list", "List files"}}, false},
-		{"wide", wideQuery, []Candidate{{wideCommand, wideQuery + " " + strings.Repeat("Unicode description 🦊 e\u0301 ", 50)}, {wideCommand + " --format json", wideQuery}}, false},
-		{"empty", "no-such-command", []Candidate{{"openai models list", "List models"}}, true},
+		{"short", "", []Candidate{{Command: "openai models list", Description: "List available models"}, {Command: "openai files list", Description: "List files"}}, false},
+		{"wide", wideQuery, []Candidate{{Command: wideCommand, Description: wideQuery + " " + strings.Repeat("Unicode description 🦊 e\u0301 ", 50)}, {Command: wideCommand + " --format json", Description: wideQuery}}, false},
+		{"empty", "no-such-command", []Candidate{{Command: "openai models list", Description: "List models"}}, true},
 	}
 	for _, width := range []int{40, 59, 60, 80, 120} {
 		for _, height := range []int{12, 13, 15, 16, 24} {

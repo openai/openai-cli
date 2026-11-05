@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/openai/openai-cli/internal/commandsuggest"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -91,11 +92,11 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 		root.Metadata = map[string]any{}
 	}
 	invocation, needsQuote := resolveInvocation(root.Name, args)
-	delete(root.Metadata, "help-native-pipe-invocation")
+	delete(root.Metadata, "help-native-invocation")
 	if needsQuote {
 		name := invocation
 		invocation = quoteInvocation(name, root.Name)
-		root.Metadata["help-native-pipe-invocation"] = nativePipeInvocation(context.Background(), name, invocation)
+		root.Metadata["help-native-invocation"] = quoteNativeInvocation(context.Background(), name, invocation)
 	}
 	root.Metadata["help-invocation"] = invocation
 	root.Metadata["help-legacy-all"] = false
@@ -469,6 +470,25 @@ func (*UnknownTopicError) ExitCode() int { return 3 }
 func allowsHelpTopic(command *cli.Command) bool {
 	compatibility, _ := command.Metadata["command-compatibility-alias"].(bool)
 	return !command.Hidden || compatibility
+}
+
+// NativeInvocation returns the executable spelling for a command copied into the current shell.
+func NativeInvocation(root *cli.Command, fallback string) string {
+	if native, ok := root.Metadata["help-native-invocation"].(string); ok {
+		return native
+	}
+	return fallback
+}
+
+func quoteNativeInvocation(ctx context.Context, name, defaultInvocation string) string {
+	switch terminal.ParentShell(ctx) {
+	case "pwsh":
+		return "& " + terminal.PowerShellQuote(name)
+	case "fish":
+		return terminal.FishQuote(name)
+	default:
+		return defaultInvocation
+	}
 }
 
 // Invocation returns a copyable executable name for help examples without
