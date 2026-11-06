@@ -1,8 +1,8 @@
 package clihelp
 
 import (
-	"context"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"unicode"
@@ -13,24 +13,49 @@ import (
 )
 
 type setupGuideContext struct {
-	Run, Shell string
-	Full       bool
+	Run, AfterKeyEntry, Shell string
+	Full, StartPowerShell     bool
 }
 
 func setupGuide(command *cli.Command) setupGuideContext {
+	parent, _ := terminal.ParentProcessName()
+	return setupGuideForParent(command, runtime.GOOS, parent)
+}
+
+func setupGuideForParent(command *cli.Command, platform, parent string) setupGuideContext {
 	root := command.Root()
-	shell := terminal.ParentShell(context.Background())
+	shell := terminal.ShellName(parent)
 	invocation, _ := root.Metadata["help-invocation"].(string)
 	run, _ := helpInvocations(root, invocation, shell)
-	// When the parent is a script or IDE, label a platform-appropriate
-	// example. Only the detected shell may determine safe launcher quoting.
-	if shell == "" {
-		shell = "bash"
-		if runtime.GOOS == "windows" {
-			shell = "pwsh"
+	guide := setupGuideContext{Run: run, AfterKeyEntry: run, Shell: shell, Full: fullReferenceRequested(command)}
+	switch shell {
+	case "bash", "zsh", "fish", "pwsh":
+		return guide
+	}
+	if platform != "windows" {
+		guide.Shell = "bash"
+		return guide
+	}
+
+	// A cmd user enters their key and runs later examples in Windows PowerShell.
+	// Keep the caller's spelling for instructions executed before that transition.
+	guide.Shell = "pwsh"
+	guide.StartPowerShell = !strings.EqualFold(filepath.Base(strings.ReplaceAll(parent, `\`, "/")), "powershell.exe")
+	if name, ok := root.Metadata["help-executable-path"].(string); ok {
+		quoted := terminal.PowerShellQuote(name)
+		guide.AfterKeyEntry = "& " + quoted
+		// The double-quoted form uses Unicode escapes unavailable in Windows PowerShell 5.1.
+		if strings.HasPrefix(quoted, `"`) {
+			guide.AfterKeyEntry = ""
 		}
 	}
-	return setupGuideContext{Run: run, Shell: shell, Full: fullReferenceRequested(command)}
+	if root.Metadata["help-control-launcher"] == true {
+		guide.AfterKeyEntry = ""
+	}
+	if !guide.StartPowerShell {
+		guide.Run = guide.AfterKeyEntry
+	}
+	return guide
 }
 
 // Format authored setup guides after template expansion. Preserve shell lines

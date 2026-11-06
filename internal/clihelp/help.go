@@ -21,7 +21,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const setupHelp = `{{$guide := setupGuide .}}{{$run := $guide.Run}}Set up your API key
+const setupHelp = `{{$guide := setupGuide .}}{{$run := $guide.AfterKeyEntry}}Set up your API key
 
 1. CREATE A KEY
    https://platform.openai.com/settings/organization/api-keys
@@ -39,16 +39,15 @@ const setupHelp = `{{$guide := setupGuide .}}{{$run := $guide.Run}}Set up your A
        {{suggestFor . "read --silent --global --export OPENAI_API_KEY" "fish"}}
 
 {{end}}{{if or $guide.Full (eq $guide.Shell "pwsh")}}   PowerShell (Windows, macOS, or Linux)
-     Run this line, paste your key (hidden), then press Enter:
+{{if or $guide.Full $guide.StartPowerShell}}     From Command Prompt (cmd.exe), run {{suggestFor . "powershell" "cmd"}} first.
+     Continue in that PowerShell session.
+{{end}}     Run this line, paste your key (hidden), then press Enter:
        {{suggestFor . "$openaiKey = Read-Host \"API key\" -AsSecureString" "pwsh"}}
      Then run these lines:
        {{suggestFor . "$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new(\"\", $openaiKey).Password" "pwsh"}}
        {{suggestFor . "Remove-Variable openaiKey" "pwsh"}}
 
-{{end}}{{if $guide.Full}}   Using Command Prompt (cmd.exe)? Run {{suggestFor . "powershell" "cmd"}} first, then use the
-   PowerShell steps above. Run the CLI in that same PowerShell session.
-
-   Windows command examples use PowerShell syntax. In cmd.exe, run
+{{end}}{{if $guide.Full}}   Windows command examples use PowerShell syntax. In cmd.exe, run
    openai from PATH or .\openai.exe from the folder containing the CLI.
 
 {{end}}   These steps set the key for this shell session. A new window needs it again.
@@ -113,6 +112,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	}
 	root.Metadata["help-control-launcher"] = len(args) > 0 && (unsafeHelpLauncher(args[0]) || invocation != args[0] && unsafeHelpLauncher(invocation))
 	delete(root.Metadata, "help-native-invocation")
+	delete(root.Metadata, "help-executable-path")
 	if root.Metadata["help-control-launcher"] == true {
 		// Never display raw control or direction-changing characters in command titles.
 		// Runnable help examples obtain shell-specific quoting from helpInvocations.
@@ -121,6 +121,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	}
 	if needsQuote {
 		name := invocation
+		root.Metadata["help-executable-path"] = name
 		invocation = quoteInvocation(name, root.Name)
 		root.Metadata["help-native-invocation"] = quoteNativeInvocation(context.Background(), name, invocation)
 	}

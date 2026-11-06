@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/openai/openai-cli/internal/terminal"
 )
 
 func TestMainAdminSetupOfflineRoutes(t *testing.T) {
@@ -137,6 +139,9 @@ func TestMainAdminSetupCopiedVerificationCommand(t *testing.T) {
 	}
 	executable := filepath.Join(work, binary)
 	copyShellTestCLI(t, executable)
+	t.Run("key entry and verification in the suggested shell", func(t *testing.T) {
+		testSetupGuideKeyShell(t, executable)
+	})
 	shells := []nativeShell{
 		{"bash", "bash", "", "export OPENAI_ADMIN_KEY='synthetic-admin-setup-key'; ", []string{"--noprofile", "--norc", "-c"}},
 		{"zsh", "zsh", "", "export OPENAI_ADMIN_KEY='synthetic-admin-setup-key'; ", []string{"-f", "-c"}},
@@ -257,5 +262,64 @@ func TestMainAdminSetupCopiedVerificationCommand(t *testing.T) {
 				t.Fatalf("empty verification does not match the guide: %+v; requests=%d", got, requests.Load())
 			}
 		})
+	}
+}
+
+// Follow the verification command after switching from cmd.exe to Windows PowerShell,
+// or directly in Fish using an executable path with spaces and an apostrophe.
+func testSetupGuideKeyShell(t *testing.T, executable string) {
+	directory, home := t.TempDir(), t.TempDir()
+	var guide mainDispatchResult
+	var destination nativeShell
+	var endpoint, suffix string
+	if runtime.GOOS == "windows" {
+		cmd := nativeShell{name: "cmd", executable: "cmd.exe", args: []string{"/D", "/C"}}
+		guide = runNativeShell(t, cmd, directory, home, "bad://fixture", `"`+executable+`" help setup`)
+		destination = nativeShell{name: "powershell", executable: "powershell.exe", args: []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-Command"}}
+		endpoint, suffix = "/models", " models list"
+	} else {
+		fish, err := exec.LookPath("fish")
+		if err != nil {
+			t.Skip("Fish is unavailable")
+		}
+		destination = nativeShell{name: "fish", executable: fish, args: []string{"--no-config", "-c"}}
+		guide = runNativeShell(t, destination, directory, home, "bad://fixture", terminal.FishQuote(executable)+" help --all setup admin; exit $status")
+		endpoint, suffix = "/organization/projects", " --format text admin organization projects list"
+	}
+	if guide.code != 0 || guide.stderr != "" {
+		t.Fatalf("could not read setup guide: %+v", guide)
+	}
+	copied := ""
+	for line := range strings.SplitSeq(guide.stdout, "\n") {
+		if strings.HasSuffix(strings.TrimSpace(line), suffix) {
+			copied = strings.TrimSpace(line)
+			break
+		}
+	}
+	if copied == "" {
+		t.Fatalf("no verification command in %q", guide.stdout)
+	}
+	script := "$env:OPENAI_API_KEY = 'synthetic-guide-key'; " + copied
+	if destination.name == "fish" {
+		const read = "read --silent --global --export OPENAI_ADMIN_KEY"
+		const erase = "set --erase --global OPENAI_ADMIN_KEY"
+		if !strings.Contains(guide.stdout, read) || !strings.Contains(guide.stdout, erase) || strings.Contains(guide.stdout, "run bash first") {
+			t.Fatal("manual admin setup must enter and remove the key in Fish")
+		}
+		script = "printf 'synthetic-guide-key\\n' | " + read + "; and " + copied + "; and " + erase + "; and not set -q OPENAI_ADMIN_KEY"
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.URL.Path != endpoint || r.Header.Get("Authorization") != "Bearer synthetic-guide-key" {
+			t.Error("copied verification used the wrong endpoint or credential")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"object":"list","data":[],"has_more":false}`)
+	}))
+	defer server.Close()
+	verified := runNativeShell(t, destination, directory, home, server.URL, script)
+	if verified.code != 0 || verified.stderr != "" || requests.Load() != 1 {
+		t.Fatalf("copied verification failed: %+v; requests=%d", verified, requests.Load())
 	}
 }

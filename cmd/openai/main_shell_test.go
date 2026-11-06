@@ -134,6 +134,17 @@ func TestMainNativeShell(t *testing.T) {
 					if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, tc.want) {
 						t.Fatalf("help failed: %+v", got)
 					}
+					if tc.args == "help setup" && runtime.GOOS == "windows" {
+						guide := strings.Join(strings.Fields(got.stdout), " ")
+						start := strings.Index(guide, "run powershell first")
+						read := strings.Index(guide, `Read-Host "API key" -AsSecureString`)
+						if read < 0 || (start >= 0) != (shell.name == "cmd") || start > read {
+							t.Fatalf("incorrect setup instructions for %s:\n%s", shell.name, got.stdout)
+						}
+						if shell.name == "cmd" {
+							testSetupGuideKeyShell(t, executable)
+						}
+					}
 				})
 			}
 			for _, elsewhere := range []bool{false, true} {

@@ -67,7 +67,8 @@ MANUAL SETUP FOR SCRIPTS OR REPEATED COMMANDS
    e. Remove the temporary variable:
       Remove-Variable openaiAdminKey
 
-   Fish: run bash first, then follow the Bash steps in that shell.
+   Fish: run this command, then enter the key at the hidden prompt:
+      read --silent --global --export OPENAI_ADMIN_KEY
    Command Prompt (cmd.exe): run powershell first, then follow the PowerShell steps.
    Keep using that same terminal. A new terminal needs the key again.
    These commands also make the key available to programs started from this terminal.
@@ -75,7 +76,7 @@ MANUAL SETUP FOR SCRIPTS OR REPEATED COMMANDS
 
 7. TEST THE KEY
    Run this command in the same terminal:
-{{if $run}}      {{$run}} --format text admin organization projects list
+{{if $guide.AfterKeyEntry}}      {{$guide.AfterKeyEntry}} --format text admin organization projects list
 {{else}}      Run the same executable with --format text admin organization projects list.
 {{end}}
    This command lists projects. It does not change them.
@@ -95,6 +96,8 @@ MANUAL SETUP FOR SCRIPTS OR REPEATED COMMANDS
 9. REMOVE THE KEY WHEN FINISHED
    Bash or zsh:
       unset OPENAI_ADMIN_KEY
+   Fish:
+      set --erase --global OPENAI_ADMIN_KEY
    PowerShell:
       Remove-Item Env:OPENAI_ADMIN_KEY -ErrorAction SilentlyContinue
    This removes the key from this terminal. It does not revoke the key.
