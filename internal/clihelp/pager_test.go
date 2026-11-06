@@ -119,6 +119,25 @@ func TestHelpPagerLeavesUnfinishedFormattingOutOfTheShellPrompt(t *testing.T) {
 	}
 }
 
+func TestHelpPagerResumesWrappedLinkInThePrimaryBuffer(t *testing.T) {
+	const link = "\x1b]8;;openai-insert://fixture/1\x1b\\"
+	content := "first\n" + link + strings.Repeat("x", 64) + endHelpLink + "\nlast\n"
+	m := newHelpPager(content, 8, 3)
+	var output strings.Builder
+	m.output = &output
+	m.Update(tea.WindowSizeMsg{Width: 8, Height: 3})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	if !m.reviewing || m.footerVisible {
+		t.Fatal("expected to inspect earlier rows while paused inside the link")
+	}
+	output.Reset()
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	if !strings.HasPrefix(output.String(), endHelpLink+"\x1b[?1049l"+link+"x") {
+		t.Fatalf("resumed link must be registered on the primary screen: %q", output.String())
+	}
+}
+
 func TestHelpPagerFinishesOnDownwardNavigation(t *testing.T) {
 	const content = "one\ntwo\nthree\nfour\nfive\n"
 	for _, scroll := range []tea.Msg{

@@ -307,18 +307,17 @@ func (m *helpPager) draw() error {
 	} else {
 		if m.reviewing {
 			m.reviewing = false
-			// Screen restoration preserves the primary cursor and SGR, but
-			// some terminals retain the review screen's current hyperlink.
-			link := endHelpLink
+			// The terminal associates insertion links with the active buffer.
+			// Close any review link before returning to the primary screen.
+			frame.WriteString(endHelpLink + "\x1b[?1049l")
 			if !m.footerVisible {
 				prefix := m.content[:m.printed]
 				if i := strings.LastIndex(prefix, helpLinkPrefix); i >= 0 {
-					if url, _, ok := strings.Cut(prefix[i+len(helpLinkPrefix):], "\x1b\\"); ok {
-						link = helpLinkPrefix + url + "\x1b\\"
+					if url, _, ok := strings.Cut(prefix[i+len(helpLinkPrefix):], "\x1b\\"); ok && url != "" {
+						frame.WriteString(helpLinkPrefix + url + "\x1b\\")
 					}
 				}
 			}
-			frame.WriteString(link + "\x1b[?1049l")
 		}
 		if m.footerVisible {
 			frame.WriteString("\r\x1b[2K")
