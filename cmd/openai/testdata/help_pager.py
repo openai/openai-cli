@@ -15,8 +15,26 @@ import termios
 import time
 
 
+def answer_status_request(master, handoff, pending_command):
+    if handoff == "no response":
+        return
+    reply = b"\x1b[0n"
+    if handoff == "interrupt":
+        reply = b"\x03" + reply
+    if handoff in ("split", "large"):
+        # An emulator can have generated wheel reports before it sees the reset.
+        report = b"\x1b[<65;75;28M"
+        os.write(master, report[:5])
+        time.sleep(.016)
+        backlog = memoryview(report[5:] + report * (10000 if handoff == "large" else 180))
+        while backlog:
+            backlog = backlog[os.write(master, backlog):]
+        reply += pending_command
+    os.write(master, reply)
+
+
 def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width=100, height=24,
-          cancel_context=False, startup_failure=False, compare_scrollback=False, launcher="openai"):
+          cancel_context=False, startup_failure=False, compare_scrollback=False, launcher="openai", mouse_handoff=None):
     with tempfile.TemporaryDirectory(prefix="help-pager-") as home:
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
@@ -56,9 +74,12 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
         limit = (lambda: resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))) if startup_failure else None
         child = subprocess.Popen(command, env=env, cwd=home, pass_fds=control[:1], preexec_fn=limit, **streams)
         data = bytearray()
+        answered = False
+        pending_command = b"printf protected-typeahead\n"
         deadline = time.monotonic() + 10
 
         def read_until(marker=None, start=0):
+            nonlocal answered
             while True:
                 if marker and marker in data[start:]:
                     return
@@ -74,6 +95,10 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
                         chunk = b""
                     if chunk:
                         data.extend(chunk)
+                        if not answered and b"\x1b[5n" in data:
+                            answered = True
+                            assert data.index(b"\x1b[?1000l") < data.index(b"\x1b[?1006l") < data.index(b"\x1b[5n")
+                            answer_status_request(master, mouse_handoff, pending_command)
                         continue
                 if child.poll() is not None:
                     if marker:
@@ -113,6 +138,11 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
                     os.write(master, action)
             read_until()
             assert child.wait(timeout=2) == code, (name, child.returncode, bytes(data))
+            if mouse_handoff:
+                assert answered, (name, "missing handoff request")
+                if mouse_handoff in ("split", "large"):
+                    assert select.select([slave], [], [], .25)[0], "following shell input was consumed"
+                    assert os.read(slave, 4096) == pending_command, "reports leaked or shell input was damaged"
             restored = termios.tcgetattr(slave)
             # macOS sets PENDIN when tcsetattr restores canonical input, even in
             # an independent raw/restore control. It is pending work, not a mode.
@@ -129,10 +159,12 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
                     # must have appeared once, in order, with no banner replay at EOF.
                     footer = b"Scroll or use arrows   Space: page   q: quit"
                     normal = bytes(data)
-                    for controls in (b"\x1b[?25l", b"\x1b[?1000h", b"\x1b[?1006h", b"\x1b[?1006l", b"\x1b[?1000l", b"\x1b[?25h", b"\r\x1b[2K", footer):
+                    for controls in (b"\x1b[?25l", b"\x1b[?1000h", b"\x1b[?1006h", b"\x1b[?1006l", b"\x1b[?1000l", b"\x1b[?25h", b"\x1b[5n", b"\r\x1b[2K", footer):
                         normal = normal.replace(controls, b"")
                     assert normal.replace(b"\r\n", b"\n") == ordinary, (name,"changed normal scrollback")
                     assert b"\x1b[?1049h" not in data
+                elif mouse_handoff:
+                    assert b"Help needs no API key" in data, (name, "missing end of help")
                 elif name == "navigation":
                     assert b"\x1b[?1049h" in data and b"\x1b[?1049l" in data, "previous-page inspection failed"
                 else:
@@ -173,6 +205,10 @@ ordinary = check("long launcher fits", launcher=launcher, width=80, height=600,
 assert ("'" + launcher + "' help setup").encode() in ordinary
 check("long launcher scrolls", launcher=launcher, width=80, action=b"G",
       extra={"NO_COLOR": "1"}, compare_scrollback=True)
+check("delayed wheel reports and command typeahead", action=b"\x1b[<65;75;28M" * 200, mouse_handoff="split")
+check("large wheel backlog and command typeahead", action=b"G", mouse_handoff="large")
+check("interrupt during wheel handoff", action=b"G", mouse_handoff="interrupt", code=130)
+check("terminal omits status response", action=b"G", mouse_handoff="no response")
 check("navigation")
 check("quit", extra={"NO_COLOR": "1"}, width=40)
 check("escape", action=b"\x1b")

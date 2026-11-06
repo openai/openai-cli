@@ -114,7 +114,7 @@ func TestHelpPagerLeavesUnfinishedFormattingOutOfTheShellPrompt(t *testing.T) {
 	if err := m.close(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(out.String(), closeStyles+"\r\n") {
+	if !strings.HasPrefix(out.String(), "\x1b[?1000l\x1b[?1006l"+closeStyles+"\r\n") {
 		t.Fatalf("shell prompt would inherit partial help formatting: %q", out.String())
 	}
 }
@@ -133,7 +133,7 @@ func TestHelpPagerResumesWrappedLinkInThePrimaryBuffer(t *testing.T) {
 	}
 	output.Reset()
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
-	if !strings.HasPrefix(output.String(), endHelpLink+"\x1b[?1049l"+link+"x") {
+	if !strings.HasPrefix(output.String(), "\x1b[?1000l\x1b[?1006l"+endHelpLink+"\x1b[?1049l"+link+"x") {
 		t.Fatalf("resumed link must be registered on the primary screen: %q", output.String())
 	}
 }

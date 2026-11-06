@@ -123,14 +123,23 @@ func (m *helpPager) run(ctx context.Context, in, out *os.File, width, height int
 	// native scrollback instead of repainting a full screen on every Down.
 	_, err = tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithContext(programContext),
 		tea.WithWindowSize(width, height), tea.WithColorProfile(commandHelpStyle(root).profile), tea.WithoutSignalHandler()).Run()
-	if writeErr := errors.Join(m.writeErr, m.close()); writeErr != nil {
-		return writeErr
+	// Tea has released its input reader. A terminal can have reports in
+	// transit even if the last event the pager handled was a keyboard exit.
+	stopErr := m.stopMouse()
+	if stopErr == nil && m.writeErr == nil && m.active {
+		var interrupted bool
+		interrupted, stopErr = finishHelpMouseInput(in, out)
+		m.interrupted = m.interrupted || interrupted
 	}
+	cleanupErr := errors.Join(m.writeErr, stopErr, m.close())
 	if code := signalCode.Load(); code != 0 {
-		return cli.Exit(errors.Join(context.Canceled, err), int(code))
+		return cli.Exit(errors.Join(context.Canceled, err, cleanupErr), int(code))
 	}
 	if m.interrupted || errors.Is(err, tea.ErrInterrupted) {
-		return cli.Exit(errors.Join(context.Canceled, err), 130)
+		return cli.Exit(errors.Join(context.Canceled, err, cleanupErr), 130)
+	}
+	if cleanupErr != nil {
+		return cleanupErr
 	}
 	if err != nil {
 		return &PagerError{Cause: err}
@@ -161,6 +170,9 @@ type helpPager struct {
 	height                           int
 	active, reviewing, footerVisible bool
 	quitting, finished, interrupted  bool
+	stoppedAt                        time.Time
+	lastInput                        time.Time
+	mouseStopped                     bool
 	writeErr                         error
 }
 
@@ -200,6 +212,17 @@ func (m *helpPager) wrap(width int) {
 	m.viewport.SetContentLines(screenRows)
 }
 
+// Give Tea's decoder a chance to deliver input it already read before asking
+// it to stop. Otherwise its read loop can wait on an undeliverable mouse event
+// for the library's full 500ms shutdown timeout.
+const helpReaderIdle = 24 * time.Millisecond
+
+type finishHelpReader struct{}
+
+func checkHelpReaderIdle() tea.Cmd {
+	return tea.Tick(helpReaderIdle, func(time.Time) tea.Msg { return finishHelpReader{} })
+}
+
 type pollHelpSize struct{}
 
 func nextHelpSize() tea.Cmd {
@@ -210,7 +233,20 @@ func (m *helpPager) Init() tea.Cmd { return nextHelpSize() }
 
 func (m *helpPager) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if m.quitting {
-		return m, tea.Quit
+		switch msg := message.(type) {
+		case finishHelpReader:
+			if time.Since(m.lastInput) >= helpReaderIdle || time.Since(m.stoppedAt) >= 50*time.Millisecond {
+				return m, tea.Quit
+			}
+			return m, checkHelpReaderIdle()
+		case tea.MouseWheelMsg:
+			m.lastInput = time.Now()
+		case tea.KeyPressMsg:
+			if msg.String() == "ctrl+c" {
+				m.interrupted = true
+			}
+		}
+		return m, nil
 	}
 	down := false
 	switch msg := message.(type) {
@@ -240,11 +276,10 @@ func (m *helpPager) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "Q", "esc":
-			m.quitting = true
-			return m, tea.Quit
+			return m, m.leave()
 		case "ctrl+c":
-			m.quitting, m.interrupted = true, true
-			return m, tea.Quit
+			m.interrupted = true
+			return m, m.leave()
 		case "home", "g":
 			m.viewport.GotoTop()
 		case "end", "G":
@@ -256,16 +291,21 @@ func (m *helpPager) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport, _ = m.viewport.Update(msg)
 		}
 	case tea.MouseWheelMsg:
+		m.lastInput = time.Now()
 		down = msg.Button == tea.MouseWheelDown && !msg.Mod.Contains(tea.ModShift)
 		m.viewport, _ = m.viewport.Update(msg)
 	default:
 		return m, nil
 	}
 	m.finished = m.finished || down && m.viewport.AtBottom()
-	m.writeErr = m.draw()
+	if m.finished {
+		m.writeErr = m.stopMouse()
+	}
+	if m.writeErr == nil {
+		m.writeErr = m.draw()
+	}
 	if m.finished || m.writeErr != nil {
-		m.quitting = true
-		return m, tea.Quit
+		return m, m.leave()
 	}
 	return m, nil
 }
@@ -289,7 +329,7 @@ func (m *helpPager) draw() error {
 	var frame strings.Builder
 	if !m.active {
 		m.active = true
-		frame.WriteString("\x1b[?25l\x1b[?1000h\x1b[?1006h")
+		frame.WriteString("\x1b[?25l\x1b[?1006h\x1b[?1000h")
 	}
 	end := min(m.viewport.YOffset()+m.viewport.Height(), len(m.rowEnds))
 	limit := m.rowEnds[end-1]
@@ -335,6 +375,29 @@ func (m *helpPager) draw() error {
 	return err
 }
 
+func (m *helpPager) leave() tea.Cmd {
+	m.quitting = true
+	m.stoppedAt = time.Now()
+	if m.writeErr == nil {
+		m.writeErr = m.stopMouse()
+	}
+	if m.writeErr != nil {
+		return tea.Quit
+	}
+	return checkHelpReaderIdle()
+}
+
+func (m *helpPager) stopMouse() error {
+	if !m.active || m.mouseStopped {
+		return nil
+	}
+	// Stop reports before leaving SGR encoding. Otherwise a wheel event
+	// between the two commands can use the old three-byte mouse encoding.
+	_, err := io.WriteString(m.output, "\x1b[?1000l\x1b[?1006l")
+	m.mouseStopped = err == nil
+	return err
+}
+
 func (m *helpPager) close() error {
 	if !m.active {
 		return nil
@@ -350,7 +413,7 @@ func (m *helpPager) close() error {
 		// Its closing sequences live in the unread suffix of the source.
 		reset.WriteString(endHelpLink + "\x1b[0m\r\n")
 	}
-	reset.WriteString("\x1b[?1006l\x1b[?1000l\x1b[?25h")
+	reset.WriteString("\x1b[?25h")
 	_, err := io.WriteString(m.output, reset.String())
 	return err
 }
