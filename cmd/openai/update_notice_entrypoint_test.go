@@ -63,7 +63,7 @@ try:
             if data:
                 channels[key.data].extend(data)
                 # Complete interactive startup before checking the post-help notice.
-                if key.data == 0 and not scrolled_to_end and b"\x1b[?1049h" in channels[0] and b"q: quit" in channels[0]:
+                if key.data == 0 and not scrolled_to_end and b"q: quit" in channels[0]:
                     os.write(pairs[0][0], b"\x1b[F")  # End
                     scrolled_to_end = True
             else:

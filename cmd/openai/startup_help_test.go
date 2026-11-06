@@ -31,12 +31,12 @@ func TestMainStartupHelpTerminalOutput(t *testing.T) {
 				t.Fatalf("help omitted its reference: %q", got.stdout)
 			}
 			if test.name == "bare" {
-				top, history, ok := strings.Cut(got.stdout, "\x1b[?1049l")
+				top, rest, ok := strings.Cut(got.stdout, "q: quit")
 				if !ok || !strings.Contains(top, "START HERE") || !strings.Contains(top, "What are we making today?") {
-					t.Fatal("bare startup did not show the first page before restoring the terminal")
+					t.Fatal("bare startup did not show the first page before accepting input")
 				}
-				if !strings.Contains(history, "GLOBAL FLAGS") || !strings.Contains(history, test.end) {
-					t.Fatal("scrolling to the end did not retain the reference")
+				if !strings.Contains(rest, "GLOBAL FLAGS") || !strings.Contains(rest, test.end) {
+					t.Fatal("scrolling to the end omitted the reference")
 				}
 			} else {
 				for _, marker := range []string{"\x1b[?1049h", "\x1b[?1002h", "\x1b[?1003h", "Space: page", "q: quit"} {

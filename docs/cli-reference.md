@@ -2,7 +2,7 @@
 
 For installation and common tasks, see the [README](../README.md).
 In an interactive terminal, run `openai` to read the full help from the top.
-Scroll to the end to return to your shell with the complete help in scrollback.
+As you scroll, the help stays in your terminal history. Your prompt appears below the last line.
 Use the mouse wheel, arrow keys, or Space to scroll. Press `q` or Escape to leave early.
 Run `openai --help` to print the full reference immediately.
 
