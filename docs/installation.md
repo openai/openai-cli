@@ -75,6 +75,25 @@ Older packages, including v1.48.1, support `/usr/bin/openai --help` and `/usr/bi
 To enable automatic updates with a supported package, run `source /usr/share/openai-cli/enable-updates.sh`.
 Other systems can use the [Linux tarball](#installing-a-prebuilt-binary).
 
+### Install over SSH
+
+In an interactive Bash or zsh terminal on Debian, Ubuntu, or Fedora, paste this block.
+
+```sh
+(
+  installer=$(mktemp /tmp/openai-install.XXXXXXXX) || exit
+  trap 'rm -f -- "$installer"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  printf 'Downloading the OpenAI CLI installer...\n' >&2
+  curl -qfsSL --retry 3 --retry-max-time 60 --max-time 60 --proto '=https' --proto-redir '=https' \
+    -o "$installer" https://raw.githubusercontent.com/openai/openai-cli/334f332fc6a5f8298b20548d4fbbbb30c940cdc5/scripts/install-linux-release.sh || exit
+  printf '%s  %s\n' b0c05af08bd5e168366063bde36147d880f90fba337ce57fff928aa5f3633ce5 "$installer" | sha256sum --check --quiet || exit
+  /bin/bash -p "$installer"
+) && source /usr/share/openai-cli/enable-updates.sh
+```
+
 ## Windows
 
 Download the Windows ZIP from **Assets** in the latest stable release with downloads. [Release downloads](https://github.com/openai/openai-cli/releases)
