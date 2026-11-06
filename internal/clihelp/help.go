@@ -170,7 +170,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	}
 	configureCommandHelp(root, root.Metadata["help-invocation"].(string), "")
 	if len(args) <= 1 {
-		// Bare startup renders the terminal overview through the normal help path.
+		// Bare startup adds the existing terminal banner to the complete reference.
 		return []string{root.Name, "--help"}, true, nil
 	}
 	if args[1] == "__complete" {

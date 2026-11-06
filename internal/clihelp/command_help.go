@@ -106,10 +106,9 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 		summary = commandSummary(plainUsage)
 	}
 	native, exampleRun := commandHelpInvocations(command, invocation)
-	interactiveStartup := path == "" && command.Metadata["help-welcome"] == true && welcomeEnabled(command)
 	if path == "" {
 		banner := ""
-		if interactiveStartup {
+		if command.Metadata["help-welcome"] == true {
 			banner = welcomeHeader(command)
 		}
 		if banner != "" {
@@ -158,22 +157,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	if description = descriptionAfterSummary(terminalProse(description), summary); description != "" {
 		out.WriteString("\n" + heading("DESCRIPTION") + "\n" + wrapPlainDescription(description, "  ", width))
 	}
-	if interactiveStartup && exampleRun != "" {
-		content.Examples = nil
-		if explore := command.Command("explore"); explore != nil && !explore.Hidden {
-			example := Example{"Browse commands and examples offline:", "explore"}
-			// Mintty displays the welcome screen through named pipes. The interactive
-			// picker requires console handles, but keyword search also works in pipes.
-			if welcomePseudoTerminal(os.Stdin.Fd()) || welcomePseudoTerminal(os.Stdout.Fd()) || welcomePseudoTerminal(os.Stderr.Fd()) {
-				example = Example{"Find image commands and examples offline:", "explore images"}
-			}
-			content.Examples = append(content.Examples, example)
-		}
-		content.Examples = append(content.Examples,
-			Example{"Set up your API key:", "help setup"},
-			Example{"See command groups and global flags:", "--help"},
-		)
-	} else if path == "" {
+	if path == "" {
 		content.Examples = []Example{{"Set up your API key:", "help setup"}, {"List available models:", "models list"}}
 		if explore := command.Command("explore"); explore != nil && !explore.Hidden {
 			content.Examples = append(content.Examples, Example{"Find image commands and examples offline:", "explore images"})
@@ -211,10 +195,6 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 			}
 			out.WriteString(wrapDescription(example.Description, "  ", width))
 			fmt.Fprintf(&out, "    $ %s\n", recordHelpExample(command, run+" "+example.Command, content.BashExamples))
-		}
-		if interactiveStartup {
-			out.WriteByte('\n')
-			return out.String()
 		}
 		if !supplied && (path == "files create" || path == "files upload") {
 			out.WriteString(wrapDescription("example.txt is the path to your existing file. Replace it with your file's path.", "  ", width))

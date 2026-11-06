@@ -1,7 +1,10 @@
 # CLI configuration and input reference
 
 For installation and common tasks, see the [README](../README.md).
-Run `openai --help` for the full set of global options.
+In an interactive terminal, run `openai` to read the full help from the top.
+Scroll to the end to return to your shell with the complete help in scrollback.
+Use the mouse wheel, arrow keys, or Space to scroll. Press `q` or Escape to leave early.
+Run `openai --help` to print the full reference immediately.
 
 ## Environment variables
 

@@ -16,10 +16,10 @@ import (
 
 // The welcome header adds no input, terminal queries, subprocesses, or state.
 // Keep the framework's help path so request setup still never runs.
-func welcomeEnabled(root *cli.Command) bool {
+func welcomeHeader(root *cli.Command) string {
 	format := root.String("format")
 	if format != "" && !strings.EqualFold(format, "auto") && !strings.EqualFold(format, "text") {
-		return false
+		return ""
 	}
 	input, output := root.Reader, root.Writer
 	if input == nil {
@@ -28,10 +28,9 @@ func welcomeEnabled(root *cli.Command) bool {
 	if output == nil {
 		output = os.Stdout
 	}
-	return welcomeTerminal(input) && welcomeTerminal(output) && welcomeTerminal(os.Stderr) && welcomeEnvironment(os.Getenv, runtime.GOOS)
-}
-
-func welcomeHeader(root *cli.Command) string {
+	if !welcomeTerminal(input) || !welcomeTerminal(output) || !welcomeTerminal(os.Stderr) || !welcomeEnvironment(os.Getenv, runtime.GOOS) {
+		return ""
+	}
 	profile := colorprofile.Env(os.Environ()) // Environment only; Detect can launch tmux.
 	if runtime.GOOS == "windows" && os.Getenv("TERM") == "" && os.Getenv("WT_SESSION") == "" {
 		// Classic consoles do not advertise VT processing. The OS version alone
