@@ -11,6 +11,7 @@ import (
 	"github.com/openai/openai-cli/internal/commandsuggest"
 	"github.com/openai/openai-cli/internal/imageoutput"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -18,7 +19,7 @@ import (
 
 // This preset is an exact catalog ID, not a claim about account permissions or
 // latest availability. Explicit API output retains the API's own defaults.
-const defaultSavedImageModel = "gpt-image-2.5-sunburst"
+const defaultSavedImageModel = openai.ImageModelGPTImage2_6Sunburst
 
 const imageGenerationQuickHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}Generate an image
   {{suggest . (printf "%s images generate --prompt \"A tiny orange robot\"" $bin)}}

@@ -184,7 +184,7 @@ def main():
                     assert len(states) == 1, states
                     saved_state = states[0].read_bytes()
                     assert json.loads(saved_state) == {
-                        'version': 2, 'prompt': prompt, 'model': 'gpt-image-2.5-sunburst', 'size': '1024x1024',
+                        'version': 2, 'prompt': prompt, 'model': 'gpt-image-2.6-sunburst', 'size': '1024x1024',
                         'quality': 'auto', 'background': 'auto', 'format': 'png',
                         'count': '1', 'output_dir': ''}, saved_state
                     terminal.send(b'\x03')
@@ -193,7 +193,7 @@ def main():
                     reopened = picker.Terminal(binary, ['images', 'generate'], env)
                     try:
                         reopened.wait(prompt.splitlines()[0])
-                        reopened.wait('gpt-image-2.5-sunburst')
+                        reopened.wait('gpt-image-2.6-sunburst')
                         assert 'Could not restore the draft' not in reopened.text()
                         picker.wait_submit_guard(reopened)
                         assert len(server.requests) == before+1, 'restoring the draft started a request'
@@ -327,7 +327,7 @@ def main():
                                     prompt = second_prompt
                                 terminal.send(b'\x03')
                                 terminal.finish(130)
-                            model = 'gpt-image-2.5-flare' if action == 'changed-model' else 'gpt-image-2.5-sunburst'
+                            model = 'gpt-image-2.6-flare' if action == 'changed-model' else 'gpt-image-2.6-sunburst'
                             check_body(server.requests[-1], {'prompt': prompt, 'model': model,
                                        'size': '1024x1024', 'quality': 'auto', 'output_format': 'png',
                                        'background': 'auto', 'n': 1})
@@ -345,7 +345,7 @@ def main():
                     if states:
                         saved_settings = json.loads(states[0].read_text())
                         assert saved_settings['version'] == 2 and saved_settings['prompt'] == prompt, saved_settings
-                        expected_model = 'gpt-image-2.5-flare' if action == 'changed-model' else 'gpt-image-2.5-sunburst'
+                        expected_model = 'gpt-image-2.6-flare' if action == 'changed-model' else 'gpt-image-2.6-sunburst'
                         assert saved_settings['model'] == expected_model, saved_settings
                     generates = action not in {'cancel', 'print'}
                     assert len(server.requests)-before == int(generates)+int(action == 'two-generations'), name
@@ -398,11 +398,11 @@ def main():
             target = root/'explicit-save-target'
             target.mkdir()
             direct_tty('explicit-options-preserved', ['images', 'generate', '--prompt', 'Direct settings',
-                       '--model', 'gpt-image-2.5-flare', '--size', '1536x864', '--quality', 'high',
+                       '--model', 'gpt-image-2.6-flare', '--size', '1536x864', '--quality', 'high',
                        '--background', 'transparent', '--output-format', 'webp', '--count', '2',
                        '--moderation', 'low', '--output-compression', '67', '--stream', 'false',
                        '--output-dir', str(target), '--name', 'preserved', '--inline', 'off'],
-                       expected_status=0, expected_body={'prompt': 'Direct settings', 'model': 'gpt-image-2.5-flare',
+                       expected_status=0, expected_body={'prompt': 'Direct settings', 'model': 'gpt-image-2.6-flare',
                        'size': '1536x864', 'quality': 'high', 'background': 'transparent', 'output_format': 'webp',
                        'n': 2, 'moderation': 'low', 'output_compression': 67, 'stream': False},
                        save_directory=target, save_name='preserved.png')
@@ -412,7 +412,7 @@ def main():
             direct_pipe('missing-prompt-pipe', ['images', 'generate'])
             direct_pipe('direct-prompt-pipe', ['images', 'generate', '--prompt', 'Pipe direct'],
                         expected_status=0, expected_body={'prompt': 'Pipe direct'})
-            payload = {'prompt': "Piped 'JSON' prompt", 'model': 'gpt-image-2.5-flare', 'size': '1536x864',
+            payload = {'prompt': "Piped 'JSON' prompt", 'model': 'gpt-image-2.6-flare', 'size': '1536x864',
                        'quality': 'high', 'background': 'transparent', 'output_format': 'png', 'n': 2}
             direct_pipe('stdin-json', ['images', 'generate'], json.dumps(payload).encode(),
                         expected_status=0, expected_body=payload)
