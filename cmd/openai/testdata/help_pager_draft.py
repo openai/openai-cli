@@ -36,6 +36,7 @@ source <(openai @completion zsh --suggestions --suggestions-only)
 record_buffer() { builtin print -rn -- "$BUFFER" > "$HOME/recorded"; BUFFER=''; : > "$HOME/ready"; }
 zle -N record_buffer
 bindkey '^]' record_buffer
+bindkey -l > "$HOME/maps-before"
 preexec() { builtin print -r -- "$1" >> "$HOME/submitted"; }
 """)
         pid, fd = pty.fork()
@@ -80,22 +81,30 @@ preexec() { builtin print -r -- "$1" >> "$HOME/submitted"; }
                 # The suffix belongs to the shell even if it shares the reply's write.
                 os.write(fd, b"-s" + position + " café".encode())
                 expected = "git status -s café".encode()
-            elif kind in ("cancel-split-cursor", "cancel-abandoned-cursor"):
+            elif kind in ("cancel-split-cursor", "cancel-abandoned-cursor", "cancel-shared-text", "cancel-shared-paste"):
                 os.write(fd, b"cancelled draft")
                 read_until(lambda: raw.count(cursor) > queries)
-                os.write(fd, position[:4])
+                cut = {"cancel-shared-text": 1, "cancel-shared-paste": 2}.get(kind, 4)
+                os.write(fd, position[:cut])
                 foreground = os.tcgetpgrp(fd)
                 assert foreground != pid
                 os.killpg(foreground, signal.SIGTERM)
-                # Hold the final two report bytes across the cancellation deadline.
+                # Withhold the remaining frame bytes across the cancellation deadline.
                 read_until(lambda: raw.count(prompt) >= 2)
                 time.sleep(.75)  # Longer than the usual zsh key-sequence timeout.
-                expected = b"1echo 1R and ;1R"
-                os.write(fd, b"1")
-                time.sleep(.75)
-                # A matching digit belongs to the typed command if no R follows.
-                tail = b"R" + expected if kind == "cancel-split-cursor" else expected[1:]
-                os.write(fd, tail)
+                if kind == "cancel-shared-text":
+                    expected = b"echo 1R and ;1R"
+                    os.write(fd, expected)
+                elif kind == "cancel-shared-paste":
+                    expected = b"first line\nsecond line"
+                    os.write(fd, paste_begin[cut:] + expected + paste_end + position)
+                else:
+                    expected = b"1echo 1R and ;1R"
+                    os.write(fd, b"1")
+                    time.sleep(.75)
+                    # A matching digit belongs to the typed command if no R follows.
+                    tail = b"R" + expected if kind == "cancel-split-cursor" else expected[1:]
+                    os.write(fd, tail)
             elif kind == "first-paste":
                 # Escape alone could also mean the user wants to quit.
                 os.write(fd, paste_begin[:1])
@@ -135,6 +144,10 @@ preexec() { builtin print -r -- "$1" >> "$HOME/submitted"; }
             read_until((home / "ready").exists)
             assert record.read_bytes() == expected, f"{kind}: changed editable draft"
             assert (home / "submitted").read_text().splitlines() == ["openai"], f"{kind}: draft was submitted"
+            if kind.startswith("cancel-shared-"):
+                os.write(fd, b'bindkey -l > "$HOME/maps-after"; : > "$HOME/maps-ready"\r')
+                read_until((home / "maps-ready").exists)
+                assert (home / "maps-before").read_bytes() == (home / "maps-after").read_bytes()
             os.write(fd, b"exit 0\r")
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
@@ -160,7 +173,8 @@ preexec() { builtin print -r -- "$1" >> "$HOME/submitted"; }
                 os.waitpid(pid, 0)
 
 
-for case in ("type", "paste", "first-paste", "quit", "quit-then-type", "split-admission", "cancel-split-cursor", "cancel-abandoned-cursor"):
+for case in ("type", "paste", "first-paste", "quit", "quit-then-type", "split-admission",
+             "cancel-split-cursor", "cancel-abandoned-cursor", "cancel-shared-text", "cancel-shared-paste"):
     check(case)
 
 # zsh owns editing and its key bindings. Discard a draft if the pager consumed

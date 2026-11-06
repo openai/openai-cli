@@ -41,21 +41,28 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
 
   ____APPNAME___resume_help_reply() {
     emulate -L zsh
-    local cursor=$'\e[1;1R' first=${____APPNAME___help_reply_length-} length=${#KEYS}
-    [[ $first == [1-5] && $length == [1-6] && $KEYS == ${cursor[1,length]} ]] && (( length >= first )) || return 0
+    local cursor=$'\e[1;1R' opener=$'\e[200~' first=${____APPNAME___help_reply_length-} length=${#KEYS}
+    [[ $first == [1-5] && $length == [1-6] ]] && (( length >= first )) || return 0
+    local sequence=$cursor
+    if (( first <= 2 )) && [[ $KEYS == ${opener[1,length]} ]]; then
+      sequence=$opener
+    fi
+    [[ $KEYS == ${sequence[1,length]} ]] || return 0
     # ZLE puts a mismatching key back on its queue. An empty queue after a
     # partial match means its key timer expired. Wait with paste mode enabled.
     if (( length < ${#cursor} && ! KEYS_QUEUED_COUNT )); then
       local -a ready
       if (( PENDING )) || { zmodload zsh/zselect && zselect -a ready -r 0 <"$TTY"; }; then
-        builtin zle -U "${cursor[1,length]}"
+        builtin zle -U "${sequence[1,length]}"
         return 0
       fi
     fi
     builtin zle -K ____APPNAME___help_reply_map
-    if (( first < length && length < ${#cursor} )); then
+    if [[ $KEYS == "$opener" ]]; then
+      builtin zle -U "$opener"
+    elif (( first < length && length < ${#cursor} )); then
       # The terminal abandoned the reply. Restore matching bytes typed in zsh.
-      builtin zle -U "${cursor[first+1,length]}"
+      builtin zle -U "${sequence[first+1,length]}"
     fi
   }
 
@@ -82,9 +89,11 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
       p[1-5]) frame=$opener${closer[1,${marker[2]}]} ;;
       *) return $code ;;
     esac
+    local first=0
     case $report in
-      ''|r) ;;
-      r[1-5]) frame=${cursor[1,${report[2]}]}$frame ;;
+      '') ;;
+      r) [[ $paste == o[12] ]] && first=${paste[2]} ;;
+      r[1-5]) first=${report[2]}; frame=${cursor[1,first]}$frame ;;
       *) return $code ;;
     esac
     # The pager requests its cursor report at 1,1. Ignore only that exact
@@ -93,14 +102,19 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
       builtin bindkey -N ____APPNAME___help_reply_map "$KEYMAP"; then
       builtin bindkey -M ____APPNAME___help_reply_map "$cursor" .redisplay
       builtin zle -K ____APPNAME___help_reply_map
-      if [[ $report == r[1-5] ]] && ! builtin bindkey -M ____APPNAME___help_prefix_map "$cursor" >/dev/null 2>&1 &&
+      if (( first )) && ! builtin bindkey -M ____APPNAME___help_prefix_map "$cursor" >/dev/null 2>&1 &&
         builtin bindkey -N ____APPNAME___help_prefix_map .safe; then
-        # Match only fixed report prefixes until ZLE sees the boundary.
-        typeset -g ____APPNAME___help_reply_length=${report[2]}
+        # ESC and ESC [ can also start a bracketed paste. ZLE distinguishes
+        # the two fixed sequences and puts a nonmatching key back on its queue.
+        typeset -g ____APPNAME___help_reply_length=$first
         builtin zle -N ____APPNAME___resume_help_reply
-        local n
-        for (( n = ${report[2]}; n <= ${#cursor}; n++ )); do
-          builtin bindkey -M ____APPNAME___help_prefix_map "${cursor[1,n]}" ____APPNAME___resume_help_reply
+        local n sequence
+        local -a sequences=("$cursor")
+        (( first > 2 )) || sequences+=("$opener")
+        for sequence in "${sequences[@]}"; do
+          for (( n = first; n <= ${#sequence}; n++ )); do
+            builtin bindkey -M ____APPNAME___help_prefix_map "${sequence[1,n]}" ____APPNAME___resume_help_reply
+          done
         done
         builtin zle -K ____APPNAME___help_prefix_map
       fi
