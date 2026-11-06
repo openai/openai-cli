@@ -62,3 +62,19 @@ func TestEveryTaskPhraseFindsItsInstalledCommandFirst(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkExploreSearchInstalledCatalog(b *testing.B) {
+	root := commands.Command
+	app.ConfigureCommand(root)
+	_, _, err := app.ConfigureHelp(root, []string{"openai", "explore"})
+	require.NoError(b, err)
+	candidates := explore.CandidatesForTest(root, "openai", "openai", "zsh")
+	for _, query := range []string{"models list", "speech composer", "upload mime type", "unknown nonsense"} {
+		b.Run(query, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				commandsuggest.Search(candidates, query)
+			}
+		})
+	}
+}

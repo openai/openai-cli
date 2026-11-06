@@ -25,11 +25,13 @@ type searchIndex struct {
 	entries    []searchEntry
 	browse     []int
 	catalog    bool
+	help       *helpIndex
 }
 
 type searchEntry struct {
 	path, arguments, prose string
 	routeWords             []string
+	phrases                []indexedTaskPhrase
 	length                 int
 }
 
@@ -50,21 +52,28 @@ func newSearchIndex(candidates []Candidate) *searchIndex {
 		if hasFlags {
 			arguments = "-" + arguments
 		}
-		description := strings.Fields(strings.ToLower(candidate.Description))
-		for i, word := range description {
-			if label, _, link := strings.Cut(word, "]("); link {
-				description[i] = label
-			} else if strings.Contains(word, "://") || strings.Contains(word, "www.") {
-				description[i] = ""
-			}
-		}
 		index.entries[i] = searchEntry{
-			path: path, arguments: arguments, prose: strings.Join(description, " "),
+			path: path, arguments: arguments, prose: searchableProse(candidate.Description),
 			routeWords: strings.FieldsFunc(candidate.path, func(r rune) bool { return !searchWordRune(r) }),
 			length:     utf8.RuneCountInString(command),
 		}
+		for _, phrase := range candidate.taskPhrases {
+			index.entries[i].phrases = append(index.entries[i].phrases, phrase.indexed())
+		}
 	}
 	return index
+}
+
+func searchableProse(text string) string {
+	description := strings.Fields(strings.ToLower(text))
+	for i, word := range description {
+		if label, _, link := strings.Cut(word, "]("); link {
+			description[i] = label
+		} else if strings.Contains(word, "://") || strings.Contains(word, "www.") {
+			description[i] = ""
+		}
+	}
+	return strings.Join(description, " ")
 }
 
 type searchMatch struct {
@@ -93,12 +102,18 @@ func (index *searchIndex) search(query string) []int {
 		}
 	}
 	if len(matches) == 0 && index.catalog {
+		matches = index.conversionMatches(words)
+	}
+	if len(matches) == 0 && index.catalog {
 		words = strings.Fields(strings.TrimPrefix(query, "openai "))
 		for i, entry := range index.entries {
 			if edits := entry.recoverRoute(words); edits >= 0 {
 				matches = append(matches, searchMatch{index: i, rank: [6]int{edits, len(entry.routeWords), entry.length}})
 			}
 		}
+	}
+	if len(matches) == 0 && index.catalog {
+		matches = index.matchHelp(words)
 	}
 	slices.SortStableFunc(matches, func(a, b searchMatch) int {
 		if order := cmp.Compare(b.task, a.task); order != 0 {
@@ -116,6 +131,34 @@ func (index *searchIndex) search(query string) []int {
 	return result
 }
 
+// "Turn X into Y" may resolve an existing "X to Y" task. Require the
+// complete, ordered task so extra words or the reverse operation cannot leak in.
+func (index *searchIndex) conversionMatches(words []string) []searchMatch {
+	if len(words) < 4 {
+		return nil
+	}
+	switch words[0] {
+	case "turn", "convert", "transform", "change":
+	default:
+		return nil
+	}
+	separator := slices.IndexFunc(words[1:], func(word string) bool { return word == "to" || word == "into" }) + 1
+	if separator < 2 || separator == len(words)-1 {
+		return nil
+	}
+	phrase := strings.Join(words[1:separator], " ") + " to " + strings.Join(words[separator+1:], " ")
+	var matches []searchMatch
+	for i, entry := range index.entries {
+		for _, task := range entry.phrases {
+			if !task.anyOrder && task.text == phrase {
+				matches = append(matches, searchMatch{index: i, task: exactTask})
+				break
+			}
+		}
+	}
+	return matches
+}
+
 func (index searchIndex) literalMatches(query string, words []string) []searchMatch {
 	var matches []searchMatch
 	route := strings.TrimPrefix(query, "openai ")
@@ -125,7 +168,7 @@ func (index searchIndex) literalMatches(query string, words []string) []searchMa
 		if candidate.path != "" && candidate.path == route {
 			match.task = literalRoute
 		} else if len(words) > 1 {
-			for _, phrase := range candidate.taskPhrases {
+			for _, phrase := range entry.phrases {
 				match.task = max(match.task, phrase.match(query, words))
 			}
 		}
@@ -293,18 +336,28 @@ const (
 	literalRoute
 )
 
-func (p TaskPhrase) match(query string, words []string) taskMatch {
+type indexedTaskPhrase struct {
+	text     string
+	terms    []string
+	anyOrder bool
+}
+
+func (p TaskPhrase) indexed() indexedTaskPhrase {
 	terms := strings.Fields(strings.ToLower(p.Text))
-	text := strings.Join(terms, " ")
-	if text == query {
+	return indexedTaskPhrase{text: strings.Join(terms, " "), terms: terms, anyOrder: p.AnyWordOrder}
+}
+
+func (p indexedTaskPhrase) match(query string, words []string) taskMatch {
+	if p.text == query {
 		return exactTask
 	}
-	if strings.HasPrefix(text, query) {
+	if strings.HasPrefix(p.text, query) {
 		return orderedTaskPrefix
 	}
-	if !p.AnyWordOrder || len(words) > len(terms) {
+	if !p.anyOrder || len(words) > len(p.terms) {
 		return noTaskMatch
 	}
+	terms := slices.Clone(p.terms)
 	contentWords := 0
 	for i, word := range words {
 		if !article(word) {

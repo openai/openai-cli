@@ -1,0 +1,179 @@
+package commandsuggest
+
+import (
+	"slices"
+	"strings"
+
+	"github.com/urfave/cli/v3"
+)
+
+// Built on the first miss and reused across keystrokes. Only installed routes
+// contribute terms. Shell history, option values and example operands do not.
+type helpIndex struct {
+	postings map[string][]helpHit
+	terms    []string // sorted for prefix lookup
+	scores   []helpScore
+}
+
+type helpHit struct {
+	index int
+	cost  int
+}
+
+type helpScore struct {
+	words, total, lastCost int
+	anchor                 bool // At least one query word names the route, its summary or an option.
+}
+
+// A lower cost is stronger evidence of the command's purpose.
+const (
+	routeWord = iota
+	summaryWord
+	optionWord
+	helpWord
+	interfaceWord
+)
+
+func newHelpIndex(candidates []Candidate, entries []searchEntry) *helpIndex {
+	h := &helpIndex{postings: make(map[string][]helpHit), scores: make([]helpScore, len(candidates))}
+	for i, candidate := range candidates {
+		cmd := candidate.definition
+		if cmd == nil {
+			continue
+		}
+
+		h.add(candidate.path, i, routeWord)
+		h.add(entries[i].prose, i, summaryWord)
+		if cmd.Usage != candidate.Description {
+			h.add(searchableProse(cmd.Usage), i, summaryWord)
+		}
+		for _, flag := range cmd.Flags {
+			if visible, ok := flag.(cli.VisibleFlag); ok && visible.IsVisible() {
+				for _, name := range flag.Names() {
+					h.add(strings.ToLower(name), i, optionWord)
+				}
+			}
+		}
+		var prose strings.Builder
+		for line := range strings.SplitSeq(cmd.Description, "\n") {
+			// Indented shell examples are already catalogued separately.
+			if line != "" && line[0] != ' ' && line[0] != '\t' {
+				prose.WriteString(line)
+				prose.WriteByte(' ')
+			}
+		}
+		detail := searchableProse(prose.String())
+		h.add(detail, i, helpWord)
+		if describesEditor(detail) {
+			h.add("interactive composer editor studio workbench launch open", i, interfaceWord)
+		}
+	}
+	slices.Sort(h.terms)
+	return h
+}
+
+func (h *helpIndex) add(text string, index, cost int) {
+	for word := range strings.FieldsFuncSeq(text, func(r rune) bool { return !searchWordRune(r) }) {
+		hits := h.postings[word]
+		if len(hits) == 0 {
+			h.terms = append(h.terms, word)
+		} else if last := &hits[len(hits)-1]; last.index == index {
+			last.cost = min(last.cost, cost)
+			continue
+		}
+		h.postings[word] = append(hits, helpHit{index: index, cost: cost})
+	}
+}
+
+// A terminal picker for editing settings is different from a read-only list.
+func describesEditor(detail string) bool {
+	if searchWord(detail, "terminal") != 0 && searchWord(detail, "interactive") != 0 {
+		return false
+	}
+	for _, noun := range []string{"form", "editor", "composer", "workbench", "studio"} {
+		if searchWord(detail, noun) == 0 {
+			return true
+		}
+	}
+	return searchWord(detail, "picker") == 0 && searchWord(detail, "settings") == 0
+}
+
+func (index *searchIndex) matchHelp(words []string) []searchMatch {
+	// Keep flags, shell syntax, and literal history searches on their existing paths.
+	if len(words) == 0 {
+		return nil
+	}
+	for _, word := range words {
+		if strings.IndexFunc(word, func(r rune) bool { return !searchWordRune(r) }) >= 0 {
+			return nil
+		}
+	}
+	if index.help == nil {
+		index.help = newHelpIndex(index.candidates, index.entries)
+	}
+	h := index.help
+	clear(h.scores)
+	corrected := false
+	for i, word := range words {
+		first, found := slices.BinarySearch(h.terms, word)
+		switch {
+		case found:
+			h.scoreWord(i, h.postings[word])
+		case i == len(words)-1 && len(word) >= 3 && first < len(h.terms) && strings.HasPrefix(h.terms[first], word):
+			for _, term := range h.terms[first:] {
+				if !strings.HasPrefix(term, word) {
+					break
+				}
+				h.scoreWord(i, h.postings[term])
+			}
+		case !corrected && len(words) >= 2 && len(word) >= 5 && asciiLetters(word):
+			// Correct a single unambiguous spelling, with other query words
+			// still required. Never guess between two operations.
+			var correction string
+			for _, term := range h.terms {
+				if WithinOneEdit(term, word) {
+					if correction != "" {
+						return nil
+					}
+					correction = term
+				}
+			}
+			if correction == "" {
+				return nil
+			}
+			h.scoreWord(i, h.postings[correction])
+			corrected = true
+		default:
+			return nil
+		}
+	}
+	var matches []searchMatch
+	for i, score := range h.scores {
+		if score.words == len(words) && (score.anchor || len(words) == 1) {
+			entry := &index.entries[i]
+			matches = append(matches, searchMatch{index: i, rank: [6]int{score.total, len(entry.routeWords), entry.length}})
+		}
+	}
+	return matches
+}
+
+// For a prefix, count a candidate once and keep its best matching field.
+func (h *helpIndex) scoreWord(position int, hits []helpHit) {
+	for _, hit := range hits {
+		score := &h.scores[hit.index]
+		if hit.cost <= optionWord {
+			score.anchor = true
+		}
+		switch score.words {
+		case position:
+			score.words++
+			score.total += hit.cost
+			score.lastCost = hit.cost
+		case position + 1:
+			if hit.cost < score.lastCost {
+				score.total += hit.cost - score.lastCost
+				score.lastCost = hit.cost
+			}
+		}
+	}
+}

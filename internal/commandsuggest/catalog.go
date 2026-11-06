@@ -19,6 +19,7 @@ type Candidate struct {
 	// Only installed command routes have a path. Examples and shell history carry display text alone.
 	path        string
 	taskPhrases []TaskPhrase
+	definition  *cli.Command // Only installed routes contribute help and public option names.
 	// Catalog entries keep the command body separate from shell-specific executable quoting.
 	commandText string
 	browseKey   string
@@ -64,6 +65,7 @@ func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]Task
 			if candidate.path != "" {
 				result[index].browseKey = candidate.browseKey
 				result[index].path = candidate.path
+				result[index].definition = candidate.definition
 				result[index].taskPhrases = candidate.taskPhrases
 			}
 			return
@@ -89,7 +91,7 @@ func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]Task
 			// Retired endpoints remain in help, but discovery should offer their
 			// authored replacement examples instead of unavailable operations.
 			if child.Metadata["help-command-section"] != "Retired commands" {
-				add(Candidate{Command: target, Description: child.Usage, path: childPath, taskPhrases: taskPhrases[childPath]}, childPath)
+				add(Candidate{Command: target, Description: child.Usage, definition: child, path: childPath, taskPhrases: taskPhrases[childPath]}, childPath)
 			}
 			walk(child, childPath)
 		}
