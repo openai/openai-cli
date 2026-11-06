@@ -15,7 +15,7 @@ func TestMainStartupHelpReturnsWithoutInput(t *testing.T) {
 		{"long-help", []string{"--help"}, "Help needs no API key"},
 		{"short-help", []string{"-h"}, "Help needs no API key"},
 		{"help-command", []string{"help"}, "Help needs no API key"},
-		{"nested-help", []string{"models", "--help"}, "Key setup: openai help setup"},
+		{"nested-help", []string{"models", "--help"}, "Global flags: openai --help"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newUpdateNoticeFixture(t)
@@ -27,8 +27,8 @@ func TestMainStartupHelpReturnsWithoutInput(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("help did not return successfully: %+v", got)
 			}
-			if !strings.Contains(got.stdout, "GLOBAL FLAGS") || !strings.Contains(got.stdout, test.end) {
-				t.Fatalf("help omitted the complete reference: %q", got.stdout)
+			if !strings.Contains(got.stdout, test.end) || (test.name != "nested-help" && !strings.Contains(got.stdout, "GLOBAL FLAGS")) {
+				t.Fatalf("help omitted its reference: %q", got.stdout)
 			}
 			if test.name == "bare" && !strings.Contains(got.stdout, "What are we making today?") {
 				t.Fatalf("bare help omitted the welcome banner: %q", got.stdout)

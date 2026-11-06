@@ -1,18 +1,43 @@
 # Reading command results
 
-Successful JSON responses now print labeled text by default, both in a terminal
-and when stdout is piped or redirected. `--format auto` and `--format text`
-select this behavior explicitly. For example:
+Single API objects print as labeled text in terminals, pipes, and redirected
+files. In interactive terminals, lists show tables when the data fits. Select
+`--format text` to print all requested records as labeled text.
 
 ```sh
 openai files retrieve --file-id file-example
 openai files retrieve --file-id file-example | cat
 ```
 
-Objects show labeled fields, nested values stay grouped, and list items and
-stream events appear as separate records. Readable lists and streams print as
-records arrive without opening an automatic pager. An empty list says
-`No results.`; `--max-items 0` writes nothing.
+Objects show labeled fields. Nested values stay grouped. In a terminal, list
+commands show a table below your command when the columns fit. Wider or nested
+records use labeled fields. Pipes, explicit `--format text`, and live streams
+print individual records as they arrive. An empty list shows `No results.`
+and `--max-items 0` writes nothing.
+
+## Browsing a list
+
+Most lists, including `openai webhooks list` and `openai skills list`, print all requested rows and return.
+Pass `--browse` to use keyboard navigation, for example `openai skills list --browse`.
+Files, Batches, Models, and Projects already browse by default. Pass `--browse=false` to print and return.
+
+Browsing starts with up to five table rows or a short block of labeled fields.
+Complete results that fit return to the shell. Longer results show a footer, such as `Files 1–5`.
+
+| Key | Action |
+| --- | --- |
+| ↓ or ↑ | Scroll one row. |
+| Space | Open the full-screen view at the next unread row. Subsequent presses advance one screen. |
+| b | Return to the previous screen. |
+| q | Quit. |
+
+Headings stay visible while you scroll. Moving forward can fetch another API
+page. Moving back reuses records you already loaded. Once you start browsing,
+the final screen stays open until you quit. Use `--format json` for the full API fields.
+
+The CLI discovers list actions during command registration, including aliases
+and names such as `list-files`. New commands using the standard JSON response
+or iterator output inherit both the table layout and the `--browse` option automatically.
 
 Ordinary text and unknown fields remain complete. Known base64 media fields and
 numeric embedding vectors show a size or count with a `--format json` hint.
@@ -55,8 +80,8 @@ openai files list --format jsonl > files.jsonl
 Pipes and redirected files receive each item before the CLI requests more items.
 The CLI does not collect the entire list. The SDK still loads individual pages.
 Models sorting retains its existing single-response collection.
-Terminal output retains automatic paging for long results. The CLI buffers at
-most one screen plus the item that crosses that screen before opening the pager.
+In a terminal, most lists print each API page before requesting the next page.
+With keyboard browsing enabled, Space opens the full-screen view at the next unread record.
 
 This changes `json` output at finite item boundaries, which previously emitted
 separate pretty-printed values. Migrate record consumers to `--format jsonl`.

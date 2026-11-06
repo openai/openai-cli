@@ -71,6 +71,10 @@ type imagePickerWorkspace struct {
 	nameCounts                                map[string]int
 	selected                                  int
 	expanded                                  bool
+	konsole, konsoleScreen                    bool
+	konsoleViewport                           interactiveImageSize
+	konsoleTransfer                           *imagePickerKonsoleTransfer
+	konsoleWorkers                            sync.WaitGroup
 	mouse                                     imagePickerMouseModes
 	expandedRows                              []string
 	expandedNativeRows, expandedColumns       int
@@ -97,6 +101,7 @@ type imagePickerWorkspace struct {
 	prepareRows                               func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)
 	previewCancel                             context.CancelFunc
 	previewWorkers                            sync.WaitGroup
+	previewGate                               chan struct{}
 	fontPreviewOnce                           sync.Once
 	fontPreviewGate                           chan struct{}
 	opening                                   bool
@@ -226,6 +231,17 @@ func (w *imagePickerWorkspace) progress(m *imagePicker) string {
 }
 
 func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile, busy, headerChanged bool) (err error) {
+	if transfer := w.konsoleTransfer; transfer != nil {
+		cw, ch := terminalimage.CellSize(w.out.Fd())
+		size := interactiveImageSize{m.width, m.height, cw, ch}
+		if !w.expanded || w.selected != transfer.index || size != transfer.size {
+			select {
+			case transfer.replace <- struct{}{}:
+			default:
+			}
+		}
+		return nil
+	}
 	defer func() {
 		w.nativeTransient = nil
 		err = imagePickerDisplayFailure(err)
@@ -234,7 +250,21 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 	if width <= 0 || height <= 0 {
 		return nil
 	}
+	ctx := w.context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	nativeExpanded := w.konsole && w.expanded && w.selected >= 0 && w.selected < len(w.images) && w.images[w.selected].protocol != ""
+	if err := w.setKonsoleScreen(ctx, nativeExpanded); err != nil {
+		return err
+	}
 	resized := width != w.width || height != w.height
+	if w.konsoleScreen {
+		cw, ch := terminalimage.CellSize(w.out.Fd())
+		size := interactiveImageSize{width, height, cw, ch}
+		resized = resized || size != w.konsoleViewport
+		w.konsoleViewport = size
+	}
 	styleChanged := w.styleDark != m.dark || w.styleColor != m.color || w.styleProfile != profile
 	if styleChanged {
 		w.styleDark, w.styleColor, w.styleProfile = m.dark, m.color, profile
@@ -260,6 +290,9 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		lines = w.inlineView(m, busy)
 	}
 	lines = lines[:min(len(lines), height)]
+	if w.konsoleScreen {
+		return w.drawKonsoleFrame(ctx, lines, resized)
+	}
 	column := 5
 	if g, ok := imageStudioLayout(width, height); ok && !w.expanded {
 		column = g.previewX + 1
@@ -332,10 +365,6 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		output.WriteString(ansi.CursorHorizontalAbsolute(cursor.X + 1))
 		output.WriteString(ansi.SetCursorStyle(5) + ansi.SetModeTextCursorEnable)
 	}
-	ctx := w.context
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	writeCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	protocol := ""
@@ -378,6 +407,7 @@ func imagePickerDeleteGraphics(column int) string {
 
 func (w *imagePickerWorkspace) close() error {
 	mouseErr := w.stopMouse()
+	w.konsoleWorkers.Wait()
 	if w.openCancel != nil {
 		w.openCancel()
 	}
@@ -390,8 +420,15 @@ func (w *imagePickerWorkspace) close() error {
 	w.previewErrorMu.Lock()
 	previewErr := w.previewError
 	w.previewErrorMu.Unlock()
+	ctx := w.context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 250*time.Millisecond)
+	defer cancel()
+	screenErr := w.setKonsoleScreen(cleanup, false)
 	if !w.started {
-		return errors.Join(mouseErr, previewErr)
+		return errors.Join(mouseErr, previewErr, screenErr)
 	}
 	w.started = false
 	var output strings.Builder
@@ -404,17 +441,11 @@ func (w *imagePickerWorkspace) close() error {
 	for _, path := range w.receipts {
 		fmt.Fprintf(&output, "Saved image: %+q\n", path)
 	}
-	ctx := w.context
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 250*time.Millisecond)
-	defer cancel()
 	protocol := ""
 	if w.kitty {
 		protocol = "kitty"
 	}
-	return errors.Join(mouseErr, previewErr, imagePickerDisplayFailure(terminalimage.WriteFrame(cleanup, w.out, output.String(), protocol)))
+	return errors.Join(mouseErr, previewErr, imagePickerDisplayFailure(errors.Join(screenErr, terminalimage.WriteFrame(cleanup, w.out, output.String(), protocol))))
 }
 
 func imagePickerWorkspaceClock(started time.Time) tea.Cmd {

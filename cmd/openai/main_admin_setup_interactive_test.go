@@ -112,7 +112,7 @@ func TestMainAdminInteractiveRootHelpRoutes(t *testing.T) {
 				t.Fatalf("displayed command-help route did not describe interactive admin setup: %+v", details)
 			}
 			ordinary := runMainDispatchWithEnv(t, "bash", env, strings.Fields(ordinaryHelp)...)
-			if ordinary.code != 0 || ordinary.stderr != "" || !strings.Contains(ordinary.stdout, "read -rs OPENAI_API_KEY") || !strings.Contains(ordinary.stdout, "openai models list") {
+			if ordinary.code != 0 || ordinary.stderr != "" || !strings.Contains(ordinary.stdout, "OPENAI_API_KEY") || !strings.Contains(ordinary.stdout, "openai models list") {
 				t.Fatalf("displayed ordinary guide route changed: %+v", ordinary)
 			}
 			if strings.Contains(details.stdout+ordinary.stdout, "never-display") {

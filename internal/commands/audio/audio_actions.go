@@ -11,13 +11,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
-	"github.com/openai/openai-cli/internal/readable"
-	requestconfig "github.com/openai/openai-cli/internal/request"
-	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
 const audioInstructionsExample = "Speak warmly and clearly."
-const audioCommandTitle = "Command · Bash/zsh"
+const audioCommandTitle = "Command"
+const audioNoGenerationNotice = "Generate speech first."
 
 func (m *audioWorkbench) instructionsSupported() bool {
 	return !strings.HasPrefix(m.settings.Model, "tts-1")
@@ -34,9 +32,14 @@ func (m *audioWorkbench) effectiveSettings() audiohistory.Settings {
 	return settings
 }
 
+func (m *audioWorkbench) noGenerationNotice() tea.Cmd {
+	m.playerNotice = audioNoGenerationNotice
+	return nil
+}
+
 func (m *audioWorkbench) openSave() tea.Cmd {
 	if m.result == nil {
-		return nil
+		return m.noGenerationNotice()
 	}
 	m.modal, m.note = "save", ""
 	path, err := audioDefaultSavePath(m.result.entry)
@@ -49,7 +52,7 @@ func (m *audioWorkbench) openSave() tea.Cmd {
 	m.path.SetValue(path)
 	m.saveFolder.SetValue(audioDefaultSaveFolder)
 	m.resizeEditors()
-	return m.focusSave(2)
+	return m.focusSave(1)
 }
 
 func (m *audioWorkbench) focusSave(focus int) tea.Cmd {
@@ -161,20 +164,60 @@ func (m *audioWorkbench) restoreEditorFocus() tea.Cmd {
 	switch m.modal {
 	case "save":
 		return m.focusSave(m.saveFocus)
+	case "seek":
+		return m.seekInput.Focus()
 	case "speed":
 		return m.speedInput.Focus()
 	case "":
+		if m.speedEditing {
+			m.setting = 3
+			m.focusSection(2)
+			return m.speedInput.Focus()
+		}
 		return m.focusSection(m.focus)
 	}
 	return nil
 }
 
 func (m *audioWorkbench) moreItems() []string {
-	items := []string{"History", "Preview voice", "Clear form", "Show command", "Help"}
+	items := []string{"History", "Preview voice", "Clear form", "View command", "Help"}
 	if m.activeFailure() {
 		items = append(items, "Last error")
 	}
 	return items
+}
+
+func (m *audioWorkbench) openActions() tea.Cmd {
+	m.modal, m.setting, m.moreChoice = "more", audioSettingMore, 0
+	return m.focusSection(2)
+}
+
+func (m *audioWorkbench) updateWideAction(key string) tea.Cmd {
+	switch key {
+	case "right":
+		return m.updateMore("down")
+	case "left":
+		if m.moreChoice > 0 {
+			return m.updateMore("up")
+		}
+		fallthrough
+	case "home", "shift+tab":
+		m.modal, m.setting = "", 4
+		return m.focusSection(2)
+	case "up":
+		// Settings sit directly above the shelf. Return to their last visible field.
+		order := m.settingOrder()
+		m.modal, m.setting = "", order[len(order)-2]
+		return m.focusSection(2)
+	case "down":
+		m.modal = ""
+		return m.enterAudioFromAbove()
+	case "tab":
+		m.modal = ""
+		return m.focusSection(4)
+	default:
+		return m.updateMore(key)
+	}
 }
 
 func (m *audioWorkbench) updateMore(key string) tea.Cmd {
@@ -186,9 +229,9 @@ func (m *audioWorkbench) updateMore(key string) tea.Cmd {
 	selected := items[m.moreChoice]
 	switch selected {
 	case "Help":
-		m.openInformation("Help", audioFormHelp, "more")
-	case "Show command":
-		m.openInformation(audioCommandTitle, m.commandPreview(), "more")
+		m.openHelp("more")
+	case "View command":
+		return m.focusCommand()
 	case "Last error":
 		m.openRecovery()
 	default:
@@ -205,7 +248,11 @@ func (m *audioWorkbench) updateMore(key string) tea.Cmd {
 			m.input.SetValue("")
 			m.instructions.SetValue("")
 			m.settings = audioDefaultSettings()
+			m.settingsExpanded = false
+			m.validation = nil
+			m.retainedGenerationFailure = false
 			m.result, m.priorResult = nil, nil
+			m.playerNotice = ""
 			m.note = "Draft cleared."
 		}
 		m.lastFinished = time.Now()
@@ -241,8 +288,9 @@ func (m *audioWorkbench) leaveRecovery() tea.Cmd {
 	restoreFocus := m.recoveryRestoreFocus
 	m.recoveryRestoreFocus = false
 	m.lastFinished = time.Now()
-	// Inspecting a previous failure restores the section the user was editing.
-	if m.modal == "" && !restoreFocus {
+	// Recovery must not strand an uncommitted Speed draft on another action.
+	// Inspecting a previous failure also restores the previous section.
+	if m.modal == "" && !restoreFocus && !m.speedEditing {
 		m.setting = audioSettingMore
 		return m.focusSection(2)
 	}
@@ -264,39 +312,45 @@ func (m *audioWorkbench) reconcileRecovery() tea.Cmd {
 	return nil
 }
 
-func (m *audioWorkbench) openInformation(title, text, parent string) {
-	m.infoTitle, m.infoText, m.infoParent = title, text, parent
-	m.infoOffset, m.modal = 0, "info"
+func (m *audioWorkbench) openHelp(parent string) {
+	m.infoParent, m.infoOffset, m.modal = parent, 0, "info"
 }
 
-func (m *audioWorkbench) infoRows() []string {
-	if m.infoTitle == audioCommandTitle {
-		return audioCommandRows(readable.Text(m.infoText), m.audioWidth())
+func (m *audioWorkbench) helpRows() []string {
+	shortcut := func(key, action string) string {
+		return "  " + m.keyHint(key, "") + strings.Repeat(" ", 12-ansi.StringWidth(key)) + m.muted().Render(action)
 	}
-	return strings.Split(ansi.Wrap(readable.Text(m.infoText), m.audioWidth(), ""), "\n")
-}
-
-// Prose wrapping can discard spaces. Executable text keeps every sequence,
-// using the existing picker decoder for linear, display-cell-aware wrapping.
-func audioCommandRows(text string, width int) []string {
-	var rows []string
-	var line strings.Builder
-	used := 0
-	for len(text) > 0 {
-		sequence, cells, read := cliterminal.Sequence(text)
-		if used > 0 && used+cells > width {
-			rows = append(rows, line.String())
-			line.Reset()
-			used = 0
-		}
-		line.WriteString(sequence)
-		used += cells
-		text = text[read:]
+	rows := []string{
+		"  " + m.strong().Render("Compose"),
+		shortcut("Tab", "Next section"),
+		shortcut("Ctrl+G", "Generate speech"),
+		shortcut("Alt+Enter", "Insert a new line"),
 	}
-	return append(rows, line.String())
+	if m.studioLayout() {
+		rows = append(rows, shortcut("↑ / ↓", "First script line to Generate and back"), shortcut("Shift+Tab", "Script to Recording"))
+	}
+	if m.splitComposer() {
+		rows = append(rows, shortcut("→ / ←", "End of text to Delivery and back"))
+	}
+	return append(rows,
+		"",
+		"  "+m.strong().Render("Audio"),
+		shortcut("Ctrl+O", "Focus audio"),
+		shortcut("Space", "Toggle playback"),
+		shortcut("← →", "Seek on waveform"),
+		shortcut("g", "Set exact time"),
+		shortcut("Enter", "Edit selected clock"),
+		shortcut("Ctrl+S", "Open Save audio"),
+		"",
+		"  "+m.strong().Render("View command"),
+		shortcut("c", "Copy command"),
+		shortcut("Ctrl+P", "Print command and exit"),
+	)
 }
 
-func (m *audioWorkbench) informationHeight() int { return max(1, m.height-5) }
+func (m *audioWorkbench) helpHeight() int {
+	return max(1, m.audioHeight()-4)
+}
 
 func audioScrollOffset(offset, rows, height int, key string) int {
 	limit := max(0, rows-height)
@@ -318,57 +372,23 @@ func audioScrollOffset(offset, rows, height int, key string) int {
 	return max(0, min(offset, limit))
 }
 
-func (m *audioWorkbench) informationView() tea.View {
-	rows, height := m.infoRows(), m.informationHeight()
+func (m *audioWorkbench) helpView() tea.View {
+	rows, height := m.helpRows(), m.helpHeight()
 	start := audioScrollOffset(m.infoOffset, len(rows), height, "")
-	lines := []string{m.strong().Render(m.infoTitle), ""}
+	lines := []string{"  " + m.strong().Render("Help"), ""}
 	lines = append(lines, rows[start:min(len(rows), start+height)]...)
-	footer := m.hintLine([2]string{"↑↓", "scroll"}, [2]string{"Esc", "back"})
-	if m.infoTitle == audioCommandTitle {
-		if _, omit := requestconfig.NextCommandOptions(m.command.Root()); !omit {
-			footer = m.hintLine([2]string{"↑↓", ""}, [2]string{"Ctrl+P", "print/exit"}, [2]string{"Esc", "back"})
-		}
+	footer := m.shortcutLine([2]string{"Esc", "back"})
+	if len(rows) > height {
+		footer = m.shortcutLine([2]string{"↑↓", "scroll"}, [2]string{"Esc", "back"})
 	}
 	lines = append(lines, "", footer)
-	return tea.NewView(m.fitAudio(lines))
+	return tea.NewView(m.fitAudio(lines, 1))
 }
-
-const audioFormHelp = `Use Tab to move between sections.
-Use Up and Down to move through fields.
-Enter chooses the highlighted action.
-
-Enter in Text or Instructions creates speech.
-Ctrl+G also creates speech.
-Ctrl+O opens generated audio without starting playback.
-Alt+Enter adds a new line.
-
-Instructions start with an editable example.
-Older models do not send Instructions.
-Your instruction draft stays available when you change models.
-
-History stores audio, Text, Instructions, and settings locally.
-It stores only the inputs sent with each request.
-Clear removes the current draft, not History or saved files.
-
-Choose Play audio or Save audio in the result.
-Space plays or stops; S opens Save.
-Left and Right choose Play or Save.
-Up focuses the waveform. Down returns to the selected action.
-Left and Right on the waveform choose the playback start.
-Shift+Left and Shift+Right move five waveform bars.
-Seeking stops playback. Press Space to play from the selected time.
-The marker follows FFplay's reported playback position.
-If FFplay does not report progress, the marker keeps its selected position.
-Waveform height scales to each recording. Playback volume stays unchanged.
-Save always exports the complete original recording.
-
-Esc returns from a menu or result.
-Esc from the form exits. Ctrl+C cancels and exits.`
 
 func (m *audioWorkbench) progressView() string {
 	action := map[string]string{"Working: generate": "Creating speech", "Working: history": "Opening History", "Working: open": "Opening audio", "Working: export": "Saving audio"}[m.note]
 	if action == "" {
 		action = "Working"
 	}
-	return m.muted().Render(fmt.Sprintf("%s… %.1fs · ", action, time.Since(m.started).Seconds())) + m.keyHint("Ctrl+C", "cancels")
+	return m.muted().Render(fmt.Sprintf("%s… %.1fs  ", action, time.Since(m.started).Seconds())) + m.keyHint("Ctrl+C", "cancels")
 }

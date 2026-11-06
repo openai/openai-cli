@@ -74,6 +74,9 @@ func flagOptionsWithStdin(
 		Encoding: requestconfig.EncodingHooks{
 			PrepareMultipart: func(body map[string]any) error { return images.PrepareMultipartBody(cmd, body) },
 			ValidateJSON: func(body []byte) error {
+				if err := admin.ValidateExternalKeyCreate(cmd, body); err != nil {
+					return err
+				}
 				if err := webhooks.ValidateRequestEvents(cmd, body); err != nil {
 					return err
 				}

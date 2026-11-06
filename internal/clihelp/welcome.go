@@ -41,7 +41,7 @@ func welcomeHeader(root *cli.Command) string {
 		profile = colorprofile.NoTTY
 	}
 	return renderWelcome(root.Version, helpWidth(root), profile,
-		welcomeDarkBackground(os.Getenv("COLORFGBG")), welcomeUnicode(os.Getenv), os.Getenv("TERM_PROGRAM"))
+		backgroundFromHint(os.Getenv("COLORFGBG")), welcomeUnicode(os.Getenv), os.Getenv("TERM_PROGRAM"))
 }
 
 // Character encoding and color support are independent. Unknown encodings use
@@ -76,23 +76,12 @@ func welcomeEnvironment(getenv func(string) string, goos string) bool {
 	return true
 }
 
-// Match the image picker, tokenizer, and Codex guide without querying stdin.
-func welcomeDarkBackground(colorfgbg string) bool {
-	parts := strings.Split(colorfgbg, ";")
-	switch parts[len(parts)-1] {
-	case "7", "15", "231", "255":
-		return false
-	default:
-		return true
-	}
-}
-
 const (
 	welcomeTitle   = "OpenAI CLI"
 	welcomeTagline = "What are we making today?"
 )
 
-func renderWelcome(version string, width int, profile colorprofile.Profile, dark, unicode bool, terminalProgram string) string {
+func renderWelcome(version string, width int, profile colorprofile.Profile, background helpBackground, unicode bool, terminalProgram string) string {
 	version = welcomeVersion(version)
 	if !unicode {
 		var ascii strings.Builder
@@ -110,12 +99,18 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 	if width < 29 || required+4 > width {
 		return ""
 	}
-	focus, muted, frameColor := "#3159BC", "#657087", "#3159BC"
+	// Keep the original gradient artwork when the terminal does not report
+	// its background. Its caption and version use the readable text palette.
+	dark := background != lightBackground
+	focus, frameColor := "#3159BC", "#3159BC"
 	if dark {
-		focus, muted, frameColor = "#8AA8FF", "#A4ACC2", "#5675BC"
+		focus, frameColor = "#8AA8FF", "#5675BC"
 	}
 	heading := lipgloss.NewStyle().Bold(true)
-	note := lipgloss.NewStyle().Foreground(lipgloss.Color(muted))
+	note := lipgloss.NewStyle()
+	if _, muted := background.textColors(); muted != "" {
+		note = note.Foreground(lipgloss.Color(muted))
+	}
 	padding := 1
 	if required+6 <= width {
 		padding = 2

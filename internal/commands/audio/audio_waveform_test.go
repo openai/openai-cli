@@ -9,6 +9,16 @@ import (
 	"unicode/utf8"
 )
 
+func audioWaveform(peaks []float64, width, height, selectedBoundary int) []string {
+	rows, _ := audioWaveformRows(peaks, min(width, 120), height, selectedBoundary, false)
+	return rows
+}
+
+func audioDenseWaveform(peaks []float64, width, height, selectedBoundary int) []string {
+	rows, _ := audioWaveformRows(peaks, width, height, selectedBoundary, true)
+	return rows
+}
+
 func TestAudioWaveformPreservesFractionalRatios(t *testing.T) {
 	peaks := []float64{0, .125, .25, .375, .5, .625, .75, .875, 1}
 	if got := audioWaveform(peaks, 19, 1, 0); !slices.Equal(got, []string{"┃─ ▁ ▂ ▃ ▄ ▅ ▆ ▇ █ "}) {
@@ -121,7 +131,7 @@ func TestAudioWaveformBoundsDimensions(t *testing.T) {
 	for _, size := range [][4]int{
 		{-1, 3, 0, 0}, {0, 3, 0, 0}, {2, 3, 0, 0}, {3, 0, 0, 0},
 		{3, 1, 3, 1}, {4, 2, 3, 1}, {7, 3, 7, 3}, {34, 4, 33, 3},
-		{72, 5, 71, 5}, {73, 6, 71, 5}, {math.MaxInt, math.MaxInt, 71, 5},
+		{72, 5, 71, 5}, {73, 6, 73, 5}, {120, 5, 119, 5}, {math.MaxInt, math.MaxInt, 119, 5},
 	} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
 			rows := audioWaveform([]float64{0, .5, 1}, size[0], size[1], math.MaxInt)
@@ -141,7 +151,7 @@ func TestAudioWaveformBoundsDimensions(t *testing.T) {
 			}
 		})
 	}
-	for _, test := range [][2]int{{-1, 0}, {2, 0}, {3, 1}, {4, 1}, {34, 16}, {71, 35}, {72, 35}, {math.MaxInt, 35}} {
+	for _, test := range [][2]int{{-1, 0}, {2, 0}, {3, 1}, {4, 1}, {34, 16}, {71, 35}, {72, 35}, {120, 59}, {math.MaxInt, math.MaxUint16 / 2}} {
 		if got := audioWaveformBars(test[0]); got != test[1] {
 			t.Fatalf("bars at width %d: %d; want %d", test[0], got, test[1])
 		}

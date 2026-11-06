@@ -106,7 +106,7 @@ exit 0
 `)
 			require.Equal(t, "", shellSuggestionsRead(t, directory, "result.out"))
 			require.Equal(t, "127", shellSuggestionsRead(t, directory, "result.status"))
-			require.Equal(t, "Command not found. Did you mean: openai?\nKeep the remaining arguments unchanged.\n",
+			require.Equal(t, "Command not found. Try openai as the command name.\nKeep the remaining arguments unchanged.\n",
 				shellSuggestionsRead(t, directory, "result.err"))
 			require.Equal(t, "127", shellSuggestionsRead(t, directory, "second.status"))
 			require.Equal(t, "still-unread", shellSuggestionsRead(t, directory, "remaining.input"))
@@ -505,7 +505,7 @@ exit 0
 			require.Equal(t, "0\n1\n1\n0\n1\n", shellSuggestionsRead(t, directory, "match.statuses"))
 			require.Equal(t, strings.Repeat(optionStatus+"\n", 5), shellSuggestionsRead(t, directory, "caller.options"))
 			require.Equal(t, optionStatus, shellSuggestionsRead(t, directory, "final.option"))
-			require.Equal(t, "Command not found. Did you mean: openai?\nKeep the remaining arguments unchanged.\n",
+			require.Equal(t, "Command not found. Try openai as the command name.\nKeep the remaining arguments unchanged.\n",
 				shellSuggestionsRead(t, directory, "near.err"))
 			require.Equal(t, "bash: command not found\n", shellSuggestionsRead(t, directory, "distant.err"))
 			require.Equal(t, "127", shellSuggestionsRead(t, directory, "near.status"))
@@ -874,7 +874,7 @@ exit 0
 `)
 			require.Equal(t, "2", shellSuggestionsRead(t, directory, "setup.status"))
 			require.Contains(t, shellSuggestionsRead(t, directory, "setup.err"), "Disable executable suggestions")
-			require.Contains(t, shellSuggestionsRead(t, directory, "result.err"), "Did you mean: synthetic_cli?")
+			require.Contains(t, shellSuggestionsRead(t, directory, "result.err"), "Try synthetic_cli as the command name.")
 			require.Equal(t, "127", shellSuggestionsRead(t, directory, "result.status"))
 		})
 	}
@@ -935,7 +935,7 @@ exit 0
 		require.Equal(t, "127", shellSuggestionsRead(t, directory, prefix+".status"))
 		require.Empty(t, shellSuggestionsRead(t, directory, prefix+".out"))
 		require.Contains(t, shellSuggestionsRead(t, directory, prefix+".err"),
-			"Command not found. Did you mean: openai?\nKeep the remaining arguments unchanged.\n")
+			"Command not found. Try openai as the command name.\nKeep the remaining arguments unchanged.\n")
 	}
 	require.Equal(t, "0", shellSuggestionsRead(t, directory, "disabled.handler"))
 	require.Equal(t, "on", shellSuggestionsRead(t, directory, "final.trace"))
@@ -1000,7 +1000,7 @@ exit 0
 		require.Equal(t, "127", shellSuggestionsRead(t, directory, prefix+".status"))
 		require.Empty(t, shellSuggestionsRead(t, directory, prefix+".out"))
 		require.Contains(t, shellSuggestionsRead(t, directory, prefix+".err"),
-			"Command not found. Did you mean: openai?\nKeep the remaining arguments unchanged.\n")
+			"Command not found. Try openai as the command name.\nKeep the remaining arguments unchanged.\n")
 	}
 	require.Empty(t, shellSuggestionsRead(t, directory, "disabled.handler"))
 	require.Equal(t, "on", shellSuggestionsRead(t, directory, "final.trace"))

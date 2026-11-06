@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/openai/openai-cli/internal/terminal"
 )
 
 const authGuidanceDetails = `{"message":"synthetic-private-auth-detail\u001b]52;c;synthetic-private-data\u0007","type":"invalid_request_error","code":"invalid_api_key","param":null,"future_field":{"sequence":9007199254740993}}`
@@ -35,11 +37,11 @@ func TestMainAPIAuthGuidanceCredentialSources(t *testing.T) {
 		{"explicit key overrides environment", "Bearer sk-fake-auth-explicit", []string{"OPENAI_API_KEY=sk-fake-auth-environment"}, []string{"--api-key=sk-fake-auth-explicit"},
 			[]string{"OPENAI_API_KEY", "--api-key"}, []string{"OPENAI_ADMIN_KEY"}, false},
 		{"explicit empty project key", "", []string{"OPENAI_API_KEY=sk-fake-auth-environment"}, []string{"--api-key="},
-			[]string{"--api-key", "empty"}, []string{"OPENAI_ADMIN_KEY"}, false},
+			[]string{"--api-key", "empty"}, []string{"OPENAI_ADMIN_KEY", "Key setup:"}, false},
 		{"explicit authorization header", "Bearer sk-fake-auth-header", []string{"OPENAI_API_KEY=sk-fake-auth-environment"}, []string{"--header", "Authorization: Bearer sk-fake-auth-header"},
-			[]string{"Authorization", "--header"}, nil, false},
+			[]string{"Authorization", "--header"}, []string{"Key setup:"}, false},
 		{"environment authorization header", "Bearer sk-fake-auth-header", []string{"OPENAI_CUSTOM_HEADERS=Authorization: Bearer sk-fake-auth-header"}, nil,
-			[]string{"Authorization", "OPENAI_CUSTOM_HEADERS"}, nil, false},
+			[]string{"Authorization", "OPENAI_CUSTOM_HEADERS"}, []string{"Key setup:"}, false},
 		{"key overrides environment authorization", "Bearer sk-fake-auth-environment", []string{"OPENAI_API_KEY=sk-fake-auth-environment", "OPENAI_CUSTOM_HEADERS=Authorization: Bearer sk-fake-auth-header"}, nil,
 			[]string{"OPENAI_API_KEY", "--api-key"}, nil, false},
 		{"admin key cannot authenticate project command", "", []string{"OPENAI_ADMIN_KEY=sk-fake-auth-admin"}, nil,
@@ -49,7 +51,7 @@ func TestMainAPIAuthGuidanceCredentialSources(t *testing.T) {
 		{"environment admin key", "Bearer sk-fake-auth-admin", []string{"OPENAI_API_KEY=sk-fake-auth-environment", "OPENAI_ADMIN_KEY=sk-fake-auth-admin"}, nil,
 			[]string{"OPENAI_ADMIN_KEY", "--admin-api-key"}, nil, true},
 		{"explicit empty admin key", "", []string{"OPENAI_ADMIN_KEY=sk-fake-auth-admin"}, []string{"--admin-api-key="},
-			[]string{"--admin-api-key", "empty"}, nil, true},
+			[]string{"--admin-api-key", "empty"}, []string{"Key setup:"}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			command, path := projectCommand, "/models/synthetic-model"
@@ -62,7 +64,14 @@ func TestMainAPIAuthGuidanceCredentialSources(t *testing.T) {
 			env := append([]string{"NO_COLOR=1", "FORCE_COLOR=0"}, test.env...)
 			got := runMainDispatchWithEnv(t, "bash", env, args...)
 			assertAuthGuidanceFailure(t, got)
-			for _, want := range append(test.want, "Key setup:", "custom API address") {
+			if !slices.Contains(test.absent, "Key setup:") {
+				setup := "Key setup: openai help setup"
+				if test.admin {
+					setup += " admin"
+				}
+				test.want = append(test.want, setup+"\n")
+			}
+			for _, want := range append(test.want, "custom API address") {
 				if !strings.Contains(got.stderr, want) {
 					t.Errorf("missing recovery action %q: %q", want, got.stderr)
 				}
@@ -185,6 +194,68 @@ func TestMainAPIAuthGuidanceWebhookDiscoveryPTY(t *testing.T) {
 	}
 }
 
+func TestMainAdmin401KeepsShellLauncher(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a Unix PATH decoy")
+	}
+	work, binary := buildNativeShellCLI(t) // Includes spaces and an apostrophe.
+	ordinary := filepath.Join(work, binary)
+	control := filepath.Join(work, "cli\u202epreview")
+	if err := os.Link(ordinary, control); err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "openai"), []byte("#!/bin/sh\nexit 99\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	const request = " --admin-api-key=sk-fake-auth-native admin organization projects retrieve --project-id proj_synthetic"
+	const endpoint = "/organization/projects/proj_synthetic"
+	const authorization = "Bearer sk-fake-auth-native"
+	t.Run("unknown parent", func(t *testing.T) {
+		server := authGuidanceServer(t, endpoint, authorization)
+		child := exec.CommandContext(t.Context(), control, strings.Fields(request)...)
+		child.Env = []string{"HOME=" + directory, "PATH=" + os.Getenv("PATH"), "OPENAI_BASE_URL=" + server.URL, "NO_COLOR=1"}
+		output, err := child.CombinedOutput()
+		if err == nil || !strings.Contains(string(output), "use the same executable with help setup admin.") ||
+			strings.Contains(string(output), "Key setup: ") || strings.ContainsRune(string(output), '\u202e') {
+			t.Fatalf("unsafe or missing non-runnable guidance: %q", output)
+		}
+	})
+	for _, tc := range []struct {
+		name, executable, keepParent string
+		args                         []string
+	}{
+		{"bash", control, "; exit $?", []string{"--noprofile", "--norc", "-c"}},
+		{"fish", control, "; exit $status", []string{"--no-config", "-c"}},
+		{"pwsh", ordinary, "", []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-Command"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, err := exec.LookPath(tc.name)
+			if err != nil {
+				t.Skipf("%s unavailable", tc.name)
+			}
+			shell := nativeShell{name: tc.name, executable: path, args: tc.args}
+			run := terminal.ShellQuoter(tc.name)(tc.executable)
+			if tc.name == "pwsh" {
+				run = "& " + run
+			}
+			server := authGuidanceServer(t, endpoint, authorization)
+			got := runNativeShell(t, shell, directory, directory, server.URL, run+request+tc.keepParent)
+			assertAuthGuidanceFailure(t, got)
+			_, command, found := strings.Cut(got.stderr, "Key setup: ")
+			command, _, _ = strings.Cut(command, "\n")
+			if !found || !strings.HasSuffix(strings.TrimSpace(command), " help setup admin") || strings.ContainsRune(command, '\u202e') {
+				t.Fatalf("wrong admin recovery command in %q", got.stderr)
+			}
+			copied := runNativeShell(t, shell, directory, directory, "bad://fixture", strings.TrimSpace(command)+tc.keepParent)
+			if copied.code != 0 || copied.stderr != "" || !strings.Contains(copied.stdout, "Set up an admin API key") {
+				t.Fatalf("copy failed: %+v", copied)
+			}
+		})
+	}
+}
+
 func TestMainAPIAuthGuidanceNativeCopiedSetup(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Bash/zsh executable identity checks require a Unix host")
@@ -237,10 +308,16 @@ func TestMainAPIAuthGuidanceNativeCopiedSetup(t *testing.T) {
 						failure := runNativeShell(t, shell, directory, home, server.URL, shell.setKey+invocation+" models retrieve --model synthetic-model")
 						assertAuthGuidanceFailure(t, failure)
 						help := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" webhooks create --help")
-						if help.code != 0 || help.stderr != "" {
-							t.Fatalf("renamed executable help failed: %+v", help)
+						_, reference, found := strings.Cut(help.stdout, "\nFULL REFERENCE\n")
+						reference, _, _ = strings.Cut(strings.TrimSpace(reference), "\n")
+						if help.code != 0 || help.stderr != "" || !found || !strings.HasSuffix(reference, " help --all webhooks create") {
+							t.Fatalf("renamed executable help omitted the full reference: %+v", help)
 						}
-						for _, output := range []string{failure.stderr, help.stdout} {
+						full := runNativeShell(t, shell, directory, home, "not-a-url", reference)
+						if full.code != 0 || full.stderr != "" {
+							t.Fatalf("copied reference %q failed: %+v", reference, full)
+						}
+						for _, output := range []string{failure.stderr, full.stdout} {
 							command := authGuidanceSetupCommand(t, output)
 							copied := runNativeShell(t, shell, directory, home, "not-a-url", command)
 							if copied.code != 0 || copied.stderr != "" || !strings.Contains(copied.stdout, "OPENAI_API_KEY") || strings.Contains(copied.stdout, "wrong executable") {

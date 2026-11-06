@@ -354,8 +354,12 @@ func TestMainImageUploadHelpIsOffline(t *testing.T) {
 				for _, flag := range []string{"--name", "--output-dir", "--count"} {
 					require.Contains(t, got.stdout, flag)
 				}
+			} else if operation == "create-variation" {
+				require.Contains(t, got.stdout, "retired and no longer available")
+				require.Contains(t, got.stdout, `openai images edit --image "photo.png"`)
+				require.NotContains(t, got.stdout, "--output-dir")
 			} else {
-				require.Contains(t, got.stdout, "FLAGS")
+				require.Contains(t, got.stdout, "\nCOMMON FLAGS\n")
 				require.Contains(t, got.stdout, "--output-dir")
 			}
 			require.Contains(t, strings.ToLower(got.stdout), "save")

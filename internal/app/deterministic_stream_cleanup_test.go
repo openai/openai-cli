@@ -41,8 +41,8 @@ func (s *deterministicCleanupIterator) Close() error { s.closes++; return s.clos
 
 func deterministicCleanupEvents() []outputJSON {
 	return []outputJSON{
-		{gjson.Parse(`{"type":"future.event","value":"first"}`)},
-		{gjson.Parse(`{"type":"future.event","value":"second"}`)},
+		{Result: gjson.Parse(`{"type":"future.event","value":"first"}`)},
+		{Result: gjson.Parse(`{"type":"future.event","value":"second"}`)},
 	}
 }
 

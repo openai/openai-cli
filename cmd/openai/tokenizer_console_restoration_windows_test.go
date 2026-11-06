@@ -276,7 +276,9 @@ func observeTokenizerRestoration(t *testing.T, binary string, input, output *os.
 		t.Fatalf("fresh screen prerequisite failed: %v", err)
 	}
 	tokenizerRestorationCheckpoint(t, "before_start", evidence)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	// The owner's existing 15-second watchdog bounds the whole scenario.
+	// Readiness depends on console state, not a separate startup deadline.
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, "tokenizer")
 	command.Stdin, command.Stdout, command.Stderr = input, output, output

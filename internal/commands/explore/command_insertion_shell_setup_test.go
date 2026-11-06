@@ -106,6 +106,26 @@ func TestCommandInsertionSetupInstallStatusRemove(t *testing.T) {
 	}
 }
 
+func TestExploreSetupConfirmsExactProfileAndKeepsExistingShortcut(t *testing.T) {
+	home := insertionSetupTestHome(t)
+	t.Setenv("ZDOTDIR", filepath.Join(home, "custom startup"))
+	setup := insertionSetupForPicker(t.Context(), "zsh")
+	require.Contains(t, setup.prompt, "~/custom startup/.zshrc")
+	require.Len(t, setup.targets, 1)
+	profile := filepath.Join(home, "custom startup", ".zshrc")
+	require.Equal(t, profile, setup.targets[0].Profile)
+	require.NoFileExists(t, profile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(profile), 0700))
+	require.NoError(t, runInsertionShellSetup(t, io.Discard, "@completion", "zsh", "--install-suggestions", "--suggestions-double-tab"))
+	var result bytes.Buffer
+	require.NoError(t, applyCommandInsertionSetup(t.Context(), &result, "json", setup.shell, "install", setup.targets))
+	var status commandInsertionSetupResult
+	require.NoError(t, json.Unmarshal(result.Bytes(), &status))
+	require.False(t, status.Changed)
+	require.True(t, status.DoubleTab)
+	require.Empty(t, insertionSetupForPicker(t.Context(), "pwsh").prompt)
+}
+
 func TestCommandInsertionStatusDoesNotCreateFiles(t *testing.T) {
 	home := pickerShellSetupHome(t)
 	for _, shell := range []string{"bash", "zsh", "fish"} {
@@ -120,8 +140,57 @@ func TestCommandInsertionStatusDoesNotCreateFiles(t *testing.T) {
 	require.Empty(t, entries)
 }
 
+func TestInstallerEnablesInsertionAndHonorsRemoval(t *testing.T) {
+	home := insertionSetupTestHome(t)
+	profile := filepath.Join(home, ".zshrc")
+	run := func(out io.Writer, action string, extra ...string) error {
+		args := []string{"@completion", "zsh", action, "--profile", profile}
+		return runInsertionShellSetup(t, out, append(args, extra...)...)
+	}
+	var code bytes.Buffer
+	const end = "\n# openai-cli-install-suggestions-complete v1\n"
+	for range 2 {
+		code.Reset()
+		require.NoError(t, run(&code, "--auto-suggestions"))
+		require.True(t, strings.HasSuffix(code.String(), end))
+		require.NotContains(t, code.String(), "--suggestions-double-tab")
+	}
+	contents, err := os.ReadFile(profile)
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(contents), "# >>> openai command insertion"))
+	require.NoError(t, run(io.Discard, "--uninstall-suggestions"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "other-config"))
+	code.Reset()
+	require.NoError(t, run(&code, "--auto-suggestions"))
+	require.Empty(t, code.String())
+	require.NoError(t, run(io.Discard, "--install-suggestions", "--suggestions-double-tab"))
+	require.NoError(t, run(&code, "--auto-suggestions"))
+	require.Contains(t, code.String(), "--suggestions-double-tab")
+	require.True(t, strings.HasSuffix(code.String(), end))
+	require.ErrorIs(t, run(insertionShortWriter{}, "--auto-suggestions"), io.ErrShortWrite)
+}
+
+func TestInstallerPreservesDifferentBashBindings(t *testing.T) {
+	home := insertionSetupTestHome(t)
+	rc := filepath.Join(home, ".bashrc")
+	login := filepath.Join(home, ".bash_profile")
+	require.NoError(t, runInsertionShellSetup(t, io.Discard, "@completion", "bash", "--install-suggestions", "--profile", rc))
+	require.NoError(t, runInsertionShellSetup(t, io.Discard, "@completion", "bash", "--install-suggestions", "--profile", login, "--suggestions-double-tab"))
+	var loader bytes.Buffer
+	require.NoError(t, runInsertionShellSetup(t, &loader, "@completion", "bash", "--auto-suggestions"))
+	require.NotContains(t, loader.String(), "--suggestions-double-tab")
+	var out bytes.Buffer
+	require.NoError(t, runInsertionShellSetup(t, &out, "--format", "json", "@completion", "bash", "--profile", login, "--suggestions-status"))
+	var status commandInsertionSetupResult
+	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
+	require.True(t, status.DoubleTab)
+}
+
 func TestCommandInsertionSetupRejectsConflictingActionsBeforeWriting(t *testing.T) {
 	for _, flags := range [][]string{
+		{"--auto-suggestions", "--install-suggestions"},
+		{"--auto-suggestions", "--suggestions"},
+		{"--auto-suggestions", "--install-picker"},
 		{"--install-suggestions", "--uninstall-suggestions"},
 		{"--install-suggestions", "--suggestions-status"},
 		{"--install-suggestions", "--picker"},

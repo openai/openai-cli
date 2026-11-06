@@ -1,18 +1,20 @@
 # Automatic list pager evidence
 
-Eligible automatic terminal lists use the pager without a mode flag.
-Space advances through loaded chunks before requesting another API page.
+Eligible terminal lists start below the command and show up to five table rows or a short labeled preview.
+For Files, Space opens the full-screen view at the first unread row. The pager fetches enough records to fill that screen when available.
+The footer identifies the visible file range. The table keeps its headings on screen.
 Resource pagers omit the optional JSON-format hint.
 This prevents a hint-only Space step when all loaded rows already fit.
 `b` returns to loaded chunks without another request.
 `q` restores the original terminal screen.
-Short, empty, and final pages remain open until the user quits.
+Short or empty complete results print once and return to the shell.
+After entering the full-screen view, the last screen stays open until the user quits.
 The pager ignores `i` and `p`.
 An API failure preserves received records after restoring the terminal.
 Explicit formats, redirected output, CI, and dumb terminals retain their existing paths.
 
 The fixture serves synthetic Files, Batches, Projects, and Models data on loopback.
-The recording compares the verified inline default with the pager default.
+The recording compares the verified inline default with the compact preview.
 Both recordings run `openai files list --limit 1 --max-items -1` against two API pages.
 Before sends Space and exits automatically.
 After sends Space, `b`, Space, and `q`.
@@ -91,8 +93,8 @@ The separate observer also verifies lazy requests and terminal restoration.
 ## First-Space boundary
 
 The large observer accepts `--width` and `--height`; defaults are 98 columns and 20 rows.
-At 101 columns and 27 rows, the first screen contains all 25 records from API page one.
-The observer requires the first Space to fetch API page two when all loaded records are visible.
+At 101 columns and 27 rows, the preview shows the first five records from a 25-record API page.
+Space opens a 25-row screen starting at record six. Only five rows come from the second API page.
 
 ```sh
 python3 -I -B scripts/demos/list-pager/check-large.py \
@@ -110,8 +112,22 @@ bash scripts/demos/list-pager/record-page-boundary.sh \
 ```
 
 Both recordings send Space, Space, `b`, Space, and `q` at 101 columns and 27 rows.
-Before shows records 001–025 after the first Space; After shows records 026–050.
+Before shows records 001–025 after the first Space; After shows records 006–030.
 The representative recordings visit two API pages before and three after.
 The separate large observer verifies all 150 records.
 `before-first-space.png` and `after-first-space.png` show the direct comparison.
 `comparison.gif` shows both interactions, including back navigation and the restored shell.
+
+## Webhooks and Skills
+
+Build the base and candidate CLI binaries. Run this recorder on macOS with Python 3, Pillow, and asciinema 3.
+
+```sh
+python3 -B scripts/demos/list-pager/record-resources.py /path/to/base/openai /path/to/candidate/openai /tmp/list-pager-demo
+```
+
+The recorder uses two 76×12 PTYs per resource and a loopback API with identical synthetic records.
+The Before screenshot shows labeled output. The After screenshot shows the default printed table.
+Both default commands print all 30 fixture rows and exit without input.
+The GIF also shows the five-row `--browse` preview. Space advances and Back reuses the cached page.
+The title bar labels each capture. The terminal contents and footer come from the CLI.

@@ -281,7 +281,7 @@ function fish_command_not_found --inherit-variable active_name --inherit-variabl
     if test "$$active_name" = 1; and set -q argv[1]; and test "$argv[1]" != '__APPNAME__'; and string match --quiet --regex -- '\A[A-Za-z0-9_-]{1,65}\z' "$argv[1]"; and string match --quiet --regex -- '__SUGGESTION_REGEX__' "$argv[1]"; and begin; not functions --query '__APPNAME__'; or begin
         set -q ____APPNAME___suggestions_enabled; and test "$____APPNAME___suggestions_enabled" = 1; and set -q ____APPNAME___suggestions_wrapper_body; and test (functions '__APPNAME__' | string collect) = "$____APPNAME___suggestions_wrapper_body"
     end; end; and not builtin --query '__APPNAME__'; and command --query -- '__APPNAME__'
-        printf '%s\n' 'Command not found. Did you mean: __APPNAME__?' 'Keep the remaining arguments unchanged.' >&2
+        printf '%s\n' 'Command not found. Try __APPNAME__ as the command name.' 'Keep the remaining arguments unchanged.' >&2
     end
     return $result
 end

@@ -16,7 +16,9 @@ import (
 	"time"
 )
 
-func (d *releaseDelivery) prepare(ctx context.Context, cache *noticeCache, selected releaseSelection) (string, error) {
+const updateBundleName = "bundle.jsonl"
+
+func (d *releaseDelivery) prepare(ctx context.Context, cache *noticeCache, selected releaseSelection, current *os.File) (string, error) {
 	address := "https://github.com/openai/openai-cli/releases/download/v" + selected.Version + "/" + archiveName(selected.Version)
 	response, err := d.request(ctx, address)
 	if err != nil {
@@ -68,6 +70,9 @@ func (d *releaseDelivery) prepare(ctx context.Context, cache *noticeCache, selec
 	if err := next.Chmod(0700); err != nil {
 		return "", err
 	}
+	if err := preservePreparedImageTrust(current, next); err != nil {
+		return "", err
+	}
 	if err := next.Sync(); err != nil {
 		return "", err
 	}
@@ -85,6 +90,16 @@ func extractUpdate(ctx context.Context, archive, next *os.File) error {
 	if err != nil {
 		return err
 	}
+	name := "openai"
+	if runtime.GOOS == "windows" {
+		name = "openai.exe"
+	}
+	return extractArchiveBinary(ctx, archive, info.Size(), runtime.GOOS == "darwin" || runtime.GOOS == "windows", name, next)
+}
+
+// Read only the requested regular file from a verified archive. Reject
+// duplicates and bound expansion before publishing any executable.
+func extractArchiveBinary(ctx context.Context, archive io.ReaderAt, size int64, isZIP bool, name string, next io.Writer) error {
 	found := false
 	copyBinary := func(reader io.Reader, size int64) error {
 		if found || size <= 0 || size > maxBinaryBytes {
@@ -97,8 +112,8 @@ func extractUpdate(ctx context.Context, archive, next *os.File) error {
 		}
 		return nil
 	}
-	if runtime.GOOS == "darwin" {
-		reader, err := zip.NewReader(archive, info.Size())
+	if isZIP {
+		reader, err := zip.NewReader(archive, size)
 		if err != nil {
 			return err
 		}
@@ -109,7 +124,7 @@ func extractUpdate(ctx context.Context, archive, next *os.File) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if entry.Name != "openai" {
+			if entry.Name != name {
 				continue
 			}
 			if !entry.Mode().IsRegular() || entry.UncompressedSize64 > maxBinaryBytes {
@@ -126,7 +141,7 @@ func extractUpdate(ctx context.Context, archive, next *os.File) error {
 			}
 		}
 	} else {
-		compressed, err := gzip.NewReader(io.NewSectionReader(archive, 0, info.Size()))
+		compressed, err := gzip.NewReader(io.NewSectionReader(archive, 0, size))
 		if err != nil {
 			return err
 		}
@@ -144,7 +159,7 @@ func extractUpdate(ctx context.Context, archive, next *os.File) error {
 			if count >= 4096 {
 				return errUpdate
 			}
-			if entry.Name != "openai" {
+			if entry.Name != name {
 				continue
 			}
 			if entry.Typeflag != tar.TypeReg {
@@ -173,11 +188,11 @@ func (d *releaseDelivery) authenticate(ctx context.Context, cache *noticeCache, 
 	if len(response.Attestations) == 0 || len(response.Attestations) > 30 {
 		return errUpdate
 	}
-	bundle, err := cache.root.OpenFile("bundle", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	bundle, err := cache.root.OpenFile(updateBundleName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
-	defer cache.root.Remove("bundle")
+	defer cache.root.Remove(updateBundleName)
 	for _, entry := range response.Attestations {
 		if _, err := bundle.Write(append(entry.Bundle, '\n')); err != nil {
 			bundle.Close()
@@ -187,8 +202,8 @@ func (d *releaseDelivery) authenticate(ctx context.Context, cache *noticeCache, 
 	if err := bundle.Close(); err != nil {
 		return err
 	}
-	command := d.verifierCommand(ctx, cache, "attestation", "verify", filepath.Join(cache.directory, "archive"),
-		"--bundle", filepath.Join(cache.directory, "bundle"), "--hostname", "github.com", "--repo", "openai/openai-cli",
+	command := d.verifierCommand(ctx, cache.directory, "attestation", "verify", filepath.Join(cache.directory, "archive"),
+		"--bundle", filepath.Join(cache.directory, updateBundleName), "--hostname", "github.com", "--repo", "openai/openai-cli",
 		"--cert-identity", workflowIdentity, "--source-ref", "refs/heads/main", "--deny-self-hosted-runners", "--format", "json")
 	var output limitedVerification
 	command.Stdout = &output
@@ -212,18 +227,85 @@ func (d *releaseDelivery) authenticate(ctx context.Context, cache *noticeCache, 
 	return d.completedPublication(ctx, verified, selected)
 }
 
-func (d *releaseDelivery) verifierCommand(ctx context.Context, cache *noticeCache, args ...string) *exec.Cmd {
+func (d *releaseDelivery) verifierCommand(ctx context.Context, directory string, args ...string) *exec.Cmd {
 	command := exec.CommandContext(ctx, d.verifier, args...)
-	command.Env = append(updateEnvironment(), "GH_CONFIG_DIR="+filepath.Join(cache.directory, "gh-config"), "GH_NO_UPDATE_NOTIFIER=1", "GH_NO_EXTENSION_UPDATE_NOTIFIER=1", "GH_PROMPT_DISABLED=1")
+	command.Env = append(updateEnvironment(), "GH_CONFIG_DIR="+filepath.Join(directory, "gh-config"), "GH_NO_UPDATE_NOTIFIER=1", "GH_NO_EXTENSION_UPDATE_NOTIFIER=1", "GH_PROMPT_DISABLED=1")
 	command.WaitDelay = time.Second
 	isolateVerifier(command)
 	return command
 }
 
+func archiveVerifierStatus() string {
+	verifier := systemUpdateVerifier()
+	root, storeErr := openVerifierStore(false)
+	if storeErr == nil {
+		defer root.Close()
+	}
+	if runtime.GOOS != "darwin" && verifier == "" && storeErr != nil {
+		return "missing"
+	}
+	directory, err := os.MkdirTemp("", "openai-verifier-*")
+	if err != nil {
+		return "unavailable"
+	}
+	defer os.RemoveAll(directory)
+	ctx := context.Background()
+	d := &releaseDelivery{verifier: verifier}
+	defer d.closeVerifier()
+	if probeHomebrewVerifier(ctx, d, directory) {
+		return "ready"
+	}
+	if d.verifier != "" && d.checkVerifierHelp(ctx, directory) == nil {
+		return "ready"
+	}
+	// A capability probe must never download or install a verifier.
+	if storeErr == nil {
+		name, pin := privateVerifierAsset()
+		if path, err := existingPrivateVerifier(ctx, root, name, pin); err == nil {
+			d.verifier = path
+			if d.checkVerifierHelp(ctx, directory) == nil {
+				return "ready"
+			}
+		}
+	}
+	if verifier == "" {
+		return "missing"
+	}
+	return "unavailable"
+}
+
+func (d *releaseDelivery) closeVerifier() {
+	if d.verifierCleanup != nil {
+		d.verifierCleanup()
+		d.verifierCleanup = nil
+	}
+}
+
 func (d *releaseDelivery) checkVerifier(ctx context.Context, cache *noticeCache) error {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	if selectEnrolledHomebrewVerifier(ctx, d, cache) {
+		return nil
+	}
+	if !d.privateVerifierEnabled {
+		return d.checkVerifierHelp(ctx, cache.directory)
+	}
+	root, err := openVerifierStore(false)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return d.selectVerifier(ctx, cache.directory, root, false)
+}
+
+func (d *releaseDelivery) checkVerifierHelp(ctx context.Context, directory string) error {
+	timeout := 2 * time.Second
+	if d.verifierCleanup != nil {
+		// macOS can inspect a newly cloned or copied executable on first launch.
+		// This probe runs in explicit setup or an already detached worker.
+		timeout = 15 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	command := d.verifierCommand(ctx, cache, "attestation", "verify", "--help")
+	command := d.verifierCommand(ctx, directory, "attestation", "verify", "--help")
 	var output limitedVerification
 	command.Stdout = &output
 	if err := command.Run(); err != nil || output.exceeded {
@@ -263,13 +345,22 @@ func updateEnvironment() []string {
 			result = append(result, key+"="+value)
 		}
 	}
+	if runtime.GOOS == "windows" {
+		// Children use the same per-user managed root. Keep the system loader
+		// and temporary paths, without inheriting SDK, verifier, or Git tokens.
+		for _, key := range []string{"SystemRoot", "WINDIR", "LOCALAPPDATA", "USERPROFILE", "TEMP", "TMP", "PATHEXT"} {
+			if value, ok := os.LookupEnv(key); ok {
+				result = append(result, key+"="+value)
+			}
+		}
+	}
 	return append(result, "LC_ALL=C", "LANG=C")
 }
 
 // Keep this package's existing notice behavior for installations whose owner
 // must perform upgrades. Pins suppress conflicting manual notices as well.
 func CheckOrUpdate(ctx context.Context, current string) string {
-	if message, managed := Automatic(ctx, current); managed {
+	if message, managed := automatic(ctx, current, true); managed {
 		return message
 	}
 	if strings.TrimSpace(os.Getenv("OPENAI_CLI_VERSION_PIN")) != "" {

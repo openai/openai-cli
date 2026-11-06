@@ -24,22 +24,22 @@ func TestSuggestCommand(t *testing.T) {
 		{
 			name:     "close typo suggests the corrected command",
 			provided: "creat",
-			want:     "Did you mean 'create'?",
+			want:     "The closest command is 'create'.",
 		},
 		{
 			name:     "near-exact suggests the corrected command",
 			provided: "chat:completion",
-			want:     "Did you mean 'chat:completions'?",
+			want:     "The closest command is 'chat:completions'.",
 		},
 		{
 			name:     "exact match still suggests itself",
 			provided: "create",
-			want:     "Did you mean 'create'?",
+			want:     "The closest command is 'create'.",
 		},
 		{
 			name:     "uppercase input is matched ignoring case",
 			provided: "CREAT",
-			want:     "Did you mean 'create'?",
+			want:     "The closest command is 'create'.",
 		},
 		{
 			name:     "unrelated input returns no suggestion",

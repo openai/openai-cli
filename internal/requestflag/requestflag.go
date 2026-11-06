@@ -451,7 +451,7 @@ func (f *Flag[T]) GetDefaultText() string {
 	if f.DefaultText != "" {
 		return f.DefaultText
 	}
-	if f.hasUnsetNullableDefault() {
+	if f.hasUnsetDefault() {
 		return ""
 	}
 	// Help can inspect a command before its flags have been parsed. Read the
@@ -466,15 +466,16 @@ func (f *Flag[T]) GetEnvVars() []string {
 
 func (f *Flag[T]) IsDefaultVisible() bool {
 	// Prevent the renderer from falling back to the parsed value when the
-	// default text is empty: an explicit null is still not the default.
-	return !f.HideDefault && !f.hasUnsetNullableDefault()
+	// default text is empty.
+	return !f.HideDefault && !f.hasUnsetDefault()
 }
 
-func (f *Flag[T]) hasUnsetNullableDefault() bool {
-	// An unset nullable flag is omitted. Const flags are always sent, while
-	// DefaultText explicitly supplies the help description of a default.
+func (f *Flag[T]) hasUnsetDefault() bool {
+	// A nil interface, pointer or slice has no declared default.
+	// Preserve explicit empty arrays, constants and authored descriptions.
 	value := reflect.ValueOf(f.Default)
-	return !f.Const && f.DefaultText == "" && value.Kind() == reflect.Pointer && value.IsNil()
+	return !f.Const && f.DefaultText == "" &&
+		(!value.IsValid() || (value.Kind() == reflect.Pointer || value.Kind() == reflect.Slice) && value.IsNil())
 }
 
 func (f *Flag[T]) TypeName() string {

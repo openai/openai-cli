@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -108,7 +109,7 @@ func newUpdateNoticeFixture(t *testing.T) updateNoticeFixture {
 	if runtime.GOOS == "darwin" {
 		cache = filepath.Join(home, "Library", "Caches")
 	}
-	directory := filepath.Join(cache, "openai-cli", "update-notice")
+	directory := filepath.Join(cache, "openai-cli", "update-notice-archive-"+runtime.GOOS+"-"+runtime.GOARCH)
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +222,7 @@ func TestMainUpdateNoticeTerminalAndRepeat(t *testing.T) {
 	}
 	before := updateNoticeSnapshot(t, fixture.home)
 	second := fixture.run(t, "")
-	if second.code != 0 || second.stdout != first.stdout || second.stderr != "" {
+	if second.code != 0 || !sameUpdatePTYOutput(first.stdout, second.stdout) || second.stderr != "" {
 		t.Fatalf("repeated invocation changed help or repeated the notice: %+v", second)
 	}
 	assertUpdateNoticeUnchanged(t, fixture, before)
@@ -248,6 +249,35 @@ func TestMainUpdateNoticeCurrentVersionStaysSilent(t *testing.T) {
 				t.Fatalf("silent invocation consumed the notice interval: state=%s; error=%v", after, err)
 			}
 		})
+	}
+}
+
+func TestMainUpdateNoticeIgnoresUnverifiedAndOtherPlatformCaches(t *testing.T) {
+	fixture := newUpdateNoticeFixture(t)
+	seed, err := os.ReadFile(fixture.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(filepath.Dir(fixture.state))
+	// The shared legacy cache recorded only GitHub tags. A verified Go installation
+	// and a different platform can both use caches that lack this platform's archive.
+	for _, name := range []string{"update-notice", "update-notice-go-" + runtime.GOOS + "-" + runtime.GOARCH, "update-notice-archive-other-cpu"} {
+		directory := filepath.Join(root, name)
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "state.json"), seed, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The latest platform check found no uploaded archive. It is still fresh.
+	data := []byte(strings.Replace(string(seed), `"latest":"99.0.0"`, `"latest":""`, 1))
+	if err := os.WriteFile(fixture.state, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := fixture.run(t, "")
+	if got.code != 0 || got.stdout == "" || got.stderr != "" {
+		t.Fatalf("expected help without an unavailable update: %+v", got)
 	}
 }
 
@@ -338,4 +368,11 @@ func TestMainUpdateNoticeFailuresPreserveExitStatus(t *testing.T) {
 		}
 		assertUpdateNoticeUnchanged(t, fixture, before)
 	})
+}
+
+// macOS PTYs can repeat CR immediately before LF. Compare all displayed text.
+var updatePTYNewline = regexp.MustCompile(`\r+\n`)
+
+func sameUpdatePTYOutput(first, second string) bool {
+	return updatePTYNewline.ReplaceAllString(first, "\n") == updatePTYNewline.ReplaceAllString(second, "\n")
 }

@@ -100,6 +100,8 @@ type syntheticDelivery struct {
 	beforePrepare, beforeValidation            func()
 }
 
+func (*syntheticDelivery) closeVerifier() {}
+
 func (d *syntheticDelivery) checkVerifier(context.Context, *noticeCache) error {
 	d.verifierCalls++
 	return d.verifierError
@@ -109,7 +111,7 @@ func (d *syntheticDelivery) selectRelease(context.Context, string) (releaseSelec
 	d.selectCalls++
 	return d.selected, nil
 }
-func (d *syntheticDelivery) prepare(ctx context.Context, cache *noticeCache, selected releaseSelection) (string, error) {
+func (d *syntheticDelivery) prepare(ctx context.Context, cache *noticeCache, selected releaseSelection, current *os.File) (string, error) {
 	d.prepareCalls++
 	if d.beforePrepare != nil {
 		d.beforePrepare()
@@ -157,6 +159,10 @@ func updateTestInstallation(t *testing.T, content []byte) *updateInstallation {
 	return i
 }
 
+func TestPreparedImageAfterTrust(t *testing.T) {
+	exercisePreparedImageAfterTrust(t, t.TempDir())
+}
+
 func TestAutomaticUpdateTransactions(t *testing.T) {
 	t.Setenv("OPENAI_CLI_NO_AUTO_UPDATE", "")
 	t.Setenv("OPENAI_CLI_NO_UPDATE_CHECK", "")
@@ -174,6 +180,10 @@ func TestAutomaticUpdateTransactions(t *testing.T) {
 			current, err := os.ReadFile(i.path)
 			if err != nil || !bytes.Equal(current, old) {
 				t.Fatal("preparation changed installed binary")
+			}
+			if scenario == "activate" {
+				// A previous version prepared the replacement before the active image was marked.
+				markUpdateFixture(t, i.path)
 			}
 			if delivery.prepareCalls != 1 || delivery.validationCalls != 0 {
 				t.Fatal("preparation activated an update")
@@ -264,6 +274,7 @@ func TestAutomaticUpdateTransactions(t *testing.T) {
 				t.Fatal(readErr)
 			}
 			if scenario == "activate" {
+				checkUpdateFixtureQuarantine(t, i.path)
 				if err != nil || !bytes.Equal(current, next) {
 					t.Fatalf("activation failed: %v", err)
 				}
@@ -315,6 +326,13 @@ func TestAutomaticUpdateDiscoveryThrottleAndLock(t *testing.T) {
 	if err := <-finished; err == nil {
 		t.Fatal("interrupted preparation succeeded")
 	}
+	// An interrupted worker can leave a partial bundle under either name.
+	bundles := []string{"bundle", "bundle.jsonl"}
+	for _, name := range bundles {
+		if err := os.WriteFile(filepath.Join(i.stateDirectory(), name), []byte("partial"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	d.beforePrepare = nil
 	w.now = w.now.Add(automaticInterval - time.Second)
 	if err := w.run(context.Background()); err != nil {
@@ -329,6 +347,11 @@ func TestAutomaticUpdateDiscoveryThrottleAndLock(t *testing.T) {
 	}
 	if d.selectCalls != 2 {
 		t.Fatal("did not retry at four hours")
+	}
+	for _, name := range bundles {
+		if _, err := os.Lstat(filepath.Join(i.stateDirectory(), name)); !os.IsNotExist(err) {
+			t.Fatalf("stale %s survived retry: %v", name, err)
+		}
 	}
 }
 

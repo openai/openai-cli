@@ -1,5 +1,191 @@
 # Changelog
 
+## [1.51.3](https://github.com/openai/openai-cli/compare/v1.51.2...v1.51.3) (2026-11-06)
+
+
+### Bug Fixes
+
+* package Linux setup as one downloadable launcher ([#716](https://github.com/openai/openai-cli/issues/716)) ([36129c1](https://github.com/openai/openai-cli/commit/36129c16b5c483ff4b4b5b4890fb982e0ec7aab2))
+
+## [1.51.2](https://github.com/openai/openai-cli/compare/v1.51.1...v1.51.2) (2026-11-05)
+
+
+### Chores
+
+* **deps:** update openai-go to v3.96.0 ([#703](https://github.com/openai/openai-cli/issues/703)) ([da11e0e](https://github.com/openai/openai-cli/commit/da11e0e884b2b06dfb81cecec97a84c41efc0930))
+
+## [1.51.1](https://github.com/openai/openai-cli/compare/v1.51.0...v1.51.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* show verifier download progress in the Windows ZIP installer ([#710](https://github.com/openai/openai-cli/issues/710)) ([1d88374](https://github.com/openai/openai-cli/commit/1d88374a50c635250c800d1f28ba1bcccc76c62a))
+
+## [1.51.0](https://github.com/openai/openai-cli/compare/v1.50.0...v1.51.0) (2026-11-05)
+
+
+### Features
+
+* **api:** add a model option for Responses ([#707](https://github.com/openai/openai-cli/issues/707)) ([9e2019d](https://github.com/openai/openai-cli/commit/9e2019d85a6e019b6c009d6eedef9178033966df))
+
+## [1.50.0](https://github.com/openai/openai-cli/compare/v1.49.0...v1.50.0) (2026-11-05)
+
+
+### Features
+
+* **api:** add image complexity, GIF, and SVG flags ([#700](https://github.com/openai/openai-cli/issues/700)) ([7b83508](https://github.com/openai/openai-cli/commit/7b83508ad8930ba4d00f0d8d4599b4ecc9b356d4))
+* **cli:** enable automatic updates for Linux package installs ([#694](https://github.com/openai/openai-cli/issues/694)) ([b774e10](https://github.com/openai/openai-cli/commit/b774e103f3537de9b6257c0d559f9191cfd23824))
+* **cli:** install Windows ZIP releases with automatic updates ([#695](https://github.com/openai/openai-cli/issues/695)) ([6d7760f](https://github.com/openai/openai-cli/commit/6d7760ffd3711828afec015df4863a6e630a0725))
+
+
+### Bug Fixes
+
+* **cli:** preserve Linux package manager permissions during installation ([#697](https://github.com/openai/openai-cli/issues/697)) ([496392e](https://github.com/openai/openai-cli/commit/496392e67acd977bc161a13b5e50e37caeedce81))
+* **installer:** start Linux setup from a verified installer ([#699](https://github.com/openai/openai-cli/issues/699)) ([5d03ac5](https://github.com/openai/openai-cli/commit/5d03ac5c408288377c54ecfc5d3474e3f59cd065))
+* **installer:** wait for Linux release packages and preserve newer installations ([#698](https://github.com/openai/openai-cli/issues/698)) ([334f332](https://github.com/openai/openai-cli/commit/334f332fc6a5f8298b20548d4fbbbb30c940cdc5))
+* keep automatic updates selected in zsh login shells ([#701](https://github.com/openai/openai-cli/issues/701)) ([0dfa36d](https://github.com/openai/openai-cli/commit/0dfa36d48076979241a2b89162ca2f8c5dadf0b1))
+
+## [1.49.0](https://github.com/openai/openai-cli/compare/v1.48.1...v1.49.0) (2026-11-04)
+
+
+### Features
+
+* **images:** use native Konsole previews in Expand ([#692](https://github.com/openai/openai-cli/pull/692)) ([7975acf](https://github.com/openai/openai-cli/commit/7975acf86fbaa89145a31c9f008954e698ef5302))
+* **api:** add GPT-6 Rosalind to the model catalog ([#690](https://github.com/openai/openai-cli/issues/690)) ([2be784c](https://github.com/openai/openai-cli/commit/2be784cb368503f7a4ea93cc1aba8f15221e19db))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.94.0 ([#691](https://github.com/openai/openai-cli/issues/691)) ([c3501d6](https://github.com/openai/openai-cli/commit/c3501d62a2e44e185770275bce52eafb5d36a07e))
+
+## [1.48.1](https://github.com/openai/openai-cli/compare/v1.48.0...v1.48.1) (2026-11-04)
+
+
+### Chores
+
+* **deps:** update openai-go to v3.93.0 ([#688](https://github.com/openai/openai-cli/issues/688)) ([73f547c](https://github.com/openai/openai-cli/commit/73f547c0783ef520c8091316a71dcddf210b09e1))
+
+## [1.48.0](https://github.com/openai/openai-cli/compare/v1.47.1...v1.48.0) (2026-11-03)
+
+
+### Features
+
+* Help coding agents find and use OpenAI CLI commands. ([#684](https://github.com/openai/openai-cli/pull/684)) ([e21cea4](https://github.com/openai/openai-cli/commit/e21cea48))
+* Make CLI installation and Homebrew upgrades easier to verify. ([#682](https://github.com/openai/openai-cli/pull/682)) ([4198c247](https://github.com/openai/openai-cli/commit/4198c247))
+* Improve the tokenizer editor and support piped request files. ([#686](https://github.com/openai/openai-cli/pull/686)) ([7c55da9a](https://github.com/openai/openai-cli/commit/7c55da9a))
+* enable automatic updates during macOS and Linux archive setup ([#683](https://github.com/openai/openai-cli/issues/683)) ([236b9c3](https://github.com/openai/openai-cli/commit/236b9c30888cec5b7f2efb0a5bcba4883c89cf76))
+
+
+### Bug Fixes
+
+* **api:** clarify Responses prompt-cache lifetime help ([#687](https://github.com/openai/openai-cli/issues/687)) ([9deddac](https://github.com/openai/openai-cli/commit/9deddace717875cb8913c28f0b7fa5958bda37d4))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.92.0 ([#681](https://github.com/openai/openai-cli/issues/681)) ([f2de487](https://github.com/openai/openai-cli/commit/f2de4874d6cc7ba03e596b5c844801ba35791cdb))
+
+## [1.47.1](https://github.com/openai/openai-cli/compare/v1.47.0...v1.47.1) (2026-11-03)
+
+
+### Features
+
+* Add Voice studio and date search for text-to-speech. ([#676](https://github.com/openai/openai-cli/pull/676)) ([d4420d1](https://github.com/openai/openai-cli/commit/d4420d17))
+
+
+### Chores
+
+* **api:** update Live Responses delegation API reference ([#680](https://github.com/openai/openai-cli/issues/680)) ([c51f9d8](https://github.com/openai/openai-cli/commit/c51f9d83bfe371c76880ff741e7c1b30d523f52b))
+* **deps:** bump github.com/tiktoken-go/tokenizer from 0.8.1 to 0.10.0 in the go-minor-and-patch group across 1 directory ([#677](https://github.com/openai/openai-cli/issues/677)) ([14d52e5](https://github.com/openai/openai-cli/commit/14d52e5f69e29852344906f1a9178dfddbfb857c))
+* **deps:** bump the codeql group across 1 directory with 2 updates ([#678](https://github.com/openai/openai-cli/issues/678)) ([fdb8fc6](https://github.com/openai/openai-cli/commit/fdb8fc67a4418bff69dc1611590176265bccdb13))
+* **deps:** update openai-go to v3.91.1 ([#675](https://github.com/openai/openai-cli/issues/675)) ([239b7a8](https://github.com/openai/openai-cli/commit/239b7a88726c117be2160b5c3bd1683ac35ec454))
+
+## [1.47.0](https://github.com/openai/openai-cli/compare/v1.46.0...v1.47.0) (2026-10-31)
+
+
+### Features
+
+* **api:** describe text formats on Responses configuration updates ([#670](https://github.com/openai/openai-cli/issues/670)) ([ddce419](https://github.com/openai/openai-cli/commit/ddce4194391036dcde13f83c9e93cd44699056b5))
+
+
+### Bug Fixes
+
+* **ci:** bind required checks to the verified merge commit ([#674](https://github.com/openai/openai-cli/issues/674)) ([8538f7d](https://github.com/openai/openai-cli/commit/8538f7dad78579276086b4efbf3f346594c0489e))
+
+
+### Chores
+
+* **api:** add agent session review and tool settings ([#673](https://github.com/openai/openai-cli/issues/673)) ([2a9f55e](https://github.com/openai/openai-cli/commit/2a9f55e26d112081c668dc6384f9552e8a0b8b67))
+
+## [1.46.0](https://github.com/openai/openai-cli/compare/v1.45.1...v1.46.0) (2026-10-29)
+
+
+### Features
+
+* **api:** add image edit markup overlays ([#669](https://github.com/openai/openai-cli/issues/669)) ([c444e77](https://github.com/openai/openai-cli/commit/c444e77fd5fa0eb1b4b82716039edd0eb4f2252f))
+* **batches:** create batches from CSV and inspect or export results by row ([#665](https://github.com/openai/openai-cli/issues/665)) ([b0f8787](https://github.com/openai/openai-cli/commit/b0f8787b27f02ecd510d0de62547b8b5c0f6a8df))
+
+
+### Chores
+
+* **api:** update API reference ([#667](https://github.com/openai/openai-cli/issues/667)) ([e654ec0](https://github.com/openai/openai-cli/commit/e654ec0d5301b88ffdd394ef4d050d6c0656df44))
+
+## [1.45.1](https://github.com/openai/openai-cli/compare/v1.45.0...v1.45.1) (2026-10-29)
+
+
+### Features
+
+* Use `openai vector-stores manage` to attach files, track indexing, and search a vector store. ([#416](https://github.com/openai/openai-cli/pull/416)) ([8ad49e2](https://github.com/openai/openai-cli/commit/8ad49e2da144c988f0f14bcbbace6356b1bd7e92))
+* Search recording history and seek by timestamp in `openai audio speak`. ([#662](https://github.com/openai/openai-cli/pull/662)) ([441fa02](https://github.com/openai/openai-cli/commit/441fa02e13c022420939cf3b5a3fe7fd58ce1f42))
+
+
+### Chores
+
+* **api:** refresh API reference ([#663](https://github.com/openai/openai-cli/issues/663)) ([df1b6ee](https://github.com/openai/openai-cli/commit/df1b6ee9bb7b7fd15d01707c58dee12b969f27f3))
+
+## [1.45.0](https://github.com/openai/openai-cli/compare/v1.44.2...v1.45.0) (2026-10-29)
+
+
+### Features
+
+* **api:** add organization external key management ([#660](https://github.com/openai/openai-cli/issues/660)) ([8f1e5f2](https://github.com/openai/openai-cli/commit/8f1e5f285890dc10863a35a3acdbfa3badc3c7ec))
+
+## [1.44.2](https://github.com/openai/openai-cli/compare/v1.44.1...v1.44.2) (2026-10-28)
+
+
+### Features
+
+* Stream readable Batch results and match each result to its input by `custom_id`. ([#652](https://github.com/openai/openai-cli/issues/652)) ([06f3af0](https://github.com/openai/openai-cli/commit/06f3af0bc39df2a8c0ececd68116e2b801e33862))
+* Submit a Batch from a JSONL file, find uploaded inputs, and watch progress with `batches list --watch`. ([#653](https://github.com/openai/openai-cli/issues/653)) ([b73b322](https://github.com/openai/openai-cli/commit/b73b322028cb3906e866147a0dcde57dcdd3fb91))
+* Use `openai batches browse` to search batches, inspect results and errors, and create a batch interactively. ([#654](https://github.com/openai/openai-cli/issues/654)) ([e349674](https://github.com/openai/openai-cli/commit/e3496741a3feb5cb893f86bb40872b039024f71d))
+* Edit speech, play the recording, and save it from the same screen in `openai audio speak`. ([#657](https://github.com/openai/openai-cli/issues/657)) ([672ae01](https://github.com/openai/openai-cli/commit/672ae0102bc46b8bff9f4bb68c70cec9ed035d36))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.90.0 ([#656](https://github.com/openai/openai-cli/issues/656)) ([1d4ea76](https://github.com/openai/openai-cli/commit/1d4ea76671c46f0e31b7deda646f7f8812bacbec))
+
+## [1.44.1](https://github.com/openai/openai-cli/compare/v1.44.0...v1.44.1) (2026-10-27)
+
+
+### Chores
+
+* **api:** update image-model documentation ([#649](https://github.com/openai/openai-cli/issues/649)) ([eed8bd0](https://github.com/openai/openai-cli/commit/eed8bd066c0ccceb91f6e55cafab102f7d359ed8))
+
+## [1.44.0](https://github.com/openai/openai-cli/compare/v1.43.2...v1.44.0) (2026-10-27)
+
+
+### Features
+
+* **api:** add custom voice deletion ([#637](https://github.com/openai/openai-cli/issues/637)) ([32f26e5](https://github.com/openai/openai-cli/commit/32f26e5ac6383fd36a4c24356dcd50fe82380feb))
+
+
+### Chores
+
+* **api:** document delegation acknowledgement timing ([#639](https://github.com/openai/openai-cli/issues/639)) ([24a8811](https://github.com/openai/openai-cli/commit/24a88114fcfa74a0774f0f6393542cfd180657b0))
+* **api:** update decision input documentation ([#640](https://github.com/openai/openai-cli/issues/640)) ([d7e4cbe](https://github.com/openai/openai-cli/commit/d7e4cbefcc9869df5f5c13bc58bb79e462266b61))
+* enforce generated-file ownership ([#642](https://github.com/openai/openai-cli/issues/642)) ([92f0ca6](https://github.com/openai/openai-cli/commit/92f0ca624c52b59ee34d2e6a28ee6ea0155f5f30))
+
 ## [1.43.2](https://github.com/openai/openai-cli/compare/v1.43.1...v1.43.2) (2026-10-27)
 
 

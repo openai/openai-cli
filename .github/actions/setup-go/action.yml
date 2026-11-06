@@ -1,13 +1,24 @@
 name: Setup Go
 description: 'Sets up the Go environment'
+inputs:
+  restore-only:
+    description: Restore compilation without publishing caches from required native jobs
+    default: 'false'
 runs:
   using: composite
   steps:
     - name: Setup go
+      if: inputs.restore-only != 'true'
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version-file: .go-version
         check-latest: true
+
+    - name: Restore Go compilation without saving
+      if: inputs.restore-only == 'true'
+      uses: ./.github/actions/setup-compatibility-go
+      with:
+        cache-compilation: 'true'
 
     - uses: ./.github/actions/link-go-sdk
 

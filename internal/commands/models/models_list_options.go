@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/output/listview"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -36,13 +37,14 @@ func Configure(root *cli.Command, policy Options) {
 	}
 	command.Usage = "List accessible model IDs and owners."
 	command.Description = `Shows IDs and owners. Narrow terminals keep both values in labeled output.
-Automatic terminal output uses a pager. Space moves forward, b moves back, and q quits.
-The final page stays open until you quit.
+` + listview.ControlsHelp + `
+Interactive requests load up to 100 models in ID order. The pager loads more records when a new screen needs them.
+Back uses previously loaded pages. Servers that return the complete list use local pages.
 Explicit output formats keep their existing behavior.
 Slow interactive requests show loading feedback.
 Use --filter and --sort-by to select models before --max-items limits the result.
 Without these flags, --max-items selects response-order records before display sorting.
-These controls use the loaded response and make no additional API requests.
+Explicit formats, filters, sort overrides, and finite --max-items use the complete response.
 Matches are case-sensitive by default. Regex matches anywhere; use ^ and $ to anchor it.
 Quote the whole filter expression for your shell. Example: --filter 'id = "model name"'.
 Whitespace outside operand quotes now separates syntax; quotes delimit text instead of matching literal quote characters.
@@ -51,12 +53,17 @@ Filter escapes are decoded before RE2. To pass two backslashes to RE2, write fou
 Only id=VALUE and id~REGEX are supported. Boolean expressions and operand lists are not supported.
 Use --format json for complete records. Filtering and sorting do not support --format raw.`
 	command.Flags = append(command.Flags,
-		&cli.StringFlag{Name: "filter", Usage: "Select IDs with id=VALUE (exact) or id~REGEX (case-sensitive RE2). Quote the expression."},
-		&cli.StringFlag{Name: "sort-by", Value: "id", Usage: "Sort selected IDs: id (ascending) or ~id (descending), before --max-items."},
+		&cli.StringFlag{Name: "filter", Usage: "Select IDs with id=VALUE (exact) or id~REGEX (case-sensitive RE2). Quote the expression. Cannot be used with --format raw."},
+		&cli.StringFlag{Name: "sort-by", Value: "id", Usage: "Sort selected IDs: id (ascending) or ~id (descending), before --max-items. Cannot be used with --format raw."},
 	)
 	next := command.Action
 	command.Action = func(ctx context.Context, command *cli.Command) error {
 		if !command.IsSet("filter") && !command.IsSet("sort-by") {
+			if policy.ShowPages != nil {
+				if handled, err := policy.ShowPages(ctx, command); handled {
+					return err
+				}
+			}
 			return runWithModelsListLoading(ctx, command, next, policy)
 		}
 		options, err := parseModelsListOptions(command.String("filter"), command.IsSet("filter"), command.String("sort-by"))

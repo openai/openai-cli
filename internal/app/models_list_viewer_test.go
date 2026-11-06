@@ -33,7 +33,7 @@ func TestModelsListViewerLoadedModelsAndLimit(t *testing.T) {
 	var out bytes.Buffer
 	opts := ShowJSONOpts{Operation: "(resource) models > (method) list", OutputKind: OutputPageItem, Stdout: &out}
 	opts.setDefaults()
-	require.NoError(t, models.WriteList(iter, listViewerOptions(opts), 80, 0))
+	require.NoError(t, models.WriteList(iter, listViewerOptions(opts), 80, 0, true))
 	require.Contains(t, out.String(), "Listed 2 models.")
 	require.Contains(t, out.String(), "OWNER")
 	require.Contains(t, out.String(), "model-first")
@@ -57,7 +57,7 @@ func TestModelsListViewerModelsTableOmitsOtherMetadata(t *testing.T) {
 			var out bytes.Buffer
 			opts := ShowJSONOpts{Operation: "(resource) models > (method) list", OutputKind: OutputPageItem, Stdout: &out}
 			opts.setDefaults()
-			require.NoError(t, models.WriteList(iter, listViewerOptions(opts), test.width, 0))
+			require.NoError(t, models.WriteList(iter, listViewerOptions(opts), test.width, 0, true))
 			require.Contains(t, out.String(), test.want)
 			require.NotContains(t, out.String(), test.hidden)
 		})
@@ -70,20 +70,20 @@ func TestModelsListViewerPreservesErrorsAndCancellation(t *testing.T) {
 	var out bytes.Buffer
 	opts := ShowJSONOpts{Operation: "(resource) models > (method) list", OutputKind: OutputPageItem, Stdout: &out}
 	opts.setDefaults()
-	require.ErrorIs(t, models.WriteList(iter, listViewerOptions(opts), 80, 0), upstream)
+	require.ErrorIs(t, models.WriteList(iter, listViewerOptions(opts), 80, 0, true), upstream)
 	require.Empty(t, out.String())
 	source, iter := staticModelIterator(t, `[{"id":"model-a","object":"model","owned_by":"synthetic"}]`, -1, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	opts.Context = ctx
 	iter = clioutput.NewIterator(source, clioutput.IteratorOptions{Context: ctx, Transform: transformers.Identity, Limit: -1})
-	require.ErrorIs(t, models.WriteList(iter, listViewerOptions(opts), 80, 0), context.Canceled)
+	require.ErrorIs(t, models.WriteList(iter, listViewerOptions(opts), 80, 0, true), context.Canceled)
 	require.Zero(t, source.Index())
 	require.Empty(t, out.String())
 	_, iter = staticModelIterator(t, `[{"id":"model-a","object":"model","owned_by":"synthetic"}]`, 1, upstream)
 	opts.Context = context.Background()
 	opts.Stdout = staticTableFailedWriter{}
-	err := models.WriteList(iter, listViewerOptions(opts), 80, 0)
+	err := models.WriteList(iter, listViewerOptions(opts), 80, 0, true)
 	require.ErrorIs(t, err, io.ErrClosedPipe)
 	require.ErrorIs(t, err, upstream)
 }

@@ -302,6 +302,29 @@ func TestTokenizerInputCompleteOrdinaryBytesPassUnchanged(t *testing.T) {
 	}
 }
 
+func TestTokenizerInputHoldsSplitCursorStyleReport(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+	defer reader.Close()
+	defer writer.Close()
+	parser := tokenizerInputParser{bridge: &tokenizerInputBridge{output: writer}}
+	var want strings.Builder
+	for _, start := range []string{"\x1bP", "\x90"} {
+		report := start + "1$r3 q\x1b\\"
+		for split := 1; split < len(report); split++ {
+			require.NoError(t, parser.feed([]byte("a"+report[:split])))
+			require.Equal(t, report[:split], parser.ordinary.String(), "split at byte %d", split)
+			require.NoError(t, parser.feed([]byte(report[split:]+"b")))
+			require.Zero(t, parser.ordinary.Len())
+			want.WriteString("a" + report + "b")
+		}
+	}
+	require.NoError(t, writer.Close())
+	raw, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.Equal(t, want.String(), string(raw))
+}
+
 func TestTokenizerInputCancelIncompleteSequence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()

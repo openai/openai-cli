@@ -11,6 +11,15 @@ import (
 // ListTable renders one loaded page. The first column contains complete IDs.
 // A false result requests labeled output when the columns cannot fit safely.
 func ListTable(headers []string, rows [][]string, width int) (string, bool) {
+	return listTable(headers, rows, width, true)
+}
+
+// ListTableFullValues shows every field in full or requests labeled output.
+func ListTableFullValues(headers []string, rows [][]string, width int) (string, bool) {
+	return listTable(headers, rows, width, false)
+}
+
+func listTable(headers []string, rows [][]string, width int, truncate bool) (string, bool) {
 	if len(headers) == 0 || width <= 0 {
 		return "", false
 	}
@@ -34,7 +43,7 @@ func ListTable(headers []string, rows [][]string, width int) (string, bool) {
 		for col, value := range row {
 			cells[index][col] = sanitize(value)
 			cellWidth := ansi.StringWidth(cells[index][col])
-			if col != 0 {
+			if col != 0 && truncate {
 				// Keep wide terminals compact. Full values remain in explicit formats.
 				cellWidth = min(cellWidth, max(minimum[col], 32))
 			}
@@ -47,7 +56,7 @@ func ListTable(headers []string, rows [][]string, width int) (string, bool) {
 		total += widths[col]
 		required += minimum[col]
 	}
-	if required > width {
+	if required > width || !truncate && total > width {
 		return "", false
 	}
 	for total > width {

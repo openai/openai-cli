@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
@@ -31,10 +32,17 @@ func ConfigureSpeech(root *cli.Command, presentation func(context.Context, *cli.
 		return
 	}
 	command := resource.Command("create")
-	command.Description += "\n\nRun without command flags in a terminal to open speech controls. " +
-		"The form retains audio, text, and instructions in private local history. " +
-		"Use audio history, inspect, play, and export for retained results. " +
+	const form = "Run without command flags in a terminal to open speech controls. " +
+		"The form retains audio, text, and instructions in private local history."
+	const inputs = "For direct output, supply --input, --model, and --voice through flags or piped JSON/YAML."
+	command.Description += "\n\n" + form + " Use audio history, inspect, play, and export for retained results. " +
 		"Explicit flags and pipes preserve direct output."
+	if command.Metadata == nil {
+		command.Metadata = map[string]any{}
+	}
+	command.Metadata["help-content"] = clihelp.Content{
+		Description: command.Description, InputNote: inputs, CompactNote: form + "\n\n" + inputs,
+	}
 	// The workbench also needs presentation policy while it handles failures.
 	next := audioWorkbenchWorkflow(command.Action)
 	command.Action = func(ctx context.Context, command *cli.Command) error {

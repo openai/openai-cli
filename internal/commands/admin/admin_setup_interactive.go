@@ -44,7 +44,8 @@ HTTPS is required except for a local loopback server.
 The pasted key replaces the Authorization header for this request.
 Debug logging and structured output are unavailable during interactive setup.
 
-Manual setup for scripts: {{$run}} help setup admin
+Manual setup for scripts:
+  {{$run}} help setup admin
 `
 
 const adminSetupRootHelp = `{{$run := or (index .Root.Metadata "help-invocation") "openai"}}Set up admin access

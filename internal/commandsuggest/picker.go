@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/terminal"
 )
 
 // ErrCanceled means that the picker returned no selection.
@@ -24,6 +25,7 @@ var ErrCanceled = errors.New("command selection canceled")
 
 type commandPicker struct {
 	candidates      []Candidate
+	search          *searchIndex
 	matches         []int
 	query           []rune
 	cursor          int
@@ -33,12 +35,15 @@ type commandPicker struct {
 	done            bool
 	title           string
 	integration     bool
+	setupPrompt     string
+	confirmSetup    bool
+	enableInsertion bool
 	dark, color     bool
 	backgroundKnown bool
 }
 
 func newCommandPicker(candidates []Candidate, title string, integration bool) *commandPicker {
-	m := &commandPicker{candidates: candidates, title: title, integration: integration, dark: true}
+	m := &commandPicker{candidates: candidates, search: newSearchIndex(candidates), title: title, integration: integration, dark: true}
 	m.filter()
 	return m
 }
@@ -51,7 +56,7 @@ func (m *commandPicker) Init() tea.Cmd {
 }
 
 func (m *commandPicker) filter() {
-	m.matches = searchCandidates(m.candidates, string(m.query))
+	m.matches = m.search.search(string(m.query))
 	m.selected = 0
 }
 
@@ -68,7 +73,25 @@ func (m *commandPicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.backgroundKnown = true
 		return m, nil
 	case tea.KeyPressMsg:
+		if m.confirmSetup {
+			switch msg.String() {
+			case "ctrl+c":
+				m.done = true
+				return m, tea.Quit
+			case "esc":
+				m.confirmSetup = false
+			case "enter":
+				if _, fits := m.setupView(); fits {
+					m.enableInsertion, m.done = true, true
+					return m, tea.Quit
+				}
+			}
+			return m, nil
+		}
 		switch msg.String() {
+		case "f2":
+			m.confirmSetup = m.setupPrompt != "" && m.width >= 40 && m.height >= 12
+			return m, nil
 		case "esc", "ctrl+c":
 			m.done = true
 			return m, tea.Quit
@@ -97,6 +120,9 @@ func (m *commandPicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.PasteMsg:
+		if m.confirmSetup {
+			return m, nil
+		}
 		before := string(m.query)
 		m.insertQuery(msg.Content)
 		if before != string(m.query) {
@@ -225,6 +251,21 @@ func highlightQuery(text string, words []string, selected bool) string {
 	return out.String()
 }
 
+// Show complete startup paths before accepting confirmation, even after a resize.
+func (m *commandPicker) setupView() (tea.View, bool) {
+	width := min(m.width-4, 88)
+	if width < 36 || m.height < 12 {
+		return tea.NewView("Resize to review setup. Esc goes back."), false
+	}
+	body := ansi.Hardwrap(ansi.Wrap(m.setupPrompt, width, ""), width, true)
+	if strings.Count(body, "\n")+6 >= m.height {
+		return tea.NewView("Enlarge the terminal to review setup.\nEsc goes back."), false
+	}
+	content := "\n  " + lipgloss.NewStyle().Bold(true).Render("Set up prompt insertion") +
+		"\n\n  " + strings.ReplaceAll(body, "\n", "\n  ") + "\n\n  Enter enables · Esc goes back"
+	return tea.NewView(content), true
+}
+
 func (m *commandPicker) View() tea.View {
 	if m.done {
 		// The inline renderer shrinks its cursor model before clearing. Keep
@@ -237,6 +278,10 @@ func (m *commandPicker) View() tea.View {
 		warning := ansi.Truncate("Resize to at least 40 x 12. Esc cancels.", max(0, m.width-1), "…")
 		return tea.NewView(warning + strings.Repeat("\n", m.closingRows()-1))
 	}
+	if m.confirmSetup {
+		view, _ := m.setupView()
+		return view
+	}
 	width := min(m.width-4, 88)
 	framed := m.width >= 60 && m.height >= 16
 	frameRows := 0
@@ -246,17 +291,17 @@ func (m *commandPicker) View() tea.View {
 		frameRows = 2
 	}
 	strong := lipgloss.NewStyle().Bold(true)
-	muted, border, selected := lipgloss.NewStyle(), lipgloss.NewStyle(), strong
+	muted, selected := lipgloss.NewStyle(), strong
 	control := lipgloss.NewStyle()
-	if m.color && m.backgroundKnown {
-		fill, accent, secondary, edge := "#E9EFFE", "#3159BC", "#657087", "#BAC4D8"
-		if m.dark {
-			fill, accent, secondary, edge = "#343D58", "#8AA8FF", "#A4ACC2", "#51566B"
-		}
+	fill, accent, secondary, edge := "#E9EFFE", "#3159BC", "#657087", "#BAC4D8"
+	if m.dark {
+		fill, accent, secondary, edge = "#343D58", "#8AA8FF", "#A4ACC2", "#51566B"
+	}
+	colors := m.color && m.backgroundKnown
+	if colors {
 		selected = selected.Foreground(lipgloss.Color(accent)).Background(lipgloss.Color(fill))
 		control = control.Foreground(lipgloss.Color(accent))
 		muted = muted.Foreground(lipgloss.Color(secondary))
-		border = border.Foreground(lipgloss.Color(edge))
 		frame = frame.BorderForeground(lipgloss.Color(edge))
 	}
 	action := "selects"
@@ -266,8 +311,18 @@ func (m *commandPicker) View() tea.View {
 	footer := []string{control.Render("↑↓") + " " + muted.Render("choose · ") + control.Render("Enter") + " " + muted.Render(action), control.Render("Esc") + " " + muted.Render("cancels")}
 	if len(m.matches) == 0 {
 		footer = []string{muted.Render("Edit your search · ") + control.Render("Esc") + " " + muted.Render("cancels")}
-	} else if combined := strings.Join(footer, muted.Render(" · ")); ansi.StringWidth(combined) <= width {
+	}
+	if combined := strings.Join(footer, muted.Render(" · ")); ansi.StringWidth(combined) <= width {
 		footer = []string{combined}
+	}
+	if m.setupPrompt != "" {
+		hint := control.Render("F2") + " " + muted.Render("set up insertion")
+		last := len(footer) - 1
+		if combined := footer[last] + muted.Render(" · ") + hint; ansi.StringWidth(combined) <= width {
+			footer[last] = combined
+		} else {
+			footer = append(footer, hint)
+		}
 	}
 	leadingRows, footerGapRows := 0, 1
 	if m.height > 12 {
@@ -295,7 +350,7 @@ func (m *commandPicker) View() tea.View {
 		queryText = muted.Render(queryText)
 	}
 	queryLine = control.Render("Search") + "  " + queryText
-	rule := border.Render(strings.Repeat("─", width))
+	rule := terminal.SectionDivider(width, colors, fill, edge, secondary)
 	words := strings.Fields(strings.ToLower(string(m.query)))
 	lines := make([]string, leadingRows)
 	lines = append(lines, header, queryLine, rule)
@@ -400,29 +455,36 @@ func (m *commandPicker) closingRows() int {
 	return min(3, max(1, m.height))
 }
 
+// Selection describes the user's explicit picker action.
+type Selection struct {
+	Command         string
+	EnableInsertion bool
+}
+
 // Pick runs the shared local selector. It returns data and never executes it.
 // Input and output belong to the foreground terminal, separate from data pipes.
-func Pick(ctx context.Context, input, output *os.File, candidates []Candidate, title string, integration bool) (string, error) {
+func Pick(ctx context.Context, input, output *os.File, candidates []Candidate, title string, integration bool, setupPrompt string) (Selection, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return Selection{}, err
 	}
 	if input == nil || output == nil || !term.IsTerminal(input.Fd()) || !term.IsTerminal(output.Fd()) || os.Getenv("TERM") == "dumb" {
-		return "", errors.New("command search requires a terminal with cursor support")
+		return Selection{}, errors.New("command search requires a terminal with cursor support")
 	}
 	if len(candidates) == 0 {
-		return "", errors.New("no commands to explore")
+		return Selection{}, errors.New("no commands to explore")
 	}
 	for _, candidate := range candidates {
 		if !validCommand(candidate.Command) {
-			return "", errors.New("invalid command suggestions")
+			return Selection{}, errors.New("invalid command suggestions")
 		}
 	}
 	width, height, err := term.GetSize(output.Fd())
 	if err != nil {
-		return "", errors.New("could not read terminal size")
+		return Selection{}, errors.New("could not read terminal size")
 	}
 	m := newCommandPicker(candidates, title, integration)
 	m.width, m.height = width, height
+	m.setupPrompt = setupPrompt
 	m.color = os.Getenv("NO_COLOR") == "" && colorprofile.Detect(output, os.Environ()) >= colorprofile.ANSI256
 	programContext, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -439,15 +501,15 @@ func Pick(ctx context.Context, input, output *os.File, candidates []Candidate, t
 		_, _ = io.WriteString(tracked, cleanup+ansi.EraseScreenBelow)
 	}
 	if writeErr := tracked.failure(); writeErr != nil {
-		return "", writeErr
+		return Selection{}, writeErr
 	}
 	if err != nil {
-		return "", err
+		return Selection{}, err
 	}
-	if m.result == "" {
-		return "", ErrCanceled
+	if !m.enableInsertion && m.result == "" {
+		return Selection{}, ErrCanceled
 	}
-	return m.result, nil
+	return Selection{Command: m.result, EnableInsertion: m.enableInsertion}, nil
 }
 
 // Bubble Tea does not propagate renderer write errors. Preserve those errors

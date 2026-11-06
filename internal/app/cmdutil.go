@@ -44,6 +44,9 @@ func ValidateBaseURL(value, source string) error {
 // GetDefaultRequestOptions keeps feature middleware composition with its current owner.
 func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 	opts := requestconfig.DefaultOptions(cmd, Version, audio.CaptureText, captureSaveReceiptPolicy(cmd), webhooks.CaptureTestRequest)
+	if cmd.Metadata[listPagerMetadata] == true {
+		opts = append(opts, option.WithMiddleware(registeredListRequest))
+	}
 	return append(opts, agentsRequestOptions(cmd)...)
 }
 
@@ -298,6 +301,9 @@ func (o *ShowJSONOpts) setDefaults() {
 
 // ShowJSON displays a single JSON result to the user.
 func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
+	if list := currentRegisteredList(opts.Context); list != nil && opts.OutputKind != OutputStreamEvent {
+		return list.collectResponse(res, opts)
+	}
 	if err := showJSON(res, opts, transformers.Select); err != nil {
 		return err
 	}
@@ -366,6 +372,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 			if err != nil {
 				return err
 			}
+			recordDefaultAPIResponse(opts)
 			if omitted {
 				return writeOutputHint(opts, clioutput.ResourceSummaryHint)
 			}
@@ -401,6 +408,9 @@ type hasRawJSON interface {
 
 // ShowJSONIterator displays an iterator of values to the user. Use itemsToDisplay = -1 for no limit.
 func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts) error {
+	if list := currentRegisteredList(opts.Context); list != nil && opts.OutputKind != OutputStreamEvent {
+		return collectListIterator(list, iter, itemsToDisplay, opts)
+	}
 	route := transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}
 	if transformers.IsAgentsStream(route) {
 		state := transformers.AgentsStreamState{AllowNoInputSessionCreation: agentsSessionCreationWithoutInput(opts.Context)}

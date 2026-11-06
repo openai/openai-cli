@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,6 +22,7 @@ import (
 	"github.com/openai/openai-cli/internal/forminput"
 	"github.com/openai/openai-cli/internal/readable"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
+	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-go/v3"
 )
 
@@ -123,7 +125,9 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	program := tea.NewProgram(inline, programOptions...)
 	if inline.workspace != nil {
 		inline.workspace.send = program.Send
+		inline.workspace.konsole = interactiveImageEligible(true, true, os.Getenv, runtime.GOOS)
 	}
+	konsole := inline.workspace != nil && inline.workspace.konsole
 	// Route OS signals through the model so cleanup and exit status match
 	// keyboard cancellation, without treating a write failure as cancellation.
 	listenerDone := make(chan struct{})
@@ -137,6 +141,10 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 		// catches resizes on terminals that do not deliver SIGWINCH.
 		resize := time.NewTicker(100 * time.Millisecond)
 		defer resize.Stop()
+		cellWidth, cellHeight := 0, 0
+		if konsole {
+			cellWidth, cellHeight = terminalimage.CellSize(output.Fd())
+		}
 		for {
 			select {
 			case received := <-signals:
@@ -161,8 +169,13 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 					program.Send(imagePickerSizeErrorMsg{})
 					return
 				}
-				if w != width || h != height {
+				cw, ch := cellWidth, cellHeight
+				if konsole {
+					cw, ch = terminalimage.CellSize(output.Fd())
+				}
+				if w != width || h != height || cw != cellWidth || ch != cellHeight {
 					width, height = w, h
+					cellWidth, cellHeight = cw, ch
 					program.Send(tea.WindowSizeMsg{Width: w, Height: h})
 				}
 			}

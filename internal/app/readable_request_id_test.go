@@ -57,7 +57,8 @@ func TestReadableAPIRequestIDPlacementAndSelectedError(t *testing.T) {
 			}
 			var out bytes.Buffer
 			require.NoError(t, ShowCommandError(requestIDErrorCommand(t), failure, &out))
-			require.True(t, strings.HasPrefix(out.String(), "HTTP 500: Internal Server Error.\nRequest ID: req_abc123\nThe API is temporarily unavailable.\n"), out.String())
+			require.True(t, strings.HasPrefix(out.String(), "The API is temporarily unavailable.\n"), out.String())
+			require.Contains(t, out.String(), "\n\nHTTP 500: Internal Server Error.\nRequest ID: req_abc123\n")
 			require.Equal(t, 1, strings.Count(out.String(), "Request ID:"))
 			require.NotContains(t, out.String(), "synthetic-private")
 			require.NotContains(t, out.String(), "synthetic body detail")
@@ -76,7 +77,7 @@ func TestReadableAPIRequestIDPlacementAndSelectedError(t *testing.T) {
 		var out bytes.Buffer
 		require.NoError(t, ShowCommandError(requestIDErrorCommand(t), errors.Join(pair[0], pair[1]), &out))
 		want := fmt.Sprintf("HTTP %d: %s.\nRequest ID: %s\n", pair[0].StatusCode, http.StatusText(pair[0].StatusCode), pair[0].Response.Header.Get("X-Request-ID"))
-		require.True(t, strings.HasPrefix(out.String(), want), out.String())
+		require.Contains(t, out.String(), "\n\n"+want)
 		require.NotContains(t, out.String(), pair[1].Response.Header.Get("X-Request-ID"))
 	}
 }
@@ -117,7 +118,7 @@ func TestReadableAPIRequestIDValidationAndBounds(t *testing.T) {
 				return
 			}
 			line := "Request ID: " + tc.id + "\n"
-			require.True(t, strings.HasPrefix(output.String(), "HTTP 400: Bad Request.\n"+line), output.String())
+			require.Contains(t, output.String(), "\n\nHTTP 400: Bad Request.\n"+line)
 			require.Equal(t, baseline.String(), strings.Replace(output.String(), line, "", 1))
 		})
 	}

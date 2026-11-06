@@ -2,13 +2,14 @@ package images
 
 import (
 	"context"
-	clioutput "github.com/openai/openai-cli/internal/output"
-	cliterminal "github.com/openai/openai-cli/internal/terminal"
+	"errors"
 	"os"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	clioutput "github.com/openai/openai-cli/internal/output"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
 const imagePickerRequestFailureNote = "Couldn't create your image."
@@ -50,8 +51,8 @@ func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
 	go func() {
 		err := p.generate(ctx, &result)
 		if err != nil && imagePickerRecoverableRequest(err) && !cliterminal.IsWriterTerminal(os.Stderr) {
-			if displayErr := writeImagePickerRequestMessage(ctx, os.Stderr, err, result.draftSaved); displayErr != nil {
-				err = displayErr
+			if displayErr := writeImagePickerRequestMessage(ctx, imagePickerDiagnostics(ctx), err, result.draftSaved); displayErr != nil {
+				err = errors.Join(err, displayErr)
 			}
 		}
 		p.requestErr = err
@@ -73,8 +74,21 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		}
 	}
 	switch msg := msg.(type) {
+	case imagePickerKonsoleWritten:
+		if err := p.workspace.finishKonsoleTransfer(msg.transfer); err != nil {
+			p.err = errors.Join(p.err, imagePickerDisplayFailure(err))
+			p.output.cancel()
+			return true, tea.Quit
+		}
+		if p.err != nil || p.model.result.Canceled {
+			return true, tea.Quit
+		}
+		if p.workspace.context == nil || p.workspace.context.Err() == nil {
+			draw(true)
+		}
+		return true, nil
 	case imagePickerPreviewFailure:
-		p.err = msg.err
+		p.err = errors.Join(p.err, msg.err)
 		p.output.cancel()
 		return true, tea.Quit
 	case imagePickerOpened:
@@ -157,7 +171,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 				w.expandedNativeRows, w.expandedRows = len(msg.rows), nil
 			}
 			w.discardNativeGeometry(msg.index, true, msg.columns, w.expandedNativeRows)
-			if msg.protocol != "" {
+			if msg.protocol != "" && !w.konsole {
 				w.images[msg.index].protocol = msg.protocol
 			}
 			if w.expanded {
@@ -180,7 +194,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		p.submitAfter = time.Now().Add(imagePickerResumeQuiet)
 		if msg.err != nil {
 			if !imagePickerRecoverableRequest(msg.err) {
-				p.err = msg.err
+				p.err = errors.Join(p.err, msg.err)
 				return true, tea.Quit
 			}
 			message := imagePickerRequestMessage(msg.err, msg.draftSaved)

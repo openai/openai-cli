@@ -16,14 +16,15 @@ require (
 	github.com/itchyny/json2yaml v0.1.5
 	github.com/muesli/cancelreader v0.2.2
 	github.com/muesli/reflow v0.3.0
-	github.com/openai/openai-go/v3 v3.88.0
+	github.com/openai/openai-go/v3 v3.96.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/gjson v1.20.0
 	github.com/tidwall/pretty v1.2.2
-	github.com/tiktoken-go/tokenizer v0.8.1
+	github.com/tiktoken-go/tokenizer v0.10.0
 	github.com/urfave/cli-docs/v3 v3.1.0
 	github.com/urfave/cli/v3 v3.14.0
+	github.com/xo/terminfo v1.0.0
 	golang.org/x/image v0.47.0
 	golang.org/x/sys v0.49.0
 )
@@ -43,7 +44,6 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
-	github.com/xo/terminfo v1.0.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/text v0.43.0 // indirect

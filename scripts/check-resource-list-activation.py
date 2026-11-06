@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import signal
 import sys
 import time
@@ -28,7 +29,8 @@ def main():
         "OPENAI_API_KEY": "sk-fake-resource-list", "OPENAI_ADMIN_KEY": "sk-fake-resource-list-admin",
         "OPENAI_BASE_URL": config["endpoint"] + "/v1",
     }
-    args = ["-test.run=^TestMainDispatchProcess$", "--", *config["args"]]
+    process = config.get("process", "TestMainDispatchProcess")
+    args = [f"-test.run=^{process}$", "--", *config["args"]]
     diagnostic = open(pathlib.Path(config["home"]) / "stderr", "w+b")
     terminal = None
 
@@ -47,38 +49,87 @@ def main():
         assert all(header in text for header in config["headers"]), text
         assert "ID:" not in text and "Filename:" not in text, text
 
-    def wait_loaded_result():
-        markers = ["q: quit"]
-        if mode == "empty":
-            markers.append("No results.")
-        elif mode == "unfamiliar":
-            markers.extend(["retain-synthetic-detail", "ID:", "item_001", "item_002"])
-        else:
-            markers.extend([*config["headers"], "item_001"])
-            if action != "one":
-                markers.append("item_002")
-        deadline = time.monotonic() + 5
-        while True:
-            text = terminal.text()
-            if all(marker in text for marker in markers):
-                return
-            if terminal.child.poll() is not None:
-                raise AssertionError(("command exited before loaded results", text[-1200:]))
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise AssertionError(("loaded results timed out", markers, text[-1200:]))
-            terminal.read(min(0.05, remaining))
-
     try:
-        terminal = navigation.terminal_module.Terminal(config["binary"], args, env, width=110, height=24,
+        binary = config["binary"]
+        if config["action"] == "print-return":
+            args = ["--noprofile", "--norc", "-c", '"$@" && echo NEXT_COMMAND', "list-test", binary, *args]
+            binary = "/bin/bash"
+        terminal = navigation.terminal_module.Terminal(binary, args, env, width=config.get("width", 110), height=24,
                                                        stderr_file=diagnostic)
         action, mode = config["action"], config["mode"]
+        if action in ("stdin-value", "stdin-interrupt"):
+            terminal.send(b"assistants")
+            terminal.wait("assistants")
+            navigation.drain(terminal, 0.35)
+            assert terminal.child.poll() is None and state()["requests"] == 0
+            assert "q: quit" not in terminal.text() and b"\x1b[?1049h" not in terminal.raw
+            if action == "stdin-interrupt":
+                os.kill(terminal.child.pid, signal.SIGINT)
+                status = terminal.child.wait(timeout=4)
+                assert status in (-signal.SIGINT, 128 + signal.SIGINT), status
+                navigation.finish(terminal, status)
+                assert state()["requests"] == 0
+            else:
+                # The first Ctrl+D delivers the pending bytes. The second ends the read.
+                terminal.send(b"\x04")
+                navigation.drain(terminal, 0.07)
+                terminal.send(b"\x04")
+                navigation.finish(terminal, 0)
+                assert "item_001" in terminal.text() and state()["requests"] == 1, terminal.text()
+            return
+        if action == "print-return":
+            # No input is sent. The second shell command must run on its own.
+            terminal.wait("NEXT_COMMAND", timeout=5)
+            status = terminal.child.wait(timeout=5)
+            assert status == 0, status
+            output = terminal.text()
+            assert "Space: browse" not in output and b"\x1b[?1049h" not in terminal.raw, output
+            print(output)
+            return
+        if action in ("discover", "inspect", "watch", "watch-without-flag", "live"):
+            if action in ("discover", "inspect"):
+                deadline = time.monotonic() + 5
+                while terminal.child.poll() is None and not any(marker in terminal.text() for marker in
+                                                                ("↑↓: row", "Space: browse", "↑↓ Space b q")):
+                    terminal.read(0.03)
+                    assert time.monotonic() < deadline, terminal.text()
+                assert b"\x1b[?1049h" not in terminal.raw, "list cleared the shell on startup"
+                if terminal.child.poll() is None:
+                    if action == "inspect" and config["width"] < 40:
+                        terminal.send(b" ")
+                        terminal.wait("BQQD", timeout=5)
+                    terminal.send(b"q")
+            navigation.finish(terminal, config["expected"])
+            if action in ("discover", "inspect"):
+                text = terminal.text()
+                for marker in config.get("markers") or []:
+                    assert marker in text, (marker, text)
+                for marker in config.get("omit") or []:
+                    assert marker not in text, (marker, text)
+                print(text)
+            diagnostic.seek(0)
+            stderr = diagnostic.read().decode()
+            if action not in ("discover", "inspect"):
+                assert b"\x1b[?1049h" not in terminal.raw, "watch entered the resource pager"
+            if action == "live":
+                for marker in config.get("markers") or []:
+                    assert marker in terminal.text(), (marker, terminal.text())
+            if action == "watch":
+                assert terminal.text().count("Batch snapshot ") == 2, terminal.text()
+            if action == "watch-without-flag":
+                assert "Use --watch" in stderr, stderr
+            else:
+                assert not stderr, stderr
+            return
         if action in ("finish", "one", "error"):
-            if action != "error":
-                wait_loaded_result()
-                assert terminal.child.poll() is None, "complete results did not remain open"
+            if mode == "unfamiliar":
+                terminal.wait("item_001")
+                terminal.send(b" ")
+                terminal.wait("item_002")
                 terminal.send(b"q")
             navigation.finish(terminal, config["expected"])
+            if mode != "unfamiliar":
+                assert b"\x1b[?1049h" not in terminal.raw, "short list or initial error cleared the shell"
             text = terminal.text()
             if mode == "empty":
                 assert "No results." in text, text
@@ -86,7 +137,14 @@ def main():
                 assert "retain-synthetic-detail" in text and "ID:" in text, text
                 assert "FILENAME" not in text, "unfamiliar fields were hidden by the table"
             elif action == "error":
-                assert "item_001" not in text, text
+                if mode in ("missing-cursor", "missing-legacy-cursor"):
+                    restored = bytes(terminal.raw).rsplit(b"\x1b[?2004l", 1)[-1]
+                    if "skills" not in config["args"]:
+                        assert re.findall(rb"item_\d{3}", restored) == [b"item_001", b"item_002"], restored
+                    else:
+                        assert restored.count(b"Synthetic skill") == 2, restored
+                else:
+                    assert "item_001" not in text, text
             else:
                 check_table()
                 assert bytes(terminal.raw).count(b"item_001") == 1, "short results were printed twice"
@@ -106,16 +164,17 @@ def main():
                     assert terminal.child.poll() is None, "removed keys quit the command"
                     assert state()["requests"] == 1, "removed keys fetched another page"
                     assert bytes(terminal.raw) == before, "removed keys redrew output"
-                terminal.resize(100, 24)
-                navigation.drain(terminal, 0.08)
-                assert state()["requests"] == 1, "resize fetched another page"
-                terminal.resize(110, 24)
-                navigation.drain(terminal, 0.08)
-                assert state()["requests"] == 1, "resize fetched another page"
+                if action != "paging":
+                    terminal.resize(100, 24)
+                    navigation.drain(terminal, 0.08)
+                    assert state()["requests"] == 1, "resize fetched another page"
+                    terminal.resize(110, 24)
+                    navigation.drain(terminal, 0.08)
+                    assert state()["requests"] == 1, "resize fetched another page"
                 terminal.send(b" ")
                 wait_state("requests", 2)
             if action in ("paging", "paging-legacy-keys"):
-                navigation.drain(terminal, 0.15)
+                terminal.wait("End", timeout=5)
                 assert terminal.child.poll() is None, "final page did not remain open"
                 terminal.send(b"b")
                 navigation.drain(terminal, 0.1)
@@ -137,10 +196,28 @@ def main():
             navigation.finish(terminal, config["expected"])
             if action in ("paging", "paging-legacy-keys"):
                 assert state()["requests"] == 2, "final completion fetched another page"
+            if action == "paging":
+                # Restore the primary screen around the alternate-screen segment.
+                # A shell command following q must start in column zero, with no
+                # live controls or duplicate table left above its prompt.
+                raw = bytes(terminal.raw)
+                prefix, entered, rest = raw.partition(b"\x1b[?1049h")
+                _, restored, suffix = rest.partition(b"\x1b[?1049l")
+                assert entered and restored, "Space must open and restore the full-screen browser"
+                primary = b"prior shell output\r\n$ openai list\r\n" + prefix + suffix + b"$ next command"
+                lines = navigation.terminal_module.screen(primary, 110, 24).decode().splitlines()
+                assert "prior shell output" in lines and "$ next command" in lines, lines
+                assert not any("q: quit" in line or "item_001" in line for line in lines), lines
             if mode.startswith("blocked-"):
                 wait_state("disconnected", 1)
             if action == "error-next":
-                assert "item_001" in terminal.text(), "later failure discarded earlier output"
+                # A transient row in the alternate screen disappears on exit.
+                # Verify the permanent output after restoration, once per received row.
+                restored = bytes(terminal.raw).rsplit(b"\x1b[?2004l", 1)[-1]
+                count = 4 if mode == "repeat-cursor" else 2
+                assert re.findall(rb"item_\d{3}", restored) == [
+                    f"item_{i:03d}".encode() for i in range(1, count + 1)
+                ], restored
         diagnostic.seek(0)
         stderr = diagnostic.read().decode("utf-8")
         if config["expected"] == 0:
@@ -148,6 +225,8 @@ def main():
         else:
             error = json.loads(stderr)
             expected = "synthetic list failure" if action in ("error", "error-next") else "Request canceled."
+            if mode in ("repeat-cursor", "empty-continuation", "empty-next-continuation", "missing-cursor", "missing-legacy-cursor"):
+                expected = "List pagination stopped because the API returned a missing or repeated cursor. Output may be incomplete."
             assert error["message"] == expected, error
             assert expected not in terminal.text(), "diagnostics leaked into stdout"
         print(json.dumps({"mode": mode, "action": action, "status": terminal.child.returncode,

@@ -20,7 +20,7 @@ type updateInstallation struct {
 	identity, directory os.FileInfo
 }
 
-func managedInstallation(current string) (*updateInstallation, error) {
+func managedInstallation(current string, worker bool) (*updateInstallation, error) {
 	if !automaticPlatform() || current != releaseVersion || !validCommit(releaseCommit) {
 		return nil, errCache
 	}
@@ -28,24 +28,15 @@ func managedInstallation(current string) (*updateInstallation, error) {
 	if !valid || v != current {
 		return nil, errCache
 	}
-	home, err := os.UserHomeDir()
+	path, err := managedExecutablePath(worker)
 	if err != nil {
 		return nil, err
-	}
-	home, err = filepath.EvalSymlinks(home)
-	if err != nil {
-		return nil, err
-	}
-	path := filepath.Join(home, ".openai", "bin", "openai")
-	executable, err := os.Executable()
-	if err != nil || filepath.Clean(executable) != path {
-		return nil, errCache
 	}
 	installation, err := openInstallation(path)
 	if err != nil {
 		return nil, err
 	}
-	if !binaryIdentity(installation.file, current, releaseCommit) {
+	if !binaryIdentity(installation.file, current, releaseCommit) || !authorizedUpdateImage(installation, worker) {
 		installation.close()
 		return nil, errCache
 	}
@@ -55,7 +46,7 @@ func managedInstallation(current string) (*updateInstallation, error) {
 func openInstallation(path string) (*updateInstallation, error) {
 	directory := filepath.Dir(path)
 	resolved, err := filepath.EvalSymlinks(directory)
-	if err != nil || resolved != directory {
+	if err != nil || !sameUpdateDirectory(resolved, directory) {
 		return nil, errCache
 	}
 	// Both dedicated directories must belong to this user. Package-manager
@@ -77,7 +68,7 @@ func openInstallation(path string) (*updateInstallation, error) {
 	i := &updateInstallation{path: path, root: root, identity: info}
 	i.directory, err = root.Stat(".")
 	if err == nil {
-		i.file, err = root.OpenFile("openai", os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		i.file, err = root.OpenFile(filepath.Base(path), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	}
 	if err != nil || !i.unchanged() {
 		i.close()
@@ -100,7 +91,7 @@ func (i *updateInstallation) unchanged() bool {
 		return false
 	}
 	actual, err := i.file.Stat()
-	if err != nil || !sameUpdateFile(i.identity, actual) {
+	if err != nil || !sameUpdateFile(i.identity, actual) || !safeOpenedUpdateFile(i.file) {
 		return false
 	}
 	current, err := os.Lstat(i.path)
@@ -112,11 +103,37 @@ func (i *updateInstallation) unchanged() bool {
 		return false
 	}
 	resolved, err := filepath.EvalSymlinks(filepath.Dir(i.path))
-	return err == nil && resolved == filepath.Dir(i.path)
+	return err == nil && sameUpdateDirectory(resolved, filepath.Dir(i.path))
 }
 
 func sameUpdateFile(a, b os.FileInfo) bool {
-	return b.Mode().IsRegular() && ownedUpdatePath(b) && os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime() == b.ModTime() && a.Mode() == b.Mode()
+	return sameUpdateFileProperties(a, b) && a.ModTime() == b.ModTime()
+}
+
+func sameUpdateFileProperties(a, b os.FileInfo) bool {
+	return b.Mode().IsRegular() && ownedUpdatePath(b) && os.SameFile(a, b) && a.Size() == b.Size() && a.Mode() == b.Mode()
+}
+
+// Writing an NTFS attachment stream can change the file's last-write time.
+// Accept that change only for the same file with the authenticated bytes.
+func preparedImageAfterTrust(ctx context.Context, next *os.File, before os.FileInfo, expectedHash string) (os.FileInfo, error) {
+	after, err := next.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !sameUpdateFileProperties(before, after) || !safeOpenedUpdateFile(next) {
+		return nil, errCache
+	}
+	// NTFS can defer timestamp updates while another handle remains open.
+	// Recheck the bytes even when the last-write time still matches.
+	hash, err := fileDigest(ctx, next)
+	if err != nil {
+		return nil, err
+	}
+	if hash != expectedHash {
+		return nil, errPreparedUpdate
+	}
+	return after, nil
 }
 
 func (i *updateInstallation) digest(ctx context.Context) (string, error) {
@@ -140,7 +157,7 @@ func openUpdateFile(root *os.Root, name string) (*os.File, error) {
 		return nil, err
 	}
 	actual, err := file.Stat()
-	if err != nil || !sameUpdateFile(info, actual) {
+	if err != nil || !sameUpdateFile(info, actual) || !safeOpenedUpdateFile(file) {
 		file.Close()
 		return nil, errCache
 	}
@@ -175,16 +192,23 @@ func (r contextReader) Read(data []byte) (int, error) {
 const stampPrefix = "github.com/openai/openai-cli/internal/updatenotice."
 
 func binaryIdentity(file *os.File, version, commit string) bool {
+	v, c, ok := binaryReleaseStamp(file)
+	return ok && v == version && c == commit
+}
+
+// Inspect the opened executable without running it. A stamp identifies a
+// release only after the caller authenticates the bytes or matches a receipt.
+func binaryReleaseStamp(file *os.File) (string, string, bool) {
 	info, err := buildinfo.Read(file)
 	if err != nil || info.Path != "command-line-arguments" {
-		return false
+		return "", "", false
 	}
 	settings := map[string]string{}
 	for _, setting := range info.Settings {
 		settings[setting.Key] = setting.Value
 	}
 	if settings["GOOS"] != runtime.GOOS || settings["GOARCH"] != runtime.GOARCH {
-		return false
+		return "", "", false
 	}
 	values := map[string]string{}
 	fields := strings.Fields(settings["-ldflags"])
@@ -195,12 +219,12 @@ func binaryIdentity(file *os.File, version, commit string) bool {
 		key, value, ok := strings.Cut(fields[index+1], "=")
 		if ok && strings.HasPrefix(key, stampPrefix) {
 			if _, exists := values[key]; exists {
-				return false
+				return "", "", false
 			}
 			values[key] = value
 		}
 	}
-	return values[stampPrefix+"releaseVersion"] == version && values[stampPrefix+"releaseCommit"] == commit
+	return values[stampPrefix+"releaseVersion"], values[stampPrefix+"releaseCommit"], true
 }
 
 func validDigest(s string) bool { return validHex(s, 64) }

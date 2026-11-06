@@ -51,8 +51,13 @@ func TestModelsListViewerInterruptStatus(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			for _, loaded := range []bool{false, true} {
 				ctx, cancel := context.WithCancel(t.Context())
-				model := listview.New(listViewerOptions(ShowJSONOpts{Context: t.Context(), Operation: test.operation}), func() (listview.Page, error) {
-					return listview.Page{Items: []gjson.Result{gjson.Parse(`{"id":"model-a","object":"model","created":123,"owned_by":"openai"}`)}}, nil
+				opts := listViewerOptions(ShowJSONOpts{
+					Context: t.Context(), Stdout: io.Discard, Operation: test.operation, OutputKind: OutputPageItem,
+				})
+				model := listview.New(opts, func() (listview.Page, error) {
+					item := gjson.Parse(`{"id":"model-a","object":"model","created":123,"owned_by":"openai"}`)
+					// Keep the loaded viewer open so it can accept the interrupt.
+					return listview.Page{Items: []gjson.Result{item}, More: true}, nil
 				}, cancel, 80, 1)
 				if loaded {
 					model.Update(model.Init()())

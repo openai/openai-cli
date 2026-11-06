@@ -26,7 +26,7 @@ func TestSummaryManagementResources(t *testing.T) {
 		{
 			"batches",
 			`{"id":"batch_example","object":"batch","status":"completed","input_file_id":"file_input","output_file_id":"file_output","error_file_id":"file_errors","errors":null,"created_at":123,"completion_window":"24h","endpoint":"/v1/responses","metadata":{"label":"example"},"request_counts":{"total":3,"completed":2,"failed":1}}`,
-			`{"id":"batch_example","status":"completed","request_counts":{"total":3,"completed":2,"failed":1},"input_file_id":"file_input","output_file_id":"file_output","error_file_id":"file_errors","endpoint":"/v1/responses"}`,
+			`{"id":"batch_example","status":"completed","created_at":"1970-01-01T00:02:03Z","completion_window":"24h","request_counts":{"total":3,"completed":2,"failed":1},"input_file_id":"file_input","output_file_id":"file_output","error_file_id":"file_errors","endpoint":"/v1/responses","metadata":{"label":"example"}}`,
 		},
 		{
 			"vector_stores",

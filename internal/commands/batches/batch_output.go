@@ -19,9 +19,17 @@ const batchOutputHelperArgument = "__batch-output"
 
 const batchOutputCleanupGrace = 200 * time.Millisecond
 
+const batchOutputFailureMessage = "Could not write the batch output. Output may be incomplete.\nCheck the receiving command or output destination before retrying."
+
 type batchOwnedPipeClosed struct{ error }
 
 func (e *batchOwnedPipeClosed) Unwrap() error { return e.error }
+
+// A record read can fail after the formatter queued earlier valid output.
+// Permit bounded delivery without hiding that failure or its exit status.
+type batchOutputDrainError struct{ error }
+
+func (e *batchOutputDrainError) Unwrap() error { return e.error }
 
 type batchPipeWriter struct {
 	file    *os.File
@@ -32,6 +40,8 @@ func (w batchPipeWriter) Write(data []byte) (int, error) {
 	n, err := w.file.Write(data)
 	if errors.Is(err, os.ErrClosed) && w.stopped.Load() {
 		err = &batchOwnedPipeClosed{error: err}
+	} else if err != nil {
+		err = batchDownloadFailure(batchOutputFailureMessage, err)
 	}
 	return n, err
 }
@@ -122,14 +132,17 @@ func RunBatchOutputHelper(args []string) (bool, error) {
 	if life == nil {
 		return true, errors.New("missing batch output lifeline")
 	}
-	defer life.Close()
 	info, err := life.Stat()
 	if err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+		_ = life.Close()
 		return true, errors.New("batch output lifeline must be a pipe")
 	}
 	// Foreground Ctrl+C also reaches children. Let the parent's context and
 	// lifeline decide shutdown, so an early child exit cannot race exit 130.
 	signal.Ignore(batchOperationSignals...)
+	// Process exit owns this handle after the watcher starts. Concurrent Close
+	// can strand a Windows pipe read or make an output failure exit zero.
+	// Keep the parent lifeline open until io.Copy drains or reports its error.
 	go func() {
 		var value [1]byte
 		_, _ = life.Read(value[:])
@@ -292,10 +305,23 @@ func streamBatchOutput(ctx context.Context, out *os.File, cleanupGrace time.Dura
 	}
 	writeErr := write(destination)
 	closeErr := dataWrite.Close()
+	var drain *batchOutputDrainError
+	var drainTimer *time.Timer
+	var drainExpired atomic.Bool
 	if (writeErr != nil || closeErr != nil) && ctx.Err() == nil {
-		stopWorker()
+		if closeErr == nil && errors.As(writeErr, &drain) {
+			drainTimer = time.AfterFunc(batchOutputCleanupGrace, func() {
+				drainExpired.Store(true)
+				stopWorker()
+			})
+		} else {
+			stopWorker()
+		}
 	}
 	waitErr := wait()
+	if drainTimer != nil {
+		drainTimer.Stop()
+	}
 	if waitErr == context.Canceled {
 		// Only the private worker's control context was canceled here. Keep the
 		// operation's own cause authoritative, including a deadline or SIGTERM.
@@ -305,10 +331,17 @@ func streamBatchOutput(ctx context.Context, out *os.File, cleanupGrace time.Dura
 		return errors.Join(ctx.Err(), writeErr, waitErr)
 	}
 	if writeErr != nil {
+		if drain != nil && (drainExpired.Load() || waitErr != nil) {
+			message := batchOutputFailureMessage
+			if drainExpired.Load() {
+				message = "Could not finish writing the batch output after an error. Output may be incomplete.\nCheck the receiving command or output destination before retrying."
+			}
+			waitErr = batchDownloadFailure(message, waitErr)
+		}
 		return &batchOutputResultError{primary: writeErr, cause: errors.Join(writeErr, waitErr)}
 	}
 	if err := errors.Join(closeErr, waitErr); err != nil {
-		return batchDownloadFailure("Could not write the batch output. Output may be incomplete.", err)
+		return batchDownloadFailure(batchOutputFailureMessage, err)
 	}
 	return nil
 }

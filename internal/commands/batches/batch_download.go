@@ -61,7 +61,12 @@ func (w workflow) handleBatchDownload(ctx context.Context, command *cli.Command)
 		return err
 	}
 	client := openai.NewClient(w.options.DefaultRequestOptions(command)...)
-	batch, err := client.Batches.Get(ctx, command.String("batch-id"), options...)
+	return w.downloadBatchFile(ctx, command, client, options, command.String("batch-id"), selection, path)
+}
+
+// downloadBatchFile preserves exact-byte downloads and the existing no-overwrite publication.
+func (w workflow) downloadBatchFile(ctx context.Context, command *cli.Command, client openai.Client, options []option.RequestOption, batchID, selection, path string) error {
+	batch, err := client.Batches.Get(ctx, batchID, options...)
 	if err != nil {
 		return err
 	}

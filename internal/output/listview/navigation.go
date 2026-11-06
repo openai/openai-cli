@@ -13,98 +13,20 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/tidwall/gjson"
 )
 
-// JSONListPage is implemented by the SDK's explicit API page types.
-type JSONListPage[P any] interface {
-	comparable
-	RawJSON() string
-	GetNextPage() (P, error)
-}
-
-// ShowPages requests pages only when the viewer needs them. The first
-// request receives the same cancelable context as all subsequent SDK requests.
-// cursorField is empty for item-ID cursors, or the SDK's envelope cursor field.
-func ShowPages[P JSONListPage[P]](first func(context.Context) (P, error), itemsToDisplay int64, opts Options, cursorField string) error {
-	if err := opts.Context.Err(); err != nil {
-		return err
-	}
-	if itemsToDisplay == 0 {
-		// Existing SDK auto-pagers make their first request before applying the
-		// output limit. Preserve its errors even when no items will be printed.
-		_, err := first(opts.Context)
-		return err
-	}
-	ctx, cancel := context.WithCancel(opts.Context)
-	defer cancel()
-	return Run(opts, newListPageFetcher(ctx, first, itemsToDisplay, cursorField), cancel)
-}
-
-func newListPageFetcher[P JSONListPage[P]](ctx context.Context, first func(context.Context) (P, error), itemsToDisplay int64, cursorField string) func() (Page, error) {
-	var page P
-	started := false
-	done := false
-	seen := make(map[string]bool)
-	remaining := itemsToDisplay
-	return func() (Page, error) {
-		if done || remaining == 0 {
-			return Page{}, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return Page{}, err
-		}
-		var err error
-		if !started {
-			started = true
-			page, err = first(ctx)
-		} else {
-			page, err = page.GetNextPage()
-		}
-		if err != nil {
-			return Page{}, err
-		}
-		var zero P
-		if page == zero {
-			done = true
-			return Page{}, nil
-		}
-		value := gjson.Parse(page.RawJSON())
-		items := value.Get("data").Array()
-		if len(items) == 0 && value.Get("has_more").Bool() {
-			done = true
-			return Page{}, &PaginationError{}
-		}
-		more := len(items) != 0 && (!value.Get("has_more").Exists() || value.Get("has_more").Bool())
-		cursor := value.Get(cursorField).String()
-		if cursorField == "" && len(items) != 0 {
-			cursor = items[len(items)-1].Get("id").String()
-		}
-		if remaining > 0 && int64(len(items)) >= remaining {
-			items = items[:int(remaining)]
-			more = false
-		}
-		result := Page{Items: items, More: more}
-		done = !more
-		if more {
-			if cursor == "" || seen[cursor] {
-				done = true
-				result.More = false
-				return result, &PaginationError{}
-			}
-			seen[cursor] = true
-		}
-		if remaining > 0 {
-			remaining -= int64(len(items))
-		}
-		return result, ctx.Err()
-	}
-}
+// ControlsHelp describes the shared terminal interaction in command help.
+const ControlsHelp = "Terminal lists start with up to five table rows or a short labeled preview. Complete results that fit return to the shell. Press Space to browse the next screen. Use the arrow keys to scroll one row, b to go back, or q to quit."
 
 // Page contains loaded records and whether another page can be requested.
 type Page struct {
-	Items []gjson.Result
-	More  bool
+	Items      []gjson.Result
+	More       bool
+	Notice     string // optional catalog guidance, including a source-specific empty result
+	FullLabels bool   // an ambiguous source page needs the complete original records
+	Total      int    // known catalog count, when the source provides one
 }
 
 // PaginationError is a fixed diagnostic that never includes API cursors or response data.
@@ -126,11 +48,12 @@ type Model struct {
 	cancel   context.CancelFunc
 	window   tea.WindowSizeMsg
 	more     bool
+	total    int
 	loaded   bool
 	loading  bool
 	quitting bool
 	pending  []string
-	viewer   *listViewer
+	records  recordViewer
 	err      error
 
 	// Fetches start in the event loop. Shutdown cancels and joins the one worker,
@@ -140,16 +63,30 @@ type Model struct {
 	fetchErr error
 }
 
-// Run owns the terminal event loop and restores it before final printing.
+// Run prints pages to scrollback or opens the interactive record viewer.
 func Run(opts Options, fetch func() (Page, error), cancel context.CancelFunc) error {
 	width, height, err := term.GetSize(opts.Stdout.(*os.File).Fd())
 	if err != nil {
 		return err
 	}
+	if opts.PrintOnly {
+		defer cancel()
+		return printPages(opts, width, fetch)
+	}
 	m := New(opts, fetch, cancel, width, height)
 	outputErr, runErr, signaled := runPrompt(m, opts, width, height)
+	if m.records.mode == recordOpening && !m.quitting && !signaled &&
+		outputErr == nil && runErr == nil && opts.Context.Err() == nil {
+		width, height, err = term.GetSize(opts.Stdout.(*os.File).Fd())
+		if err != nil {
+			return m.Finish(outputErr, err)
+		}
+		m.window = tea.WindowSizeMsg{Width: width, Height: height}
+		outputErr, runErr, signaled = runPrompt(m, opts, width, height)
+	}
 	if signaled {
 		m.pending = nil
+		m.quitting = true
 	}
 	return m.Finish(outputErr, runErr)
 }
@@ -161,7 +98,17 @@ func runPrompt(m *Model, opts Options, width, height int) (error, error, bool) {
 		// Tea must still restore terminal modes after request/program cancellation.
 		Writer: clioutput.Writer{Context: context.Background(), Sink: opts.Stdout}, File: opts.Stdout.(*os.File),
 	}, stop: stop}
-	program := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(out),
+	var model tea.Model = m
+	var output io.Writer = out
+	var preview *recordPreviewModel
+	if m.records.mode == recordPreview {
+		preview = &recordPreviewModel{model: m, out: out, width: width, height: height}
+		model = preview
+		// Tea owns native input modes, resize notifications and key decoding.
+		// Only the inline renderer writes visible output in this phase.
+		output = terminal.BorrowedWriter{Writer: io.Discard, File: opts.Stdout.(*os.File)}
+	}
+	program := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(output),
 		tea.WithContext(programContext), tea.WithWindowSize(width, height),
 		tea.WithColorProfile(opts.Style.profile), tea.WithoutSignalHandler())
 	stopSignals := func() {}
@@ -201,6 +148,9 @@ func runPrompt(m *Model, opts Options, width, height int) (error, error, bool) {
 	}
 	defer stopSignals()
 	_, runErr := program.Run()
+	if preview != nil {
+		preview.close()
+	}
 	stopSignals()
 	// Retain an interrupt even when terminal shutdown wins the message race.
 	if receivedSignal == os.Interrupt {
@@ -240,12 +190,12 @@ func (m *Model) Finish(outputErr, runErr error) error {
 	if outputErr != nil || runErr != nil || m.opts.Context.Err() != nil {
 		m.pending = nil
 	}
-	return errors.Join(m.err, fetchErr, outputErr, runErr, m.printErrorPages())
+	return errors.Join(m.err, fetchErr, outputErr, runErr, m.printPending())
 }
 
-// Print received records after restoration when a later page fails.
+// Print short complete lists or received records after a later page fails.
 // Remove pending ownership before writing, so partial output cannot be retried.
-func (m *Model) printErrorPages() error {
+func (m *Model) printPending() error {
 	pages := m.pending
 	m.pending = nil
 	writer := clioutput.Writer{Context: m.opts.Context, Sink: m.opts.Stdout}
@@ -281,6 +231,10 @@ func listWithoutCleanupCancellation(err error) error {
 }
 
 func (m *Model) Init() tea.Cmd {
+	if m.records.mode == recordOpening {
+		m.records.mode = recordBrowser
+		return m.advanceRecords(true, 1)
+	}
 	if m.loaded {
 		return nil
 	}
@@ -318,22 +272,19 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		// Reflow only the loaded page. Resizing never requests data.
+		previous := m.window
 		m.window = msg
-		if err := m.viewer.resize(m.opts.Context, m.opts.RenderPage, msg.Width, msg.Height); err != nil {
-			m.err = errors.Join(m.err, err)
-			m.pending = m.viewer.takePages()
-			return m, m.quit()
+		if previous == msg {
+			return m, nil
 		}
+		return m, m.resizeRecords(previous.Width != msg.Width)
 	case listPageMessage:
-		m.loading = false
-		var content string
-		if len(msg.page.Items) != 0 || !m.loaded && msg.err == nil {
-			content, m.err = m.opts.RenderPage(msg.page.Items, max(1, m.window.Width))
+		m.loading, m.loaded, m.more = false, true, msg.page.More
+		if msg.page.Total > 0 {
+			m.total = msg.page.Total
 		}
-		m.loaded = true
-		m.more = msg.page.More
 		m.err = errors.Join(m.err, msg.err)
-		return m, m.receiveViewerPage(msg.page.Items, content)
+		return m, m.receiveRecords(msg.page)
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
@@ -343,18 +294,18 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.quit()
 		}
-		return m, m.viewerKey(msg)
+		return m, m.recordKey(msg)
 	}
 	return m, nil
 }
 
 func (m *Model) View() tea.View {
 	view := tea.NewView("")
-	// Keep screen ownership stable through the final frame. Tea restores the
-	// original terminal before Finish prints any received records after errors.
-	view.AltScreen = true
-	if !m.quitting {
-		view.Content = m.viewerView()
+	// Start record lists in the shell. Only an explicit page-forward key
+	// enters the alternate screen. Keep that screen stable through cleanup.
+	view.AltScreen = m.records.mode == recordBrowser
+	if !m.quitting && m.records.mode != recordOpening {
+		view.Content = m.recordView()
 	}
 	return view
 }
@@ -414,14 +365,22 @@ func (w *listNavigationOutput) WriteString(data string) (int, error) {
 }
 
 // Options supplies presentation and feature policy for the shared viewer.
-// Context and render functions must be non-nil. Stdout must be a terminal file
-// when used by Run; New also permits buffered output for an embedded event loop.
+// Every viewer requires Context, RenderTable, RenderRecordLabels and RenderPage.
+// RenderPage formats static output and received pages after a failure.
+// Run requires a terminal file for Stdout. New permits buffered output for an embedded event loop.
 type Options struct {
+	PrintOnly  bool // write all pages to scrollback without reading keys
 	Context    context.Context
 	Stdout     io.Writer
 	Style      Style
 	RenderPage func([]gjson.Result, int) (string, error)
 	Interrupt  func(error) error
+	// Record navigation renders a compact table with a pinned header. If the
+	// data or terminal width needs labels, it renders one complete item.
+	RenderTable        func([]gjson.Result, int) (string, bool, error)
+	Singular, Plural   string
+	Hint               string
+	RenderRecordLabels func(item gjson.Result, full bool) (string, error)
 	// The caller cancels Context on process signals and retains their exit status.
 	CallerHandlesSignals bool
 }
@@ -429,8 +388,9 @@ type Options struct {
 // New constructs the loaded-page event model without taking terminal ownership.
 // The caller must call Finish after its event loop restores the terminal.
 func New(opts Options, fetch func() (Page, error), cancel context.CancelFunc, width, height int) *Model {
-	m := &Model{opts: opts, fetch: fetch, cancel: cancel,
+	if opts.Singular == "" || opts.Plural == "" {
+		opts.Singular, opts.Plural = "Record", "Records"
+	}
+	return &Model{opts: opts, fetch: fetch, cancel: cancel,
 		window: tea.WindowSizeMsg{Width: width, Height: height}}
-	m.viewer = newListViewer()
-	return m
 }

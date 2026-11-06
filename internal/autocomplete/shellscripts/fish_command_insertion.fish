@@ -1,6 +1,12 @@
 # Current-session command insertion. Ctrl-X, then Tab searches displayed commands.
 # Existing bindings stay intact. Double Tab is a separate opt-in.
-if status is-interactive; and isatty stdin; and isatty stdout; and isatty stderr; and test "$TERM" != dumb
+# Previously installed startup loaders fetch this script at the first prompt.
+# Their local executable variable distinguishes automatic loading from explicit sourcing.
+if set -q ____APPNAME___skip_pending_suggestions; and set -q __openai_startup_executable
+    set --erase --global ____APPNAME___skip_pending_suggestions
+    set --erase --global ____APPNAME___suggestions_loader_loaded
+else if status is-interactive; and isatty stdin; and isatty stdout; and isatty stderr; and test "$TERM" != dumb
+__FISH_EXPLORE_SELECTION__
     function ____APPNAME___suggestions_owns_command
         set -q ____APPNAME___suggestions_wrapper_body; or return 1
         functions -q __APPNAME__; or return 1
@@ -59,22 +65,9 @@ if status is-interactive; and isatty stdin; and isatty stdout; and isatty stderr
 
     function ____APPNAME___suggestions_run
         ____APPNAME___suggestions_clear
-        if test (count $argv) -eq 1; and test "$argv[1]" = explore; and not status is-command-substitution; and isatty stdin; and isatty stdout; and isatty stderr
-            set -l selected (command __APPNAME__ explore --shell-integration --shell fish)
-            set -l code $status
-            test "$code" = 0; or return $code
-            test (count $selected) -eq 1; and test -n "$selected"; or return 1
-            string match -rq '[[:cntrl:]]' -- "$selected"; and return 1
-            test (printf %s "$selected" | command wc -c) -le 16384; or return 1
-            set -g ____APPNAME___suggestions "$selected"
-            set -g ____APPNAME___suggestions_directory "$PWD"
-            set -g ____APPNAME___suggestions_index 1
-            set -g ____APPNAME___suggestions_last "$selected"
-            set -g ____APPNAME___suggestions_draft ''
-            set -g ____APPNAME___suggestions_cursor 0
-            commandline --replace -- "$selected"
-            commandline --cursor (string length -- "$selected")
-            return 0
+        if ____APPNAME___is_bare_explore $argv
+            ____APPNAME___fill_explore __APPNAME__ remember
+            return $status
         end
         if command test -e /dev/fd/7; or command test -e /dev/fd/8; or command test -e /dev/fd/9
             command __APPNAME__ $argv
@@ -153,7 +146,7 @@ if status is-interactive; and isatty stdin; and isatty stdout; and isatty stderr
         ____APPNAME___suggestions_clear
     end
 
-    function __APPNAME___command_insertion_disable
+    function ____APPNAME___suggestions_disable
         set -g ____APPNAME___suggestions_enabled 0
         for keymap in default insert
             for key in \cx\ci \ci\ci
@@ -172,10 +165,20 @@ if status is-interactive; and isatty stdin; and isatty stdout; and isatty stderr
     end
 
     function ____APPNAME___suggestions_install
-        if functions -q __APPNAME__; and not ____APPNAME___suggestions_owns_command
+        if functions -q __APPNAME__; and not ____APPNAME___suggestions_owns_command; and not begin; functions -q ____APPNAME___package_explore_owns_command; and ____APPNAME___package_explore_owns_command; end
             return 0
         end
+        if functions -q __APPNAME___command_insertion_disable
+            set -l body (functions __APPNAME___command_insertion_disable | string collect)
+            if test "$body" != "$____APPNAME___suggestions_disable_body"; and test "$body" != "$____APPNAME___package_explore_disable_body"
+                return 0
+            end
+        end
         command -q __APPNAME__; or return 0
+        function __APPNAME___command_insertion_disable
+            ____APPNAME___suggestions_disable
+        end
+        set -g ____APPNAME___suggestions_disable_body (functions __APPNAME___command_insertion_disable | string collect)
         function __APPNAME__
             ____APPNAME___suggestions_run $argv
         end

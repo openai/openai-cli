@@ -70,3 +70,15 @@ func TestListTableEmptyAndMalformedRows(t *testing.T) {
 	_, ok = ListTable([]string{"ID", "NAME"}, [][]string{{"id"}}, 80)
 	require.False(t, ok)
 }
+
+func TestListTableFullValues(t *testing.T) {
+	value := strings.Repeat("東京", 10)
+	header := []string{"ID", "NEW FIELD"}
+	rows := [][]string{{"id", value}}
+	wide, fits := ListTableFullValues(header, rows, 44)
+	require.True(t, fits)
+	require.Contains(t, wide, value, "The former 32-cell summary cap cannot hide unfamiliar values.")
+	narrow, fits := ListTableFullValues(header, rows, 43)
+	require.False(t, fits)
+	require.Empty(t, narrow)
+}

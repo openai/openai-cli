@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -15,6 +17,7 @@ import (
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	"github.com/openai/openai-cli/internal/commands/webhooks"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/tidwall/gjson"
@@ -114,7 +117,35 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 		message := ""
 		var batchFailure *batchcommands.WorkflowError
 		if errors.As(failure, &batchFailure) {
-			message = batchFailure.Error()
+			message = batchcommands.WorkflowErrorMessage(failure)
+			var storage *readable.JSONStreamStorageError
+			if errors.As(failure, &storage) && !strings.Contains(message, storage.Error()) {
+				message += "\n" + storage.Error()
+			}
+			if isAPI && !errors.Is(failure, context.Canceled) {
+				// Workflow wrappers can already include guidance from this cause,
+				// before the outer command adds presentation context.
+				included := readableAPIErrorMessage(root, batchFailure.Unwrap(), apierr)
+				if !strings.Contains(message, included) {
+					message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, presenter)
+				}
+			}
+			// Workflow outcomes must not hide safe, known transport guidance.
+			// Keep API details and explicit machine error contracts unchanged.
+			if !isAPI && !errors.Is(failure, context.Canceled) && message != "" {
+				var transport *url.Error
+				var network *net.OpError
+				var timeout net.Error
+				cause := batchFailure.Unwrap()
+				switch {
+				case errors.As(cause, &transport):
+					message += "\n" + localErrorMessage(root, transport, presenter)
+				case errors.As(cause, &network):
+					message += "\n" + localErrorMessage(root, network, presenter)
+				case errors.As(cause, &timeout) && timeout.Timeout():
+					message += "\n" + localErrorMessage(root, timeout, presenter)
+				}
+			}
 		} else if isAPI && !errors.Is(failure, context.Canceled) {
 			message = readableAPIErrorMessageTo(root, failure, apierr, presenter)
 		} else if isStream {
@@ -145,6 +176,7 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 		}{message})
 		value = gjson.ParseBytes(data)
 	}
+	value = batchcommands.SubmissionErrorValue(failure, value)
 	return ShowJSON(value, ShowJSONOpts{
 		Context: outputPolicyContext(ctx, root), Operation: "", OutputKind: OutputUnspecified,
 		Format: format, ExplicitFormat: root.IsSet("format-error") || root.IsSet("format"),
@@ -161,17 +193,18 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 }
 
 func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.Error, output ...io.Writer) string {
-	message := "The API could not complete the request."
+	requestID := clioutput.APIRequestID(apierr)
+	var message string
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
 		message = readableAPIAuthenticationMessage(root, failure, apierr, output...)
 	case http.StatusForbidden:
-		message = "Check your key's permissions.\nCheck project access to this resource."
+		message = "The API denied access to this resource.\nCheck your key's permissions and its project access."
 		if permission := readableAPIAccessPermissionMessage(root, failure, apierr); permission != "" {
 			message = permission
 		}
 	case http.StatusNotFound:
-		message = "Check the resource or model ID.\nCheck your key's access to it."
+		message = "The requested resource is unavailable.\nCheck the resource or model ID and your key's access to it."
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		var contextual *commandError
 		var command *cli.Command
@@ -180,19 +213,26 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 		}
 		message = readableAPIArgumentMessage(apierr, command, output...)
 	case http.StatusTooManyRequests:
-		message = "Wait before trying again."
-		switch apierr.Code {
-		case "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded":
+		message = "The API is limiting requests.\nWait before trying again."
+		if quotaLimitError(apierr.Code, apierr.Type) {
 			message = "API usage or billing limit reached.\nCheck your project's billing and limits."
 		}
 	case http.StatusConflict:
 		message = "The resource changed or is not ready.\nCheck its current status."
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
-		message = "The request timed out.\nThe API may have received the request.\nCheck its status before trying again."
+		message = "The request timed out.\n" + apiRetryGuidance(apierr)
+	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:
+		message = "The API is temporarily unavailable.\n" + apiRetryGuidance(apierr)
+	case http.StatusNotImplemented:
+		message = "This API endpoint does not implement this operation.\nCheck the API address and the operations it supports."
 	default:
-		if apierr.StatusCode >= 500 {
-			message = "The API is temporarily unavailable.\nThe API may have received the request.\nCheck its status before trying again."
+		detail := "this error"
+		if requestID != "" {
+			detail = "the request ID below"
+		} else if apierr.StatusCode > 0 {
+			detail = "the HTTP status below"
 		}
+		message = "The API could not complete the request.\nContact the API provider with " + detail + "."
 	}
 	if guidance := readableAPIPermissionMessage(failure, apierr); guidance != "" {
 		if strings.Contains(message, "Missing permission: api.webhooks.") {
@@ -207,18 +247,47 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 	if errors.As(failure, &workflow) {
 		message = workflow.Error() + "\n" + message
 	}
+	var details []string
 	if apierr.StatusCode > 0 {
 		status := fmt.Sprintf("HTTP %d", apierr.StatusCode)
 		if reason := http.StatusText(apierr.StatusCode); reason != "" {
 			status += ": " + reason
 		}
-		header := status + ".\n"
-		if requestID := clioutput.APIRequestID(apierr); requestID != "" {
-			header += "Request ID: " + requestID + "\n"
-		}
-		message = header + message
+		details = append(details, status+".")
+	}
+	if requestID != "" {
+		details = append(details, "Request ID: "+requestID)
+	}
+	if len(details) != 0 {
+		message += "\n\n" + strings.Join(details, "\n")
+	}
+	// Credential recovery already supplies the next step. Avoid burying it
+	// among unrelated format options; explicit machine output remains available.
+	if apierr.StatusCode == http.StatusUnauthorized || apierr.StatusCode == http.StatusForbidden {
+		return message
 	}
 	return message + "\nAPI error details: --format-error json."
+}
+
+func apiRetryGuidance(apierr *openai.Error) string {
+	request := apierr.Request
+	if request == nil && apierr.Response != nil {
+		request = apierr.Response.Request
+	}
+	if request != nil && (request.Method == http.MethodGet || request.Method == http.MethodHead || request.Method == http.MethodOptions) {
+		return "Try fetching the data again in a moment."
+	}
+	return "The API may have received the request.\nCheck its status before trying again."
+}
+
+func quotaLimitError(code, kind string) bool {
+	for _, category := range []string{code, kind} {
+		switch category {
+		case "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded":
+			return true
+		}
+	}
+	return false
 }
 
 // Parameter names are untrusted API data. Match only paths declared by this
