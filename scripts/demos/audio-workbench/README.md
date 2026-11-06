@@ -58,7 +58,8 @@ The helper files must retain executable permission after placement.
 The renderer uses the exact font chain `Menlo,Apple Symbols` at 22 pixels.
 Menlo supplies the text metrics; Apple Symbols supplies missing glyphs.
 
-The fixture serves only the loopback speech endpoint.
+Generation, recovery, and cancellation scenarios explicitly select `gpt-4o-mini-tts` in the form.
+The fixture serves the loopback Speech API endpoint. The print-command scenario checks the fresh Realtime model default without making a request.
 It validates the fake credential and known synthetic request fields.
 It returns mono signed PCM16 at 24 kHz, with exactly 48,000 sample frames.
 The WAV fixture wraps those same samples.
