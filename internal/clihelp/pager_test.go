@@ -89,13 +89,33 @@ func TestHelpPagerLimitsAnUnbrokenLineToTheFirstPage(t *testing.T) {
 	var out strings.Builder
 	m.output = &out
 	m.Update(tea.WindowSizeMsg{Width: 4, Height: 3})
-	if !strings.Contains(out.String(), "abcd\r\nefgh\r\n") || strings.Contains(out.String(), "ijkl") {
+	if !strings.Contains(out.String(), "abcdefghi") || strings.Contains(out.String(), "\n") || strings.Contains(out.String(), "ijkl") {
 		t.Fatalf("initial page overflowed: %q", out.String())
 	}
 	out.Reset()
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
-	if !strings.Contains(out.String(), "ijkl\r\nmnop\r\nEND") || strings.Contains(out.String(), "abcd") {
+	if !strings.Contains(out.String(), "jklmnop\r\nEND") || strings.Contains(out.String(), "abcd") {
 		t.Fatalf("unexpected final rows: %q", out.String())
+	}
+}
+
+func TestHelpPagerLeavesUnfinishedFormattingOutOfTheShellPrompt(t *testing.T) {
+	const closeStyles = "\x1b]8;;\x1b\\\x1b[0m"
+	const command = "\x1b[32m\x1b]8;;openai-insert://example/1\x1b\\'/long path/openai' help setup" + closeStyles + "\n"
+	m := newHelpPager(command, 8, 3)
+	var out strings.Builder
+	m.output = &out
+	m.Update(tea.WindowSizeMsg{Width: 8, Height: 3})
+	if !strings.Contains(out.String(), "openai-insert://") || strings.Contains(out.String(), closeStyles) || m.footerVisible {
+		t.Fatalf("expected a partial linked command: %q", out.String())
+	}
+	out.Reset()
+	m.Update(tea.KeyPressMsg{Code: 'q'})
+	if err := m.close(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.String(), closeStyles+"\r\n") {
+		t.Fatalf("shell prompt would inherit partial help formatting: %q", out.String())
 	}
 }
 

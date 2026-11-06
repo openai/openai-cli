@@ -16,7 +16,7 @@ import time
 
 
 def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width=100, height=24,
-          cancel_context=False, startup_failure=False, compare_scrollback=False):
+          cancel_context=False, startup_failure=False, compare_scrollback=False, launcher="openai"):
     with tempfile.TemporaryDirectory(prefix="help-pager-") as home:
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
@@ -52,7 +52,7 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
         if startup_failure:
             env["OPENAI_CLI_HELP_PAGER_EXHAUST_FDS"] = "1"
             process_test = "TestMainHelpPagerStartupFailureProcess"
-        command = [sys.argv[1], f"-test.run=^{process_test}$", "--", "openai", *args]
+        command = [sys.argv[1], f"-test.run=^{process_test}$", "--", launcher, *args]
         limit = (lambda: resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))) if startup_failure else None
         child = subprocess.Popen(command, env=env, cwd=home, pass_fds=control[:1], preexec_fn=limit, **streams)
         data = bytearray()
@@ -165,6 +165,14 @@ check("end to bottom", action=b"G", extra={"NO_COLOR": "1"}, compare_scrollback=
 check("resize to bottom", extra={"NO_COLOR": "1"}, compare_scrollback=True)
 check("page to bottom", action=b" " * 12, extra={"NO_COLOR": "1"}, compare_scrollback=True)
 check("wheel to bottom", action=b"\x1b[<65;5;5M" * 100, extra={"NO_COLOR": "1"}, compare_scrollback=True)
+# A direct launcher can cross a terminal margin inside shell quotes. Compare
+# the whole native document with the fitting control to catch inserted newlines.
+launcher = "/long path/" + "a" * 74 + "/openai"
+ordinary = check("long launcher fits", launcher=launcher, width=80, height=600,
+                 extra={"NO_COLOR": "1"}, action=None, compare_scrollback=True)
+assert ("'" + launcher + "' help setup").encode() in ordinary
+check("long launcher scrolls", launcher=launcher, width=80, action=b"G",
+      extra={"NO_COLOR": "1"}, compare_scrollback=True)
 check("navigation")
 check("quit", extra={"NO_COLOR": "1"}, width=40)
 check("escape", action=b"\x1b")

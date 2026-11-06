@@ -147,27 +147,27 @@ func (e *PagerError) Error() string {
 
 func (e *PagerError) Unwrap() error { return e.Cause }
 
+const helpLinkPrefix = "\x1b]8;;"
+const endHelpLink = helpLinkPrefix + "\x1b\\"
+
 type helpPager struct {
 	viewport viewport.Model
-	lines    []string
-	// One end offset per original line, measured in screen rows at the current width.
-	lineEnds                        []int
-	printed                         int
-	trailing                        int
-	output                          io.Writer
-	terminal                        *os.File
-	height                          int
-	active, reviewing               bool
-	quitting, finished, interrupted bool
-	writeErr                        error
+	content  string
+	// Source byte offsets at each physical row, including only authored newlines.
+	rowEnds                          []int
+	printed                          int
+	output                           io.Writer
+	terminal                         *os.File
+	height                           int
+	active, reviewing, footerVisible bool
+	quitting, finished, interrupted  bool
+	writeErr                         error
 }
 
 func newHelpPager(content string, width, height int) *helpPager {
-	body := strings.TrimRight(content, "\n")
 	m := &helpPager{
 		viewport: viewport.New(viewport.WithWidth(width), viewport.WithHeight(height-1)),
-		lines:    strings.Split(body, "\n"), trailing: len(content) - len(body),
-		output: io.Discard, height: height,
+		content:  content, output: io.Discard, height: height,
 	}
 	m.wrap(width)
 	return m
@@ -175,27 +175,28 @@ func newHelpPager(content string, width, height int) *helpPager {
 
 func (m *helpPager) wrap(width int) {
 	m.viewport.SetWidth(width)
-	m.lineEnds = m.lineEnds[:0]
-	var screenRows, lines []string
-	for i, line := range m.lines {
+	m.rowEnds = m.rowEnds[:0]
+	var screenRows []string
+	offset := 0
+	for _, line := range strings.Split(strings.TrimRight(m.content, "\n"), "\n") {
 		wrapped := strings.Split(ansi.Hardwrap(line, width, true), "\n")
-		if i < m.printed {
-			// The terminal reflows these rows itself. Keep their published
-			// identities when the number of physical rows changes.
-			lines = append(lines, line)
-			screenRows = append(screenRows, wrapped...)
-			m.lineEnds = append(m.lineEnds, len(screenRows))
-			continue
-		}
-		// An unread launcher path can wrap across several screens. Publish
-		// each new physical row only when the reader reaches it.
-		for _, row := range wrapped {
-			lines = append(lines, row)
+		for i, row := range wrapped {
+			offset += len(row)
+			end := offset
+			if i+1 < len(wrapped) {
+				// Let the first grapheme of the next row trigger native soft wrap.
+				// The cursor then rests inside that row, rather than at a pending
+				// right-margin wrap that a switch of screen buffers can discard.
+				next, _ := ansi.FirstGraphemeCluster(wrapped[i+1], ansi.GraphemeWidth)
+				end += len(next)
+			} else if offset < len(m.content) {
+				offset++ // The source line ends here, even if it wraps on screen.
+				end = offset
+			}
 			screenRows = append(screenRows, row)
-			m.lineEnds = append(m.lineEnds, len(screenRows))
+			m.rowEnds = append(m.rowEnds, end)
 		}
 	}
-	m.lines = lines
 	m.viewport.SetContentLines(screenRows)
 }
 
@@ -233,7 +234,7 @@ func (m *helpPager) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.reviewing && m.printed > 0 {
 			// The terminal reflows previously printed rows in place. Keep our
 			// forward position aligned with the end of that same printed prefix.
-			m.viewport.SetYOffset(max(offset, m.lineEnds[m.printed-1]-m.viewport.Height()))
+			m.viewport.SetYOffset(max(offset, sort.SearchInts(m.rowEnds, m.printed)+1-m.viewport.Height()))
 		}
 		m.finished = m.viewport.TotalLineCount() <= height || offset > 0 && m.viewport.AtBottom()
 	case tea.KeyPressMsg:
@@ -286,40 +287,48 @@ func (m *helpPager) View() tea.View {
 
 func (m *helpPager) draw() error {
 	var frame strings.Builder
-	hadFooter := m.active
 	if !m.active {
 		m.active = true
 		frame.WriteString("\x1b[?25l\x1b[?1000h\x1b[?1006h")
 	}
-	end := m.viewport.YOffset() + m.viewport.Height()
-	if m.printed > 0 && end < m.lineEnds[m.printed-1] && !m.finished {
+	end := min(m.viewport.YOffset()+m.viewport.Height(), len(m.rowEnds))
+	limit := m.rowEnds[end-1]
+	if m.finished {
+		limit = len(m.content)
+	}
+	if limit < m.printed {
 		// Inspect older rows without overwriting or duplicating native history.
 		if !m.reviewing {
 			frame.WriteString("\x1b[?1049h")
 			m.reviewing = true
 		}
-		frame.WriteString("\x1b[H\x1b[2J")
+		frame.WriteString(endHelpLink + "\x1b[0m\x1b[H\x1b[2J")
 		frame.WriteString(strings.ReplaceAll(m.View().Content, "\n", "\r\n"))
 	} else {
 		if m.reviewing {
 			m.reviewing = false
-			frame.WriteString("\x1b[?1049l")
+			// Screen restoration preserves the primary cursor and SGR, but
+			// some terminals retain the review screen's current hyperlink.
+			link := endHelpLink
+			if !m.footerVisible {
+				prefix := m.content[:m.printed]
+				if i := strings.LastIndex(prefix, helpLinkPrefix); i >= 0 {
+					if url, _, ok := strings.Cut(prefix[i+len(helpLinkPrefix):], "\x1b\\"); ok {
+						link = helpLinkPrefix + url + "\x1b\\"
+					}
+				}
+			}
+			frame.WriteString(link + "\x1b[?1049l")
 		}
-		if hadFooter {
+		if m.footerVisible {
 			frame.WriteString("\r\x1b[2K")
 		}
-		limit := min(len(m.lines), sort.SearchInts(m.lineEnds, end)+1)
-		if m.finished {
-			limit = len(m.lines)
-		}
-		for m.printed < limit {
-			frame.WriteString(m.lines[m.printed])
-			frame.WriteString("\r\n")
-			m.printed++
-		}
-		if m.finished {
-			frame.WriteString(strings.Repeat("\r\n", max(0, m.trailing-1)))
-		} else {
+		frame.WriteString(strings.ReplaceAll(m.content[m.printed:limit], "\n", "\r\n"))
+		m.printed = limit
+		// A footer needs its own physical row. Never insert it inside a
+		// soft-wrapped shell command, where it would change what users copy.
+		m.footerVisible = !m.finished && limit > 0 && m.content[limit-1] == '\n'
+		if m.footerVisible {
 			frame.WriteString(m.footer())
 		}
 	}
@@ -333,10 +342,14 @@ func (m *helpPager) close() error {
 	}
 	var reset strings.Builder
 	if m.reviewing {
-		reset.WriteString("\x1b[?1049l")
+		reset.WriteString(endHelpLink + "\x1b[?1049l")
 	}
-	if !m.finished {
+	if m.footerVisible {
 		reset.WriteString("\r\x1b[2K")
+	} else if !m.finished {
+		// A partial styled command may still have an open insertion link.
+		// Its closing sequences live in the unread suffix of the source.
+		reset.WriteString(endHelpLink + "\x1b[0m\r\n")
 	}
 	reset.WriteString("\x1b[?1006l\x1b[?1000l\x1b[?25h")
 	_, err := io.WriteString(m.output, reset.String())
