@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/colorprofile"
@@ -66,5 +67,29 @@ func DarkBackground(colorfgbg string) bool {
 		return false
 	default:
 		return true
+	}
+}
+
+// BackgroundHint reads COLORFGBG, which describes fg;bg or fg;extra;bg. Only conventional black and
+// white slots identify a palette here. Other terminal colors can be remapped.
+func BackgroundHint(hint string) (dark, known bool) {
+	fields := strings.Split(hint, ";")
+	if len(fields) < 2 || len(fields) > 3 {
+		return false, false
+	}
+	for _, field := range fields[:len(fields)-1] {
+		if field != "default" {
+			if _, err := strconv.ParseUint(field, 10, 8); err != nil {
+				return false, false
+			}
+		}
+	}
+	switch fields[len(fields)-1] {
+	case "0", "16", "232":
+		return true, true
+	case "7", "15", "231", "255":
+		return false, true
+	default:
+		return false, false
 	}
 }

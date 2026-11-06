@@ -102,6 +102,10 @@ func knownResourceFields(ctx context.Context, value gjson.Result, fields, omitte
 // malformed JSON, and unfamiliar record shapes fall back to full rendering.
 // Retained JSON is copied verbatim so large numbers and nested actions/errors stay intact.
 func summarizeResourceFields(ctx context.Context, value gjson.Result, fields, omitted []string) (gjson.Result, bool, error) {
+	return selectResourceFields(ctx, value, fields, omitted, resourceFieldPresent)
+}
+
+func selectResourceFields(ctx context.Context, value gjson.Result, fields, omitted []string, keep func(gjson.Result) bool) (gjson.Result, bool, error) {
 	values, err := knownResourceFields(ctx, value, fields, omitted)
 	if err != nil || values == nil {
 		return gjson.Result{}, false, err
@@ -114,7 +118,7 @@ func summarizeResourceFields(ctx context.Context, value gjson.Result, fields, om
 			return gjson.Result{}, false, err
 		}
 		field, exists := values[key]
-		if !exists || !resourceFieldPresent(field) {
+		if !exists || !keep(field) {
 			continue
 		}
 		if kept > 0 {
