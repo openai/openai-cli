@@ -70,7 +70,25 @@ func RunWithPager(ctx context.Context, root *cli.Command, argv []string, run fun
 		_, err := (clioutput.Writer{Context: ctx, Sink: out}).Write(captured.Bytes())
 		return err
 	}
-	return m.run(ctx, in, out, width, height, root)
+	m.draft = openHelpDraft(in, out)
+	err = m.run(ctx, in, out, width, height, root)
+	if m.draft == nil {
+		return err
+	}
+	var record []byte
+	if err == nil && !m.draft.invalid {
+		record = m.draft.text
+	}
+	if m.draft.recovery != "" {
+		// The optional second field describes terminal framing only.
+		record = append(record, 0)
+		record = append(record, m.draft.recovery...)
+	}
+	if len(record) > 0 {
+		_, writeErr := m.draft.output.Write(append(record, 0))
+		err = errors.Join(err, writeErr)
+	}
+	return errors.Join(err, m.draft.output.Close())
 }
 
 func (m *helpPager) run(ctx context.Context, in, out *os.File, width, height int, root *cli.Command) (returnErr error) {
@@ -122,14 +140,18 @@ func (m *helpPager) run(ctx context.Context, in, out *os.File, width, height int
 	m.output, m.terminal = clioutput.Writer{Context: context.Background(), Sink: out}, out
 	// Tea decodes input. Writing complete rows ourselves keeps each one in
 	// native scrollback instead of repainting a full screen on every Down.
-	_, err = tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithContext(programContext),
+	var reader io.Reader = in
+	if m.draft != nil {
+		reader = m.draft.input
+	}
+	_, err = tea.NewProgram(m, tea.WithInput(reader), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithContext(programContext),
 		tea.WithWindowSize(width, height), tea.WithColorProfile(commandHelpStyle(root).profile), tea.WithoutSignalHandler()).Run()
 	// Tea has released its input reader. A terminal can have reports in
 	// transit even if the last event the pager handled was a keyboard exit.
 	stopErr := m.stopMouse()
 	if stopErr == nil && m.writeErr == nil && m.active {
 		var interrupted bool
-		interrupted, stopErr = finishHelpMouseInput(in, out)
+		interrupted, stopErr = finishHelpMouseInput(in, out, m.draft, programContext.Err() != nil || m.interrupted)
 		m.interrupted = m.interrupted || interrupted
 	}
 	cleanupErr := errors.Join(m.writeErr, stopErr, m.close())
@@ -158,6 +180,7 @@ const helpLinkPrefix = "\x1b]8;;"
 const endHelpLink = helpLinkPrefix + "\x1b\\"
 
 type helpPager struct {
+	draft    *helpDraft
 	viewport viewport.Model
 	content  string
 	// Source byte offsets at each physical row, including only authored newlines.
@@ -227,9 +250,22 @@ func nextHelpSize() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return pollHelpSize{} })
 }
 
-func (m *helpPager) Init() tea.Cmd { return nextHelpSize() }
+func (m *helpPager) Init() tea.Cmd {
+	if m.draft != nil {
+		m.draft.probeStart = time.Now()
+		return tea.Batch(nextHelpSize(), tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg { return draftProbeExpired{} }))
+	}
+	return nextHelpSize()
+}
 
 func (m *helpPager) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if m.draft != nil && m.draft.input.canceledPaste() {
+		m.interrupted = true
+		return m, tea.Quit
+	}
+	if m.draft != nil && !m.draft.started.IsZero() {
+		return m, m.collectDraft(message)
+	}
 	if m.quitting {
 		switch msg := message.(type) {
 		case finishHelpReader:
@@ -245,6 +281,18 @@ func (m *helpPager) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	}
+	if m.draft != nil && !m.draft.probeDone {
+		if handled, cmd := m.negotiateDraft(message); handled {
+			return m, cmd
+		}
+	}
+	if m.draft != nil && m.draft.enabled {
+		text := m.draft.textFor(message)
+		key, isKey := message.(tea.KeyPressMsg)
+		if text != "" && (!isKey || startsHelpDraft(key)) {
+			return m, m.startDraft(text)
+		}
 	}
 	down := false
 	switch msg := message.(type) {
@@ -273,14 +321,14 @@ func (m *helpPager) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.finished = m.viewport.TotalLineCount() <= height || offset > 0 && m.viewport.AtBottom()
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "q", "Q", "esc":
+		case "esc":
 			return m, m.leave()
 		case "ctrl+c":
 			m.interrupted = true
 			return m, m.leave()
 		case "home", "g":
 			m.viewport.GotoTop()
-		case "end", "G":
+		case "end", "G", "q", "Q":
 			m.viewport.GotoBottom()
 			m.finished = true
 		default:
@@ -309,9 +357,15 @@ func (m *helpPager) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *helpPager) footer() string {
-	footer := "Scroll or use arrows   Space: page   q: quit"
+	footer := "Scroll or use arrows   Space: page   q: end   Esc: quit"
 	if m.viewport.Width() < len(footer) {
-		footer = "Scroll   q: quit"
+		footer = "Scroll   q: end   Esc: quit"
+	}
+	if m.draft != nil && m.draft.enabled {
+		footer = "Type a command   Space: page   q: end   Esc: quit"
+		if m.viewport.Width() < len(footer) {
+			footer = "Type a command   q: end   Esc: quit"
+		}
 	}
 	return ansi.Truncate(footer, m.viewport.Width(), "")
 }
@@ -328,6 +382,9 @@ func (m *helpPager) draw() error {
 	if !m.active {
 		m.active = true
 		frame.WriteString("\x1b[?25l\x1b[?1006h\x1b[?1000h")
+		if m.draft != nil {
+			frame.WriteString(draftCursorQuery)
+		}
 	}
 	end := min(m.viewport.YOffset()+m.viewport.Height(), len(m.rowEnds))
 	limit := m.rowEnds[end-1]
@@ -382,6 +439,9 @@ func (m *helpPager) leave() tea.Cmd {
 	if m.writeErr != nil {
 		return tea.Quit
 	}
+	if m.draft != nil && m.draft.enabled {
+		return m.finishDraftInput()
+	}
 	return checkHelpReaderIdle()
 }
 
@@ -410,6 +470,9 @@ func (m *helpPager) close() error {
 		// A partial styled command may still have an open insertion link.
 		// Its closing sequences live in the unread suffix of the source.
 		reset.WriteString(endHelpLink + "\x1b[0m\r\n")
+	}
+	if m.draft != nil && m.draft.enabled {
+		reset.WriteString("\x1b[?2004l")
 	}
 	reset.WriteString("\x1b[?25h")
 	_, err := io.WriteString(m.output, reset.String())

@@ -31,7 +31,7 @@ func TestMainStartupHelpTerminalOutput(t *testing.T) {
 				t.Fatalf("help omitted its reference: %q", got.stdout)
 			}
 			if test.name == "bare" {
-				top, rest, ok := strings.Cut(got.stdout, "q: quit")
+				top, rest, ok := strings.Cut(got.stdout, "q: end")
 				if !ok || !strings.Contains(top, "START HERE") || !strings.Contains(top, "What are we making today?") {
 					t.Fatal("bare startup did not show the first page before accepting input")
 				}
@@ -39,7 +39,7 @@ func TestMainStartupHelpTerminalOutput(t *testing.T) {
 					t.Fatal("scrolling to the end omitted the reference")
 				}
 			} else {
-				for _, marker := range []string{"\x1b[?1049h", "\x1b[?1002h", "\x1b[?1003h", "Space: page", "q: quit"} {
+				for _, marker := range []string{"\x1b[?1049h", "\x1b[?1002h", "\x1b[?1003h", "Space: page", "q: end"} {
 					if strings.Contains(got.stdout, marker) {
 						t.Errorf("explicit help captured the terminal with %q", marker)
 					}

@@ -72,7 +72,7 @@ func TestHelpPagerAppendsOnlyNewRowsOnForwardScroll(t *testing.T) {
 		t.Fatal("Home did not open the previously read rows")
 	}
 	out.Reset()
-	_, done := m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	_, done := m.Update(tea.KeyPressMsg{Code: 'q'})
 	if done == nil || !strings.Contains(out.String(), "\x1b[?1049l") || !strings.Contains(out.String(), "fifth\r\nsixth\r\n\r\n") || strings.Contains(out.String(), "fourth") {
 		t.Fatalf("EOF must append only the unread tail: %q", out.String())
 	}
@@ -110,7 +110,7 @@ func TestHelpPagerLeavesUnfinishedFormattingOutOfTheShellPrompt(t *testing.T) {
 		t.Fatalf("expected a partial linked command: %q", out.String())
 	}
 	out.Reset()
-	m.Update(tea.KeyPressMsg{Code: 'q'})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if err := m.close(); err != nil {
 		t.Fatal(err)
 	}

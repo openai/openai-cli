@@ -3,7 +3,18 @@
 For installation and common tasks, see the [README](../README.md).
 In an interactive terminal, run `openai` to read the full help from the top.
 As you scroll, the help stays in your terminal history. Your prompt appears below the last line.
-Use the mouse wheel, arrow keys, or Space to scroll. Press `q` or Escape to leave early.
+Use the mouse wheel, arrow keys, or Space to scroll. Press `q` to show the rest of the help immediately.
+Press Escape to leave at your current position.
+
+With zsh command insertion enabled, look for `Type a command` at the bottom of the page.
+Start typing to show the remaining help. Your text appears at your zsh prompt for editing.
+Press Enter at that prompt to run it. Before typing, `q` or `Q` jumps to the end and Space scrolls one page.
+To enable command insertion for the current zsh session, run:
+
+```zsh
+source <(openai @completion zsh --suggestions --suggestions-only)
+```
+
 Run `openai --help` to print the full reference immediately.
 
 ## Environment variables

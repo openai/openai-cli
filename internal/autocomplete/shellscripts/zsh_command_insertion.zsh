@@ -16,6 +16,113 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     typeset -g ____APPNAME___suggestions_index=0 ____APPNAME___suggestions_last=''
   }
 
+  ____APPNAME___clear_help_reply_map() {
+    emulate -L zsh
+    add-zsh-hook -d precmd ____APPNAME___clear_help_reply_map
+    add-zsh-hook -d preexec ____APPNAME___clear_help_reply_map
+    builtin bindkey -D ____APPNAME___help_reply_map 2>/dev/null
+  }
+
+  # Resume the terminal frame in the original editor. Only fixed framing can
+  # enter the key queue. Draft text always uses print -rz instead.
+  ____APPNAME___restore_help_frame() {
+    emulate -L zsh
+    [[ ${WIDGET-} == zle-line-init && ${widgets[zle-line-init]-} == user:____APPNAME___restore_help_frame ]] || return 0
+    local marker=${____APPNAME___pending_help_frame-} opener=$'\e[200~' closer=$'\e[201~' frame='' code=0
+    unset ____APPNAME___pending_help_frame
+    if (( ${+widgets[____APPNAME___prior_line_init]} )); then
+      builtin zle -A ____APPNAME___prior_line_init zle-line-init
+      builtin zle -D ____APPNAME___prior_line_init
+      builtin zle zle-line-init -f nolast -N -- "$@" || code=$?
+    else
+      builtin zle -D zle-line-init
+    fi
+    case ${marker%r} in
+      '') [[ $marker == r ]] || return $code ;;
+      o[1-5]) frame=${opener[1,${marker[2]}]} ;;
+      p0) frame=$opener ;;
+      p[1-5]) frame=$opener${closer[1,${marker[2]}]} ;;
+      *) return $code ;;
+    esac
+    # The pager requests its cursor report at 1,1. Ignore only that exact
+    # response. The temporary map inherits the user's bindings for this line.
+    if [[ $marker == *r ]] && ! builtin bindkey -M ____APPNAME___help_reply_map $'\e[1;1R' >/dev/null 2>&1 &&
+      builtin bindkey -N ____APPNAME___help_reply_map "$KEYMAP"; then
+      builtin bindkey -M ____APPNAME___help_reply_map $'\e[1;1R' .redisplay
+      builtin zle -K ____APPNAME___help_reply_map
+      add-zsh-hook preexec ____APPNAME___clear_help_reply_map
+      add-zsh-hook precmd ____APPNAME___clear_help_reply_map
+    fi
+    [[ -z $frame ]] || builtin zle -U "$frame"
+    return $code
+  }
+
+  ____APPNAME___arm_help_frame() {
+    # Other precmd hooks may replace line-init. Capture the final owner.
+    add-zsh-hook -d precmd ____APPNAME___arm_help_frame
+    [[ -n ${____APPNAME___pending_help_frame-} ]] || return 0
+    zmodload zsh/zleparameter || return 1
+    [[ ${widgets[zle-line-init]-} != user:____APPNAME___restore_help_frame ]] || return 0
+    (( ! ${+widgets[____APPNAME___prior_line_init]} )) || return 1
+    if (( ${+widgets[zle-line-init]} )); then
+      builtin zle -A zle-line-init ____APPNAME___prior_line_init || return 1
+    fi
+    if ! builtin zle -N zle-line-init ____APPNAME___restore_help_frame; then
+      (( ! ${+widgets[____APPNAME___prior_line_init]} )) || builtin zle -D ____APPNAME___prior_line_init
+      unset ____APPNAME___pending_help_frame
+      return 1
+    fi
+  }
+
+  ____APPNAME___run_with_help_draft() {
+    emulate -L zsh
+    unsetopt multios xtrace verbose
+    local file code draft marker extra
+    if (( $# == 0 && ZSH_SUBSHELL == 0 )) && [[ -o zle && -t 0 && -t 1 && -t 2 &&
+      ! -e /dev/fd/5 && ! -e /dev/fd/6 ]] && ____APPNAME___suggestions_owns_command &&
+      file=$(command mktemp "${TMPDIR:-/tmp}/__APPNAME__-help-draft.XXXXXXXX" 2>/dev/null); then
+      {
+        # The reader and writer need independent offsets. Unlink before the CLI can write.
+        {
+          if command rm -f -- "$file" 2>/dev/null; then
+            file=''
+            OPENAI_CLI_HELP_DRAFT_FD=6 command '__APPNAME__' 5<&-
+            code=$?
+            # A paste may contain newlines. Reject malformed UTF-8 and Unicode C0/C1 controls.
+            # Locale-defined cntrl also includes format characters such as the emoji joiner.
+            local LC_ALL=C.UTF-8
+            if IFS= builtin read -r -d '' -u5 draft; then
+              if IFS= builtin read -r -d '' -u5 marker; then
+                [[ -n $marker ]] && ! LC_ALL=C IFS= builtin read -r -k 1 -u5 extra || return $code
+              elif [[ -n $marker ]]; then
+                return $code
+              fi
+              case $code in
+                0)
+                  [[ -z $marker || $marker == r ]] || return $code
+                  [[ $draft != *[[:INVALID:][:INCOMPLETE:]]* &&
+                    ${draft//$'\n'/} != *[$'\x01'-$'\x1f'$'\x7f'-$'\u009f']* ]] || return $code
+                  [[ -z $draft ]] || builtin print -rz -- "$draft"
+                  ;;
+                130|143)
+                  [[ -z $draft && ( $marker == r || ${marker%r} == o[1-5] || ${marker%r} == p[0-5] ) ]] || return $code
+                  ;;
+                *) return $code ;;
+              esac
+              if [[ -n $marker ]]; then
+                add-zsh-hook precmd ____APPNAME___arm_help_frame && typeset -g ____APPNAME___pending_help_frame=$marker
+              fi
+            fi
+            return $code
+          fi
+        } 7>&2 2>/dev/null 5<"$file" 6>"$file" 2>&7 7>&-
+      } always {
+        [[ -z $file ]] || command rm -f -- "$file" 2>/dev/null
+      }
+    fi
+    command '__APPNAME__' "$@"
+  }
+
   ____APPNAME___suggestions_collect() {
     emulate -L zsh
     local code data line
@@ -29,7 +136,7 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     shift
     local click_session='' click_generation=''
     (( $+functions[____APPNAME___suggestions_click_prepare] )) && ____APPNAME___suggestions_click_prepare
-    if OPENAI_CLI_COMMANDS_FD=9 OPENAI_CLI_COMMANDS_SHELL=zsh OPENAI_CLI_COMMANDS_CLICK_SESSION=$click_session OPENAI_CLI_COMMANDS_CLICK_GENERATION=$click_generation command '__APPNAME__' "$@"; then
+    if OPENAI_CLI_COMMANDS_FD=9 OPENAI_CLI_COMMANDS_SHELL=zsh OPENAI_CLI_COMMANDS_CLICK_SESSION=$click_session OPENAI_CLI_COMMANDS_CLICK_GENERATION=$click_generation ____APPNAME___run_with_help_draft "$@"; then
       code=0
     else
       code=$?
@@ -56,6 +163,7 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     emulate -L zsh
     # Sequential stderr redirections must retain the terminal, not a multios pipe.
     unsetopt multios
+    local -x OPENAI_CLI_HELP_DRAFT_FD=''
     local file code ____APPNAME___suggestions_started=0
     ____APPNAME___suggestions_clear
     # Only the bare interactive command hands its selection to the next editor.
@@ -120,7 +228,7 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     local selected code row=0 candidate
     (( $+functions[____APPNAME___suggestions_click_revoke] )) && ____APPNAME___suggestions_click_revoke
     zle -I
-    if selected=$(printf '%s\n' "${____APPNAME___suggestions[@]}" | OPENAI_CLI_COMMANDS_FD= OPENAI_CLI_COMMANDS_SHELL= command '__APPNAME__' explore --suggestions --shell-integration --shell zsh); then
+    if selected=$(printf '%s\n' "${____APPNAME___suggestions[@]}" | OPENAI_CLI_HELP_DRAFT_FD= OPENAI_CLI_COMMANDS_FD= OPENAI_CLI_COMMANDS_SHELL= command '__APPNAME__' explore --suggestions --shell-integration --shell zsh); then
       code=0
     else
       code=$?
