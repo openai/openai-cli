@@ -21,7 +21,7 @@ import (
 )
 
 func TestListPagerAdvanceAtVisibleRecordBoundary(t *testing.T) {
-	for _, count := range []int{24, 25, 26} {
+	for _, count := range []int{4, 5, 6} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			var out bytes.Buffer
 			var requests atomic.Int32
@@ -43,28 +43,29 @@ func TestListPagerAdvanceAtVisibleRecordBoundary(t *testing.T) {
 			model.Update(model.Init()())
 			require.EqualValues(t, 1, requests.Load())
 			require.NotContains(t, model.View().Content, "Full data:")
-			if count <= 25 {
+			if count <= 5 {
 				require.Contains(t, model.View().Content, last)
 			} else {
 				require.NotContains(t, model.View().Content, last)
 			}
 			_, advance := model.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
-			if count == 26 {
-				require.Nil(t, advance, "remaining loaded records must precede the next API request")
-				require.EqualValues(t, 1, requests.Load())
-				require.Contains(t, model.View().Content, last)
-				_, advance = model.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
-			}
-			require.NotNil(t, advance, "Space must fetch once all records are visible")
-			model.Update(advance())
+			require.NotNil(t, advance, "the next screen spans the API page boundary")
+			require.IsType(t, tea.QuitMsg{}, advance(), "the inline renderer releases the shell first")
+			model.Update(model.Init()())
 			require.EqualValues(t, 2, requests.Load())
-			require.Contains(t, model.View().Content, "file-next")
-			require.Contains(t, model.View().Content, "End")
+			nextScreen := model.View().Content
+			require.Contains(t, nextScreen, "file-next")
+			require.Contains(t, nextScreen, "End")
+			if count == 6 {
+				require.Contains(t, nextScreen, last, "keep the last unshown file from the first API response")
+			}
+			require.NotContains(t, nextScreen, "file-001")
 			model.Update(tea.KeyPressMsg{Code: 'b', Text: "b"})
-			require.Contains(t, model.View().Content, last)
+			require.Contains(t, model.View().Content, "file-001")
+			require.NotContains(t, model.View().Content, "file-next")
 			_, cached := model.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 			require.Nil(t, cached)
-			require.Contains(t, model.View().Content, "file-next")
+			require.Equal(t, nextScreen, model.View().Content)
 			require.EqualValues(t, 2, requests.Load())
 			model.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
 			require.NoError(t, model.Finish(nil, nil))
@@ -88,9 +89,9 @@ func listPagerCommand(action cli.ActionFunc) *cli.Command {
 		}})
 	}
 	configureModelsList(root)
-	configureListCommands(root)
 	localcommands.ConfigureSubgroups(root)
 	localcommands.ConfigureTasks(root)
+	configureRegisteredLists(root)
 	return root
 }
 
@@ -120,9 +121,9 @@ func TestListPagerHelp(t *testing.T) {
 			root.Writer = &help
 			args := append([]string{"openai"}, strings.Fields(route)...)
 			require.NoError(t, root.Run(t.Context(), append(args, "list", "--help")))
-			require.Contains(t, help.String(), "Automatic terminal output uses a pager.")
-			require.Contains(t, help.String(), "Space moves forward, b moves back, and q quits.")
-			require.Contains(t, help.String(), "The final page stays open until you quit.")
+			require.Contains(t, help.String(), "Terminal lists start with up to five table rows or a short labeled preview.")
+			require.Contains(t, help.String(), "Complete results that fit return to the shell.")
+			require.Contains(t, help.String(), "Press Space to browse the next screen.")
 			for _, removed := range []string{"--pager", "--no-pager", "inline", "finish automatically", "retain noninteractive behavior"} {
 				require.NotContains(t, help.String(), removed)
 			}

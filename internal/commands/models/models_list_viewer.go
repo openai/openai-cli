@@ -53,29 +53,26 @@ func WriteList[T any](iter *clioutput.Iterator[T], opts listview.Options, width,
 }
 
 type modelPages struct {
-	ctx   context.Context
-	items []gjson.Result
-	size  int
+	ctx        context.Context
+	items      []gjson.Result
+	size       int
+	total      int
+	fullLabels bool
 }
 
 func localModelPages(ctx context.Context, items []gjson.Result) (modelPages, error) {
-	pages := modelPages{ctx: ctx, items: items, size: len(items)}
-	if len(items) <= modelListPageSize {
-		return pages, ctx.Err()
-	}
+	pages := modelPages{ctx: ctx, items: items, size: min(modelListPageSize, len(items)), total: len(items)}
 	options, _ := ctx.Value(modelsListOptionsKey{}).(modelsListOptions)
 	if !options.applied {
-		// Sort across page boundaries. If any identity is ambiguous, the whole
-		// response must retain its existing labeled fallback and input order.
-		sorted, supported, err := transformers.SelectModels(ctx, items, transformers.ModelSelection{
-			Descending: options.selection.Descending, Limit: -1,
-		})
-		if err != nil || !supported {
+		sorted, supported, err := sortModelRecords(ctx, items)
+		if err != nil {
 			return pages, err
 		}
 		pages.items = sorted
+		if !supported {
+			pages.size, pages.fullLabels = len(items), true
+		}
 	}
-	pages.size = modelListPageSize
 	return pages, ctx.Err()
 }
 
@@ -85,7 +82,20 @@ func (p *modelPages) next() (listview.Page, error) {
 		return listview.Page{}, err
 	}
 	count := min(p.size, len(p.items))
-	page := listview.Page{Items: p.items[:count], More: count < len(p.items), Local: true}
+	page := listview.Page{Items: p.items[:count], More: count < len(p.items), Total: p.total, FullLabels: p.fullLabels}
 	p.items = p.items[count:]
 	return page, nil
+}
+
+// Sort once before the viewer selects a screen. Reordering overlapping screens
+// independently could show an ID twice and skip another when moving one row.
+func sortModelRecords(ctx context.Context, items []gjson.Result) ([]gjson.Result, bool, error) {
+	options, _ := ctx.Value(modelsListOptionsKey{}).(modelsListOptions)
+	sorted, supported, err := transformers.SelectModels(ctx, items, transformers.ModelSelection{
+		Descending: options.selection.Descending, Limit: -1,
+	})
+	if err != nil || !supported {
+		return items, false, err
+	}
+	return sorted, true, nil
 }

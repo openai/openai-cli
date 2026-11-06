@@ -40,35 +40,57 @@ func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *
 	if message := readableAPIAccessPermissionMessage(root, failure, apierr); message != "" {
 		return message
 	}
-	message := "The server did not accept authentication."
+	credential, override := apiAuthenticationCredentialSource(root, flag, variable, label)
+	emptyFlag := root.IsSet(flag) && root.Count(flag) > 0 && root.String(flag) == ""
+	setup := clihelp.DisplayInvocation(root) + " help setup"
+	if admin {
+		setup += " admin"
+	}
 	if custom {
-		message = "Authentication failed for the custom API address."
-	}
-	credential, customAuthorization := apiAuthenticationCredentialSource(root, flag, variable, label)
-	lines := []string{message, credential}
-	switch {
-	case customAuthorization:
-		lines = append(lines, "Next: correct or remove this Authorization override.")
-	case root.IsSet(flag) && root.Count(flag) > 0 && root.String(flag) == "":
-		lines = append(lines, "Next: remove the empty --"+flag+" override.", "Then set "+variable+" in this shell.")
-	case custom:
-		lines = append(lines, "Next: set the credential required by this API endpoint.")
-	case !apiAuthenticationKeyPresent(root, flag, variable):
-		if admin {
-			lines = append(lines, "Next: set OPENAI_ADMIN_KEY to an organization admin API key.")
-		} else {
-			lines = append(lines, "Next: set OPENAI_API_KEY in this shell.")
+		message := "Authentication failed for the custom API address.\n" + credential
+		switch {
+		case override:
+			return message + "\nCorrect or remove this Authorization override."
+		case emptyFlag:
+			return message + "\nRemove the empty --" + flag + " override."
+		default:
+			return message + "\nSet the credential required by this API endpoint.\nKey setup: " + clihelp.SuggestedCommand(root, output, setup)
 		}
-	case admin:
-		lines = append(lines, "Next: ask an organization owner to check this admin key's access.")
-	default:
-		lines = append(lines, "Next: check this key's status and access in API key settings.")
 	}
-	if !custom && !customAuthorization && !admin {
-		lines = append(lines, "API keys: "+apiAuthenticationKeyURL)
+	switch {
+	case override:
+		return credential + "\nCorrect or remove this Authorization override."
+	case emptyFlag:
+		message := "The --" + flag + " override is empty."
+		if os.Getenv(variable) != "" {
+			return message + "\nRemove the empty option to use " + variable + "."
+		}
+		return message + "\nRemove the empty option. For help setting " + variable + ", run:\n  " +
+			clihelp.SuggestedCommand(root, output, setup)
+	case !apiAuthenticationKeyPresent(root, flag, variable):
+		return "No " + label + " is configured.\nRun this guide to set " + variable + ".\n  " +
+			clihelp.SuggestedCommand(root, output, setup)
 	}
-	lines = append(lines, "Key setup: "+clihelp.SuggestedCommand(root, output, clihelp.DisplayInvocation(root)+" help setup"))
-	return strings.Join(lines, "\n")
+	message := "OpenAI could not authenticate this request."
+	action := "Check the"
+	if apierr.Code == "invalid_api_key" {
+		message = "OpenAI rejected the " + label + "."
+		action = "Replace the"
+	}
+	// A flag value distinct from the environment proves that the flag supplied
+	// the credential. Identical values cannot establish which source was used.
+	source := variable
+	if root.IsSet(flag) {
+		if root.String(flag) != os.Getenv(variable) {
+			source = "--" + flag
+		} else {
+			source += " or the --" + flag + " override"
+		}
+	}
+	if admin {
+		return message + "\nAsk an organization owner to check the admin API key supplied by " + source + "."
+	}
+	return message + "\n" + action + " API key supplied by " + source + "."
 }
 
 // Recognize the API's permission message without echoing its prose or unknown

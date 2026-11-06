@@ -57,18 +57,16 @@ func SummarizeResource(ctx context.Context, value gjson.Result, route Route) (gj
 	return summarizeResourceFields(ctx, value, strings.Fields(fields), strings.Fields(omitted))
 }
 
-// Only declared fields may be hidden. New fields (even null), duplicate keys,
-// malformed JSON, and unfamiliar record shapes fall back to full rendering.
-// Retained JSON is copied verbatim so large numbers and nested actions/errors stay intact.
-func summarizeResourceFields(ctx context.Context, value gjson.Result, fields, omitted []string) (gjson.Result, bool, error) {
+// Return the original fields only when the record has unique, declared keys.
+func knownResourceFields(ctx context.Context, value gjson.Result, fields, omitted []string) (map[string]gjson.Result, error) {
 	// GJSON can read partial objects, including results preserved by the SDK.
 	// Do not present a partial record as a complete resource summary.
 	validJSON := gjson.Valid(value.Raw)
 	if err := ctx.Err(); err != nil {
-		return gjson.Result{}, false, err
+		return nil, err
 	}
 	if !validJSON {
-		return gjson.Result{}, false, nil
+		return nil, nil
 	}
 	allowed := make(map[string]bool, len(fields)+len(omitted))
 	for _, field := range fields {
@@ -92,10 +90,21 @@ func summarizeResourceFields(ctx context.Context, value gjson.Result, fields, om
 		return true
 	})
 	if err := ctx.Err(); err != nil {
-		return gjson.Result{}, false, err
+		return nil, err
 	}
 	if !valid {
-		return gjson.Result{}, false, nil
+		return nil, nil
+	}
+	return values, nil
+}
+
+// Only declared fields may be hidden. New fields (even null), duplicate keys,
+// malformed JSON, and unfamiliar record shapes fall back to full rendering.
+// Retained JSON is copied verbatim so large numbers and nested actions/errors stay intact.
+func summarizeResourceFields(ctx context.Context, value gjson.Result, fields, omitted []string) (gjson.Result, bool, error) {
+	values, err := knownResourceFields(ctx, value, fields, omitted)
+	if err != nil || values == nil {
+		return gjson.Result{}, false, err
 	}
 	var out strings.Builder
 	out.WriteByte('{')

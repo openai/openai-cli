@@ -123,10 +123,10 @@ def legacy_paging(binary, prefix):
     records = [record("zeta-last"), *[record(f"alpha-{i:03}") for i in reversed(range(100))]]
     with command(binary, prefix, [(200, {"object": "list", "data": records})], height=120) as (terminal, server):
         terminal.wait("alpha-000")
-        terminal.wait("Showing 100 of 101 models.")
+        terminal.wait("Models 1–5 of 101")
         send_and_wait(terminal, b" ", "zeta")
-        terminal.wait("Showing 1 of 101 models.")
-        send_and_wait(terminal, b"b", "alph")
+        terminal.wait("Models 6–101 of 101")
+        send_and_wait(terminal, b"b", "1–5 of 101")
         quit_cleanly(terminal)
         assert server.paths == [FIRST], "legacy response was downloaded twice"
 
@@ -135,8 +135,8 @@ def explicit_modes(binary, prefix):
     body = {"object": "list", "data": [record("alpha-first")]}
     for flags in [("--format", "auto"), ("--sort-by", "~id"), ("--max-items", "1"), ("--filter", "id=alpha-first")]:
         with command(binary, prefix, [(200, body)], flags) as (terminal, server):
-            terminal.wait("alpha-first")
-            quit_cleanly(terminal)
+            navigation.finish(terminal, 0)
+            assert "alpha-first" in terminal.text() and b"\x1b[?1049h" not in terminal.raw
             assert server.paths == ["/v1/models"], "explicit options changed the request contract"
     for value in ["json", "raw"]:
         with command(binary, prefix, [(200, body)], ("--format", value)) as (terminal, server):

@@ -15,135 +15,6 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-type navigationTestPage struct {
-	raw      string
-	next     *navigationTestPage
-	err      error
-	requests *int
-}
-
-func (p *navigationTestPage) RawJSON() string { return p.raw }
-func (p *navigationTestPage) GetNextPage() (*navigationTestPage, error) {
-	*p.requests++
-	return p.next, p.err
-}
-
-func TestListPageFetcherWaitsAndPreservesPageSize(t *testing.T) {
-	for _, limit := range []int64{-1, 0, 1, 2, 3} {
-		t.Run(fmt.Sprint(limit), func(t *testing.T) {
-			requests := 0
-			last := &navigationTestPage{raw: `{"data":[{"id":"c"}],"has_more":false}`, requests: &requests}
-			first := &navigationTestPage{raw: `{"data":[{"id":"a"},{"id":"b"}],"has_more":true}`, next: last, requests: &requests}
-			fetch := newListPageFetcher(context.Background(), func(context.Context) (*navigationTestPage, error) { requests++; return first, nil }, limit, "")
-			if requests != 0 {
-				t.Fatal("constructed fetcher made a request")
-			}
-			page, err := fetch()
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := 2
-			if limit >= 0 && limit < 2 {
-				want = int(limit)
-			}
-			if len(page.Items) != want {
-				t.Fatalf("got %d items, want %d", len(page.Items), want)
-			}
-			wantRequests := 1
-			if limit == 0 {
-				wantRequests = 0
-			}
-			if requests != wantRequests {
-				t.Fatalf("first load made %d requests", requests)
-			}
-			if page.More != (limit == -1 || limit > 2) {
-				t.Fatalf("unexpected continuation: %v", page.More)
-			}
-			page, err = fetch()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if limit == -1 || limit > 2 {
-				wantRequests++
-				if len(page.Items) != 1 || page.Items[0].Get("id").String() != "c" {
-					t.Fatalf("unexpected next page: %+v", page)
-				}
-			}
-			if requests != wantRequests || page.More {
-				t.Fatalf("unexpected final load: requests=%d, more=%v", requests, page.More)
-			}
-			if _, err := fetch(); err != nil || requests != wantRequests {
-				t.Fatal("fetched after the last page", err, requests)
-			}
-		})
-	}
-}
-
-func TestShowJSONPagesZeroRetainsRequestErrors(t *testing.T) {
-	failure := errors.New("synthetic first request failure")
-	for _, requestErr := range []error{nil, failure} {
-		calls := 0
-		err := ShowPages(func(context.Context) (*navigationTestPage, error) {
-			calls++
-			return nil, requestErr
-		}, 0, testOptions(t.Context()), "")
-		if calls != 1 || !errors.Is(err, requestErr) {
-			t.Fatalf("calls=%d, error=%v; want %v", calls, err, requestErr)
-		}
-	}
-}
-
-func TestListPageFetcherStopsEmptyAndStalledCursors(t *testing.T) {
-	for _, tt := range []struct {
-		name, cursor, first, second string
-		wantError                   bool
-	}{
-		{"empty", "", `{"data":[],"has_more":true}`, "", true},
-		{"last", "", `{"data":[{"id":"a"}],"has_more":false}`, "", false},
-		{"missing", "", `{"data":[{}],"has_more":true}`, "", true},
-		{"repeated", "", `{"data":[{"id":"a"}],"has_more":true}`, `{"data":[{"id":"a"}],"has_more":true}`, true},
-		{"last_id", "last_id", `{"data":[{"id":"a"}],"has_more":true,"last_id":"x"}`, `{"data":[{"id":"b"}],"has_more":true,"last_id":"x"}`, true},
-		{"next", "next", `{"data":[{"id":"a"}],"has_more":true,"next":"x"}`, `{"data":[{"id":"b"}],"has_more":false}`, false},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			requests := 0
-			second := &navigationTestPage{raw: tt.second, requests: &requests}
-			first := &navigationTestPage{raw: tt.first, next: second, requests: &requests}
-			fetch := newListPageFetcher(context.Background(), func(context.Context) (*navigationTestPage, error) { requests++; return first, nil }, -1, tt.cursor)
-			page, err := fetch()
-			if page.More && err == nil {
-				page, err = fetch()
-			}
-			if (err != nil) != tt.wantError {
-				t.Fatalf("error=%v", err)
-			}
-			var navigationError *PaginationError
-			if tt.wantError && !errors.As(err, &navigationError) {
-				t.Fatalf("cursor failure has no safe diagnostic type: %v", err)
-			}
-			if page.More {
-				t.Fatal("continues after final or stalled page")
-			}
-			prior := requests
-			if _, err := fetch(); err != nil || requests != prior {
-				t.Fatal("made request after stop", err)
-			}
-		})
-	}
-}
-
-func TestListPageFetcherCancellationPreventsRequests(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	fetch := newListPageFetcher(ctx, func(context.Context) (*navigationTestPage, error) {
-		t.Fatal("request after cancellation")
-		return nil, nil
-	}, -1, "")
-	if _, err := fetch(); !errors.Is(err, context.Canceled) {
-		t.Fatalf("got %v", err)
-	}
-}
-
 func TestListNavigationUsesLoadedRowsBeforeOneRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -155,11 +26,9 @@ func TestListNavigationUsesLoadedRowsBeforeOneRequest(t *testing.T) {
 		<-release
 		return viewerPage("second"), nil
 	}, cancel, 80, 4)
-	m.Update(listPageMessage{page: Page{Items: []gjson.Result{gjson.Parse(`{"a":"one","b":"two","c":"three","d":"four","e":"five","f":"six","g":"seven"}`)}, More: true}})
-	for !m.viewer.viewport.AtBottom() {
-		if cmd := viewerKey(m, ' '); cmd != nil || requests.Load() != 0 {
-			t.Fatal("Space requested data before displaying loaded rows")
-		}
+	m.Update(listPageMessage{page: Page{Items: []gjson.Result{gjson.Parse(`{"a":"one","b":"two","c":"three","d":"four","e":"five","f":"six"}`)}, More: true}})
+	if cmd := viewerKey(m, ' '); cmd != nil || requests.Load() != 0 || !strings.Contains(m.View().Content, "six") {
+		t.Fatal("Space must display the remaining loaded rows without fetching")
 	}
 	cmd := viewerKey(m, ' ')
 	if cmd == nil {
@@ -254,14 +123,16 @@ func TestListNavigationFinishRetainsInterruptDuringCompletion(t *testing.T) {
 
 func TestListNavigationRemovedKeysAndResizeDoNotFetch(t *testing.T) {
 	m := New(testOptions(t.Context()), func() (Page, error) { t.Fatal("unexpected fetch"); return Page{}, nil }, func() {}, 80, 20)
-	m.Update(listPageMessage{page: viewerPage("first", "second")})
+	page := viewerPage("first", "second")
+	page.More = true
+	m.Update(listPageMessage{page: page})
 	for _, key := range []rune{'p', 'i', 'b'} {
 		if viewerKey(m, key) != nil {
 			t.Fatal("unsupported key or backward boundary started work")
 		}
 	}
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 4})
-	if len(m.viewer.pages) != 1 || m.loading || m.quitting || !strings.Contains(m.View().Content, "first") {
+	if len(m.records.pages) != 1 || m.loading || m.quitting || !strings.Contains(m.View().Content, "first") {
 		t.Fatal("resize changed loaded content")
 	}
 }
@@ -279,19 +150,29 @@ func TestListNavigationLabelsPreserveLongIDs(t *testing.T) {
 	}
 }
 
-func TestListNavigationCompletePageStaysOpenWithoutPrinting(t *testing.T) {
-	for _, items := range [][]gjson.Result{nil, {gjson.Parse(`{"id":"first"}`)}, {gjson.Parse(`{"id":"first"}`), gjson.Parse(`{"id":"second"}`)}} {
+func TestListNavigationShortCompletePagePrintsOnce(t *testing.T) {
+	for _, items := range [][]gjson.Result{nil, viewerPage("first").Items, viewerPage("first", "second").Items} {
 		var out bytes.Buffer
 		opts := testOptions(t.Context())
 		opts.Stdout = &out
 		m := New(opts, nil, func() {}, 80, 20)
-		_, cmd := m.Update(listPageMessage{page: Page{Items: items}})
-		if cmd != nil || m.quitting || !m.View().AltScreen || !strings.Contains(m.View().Content, "End") || out.Len() != 0 {
-			t.Fatal("successful completion must stay in the pager")
+		m.Update(listPageMessage{page: Page{Items: items}})
+		if !m.quitting || m.View().AltScreen || out.Len() != 0 {
+			t.Fatal("a short result should print after the inline view releases the terminal")
 		}
-		viewerKey(m, 'q')
-		if err := m.Finish(nil, nil); err != nil || out.Len() != 0 {
-			t.Fatal("quit must restore the terminal without printing history", err)
+		if err := m.Finish(nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		want := "No results.\n"
+		if len(items) != 0 {
+			var records []string
+			for _, item := range items {
+				records = append(records, "ID: "+item.Get("id").String())
+			}
+			want = strings.Join(records, "\n") + "\n"
+		}
+		if out.String() != want {
+			t.Fatalf("printed %q, want %q", out.String(), want)
 		}
 	}
 }
@@ -310,9 +191,11 @@ func TestListNavigationPartialPagePreservesErrorAndRecords(t *testing.T) {
 
 func TestListNavigationFinalEmptyPageKeepsLoadedResults(t *testing.T) {
 	m := New(testOptions(t.Context()), nil, func() {}, 40, 20)
-	m.Update(listPageMessage{page: viewerPage("first")})
+	first := viewerPage("first")
+	first.More = true
+	m.Update(listPageMessage{page: first})
 	m.Update(listPageMessage{})
-	if m.quitting || len(m.viewer.pages) != 1 || !strings.Contains(m.View().Content, "first") || !strings.Contains(m.View().Content, "End") {
+	if m.quitting || len(m.records.pages) != 1 || !strings.Contains(m.View().Content, "first") || !strings.Contains(m.View().Content, "End") {
 		t.Fatal("empty final response lost or duplicated loaded results")
 	}
 }
@@ -320,5 +203,10 @@ func testOptions(ctx context.Context) Options {
 	render := func(items []gjson.Result) (string, error) {
 		return RenderLabels(items, transformers.Identity, clioutput.ReadableOptions{Context: ctx, DiagnosticsAllowed: true})
 	}
-	return Options{Context: ctx, RenderPage: func(items []gjson.Result, _ int) (string, error) { return render(items) }}
+	return Options{
+		Context:            ctx,
+		RenderPage:         func(items []gjson.Result, _ int) (string, error) { return render(items) },
+		RenderTable:        func([]gjson.Result, int) (string, bool, error) { return "", false, nil },
+		RenderRecordLabels: func(item gjson.Result, _ bool) (string, error) { return render([]gjson.Result{item}) },
+	}
 }

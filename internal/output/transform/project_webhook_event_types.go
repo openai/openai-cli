@@ -68,3 +68,31 @@ func ProjectWebhookEventTypes(ctx context.Context, value gjson.Result) (gjson.Re
 	}
 	return gjson.ParseBytes(encoded), ctx.Err()
 }
+
+// WebhookEventTypeRows reuses the readable catalog policy. Each pager record
+// keeps the event name and its category, including events in the "other" group.
+// An unexpected catalog is returned intact for labeled output.
+func WebhookEventTypeRows(ctx context.Context, value gjson.Result) (rows []gjson.Result, notice string, full bool, err error) {
+	catalog, err := ProjectWebhookEventTypes(ctx, value)
+	if err != nil {
+		return nil, "", false, err
+	}
+	if catalog.Raw == value.Raw {
+		return []gjson.Result{value}, "The API returned an unexpected event catalog.", true, nil
+	}
+	if catalog.Type == gjson.String {
+		return nil, catalog.Str, false, nil
+	}
+	catalog.ForEach(func(category, events gjson.Result) bool {
+		// The projection emits JSON-encoded category keys and string values.
+		events.ForEach(func(_, event gjson.Result) bool {
+			if ctx.Err() != nil {
+				return false
+			}
+			rows = append(rows, gjson.Parse(`{"event":`+event.Raw+`,"category":`+category.Raw+`}`))
+			return true
+		})
+		return ctx.Err() == nil
+	})
+	return rows, "", false, ctx.Err()
+}

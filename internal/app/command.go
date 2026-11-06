@@ -53,7 +53,6 @@ func ConfigureCommand(root *cli.Command) {
 	registerAdminSetup(root)
 	admin.ConfigureCredentials(root)
 	admin.ConfigureProjectLifecycle(root)
-	configureListCommands(root)
 	webhooks.Configure(root, webhookCommandOptions())
 	describeAgentsCommands(root)
 	configureAgentsSessionCreation(root)
@@ -65,6 +64,8 @@ func ConfigureCommand(root *cli.Command) {
 			}
 		}
 	}
+	// Cloned aliases must share the same flag definitions as their original route.
+	configureRegisteredLists(root)
 	localcommands.ConfigureSubgroups(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
@@ -78,6 +79,8 @@ func ConfigureCommand(root *cli.Command) {
 	manpages.Configure(root, func(command *cli.Command, message string) error {
 		return ReportSaveReceipt(command, os.Stderr, message, nil)
 	})
+	// Include list actions added after alias creation. Decorated actions are skipped.
+	configureRegisteredLists(root)
 	configureOutputPolicy(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)

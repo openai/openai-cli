@@ -295,7 +295,7 @@ func TestMainDispatchBatchInputsPartialFailureRecovery(t *testing.T) {
 				if strings.Contains(got.stderr, "synthetic private details") {
 					t.Error("human guidance exposed API prose")
 				}
-				if strings.Count(got.stderr, "HTTP 403") != 1 || strings.Count(got.stderr, "API error details: --format-error json.") != 1 {
+				if strings.Count(got.stderr, "HTTP 403") != 1 || strings.Contains(got.stderr, "--format-error json") {
 					t.Fatalf("API guidance repeated: %s", got.stderr)
 				}
 			} else if !gjson.Valid(got.stderr) || gjson.Get(got.stderr, "code").Str != "synthetic_denied" {
