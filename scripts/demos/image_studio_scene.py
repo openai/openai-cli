@@ -85,7 +85,7 @@ def main():
                 report["checkpoints"].append({"name": name, "requests": len(api.requests),
                                                "bytes": len(terminal.raw)})
 
-            driver.picker.ready(terminal)
+            wait(lambda: "Create image" in frame() and "Prompt" in frame(), "prompt editor")
             key(b"\x1b[200~" + prompt.encode() + b"\x1b[201~", 1.2)
             checkpoint("prompt")
             key(b"\t" if args.baseline else driver.picker.DOWN, 0.7)
@@ -103,7 +103,7 @@ def main():
             checkpoint("results")
             if not args.baseline:
                 key(b"\t", 0.65)
-                assert "Tab editor" in frame() and "1 / 3" in frame()
+                assert "Tab pane" in frame() and "1 / 3" in frame()
                 key(b"\x1b[C", 0.75)
                 assert "2 / 3" in frame() and "-2.png" in frame()
                 assert "Saved to " in frame()
@@ -112,7 +112,7 @@ def main():
                 assert "Alt+Enter newline" in frame() and prompt in frame()
                 checkpoint("editor")
                 key(b"\t", 0.7)
-                assert "Tab editor" in frame() and len(api.requests)==1
+                assert "Tab pane" in frame() and len(api.requests)==1
                 key(b"\x1b[D", 0.8)
                 assert "1 / 3" in frame()
             else:
