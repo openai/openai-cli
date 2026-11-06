@@ -6,6 +6,8 @@
   <p>
     <a href="#installation"><strong>Install</strong></a>
     ·
+    <a href="#explore-commands">Explore commands</a>
+    ·
     <a href="docs/cli-reference.md">CLI reference</a>
     ·
     <a href="#guides">Guides</a>
@@ -59,15 +61,21 @@ Enter your password if sudo asks. [Install over SSH](docs/installation.md#instal
 
 The installer downloads the matching ZIP and makes `openai` available in this terminal. [Install with File Explorer](docs/installation.md#windows)
 
-## Authentication
+## Explore commands
 
-To check your installation, run the CLI in your terminal. It lists commands without an API key.
+Run `openai` to check your installation. To find a command by describing a task, open Explore in your terminal.
+Both commands work without an API key.
 
 ```sh
-openai
+openai explore
 ```
 
-To make API requests, follow the instructions this command prints for your shell.
+Type `count tokens offline`. Use the arrow keys to highlight `openai tokenizer count`, then press Enter.
+Explore selects the command. Run it from your shell when you're ready.
+
+## Authentication
+
+When you're ready to make an API request, run the setup guide for your shell.
 
 ```sh
 openai help setup
