@@ -96,7 +96,7 @@ func TestAudioActionsEmptyPlayerRespectsGuards(t *testing.T) {
 			}
 			if guard == "invalid-speed" {
 				require.True(t, m.speedEditing)
-				require.Equal(t, audioSpeedError, m.speedError)
+				require.Equal(t, m.speedRangeError(), m.speedError)
 				require.Equal(t, 1.0, m.settings.Speed)
 			}
 		})

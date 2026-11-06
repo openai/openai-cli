@@ -91,5 +91,14 @@ func flagOptionsWithStdin(
 			return audio.EmbedVoiceBody(cmd, body, stdin)
 		}
 	}
-	return requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
+	if !audio.IsSpeechRequest(cmd) || bodyType != ApplicationJSON {
+		return requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
+	}
+	var speechBody []byte
+	hooks.Encoding.ObserveJSON = append([]func([]byte){func(body []byte) { speechBody = body }}, observeJSON...)
+	options, err = requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
+	if err != nil {
+		return nil, err
+	}
+	return audio.SpeechModelOptions(speechBody, options, func() []option.RequestOption { return GetDefaultRequestOptions(cmd) })
 }

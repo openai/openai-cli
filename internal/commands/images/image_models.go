@@ -33,7 +33,7 @@ No images are generated. Checks stop after 15 seconds, with no retries.
   --offline   Show known names immediately, without an API key or access check
 
 Use an exact name from the list:
-  {{suggest . (printf "%s images generate --prompt \"A tiny orange robot\" --model gpt-image-2.5-flare" $bin)}}
+  {{suggest . (printf "%s images generate --prompt \"A tiny orange robot\" --model gpt-image-2.6-flare" $bin)}}
 
 The known list comes from this CLI's SDK; it may not include newly released models.
 Visibility checks do not guarantee image-generation permissions or quota.

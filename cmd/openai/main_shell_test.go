@@ -474,7 +474,7 @@ func testNativeShellImageExample(t *testing.T, shell nativeShell, directory, inv
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode synthetic request: %v", err)
-		} else if body.Model != "gpt-image-2.5-sunburst" || body.Prompt != prompt {
+		} else if body.Model != "gpt-image-2.6-sunburst" || body.Prompt != prompt {
 			t.Errorf("copied example changed its arguments: %+v", body)
 		}
 		if body.Inline != nil {

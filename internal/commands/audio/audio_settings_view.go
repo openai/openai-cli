@@ -102,6 +102,8 @@ func audioChoiceLabel(setting int, value string) string {
 func audioChoiceDescription(setting int, value string) (detail string, retires bool) {
 	if setting == 0 {
 		switch value {
+		case realtimeSpeechModel:
+			return "Realtime speech, WAV or PCM", false
 		case "gpt-4o-mini-tts":
 			return "Supports voice instructions", true
 		case "gpt-4o-mini-tts-2025-03-20", "gpt-4o-mini-tts-2025-12-15":

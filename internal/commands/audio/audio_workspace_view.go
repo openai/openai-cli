@@ -22,7 +22,8 @@ func (m *audioWorkbench) composerWidth() int {
 	}
 	if m.splitComposer() {
 		// Keep the script at a readable measure while leaving room for a dated model ID.
-		return min(80, (m.audioWidth()-audioColumnGap)*11/20)
+		available := m.audioWidth() - audioColumnGap
+		return min(80, available*11/20, available-48)
 	}
 	return m.audioWidth()
 }

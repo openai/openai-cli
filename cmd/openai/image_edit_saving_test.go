@@ -87,7 +87,7 @@ func TestMainImageUploadSavingDefaultsAndSources(t *testing.T) {
 				require.Equal(t, "/images/edits", captured.path)
 				require.Equal(t, [][]byte{payload, payload}, captured.files["image[]"])
 				require.Equal(t, [][]byte{payload}, captured.files["mask"])
-				require.Equal(t, map[string][]string{"prompt": {"Make the sky purple"}, "model": {"gpt-image-2.5-sunburst"}, "n": {"1"}, "size": {"auto"}, "quality": {"auto"}, "background": {"auto"}, "output_format": {"png"}, "partial_images": {"0"}, "stream": {"false"}}, captured.values)
+				require.Equal(t, map[string][]string{"prompt": {"Make the sky purple"}, "model": {"gpt-image-2.6-sunburst"}, "n": {"1"}, "size": {"auto"}, "quality": {"auto"}, "background": {"auto"}, "output_format": {"png"}, "partial_images": {"0"}, "stream": {"false"}}, captured.values)
 			} else {
 				require.Equal(t, "/images/variations", captured.path)
 				require.Equal(t, [][]byte{payload}, captured.files["image"])

@@ -11,6 +11,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/charmbracelet/x/windows v0.2.2
+	github.com/coder/websocket v1.8.15
 	github.com/dlclark/regexp2 v1.12.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/itchyny/json2yaml v0.1.5
@@ -34,7 +35,6 @@ require (
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
-	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
 	github.com/dlclark/regexp2/v2 v2.5.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
