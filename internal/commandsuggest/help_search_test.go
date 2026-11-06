@@ -66,3 +66,37 @@ func TestHelpSearchKeepsAmbiguousSpellingsAndLiteralRoutesDistinct(t *testing.T)
 	recent := []Candidate{{Command: "openai paint"}}
 	require.Empty(t, newSearchIndex(recent).search("paint studio"))
 }
+
+// This tree has no task phrases or command-specific search configuration.
+func TestDiscoveryFromNewCommandDefinitions(t *testing.T) {
+	leaf := func(name, usage string) *cli.Command { return &cli.Command{Name: name, Usage: usage} }
+	polish := leaf("polish", "Finish a prism.")
+	polish.Aliases = []string{"buff"}
+	polish.Flags = []cli.Flag{&cli.StringFlag{Name: "grit", Usage: "Choose the abrasive coarseness."}}
+	prisms := &cli.Command{Name: "prisms", Commands: []*cli.Command{
+		polish, leaf("list", "Browse inventory."), leaf("delete", "Discard one object."),
+		{Name: "facets", Commands: []*cli.Command{leaf("delete", "Remove a prism facet."), leaf("list", "Browse facets.")}},
+	}}
+	root := &cli.Command{Commands: []*cli.Command{prisms, leaf("weave", "Convert strands into ribbons."), leaf("unweave", "Produce strands from ribbons.")}}
+	catalog := Catalog(root, "openai", nil, (*cli.Command).VisibleCommands, func(_ *cli.Command, _ string) []Candidate { return nil })
+	index := newSearchIndex(catalog)
+	for query, want := range map[string]string{
+		"polish a prism": "prisms polish", "buff a prism": "prisms polish",
+		"prisms abrasive coarseness": "prisms polish", "show me all prisms": "prisms list",
+		"remove a prism": "prisms delete", "remove a facet in a prism": "prisms facets delete",
+		"show facets in a prism":    "prisms facets list",
+		"turn strands into ribbons": "weave", "convert ribbons to strands": "unweave",
+	} {
+		matches := index.search(query)
+		require.NotEmpty(t, matches, query)
+		require.Equal(t, "openai "+want, catalog[matches[0]].Command, query)
+	}
+	require.Empty(t, index.search("polish an asteroid"))
+	require.Empty(t, index.search("coarseness"), "a passing mention in option help needs a subject")
+	fresh := newSearchIndex(catalog)
+	require.Equal(t, index.search("prisms abrasive coarseness"), fresh.search("prisms abrasive coarseness"), "prior searches must not affect results")
+	matches := index.search("turn strands into ribbons")
+	for _, i := range matches {
+		require.NotEqual(t, "openai unweave", catalog[i].Command)
+	}
+}

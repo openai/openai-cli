@@ -34,7 +34,7 @@ const (
 	interfaceWord
 )
 
-func newHelpIndex(candidates []Candidate, entries []searchEntry) *helpIndex {
+func newHelpIndex(candidates []Candidate, entries []searchEntry, includeOptionHelp bool) *helpIndex {
 	h := &helpIndex{postings: make(map[string][]helpHit), scores: make([]helpScore, len(candidates))}
 	for i, candidate := range candidates {
 		cmd := candidate.definition
@@ -43,6 +43,11 @@ func newHelpIndex(candidates []Candidate, entries []searchEntry) *helpIndex {
 		}
 
 		h.add(candidate.path, i, routeWord)
+		for _, alias := range cmd.Aliases {
+			if safeCatalogName(alias) {
+				h.add(strings.ToLower(alias), i, routeWord)
+			}
+		}
 		h.add(entries[i].prose, i, summaryWord)
 		if cmd.Usage != candidate.Description {
 			h.add(searchableProse(cmd.Usage), i, summaryWord)
@@ -51,6 +56,9 @@ func newHelpIndex(candidates []Candidate, entries []searchEntry) *helpIndex {
 			if visible, ok := flag.(cli.VisibleFlag); ok && visible.IsVisible() {
 				for _, name := range flag.Names() {
 					h.add(strings.ToLower(name), i, optionWord)
+				}
+				if doc, ok := flag.(cli.DocGenerationFlag); includeOptionHelp && ok {
+					h.add(searchableProse(doc.GetUsage()), i, helpWord)
 				}
 			}
 		}
@@ -109,9 +117,25 @@ func (index *searchIndex) matchHelp(words []string) []searchMatch {
 		}
 	}
 	if index.help == nil {
-		index.help = newHelpIndex(index.candidates, index.entries)
+		index.help = newHelpIndex(index.candidates, index.entries, false)
 	}
-	h := index.help
+	if matches := index.help.matches(words, index.entries); len(matches) > 0 {
+		return matches
+	}
+	// Long option descriptions are the least specific evidence. Parse them
+	// only for a miss and keep the tiers separate so typing order cannot change results.
+	// A single word buried in an option description is a poor explanation
+	// for suggesting the command. Require a second term and a known subject.
+	if len(words) < 2 || !slices.ContainsFunc(words, func(word string) bool { return len(index.help.postings[word]) > 0 }) {
+		return nil
+	}
+	if index.optionHelp == nil {
+		index.optionHelp = newHelpIndex(index.candidates, index.entries, true)
+	}
+	return index.optionHelp.matches(words, index.entries)
+}
+
+func (h *helpIndex) matches(words []string, entries []searchEntry) []searchMatch {
 	clear(h.scores)
 	corrected := false
 	for i, word := range words {
@@ -150,7 +174,7 @@ func (index *searchIndex) matchHelp(words []string) []searchMatch {
 	var matches []searchMatch
 	for i, score := range h.scores {
 		if score.words == len(words) && (score.anchor || len(words) == 1) {
-			entry := &index.entries[i]
+			entry := &entries[i]
 			matches = append(matches, searchMatch{index: i, rank: [6]int{score.total, len(entry.routeWords), entry.length}})
 		}
 	}
