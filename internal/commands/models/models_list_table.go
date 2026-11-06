@@ -107,7 +107,7 @@ func modelLayout(ctx context.Context, models []transformers.ModelListRow, width 
 	// shorten an owner, including the marker for unavailable owner information.
 	table, fits := "", false
 	if ownerWidth <= 32 && idWidth+2+ownerWidth <= width {
-		table, fits = readable.ListTable([]string{"ID", "OWNER"}, rows, width)
+		table, fits = readable.ListTable([]string{"ID", "OWNER"}, rows, width, 0)
 	}
 	if fits {
 		content.WriteString(style.Table(table))

@@ -2,6 +2,7 @@ package transform
 
 import (
 	"context"
+	"slices"
 	"strconv"
 
 	"github.com/tidwall/gjson"
@@ -9,9 +10,12 @@ import (
 
 // ListTableProjection describes one loaded screen. Empty headers request labeled output.
 type ListTableProjection struct {
-	Headers    []string
-	Rows       [][]string
-	FullValues bool
+	Headers []string
+	Rows    [][]string
+	// ProtectedColumn identifies the value to keep complete in compact rows.
+	// FullValues projections preserve every column and ignore this index.
+	ProtectedColumn int
+	FullValues      bool
 }
 
 // ProjectListTable selects columns from one loaded API page. It preserves IDs
@@ -108,7 +112,7 @@ func ProjectRecordTable(ctx context.Context, operation string, items []gjson.Res
 	if err := ctx.Err(); err != nil {
 		return ListTableProjection{}, err
 	}
-	return ListTableProjection{Headers: headers, Rows: rows}, nil
+	return ListTableProjection{Headers: headers, Rows: rows, ProtectedColumn: slices.Index(fields, "id")}, nil
 }
 
 func listTableEmptyString(value gjson.Result) bool {

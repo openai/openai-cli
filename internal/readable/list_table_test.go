@@ -12,7 +12,7 @@ func TestListTableKeepsIDsAndFitsWidth(t *testing.T) {
 	headers := []string{"ID", "FILENAME", "PURPOSE", "SIZE", "STATUS"}
 	rows := [][]string{{"file-example-1", "requests-東京-👩🏽‍💻-" + strings.Repeat("x", 100) + ".jsonl", "user_data", "1 KiB", "processed"}, {"file-example-2", "short.jsonl", "batch", "0 B", "uploaded"}}
 	for _, width := range []int{58, 80, 110} {
-		text, ok := ListTable(headers, rows, width)
+		text, ok := ListTable(headers, rows, width, 0)
 		require.True(t, ok)
 		require.Contains(t, text, "file-example-1")
 		require.Contains(t, text, "file-example-2")
@@ -27,7 +27,7 @@ func TestListTableKeepsIDsAndFitsWidth(t *testing.T) {
 
 func TestListTableNarrowFallbackKeepsIDs(t *testing.T) {
 	for _, width := range []int{-1, 0, 1, 40} {
-		text, ok := ListTable([]string{"ID", "NAME"}, [][]string{{"proj-" + strings.Repeat("a", 60), "東京"}}, width)
+		text, ok := ListTable([]string{"ID", "NAME"}, [][]string{{"proj-" + strings.Repeat("a", 60), "東京"}}, width, 0)
 		require.False(t, ok)
 		require.Empty(t, text)
 	}
@@ -38,15 +38,15 @@ func TestListTableKeepsTrailingProjectID(t *testing.T) {
 	id := "proj_" + strings.Repeat("a", 40)
 	rows := [][]string{{strings.Repeat("n", 60), "active", id}}
 	const minimum = len("NAME") + len("STATUS") + 4
-	text, fits := ListTable(headers, rows, minimum+len(id))
+	text, fits := ListTable(headers, rows, minimum+len(id), 2)
 	require.True(t, fits)
 	require.Contains(t, text, "nnn…  active  "+id+"\n")
-	_, fits = ListTable(headers, rows, minimum+len(id)-1)
+	_, fits = ListTable(headers, rows, minimum+len(id)-1, 2)
 	require.False(t, fits)
 }
 
 func TestListTableEscapesEveryCell(t *testing.T) {
-	text, ok := ListTable([]string{"ID", "NAME"}, [][]string{{"file-\x1b]52;c;a\a", "a\nb\tc\r\u202e\u009b"}}, 110)
+	text, ok := ListTable([]string{"ID", "NAME"}, [][]string{{"file-\x1b]52;c;a\a", "a\nb\tc\r\u202e\u009b"}}, 110, 0)
 	require.True(t, ok)
 	require.Contains(t, text, `file-\u001b]52;c;a\u0007`)
 	require.Contains(t, text, `a\nb\tc\r\u202e\u009b`)
@@ -57,7 +57,7 @@ func TestListTableEscapesEveryCell(t *testing.T) {
 
 func TestListTableUnicodeWidths(t *testing.T) {
 	rows := [][]string{{"模型-👩🏽‍💻", "Cafe\u0301 東京"}, {"model-2", "大阪"}}
-	text, ok := ListTable([]string{"ID", "OWNER"}, rows, 30)
+	text, ok := ListTable([]string{"ID", "OWNER"}, rows, 30, 0)
 	require.True(t, ok)
 	for _, row := range rows {
 		for _, cell := range row {
@@ -74,13 +74,23 @@ func TestListTableUnicodeWidths(t *testing.T) {
 }
 
 func TestListTableEmptyAndMalformedRows(t *testing.T) {
-	text, ok := ListTable([]string{"ID"}, nil, 80)
+	text, ok := ListTable([]string{"ID"}, nil, 80, 0)
 	require.True(t, ok)
 	require.Equal(t, "No results.\n", text)
-	_, ok = ListTable(nil, nil, 80)
+	_, ok = ListTable(nil, nil, 80, 0)
 	require.False(t, ok)
-	_, ok = ListTable([]string{"ID", "NAME"}, [][]string{{"id"}}, 80)
+	_, ok = ListTable([]string{"ID", "NAME"}, [][]string{{"id"}}, 80, 0)
 	require.False(t, ok)
+}
+
+func TestListTableInvalidProtectedColumn(t *testing.T) {
+	for _, index := range []int{-1, 2} {
+		for _, rows := range [][][]string{nil, {{"proj_demo", "Demo"}}} {
+			text, fits := ListTable([]string{"ID", "Name"}, rows, 80, index)
+			require.False(t, fits)
+			require.Empty(t, text)
+		}
+	}
 }
 
 func TestListTableFullValues(t *testing.T) {

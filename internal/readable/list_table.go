@@ -8,19 +8,19 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// ListTable renders one loaded page. The ID column keeps complete values.
+// ListTable renders one loaded page, keeping values in protectedColumn complete.
 // A false result requests labeled output when the columns cannot fit safely.
-func ListTable(headers []string, rows [][]string, width int) (string, bool) {
-	return listTable(headers, rows, width, true)
+func ListTable(headers []string, rows [][]string, width, protectedColumn int) (string, bool) {
+	return listTable(headers, rows, width, protectedColumn, true)
 }
 
 // ListTableFullValues shows every field in full or requests labeled output.
 func ListTableFullValues(headers []string, rows [][]string, width int) (string, bool) {
-	return listTable(headers, rows, width, false)
+	return listTable(headers, rows, width, 0, false)
 }
 
-func listTable(headers []string, rows [][]string, width int, truncate bool) (string, bool) {
-	if len(headers) == 0 || width <= 0 {
+func listTable(headers []string, rows [][]string, width, protectedColumn int, truncate bool) (string, bool) {
+	if protectedColumn < 0 || protectedColumn >= len(headers) || width <= 0 {
 		return "", false
 	}
 	if len(rows) == 0 {
@@ -29,11 +29,7 @@ func listTable(headers []string, rows [][]string, width int, truncate bool) (str
 	labels := make([]string, len(headers))
 	widths := make([]int, len(headers))
 	minimum := make([]int, len(headers))
-	idColumn := 0
 	for col, header := range headers {
-		if header == "ID" {
-			idColumn = col
-		}
 		labels[col] = InlineText(header)
 		minimum[col] = ansi.StringWidth(labels[col])
 		widths[col] = minimum[col]
@@ -47,14 +43,14 @@ func listTable(headers []string, rows [][]string, width int, truncate bool) (str
 		for col, value := range row {
 			cells[index][col] = InlineText(value)
 			cellWidth := ansi.StringWidth(cells[index][col])
-			if col != idColumn && truncate {
+			if col != protectedColumn && truncate {
 				// Keep wide terminals compact. Full values remain in explicit formats.
 				cellWidth = min(cellWidth, max(minimum[col], 32))
 			}
 			widths[col] = max(widths[col], cellWidth)
 		}
 	}
-	minimum[idColumn] = widths[idColumn]
+	minimum[protectedColumn] = widths[protectedColumn]
 	total, required := 2*(len(headers)-1), 2*(len(headers)-1)
 	for col := range widths {
 		total += widths[col]
@@ -75,7 +71,7 @@ func listTable(headers []string, rows [][]string, width int, truncate bool) (str
 	}
 	for _, row := range cells {
 		for col := range row {
-			if col != idColumn {
+			if col != protectedColumn {
 				row[col] = ansi.Truncate(row[col], widths[col], "…")
 			}
 		}
