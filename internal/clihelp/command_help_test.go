@@ -18,13 +18,18 @@ import (
 )
 
 func TestBashHelpExampleUsesBashLauncherQuoting(t *testing.T) {
-	const native = `& 'preview''s build/openai'`
+	name := filepath.FromSlash("preview's build/openai")
 	command := &cli.Command{Name: "view", Metadata: map[string]any{
 		"help-content":         Content{BashExamples: true},
-		"help-executable-path": filepath.FromSlash("preview's build/openai"),
+		"help-executable-path": name,
 	}}
-	if got := ExampleInvocation(command, native, native); got != `'preview'\''s build/openai'` {
+	native, bash := ShellInvocations(command, "openai", "pwsh")
+	if got := ExampleInvocation(command, bash, native); got != `'preview'\''s build/openai'` {
 		t.Fatalf("Bash example includes incompatible launcher syntax: %q", got)
+	}
+	command.Metadata["help-content"] = Content{}
+	if got := ExampleInvocation(command, bash, native); got != "& "+terminal.PowerShellQuote(name) {
+		t.Fatalf("ordinary example lost the native launcher: %q", got)
 	}
 	delete(command.Metadata, "help-executable-path")
 	command.Metadata["help-control-launcher"] = true
@@ -32,15 +37,11 @@ func TestBashHelpExampleUsesBashLauncherQuoting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ExampleInvocation(command, "openai", "openai"); got != terminal.ShellQuote(filepath.ToSlash(executable)) {
+	if _, got := ShellInvocations(command, "openai", "bash"); got != terminal.ShellQuote(filepath.ToSlash(executable)) {
 		t.Fatalf("Bash example targeted a different executable: %q", got)
 	}
-	if got := ExampleInvocation(command, "", ""); got != "" {
-		t.Fatalf("provided an example when no launcher was available: %q", got)
-	}
-	command.Metadata["help-content"] = Content{}
-	if got := ExampleInvocation(command, native, native); got != native {
-		t.Fatalf("ordinary example lost the native launcher: %q", got)
+	if native, bash := ShellInvocations(command, "openai", ""); native != "" || bash != "" {
+		t.Fatalf("provided a launcher for an unknown shell: %q, %q", native, bash)
 	}
 }
 

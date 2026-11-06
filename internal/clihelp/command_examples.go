@@ -2,7 +2,6 @@ package clihelp
 
 import (
 	"context"
-	"path/filepath"
 
 	"github.com/openai/openai-cli/internal/commandsuggest"
 	"github.com/openai/openai-cli/internal/terminal"
@@ -20,19 +19,9 @@ func CommandExamples(command *cli.Command, path string) []Example {
 }
 
 // ExampleInvocation keeps Bash-specific examples copyable in their stated shell.
-func ExampleInvocation(command *cli.Command, fallback, native string) string {
+func ExampleInvocation(command *cli.Command, bash, native string) string {
 	if content, _ := command.Metadata["help-content"].(Content); content.BashExamples {
-		root := command.Root()
-		if name, ok := root.Metadata["help-executable-path"].(string); ok {
-			return terminal.ShellQuote(filepath.ToSlash(name))
-		}
-		if root.Metadata["help-control-launcher"] == true && fallback != "" {
-			// Explore can supply a display name here. Resolve the actual
-			// executable before presenting a command to paste into Bash.
-			_, bash := helpInvocations(root, fallback, "bash")
-			return bash
-		}
-		return filepath.ToSlash(fallback)
+		return bash
 	}
 	return native
 }
@@ -45,7 +34,7 @@ func commandHelpInvocations(command *cli.Command, invocation string) (native, ex
 	if root.Metadata["help-control-launcher"] == true {
 		shell = terminal.ParentShell(context.Background())
 	}
-	native, bash := helpInvocations(root, invocation, shell)
+	native, bash := ShellInvocations(root, invocation, shell)
 	return native, ExampleInvocation(command, bash, native)
 }
 

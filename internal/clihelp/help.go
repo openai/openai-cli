@@ -115,7 +115,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	delete(root.Metadata, "help-executable-path")
 	if root.Metadata["help-control-launcher"] == true {
 		// Never display raw control or direction-changing characters in command titles.
-		// Runnable help examples obtain shell-specific quoting from helpInvocations.
+		// Runnable help examples obtain shell-specific quoting from ShellInvocations.
 		invocation, needsQuote = root.Name, false
 		root.Metadata["help-display-invocation"] = root.Name
 	}
@@ -474,21 +474,38 @@ func unsafeHelpLauncher(name string) bool {
 	return control || !utf8.ValidString(name)
 }
 
-func helpInvocations(root *cli.Command, invocation, shell string) (native, bash string) {
-	if root.Metadata["help-control-launcher"] != true {
-		return NativeInvocation(root, invocation), invocation
-	}
-	// A display escape cannot identify a filename. Quote the actual executable for this shell.
+// ShellInvocations returns the current executable in the destination shell and in Bash.
+// Without a known shell, a control-bearing filename has no safe runnable spelling.
+func ShellInvocations(root *cli.Command, invocation, shell string) (native, bash string) {
 	quote := terminal.ShellQuoter(shell)
-	name, err := os.Executable()
-	if quote == nil || err != nil || !utf8.ValidString(name) {
-		return "", ""
+	name, _ := root.Metadata["help-executable-path"].(string)
+	if root.Metadata["help-control-launcher"] == true {
+		if quote == nil {
+			return "", ""
+		}
+		var err error
+		name, err = os.Executable()
+		if err != nil || !utf8.ValidString(name) {
+			return "", ""
+		}
 	}
-	native = quote(name)
-	if shell == "pwsh" {
-		native = "& " + native
+	native = invocation
+	if cached, ok := root.Metadata["help-native-invocation"].(string); ok {
+		native = cached
 	}
-	return native, terminal.ShellQuote(filepath.ToSlash(name))
+	if name == "" {
+		return native, filepath.ToSlash(invocation)
+	}
+	bash = terminal.ShellQuote(filepath.ToSlash(name))
+	switch shell {
+	case "bash", "zsh":
+		native = bash
+	case "pwsh":
+		native = "& " + quote(name)
+	case "fish":
+		native = quote(name)
+	}
+	return native, bash
 }
 
 func fullReferenceRequested(command *cli.Command) bool {
@@ -503,7 +520,7 @@ func fullReferenceRequested(command *cli.Command) bool {
 // Use the same shell-specific executable spelling as completion help.
 func fullReferenceCommand(command *cli.Command, invocation, path string) string {
 	shell := terminal.ParentShell(context.Background())
-	native, _ := helpInvocations(command.Root(), invocation, shell)
+	native, _ := ShellInvocations(command.Root(), invocation, shell)
 	if native == "" || !ShellSafeCommandPath(command) {
 		return ""
 	}
@@ -574,14 +591,6 @@ func (*UnknownTopicError) ExitCode() int { return 3 }
 func allowsHelpTopic(command *cli.Command) bool {
 	compatibility, _ := command.Metadata["command-compatibility-alias"].(bool)
 	return !command.Hidden || compatibility || command.Name == "@completion" || command.Name == "@manpages"
-}
-
-// NativeInvocation returns the executable spelling for a command copied into the current shell.
-func NativeInvocation(root *cli.Command, fallback string) string {
-	if native, ok := root.Metadata["help-native-invocation"].(string); ok {
-		return native
-	}
-	return fallback
 }
 
 func quoteNativeInvocation(ctx context.Context, name, defaultInvocation string) string {

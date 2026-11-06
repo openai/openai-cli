@@ -18,7 +18,7 @@ func TestConfigureExploreReusesDeclaredHelpExamples(t *testing.T) {
 	Register(root)
 	Register(root)
 	require.Len(t, root.Commands, 2)
-	candidates := exploreCandidates(root, "openai", "fish")
+	candidates := exploreCandidates(root, "openai", "openai", "fish")
 	require.Equal(t, `openai future --name "quoted value"`, candidates[1].Command)
 	require.Equal(t, "Future example", candidates[1].Description)
 	require.NotNil(t, root.Command("explore"))
@@ -31,7 +31,7 @@ func TestExploreOffersShellSpecificExamplesOnlyInTheirShell(t *testing.T) {
 	}}}}
 	for _, shell := range []string{"bash", "zsh", "fish", "pwsh", ""} {
 		found := false
-		for _, result := range exploreCandidates(root, "openai", shell) {
+		for _, result := range exploreCandidates(root, "openai", "openai", shell) {
 			if result.Command == "openai "+example {
 				found = true
 			}

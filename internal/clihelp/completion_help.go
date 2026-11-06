@@ -16,7 +16,7 @@ const completionReferenceArguments = "Use the same executable with the arguments
 // CompletionSetupGuidance preserves the launching executable when suggesting setup help.
 func CompletionSetupGuidance(ctx context.Context, root *cli.Command) string {
 	shell := terminal.ParentShell(ctx)
-	native, _ := helpInvocations(root, DisplayInvocation(root), shell)
+	native, _ := ShellInvocations(root, DisplayInvocation(root), shell)
 	if native == "" {
 		return completionReferenceArguments
 	}
@@ -37,7 +37,7 @@ func completionHelp(command *cli.Command, invocation string, width, navigationWi
 	heading := func(title string) { fmt.Fprintln(&out, style.render(style.section, title)) }
 	note := func(text string) { out.WriteString(style.render(style.note, wrapDescription(text, "  ", width))) }
 	shell := terminal.ParentShell(context.Background())
-	native, bash := helpInvocations(command.Root(), invocation, shell)
+	native, bash := ShellInvocations(command.Root(), invocation, shell)
 	topic := completionTopic(shell)
 	fmt.Fprintln(&out, style.render(style.title, "Shell completion"))
 	if fullReferenceRequested(command) {

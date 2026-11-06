@@ -66,7 +66,7 @@ func pipingGuide() *cli.Command {
 			"bash-invocation": func(command *cli.Command) string {
 				root := command.Root()
 				run, _ := root.Metadata["help-invocation"].(string)
-				_, bash := helpInvocations(root, run, "bash")
+				_, bash := ShellInvocations(root, run, "bash")
 				return bash
 			},
 		},

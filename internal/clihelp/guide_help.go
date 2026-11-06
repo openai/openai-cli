@@ -26,7 +26,7 @@ func setupGuideForParent(command *cli.Command, platform, parent string) setupGui
 	root := command.Root()
 	shell := terminal.ShellName(parent)
 	invocation, _ := root.Metadata["help-invocation"].(string)
-	run, _ := helpInvocations(root, invocation, shell)
+	run, _ := ShellInvocations(root, invocation, shell)
 	guide := setupGuideContext{Run: run, AfterKeyEntry: run, Shell: shell, Full: fullReferenceRequested(command)}
 	switch shell {
 	case "bash", "zsh", "fish", "pwsh":

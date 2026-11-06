@@ -84,8 +84,7 @@ var taskPhrases = map[string][]commandsuggest.TaskPhrase{
 	"transcribe":      {{Text: "speech to text"}},
 }
 
-func exploreCandidates(root *cli.Command, invocation, shell string) []commandsuggest.Candidate {
-	native := clihelp.NativeInvocation(root, invocation)
+func exploreCandidates(root *cli.Command, native, bash, shell string) []commandsuggest.Candidate {
 	return commandsuggest.Catalog(root, native, taskPhrases, clihelp.VisibleCommands, func(command *cli.Command, path string) []commandsuggest.Candidate {
 		// Search examples describe queries, not additional destinations.
 		if path == "explore" {
@@ -94,7 +93,7 @@ func exploreCandidates(root *cli.Command, invocation, shell string) []commandsug
 		if content, _ := command.Metadata["help-content"].(clihelp.Content); content.BashExamples && shell != "bash" && shell != "zsh" {
 			return nil
 		}
-		run := clihelp.ExampleInvocation(command, invocation, native)
+		run := clihelp.ExampleInvocation(command, bash, native)
 		var candidates []commandsuggest.Candidate
 		for _, example := range clihelp.CommandExamples(command, path) {
 			candidates = append(candidates, commandsuggest.Example(run, example.Command, example.Description))
@@ -133,8 +132,12 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 	if shell == "" {
 		shell = terminal.ParentShell(ctx)
 	}
+	native, bash := clihelp.ShellInvocations(root, clihelp.Invocation(root.Name, os.Args), shell)
+	if native == "" && !command.Bool("suggestions") {
+		return exploreFailure("Run Explore from Bash, zsh, Fish, or PowerShell 7 (pwsh) to get copyable commands for this executable.", 2, nil)
+	}
 	if query != "" {
-		matches := commandsuggest.Search(exploreCandidates(root, clihelp.Invocation(root.Name, os.Args), shell), query)
+		matches := commandsuggest.Search(exploreCandidates(root, native, bash, shell), query)
 		if err := ctx.Err(); err != nil {
 			return exploreFailure("Command search was interrupted.", 130, err)
 		}
@@ -177,7 +180,7 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 			return exploreFailure("Recent command suggestions are unavailable or invalid. Run a CLI help command and retry.", 2, err)
 		}
 	} else {
-		candidates = exploreCandidates(root, clihelp.Invocation(root.Name, os.Args), shell)
+		candidates = exploreCandidates(root, native, bash, shell)
 	}
 	input, err := terminal.OpenInputFromOutput(os.Stderr)
 	if err != nil {
