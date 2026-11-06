@@ -40,6 +40,15 @@ func TestListPagerResizeRendersCachedRecords(t *testing.T) {
 					{gjson.Parse(input)},
 					{gjson.Parse(strings.ReplaceAll(input, "_first", "_second"))},
 				}
+				// Fit exactly the longer of the two records and a footer. Space
+				// must use cached data before the injected third-request error.
+				screen := func(width int) tea.WindowSizeMsg {
+					content, err := opts.RenderPage(pages[1], width)
+					require.NoError(t, err)
+					body := ansi.Hardwrap(strings.TrimSuffix(content, "\n"), width, true)
+					return tea.WindowSizeMsg{Width: width, Height: strings.Count(body, "\n") + 2}
+				}
+				wide, narrow := screen(120), screen(20)
 				failure := errors.New("synthetic next-page failure")
 				model := listview.New(opts, func() (listview.Page, error) {
 					request := int(requests.Add(1))
@@ -47,7 +56,7 @@ func TestListPagerResizeRendersCachedRecords(t *testing.T) {
 						return listview.Page{Items: pages[request-1], More: true}, nil
 					}
 					return listview.Page{}, failure
-				}, func() {}, 120, 100)
+				}, func() {}, wide.Width, wide.Height)
 				check := func(index, width int) string {
 					t.Helper()
 					want, err := opts.RenderPage(pages[index], width)
@@ -70,12 +79,12 @@ func TestListPagerResizeRendersCachedRecords(t *testing.T) {
 				require.NotNil(t, next)
 				model.Update(next())
 				check(1, 120)
-				model.Update(tea.WindowSizeMsg{Width: 20, Height: 100})
+				model.Update(narrow)
 				secondNarrow := check(1, 20)
 				_, back := model.Update(tea.KeyPressMsg{Code: 'b', Text: "b"})
 				require.Nil(t, back)
 				check(0, 20)
-				model.Update(tea.WindowSizeMsg{Width: 120, Height: 100})
+				model.Update(wide)
 				firstWide := check(0, 120)
 				_, cached := model.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 				require.Nil(t, cached)

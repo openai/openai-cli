@@ -1,6 +1,7 @@
 # Recovering from command errors
 
 Command errors go to stderr and keep their failing exit status.
+Readable API errors lead with guidance. The HTTP status and available request ID appear below it.
 The CLI suggests help for the corrected command but never runs it.
 The shell must first find the `openai` executable.
 For example, `opneai images generate` fails inside the shell before the CLI starts.

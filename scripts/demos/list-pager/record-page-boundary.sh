@@ -98,7 +98,7 @@ for version in ('before','after'):
     ids=re.findall(r'\bfile-demo-\d{3}\b',screen)
     assert ids==[f'file-demo-{value:03d}' for value in range(first,first+25)]
     assert ('Full data:' in screen)==(version=='before')
-    assert 'q: quit' in screen and 'Space: more' in screen
+    assert 'q: quit' in screen and 'Space:' in screen
     (output/f'{version}-first-space.time').write_text(str(cutoff))
     report[version]={'first_space_ids':ids,'relay_sha256':relay['sha256'],'original_screen_restored':True}
 requests=[json.loads(line) for line in (output/'requests.jsonl').read_text().splitlines()]

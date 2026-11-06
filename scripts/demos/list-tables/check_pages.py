@@ -111,7 +111,7 @@ def main():
                                 wait_view(expected_ids[-1])
                         elif mode == "chunks":
                             for _ in range(100):
-                                if "Space: more" not in frame:
+                                if "End" in frame:
                                     break
                                 previous = frame
                                 send_key(terminal, " ", keys)

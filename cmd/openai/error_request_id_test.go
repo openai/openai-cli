@@ -64,11 +64,11 @@ func TestMainDispatchOutputAPIErrorRequestID(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := runRequestIDError(t, tc.responseID, tc.reflectID, tc.flags...)
-			prefix := "HTTP 500: Internal Server Error.\n"
+			details := "\n\nHTTP 500: Internal Server Error.\n"
 			if tc.wantID {
-				prefix += "Request ID: " + tc.responseID + "\n"
+				details += "Request ID: " + tc.responseID + "\n"
 			}
-			if !strings.HasPrefix(got.stderr, prefix) || strings.Contains(got.stderr, "Request ID:") != tc.wantID {
+			if !strings.HasPrefix(got.stderr, "The API is temporarily unavailable.") || !strings.Contains(got.stderr, details) || strings.Contains(got.stderr, "Request ID:") != tc.wantID {
 				t.Fatalf("request ID is missing, misplaced, or should be omitted: %q", got.stderr)
 			}
 			for _, private := range []string{"synthetic-private-", "synthetic response detail", "https://", "\x1b"} {

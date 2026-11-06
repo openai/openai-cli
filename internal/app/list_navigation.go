@@ -69,6 +69,12 @@ func listViewerOptions(opts ShowJSONOpts) listview.Options {
 			return renderListNavigationPage(opts, items, width, diagnostics, style)
 		},
 	}
+	if opts.Operation == "(resource) files > (method) list" && opts.OutputKind == OutputPageItem &&
+		(opts.Format == "" || strings.EqualFold(opts.Format, "auto")) && opts.Transform == "" && !opts.RawOutput {
+		result.RenderFileLabels = func(item gjson.Result) (string, error) {
+			return renderListNavigationLabels(opts, []gjson.Result{item}, false)
+		}
+	}
 	if opts.CallerHandlesSignals {
 		result.Interrupt = func(err error) error { return &listCommandInterrupt{cause: err, code: 130} }
 	}

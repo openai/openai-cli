@@ -49,22 +49,22 @@ func TestListPagerAdvanceAtVisibleRecordBoundary(t *testing.T) {
 				require.NotContains(t, model.View().Content, last)
 			}
 			_, advance := model.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
-			if count == 26 {
-				require.Nil(t, advance, "remaining loaded records must precede the next API request")
-				require.EqualValues(t, 1, requests.Load())
-				require.Contains(t, model.View().Content, last)
-				_, advance = model.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
-			}
-			require.NotNil(t, advance, "Space must fetch once all records are visible")
+			require.NotNil(t, advance, "the next screen spans the API page boundary")
 			model.Update(advance())
 			require.EqualValues(t, 2, requests.Load())
-			require.Contains(t, model.View().Content, "file-next")
-			require.Contains(t, model.View().Content, "End")
+			nextScreen := model.View().Content
+			require.Contains(t, nextScreen, "file-next")
+			require.Contains(t, nextScreen, "End")
+			if count == 26 {
+				require.Contains(t, nextScreen, last, "keep the last unshown file from the first API response")
+			}
+			require.NotContains(t, nextScreen, "file-001")
 			model.Update(tea.KeyPressMsg{Code: 'b', Text: "b"})
-			require.Contains(t, model.View().Content, last)
+			require.Contains(t, model.View().Content, "file-001")
+			require.NotContains(t, model.View().Content, "file-next")
 			_, cached := model.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 			require.Nil(t, cached)
-			require.Contains(t, model.View().Content, "file-next")
+			require.Equal(t, nextScreen, model.View().Content)
 			require.EqualValues(t, 2, requests.Load())
 			model.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
 			require.NoError(t, model.Finish(nil, nil))
@@ -121,7 +121,11 @@ func TestListPagerHelp(t *testing.T) {
 			args := append([]string{"openai"}, strings.Fields(route)...)
 			require.NoError(t, root.Run(t.Context(), append(args, "list", "--help")))
 			require.Contains(t, help.String(), "Automatic terminal output uses a pager.")
-			require.Contains(t, help.String(), "Space moves forward, b moves back, and q quits.")
+			if route == "files" {
+				require.Contains(t, help.String(), "Space shows the next screen of files.")
+			} else {
+				require.Contains(t, help.String(), "Space moves forward, b moves back, and q quits.")
+			}
 			require.Contains(t, help.String(), "The final page stays open until you quit.")
 			for _, removed := range []string{"--pager", "--no-pager", "inline", "finish automatically", "retain noninteractive behavior"} {
 				require.NotContains(t, help.String(), removed)

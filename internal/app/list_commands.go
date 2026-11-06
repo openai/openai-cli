@@ -44,10 +44,14 @@ func configureListCommand[P JSONListPage[P]](root *cli.Command, resourceName, op
 	if command == nil || command.Action == nil {
 		return
 	}
+	navigation := "Space moves forward, b moves back, and q quits.\nSpace shows more loaded results before requesting the next API page."
+	if resourceName == "files" {
+		navigation = "Space shows the next screen of files. Use the arrow keys to scroll up or down one row. " +
+			"Press b to go back or q to quit. The footer shows which files are visible."
+	}
 	command.Description = strings.TrimSpace(command.Description + "\n\n" +
 		"Automatic terminal output shows a compact table, with labeled output when a page needs more detail.\n" +
-		"Automatic terminal output uses a pager. Space moves forward, b moves back, and q quits.\n" +
-		"Space shows more loaded results before requesting the next API page.\n" +
+		"Automatic terminal output uses a pager. " + navigation + "\n" +
 		"The final page stays open until you quit.\n" +
 		"--limit controls API page size; --max-items limits total results and defaults to unlimited.\n" +
 		"Explicit text or machine formats, field extraction, and redirected input or output retain their existing output behavior.")

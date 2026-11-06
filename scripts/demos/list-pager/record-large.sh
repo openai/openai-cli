@@ -22,7 +22,7 @@ set -uo pipefail
 test -t 0 && test -t 1 && test -t 2 || exit 99
 printf '\033[2J\033[H\033[?25l'
 printf '150 synthetic files | local API | 25 files per API page\n'
-printf 'Space: more   b: back   q: quit\n\n'
+printf 'Space: next screen   b: back   q: quit\n\n'
 printf '$ openai files list --limit 25 --max-items -1\n'
 sleep 0.2
 if "$DEMO_PYTHON" "$DEMO_SCENE_DRIVER" openai files list --limit 25 --max-items -1; then
@@ -50,12 +50,11 @@ demo_render_options=(--renderer swash --font-family Menlo --font-size 18 --line-
   --theme github-dark --fps-cap 20 --last-frame-duration 2)
 demo_actions="$("$demo_python" -I -B - <<'ACTIONS'
 import json
-actions = []
-for page in range(1, 7):
-    actions.append({'marker': f'file-demo-{(page-1)*25+1:03d}', 'footer': 'q: quit', 'key': ' '})
-    actions.append({'marker': f'file-demo-{page*25:03d}', 'footer': 'q: quit', 'key': ' ' if page < 6 else 'b'})
+starts = list(range(1, 151, 18))  # 20 terminal lines minus the table header and controls.
+actions = [{'marker': f'file-demo-{n:03d}', 'footer': 'q: quit', 'key': ' '} for n in starts[:-1]]
 actions.extend([
-    {'marker': 'file-demo-126', 'footer': 'q: quit', 'key': ' '},
+    {'marker': 'file-demo-150', 'footer': 'q: quit', 'key': 'b'},
+    {'marker': f'file-demo-{starts[-2]:03d}', 'footer': 'q: quit', 'key': ' '},
     {'marker': 'file-demo-150', 'footer': 'q: quit', 'key': 'q'},
 ])
 print(json.dumps(actions))
@@ -88,7 +87,7 @@ raw = raw.encode()
 relay = json.loads((output/'after.relay.json').read_text())
 assert relay['exit_status'] == 0
 keys = [item['key'] for item in relay['inputs']]
-assert keys == [' '] * 11 + ['b', ' ', 'q']
+assert keys == [' '] * 8 + ['b', ' ', 'q']
 assert hashlib.sha256(raw).hexdigest() == relay['sha256']
 assert b'\x1b[38;2;138;168;255mID' in raw
 assert not re.search(rb'\x1b\[\?(?:2026|2027)\$p', raw)

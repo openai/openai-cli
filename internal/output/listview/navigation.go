@@ -134,6 +134,7 @@ type Model struct {
 	quitting bool
 	pending  []string
 	viewer   *listViewer
+	files    *filesViewer
 	err      error
 
 	// Fetches start in the event loop. Shutdown cancels and joins the one worker,
@@ -322,7 +323,14 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		// Reflow only the loaded page. Resizing never requests data.
+		previous := m.window
 		m.window = msg
+		if m.files != nil {
+			if previous == msg {
+				return m, nil
+			}
+			return m, m.resizeFiles(previous.Width != msg.Width)
+		}
 		if err := m.viewer.resize(m.opts.Context, m.opts.RenderPage, msg.Width, msg.Height); err != nil {
 			m.err = errors.Join(m.err, err)
 			m.pending = m.viewer.takePages()
@@ -330,6 +338,11 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case listPageMessage:
 		m.loading = false
+		if m.files != nil {
+			m.loaded, m.more = true, msg.page.More
+			m.err = errors.Join(m.err, msg.err)
+			return m, m.receiveFiles(msg.page.Items)
+		}
 		var content string
 		if len(msg.page.Items) != 0 || !m.loaded && msg.err == nil {
 			content, m.err = m.opts.RenderPage(msg.page.Items, max(1, m.window.Width))
@@ -348,6 +361,9 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.quit()
 		}
+		if m.files != nil {
+			return m, m.filesKey(msg)
+		}
 		return m, m.viewerKey(msg)
 	}
 	return m, nil
@@ -359,7 +375,11 @@ func (m *Model) View() tea.View {
 	// original terminal before Finish prints any received records after errors.
 	view.AltScreen = true
 	if !m.quitting {
-		view.Content = m.viewerView()
+		if m.files != nil {
+			view.Content = m.filesView()
+		} else {
+			view.Content = m.viewerView()
+		}
 	}
 	return view
 }
@@ -427,6 +447,9 @@ type Options struct {
 	Style      Style
 	RenderPage func([]gjson.Result, int) (string, error)
 	Interrupt  func(error) error
+	// Files uses record-based navigation. This renderer retains full labeled
+	// output when the compact Files table cannot represent a screen.
+	RenderFileLabels func(gjson.Result) (string, error)
 	// The caller cancels Context on process signals and retains their exit status.
 	CallerHandlesSignals bool
 }
@@ -437,5 +460,8 @@ func New(opts Options, fetch func() (Page, error), cancel context.CancelFunc, wi
 	m := &Model{opts: opts, fetch: fetch, cancel: cancel,
 		window: tea.WindowSizeMsg{Width: width, Height: height}}
 	m.viewer = newListViewer()
+	if opts.RenderFileLabels != nil {
+		m.files = &filesViewer{}
+	}
 	return m
 }

@@ -194,23 +194,21 @@ def lazy_back(s, server):
     s.count(1)
     assert s.visible() == first, 'i changed the pager'
     s.send(' ')
-    ready(s, 2)
-    s.count(2)
+    last = ready(s, 3)
+    assert fixture.identifier(2) in last and fixture.identifier(1) not in last, last
+    s.count(3)
     s.send('b')
-    ready(s, 1)
-    s.count(2)
+    assert ready(s, 1) == first
+    s.count(3)
     s.send(' ')
-    ready(s, 2)
-    s.count(2)
-    s.send(' ')
-    ready(s, 3)
+    assert ready(s, 3) == last
     s.count(3)
     s.send(' ')
     ready(s, 3)
     s.count(3)
     assert s.terminal.child.poll() is None, 'final page exited automatically'
     s.send('b')
-    ready(s, 2)
+    assert ready(s, 1) == first
     s.count(3)
     s.send('q')
     s.finish(0)

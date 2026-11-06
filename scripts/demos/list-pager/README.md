@@ -1,7 +1,8 @@
 # Automatic list pager evidence
 
 Eligible automatic terminal lists use the pager without a mode flag.
-Space advances through loaded chunks before requesting another API page.
+For Files, Space shows the next screenful. The pager fetches enough records to fill that screen when available.
+The footer identifies the visible file range. The table keeps its headings on screen.
 Resource pagers omit the optional JSON-format hint.
 This prevents a hint-only Space step when all loaded rows already fit.
 `b` returns to loaded chunks without another request.

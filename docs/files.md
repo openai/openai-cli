@@ -26,6 +26,14 @@ openai files download file-example > copy.txt
 
 Replace `file-example` with the full ID from your upload response.
 
+## Browse files in the terminal
+
+Run `openai files list` to browse files in your project. The footer shows the visible range, such as `Files 1–28`.
+Press Space for the next screen. Press the up or down arrow to scroll one row.
+Press `b` to go back or `q` to quit. The table keeps its column headings in view as you scroll.
+
+If the CLI reports a missing API key, run `openai help setup` for instructions.
+
 ## Find commands and complete paths
 
 Use `openai files --help` to see upload, get, and download in workflow order.

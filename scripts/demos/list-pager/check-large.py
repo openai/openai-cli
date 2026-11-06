@@ -38,11 +38,13 @@ def exercise(session, server):
         found = IDS.findall(frame)
         assert found and len(found) == len(set(found)), ('duplicate visible row', found)
         assert all(f'dataset-{identifier[-3:]}.jsonl' in frame for identifier in found), frame
-        new = [value for value in found if value not in seen]
-        assert new == expected[len(seen):len(seen)+len(new)], ('missing or reordered files', len(seen), new)
-        seen.extend(new)
+        assert found == expected[len(seen):len(seen)+len(found)], ('repeated, missing or reordered files', len(seen), found)
+        start = len(seen) + 1
+        seen.extend(found)
+        position = f'File {start}' if len(found) == 1 else f'Files {start}–{len(seen)}'
+        assert position in frame and 'FILENAME' in frame, frame
         frames.append({'request_count': len(observer.requests(server)), 'ids': found, 'frame': frame})
-        if 'Space: more' not in frame:
+        if 'End' in frame:
             break
         before = len(observer.requests(server))
         session.count(before)
@@ -50,18 +52,16 @@ def exercise(session, server):
         session.send(' ')
         frame = changed(session, previous)
         after = len(observer.requests(server))
-        assert after in (before, before+1), ('unexpected requests', before, after)
-        if len(frames) == 1 and len(found) == server.rows:
-            assert after == before+1, 'Space did not fetch the next page after all loaded rows were visible'
-        if after != before:
-            assert f'file-demo-{before*25:03d}' in seen, 'API page fetched before its loaded rows were visited'
-        if after == 2 and not checked_back:
+        last_visible = int(IDS.findall(frame)[-1].rsplit('-', 1)[1])
+        needed = (last_visible + server.rows - 1) // server.rows
+        assert after == max(before, needed), ('fetched beyond the next screen', before, after, frame)
+        if after > before and not checked_back:
             session.send('b')
             assert changed(session, frame) == previous, 'back did not restore the previous chunk'
-            session.count(2)
+            session.count(after)
             session.send(' ')
             assert changed(session, previous) == frame, 'cached forward navigation changed the chunk'
-            session.count(2)
+            session.count(after)
             checked_back = True
     else:
         raise AssertionError('150-file fixture exceeded navigation bound')

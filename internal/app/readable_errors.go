@@ -244,11 +244,11 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 		if reason := http.StatusText(apierr.StatusCode); reason != "" {
 			status += ": " + reason
 		}
-		header := status + ".\n"
+		details := status + "."
 		if requestID := clioutput.APIRequestID(apierr); requestID != "" {
-			header += "Request ID: " + requestID + "\n"
+			details += "\nRequest ID: " + requestID
 		}
-		message = header + message
+		message += "\n\n" + details
 	}
 	return message + "\nAPI error details: --format-error json."
 }
