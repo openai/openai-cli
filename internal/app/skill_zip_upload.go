@@ -34,13 +34,30 @@ func selectSkillZIP(cmd *cli.Command, body map[string]any) (request.BodyContentT
 	return request.MultipartFormEncoded, nil
 }
 
-func labelSkillZIP(body map[string]any) error {
-	switch file := body["files"].(type) {
-	case request.FileUpload:
-		file.MediaType = "application/zip"
-		body["files"] = file
-	case io.Reader: // stdin has no filename
-		body["files"] = request.FileUpload{Reader: file, FileName: "skill.zip", MediaType: "application/zip"}
+func embedSkillZIP(cmd *cli.Command, body map[string]any, stdin *request.OnceStdinReader) (map[string]any, error) {
+	path := string(body["files"].(request.FilePathValue))
+	delete(body, "files")
+	// Other fields keep their JSON input semantics. Resolve text references
+	// before opening the archive so a failed scalar read owns no upload.
+	scalars, err := request.EmbedRequestFiles(cmd, body, "body", request.EmbedText, stdin)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	var file request.FileUpload
+	if request.IsStdinPath(path) {
+		reader, err := stdin.Take()
+		if err != nil {
+			return nil, err
+		}
+		file = request.FileUpload{Reader: io.NopCloser(reader), FileName: "skill.zip"}
+	} else {
+		file, err = (request.FileInputSource{Option: "--files"}).OpenUpload(path)
+		if err != nil {
+			return nil, err
+		}
+	}
+	file.MediaType = "application/zip"
+	form := scalars.(map[string]any)
+	form["files"] = file
+	return form, nil
 }

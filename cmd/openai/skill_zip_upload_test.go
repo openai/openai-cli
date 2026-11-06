@@ -22,6 +22,7 @@ func TestMainSkillZIPUpload(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 	require.NoError(t, os.WriteFile("@demo.ZIP", archive.Bytes(), 0600))
+	require.NoError(t, os.WriteFile("default.txt", []byte("false"), 0600))
 
 	for _, tc := range []struct {
 		name, path, filename string
@@ -31,6 +32,7 @@ func TestMainSkillZIPUpload(t *testing.T) {
 		{"named archive", "/skills", "@demo.ZIP", []string{"skills", "create", "--files", "@demo.ZIP"}, nil},
 		{"stdin archive", "/skills/skill_demo/versions", "skill.zip", []string{"skills", "versions", "create", "skill_demo", "--default=false", "--files", "-"}, archive.Bytes()},
 		{"trusted piped path", "/skills/skill_demo/versions", "@demo.ZIP", []string{"skills:versions", "create", "--skill-id", "skill_demo", "--default=false"}, []byte(`{"files":["@demo.ZIP"]}`)},
+		{"scalar file reference", "/skills/skill_demo/versions", "@demo.ZIP", []string{"skills", "versions", "create", "skill_demo", "--files", "@demo.ZIP"}, []byte(`{"default":"@file://default.txt"}`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const response = `{"id":"skill_demo"}`

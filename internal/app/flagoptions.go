@@ -93,7 +93,9 @@ func flagOptionsWithStdin(
 	}
 	if bodyType == ApplicationJSON && isSkillCreate(cmd) {
 		hooks.SelectBodyType = selectSkillZIP
-		hooks.Encoding.PrepareMultipart = labelSkillZIP
+		hooks.EmbedMultipart = func(body map[string]any, stdin *requestconfig.OnceStdinReader) (map[string]any, error) {
+			return embedSkillZIP(cmd, body, stdin)
+		}
 	}
 	return requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
 }
