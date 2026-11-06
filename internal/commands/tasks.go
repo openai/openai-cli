@@ -15,7 +15,7 @@ func ConfigureTasks(root *cli.Command) {
 	}{
 		{"audio", "transcriptions", "transcribe", "Convert audio to text.", true},
 		{"audio", "translations", "translate", "Translate audio to English text.", true},
-		{"audio", "speech", "speak", "Generate speech from text.", true},
+		{"audio", "speech", "speak", "Generate speech from text or open the composer without flags in a terminal.", true},
 		{"files", "", "upload", "Upload an API file.", false},
 	} {
 		group := root.Command(task.group)

@@ -483,6 +483,7 @@ def startup_case(ctx):
                 child.close()
 
         native(["audio", "speak"], "form", form=True)
+        native(["speak"], "shortcut-form", form=True)
         for position in ("before", "group", "leaf"):
             for command in ("history", "inspect", "export", "play"):
                 leaf = [command] + ([] if command == "history" else [identity])

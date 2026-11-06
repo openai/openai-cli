@@ -111,6 +111,18 @@ func TestMainExploreQueryWorksOfflineInPipes(t *testing.T) {
 	}
 }
 
+func TestMainExploreFindsTheSpeechComposer(t *testing.T) {
+	got := runMainDispatchWithEnv(t, "zsh", []string{"OPENAI_BASE_URL=not%url"}, "openai", "explore", "speech composer")
+	require.Zero(t, got.code)
+	require.Empty(t, got.stderr)
+	lines := strings.Split(strings.TrimSpace(got.stdout), "\n")
+	require.GreaterOrEqual(t, len(lines), 2)
+	command, description, found := strings.Cut(strings.TrimSpace(lines[1]), "  ")
+	require.True(t, found)
+	require.Equal(t, "openai speak", command)
+	require.Contains(t, description, "composer")
+}
+
 func TestMainExploreRanksCommandsForCommonTasks(t *testing.T) {
 	for _, tc := range []struct{ query, first string }{
 		{"explore text", "tokenizer --help"},

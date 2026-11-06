@@ -1,10 +1,15 @@
 # Speech controls and retained audio
 
-Run this command with terminal input and output:
+To open the speech composer, run this command without flags in a terminal:
 
 ```sh
-openai audio speak
+openai speak
 ```
+
+You can also use `openai audio speak`.
+In `openai explore`, search for `speech composer` and select `openai speak`.
+Run the selected command at your shell prompt to open the composer.
+[Command insertion](command-insertion.md#search-all-commands) explains how each supported shell handles the selection.
 
 Type in the editor below **Text to speech**. The caret marks the insertion point as text wraps.
 Instructions and Voice stay on the form. Settings summarizes the model, format, and speed.
