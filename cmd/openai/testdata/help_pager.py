@@ -54,6 +54,7 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
             "PATH": "/usr/bin:/bin", "HOME": home, "USERPROFILE": home,
             "XDG_CONFIG_HOME": home, "XDG_CACHE_HOME": home,
             "TERM": "xterm-256color", "LANG": "en_US.UTF-8",
+            "OPENAI_CLI_BARE_INPUT": "1",  # Simulate a confirmed standalone shell line.
             "OPENAI_CLI_MAIN_DISPATCH_PROCESS": "1", "OPENAI_CLI_NO_UPDATE_CHECK": "1",
             "OPENAI_BASE_URL": "not%url", "OPENAI_API_KEY": "", "OPENAI_ADMIN_KEY": "",
             "OPENAI_MTLS_CLIENT_CERT_FILE": "/synthetic/missing-cert.pem",
@@ -245,3 +246,5 @@ for stream in ("stdin", "stdout", "stderr"):
     check("redirected-" + stream, redirected=stream, action=None)
 check("ci", extra={"CI": "true"}, action=None)
 check("dumb", extra={"TERM": "dumb"}, action=None)
+
+check("unconfirmed bare invocation", extra={"OPENAI_CLI_BARE_INPUT": ""}, action=None)

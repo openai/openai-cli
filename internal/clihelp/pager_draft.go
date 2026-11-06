@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 )
 
 // A cooperating zsh function owns the destination. Only the shell can safely
@@ -51,9 +52,12 @@ const (
 	// without interpreting ordinary keystrokes or moving the visible prompt.
 	draftCursorQuery = "\x1b7\x1b[H\x1b[6n\x1b8"
 	draftCursorReply = "\x1b[1;1R"
-	encodedEscape    = "\x1b[27u"
-	pasteOpener      = "\x1b[200~"
-	pasteCloser      = "\x1b[201~"
+	// Ultraviolet also decodes the wire reply as F3. Forward the unambiguous
+	// cursor report only after confirming the reply from the terminal.
+	decodedCursorReply = "\x1b[?1;1R"
+	encodedEscape      = "\x1b[27u"
+	pasteOpener        = "\x1b[200~"
+	pasteCloser        = "\x1b[201~"
 )
 
 func (r *helpDraftInput) beginProbe() {
@@ -159,7 +163,7 @@ func (r *helpDraftInput) forwardByte(out []byte, b byte) []byte {
 		r.cursorMatched = 0
 		r.cursorQueries--
 		r.replied = r.waiting && r.cursorQueries == 0
-		return append(out, draftCursorReply...)
+		return append(out, decodedCursorReply...)
 	}
 	if r.cursorMatched == 1 && b == draftCursorReply[0] {
 		out = append(out, encodedEscape...)
@@ -249,8 +253,7 @@ func (r *helpDraftInput) pasteInProgress() bool {
 	return r.inPaste || len(r.pending) > 0 || len(r.utf8Tail) > 0 || r.cursorMatched > 0
 }
 
-// On a forced cancellation, relay only the fixed paste delimiter bytes
-// already consumed from the tty. The caller restores them to its own editor.
+// The shell can replay fixed terminal framing consumed before the handoff.
 func (r *helpDraftInput) recoveryTag() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -263,6 +266,9 @@ func (r *helpDraftInput) recoveryTag() string {
 	}
 	if r.cursorQueries > 0 {
 		tag += "r"
+		if r.cursorMatched > 0 {
+			tag += strconv.Itoa(r.cursorMatched)
+		}
 	}
 	return tag
 }
@@ -378,7 +384,13 @@ func (m *helpPager) negotiateDraft(msg tea.Msg) (bool, tea.Cmd) {
 }
 
 func startsHelpDraft(key tea.KeyPressMsg) bool {
-	return key.Text != "" && key.Text != "q" && key.Text != "Q" && key.Text != " "
+	return literalDraftKey(key) && key.Text != "q" && key.Text != "Q" && key.Text != " "
+}
+
+const draftLockModifiers = tea.ModCapsLock | tea.ModNumLock | tea.ModScrollLock
+
+func literalDraftKey(key tea.KeyPressMsg) bool {
+	return key.Text != "" && key.Mod&^(tea.ModShift|draftLockModifiers) == 0
 }
 
 func waitForDraftInput() tea.Cmd {
@@ -425,22 +437,22 @@ func (m *helpPager) collectDraft(msg tea.Msg) tea.Cmd {
 		return waitForDraftInput()
 	case tea.KeyPressMsg:
 		d.lastInput = time.Now()
-		switch v.String() {
-		case "ctrl+c":
+		mod := v.Mod &^ draftLockModifiers
+		switch {
+		case v.Code == 'c' && mod == tea.ModCtrl:
 			m.interrupted = true
-		case "enter":
+		case v.Code == tea.KeyEnter && mod == 0:
 			d.appendText("\n")
-		case "backspace":
-			_, size := utf8.DecodeLastRune(d.text)
-			d.text = d.text[:len(d.text)-size]
+		case literalDraftKey(v):
+			d.typed = true
+			d.appendText(v.Text)
 		default:
-			// The user can start the next command while q or the last wheel
-			// event is releasing the terminal.
-			if v.Text != "" {
-				d.typed = true
-				d.appendText(v.Text)
-			}
+			// Only zsh knows what its editing keys do. Omitting one
+			// could stage a different command from the one the user typed.
+			d.invalid = true
 		}
+	case uv.UnknownEvent, uv.UnknownCsiEvent, uv.UnknownSs3Event:
+		d.invalid = true
 	case tea.PasteStartMsg:
 		d.pasteActive = true
 	case tea.PasteEndMsg:

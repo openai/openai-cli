@@ -3,13 +3,11 @@
 package clihelp
 
 import (
-	"context"
 	"io"
 	"os"
 	"sync"
 	"time"
 
-	clioutput "github.com/openai/openai-cli/internal/output"
 	"golang.org/x/sys/unix"
 )
 
@@ -44,7 +42,7 @@ func (r *helpProgramInput) Read(buf []byte) (int, error) {
 // Wait for the terminal to process the preceding mouse reset before restoring
 // cooked input. The terminal writes its status response after its queued mouse
 // reports. Read precisely through that response, never into following shell input.
-func finishHelpMouseInput(in, out *os.File, draft *helpDraft, aborting bool) (interrupted bool, err error) {
+func finishHelpMouseInput(in, out *os.File, display io.Writer, draft *helpDraft, aborting bool) (interrupted bool, err error) {
 	inputInfo, inputErr := in.Stat()
 	outputInfo, outputErr := out.Stat()
 	if inputErr != nil || outputErr != nil || !os.SameFile(inputInfo, outputInfo) {
@@ -67,7 +65,7 @@ func finishHelpMouseInput(in, out *os.File, draft *helpDraft, aborting bool) (in
 		}
 	}
 	if !guardPaste {
-		if _, err := (clioutput.Writer{Context: context.Background(), Sink: out}).WriteString("\x1b[5n"); err != nil {
+		if _, err := io.WriteString(display, "\x1b[5n"); err != nil {
 			return false, err
 		}
 	}

@@ -16,11 +16,47 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     typeset -g ____APPNAME___suggestions_index=0 ____APPNAME___suggestions_last=''
   }
 
+  # preexec receives the submitted line, before the shell executes any part of it.
+  # Remember one boolean. Never retain or export the contents of the command line.
+  ____APPNAME___remember_bare_input() {
+    emulate -L zsh
+    setopt extendedglob
+    unset ____APPNAME___bare_input
+    if [[ $1 == [[:blank:]]#'__APPNAME__'[[:blank:]]# ]]; then
+      typeset -g ____APPNAME___bare_input=1
+    fi
+  }
+
   ____APPNAME___clear_help_reply_map() {
     emulate -L zsh
     add-zsh-hook -d precmd ____APPNAME___clear_help_reply_map
     add-zsh-hook -d preexec ____APPNAME___clear_help_reply_map
+    if (( ${+____APPNAME___help_reply_length} )); then
+      unset ____APPNAME___help_reply_length
+      builtin bindkey -D ____APPNAME___help_prefix_map
+      builtin zle -D ____APPNAME___resume_help_reply
+    fi
     builtin bindkey -D ____APPNAME___help_reply_map 2>/dev/null
+  }
+
+  ____APPNAME___resume_help_reply() {
+    emulate -L zsh
+    local cursor=$'\e[1;1R' first=${____APPNAME___help_reply_length-} length=${#KEYS}
+    [[ $first == [1-5] && $length == [1-6] && $KEYS == ${cursor[1,length]} ]] && (( length >= first )) || return 0
+    # ZLE puts a mismatching key back on its queue. An empty queue after a
+    # partial match means its key timer expired. Wait with paste mode enabled.
+    if (( length < ${#cursor} && ! KEYS_QUEUED_COUNT )); then
+      local -a ready
+      if (( PENDING )) || { zmodload zsh/zselect && zselect -a ready -r 0 <"$TTY"; }; then
+        builtin zle -U "${cursor[1,length]}"
+        return 0
+      fi
+    fi
+    builtin zle -K ____APPNAME___help_reply_map
+    if (( first < length && length < ${#cursor} )); then
+      # The terminal abandoned the reply. Restore matching bytes typed in zsh.
+      builtin zle -U "${cursor[first+1,length]}"
+    fi
   }
 
   # Resume the terminal frame in the original editor. Only fixed framing can
@@ -37,19 +73,37 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     else
       builtin zle -D zle-line-init
     fi
-    case ${marker%r} in
-      '') [[ $marker == r ]] || return $code ;;
+    local paste=${marker%%r*} cursor=$'\e[1;1R'
+    local report=${marker#"$paste"}
+    case $paste in
+      '') [[ -n $report ]] || return $code ;;
       o[1-5]) frame=${opener[1,${marker[2]}]} ;;
       p0) frame=$opener ;;
       p[1-5]) frame=$opener${closer[1,${marker[2]}]} ;;
       *) return $code ;;
     esac
+    case $report in
+      ''|r) ;;
+      r[1-5]) frame=${cursor[1,${report[2]}]}$frame ;;
+      *) return $code ;;
+    esac
     # The pager requests its cursor report at 1,1. Ignore only that exact
     # response. The temporary map inherits the user's bindings for this line.
-    if [[ $marker == *r ]] && ! builtin bindkey -M ____APPNAME___help_reply_map $'\e[1;1R' >/dev/null 2>&1 &&
+    if [[ -n $report ]] && ! builtin bindkey -M ____APPNAME___help_reply_map "$cursor" >/dev/null 2>&1 &&
       builtin bindkey -N ____APPNAME___help_reply_map "$KEYMAP"; then
-      builtin bindkey -M ____APPNAME___help_reply_map $'\e[1;1R' .redisplay
+      builtin bindkey -M ____APPNAME___help_reply_map "$cursor" .redisplay
       builtin zle -K ____APPNAME___help_reply_map
+      if [[ $report == r[1-5] ]] && ! builtin bindkey -M ____APPNAME___help_prefix_map "$cursor" >/dev/null 2>&1 &&
+        builtin bindkey -N ____APPNAME___help_prefix_map .safe; then
+        # Match only fixed report prefixes until ZLE sees the boundary.
+        typeset -g ____APPNAME___help_reply_length=${report[2]}
+        builtin zle -N ____APPNAME___resume_help_reply
+        local n
+        for (( n = ${report[2]}; n <= ${#cursor}; n++ )); do
+          builtin bindkey -M ____APPNAME___help_prefix_map "${cursor[1,n]}" ____APPNAME___resume_help_reply
+        done
+        builtin zle -K ____APPNAME___help_prefix_map
+      fi
       add-zsh-hook preexec ____APPNAME___clear_help_reply_map
       add-zsh-hook precmd ____APPNAME___clear_help_reply_map
     fi
@@ -78,7 +132,7 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     emulate -L zsh
     unsetopt multios xtrace verbose
     local file code draft marker extra
-    if (( $# == 0 && ZSH_SUBSHELL == 0 )) && [[ -o zle && -t 0 && -t 1 && -t 2 &&
+    if [[ $OPENAI_CLI_BARE_INPUT == 1 && -o zle && -t 0 && -t 1 && -t 2 &&
       ! -e /dev/fd/5 && ! -e /dev/fd/6 ]] && ____APPNAME___suggestions_owns_command &&
       file=$(command mktemp "${TMPDIR:-/tmp}/__APPNAME__-help-draft.XXXXXXXX" 2>/dev/null); then
       {
@@ -97,15 +151,18 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
               elif [[ -n $marker ]]; then
                 return $code
               fi
+              local paste=${marker%%r*}
+              local report=${marker#"$paste"}
+              [[ -z $report || $report == r || $report == r[1-5] ]] || return $code
               case $code in
                 0)
-                  [[ -z $marker || $marker == r ]] || return $code
+                  [[ -z $paste ]] || return $code
                   [[ $draft != *[[:INVALID:][:INCOMPLETE:]]* &&
                     ${draft//$'\n'/} != *[$'\x01'-$'\x1f'$'\x7f'-$'\u009f']* ]] || return $code
                   [[ -z $draft ]] || builtin print -rz -- "$draft"
                   ;;
                 130|143)
-                  [[ -z $draft && ( $marker == r || ${marker%r} == o[1-5] || ${marker%r} == p[0-5] ) ]] || return $code
+                  [[ -z $draft && -n $marker && ( -z $paste || $paste == o[1-5] || $paste == p[0-5] ) ]] || return $code
                   ;;
                 *) return $code ;;
               esac
@@ -163,7 +220,12 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     emulate -L zsh
     # Sequential stderr redirections must retain the terminal, not a multios pipe.
     unsetopt multios
-    local -x OPENAI_CLI_HELP_DRAFT_FD=''
+    local -x OPENAI_CLI_HELP_DRAFT_FD='' OPENAI_CLI_BARE_INPUT=''
+    if (( $# == 0 && ZSH_SUBSHELL == 0 && ${#funcstack} == 2 )) &&
+      [[ ${____APPNAME___bare_input-} == 1 && ${funcstack[2]} == '__APPNAME__' ]]; then
+      OPENAI_CLI_BARE_INPUT=1
+      unset ____APPNAME___bare_input
+    fi
     local file code ____APPNAME___suggestions_started=0
     ____APPNAME___suggestions_clear
     # Only the bare interactive command hands its selection to the next editor.
@@ -271,6 +333,8 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     fi
     add-zsh-hook -d chpwd ____APPNAME___suggestions_clear
     add-zsh-hook -d preexec ____APPNAME___suggestions_clear
+    add-zsh-hook -d preexec ____APPNAME___remember_bare_input
+    unset ____APPNAME___bare_input
     ____APPNAME___suggestions_clear
   }
 
@@ -287,6 +351,7 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     autoload -Uz add-zsh-hook
     add-zsh-hook chpwd ____APPNAME___suggestions_clear
     add-zsh-hook preexec ____APPNAME___suggestions_clear
+    add-zsh-hook preexec ____APPNAME___remember_bare_input
     local keymap key
     local -a keys=('^X^I')
     [[ __DOUBLE_TAB__ == 1 ]] && keys+=('^I^I')

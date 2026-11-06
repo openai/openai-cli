@@ -22,7 +22,7 @@ paste_begin = b"\x1b[200~"
 paste_end = b"\x1b[201~"
 
 
-def check(kind):
+def check(kind, edit_before_reply=None, *, edit_after_reply=b"", expected_edit=b""):
     with tempfile.TemporaryDirectory(prefix="help-draft-") as tmp:
         home = Path(tmp)
         launcher = home / "openai"
@@ -80,6 +80,22 @@ preexec() { builtin print -r -- "$1" >> "$HOME/submitted"; }
                 # The suffix belongs to the shell even if it shares the reply's write.
                 os.write(fd, b"-s" + position + " café".encode())
                 expected = "git status -s café".encode()
+            elif kind in ("cancel-split-cursor", "cancel-abandoned-cursor"):
+                os.write(fd, b"cancelled draft")
+                read_until(lambda: raw.count(cursor) > queries)
+                os.write(fd, position[:4])
+                foreground = os.tcgetpgrp(fd)
+                assert foreground != pid
+                os.killpg(foreground, signal.SIGTERM)
+                # Hold the final two report bytes across the cancellation deadline.
+                read_until(lambda: raw.count(prompt) >= 2)
+                time.sleep(.75)  # Longer than the usual zsh key-sequence timeout.
+                expected = b"1echo 1R and ;1R"
+                os.write(fd, b"1")
+                time.sleep(.75)
+                # A matching digit belongs to the typed command if no R follows.
+                tail = b"R" + expected if kind == "cancel-split-cursor" else expected[1:]
+                os.write(fd, tail)
             elif kind == "first-paste":
                 # Escape alone could also mean the user wants to quit.
                 os.write(fd, paste_begin[:1])
@@ -95,6 +111,11 @@ preexec() { builtin print -r -- "$1" >> "$HOME/submitted"; }
                 os.write(fd, paste_begin[:3])
                 time.sleep(.4)  # Longer than the missing-reply idle fallback.
                 os.write(fd, paste_begin[3:] + expected[1:] + paste_end + position)
+            elif edit_before_reply is not None:
+                os.write(fd, b"echo bad")
+                read_until(lambda: raw.count(cursor) > queries)
+                os.write(fd, edit_before_reply + position + edit_after_reply)
+                expected = expected_edit
             else:
                 os.write(fd, b"q")
                 read_until(lambda: raw.count(cursor) > queries)
@@ -139,5 +160,20 @@ preexec() { builtin print -r -- "$1" >> "$HOME/submitted"; }
                 os.waitpid(pid, 0)
 
 
-for case in ("type", "paste", "first-paste", "quit", "quit-then-type", "split-admission"):
+for case in ("type", "paste", "first-paste", "quit", "quit-then-type", "split-admission", "cancel-split-cursor", "cancel-abandoned-cursor"):
     check(case)
+
+# zsh owns editing and its key bindings. Discard a draft if the pager consumed
+# an editing key. The same key after the terminal reply still reaches zsh.
+for name, key in {
+    "kill-line": b"\x15",
+    "kill-word": b"\x17",
+    "cursor-left": b"\x1b[D",
+    "alt-b": b"\x1bb",
+    "modified-text": b"\x1b[98;3;98u",
+    "backspace": b"\x7f",
+    "unknown-key": b"\x1b[99~",
+    "f3": b"\x1bOR",
+}.items():
+    check(name, key + b"pwd")
+check("shell-kill-line", b"", edit_after_reply=b"\x15pwd", expected_edit=b"pwd")

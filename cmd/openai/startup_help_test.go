@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestMainStartupHelpTerminalOutput(t *testing.T) {
+func TestMainStartupHelpReturnsWithoutInput(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		args []string
@@ -22,7 +22,7 @@ func TestMainStartupHelpTerminalOutput(t *testing.T) {
 			fixture.env["OPENAI_CLI_NO_UPDATE_CHECK"] = "1"
 			fixture.env["OPENAI_BASE_URL"] = "not%url"
 			before := updateNoticeSnapshot(t, fixture.home)
-			// The PTY driver sends End only after the startup pager displays its controls.
+			// All streams are terminals. The driver sends no keyboard input.
 			got := fixture.run(t, "", test.args...)
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("help did not return successfully: %+v", got)
@@ -30,19 +30,12 @@ func TestMainStartupHelpTerminalOutput(t *testing.T) {
 			if !strings.Contains(got.stdout, test.end) || (test.name != "nested-help" && !strings.Contains(got.stdout, "GLOBAL FLAGS")) {
 				t.Fatalf("help omitted its reference: %q", got.stdout)
 			}
-			if test.name == "bare" {
-				top, rest, ok := strings.Cut(got.stdout, "q: end")
-				if !ok || !strings.Contains(top, "START HERE") || !strings.Contains(top, "What are we making today?") {
-					t.Fatal("bare startup did not show the first page before accepting input")
-				}
-				if !strings.Contains(rest, "GLOBAL FLAGS") || !strings.Contains(rest, test.end) {
-					t.Fatal("scrolling to the end omitted the reference")
-				}
-			} else {
-				for _, marker := range []string{"\x1b[?1049h", "\x1b[?1002h", "\x1b[?1003h", "Space: page", "q: end"} {
-					if strings.Contains(got.stdout, marker) {
-						t.Errorf("explicit help captured the terminal with %q", marker)
-					}
+			if test.name == "bare" && !strings.Contains(got.stdout, "What are we making today?") {
+				t.Fatalf("bare help omitted the welcome banner: %q", got.stdout)
+			}
+			for _, marker := range []string{"\x1b[?1049h", "\x1b[?1002h", "\x1b[?1003h", "Space: page", "q: quit"} {
+				if strings.Contains(got.stdout, marker) {
+					t.Errorf("help captured the terminal with %q", marker)
 				}
 			}
 			assertUpdateNoticeUnchanged(t, fixture, before)

@@ -36,7 +36,9 @@ func RunWithPager(ctx context.Context, root *cli.Command, argv []string, run fun
 	}
 	in, inputFile := input.(*os.File)
 	out, outputFile := output.(*os.File)
-	if len(argv) != 1 || argv[0] == "" || !inputFile || !outputFile ||
+	// An executable cannot distinguish a standalone command from the same
+	// invocation inside a shell list. Only the shell can confirm the input line.
+	if len(argv) != 1 || argv[0] == "" || os.Getenv("OPENAI_CLI_BARE_INPUT") != "1" || !inputFile || !outputFile ||
 		!term.IsTerminal(in.Fd()) || !term.IsTerminal(out.Fd()) || !term.IsTerminal(os.Stderr.Fd()) ||
 		!welcomeEnvironment(os.Getenv, runtime.GOOS) {
 		return run()
@@ -108,6 +110,7 @@ func (m *helpPager) run(ctx context.Context, in, out *os.File, width, height int
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	signalCode := 0
+	quietExit := false
 	listenerDone := make(chan struct{})
 	go func() {
 		defer close(listenerDone)
@@ -126,9 +129,18 @@ func (m *helpPager) run(ctx context.Context, in, out *os.File, width, height int
 		close(signals)
 		<-listenerDone
 		if signalCode != 0 {
-			returnErr = cli.Exit(errors.Join(context.Canceled, returnErr), signalCode)
+			returnErr = helpExit(errors.Join(context.Canceled, returnErr), signalCode, quietExit)
 		}
 	}()
+	executable, err := os.Executable()
+	if err != nil {
+		return &PagerError{Cause: err}
+	}
+	display, err := terminal.NewOutput(programContext, executable, out)
+	if err != nil {
+		return &PagerError{Cause: err}
+	}
+	defer func() { returnErr = errors.Join(returnErr, display.Close()) }()
 	defer func() {
 		if restoreErr := errors.Join(term.Restore(in.Fd(), inputState), term.Restore(out.Fd(), outputState)); restoreErr != nil {
 			returnErr = errors.Join(returnErr, &PagerError{Cause: restoreErr})
@@ -137,7 +149,11 @@ func (m *helpPager) run(ctx context.Context, in, out *os.File, width, height int
 	if _, err := uv.NewConsole(in, out, os.Environ()).MakeRaw(); err != nil {
 		return &PagerError{Cause: err}
 	}
-	m.output, m.terminal = clioutput.Writer{Context: context.Background(), Sink: out}, out
+	ordered := newHelpPagerOutput(display, cancel)
+	m.output, m.terminal = ordered, out
+	if m.draft != nil {
+		m.draft.input.output = ordered
+	}
 	// Tea decodes input. Writing complete rows ourselves keeps each one in
 	// native scrollback instead of repainting a full screen on every Down.
 	var reader io.Reader = in
@@ -148,24 +164,58 @@ func (m *helpPager) run(ctx context.Context, in, out *os.File, width, height int
 	_, err = tea.NewProgram(m, tea.WithInput(reader), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithContext(programContext),
 		tea.WithWindowSize(width, height), tea.WithColorProfile(commandHelpStyle(root).profile), tea.WithoutSignalHandler()).Run()
 	releaseInput()
+	interrupted := programContext.Err() != nil || m.interrupted || errors.Is(err, tea.ErrInterrupted)
+	paintErr := ordered.finish(programContext, interrupted)
+	if ordered.sent.Load() < ordered.queued.Load() {
+		// An interrupted append can stop mid-link or before a queued mode
+		// reset. Restore every presentation mode we may have entered.
+		m.mouseStopped = false
+		m.reviewing = m.usedReview
+		m.finished, m.footerVisible = false, false
+	}
+	m.output = helpCleanupOutput{display}
+	if m.draft != nil {
+		m.draft.input.output = m.output
+	}
 	// The terminal can have reports in transit even after a keyboard exit.
 	stopErr := m.stopMouse()
 	if stopErr == nil && m.writeErr == nil && m.active {
 		var interrupted bool
-		interrupted, stopErr = finishHelpMouseInput(in, out, m.draft, programContext.Err() != nil || m.interrupted)
+		interrupted, stopErr = finishHelpMouseInput(in, out, m.output, m.draft, programContext.Err() != nil || m.interrupted)
 		m.interrupted = m.interrupted || interrupted
 	}
-	cleanupErr := errors.Join(m.writeErr, stopErr, m.close())
+	cleanupErr := errors.Join(m.writeErr, paintErr, stopErr, m.close())
+	if errors.Is(cleanupErr, context.DeadlineExceeded) || interrupted && !m.active {
+		// A diagnostic to this same blocked terminal would stall after the
+		// pager restored it. Cancellation before its first frame has no
+		// acknowledged output either. Preserve the exit status and cause.
+		stdout, oerr := out.Stat()
+		stderr, eerr := os.Stderr.Stat()
+		quietExit = oerr == nil && eerr == nil && os.SameFile(stdout, stderr)
+	}
 	if m.interrupted || errors.Is(err, tea.ErrInterrupted) {
-		return cli.Exit(errors.Join(context.Canceled, err, cleanupErr), 130)
+		return helpExit(errors.Join(context.Canceled, err, cleanupErr), 130, quietExit)
 	}
 	if cleanupErr != nil {
+		if quietExit {
+			return helpExit(cleanupErr, 1, true)
+		}
 		return cleanupErr
 	}
 	if err != nil {
+		if quietExit {
+			return helpExit(err, 1, true)
+		}
 		return &PagerError{Cause: err}
 	}
 	return nil
+}
+
+func helpExit(cause error, code int, quiet bool) error {
+	if quiet {
+		return errors.Join(cli.Exit("", code), cause)
+	}
+	return cli.Exit(cause, code)
 }
 
 // PagerError preserves the cause while exposing only safe recovery guidance.
@@ -185,17 +235,17 @@ type helpPager struct {
 	viewport viewport.Model
 	content  string
 	// Source byte offsets at each physical row, including only authored newlines.
-	rowEnds                          []int
-	printed                          int
-	output                           io.Writer
-	terminal                         *os.File
-	height                           int
-	active, reviewing, footerVisible bool
-	quitting, finished, interrupted  bool
-	stoppedAt                        time.Time
-	lastInput                        time.Time
-	mouseStopped                     bool
-	writeErr                         error
+	rowEnds                                      []int
+	printed                                      int
+	output                                       io.Writer
+	terminal                                     *os.File
+	height                                       int
+	active, reviewing, usedReview, footerVisible bool
+	quitting, finished, interrupted              bool
+	stoppedAt                                    time.Time
+	lastInput                                    time.Time
+	mouseStopped                                 bool
+	writeErr                                     error
 }
 
 func newHelpPager(content string, width, height int) *helpPager {
@@ -402,6 +452,7 @@ func (m *helpPager) draw() error {
 		if !m.reviewing {
 			frame.WriteString("\x1b[?1049h")
 			m.reviewing = true
+			m.usedReview = true
 		}
 		frame.WriteString(endHelpLink + "\x1b[0m\x1b[H\x1b[2J")
 		frame.WriteString(strings.ReplaceAll(m.View().Content, "\n", "\r\n"))

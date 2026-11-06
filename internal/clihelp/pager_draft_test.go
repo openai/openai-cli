@@ -28,7 +28,7 @@ func TestHelpDraftFramesFragmentedPaste(t *testing.T) {
 			t.Fatal("changed paste content or its boundaries")
 		}
 		output = input.frame([]byte(reply))
-		if !input.replied || !bytes.Equal(output, []byte(reply)) {
+		if !input.replied || !bytes.Equal(output, []byte(decodedCursorReply)) {
 			t.Fatal("missed the terminal status reply")
 		}
 	}
@@ -104,8 +104,9 @@ func TestHelpDraftLeavesPostReplyBytesForShell(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got.String() != consumed {
-		t.Fatalf("pager read %q, want %q", got.String(), consumed)
+	const decoded = "é" + decodedCursorReply + "git" + decodedCursorReply
+	if got.String() != decoded {
+		t.Fatalf("pager decoded %q, want %q", got.String(), decoded)
 	}
 	left, err := io.ReadAll(ttyInput)
 	if err != nil || string(left) != suffix {
