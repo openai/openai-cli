@@ -23,6 +23,15 @@ var (
 // The protected DACL grants full access to the current user, SYSTEM, and Administrators.
 // Set it at creation: later changes cannot revoke access through existing handles.
 func CreatePrivate(root *os.Root, name string) (*os.File, error) {
+	return createPrivate(root, name, 0, 0)
+}
+
+// CreateTemporary creates a private file that Windows removes when its last handle closes.
+func CreateTemporary(root *os.Root, name string) (*os.File, error) {
+	return createPrivate(root, name, windows.DELETE, windows.FILE_DELETE_ON_CLOSE)
+}
+
+func createPrivate(root *os.Root, name string, extraAccess, extraOptions uint32) (*os.File, error) {
 	if !filepath.IsLocal(name) || filepath.Base(name) != name {
 		return nil, ErrInvalidName
 	}
@@ -49,9 +58,9 @@ func CreatePrivate(root *os.Root, name string) (*os.File, error) {
 	}
 	attributes.Length = uint32(unsafe.Sizeof(attributes))
 	var handle windows.Handle
-	err = windows.NtCreateFile(&handle, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE, &attributes, &windows.IO_STATUS_BLOCK{}, nil,
+	err = windows.NtCreateFile(&handle, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE|extraAccess, &attributes, &windows.IO_STATUS_BLOCK{}, nil,
 		windows.FILE_ATTRIBUTE_NORMAL, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_CREATE,
-		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
+		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT|extraOptions, 0, 0)
 	if err != nil {
 		if status, ok := err.(windows.NTStatus); ok {
 			err = status.Errno()
