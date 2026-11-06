@@ -24,7 +24,7 @@ func TestMainInputPolicyHelpClassifiesOperands(t *testing.T) {
 		},
 	} {
 		t.Run(strings.Join(tc.path, "/"), func(t *testing.T) {
-			args := append([]string{"openai", "help"}, tc.path...)
+			args := append([]string{"openai", "help", "--all"}, tc.path...)
 			got := runMainDispatchWithEnv(t, "bash", env, args...)
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("help: %+v", got)
@@ -32,6 +32,11 @@ func TestMainInputPolicyHelpClassifiesOperands(t *testing.T) {
 			for _, flag := range tc.present {
 				if !strings.Contains(got.stdout, flag) {
 					t.Errorf("help omits supported flag %s", flag)
+				}
+				args := append([]string{"openai"}, tc.path...)
+				scoped := runMainDispatchWithEnv(t, "bash", env, append(args, "-h", flag)...)
+				if scoped.code != 0 || scoped.stderr != "" || !strings.HasPrefix(strings.TrimSpace(scoped.stdout), flag+"=") || !strings.Contains(scoped.stdout, "JSON or YAML") {
+					t.Errorf("flag help for %s: %+v", flag, scoped)
 				}
 			}
 			for _, flag := range tc.absent {
