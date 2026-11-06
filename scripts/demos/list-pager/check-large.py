@@ -19,7 +19,7 @@ IDS = re.compile(r'\bfile-demo-[0-9]{3}\b')
 def changed(session, previous):
     deadline = time.monotonic() + 8
     while True:
-        frame = session.visible()
+        frame = observer.list_screen(session.visible())
         if frame != previous and IDS.search(frame) and 'q: quit' in frame and 'Loading' not in frame:
             return frame
         assert session.terminal.child.poll() is None, 'pager exited during navigation'
@@ -30,7 +30,10 @@ def changed(session, previous):
 def exercise(session, server):
     expected = [f'file-demo-{number:03d}' for number in range(1, 151)]
     session.wait_visible(expected[0])
-    frame = session.wait_visible('q: quit')
+    first = session.wait_visible('q: quit')
+    assert observer.ORIGINAL in first and b'\x1b[?1049h' not in session.terminal.raw, first
+    frame = observer.list_screen(first)
+    assert IDS.findall(frame) == expected[:max(1, min(5, session.terminal.initial_size[1] - 2))], frame
     session.count(1)
     seen, frames = [], []
     checked_back = False
@@ -57,7 +60,7 @@ def exercise(session, server):
         assert after == max(before, needed), ('fetched beyond the next screen', before, after, frame)
         if after > before and not checked_back:
             session.send('b')
-            assert changed(session, frame) == previous, 'back did not restore the previous chunk'
+            assert observer.same_rows(changed(session, frame), previous), 'back did not restore the previous chunk'
             session.count(after)
             session.send(' ')
             assert changed(session, previous) == frame, 'cached forward navigation changed the chunk'
@@ -71,7 +74,7 @@ def exercise(session, server):
     assert 'End' in frame and session.terminal.child.poll() is None, 'final page did not remain open'
     session.send(' ')
     session.count(6)
-    assert session.visible() == frame, 'Space changed the final page'
+    assert observer.list_screen(session.visible()) == frame, 'Space changed the final page'
     session.send('b')
     assert changed(session, frame) == frames[-2]['frame'], 'back failed on the final page'
     session.send(' ')

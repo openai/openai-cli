@@ -9,6 +9,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/apiquery"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/output/listview"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -50,9 +51,8 @@ func configureListCommand[P JSONListPage[P]](root *cli.Command, resourceName, op
 	}
 	markListPager(command)
 	command.Description = strings.TrimSpace(command.Description + "\n\n" +
+		listview.ControlsHelp + "\n" +
 		"Automatic terminal output shows a compact table, with labeled output when a page needs more detail.\n" +
-		"Automatic terminal output uses a pager. " + listControlsHelp + "\n" +
-		"The final page stays open until you quit.\n" +
 		"--limit controls API page size; --max-items limits total results and defaults to unlimited.\n" +
 		"Explicit text or machine formats, field extraction, and redirected input or output retain their existing output behavior.")
 	for _, flag := range command.Flags {

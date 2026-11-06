@@ -29,7 +29,11 @@ def capture(binary, resource, candidate):
                'TERM': 'xterm-256color', 'TERM_PROGRAM': 'Apple_Terminal', 'NO_COLOR': '1', 'PAGER': 'cat',
                'OPENAI_BASE_URL': f'http://127.0.0.1:{server.server_port}/v1',
                'OPENAI_CLI_NO_AUTO_UPDATE': '1', 'OPENAI_CLI_NO_UPDATE_CHECK': '1'}
-        t = Terminal(str(binary), args, env, width=WIDTH, height=HEIGHT)
+        command = f'$ openai {resource} list'
+        # Give both binaries the same shell line above their first result.
+        launch = 'import os, sys; print(sys.argv[1], flush=True); os.execv(sys.argv[2], sys.argv[2:])'
+        t = Terminal(sys.executable, ['-I', '-S', '-c', launch, command, str(binary), *args],
+                     env, width=WIDTH, height=HEIGHT)
         try:
             if not candidate:
                 # Record the first screen of the original sequential output.
@@ -42,23 +46,27 @@ def capture(binary, resource, candidate):
                 assert f'ID: {prefix}_demo_001' in visible, visible
                 return [visible]
 
-            def wait_for_range(start):
-                last = start + ROWS - 1
+            def wait_for_range(start, last, *, preview=False):
                 deadline = time.monotonic() + 8
                 while time.monotonic() < deadline:
                     t.read(.04)
-                    visible = navigation['screen_text'](t).rstrip('\n')
+                    visible = (screen(t.raw, WIDTH, HEIGHT).decode() if preview
+                               else navigation['screen_text'](t)).rstrip('\n')
                     if (f'{resource.title()} {start}–{last}' in visible
                             and f'{prefix}_demo_{start:03}' in visible and f'{prefix}_demo_{last:03}' in visible):
                         return visible
                 raise AssertionError(t.text())
 
-            first = wait_for_range(1)
+            first = wait_for_range(1, 5, preview=True)
             assert len(server.requests) == 1, server.requests
+            assert command in first, "the first table hid the command that opened it"
+            assert 'Space: browse' in first, "preview controls must explain how to expand"
+            assert b'\x1b[?1049h' not in t.raw, "preview replaced the shell screen"
             t.send(b' ')
-            second = wait_for_range(1 + ROWS)
+            second = wait_for_range(6, 5 + ROWS)
+            assert b'\x1b[?1049h' in t.raw, "Space did not open the full-screen view"
             t.send(b'b')
-            assert wait_for_range(1) == first
+            wait_for_range(1, 5)
             assert len(server.requests) == 2, server.requests
             t.send(b'q')
             navigation['finish'](t, 0)
@@ -73,7 +81,7 @@ def render(text, resource, caption, font):
     image = Image.new('RGB', (width, 70 + HEIGHT * 23), '#0d1117')
     draw = ImageDraw.Draw(image)
     draw.rectangle((0, 0, width, 44), fill='#161b22')
-    draw.text((20, 11), f'$ openai {resource} list', font=font, fill='#f0f6fc')
+    draw.text((20, 11), resource.title(), font=font, fill='#f0f6fc')
     draw.text((width - 20, 11), caption, font=font, fill='#b1bac4', anchor='rt')
     for row, line in enumerate(text.splitlines()):
         draw.text((20, 56 + row * 23), line, font=font, fill='#e6edf3')

@@ -27,8 +27,6 @@ func markListPager(command *cli.Command) {
 	command.Metadata[listPagerMetadata] = true
 }
 
-const listControlsHelp = "Space shows the next screen. Use the up and down arrows to scroll one row. Press b to go back or q to quit. The footer shows the visible range."
-
 // Apply the same terminal behavior after the command tree and its aliases exist.
 func configureRegisteredLists(root *cli.Command) {
 	var visit func(*cli.Command, string)
@@ -55,7 +53,7 @@ func registerListPager(command *cli.Command, parent, title, method string) {
 		return
 	}
 	markListPager(command)
-	help := "Automatic terminal output uses a pager. " + listControlsHelp
+	help := listview.ControlsHelp
 	command.Description = strings.TrimSpace(command.Description + "\n\n" + help)
 	if content, ok := command.Metadata["help-content"].(clihelp.Content); ok {
 		content.Description = strings.TrimSpace(content.Description + "\n\n" + help)

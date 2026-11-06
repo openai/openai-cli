@@ -13,8 +13,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/tidwall/gjson"
 )
+
+// ControlsHelp describes the shared terminal interaction in command help.
+const ControlsHelp = "Terminal lists start with up to five table rows or a short labeled preview. Complete results that fit return to the shell. Press Space to browse the next screen. Use the arrow keys to scroll one row, b to go back, or q to quit."
 
 // JSONListPage is implemented by the SDK's explicit API page types.
 type JSONListPage[P any] interface {
@@ -156,6 +160,15 @@ func Run(opts Options, fetch func() (Page, error), cancel context.CancelFunc) er
 	}
 	m := New(opts, fetch, cancel, width, height)
 	outputErr, runErr, signaled := runPrompt(m, opts, width, height)
+	if m.records != nil && m.records.mode == recordOpening && !m.quitting && !signaled &&
+		outputErr == nil && runErr == nil && opts.Context.Err() == nil {
+		width, height, err = term.GetSize(opts.Stdout.(*os.File).Fd())
+		if err != nil {
+			return m.Finish(outputErr, err)
+		}
+		m.window = tea.WindowSizeMsg{Width: width, Height: height}
+		outputErr, runErr, signaled = runPrompt(m, opts, width, height)
+	}
 	if signaled {
 		m.pending = nil
 		m.quitting = true
@@ -170,7 +183,17 @@ func runPrompt(m *Model, opts Options, width, height int) (error, error, bool) {
 		// Tea must still restore terminal modes after request/program cancellation.
 		Writer: clioutput.Writer{Context: context.Background(), Sink: opts.Stdout}, File: opts.Stdout.(*os.File),
 	}, stop: stop}
-	program := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(out),
+	var model tea.Model = m
+	var output io.Writer = out
+	var preview *recordPreviewModel
+	if m.records != nil && m.records.mode == recordPreview {
+		preview = &recordPreviewModel{model: m, out: out, width: width, height: height}
+		model = preview
+		// Tea owns native input modes, resize notifications and key decoding.
+		// Only the inline renderer writes visible output in this phase.
+		output = terminal.BorrowedWriter{Writer: io.Discard, File: opts.Stdout.(*os.File)}
+	}
+	program := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(output),
 		tea.WithContext(programContext), tea.WithWindowSize(width, height),
 		tea.WithColorProfile(opts.Style.profile), tea.WithoutSignalHandler())
 	stopSignals := func() {}
@@ -210,6 +233,9 @@ func runPrompt(m *Model, opts Options, width, height int) (error, error, bool) {
 	}
 	defer stopSignals()
 	_, runErr := program.Run()
+	if preview != nil {
+		preview.close()
+	}
 	stopSignals()
 	// Retain an interrupt even when terminal shutdown wins the message race.
 	if receivedSignal == os.Interrupt {
@@ -249,12 +275,12 @@ func (m *Model) Finish(outputErr, runErr error) error {
 	if outputErr != nil || runErr != nil || m.opts.Context.Err() != nil {
 		m.pending = nil
 	}
-	return errors.Join(m.err, fetchErr, outputErr, runErr, m.printErrorPages())
+	return errors.Join(m.err, fetchErr, outputErr, runErr, m.printPending())
 }
 
-// Print received records after restoration when a later page fails.
+// Print short complete lists or received records after a later page fails.
 // Remove pending ownership before writing, so partial output cannot be retried.
-func (m *Model) printErrorPages() error {
+func (m *Model) printPending() error {
 	pages := m.pending
 	m.pending = nil
 	writer := clioutput.Writer{Context: m.opts.Context, Sink: m.opts.Stdout}
@@ -290,6 +316,10 @@ func listWithoutCleanupCancellation(err error) error {
 }
 
 func (m *Model) Init() tea.Cmd {
+	if m.records != nil && m.records.mode == recordOpening {
+		m.records.mode = recordBrowser
+		return m.advanceRecords(true, 1)
+	}
 	if m.loaded {
 		return nil
 	}
@@ -378,10 +408,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) View() tea.View {
 	view := tea.NewView("")
-	// Keep screen ownership stable through the final frame. Tea restores the
-	// original terminal before Finish prints any received records after errors.
-	view.AltScreen = true
-	if !m.quitting {
+	// Start record lists in the shell. Only an explicit page-forward key
+	// enters the alternate screen. Keep that screen stable through cleanup.
+	view.AltScreen = m.records == nil || m.records.mode == recordBrowser
+	if !m.quitting && (m.records == nil || m.records.mode != recordOpening) {
 		if m.records != nil {
 			view.Content = m.recordView()
 		} else {

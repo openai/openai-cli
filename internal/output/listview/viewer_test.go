@@ -228,7 +228,7 @@ func TestViewerHistoryWriteFailureDoesNotRetry(t *testing.T) {
 	m.Update(listPageMessage{page: viewerPage("first")})
 	m.Update(listPageMessage{page: viewerPage("second")})
 	m.Update(listPageMessage{err: errors.New("synthetic API failure")})
-	if err := m.printErrorPages(); !errors.Is(err, failure) {
+	if err := m.printPending(); !errors.Is(err, failure) {
 		t.Fatal("lost output failure", err)
 	}
 	if err := m.Finish(failure, nil); !errors.Is(err, failure) {

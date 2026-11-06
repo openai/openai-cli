@@ -39,7 +39,12 @@ func filesViewerFixture(t *testing.T, width, height, pageSize, total int) (*Mode
 
 func finishFilesMove(m *Model, cmd tea.Cmd) {
 	for cmd != nil {
-		_, cmd = m.Update(cmd())
+		msg := cmd()
+		if _, ended := msg.(tea.QuitMsg); ended && m.records.mode == recordOpening {
+			cmd = m.Init()
+		} else {
+			_, cmd = m.Update(msg)
+		}
 	}
 }
 
@@ -62,26 +67,30 @@ func TestFilesScreenNavigationCrossesAPIPages(t *testing.T) {
 		require.Contains(t, lines[len(lines)-1], fmt.Sprintf("Files %d–%d", first, last))
 		require.Equal(t, wantCalls, *calls)
 	}
-	check(1, 28, 1)
+	require.False(t, m.View().AltScreen)
+	check(1, 5, 1)
 	moveFiles(m, tea.KeyDown)
-	check(2, 29, 1)
+	check(2, 6, 1)
 	moveFiles(m, tea.KeyDown)
-	check(3, 30, 1)
-	moveFiles(m, tea.KeyDown)
-	check(4, 31, 2)
+	check(3, 7, 1)
 	moveFiles(m, tea.KeyUp)
-	check(3, 30, 2)
+	check(2, 6, 1)
 	moveFiles(m, 'b')
-	check(1, 28, 2)
+	check(1, 5, 1)
 	moveFiles(m, ' ')
-	check(29, 56, 2)
+	require.True(t, m.View().AltScreen)
+	check(6, 33, 2)
 	moveFiles(m, ' ')
-	check(57, 65, 3)
+	check(34, 61, 3)
+	moveFiles(m, ' ')
+	check(62, 65, 3)
 	require.Contains(t, m.View().Content, "End")
 	moveFiles(m, 'b')
-	check(29, 56, 3)
+	check(34, 61, 3)
 	moveFiles(m, 'b')
-	check(1, 28, 3)
+	check(6, 33, 3)
+	moveFiles(m, 'b')
+	check(1, 5, 3)
 }
 
 func TestFilesShortFirstScreenCanBeRestored(t *testing.T) {
@@ -146,6 +155,19 @@ func TestFilesArrowUpReturnsToPreviousLabeledLine(t *testing.T) {
 	require.True(t, strings.HasPrefix(m.View().Content, "ID "))
 	moveFiles(m, tea.KeyUp)
 	require.True(t, strings.HasPrefix(m.View().Content, "f002 last\n"))
+}
+
+func TestWrappedRecordContinuesFromTheCompactPreview(t *testing.T) {
+	m, _ := filesViewerFixture(t, 12, 9, 1, 1)
+	const text = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789--end-of-the-label"
+	m.opts.RenderRecordLabels = func(gjson.Result, bool) (string, error) { return text, nil }
+	finishFilesMove(m, m.Init())
+	first := strings.ReplaceAll(m.records.screen.content, "\n", "")
+	require.True(t, strings.HasPrefix(text, first))
+	require.Less(t, len(first), len(text))
+	moveFiles(m, ' ')
+	require.True(t, m.View().AltScreen)
+	require.Equal(t, text, first+strings.ReplaceAll(m.records.screen.content, "\n", ""))
 }
 
 func TestFilesArrowsReuseWrappedRecord(t *testing.T) {

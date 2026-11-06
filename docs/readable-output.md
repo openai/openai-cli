@@ -1,8 +1,8 @@
 # Reading command results
 
-Successful JSON responses now print labeled text by default, both in a terminal
-and when stdout is piped or redirected. `--format auto` and `--format text`
-select this behavior explicitly. For example:
+Single API objects print as labeled text in terminals, pipes, and redirected
+files. Lists use a compact preview in interactive terminals. Select
+`--format text` to print all requested records as labeled text.
 
 ```sh
 openai files retrieve --file-id file-example
@@ -10,7 +10,7 @@ openai files retrieve --file-id file-example | cat
 ```
 
 Objects show labeled fields. Nested values stay grouped. In a terminal, list
-commands open a pager. It shows a table when the columns fit. Wider or nested
+commands show a table below your command when the columns fit. Wider or nested
 records use labeled fields. Pipes, explicit `--format text`, and live streams
 print individual records as they arrive. An empty list shows `No results.`
 and `--max-items 0` writes nothing.
@@ -18,18 +18,19 @@ and `--max-items 0` writes nothing.
 ## Browsing a list
 
 Run `openai files list`, `openai webhooks list`, or `openai skills list`.
-The footer shows which records are visible, such as `Files 1–28`.
+The CLI starts with up to five table rows or a short block of labeled fields.
+Complete results that fit return to the shell. Longer results show a footer, such as `Files 1–5`.
 
 | Key | Action |
 | --- | --- |
 | ↓ or ↑ | Scroll one row. |
-| Space | Show the next screen. |
+| Space | Open the full-screen view at the next unread row. Subsequent presses advance one screen. |
 | b | Return to the previous screen. |
 | q | Quit. |
 
 Headings stay visible while you scroll. Moving forward can fetch another API
-page. Moving back reuses records you already loaded. The pager stays open on
-the final screen. Use `--format json` for the full API fields.
+page. Moving back reuses records you already loaded. Once you start browsing,
+the final screen stays open until you quit. Use `--format json` for the full API fields.
 
 The CLI discovers list actions during command registration, including aliases
 and names such as `list-files`. New commands using the standard JSON response

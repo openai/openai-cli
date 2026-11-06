@@ -21,7 +21,7 @@ import (
 )
 
 func TestListPagerAdvanceAtVisibleRecordBoundary(t *testing.T) {
-	for _, count := range []int{24, 25, 26} {
+	for _, count := range []int{4, 5, 6} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			var out bytes.Buffer
 			var requests atomic.Int32
@@ -43,19 +43,20 @@ func TestListPagerAdvanceAtVisibleRecordBoundary(t *testing.T) {
 			model.Update(model.Init()())
 			require.EqualValues(t, 1, requests.Load())
 			require.NotContains(t, model.View().Content, "Full data:")
-			if count <= 25 {
+			if count <= 5 {
 				require.Contains(t, model.View().Content, last)
 			} else {
 				require.NotContains(t, model.View().Content, last)
 			}
 			_, advance := model.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 			require.NotNil(t, advance, "the next screen spans the API page boundary")
-			model.Update(advance())
+			require.IsType(t, tea.QuitMsg{}, advance(), "the inline renderer releases the shell first")
+			model.Update(model.Init()())
 			require.EqualValues(t, 2, requests.Load())
 			nextScreen := model.View().Content
 			require.Contains(t, nextScreen, "file-next")
 			require.Contains(t, nextScreen, "End")
-			if count == 26 {
+			if count == 6 {
 				require.Contains(t, nextScreen, last, "keep the last unshown file from the first API response")
 			}
 			require.NotContains(t, nextScreen, "file-001")
@@ -120,13 +121,9 @@ func TestListPagerHelp(t *testing.T) {
 			root.Writer = &help
 			args := append([]string{"openai"}, strings.Fields(route)...)
 			require.NoError(t, root.Run(t.Context(), append(args, "list", "--help")))
-			require.Contains(t, help.String(), "Automatic terminal output uses a pager.")
-			if route == "models" {
-				require.Contains(t, help.String(), "Space advances one screen, b moves back, and q quits.")
-			} else {
-				require.Contains(t, help.String(), "Space shows the next screen.")
-			}
-			require.Contains(t, help.String(), "The final page stays open until you quit.")
+			require.Contains(t, help.String(), "Terminal lists start with up to five table rows or a short labeled preview.")
+			require.Contains(t, help.String(), "Complete results that fit return to the shell.")
+			require.Contains(t, help.String(), "Press Space to browse the next screen.")
 			for _, removed := range []string{"--pager", "--no-pager", "inline", "finish automatically", "retain noninteractive behavior"} {
 				require.NotContains(t, help.String(), removed)
 			}

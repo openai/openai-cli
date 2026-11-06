@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/output/listview"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -36,10 +37,9 @@ func Configure(root *cli.Command, policy Options) {
 	}
 	command.Usage = "List accessible model IDs and owners."
 	command.Description = `Shows IDs and owners. Narrow terminals keep both values in labeled output.
-Automatic terminal output uses a pager. Arrow keys move one row. Space advances one screen, b moves back, and q quits.
+` + listview.ControlsHelp + `
 Interactive requests load up to 100 models in ID order. The pager loads more records when a new screen needs them.
 Back uses previously loaded pages. Servers that return the complete list use local pages.
-The final page stays open until you quit.
 Explicit output formats keep their existing behavior.
 Slow interactive requests show loading feedback.
 Use --filter and --sort-by to select models before --max-items limits the result.

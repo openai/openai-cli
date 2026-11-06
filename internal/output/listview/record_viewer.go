@@ -32,7 +32,16 @@ type recordPage struct {
 	fullLabels bool
 }
 
+type recordMode uint8
+
+const (
+	recordPreview recordMode = iota
+	recordOpening
+	recordBrowser
+)
+
 type recordViewer struct {
+	mode                  recordMode
 	emptyMessage          string
 	labelItem, labelWidth int
 	wrappedLabels         []string       // at most one record, including very long unfamiliar fields
@@ -51,6 +60,7 @@ type recordViewer struct {
 
 func (m *Model) receiveRecords(page Page) tea.Cmd {
 	f := m.records
+	first := len(f.pages) == 0
 	if page.Notice != "" {
 		if len(page.Items) == 0 {
 			f.emptyMessage = page.Notice
@@ -65,7 +75,24 @@ func (m *Model) receiveRecords(page Page) tea.Cmd {
 		f.items = append(f.items, page.Items...)
 		f.pages = append(f.pages, recordPage{end: len(f.items), fullLabels: page.FullLabels})
 	}
-	return m.refreshRecords()
+	cmd := m.refreshRecords()
+	if first && cmd == nil && m.err == nil && !m.more && f.screen.end.item == len(f.items) {
+		// A complete result that fits in the preview belongs in scrollback.
+		// Finish writes it once after Tea releases the terminal.
+		body := f.screen.content
+		if len(f.items) == 0 {
+			body = f.emptyMessage
+			if body == "" {
+				body = "No results."
+			}
+		}
+		if len(f.items) != 0 && (page.Notice != "" || m.showRecordHint()) {
+			body += "\n" + m.opts.Style.Note(m.opts.Hint)
+		}
+		m.pending = []string{body + "\n"}
+		return m.quit()
+	}
+	return cmd
 }
 
 // fullRecordLabels preserves the source page's fallback even when an individual
@@ -149,7 +176,7 @@ func (m *Model) refreshRecords() tea.Cmd {
 
 func (m *Model) renderRecords() (recordScreen, error) {
 	f := m.records
-	width, height := max(1, m.window.Width), m.recordHeight()
+	width, height := m.recordWidth(), m.recordHeight()
 	s := recordScreen{recordRange: recordRange{from: f.from}}
 	// A regular screen has one pinned table header and one footer. A two-row
 	// terminal can still display one complete record row above the footer.
@@ -263,6 +290,12 @@ func (m *Model) advanceRecords(page bool, step int) tea.Cmd {
 	if s.end.item == len(f.items) && !m.more {
 		return nil
 	}
+	if page && f.mode == recordPreview {
+		// End the inline renderer before saving the main screen. Switching
+		// buffers in the same render would restore a stale preview on quit.
+		f.mode = recordOpening
+		return tea.Quit
+	}
 	f.endLimit, f.fill, f.restoreLabels = recordPosition{}, true, false
 	if page {
 		f.history = append(f.history, s.recordRange)
@@ -305,7 +338,7 @@ func (m *Model) backRecords(page bool, step int) tea.Cmd {
 			continue
 		}
 		f.from.item--
-		width := max(1, m.window.Width)
+		width := m.recordWidth()
 		// A table-eligible record can have appeared in a labeled screen beside
 		// an unfamiliar record. Step back into its actual previous layout.
 		labeled, seen := f.wasLabeled[f.from.item]
@@ -343,7 +376,13 @@ func (m *Model) recordTable(from, end, width int) (string, bool, error) {
 
 // Keep optional detail guidance below the records, so it cannot add a paging step.
 func (m *Model) showRecordHint() bool {
-	return m.opts.Hint != "" && m.window.Height >= 4 && ansi.StringWidth(m.opts.Hint) <= m.window.Width
+	return m.opts.Hint != "" && m.window.Height >= 4 && ansi.StringWidth(m.opts.Hint) <= m.recordWidth()
+}
+
+// Keep wrapped line offsets stable when the inline frame (which reserves
+// one right-edge cell) hands the first unread line to the full-screen browser.
+func (m *Model) recordWidth() int {
+	return max(1, m.window.Width-1)
 }
 
 func (m *Model) recordHeight() int {
@@ -351,12 +390,17 @@ func (m *Model) recordHeight() int {
 	if m.showRecordHint() {
 		height--
 	}
+	if m.records.mode != recordBrowser {
+		// Reserve a header plus five data rows for tables. Labeled records
+		// use those same six physical lines, even for a single long value.
+		height = min(height, 6)
+	}
 	return max(1, height)
 }
 
 func (m *Model) recordView() string {
 	f := m.records
-	width := max(1, m.window.Width)
+	width := m.recordWidth()
 	position := m.opts.Plural
 	if len(f.screen.rows) != 0 {
 		first := f.screen.from.item + 1
@@ -376,6 +420,9 @@ func (m *Model) recordView() string {
 	}
 	controls := "↑↓: row   Space: next screen   b: back   q: quit"
 	medium, short := "Space: next  b: back  q: quit", "↑↓ Space b q"
+	if f.mode == recordPreview {
+		controls, medium, short = "↑↓: row   Space: browse   b: back   q: quit", "Space: browse  b: back  q: quit", "Space: browse  q"
+	}
 	if m.loading || !m.loaded {
 		controls, medium, short = "Loading…   q: quit", "Loading…  q: quit", "Loading… q"
 	} else if !m.more && f.screen.end.item == len(f.items) {

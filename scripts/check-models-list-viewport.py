@@ -123,10 +123,16 @@ def main():
             def screen(name=None, offset=None):
                 assert terminal.child.poll() is None, "Pager exited before q"
                 value = navigation.screen_text(terminal)
+                width, height = terminal.size()
+                inline = b"\x1b[?1049h" not in terminal.raw
+                if inline:
+                    # Asciinema exports logical lines. The preview uses one
+                    # soft-wrapped line; recover its physical rows for this ASCII fixture.
+                    value = "\n".join(line[i:i+width].rstrip() for line in value.splitlines()
+                                      for i in range(0, len(line), width))
                 if name is not None:
                     (output / (name + ".txt")).write_text(value)
                 assert len(server.requests) == 1, "Paging fetched another API response"
-                width, height = terminal.size()
                 lines = [line.rstrip() for line in value.rstrip("\n").splitlines()]
                 assert lines and len(lines) <= height, "Empty or oversized pager screen"
                 footer = lines.pop()
@@ -135,10 +141,12 @@ def main():
                     assert lines == ["No results."] and "End" in footer
                     return value, []
                 if width >= len("Details: --format json") and height >= 4:
-                    assert lines.pop() == "Details: --format json"
-                header, rows, ordinals = expected_rows(width)
+                    hint = lines.pop()
+                    assert hint == "Details: --format json"
+                header, rows, ordinals = expected_rows(max(1, width-1))
                 if header:
-                    assert lines.pop(0) == header, "Table header must remain pinned"
+                    actual_header = lines.pop(0)
+                    assert actual_header == header, "Table header must remain pinned"
                 if offset is not None:
                     end = offset + len(lines)
                     assert lines and lines == rows[offset:end], f"Model rows changed at offset {offset}: {lines!r}"
@@ -165,8 +173,25 @@ def main():
                 navigation.drain(terminal, 0.05)
                 return screen()
 
+            header, expected, _ = expected_rows(max(1, args.width-1))
+            hint_lines = int(bool(ordered and args.width >= len("Details: --format json") and args.height >= 4))
+            available = max(1, min(6, args.height - hint_lines - 1) - int(bool(header)))
+            if len(expected) <= available:
+                navigation.finish(terminal, 0)
+                actual = navigation.screen_text(terminal)
+                lines = [line.rstrip() for line in actual.strip("\n").splitlines()]
+                want = ([header] if header else []) + expected if ordered else ["No results."]
+                if ordered and hint_lines:
+                    want.append("Details: --format json")
+                assert lines == want, (lines, want)
+                assert b"\x1b[?1049h" not in terminal.raw, "short list took over the shell"
+                assert len(server.requests) == 1, server.requests
+                result.update(status="passed", exited_before_input=True, footer_visible=False,
+                              initial_status=terminal.child.returncode, verified_full_ids_and_owners=len(ordered))
+                return
+
             deadline = time.monotonic() + 8
-            marker = b"synthetic" if ordered else b"No results."
+            marker = b"synthetic"
             while marker not in terminal.raw:
                 terminal.read(0.02)
                 assert terminal.child.poll() is None, "Automatic terminal list bypassed the pager"
@@ -178,7 +203,7 @@ def main():
                           initial_status=terminal.child.poll(), footer_visible=True,
                           initial_seconds=time.monotonic() - terminal.started)
             (output / "initial.tty").write_bytes(before)
-            assert not result["exited_before_input"], "Short or empty list bypassed the pager"
+            assert not result["exited_before_input"], "Preview exited with undisplayed rows"
             assert result["initial_bytes"] < 40000, "Initial screen dumped excessive output"
             initial_screen, initial_lines = screen("initial-screen", 0)
             if args.expect_id_owner and items:
@@ -203,7 +228,7 @@ def main():
             steps = 0
             completion_started = time.monotonic()
             deadline = completion_started + max(30, len(ordered) * 0.03)
-            _, rows, _ = expected_rows(args.width)
+            _, rows, _ = expected_rows(max(1, args.width-1))
             while len(all_lines) < len(rows):
                 assert time.monotonic() < deadline, "Pager traversal exceeded its completion deadline"
                 change_view(b" ")
@@ -214,9 +239,11 @@ def main():
                     (output / "second-page.txt").write_text(current)
                     result["bytes_after_space"] = len(terminal.raw)
                     result["request_count_after_space"] = len(server.requests)
-                    assert change_view(b"b")[0] == initial_screen, "Back did not restore the initial viewport"
+                    _, previous = change_view(b"b")
+                    assert previous == initial_lines, "Back did not restore the preview records"
+                    screen(offset=0)
                     assert change_view(b" ")[0] == current, "Forward changed cached records"
-                    if expected_rows(args.width)[0]:
+                    if expected_rows(max(1, args.width-1))[0]:
                         terminal.resize(max(20, args.width - 30), args.height)
                         navigation.drain(terminal, 0.3)
                         screen("resized-second-page")
