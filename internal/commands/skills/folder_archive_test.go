@@ -1,8 +1,11 @@
 package skills
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -65,4 +68,32 @@ func TestFolderChangesDuringPackaging(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFolderOwnsTemporaryZIP(t *testing.T) {
+	dir := t.TempDir()
+	scratch := filepath.Join(dir, "scratch")
+	require.NoError(t, os.Mkdir(scratch, 0700))
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(key, scratch)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("synthetic"), 0600))
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	upload, err := ArchiveFolder(t.Context(), dir, info)
+	require.NoError(t, err)
+	defer upload.Close()
+	data, err := io.ReadAll(upload)
+	require.NoError(t, err)
+	require.NoError(t, upload.Close())
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	require.NoError(t, err)
+	var names []string
+	for _, f := range archive.File {
+		names = append(names, f.Name)
+	}
+	require.ElementsMatch(t, []string{filepath.Base(dir) + "/SKILL.md", filepath.Base(dir) + "/scratch/"}, names)
+	entries, err := os.ReadDir(scratch)
+	require.NoError(t, err)
+	require.Empty(t, entries)
 }
