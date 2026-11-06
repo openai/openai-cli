@@ -106,13 +106,11 @@ presenting the client certificate during the proxy's own TLS handshake.
 
 ## Text and structured request values
 
-Request flags use schema metadata to select parsing.
-Flags that accept unrestricted text preserve that text, including `null`, numbers, brackets, and newlines.
-This includes nullable identifiers, nested text fields, and each repeated text operand.
-Numeric, Boolean, enum-only, and structured-only object or array operands keep their typed parsing.
-Specialized input adapters retain their existing contracts.
-
-Text operands that also accept another type have a matching `-structured` flag.
+If a flag has a matching `-structured` flag, its ordinary form sends exactly the text you supply.
+For example, `responses create --input 'Translate: hello'` sends a string.
+This also applies to completion prompts and stop sequences, embedding inputs, and vector store search queries.
+Run `openai help --all responses create` to see which flags support both forms.
+Other flags keep their existing parsers.
 Use that flag to parse JSON or YAML, including explicit nulls:
 
 ```sh
@@ -145,7 +143,6 @@ OPENAI_CLI_INPUT_MODE=literal openai responses create --model MODEL --input 'Tra
 Only processes that inherit the setting use it.
 Configure containers, SSH sessions, and environment-clearing launchers separately.
 An explicit `literal` assignment overrides inherited `legacy` for that process.
-The proposed legacy support duration still requires owner acceptance; this guide makes no lifetime guarantee.
 
 ## Passing files as arguments
 

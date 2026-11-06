@@ -22,13 +22,10 @@ They do not become flags or file references.
 
 ## Text and structured operands
 
-Schema metadata selects each operand's parsing policy.
-Text-capable operands preserve unrestricted text, including nullable identifiers, nested text fields, and each repeated text operand.
-Numeric, Boolean, enum-only, and structured-only object or array operands keep their existing typed behavior.
-Specialized input adapters retain their existing contracts.
-
-Text operands that also accept another type expose a matching `-structured` flag.
-This includes text operands that accept null.
+Flags with a matching `-structured` flag preserve text in their ordinary form.
+This includes Responses input, completion prompts and stop sequences, embedding inputs, and vector store search queries.
+Use `openai help --all responses create` to find both forms for that command.
+Other flags keep their existing parsers.
 Use `-structured` to parse JSON or YAML explicitly:
 
 ```sh

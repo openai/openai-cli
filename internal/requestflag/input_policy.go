@@ -3,6 +3,7 @@ package requestflag
 import (
 	"fmt"
 	"reflect"
+	"slices"
 
 	"github.com/urfave/cli/v3"
 )
@@ -16,6 +17,9 @@ const (
 	InputPolicyTyped
 	InputPolicyText
 	InputPolicyTextStructured
+	// The older command snapshot has no schema annotation for this operand.
+	// Keep its original flag parser until the producer supplies a policy.
+	inputPolicyExistingParser
 )
 
 const InputModeEnv = "OPENAI_CLI_INPUT_MODE"
@@ -36,13 +40,60 @@ type InputValue struct {
 type inputPolicyFlag interface {
 	cli.Flag
 	inputPolicy() InputPolicy
+	setInputPolicy(InputPolicy)
 	setLegacyInput(bool)
 }
 
-func (f *Flag[T]) inputPolicy() InputPolicy        { return f.InputPolicy }
-func (f *Flag[T]) setLegacyInput(legacy bool)      { f.legacyInput = legacy }
-func (f *InnerFlag[T]) inputPolicy() InputPolicy   { return f.InputPolicy }
-func (f *InnerFlag[T]) setLegacyInput(legacy bool) { f.legacyInput = legacy }
+func (f *Flag[T]) inputPolicy() InputPolicy          { return f.InputPolicy }
+func (f *Flag[T]) setLegacyInput(legacy bool)        { f.legacyInput = legacy }
+func (f *InnerFlag[T]) inputPolicy() InputPolicy     { return f.InputPolicy }
+func (f *InnerFlag[T]) setLegacyInput(legacy bool)   { f.legacyInput = legacy }
+func (f *Flag[T]) setInputPolicy(p InputPolicy)      { f.InputPolicy = p }
+func (f *InnerFlag[T]) setInputPolicy(p InputPolicy) { f.InputPolicy = p }
+
+// ConfigureUnannotatedCommands supports older generated command snapshots.
+// Call it on canonical resources before adding handwritten commands or aliases.
+// If the producer supplied any policies, it owns the entire snapshot and
+// ConfigureInputMode will diagnose omissions instead of filling them in.
+func ConfigureUnannotatedCommands(root *cli.Command, textUnionFields map[string][]string) {
+	type assignment struct {
+		flag   inputPolicyFlag
+		policy InputPolicy
+	}
+	var pending []assignment
+	for _, resource := range root.Commands {
+		for _, action := range resource.Commands {
+			fields := textUnionFields[resource.Name+" "+action.Name]
+			for _, flag := range action.Flags {
+				operand, ok := flag.(inputPolicyFlag)
+				if !ok || !isRequestOperand(flag) {
+					continue
+				}
+				if operand.inputPolicy() != InputPolicyUnknown {
+					return
+				}
+				policy := inputPolicyExistingParser
+				if len(fields) != 0 && slices.Contains(fields, operandBodyPath(flag)) {
+					policy = InputPolicyTextStructured
+				}
+				pending = append(pending, assignment{operand, policy})
+			}
+		}
+	}
+	for _, item := range pending {
+		item.flag.setInputPolicy(item.policy)
+	}
+}
+
+func operandBodyPath(flag cli.Flag) string {
+	if inner, ok := flag.(HasOuterFlag); ok {
+		return operandBodyPath(inner.GetOuterFlag()) + "." + inner.GetInnerField()
+	}
+	if field, ok := flag.(InRequest); ok {
+		return field.GetBodyPath()
+	}
+	return ""
+}
 
 // ConfigureInputMode captures one process's policy before argument parsing.
 // It never changes the environment or shares mutable process-global state.

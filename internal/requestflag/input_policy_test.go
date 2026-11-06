@@ -38,6 +38,29 @@ func TestInputPolicyRejectsMissingRequestMetadata(t *testing.T) {
 	})
 }
 
+func TestUnannotatedCommandsOnlyFillAnEntireOlderSnapshot(t *testing.T) {
+	for _, annotated := range []bool{false, true} {
+		input := &Flag[any]{Name: "prompt", BodyPath: "input"}
+		query := &Flag[any]{Name: "input", QueryPath: "input"}
+		if annotated {
+			query.InputPolicy = InputPolicyTyped
+		}
+		action := &cli.Command{Name: "create", Flags: []cli.Flag{input, query}}
+		root := &cli.Command{Commands: []*cli.Command{{Name: "responses", Commands: []*cli.Command{action}}}}
+		ConfigureUnannotatedCommands(root, map[string][]string{"responses create": {"input"}})
+		if annotated {
+			require.Equal(t, InputPolicyUnknown, input.InputPolicy)
+			require.ErrorContains(t, ConfigureInputMode(root, ""), "--prompt")
+			continue
+		}
+		require.NoError(t, ConfigureInputMode(root, ""))
+		require.Equal(t, InputPolicyTextStructured, input.InputPolicy)
+		require.Equal(t, inputPolicyExistingParser, query.InputPolicy)
+		require.NoError(t, query.Set("input", "17"))
+		require.NotEqual(t, "17", query.Get())
+	}
+}
+
 func TestInputPolicyModeBelongsToCommandTree(t *testing.T) {
 	t.Parallel()
 	newTree := func() (*cli.Command, *Flag[any], *Flag[any]) {
