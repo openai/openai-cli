@@ -53,8 +53,8 @@ Filter escapes are decoded before RE2. To pass two backslashes to RE2, write fou
 Only id=VALUE and id~REGEX are supported. Boolean expressions and operand lists are not supported.
 Use --format json for complete records. Filtering and sorting do not support --format raw.`
 	command.Flags = append(command.Flags,
-		&cli.StringFlag{Name: "filter", Usage: "Select IDs with id=VALUE (exact) or id~REGEX (case-sensitive RE2). Quote the expression."},
-		&cli.StringFlag{Name: "sort-by", Value: "id", Usage: "Sort selected IDs: id (ascending) or ~id (descending), before --max-items."},
+		&cli.StringFlag{Name: "filter", Usage: "Select IDs with id=VALUE (exact) or id~REGEX (case-sensitive RE2). Quote the expression. Cannot be used with --format raw."},
+		&cli.StringFlag{Name: "sort-by", Value: "id", Usage: "Sort selected IDs: id (ascending) or ~id (descending), before --max-items. Cannot be used with --format raw."},
 	)
 	next := command.Action
 	command.Action = func(ctx context.Context, command *cli.Command) error {

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
 	"github.com/urfave/cli/v3"
 )
@@ -42,9 +44,13 @@ func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *
 	}
 	credential, override := apiAuthenticationCredentialSource(root, flag, variable, label)
 	emptyFlag := root.IsSet(flag) && root.Count(flag) > 0 && root.String(flag) == ""
-	setup := clihelp.DisplayInvocation(root) + " help setup"
-	if admin {
-		setup += " admin"
+	setupGuidance := func(prefix string) string {
+		topic := keySetupTopic(admin)
+		native, _ := clihelp.ShellInvocations(root, clihelp.DisplayInvocation(root), terminal.ParentShell(context.Background()))
+		if native == "" {
+			return "For key setup, use the same executable with " + topic + "."
+		}
+		return prefix + clihelp.SuggestedCommand(root, output, native+" "+topic)
 	}
 	if custom {
 		message := "Authentication failed for the custom API address.\n" + credential
@@ -54,7 +60,7 @@ func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *
 		case emptyFlag:
 			return message + "\nRemove the empty --" + flag + " override."
 		default:
-			return message + "\nSet the credential required by this API endpoint.\nKey setup: " + clihelp.SuggestedCommand(root, output, setup)
+			return message + "\nSet the credential required by this API endpoint.\n" + setupGuidance("Key setup: ")
 		}
 	}
 	switch {
@@ -65,11 +71,9 @@ func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *
 		if os.Getenv(variable) != "" {
 			return message + "\nRemove the empty option to use " + variable + "."
 		}
-		return message + "\nRemove the empty option. For help setting " + variable + ", run:\n  " +
-			clihelp.SuggestedCommand(root, output, setup)
+		return message + "\nRemove the empty option. " + setupGuidance("For help setting "+variable+", run:\n  ")
 	case !apiAuthenticationKeyPresent(root, flag, variable):
-		return "No " + label + " is configured.\nRun this guide to set " + variable + ".\n  " +
-			clihelp.SuggestedCommand(root, output, setup)
+		return "No " + label + " is configured.\n" + setupGuidance("Run this guide to set "+variable+".\n  ")
 	}
 	message := "OpenAI could not authenticate this request."
 	action := "Check the"
@@ -165,6 +169,10 @@ func apiAuthenticationAdminCommand(root *cli.Command, failure error) bool {
 	if command == nil {
 		command, _, _ = parsedOutputCommand(root)
 	}
+	return isAdminAPICommand(command)
+}
+
+func isAdminAPICommand(command *cli.Command) bool {
 	if command == nil {
 		return false
 	}
@@ -174,12 +182,20 @@ func apiAuthenticationAdminCommand(root *cli.Command, failure error) bool {
 	if strings.HasPrefix(resource, "admin:") {
 		return true
 	}
+	root := command.Root()
 	for _, ancestor := range command.Lineage() {
 		if ancestor != root && (ancestor.Name == "admin" || strings.HasPrefix(ancestor.Name, "admin:")) {
 			return true
 		}
 	}
 	return false
+}
+
+func keySetupTopic(admin bool) string {
+	if admin {
+		return "help setup admin"
+	}
+	return "help setup"
 }
 
 func apiAuthenticationKeyPresent(root *cli.Command, flag, variable string) bool {

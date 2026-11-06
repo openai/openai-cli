@@ -19,6 +19,9 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 	localcommands.OrderImages(root)
 	configureGlobalFlagDescriptions(root)
 	configureHelpGroups(root)
+	root.Metadata["help-key-setup-topic"] = func(command *cli.Command) string {
+		return keySetupTopic(isAdminAPICommand(command))
+	}
 	manpages.ConfigureHelp(root)
 	configureImageHelpContent(root)
 	configureLocalHelpContent(root)
@@ -331,7 +334,7 @@ func configureHelpGroups(root *cli.Command) {
 			setCompleteHelpContent(list, clihelp.Content{
 				Description: list.Description,
 				Examples:    clihelp.CommandExamples(list, "models list"),
-				CompactNote: "In the pager, Space moves forward, b moves back, and q quits. Use --format json for complete model records.",
+				CompactNote: "In the pager, Space moves forward, b moves back, and q quits. Filtering and sorting do not support --format raw. Use --format json for complete model records.",
 			})
 			setBriefFlagDescriptions(list, map[string]string{
 				"filter":    "Match model IDs with id=VALUE or id~REGEX.",

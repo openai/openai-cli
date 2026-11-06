@@ -33,7 +33,7 @@ func configureBatchHelpContent(root *cli.Command) {
 	})
 	setCompleteHelpContent(batches, group)
 	compactNotes := map[string]string{
-		"browse":  "Ctrl+N starts a new batch. Review the request before submitting it. Leaving the browser keeps remote batches running.",
+		"browse":  "Requires terminal stdin, stdout, and stderr. Use batches list in scripts. Ctrl+N starts a new batch. Review the request before submitting it. Leaving the browser keeps remote batches running.",
 		"list":    "In the pager, Space moves forward, b moves back, and q quits.",
 		"results": "Use --match-input to match by custom ID. Late failures can leave partial output. Use batches download for exact file bytes.",
 		"submit":  "Uploads one JSONL file and creates one batch. Add --wait to follow completion. Mutations never retry automatically.",

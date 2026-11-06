@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -205,7 +206,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 				out = append(out, topic)
 				if !literal && strings.HasPrefix(topic, "-") {
 					name, _, assigned := strings.Cut(strings.TrimLeft(topic, "-"), "=")
-					if flag, ok := rootFlag(root, name).(cli.DocGenerationFlag); ok && flag.TakesValue() && !assigned && j+1 < len(args) {
+					if flag, ok := declaredFlag(root, name).(cli.DocGenerationFlag); ok && flag.TakesValue() && !assigned && j+1 < len(args) {
 						// A flag value may itself spell a help switch or delimiter.
 						j++
 						out = append(out, args[j])
@@ -227,7 +228,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 			// may themselves say "help"; skip those values without parsing them.
 			if arg != "--" && (current == root || len(current.Commands) > 0) {
 				name, _, assigned := strings.Cut(strings.TrimLeft(arg, "-"), "=")
-				if flag := rootFlag(root, name); flag != nil {
+				if flag := declaredFlag(root, name); flag != nil {
 					if local, ok := flag.(cli.LocalFlag); current != root && ok && local.IsLocal() {
 						return args, false, nil
 					}
@@ -267,12 +268,10 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	return args, false, nil
 }
 
-func rootFlag(root *cli.Command, name string) cli.Flag {
-	for _, flag := range root.Flags {
-		for _, alias := range flag.Names() {
-			if alias == name {
-				return flag
-			}
+func declaredFlag(command *cli.Command, name string) cli.Flag {
+	for _, flag := range command.Flags {
+		if slices.Contains(flag.Names(), name) {
+			return flag
 		}
 	}
 	return nil
@@ -305,7 +304,7 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 				}
 			}
 			remove[i], help = true, true
-			if !assigned && i == len(args)-2 && current.CustomHelpTemplate == commandHelpTemplate && current.Name != "@completion" {
+			if !assigned && i == len(args)-2 && current.CustomHelpTemplate == commandHelpTemplate {
 				subjectIndex = i + 1
 			}
 			continue
@@ -313,19 +312,16 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 		if strings.HasPrefix(arg, "-") {
 			name, value, assigned := strings.Cut(strings.TrimLeft(arg, "-"), "=")
 			var found cli.Flag
+			var owner *cli.Command
 			for j := len(chain) - 1; j >= 0 && found == nil; j-- {
-				for _, flag := range chain[j].Flags {
-					if local, ok := flag.(cli.LocalFlag); j != len(chain)-1 && ok && local.IsLocal() {
-						continue
-					}
-					for _, alias := range flag.Names() {
-						if alias == name {
-							found = flag
-							if chain[j].Name == "@completion" {
-								completionOption = true
-							}
-						}
-					}
+				owner = chain[j]
+				flag := declaredFlag(owner, name)
+				if local, ok := flag.(cli.LocalFlag); owner != current && ok && local.IsLocal() {
+					continue
+				}
+				found = flag
+				if found != nil && owner.Name == "@completion" {
+					completionOption = true
 				}
 			}
 			if found == nil && current == root && (spelling == "--all" || spelling == "-all") {
@@ -342,12 +338,20 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 			if i == subjectIndex && !assigned {
 				// Only consume an advertised spelling in the final argument.
 				// All other options and values still belong to the parser.
+				// urfave registers the root version flag later, during Run.
+				if found == nil && current == root && !root.HideVersion && root.Version != "" && cli.VersionFlag != nil {
+					names := cli.VersionFlag.Names()
+					if slices.Contains(names, name) && declaredFlag(root, names[0]) == nil {
+						found, owner = cli.VersionFlag, root
+					}
+				}
 				prefix := "--"
 				if len(name) == 1 {
 					prefix = "-"
 				}
-				if visible, ok := found.(cli.VisibleFlag); ok && visible.IsVisible() && spelling == prefix+name {
-					root.Metadata["help-selected-flag"] = found
+				if visible, ok := found.(cli.VisibleFlag); ok && visible.IsVisible() && spelling == prefix+name &&
+					(current.Name != "@completion" || owner == current) {
+					root.Metadata["help-selected-flag"] = helpFlagSelection{owner, name}
 					remove[i] = true
 					continue
 				}
@@ -403,13 +407,22 @@ func normalizeHelpFlag(root *cli.Command, args []string) ([]string, bool) {
 	return out, true
 }
 
+// Resolve the installed flag so the reference reflects aliases kept by urfave.
+type helpFlagSelection struct {
+	owner *cli.Command
+	name  string
+}
+
 func requestedHelpFlag(command *cli.Command) cli.Flag {
 	metadata := command.Root().Metadata
 	if metadata["help-selected-command"] != command {
 		return nil
 	}
-	flag, _ := metadata["help-selected-flag"].(cli.Flag)
-	return flag
+	selection, ok := metadata["help-selected-flag"].(helpFlagSelection)
+	if !ok {
+		return nil
+	}
+	return declaredFlag(selection.owner, selection.name)
 }
 
 var subcommandHelpOnce sync.Once

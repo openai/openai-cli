@@ -61,9 +61,6 @@ func commandHelpAtWidth(command *cli.Command, invocation, path string, width int
 }
 
 func commandHelpAtWidths(command *cli.Command, invocation, path string, width, navigationWidth int) string {
-	if path == "@completion" {
-		return completionHelp(command, invocation, width, navigationWidth)
-	}
 	var out strings.Builder
 	style := commandHelpStyle(command)
 	heading := func(text string) string { return style.render(style.section, text) }
@@ -88,6 +85,9 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 				return wrapDescription(guidance, "  ", width)
 			}
 		}
+	}
+	if path == "@completion" {
+		return completionHelp(command, invocation, width, navigationWidth)
 	}
 	plainUsage := terminalProse(usage)
 	summary := terminalProse(content.Summary)
@@ -257,7 +257,11 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	} else if path == "" {
 		out.WriteString(style.render(style.note, wrapDescription("Help needs no API key or internet.", "  ", width)))
 	} else if showKeySetup {
-		fmt.Fprintf(&out, "  Key setup: %s\n", commandsuggest.Record(command, native+" help setup"))
+		topic := "help setup"
+		if topicFor, ok := command.Root().Metadata["help-key-setup-topic"].(func(*cli.Command) string); ok {
+			topic = topicFor(command)
+		}
+		fmt.Fprintf(&out, "  Key setup: %s\n", commandsuggest.Record(command, native+" "+topic))
 	}
 	output := command.Root().Writer
 	if output == nil {

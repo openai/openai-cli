@@ -471,11 +471,11 @@ func (f *Flag[T]) IsDefaultVisible() bool {
 }
 
 func (f *Flag[T]) hasUnsetDefault() bool {
-	// A nil slice has no declared items. An explicit empty array has a
-	// non-nil slice. Preserve constants and authored default descriptions.
+	// A nil interface, pointer or slice has no declared default.
+	// Preserve explicit empty arrays, constants and authored descriptions.
 	value := reflect.ValueOf(f.Default)
 	return !f.Const && f.DefaultText == "" &&
-		(value.Kind() == reflect.Pointer || value.Kind() == reflect.Slice) && value.IsNil()
+		(!value.IsValid() || (value.Kind() == reflect.Pointer || value.Kind() == reflect.Slice) && value.IsNil())
 }
 
 func (f *Flag[T]) TypeName() string {

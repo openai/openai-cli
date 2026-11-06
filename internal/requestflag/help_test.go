@@ -76,6 +76,23 @@ func TestHelpDistinguishesUnsetAndExplicitArrayDefaults(t *testing.T) {
 	}
 }
 
+func TestHelpDoesNotAdvertiseAnOmittedInterfaceAsNull(t *testing.T) {
+	for _, tc := range []struct {
+		flag *Flag[any]
+		want string
+	}{
+		{&Flag[any]{}, ""},
+		{&Flag[any]{Const: true}, "null"},
+		{&Flag[any]{DefaultText: "automatic"}, "automatic"},
+		{&Flag[any]{Default: false}, "false"},
+		{&Flag[any]{Default: []any{}}, "[]"},
+	} {
+		if got := strings.TrimSpace(tc.flag.GetDefaultText()); got != tc.want || tc.flag.IsDefaultVisible() != (tc.want != "") {
+			t.Errorf("interface default = %q (visible %t), want %q", got, tc.flag.IsDefaultVisible(), tc.want)
+		}
+	}
+}
+
 func TestHelpPreservesNullableRequestSemantics(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
