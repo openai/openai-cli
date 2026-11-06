@@ -21,7 +21,9 @@ func (w workflow) newBatchResultsCommand() *cli.Command {
 		Description:     "Reads JSONL records without changing the batch. Non-matching results stream text, JSON, JSONL, and raw output after validating each record. Oversized records use one reusable private temporary file. Matching uses indexed temporary storage. Transforms and explore/pretty/YAML output load the selected document into memory. Late failures return a nonzero status and can leave incomplete output. Use --custom-id to select fewer records. Use --format explore for the JSON browser. Matching uses custom_id, never file order. Missing results can be pending or in the other result file. Duplicate IDs remain grouped without inventing pairs. Use batches download for exact file bytes.",
 		HideHelpCommand: true, Suggest: true,
 		Flags: []cli.Flag{
-			&requestflag.Flag[string]{Name: "batch-id", PathParam: "batch_id", Required: true},
+			&requestflag.Flag[string]{
+				Name: "batch-id", PathParam: "batch_id", Required: true, InputPolicy: requestflag.InputPolicyText,
+			},
 			&cli.StringFlag{Name: "file", Value: "output", Usage: "Select output, error, or input records"},
 			&cli.StringFlag{Name: "custom-id", Usage: "Show records with this exact custom_id"},
 			&cli.BoolFlag{Name: "match-input", Usage: "Match output or error records to inputs; include unmatched inputs"},
