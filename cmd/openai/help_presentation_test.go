@@ -112,12 +112,31 @@ func TestMainHelpForOneFlagUsesLocalOutputGuidance(t *testing.T) {
 		{[]string{"explore"}, "--format-error", "Search supports auto or text for --format and --format-error."},
 		{[]string{"images", "preview"}, "--format", "supports --format auto or text only"},
 		{[]string{"images", "preview"}, "-r", "cannot use --transform or --raw-output"},
+		{[]string{"explore"}, "--transform-error", "Search does not support --transform-error."},
+		{[]string{"explore"}, "-r", "Search does not support --raw-output."},
+		{[]string{"tokenizer", "view"}, "--raw-output", "does not support --transform or --raw-output"},
 	} {
 		args := append([]string{"openai"}, tc.path...)
 		got := runMainDispatch(t, "bash", append(args, "-h", tc.flag)...)
 		if got.code != 0 || got.stderr != "" || !strings.Contains(strings.Join(strings.Fields(got.stdout), " "), tc.want) ||
 			strings.Contains(got.stdout, "json") || strings.Contains(got.stdout, "SYNOPSIS") {
 			t.Errorf("scoped flag help for %v %s: %+v", tc.path, tc.flag, got)
+		}
+	}
+	// License output uses the standard formatter even though its overview explains text extraction.
+	licenses := runMainDispatch(t, "bash", "openai", "audio", "licenses", "-h", "--format")
+	if licenses.code != 0 || licenses.stderr != "" || !strings.HasPrefix(strings.TrimSpace(licenses.stdout), "--format=") ||
+		!strings.Contains(licenses.stdout, "json: full JSON") || strings.Contains(licenses.stdout, "FULL REFERENCE") {
+		t.Fatalf("audio licenses omitted the supported format reference: %+v", licenses)
+	}
+	for _, path := range [][]string{{"audio", "licenses"}, {"audio", "play"}, {"audio", "export"}, {"images", "preview"}} {
+		for _, flag := range []string{"--format-error", "--transform-error"} {
+			args := append(append([]string{"openai"}, path...), "-h", flag)
+			got := runMainDispatch(t, "bash", args...)
+			if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, flag) || strings.Contains(got.stdout, "FULL REFERENCE") ||
+				strings.Contains(got.stdout, "openai "+strings.Join(path, " ")) {
+				t.Errorf("scoped %v %s did not show the applicable error option: %+v", path, flag, got)
+			}
 		}
 	}
 	// --format is not the --format-error mentioned in the playback guidance.
@@ -213,6 +232,32 @@ func TestMainHelpPresentationPreservesDetailsAfterShortName(t *testing.T) {
 	plain := strings.Join(strings.Fields(got.stdout), " ")
 	if !strings.Contains(plain, "'flex' (https://developers.openai.com/api/docs/guides/flex-processing)") {
 		t.Error("quoted service-tier value must retain its reference outside the quotes")
+	}
+}
+
+func TestMainBriefFlagDescriptionsFollowCommandAliases(t *testing.T) {
+	for _, tc := range []struct{ route, flag, brief, detail string }{
+		{"chat completions create", "--stream", "Stream the reply as it is generated.", "server-sent events"},
+		{"chat:completions create", "--stream", "Stream the reply as it is generated.", "server-sent events"},
+		{"beta responses create", "--input", "Text, image, or file input.", "inputs to the model, used to generate a response."},
+		{"beta:responses create", "--input", "Text, image, or file input.", "inputs to the model, used to generate a response."},
+	} {
+		t.Run(tc.route, func(t *testing.T) {
+			path := append([]string{"openai"}, strings.Fields(tc.route)...)
+			short := runMainDispatch(t, "bash", append(path, "--help")...)
+			if short.code != 0 || short.stderr != "" || !strings.Contains(strings.Join(strings.Fields(short.stdout), " "), tc.flag+" "+tc.brief) {
+				t.Fatalf("ordinary help lost the flag overview: %+v", short)
+			}
+			for _, args := range [][]string{
+				append(path, "-h", tc.flag),
+				append([]string{"openai", "help", "--all"}, strings.Fields(tc.route)...),
+			} {
+				got := runMainDispatch(t, "bash", args...)
+				if got.code != 0 || got.stderr != "" || !strings.Contains(strings.Join(strings.Fields(got.stdout), " "), tc.detail) {
+					t.Fatalf("%q lost the complete flag description: %+v", args, got)
+				}
+			}
+		})
 	}
 }
 

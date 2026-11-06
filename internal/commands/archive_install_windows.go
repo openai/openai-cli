@@ -15,12 +15,17 @@ import (
 // explicitly requests a per-user installation.
 func RegisterArchiveInstall(root *cli.Command) {
 	const description = "Print the managed executable path. Setup reuses an existing managed installation."
+	const errorFormat = "Use --format-error json for machine-readable installation errors."
 	root.Commands = append(root.Commands, &cli.Command{
 		Name:        "install",
 		Usage:       "Install this Windows ZIP for your user and enable automatic updates",
 		Description: description,
 		Metadata: map[string]any{LocalUtilityMetadata: true, "help-command-section": "Local tools", "help-content": clihelp.Content{
-			Description: description, GlobalOptionsNote: "Use --format-error json for machine-readable installation errors.",
+			Description: description, GlobalOptionsNote: errorFormat,
+			InheritedFlagHelp: map[string]string{
+				"format-error":    errorFormat,
+				"transform-error": "",
+			},
 		}},
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "user", Usage: "Set up the current user in an ordinary terminal", Required: true, OnlyOnce: true},

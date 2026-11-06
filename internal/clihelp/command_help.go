@@ -5,7 +5,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/commandsuggest"
@@ -22,7 +21,10 @@ type Content struct {
 	Description       string
 	Examples          []Example
 	BashExamples      bool   // Examples explicitly labeled for Bash or zsh keep their authored shell syntax.
-	GlobalOptionsNote string // Local commands describe their supported output options instead of listing API flags.
+	GlobalOptionsNote string // Overview of local output behavior.
+	// A nil map uses the standard inherited flag references. A scoped command
+	// lists its relevant flags; an empty value keeps the flag's standard reference.
+	InheritedFlagHelp map[string]string
 	Notes             string
 }
 
@@ -75,17 +77,15 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 		content = Content{Description: command.Description, Examples: examples[path]}
 	}
 	if flag := requestedHelpFlag(command); flag != nil {
-		if content.GlobalOptionsNote == "" || slices.Contains(command.Flags, flag) {
+		if content.InheritedFlagHelp == nil || slices.Contains(command.Flags, flag) {
 			return flagList(command, []cli.Flag{flag}, width)
 		}
-		// An inherited option can have a different meaning on a local command.
-		// Show its local guidance, or fall back to the ordinary command page.
-		words := strings.FieldsFunc(content.GlobalOptionsNote, func(r rune) bool {
-			return r != '-' && !unicode.IsLetter(r) && !unicode.IsDigit(r)
-		})
-		for _, word := range words {
-			if strings.HasPrefix(word, "-") && slices.Contains(flag.Names(), strings.TrimLeft(word, "-")) {
-				return wrapDescription(content.GlobalOptionsNote, "  ", width)
+		for _, name := range flag.Names() {
+			if guidance, ok := content.InheritedFlagHelp[name]; ok {
+				if guidance == "" {
+					return flagList(command, []cli.Flag{flag}, width)
+				}
+				return wrapDescription(guidance, "  ", width)
 			}
 		}
 	}
@@ -240,7 +240,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 		}
 	}
 	hasChildren := native != "" && (path == "" || full) && len(VisibleCommands(command)) > 0
-	showKeySetup := native != "" && path != "" && full && content.GlobalOptionsNote == "" && content.Notes == ""
+	showKeySetup := native != "" && path != "" && full && content.InheritedFlagHelp == nil && content.Notes == ""
 	if hasChildren || path == "" || showKeySetup || content.Notes != "" {
 		out.WriteString("\n" + heading("NOTES") + "\n")
 	}
@@ -318,7 +318,7 @@ func compactCommandHelp(command *cli.Command, invocation, path, summary string, 
 		}
 	}
 	referenceTitle := "FULL REFERENCE"
-	rows, complete := commonFlagRows(command, path, example, width)
+	rows, complete := commonFlagRows(command, example, width)
 	if rows != "" {
 		section := "FLAGS"
 		if !complete {

@@ -51,9 +51,15 @@ func Register(root *cli.Command) {
 		},
 		Action: commandExplore,
 	}
+	const output = "Search supports auto or text for --format and --format-error."
 	command.Metadata["help-content"] = clihelp.Content{
 		Description:       command.Description,
-		GlobalOptionsNote: "Search supports auto or text for --format and --format-error.",
+		GlobalOptionsNote: output,
+		InheritedFlagHelp: map[string]string{
+			"format": output, "format-error": output,
+			"transform": "Search does not support --transform.", "raw-output": "Search does not support --raw-output.",
+			"transform-error": "Search does not support --transform-error.",
+		},
 		Examples: []clihelp.Example{
 			{Description: "Open interactive command search:", Command: "explore"},
 			{Description: "Find a command by describing the task:", Command: `explore "count tokens offline"`},

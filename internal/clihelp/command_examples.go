@@ -26,10 +26,13 @@ func ExampleInvocation(command *cli.Command, fallback, native string) string {
 		if name, ok := root.Metadata["help-executable-path"].(string); ok {
 			return terminal.ShellQuote(filepath.ToSlash(name))
 		}
-		if root.Metadata["help-control-launcher"] != true {
-			return filepath.ToSlash(fallback)
+		if root.Metadata["help-control-launcher"] == true && fallback != "" {
+			// Explore can supply a display name here. Resolve the actual
+			// executable before presenting a command to paste into Bash.
+			_, bash := helpInvocations(root, fallback, "bash")
+			return bash
 		}
-		return fallback
+		return filepath.ToSlash(fallback)
 	}
 	return native
 }

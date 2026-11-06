@@ -268,9 +268,13 @@ func TestOneFlagHelpSelectsTheVisibleDeclaration(t *testing.T) {
 	root := completeHelpFixture(&out)
 	leaf := root.Command("images").Command("generate")
 	inherited := &cli.StringFlag{Name: "header", Aliases: []string{"H"}}
+	unrelated := &cli.StringFlag{Name: "remote-only", Usage: "Send a remote option."}
 	shadow := &cli.StringFlag{Name: "format", Aliases: []string{"f"}, Usage: "Local image format."}
-	leaf.Metadata = map[string]any{"help-content": Content{GlobalOptionsNote: "Use --format text for output."}}
-	root.Flags = append(root.Flags, inherited)
+	leaf.Metadata = map[string]any{"help-content": Content{
+		GlobalOptionsNote: "Other commands accept --remote-only.",
+		InheritedFlagHelp: map[string]string{"format": "Inherited formats.", "header": "Local header guidance."},
+	}}
+	root.Flags = append(root.Flags, inherited, unrelated)
 	leaf.Flags = append(leaf.Flags, shadow)
 	for _, tc := range []struct {
 		args []string
@@ -278,6 +282,7 @@ func TestOneFlagHelpSelectsTheVisibleDeclaration(t *testing.T) {
 	}{
 		{[]string{"--help", "--prompt"}, leaf.Flags[1]},
 		{[]string{"-h", "-H"}, inherited},
+		{[]string{"-h", "--remote-only"}, unrelated},
 		{[]string{"--help", "--format"}, shadow},
 		{[]string{"--help", "-f"}, shadow},
 		{[]string{"sample.png", "--size", "example", "--help", "--format"}, shadow},
@@ -296,6 +301,12 @@ func TestOneFlagHelpSelectsTheVisibleDeclaration(t *testing.T) {
 		}
 		if requestedHelpFlag(leaf) != tc.want || requestedHelpFlag(root) != nil {
 			t.Fatalf("%q selected the wrong flag or command", args)
+		}
+		if tc.want == unrelated && (!strings.Contains(out.String(), "openai images generate") || strings.Contains(out.String(), unrelated.Usage)) {
+			t.Fatalf("mentioning an unrelated flag in prose selected its reference: %q", out.String())
+		}
+		if tc.want == inherited && strings.TrimSpace(out.String()) != "Local header guidance." {
+			t.Fatalf("inherited alias lost guidance absent from display prose: %q", out.String())
 		}
 		if tc.want == shadow && !strings.Contains(out.String(), "Local image format.") {
 			t.Fatalf("inherited restrictions replaced the local flag description for %q", args)

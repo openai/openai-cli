@@ -38,17 +38,30 @@ func RegisterLocal(root *cli.Command, options LocalOptions) {
 		command.HideHelpCommand = true
 		command.Description = "Uses local audio history without API requests. The speech form retains audio, text, instructions, and settings privately."
 		output := "Use --format json for structured output. Use --transform to select fields."
+		inherited := map[string]string{
+			"format": "", "transform": "", "raw-output": "",
+			"format-error": "", "transform-error": "",
+		}
 		switch command.Name {
 		case "licenses":
 			command.Description = "Prints the embedded dependency notice without credentials, history access, or network requests."
 			output = "Use --transform licenses --raw-output to print the license text."
+			inherited["transform"], inherited["raw-output"] = output, output
 		case "play":
 			output = "Use --format-error json for machine-readable playback errors."
+			inherited = map[string]string{
+				"format-error":    output,
+				"transform-error": "",
+			}
 		case "export":
 			output = "Use --quiet to suppress the saved-file message."
+			inherited = map[string]string{
+				"quiet":        output,
+				"format-error": "", "transform-error": "",
+			}
 		}
 		command.Metadata = map[string]any{LocalMetadata: true, "help-content": clihelp.Content{
-			Description: command.Description, GlobalOptionsNote: output,
+			Description: command.Description, GlobalOptionsNote: output, InheritedFlagHelp: inherited,
 		}}
 		command.Action = audioLocalAction(command.Action)
 		group.Commands = append(group.Commands, command)

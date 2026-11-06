@@ -527,7 +527,7 @@ func legacyHelpNotice(command *cli.Command) string {
 		legacy = legacy || help.IsSet("all")
 	}
 	content, _ := command.Metadata["help-content"].(Content)
-	if !legacy || (command != root && command.CustomHelpTemplate == commandHelpTemplate) || content.GlobalOptionsNote != "" {
+	if !legacy || (command != root && command.CustomHelpTemplate == commandHelpTemplate) || content.InheritedFlagHelp != nil {
 		return ""
 	}
 	var path []string

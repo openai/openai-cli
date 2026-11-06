@@ -86,11 +86,16 @@ func ConfigureHelp(root *cli.Command) {
 	if command.Metadata == nil {
 		command.Metadata = map[string]any{}
 	}
+	const quiet = "Use --quiet to suppress the completion message."
 	command.Metadata["help-content"] = clihelp.Content{
 		Description: "By default, the CLI writes man/man1/openai.1.gz. " +
 			"Use --text to also write openai.1 or --gzip=false to skip the compressed file.",
-		GlobalOptionsNote: "Use --quiet to suppress the completion message.",
-		Examples:          []clihelp.Example{{Description: "Write the man page under docs/man1:", Command: `"@manpages" --output docs`}},
+		GlobalOptionsNote: quiet,
+		InheritedFlagHelp: map[string]string{
+			"quiet":        quiet,
+			"format-error": "", "transform-error": "",
+		},
+		Examples: []clihelp.Example{{Description: "Write the man page under docs/man1:", Command: `"@manpages" --output docs`}},
 	}
 	labels, _ := command.Metadata["help-flag-labels"].([]clihelp.FlagLabel)
 	command.Metadata["help-flag-labels"] = append(labels, clihelp.FlagLabel{Owner: command, Names: []string{"output"}, Label: "DIRECTORY"})

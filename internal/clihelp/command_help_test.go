@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/requestflag"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -24,6 +25,18 @@ func TestBashHelpExampleUsesBashLauncherQuoting(t *testing.T) {
 	}}
 	if got := ExampleInvocation(command, native, native); got != `'preview'\''s build/openai'` {
 		t.Fatalf("Bash example includes incompatible launcher syntax: %q", got)
+	}
+	delete(command.Metadata, "help-executable-path")
+	command.Metadata["help-control-launcher"] = true
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ExampleInvocation(command, "openai", "openai"); got != terminal.ShellQuote(filepath.ToSlash(executable)) {
+		t.Fatalf("Bash example targeted a different executable: %q", got)
+	}
+	if got := ExampleInvocation(command, "", ""); got != "" {
+		t.Fatalf("provided an example when no launcher was available: %q", got)
 	}
 	command.Metadata["help-content"] = Content{}
 	if got := ExampleInvocation(command, native, native); got != native {
@@ -70,7 +83,7 @@ func TestCommonFlagRowsExplainUndocumentedRequestFields(t *testing.T) {
 		&requestflag.Flag[int64]{Name: "limit", QueryPath: "limit"},
 		&requestflag.Flag[string]{Name: "group", HeaderPath: "X-Group"},
 	}}
-	rows, complete := commonFlagRows(command, "create", "", 79)
+	rows, complete := commonFlagRows(command, "", 79)
 	if !complete {
 		t.Fatal("all three flags fit on the overview")
 	}

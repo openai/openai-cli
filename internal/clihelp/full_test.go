@@ -21,7 +21,7 @@ func TestCommonFlagRowsPrioritizeRequiredAndExampleFlags(t *testing.T) {
 		output, file,
 	}}
 	for _, width := range []int{24, 40, 80} {
-		rows, _ := commonFlagRows(command, "files create", "files create -o output.wav", width)
+		rows, _ := commonFlagRows(command, "files create -o output.wav", width)
 		plain := strings.Join(strings.Fields(rows), " ")
 		if !strings.HasPrefix(plain, "--file Path to the input file. --output-path, -o Save the result.") {
 			t.Fatalf("width %d: inputs in wrong order or without descriptions: %s", width, rows)
@@ -72,7 +72,7 @@ func TestCommonFlagRowsKeepAllRequiredInputs(t *testing.T) {
 		command.Flags = append(command.Flags, &cli.StringFlag{Name: name, Required: true, Usage: "Required input."})
 	}
 	command.Flags = append(command.Flags, &cli.StringFlag{Name: "extra", Usage: "Additional option."})
-	rows, _ := commonFlagRows(command, "create", "create --extra example", 80)
+	rows, _ := commonFlagRows(command, "create --extra example", 80)
 	if strings.Count(rows, "Required input.") != 6 || strings.Contains(rows, "--extra") {
 		t.Fatalf("all required inputs must appear before optional flags: %s", rows)
 	}
@@ -337,6 +337,7 @@ func TestFlagUsageOverrideRequiresDeclaringOwner(t *testing.T) {
 	root := &cli.Command{Flags: []cli.Flag{rootFlag}}
 	leaf := &cli.Command{Flags: []cli.Flag{localFlag}}
 	leaf.Metadata = map[string]any{"help-flag-usages": []FlagUsage{
+		{Owner: root, Names: []string{"m"}, Brief: "Choose the root model."},
 		{Owner: root, Names: []string{"m"}, Usage: "Root `model` guidance."},
 		{Owner: leaf, Names: []string{"model"}, Usage: "ID of the `model` to retrieve."},
 	}}
@@ -344,6 +345,15 @@ func TestFlagUsageOverrideRequiresDeclaringOwner(t *testing.T) {
 		if err := flag.PreParse(); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if brief := commonFlagDescription(leaf, rootFlag); brief != "Choose the root model." {
+		t.Fatalf("flag alias did not select its owner's brief guidance: %q", brief)
+	}
+	if brief := commonFlagDescription(leaf, localFlag); brief != "ID of the model to retrieve." {
+		t.Fatalf("shadowing flag lost its own guidance: %q", brief)
+	}
+	if _, full := flagReference(leaf, rootFlag); full != "Root `model` guidance." {
+		t.Fatalf("brief override replaced the full reference: %q", full)
 	}
 	got := fullFlagGroups(leaf, []cli.Flag{localFlag}, 80)
 	if !strings.Contains(got, "ID of the model to retrieve.") || strings.Contains(got, "Root model guidance") {

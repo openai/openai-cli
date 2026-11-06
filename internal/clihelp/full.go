@@ -23,19 +23,23 @@ type FlagGroup struct {
 type FlagUsage struct {
 	Owner *cli.Command
 	Names []string
-	Usage string
+	Usage string // Optional full reference. Defaults to the declared usage.
+	Brief string // Optional overview. Defaults to the first sentence of the reference.
+}
+
+func (entry FlagUsage) matches(flag cli.Flag) bool {
+	if entry.Owner == nil || !slices.Contains(entry.Owner.Flags, flag) {
+		return false
+	}
+	names := flag.Names()
+	return slices.ContainsFunc(entry.Names, func(name string) bool { return slices.Contains(names, name) })
 }
 
 func commandFlagUsage(command *cli.Command, flag cli.Flag, usage string) string {
 	configured, _ := command.Metadata["help-flag-usages"].([]FlagUsage)
 	for _, entry := range configured {
-		if entry.Owner == nil || !slices.Contains(entry.Owner.Flags, flag) {
-			continue
-		}
-		for _, name := range entry.Names {
-			if slices.Contains(flag.Names(), name) {
-				return entry.Usage
-			}
+		if entry.Usage != "" && entry.matches(flag) {
+			return entry.Usage
 		}
 	}
 	if strings.TrimSpace(usage) == "" {
@@ -105,7 +109,7 @@ func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
 
 // Prefer the inputs someone needs to run the command, then the flags in its
 // first example. Fill the remaining space with common controls, up to five.
-func commonFlagRows(command *cli.Command, path, example string, width int) (string, bool) {
+func commonFlagRows(command *cli.Command, example string, width int) (string, bool) {
 	// Replacement examples use the supported command's options. The old
 	// options remain documented in the explicit full reference.
 	if command.Metadata["help-command-section"] == "Retired commands" {
@@ -169,7 +173,7 @@ func commonFlagRows(command *cli.Command, path, example string, width int) (stri
 	column := helpDescriptionColumn(width, labels)
 	var out strings.Builder
 	for i, flag := range selected {
-		description := commonFlagDescription(command, path, flag)
+		description := commonFlagDescription(command, flag)
 		label := labels[i]
 		if column == 0 && ansi.StringWidth(label)+2 > width {
 			writeFlagLabels(&out, style.flagLabels(label, style.text), "  ", width)
@@ -181,59 +185,11 @@ func commonFlagRows(command *cli.Command, path, example string, width int) (stri
 	return out.String(), localCount == len(selected)
 }
 
-func commonFlagDescription(command *cli.Command, path string, flag cli.Flag) string {
-	// The Responses reference includes SDK-oriented paragraphs. Describe its
-	// primary inputs directly here, and keep the full text in single-flag help.
-	switch strings.ReplaceAll(path, ":", " ") {
-	case "models list":
-		switch flag.Names()[0] {
-		case "filter":
-			return "Match model IDs with id=VALUE or id~REGEX."
-		case "sort-by":
-			return "Sort model IDs ascending (id) or descending (~id)."
-		case "max-items":
-			return "Maximum models to return."
-		}
-	case "chat completions create":
-		switch flag.Names()[0] {
-		case "message":
-			return "A message in the conversation."
-		case "model":
-			return "Model ID to use."
-		case "stream":
-			return "Stream the reply as it is generated."
-		case "max-completion-tokens":
-			return "Output token limit, including reasoning tokens."
-		case "temperature":
-			return "Sampling temperature, from 0 to 2."
-		}
-	case "images generate", "images edit":
-		switch flag.Names()[0] {
-		case "image":
-			return "Source image to edit."
-		case "prompt":
-			return "Describe the image you want."
-		case "name":
-			return "Filename for the saved image."
-		case "model":
-			return "Image model to use."
-		case "size":
-			return "Image dimensions."
-		case "quality":
-			return "Image quality."
-		}
-	case "responses create", "beta responses create":
-		switch flag.Names()[0] {
-		case "model":
-			return "Model ID to use."
-		case "input":
-			return "Text, image, or file input."
-		case "instructions":
-			return "System or developer instructions."
-		case "stream":
-			return "Stream the response as it is generated."
-		case "max-output-tokens":
-			return "Output token limit, including reasoning tokens."
+func commonFlagDescription(command *cli.Command, flag cli.Flag) string {
+	configured, _ := command.Metadata["help-flag-usages"].([]FlagUsage)
+	for _, entry := range configured {
+		if entry.Brief != "" && entry.matches(flag) {
+			return entry.Brief
 		}
 	}
 	_, description := flagReference(command, flag)
