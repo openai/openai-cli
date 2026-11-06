@@ -91,5 +91,9 @@ func flagOptionsWithStdin(
 			return audio.EmbedVoiceBody(cmd, body, stdin)
 		}
 	}
+	if bodyType == ApplicationJSON && isSkillCreate(cmd) {
+		hooks.SelectBodyType = selectSkillZIP
+		hooks.Encoding.PrepareMultipart = labelSkillZIP
+	}
 	return requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
 }
