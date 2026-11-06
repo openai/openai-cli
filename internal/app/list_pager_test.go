@@ -89,9 +89,9 @@ func listPagerCommand(action cli.ActionFunc) *cli.Command {
 		}})
 	}
 	configureModelsList(root)
-	configureListCommands(root)
 	localcommands.ConfigureSubgroups(root)
 	localcommands.ConfigureTasks(root)
+	configureRegisteredLists(root)
 	return root
 }
 

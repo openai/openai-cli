@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/tidwall/gjson"
@@ -59,7 +60,7 @@ type recordViewer struct {
 }
 
 func (m *Model) receiveRecords(page Page) tea.Cmd {
-	f := m.records
+	f := &m.records
 	first := len(f.pages) == 0
 	if page.Notice != "" {
 		if len(page.Items) == 0 {
@@ -111,7 +112,7 @@ func (v *recordViewer) fullRecordLabels(from, end int) bool {
 }
 
 func (m *Model) resizeRecords(widthChanged bool) tea.Cmd {
-	f := m.records
+	f := &m.records
 	f.history = nil
 	f.rowLimit, f.endLimit, f.fill, f.restoreLabels = 0, recordPosition{}, false, false
 	// Anchor reflow to the record. A wrapped line can move when the width changes.
@@ -123,7 +124,7 @@ func (m *Model) resizeRecords(widthChanged bool) tea.Cmd {
 }
 
 func (m *Model) refreshRecords() tea.Cmd {
-	f := m.records
+	f := &m.records
 	if m.err == nil && f.from.item < len(f.items) {
 		var next recordScreen
 		next, m.err = m.renderRecords()
@@ -146,7 +147,8 @@ func (m *Model) refreshRecords() tea.Cmd {
 		start := 0
 		for _, page := range f.pages {
 			end := page.end
-			content, err := m.opts.RenderPage(f.items[start:end], max(1, m.window.Width))
+			received := Page{Items: f.items[start:end], FullLabels: page.fullLabels}
+			content, err := printablePage(m.opts, received, max(1, m.window.Width))
 			if err != nil {
 				m.err = errors.Join(m.err, err)
 				break
@@ -175,7 +177,7 @@ func (m *Model) refreshRecords() tea.Cmd {
 }
 
 func (m *Model) renderRecords() (recordScreen, error) {
-	f := m.records
+	f := &m.records
 	width, height := m.recordWidth(), m.recordHeight()
 	s := recordScreen{recordRange: recordRange{from: f.from}}
 	// A regular screen has one pinned table header and one footer. A two-row
@@ -238,7 +240,7 @@ func (m *Model) renderRecords() (recordScreen, error) {
 }
 
 func (m *Model) recordLabelLines(item, width int) ([]string, error) {
-	f := m.records
+	f := &m.records
 	if err := m.opts.Context.Err(); err != nil {
 		return nil, err
 	}
@@ -255,26 +257,27 @@ func (m *Model) recordLabelLines(item, width int) ([]string, error) {
 	return f.wrappedLabels, m.opts.Context.Err()
 }
 
+var recordKeys = viewport.DefaultKeyMap()
+
 func (m *Model) recordKey(msg tea.KeyPressMsg) tea.Cmd {
-	f := m.records
+	f := &m.records
 	s := &f.screen
 	if m.loading || len(s.rows) == 0 {
 		return nil
 	}
-	keys := m.viewer.viewport.KeyMap
 	var forward, page bool
 	step := 1
 	switch {
-	case key.Matches(msg, keys.PageDown):
+	case key.Matches(msg, recordKeys.PageDown):
 		forward, page = true, true
-	case key.Matches(msg, keys.PageUp):
+	case key.Matches(msg, recordKeys.PageUp):
 		page = true
-	case key.Matches(msg, keys.Down):
+	case key.Matches(msg, recordKeys.Down):
 		forward = true
-	case key.Matches(msg, keys.Up):
-	case key.Matches(msg, keys.HalfPageDown):
+	case key.Matches(msg, recordKeys.Up):
+	case key.Matches(msg, recordKeys.HalfPageDown):
 		forward, step = true, max(1, len(s.rows)/2)
-	case key.Matches(msg, keys.HalfPageUp):
+	case key.Matches(msg, recordKeys.HalfPageUp):
 		step = max(1, len(s.rows)/2)
 	default:
 		return nil
@@ -286,7 +289,7 @@ func (m *Model) recordKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 func (m *Model) advanceRecords(page bool, step int) tea.Cmd {
-	f, s := m.records, &m.records.screen
+	f, s := &m.records, &m.records.screen
 	if s.end.item == len(f.items) && !m.more {
 		return nil
 	}
@@ -311,7 +314,7 @@ func (m *Model) advanceRecords(page bool, step int) tea.Cmd {
 }
 
 func (m *Model) backRecords(page bool, step int) tea.Cmd {
-	f, s := m.records, &m.records.screen
+	f, s := &m.records, &m.records.screen
 	if s.from == (recordPosition{}) {
 		return nil
 	}
@@ -399,7 +402,7 @@ func (m *Model) recordHeight() int {
 }
 
 func (m *Model) recordView() string {
-	f := m.records
+	f := &m.records
 	width := m.recordWidth()
 	position := m.opts.Plural
 	if len(f.screen.rows) != 0 {

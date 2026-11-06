@@ -54,7 +54,6 @@ func TestModelRequestsUseOpaqueCursorsOnTheOriginalRoute(t *testing.T) {
 	first, err := pages.next()
 	require.NoError(t, err)
 	require.True(t, first.More)
-	require.False(t, first.Local)
 	require.Equal(t, "kept", first.Items[0].Get("extra").Str)
 	require.EqualValues(t, 1, calls.Load())
 	last, err := pages.next()
@@ -102,12 +101,11 @@ func TestModelRequestsReuseTheLegacyResponse(t *testing.T) {
 			})
 			first, err := pages.next()
 			require.NoError(t, err)
-			require.True(t, first.Local && first.More)
+			require.True(t, first.More)
 			require.Len(t, first.Items, modelListPageSize)
 			require.Equal(t, "model-000", first.Items[0].Get("id").Str)
 			last, err := pages.next()
 			require.NoError(t, err)
-			require.True(t, last.Local)
 			require.False(t, last.More)
 			require.Equal(t, "model-100", last.Items[0].Get("id").Str)
 			require.EqualValues(t, 1, calls.Load())
@@ -199,7 +197,7 @@ func TestModelRequestsRetryOnlyUnsupportedInitialLimit(t *testing.T) {
 			page, err := pages.next()
 			if test.retry {
 				require.NoError(t, err)
-				require.True(t, page.Local)
+				require.Equal(t, "legacy", page.Items[0].Get("id").Str)
 				require.EqualValues(t, 2, calls.Load())
 			} else {
 				var apiErr *openai.Error

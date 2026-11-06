@@ -17,6 +17,7 @@ import (
 func viewerOptions(t *testing.T, out *bytes.Buffer) Options {
 	opts := testOptions(t.Context())
 	opts.Stdout = out
+	opts.RenderRecordLabels = func(item gjson.Result, _ bool) (string, error) { return item.Get("id").String(), nil }
 	opts.RenderPage = func(items []gjson.Result, _ int) (string, error) {
 		var text strings.Builder
 		for _, item := range items {
@@ -36,7 +37,15 @@ func viewerPage(ids ...string) Page {
 }
 
 func viewerKey(m *Model, key rune) tea.Cmd {
-	_, cmd := m.Update(tea.KeyPressMsg{Code: key, Text: string(key)})
+	return viewerPress(m, tea.KeyPressMsg{Code: key, Text: string(key)})
+}
+
+// The production Run starts a fresh program when the inline preview opens the browser.
+func viewerPress(m *Model, msg tea.KeyPressMsg) tea.Cmd {
+	_, cmd := m.Update(msg)
+	if m.records.mode == recordOpening {
+		return m.Init()
+	}
 	return cmd
 }
 
@@ -47,7 +56,7 @@ func TestViewerBackKeepsFetchFrontier(t *testing.T) {
 	var requests atomic.Int32
 	m := New(viewerOptions(t, &out), func() (Page, error) {
 		return pages[requests.Add(1)-1], nil
-	}, func() {}, 80, 20)
+	}, func() {}, 80, 2)
 	m.Update(m.Init()())
 	m.Update(viewerKey(m, ' ')())
 	viewerKey(m, 'b')
@@ -120,7 +129,11 @@ func TestViewerPendingFetchIgnoresNavigation(t *testing.T) {
 func TestViewerFinalPageStaysUntilQuit(t *testing.T) {
 	var out bytes.Buffer
 	m := New(viewerOptions(t, &out), nil, func() {}, 80, 20)
-	m.Update(listPageMessage{page: viewerPage("final")})
+	first := viewerPage("initial")
+	first.More = true
+	m.Update(listPageMessage{page: first})
+	m.fetch = func() (Page, error) { return viewerPage("final"), nil }
+	m.Update(viewerKey(m, ' ')())
 	for _, key := range []rune{' ', 'i', 'p'} {
 		if viewerKey(m, key) != nil || m.quitting || !strings.Contains(m.View().Content, "End") {
 			t.Fatal("viewer closed or fetched at the final page")
@@ -147,7 +160,7 @@ func TestViewerLargeLineAndResizePreserveOriginal(t *testing.T) {
 	if strings.Count(view, "\n") > 6 || len(view) > 31*7+7 {
 		t.Fatal("large line escaped the bounded viewer")
 	}
-	if m.viewer.pages[0].content != id+"\nnext-record\n" {
+	if m.records.items[0].Get("id").String() != id || m.records.items[1].Get("id").String() != "next-record" {
 		t.Fatal("resize truncated or hardwrapped the original ID")
 	}
 	viewerKey(m, 'q')
@@ -180,7 +193,7 @@ func TestViewerTabsPreserveValuesAndFooter(t *testing.T) {
 						}
 					}
 					shown.WriteString(strings.Join(strings.Fields(lines[0]), ""))
-					if m.viewer.viewport.AtBottom() {
+					if m.records.screen.end.item == len(m.records.items) {
 						break
 					}
 					if step > len(content) || viewerKey(m, ' ') != nil {
@@ -204,10 +217,35 @@ func TestViewerErrorRetainsPreviouslyLoadedResults(t *testing.T) {
 	var out bytes.Buffer
 	failure := errors.New("synthetic API failure")
 	m := New(viewerOptions(t, &out), nil, func() {}, 80, 20)
-	m.Update(listPageMessage{page: viewerPage("first")})
+	first := viewerPage("first")
+	first.More = true
+	m.Update(listPageMessage{page: first})
 	m.Update(listPageMessage{err: failure})
 	if err := m.Finish(nil, nil); !errors.Is(err, failure) || out.String() != "first\n" {
 		t.Fatal("lost earlier results or later failure", err, out.String())
+	}
+}
+
+func TestViewerPartialOutputRetainsFullLabels(t *testing.T) {
+	var out bytes.Buffer
+	opts := viewerOptions(t, &out)
+	opts.RenderRecordLabels = func(item gjson.Result, full bool) (string, error) {
+		if !full {
+			t.Fatal("the received page requires full labels")
+		}
+		return item.Get("id").Str + " " + item.Get("extra").Str + "\n", nil
+	}
+	failure := errors.New("next page failed")
+	m := New(opts, func() (Page, error) { return Page{}, failure }, func() {}, 80, 20)
+	item := gjson.Parse(`{"id":"first","extra":"original metadata"}`)
+	m.Update(listPageMessage{page: Page{Items: []gjson.Result{item}, FullLabels: true, More: true}})
+	next := viewerKey(m, ' ')
+	if next == nil {
+		t.Fatal("Space did not request the next page")
+	}
+	m.Update(next())
+	if err := m.Finish(nil, nil); !errors.Is(err, failure) || out.String() != "first original metadata\n" {
+		t.Fatal("lost original metadata or the page failure", err, out.String())
 	}
 }
 
@@ -225,7 +263,9 @@ func TestViewerHistoryWriteFailureDoesNotRetry(t *testing.T) {
 		return out.Write(data)
 	})
 	m := New(opts, nil, func() {}, 80, 20)
-	m.Update(listPageMessage{page: viewerPage("first")})
+	first := viewerPage("first")
+	first.More = true
+	m.Update(listPageMessage{page: first})
 	m.Update(listPageMessage{page: viewerPage("second")})
 	m.Update(listPageMessage{err: errors.New("synthetic API failure")})
 	if err := m.printPending(); !errors.Is(err, failure) {

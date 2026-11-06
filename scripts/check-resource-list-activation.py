@@ -50,9 +50,22 @@ def main():
         assert "ID:" not in text and "Filename:" not in text, text
 
     try:
-        terminal = navigation.terminal_module.Terminal(config["binary"], args, env, width=config.get("width", 110), height=24,
+        binary = config["binary"]
+        if config["action"] == "print-return":
+            args = ["--noprofile", "--norc", "-c", '"$@" && echo NEXT_COMMAND', "list-test", binary, *args]
+            binary = "/bin/bash"
+        terminal = navigation.terminal_module.Terminal(binary, args, env, width=config.get("width", 110), height=24,
                                                        stderr_file=diagnostic)
         action, mode = config["action"], config["mode"]
+        if action == "print-return":
+            # No input is sent. The second shell command must run on its own.
+            terminal.wait("NEXT_COMMAND", timeout=5)
+            status = terminal.child.wait(timeout=5)
+            assert status == 0, status
+            output = terminal.text()
+            assert "Space: browse" not in output and b"\x1b[?1049h" not in terminal.raw, output
+            print(output)
+            return
         if action in ("discover", "inspect", "watch", "watch-without-flag", "live"):
             if action in ("discover", "inspect"):
                 deadline = time.monotonic() + 5
@@ -104,9 +117,9 @@ def main():
                 assert "retain-synthetic-detail" in text and "ID:" in text, text
                 assert "FILENAME" not in text, "unfamiliar fields were hidden by the table"
             elif action == "error":
-                if mode == "missing-cursor":
+                if mode in ("missing-cursor", "missing-legacy-cursor"):
                     restored = bytes(terminal.raw).rsplit(b"\x1b[?2004l", 1)[-1]
-                    if "groups" in config["args"]:
+                    if "skills" not in config["args"]:
                         assert re.findall(rb"item_\d{3}", restored) == [b"item_001", b"item_002"], restored
                     else:
                         assert restored.count(b"Synthetic skill") == 2, restored
@@ -192,7 +205,7 @@ def main():
         else:
             error = json.loads(stderr)
             expected = "synthetic list failure" if action in ("error", "error-next") else "Request canceled."
-            if mode in ("repeat-cursor", "empty-continuation", "missing-cursor"):
+            if mode in ("repeat-cursor", "empty-continuation", "empty-next-continuation", "missing-cursor", "missing-legacy-cursor"):
                 expected = "List pagination stopped because the API returned a missing or repeated cursor. Output may be incomplete."
             assert error["message"] == expected, error
             assert expected not in terminal.text(), "diagnostics leaked into stdout"

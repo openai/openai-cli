@@ -15,14 +15,13 @@ import (
 func filesViewerFixture(t *testing.T, width, height, pageSize, total int) (*Model, *int) {
 	t.Helper()
 	calls, count := 0, 0
-	opts := Options{Context: t.Context(), Stdout: io.Discard, Singular: "File", Plural: "Files",
-		RenderTable: func(items []gjson.Result, width int) (string, bool, error) {
-			return RenderTable(t.Context(), "(resource) files > (method) list", items, width, false, Style{})
-		},
-		RenderRecordLabels: func(item gjson.Result, _ bool) (string, error) {
-			id := item.Get("id").Str
-			return id + "\nlabel A\nlabel B\nlabel C\n", nil
-		},
+	opts := testOptions(t.Context())
+	opts.Stdout, opts.Singular, opts.Plural = io.Discard, "File", "Files"
+	opts.RenderTable = func(items []gjson.Result, width int) (string, bool, error) {
+		return RenderTable(t.Context(), "(resource) files > (method) list", items, width, false, Style{})
+	}
+	opts.RenderRecordLabels = func(item gjson.Result, _ bool) (string, error) {
+		return item.Get("id").Str + "\nlabel A\nlabel B\nlabel C\n", nil
 	}
 	return New(opts, func() (Page, error) {
 		calls++
@@ -40,7 +39,10 @@ func filesViewerFixture(t *testing.T, width, height, pageSize, total int) (*Mode
 func finishFilesMove(m *Model, cmd tea.Cmd) {
 	for cmd != nil {
 		msg := cmd()
-		if _, ended := msg.(tea.QuitMsg); ended && m.records.mode == recordOpening {
+		if _, ended := msg.(tea.QuitMsg); ended {
+			if m.records.mode != recordOpening {
+				return
+			}
 			cmd = m.Init()
 		} else {
 			_, cmd = m.Update(msg)

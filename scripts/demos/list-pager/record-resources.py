@@ -21,29 +21,32 @@ ROWS = HEIGHT - 2
 navigation = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'check-list-navigation.py'))
 
 
-def capture(binary, resource, candidate):
+def capture(binary, resource, mode):
     args = [resource, 'list']
+    if mode == 'browse':
+        args.append('--browse')
     prefix = 'whe' if resource == 'webhooks' else 'skill'
     with serve(resource=resource, pages=3, rows=ROWS) as server, tempfile.TemporaryDirectory() as home:
         env = {'HOME': home, 'XDG_CONFIG_HOME': home, 'PATH': '/usr/bin:/bin', 'LANG': 'en_US.UTF-8',
                'TERM': 'xterm-256color', 'TERM_PROGRAM': 'Apple_Terminal', 'NO_COLOR': '1', 'PAGER': 'cat',
                'OPENAI_BASE_URL': f'http://127.0.0.1:{server.server_port}/v1',
                'OPENAI_CLI_NO_AUTO_UPDATE': '1', 'OPENAI_CLI_NO_UPDATE_CHECK': '1'}
-        command = f'$ openai {resource} list'
+        command = '$ openai ' + ' '.join(args)
         # Give both binaries the same shell line above their first result.
         launch = 'import os, sys; print(sys.argv[1], flush=True); os.execv(sys.argv[2], sys.argv[2:])'
         t = Terminal(sys.executable, ['-I', '-S', '-c', launch, command, str(binary), *args],
                      env, width=WIDTH, height=HEIGHT)
         try:
-            if not candidate:
-                # Record the first screen of the original sequential output.
-                deadline = time.monotonic() + 8
-                while t.raw.count(b'\n') < HEIGHT:
-                    t.read(.05)
-                    assert time.monotonic() < deadline, t.text()
+            if mode != 'browse':
+                # Both default invocations must return without keyboard input.
+                navigation['finish'](t, 0)
                 first = b'\n'.join(t.raw.split(b'\n')[:HEIGHT])
                 visible = screen(first, WIDTH, HEIGHT).decode()
-                assert f'ID: {prefix}_demo_001' in visible, visible
+                assert f'{prefix}_demo_001' in visible, visible
+                assert f'{prefix}_demo_030' in t.text() and len(server.requests) == 3
+                assert b'\x1b[?1049h' not in t.raw
+                if mode == 'print':
+                    assert 'NAME' in visible and 'Space: browse' not in t.text()
                 return [visible]
 
             def wait_for_range(start, last, *, preview=False):
@@ -100,17 +103,18 @@ def main():
     frames = []
     transcript = {}
     for resource in ('webhooks', 'skills'):
-        before = capture(args.before.resolve(), resource, False)[0]
-        after, advanced = capture(args.after.resolve(), resource, True)
-        transcript[resource] = {'before': before, 'first': after, 'next': advanced}
+        before = capture(args.before.resolve(), resource, 'before')[0]
+        printed = capture(args.after.resolve(), resource, 'print')[0]
+        preview, advanced = capture(args.after.resolve(), resource, 'browse')
+        transcript[resource] = {'before': before, 'printed': printed, 'preview': preview, 'next': advanced}
         group = [render(text, resource, label, font) for text, label in
-                 [(before, 'Before'), (after, 'After'), (advanced, 'After · Space')]]
+                 [(before, 'Before'), (printed, 'After'), (preview, 'After · --browse'), (advanced, 'After · Space')]]
         if resource == 'webhooks':
             group[0].save(args.output / 'before.png')
             group[1].save(args.output / 'after.png')
         frames.extend(group)
     frames[0].save(args.output / 'pager.gif', save_all=True, append_images=frames[1:],
-                   duration=[2300, 2600, 2300, 2300, 2600, 2300], loop=0, optimize=True)
+                   duration=[2200, 2600, 2500, 2200] * 2, loop=0, optimize=True)
     (args.output / 'screens.json').write_text(json.dumps(transcript, indent=2) + '\n')
 
 

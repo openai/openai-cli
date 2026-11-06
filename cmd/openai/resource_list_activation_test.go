@@ -79,8 +79,15 @@ func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) 
 		if query.Get("after") != wantCursor {
 			t.Errorf("request %d cursor=%q, want %q", request, query.Get("after"), wantCursor)
 		}
-		if r.Header.Get("X-List-Test") != "preserved" || r.Header.Get("OpenAI-Organization") != "org-synthetic" {
-			t.Error("list request discarded the explicit header or organization")
+		if r.Header.Get("X-List-Test") != "preserved" || r.Header.Get("OpenAI-Organization") != "org-synthetic" || r.Header.Get("OpenAI-Project") != "proj-synthetic" {
+			t.Error("list request discarded a header or its organization/project context")
+		}
+		key := "sk-fake-list-override"
+		if strings.HasPrefix(route.path, "/organization/") {
+			key = "sk-fake-list-admin-override"
+		}
+		if r.Header.Get("Authorization") != "Bearer "+key {
+			t.Error("list request used the wrong credential")
 		}
 		if route.object == "file" && (query.Get("purpose") != "assistants" || query.Get("order") != "asc") {
 			t.Errorf("file query changed: %v", query)
@@ -102,7 +109,7 @@ func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) 
 			return
 		}
 		items := []map[string]any{}
-		if mode != "empty" && mode != "empty-continuation" {
+		if mode != "empty" && mode != "empty-continuation" && !(mode == "empty-next-continuation" && request == 2) {
 			for number := (request-1)*2 + 1; number <= request*2; number++ {
 				item := map[string]any{"id": fmt.Sprintf("item_%03d", number), "object": route.object}
 				switch route.object {
@@ -133,9 +140,15 @@ func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) 
 		envelope := map[string]any{"object": "list", "data": items, "has_more": more, "first_id": "item_001", "last_id": nextCursor}
 		if route.object == "group" && mode != "missing-cursor" {
 			envelope["next"] = nextCursor
-			if mode == "repeat-cursor" && request == 2 {
-				envelope["has_more"] = true
-			}
+		}
+		if (mode == "repeat-cursor" || mode == "empty-next-continuation") && request == 2 {
+			envelope["has_more"] = true
+		}
+		if route.object == "organization.project" && (mode == "missing-cursor" || mode == "missing-legacy-cursor") {
+			delete(envelope, "last_id")
+		}
+		if request == 1 && (mode == "legacy" || mode == "missing-legacy-cursor") {
+			delete(envelope, "has_more")
 		}
 		_ = json.NewEncoder(w).Encode(envelope)
 	}))
@@ -144,7 +157,8 @@ func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) 
 }
 
 func resourceListArgs(route resourceListRoute, extra ...string) []string {
-	args := []string{"openai", "--organization", "org-synthetic", "--header", "X-List-Test: preserved"}
+	args := []string{"openai", "--api-key", "sk-fake-list-override", "--admin-api-key", "sk-fake-list-admin-override",
+		"--organization", "org-synthetic", "--project", "proj-synthetic", "--header", "X-List-Test: preserved"}
 	args = append(args, route.args...)
 	args = append(args, "--limit", "2", "--after", "seed")
 	return append(args, extra...)

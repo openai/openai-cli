@@ -6,11 +6,12 @@ import "testing"
 
 func TestMainRegisteredListPagination(t *testing.T) {
 	webhooks := resourceListRoute{"webhooks", "/webhook_endpoints", "webhook_endpoint",
-		[]string{"webhooks", "list"}, []string{"ID", "NAME", "EVENTS"}}
-	skills := resourceListRoute{"skills", "/skills", "skill", []string{"skills", "list"},
+		[]string{"webhooks", "list", "--browse"}, []string{"ID", "NAME", "EVENTS"}}
+	skills := resourceListRoute{"skills", "/skills", "skill", []string{"skills", "list", "--browse"},
 		[]string{"ID", "NAME", "DEFAULT VERSION", "LATEST VERSION"}}
-	groups := resourceListRoute{"groups", "/organization/groups", "group", []string{"admin", "organization", "groups", "list"},
+	groups := resourceListRoute{"groups", "/organization/groups", "group", []string{"admin", "organization", "groups", "list", "--browse"},
 		[]string{"ID", "NAME", "GROUP TYPE", "IS SCIM MANAGED"}}
+	projects := resourceListRoutes[2]
 	for _, tc := range []struct {
 		route        resourceListRoute
 		mode, action string
@@ -22,6 +23,9 @@ func TestMainRegisteredListPagination(t *testing.T) {
 		{groups, "repeat-cursor", "error-next", 1},
 		{groups, "blocked-next", "q", 0},
 		{skills, "error-next", "error-next", 1},
+		{projects, "repeat-cursor", "error-next", 1},
+		{projects, "empty-next-continuation", "error-next", 1},
+		{projects, "legacy", "paging", 0},
 	} {
 		t.Run(tc.route.name+"/"+tc.mode, func(t *testing.T) {
 			fixture := newResourceListFixture(t, tc.route, tc.mode)
@@ -44,6 +48,9 @@ func TestMainRegisteredListPagination(t *testing.T) {
 		{groups, "missing-cursor", "error", nil, 1},
 		{skills, "missing-cursor", "error", nil, 1},
 		{groups, "missing-cursor", "one", []string{"--max-items", "1"}, 0},
+		{projects, "missing-cursor", "error", nil, 1},
+		{projects, "missing-legacy-cursor", "error", nil, 1},
+		{projects, "missing-legacy-cursor", "finish", []string{"--max-items", "2"}, 0},
 	} {
 		t.Run(tc.route.name+"/"+tc.mode+"/"+tc.action, func(t *testing.T) {
 			fixture := newResourceListFixture(t, tc.route, tc.mode)

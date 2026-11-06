@@ -53,7 +53,7 @@ func TestNewListCommandsInheritPager(t *testing.T) {
 	for _, verb := range []string{"list", "list-revisions"} {
 		t.Run(verb, func(t *testing.T) {
 			runResourceListObserver(t, map[string]any{
-				"process": "TestNewListCommandProcess", "args": []string{"openai", "widgets", verb},
+				"process": "TestNewListCommandProcess", "args": []string{"openai", "widgets", verb, "--browse"},
 				"home": t.TempDir(), "endpoint": "http://127.0.0.1:1", "action": "discover",
 				"mode": "complete", "expected": 0, "markers": []string{"CALIBRATION", "widget_01", "42"},
 			})

@@ -127,6 +127,7 @@ python3 -B scripts/demos/list-pager/record-resources.py /path/to/base/openai /pa
 ```
 
 The recorder uses two 76×12 PTYs per resource and a loopback API with identical synthetic records.
-The Before screenshot shows the first screen of labeled output. The After screenshot shows the same command's five-row preview.
-The GIF includes Space advancing both lists. The recorder checks each range and verifies Back reuses the earlier page.
+The Before screenshot shows labeled output. The After screenshot shows the default printed table.
+Both default commands print all 30 fixture rows and exit without input.
+The GIF also shows the five-row `--browse` preview. Space advances and Back reuses the cached page.
 The title bar labels each capture. The terminal contents and footer come from the CLI.

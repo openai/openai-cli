@@ -34,6 +34,7 @@ Press Space to browse the next screen. Press the up or down arrow to scroll one 
 Press `b` to go back or `q` to quit. The table keeps its column headings in view as you scroll.
 
 If the CLI reports a missing API key, run `openai help setup` for instructions.
+Use `openai files list --browse=false` to print the table directly to the terminal.
 
 ## Find commands and complete paths
 

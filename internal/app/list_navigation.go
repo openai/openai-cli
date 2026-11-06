@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"runtime"
 	"strings"
@@ -9,10 +10,12 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/commands/models"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/listview"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/tidwall/gjson"
+	"github.com/urfave/cli/v3"
 )
 
 // InteractiveListOutput leaves explicit machine formats and redirected input or
@@ -36,15 +39,6 @@ func InteractiveListOutput(opts ShowJSONOpts) bool {
 	return err == nil && width > 0 && height > 0
 }
 
-// JSONListPage is implemented by SDK explicit API page types.
-type JSONListPage[P any] = listview.JSONListPage[P]
-
-// ShowJSONPages retains the lazy-page entrypoint with assembly presentation policy.
-func ShowJSONPages[P JSONListPage[P]](first func(context.Context) (P, error), maximum int64, opts ShowJSONOpts, cursorField string) error {
-	opts.setDefaults()
-	return listview.ShowPages(first, maximum, listViewerOptions(opts), cursorField)
-}
-
 func listViewerOptions(opts ShowJSONOpts) listview.Options {
 	style := listNavigationStyle(opts)
 	diagnostics := outputDiagnosticsAllowed(opts.Context)
@@ -52,25 +46,24 @@ func listViewerOptions(opts ShowJSONOpts) listview.Options {
 	diagnostics = diagnostics && opts.Operation == "(resource) models > (method) list"
 	result := listview.Options{
 		Context: opts.Context, Stdout: opts.Stdout,
+		PrintOnly:            printedListFrom(opts.Context) != nil,
 		Style:                style,
 		CallerHandlesSignals: opts.CallerHandlesSignals,
 		RenderPage: func(items []gjson.Result, width int) (string, error) {
 			return renderListNavigationPage(opts, items, width, diagnostics, style)
 		},
 	}
-	if opts.OutputKind == OutputPageItem && (opts.Format == "" || strings.EqualFold(opts.Format, "auto")) && opts.Transform == "" && !opts.RawOutput {
-		result.Singular, result.Plural = listRangeNames(opts.Operation, opts.Title)
-		result.RenderTable = func(items []gjson.Result, width int) (string, bool, error) {
-			return listview.RenderRecordTable(opts.Context, opts.Operation, items, width, style)
-		}
-		result.RenderRecordLabels = func(item gjson.Result, _ bool) (string, error) {
-			return renderListNavigationLabels(opts, []gjson.Result{item}, false)
-		}
-		if opts.Operation == "(resource) models > (method) list" {
-			models.ConfigureRecordView(&result)
-			if diagnostics {
-				result.Hint = "Details: --format json"
-			}
+	result.Singular, result.Plural = listRangeNames(opts.Operation, opts.Title)
+	result.RenderTable = func(items []gjson.Result, width int) (string, bool, error) {
+		return listview.RenderRecordTable(opts.Context, opts.Operation, items, width, style)
+	}
+	result.RenderRecordLabels = func(item gjson.Result, _ bool) (string, error) {
+		return renderListNavigationLabels(opts, []gjson.Result{item}, false)
+	}
+	if opts.Operation == "(resource) models > (method) list" {
+		models.ConfigureRecordView(&result)
+		if diagnostics {
+			result.Hint = "Details: --format json"
 		}
 	}
 	if opts.CallerHandlesSignals {
@@ -173,3 +166,31 @@ func renderListNavigationLabels(opts ShowJSONOpts, items []gjson.Result, diagnos
 	readable.DiagnosticsAllowed = diagnostics
 	return listview.RenderLabels(items, selectOutputTransformer(opts, transformers.Select), readable)
 }
+
+// One signal owner cancels requests before the viewer joins its fetch worker.
+func runTerminalList(opts ShowJSONOpts, show func(ShowJSONOpts) error) error {
+	ctx, stop := clioutput.DownloadSignalContext(opts.Context)
+	defer stop()
+	opts.Context, opts.CallerHandlesSignals = ctx, true
+	err := clioutput.StreamToStdout(func(*os.File) error { return show(opts) })
+	var interrupted *clioutput.DownloadSignalError
+	if errors.As(context.Cause(ctx), &interrupted) {
+		err = errors.Join(err, context.Cause(ctx))
+		var exit cli.ExitCoder
+		if !errors.As(err, &exit) {
+			err = &listCommandInterrupt{cause: err, code: interrupted.SignalExitCode()}
+		}
+	}
+	return err
+}
+
+// Keep a nonempty cause so the error presenter does not mistake cancellation
+// for an intentionally silent shell-completion status.
+type listCommandInterrupt struct {
+	cause error
+	code  int
+}
+
+func (e *listCommandInterrupt) Error() string { return e.cause.Error() }
+func (e *listCommandInterrupt) Unwrap() error { return e.cause }
+func (e *listCommandInterrupt) ExitCode() int { return e.code }

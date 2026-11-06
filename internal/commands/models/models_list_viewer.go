@@ -82,7 +82,7 @@ func (p *modelPages) next() (listview.Page, error) {
 		return listview.Page{}, err
 	}
 	count := min(p.size, len(p.items))
-	page := listview.Page{Items: p.items[:count], More: count < len(p.items), Local: true, Total: p.total, FullLabels: p.fullLabels}
+	page := listview.Page{Items: p.items[:count], More: count < len(p.items), Total: p.total, FullLabels: p.fullLabels}
 	p.items = p.items[count:]
 	return page, nil
 }

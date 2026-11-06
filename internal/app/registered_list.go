@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/listview"
@@ -31,6 +32,12 @@ func markListPager(command *cli.Command) {
 func configureRegisteredLists(root *cli.Command) {
 	var visit func(*cli.Command, string)
 	visit = func(parent *cli.Command, parentPath string) {
+		// Compatibility routes can expose the same generated resource under
+		// a shorter path. Use its canonical schema for every spelling.
+		resourcePath := parentPath
+		if canonical := localcommands.ResourceName(parent); canonical != "" {
+			resourcePath = strings.ReplaceAll(canonical, ":", " ")
+		}
 		for _, child := range parent.Commands {
 			path := strings.TrimSpace(parentPath + " " + strings.ReplaceAll(child.Name, ":", " "))
 			for _, name := range child.Names() {
@@ -38,7 +45,7 @@ func configureRegisteredLists(root *cli.Command) {
 					name = "list"
 				}
 				if name == "list" || strings.HasPrefix(name, "list-") {
-					registerListPager(child, parentPath, path, name)
+					registerListPager(child, resourcePath, path, name)
 					break
 				}
 			}
@@ -53,7 +60,12 @@ func registerListPager(command *cli.Command, parent, title, method string) {
 		return
 	}
 	markListPager(command)
-	help := listview.ControlsHelp
+	// These resources already opened a pager before list tables were generalized.
+	browse := method == "list" && (parent == "files" || parent == "batches" || parent == "admin organization projects")
+	help := "Terminal output prints all requested rows and returns to the shell. Use --browse for an interactive preview."
+	if browse {
+		help = listview.ControlsHelp
+	}
 	command.Description = strings.TrimSpace(command.Description + "\n\n" + help)
 	if content, ok := command.Metadata["help-content"].(clihelp.Content); ok {
 		content.Description = strings.TrimSpace(content.Description + "\n\n" + help)
@@ -64,7 +76,7 @@ func registerListPager(command *cli.Command, parent, title, method string) {
 	operation := "(resource) " + resource + " > (method) " + strings.ReplaceAll(method, "-", "_")
 	next := command.Action
 	command.Action = func(ctx context.Context, cmd *cli.Command) error {
-		if cmd.Bool("watch") || cmd.Bool("stream") {
+		if cmd.Bool("watch") || cmd.Bool("stream") || parent == "batches" && (cmd.IsSet("watch-count") || cmd.IsSet("poll-interval")) {
 			return next(ctx, cmd)
 		}
 		opts := ShowJSONOpts{
@@ -76,10 +88,11 @@ func registerListPager(command *cli.Command, parent, title, method string) {
 			return next(ctx, cmd)
 		}
 		opts.setDefaults()
-		return runInteractiveList(opts, func(opts ShowJSONOpts) error {
+		return runTerminalList(opts, func(opts ShowJSONOpts) error {
 			return runRegisteredList(opts, func(ctx context.Context) error { return next(ctx, cmd) })
 		})
 	}
+	configureListBrowsing(command, browse)
 }
 
 type registeredListKey struct{}
@@ -186,7 +199,11 @@ func collectListIterator[T any](list *registeredList, source jsonview.Iterator[T
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if remaining != 0 && list.page != nil && list.page.more {
+	// ConversationCursorPage uses last_id. Its SDK iterator also stops if
+	// that cursor is missing from a legacy response without has_more.
+	_, usesLastID := source.(*pagination.ConversationCursorPageAutoPager[T])
+	if remaining != 0 && list.page != nil &&
+		(list.page.more || usesLastID && !list.page.hasMoreField && len(list.rows) > 0) {
 		return &listview.PaginationError{}
 	}
 	return nil

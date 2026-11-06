@@ -1,7 +1,7 @@
 # Reading command results
 
 Single API objects print as labeled text in terminals, pipes, and redirected
-files. Lists use a compact preview in interactive terminals. Select
+files. In interactive terminals, lists show tables when the data fits. Select
 `--format text` to print all requested records as labeled text.
 
 ```sh
@@ -17,8 +17,11 @@ and `--max-items 0` writes nothing.
 
 ## Browsing a list
 
-Run `openai files list`, `openai webhooks list`, or `openai skills list`.
-The CLI starts with up to five table rows or a short block of labeled fields.
+Most lists, including `openai webhooks list` and `openai skills list`, print all requested rows and return.
+Pass `--browse` to use keyboard navigation, for example `openai skills list --browse`.
+Files, Batches, Models, and Projects already browse by default. Pass `--browse=false` to print and return.
+
+Browsing starts with up to five table rows or a short block of labeled fields.
 Complete results that fit return to the shell. Longer results show a footer, such as `Files 1–5`.
 
 | Key | Action |
@@ -34,7 +37,7 @@ the final screen stays open until you quit. Use `--format json` for the full API
 
 The CLI discovers list actions during command registration, including aliases
 and names such as `list-files`. New commands using the standard JSON response
-or iterator output inherit the pager and table layout automatically.
+or iterator output inherit both the table layout and the `--browse` option automatically.
 
 Ordinary text and unknown fields remain complete. Known base64 media fields and
 numeric embedding vectors show a size or count with a `--format json` hint.

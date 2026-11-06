@@ -17,7 +17,7 @@ type listPageContinuation struct {
 	matchedKey, readValue bool
 	key                   [2 + 6*len("has_more") + 1]byte
 	keyLen                int
-	more                  bool
+	hasMoreField, more    bool
 }
 
 func (page *listPageContinuation) Read(p []byte) (int, error) {
@@ -64,6 +64,7 @@ func (page *listPageContinuation) observe(data []byte) {
 		}
 		page.matchedKey = false
 		if page.readValue {
+			page.hasMoreField = true
 			page.more = c == 't'
 			page.readValue = false
 		}
