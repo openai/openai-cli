@@ -18,8 +18,6 @@
 
 > Looking for the coding agent? Use [Codex CLI](https://developers.openai.com/codex/cli).
 
-<!-- x-release-please-start-version -->
-
 ## Installation
 
 Choose your operating system. Each setup installs all CLI commands and turns on automatic updates for normal interactive use.
@@ -43,30 +41,15 @@ source "$(brew --prefix)/bin/openai-enable-updates.zsh"
 
 ### Linux
 
-On Debian, Ubuntu, or Fedora, paste the block below into Bash or zsh. It picks the package for your computer.
-Enter your password if sudo asks.
-
-<details>
-<summary>Show the Linux install command</summary>
+On Debian, Ubuntu, or Fedora, [download `openai.sh`](https://github.com/openai/openai-cli/releases/download/v1.51.3/openai.sh).
+Open Bash or zsh in the download folder. Paste both lines together.
 
 ```sh
-(
-  installer=$(mktemp /tmp/openai-install.XXXXXXXX) || exit
-  trap 'rm -f -- "$installer"' EXIT
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-  printf 'Downloading the OpenAI CLI installer...\n' >&2
-  curl -qfsSL --retry 3 --retry-max-time 60 --max-time 60 --proto '=https' --proto-redir '=https' \
-    -o "$installer" https://raw.githubusercontent.com/openai/openai-cli/334f332fc6a5f8298b20548d4fbbbb30c940cdc5/scripts/install-linux-release.sh || exit
-  printf '%s  %s\n' b0c05af08bd5e168366063bde36147d880f90fba337ce57fff928aa5f3633ce5 "$installer" | sha256sum --check --quiet || exit
-  /bin/bash -p "$installer"
-) && source /usr/share/openai-cli/enable-updates.sh
+echo '3b94b2ac8e73bd16f3803ceea1ba5c08b1c80a3c9b27f75c5b8a9d4d76ff7e00  openai.sh' |
+  sha256sum -c - && source ./openai.sh
 ```
 
-</details>
-
-[Other Linux distributions](docs/installation.md#installing-a-prebuilt-binary)
+Enter your password if sudo asks. [Install over SSH](docs/installation.md#install-over-ssh) · [Other Linux distributions](docs/installation.md#installing-a-prebuilt-binary)
 
 ### Windows
 
@@ -75,8 +58,6 @@ Enter your password if sudo asks.
 3. Paste it into PowerShell without administrator privileges.
 
 The installer downloads the matching ZIP and makes `openai` available in this terminal. [Install with File Explorer](docs/installation.md#windows)
-
-<!-- x-release-please-end -->
 
 ## Authentication
 

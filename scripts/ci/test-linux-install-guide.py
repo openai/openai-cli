@@ -1,10 +1,11 @@
-"""Run the README paste and sourced release launcher with real curl and a harmless installer."""
+"""Exercise both documented Linux installs with real shell, curl and checksum tools."""
 
 import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from itertools import product
 import os
 from pathlib import Path
+import re
 import ssl
 import subprocess
 import tempfile
@@ -16,9 +17,23 @@ launcher = (repo / "scripts/openai.sh").read_bytes()
 manifest = (repo / "scripts/openai.sha256").read_bytes()
 if manifest != f"{hashlib.sha256(launcher).hexdigest()}  openai.sh\n".encode():
     raise SystemExit("The Linux launcher does not match its reviewed checksum.")
-guide = (repo / "README.md").read_text()
-linux = guide.split("\n### Linux\n", 1)[1].split("\n### ", 1)[0]
-paste = linux.split("```sh\n", 1)[1].split("\n```", 1)[0]
+
+
+def section_command(path, heading):
+    documented = (repo / path).read_text().split(f"\n### {heading}\n", 1)[1]
+    section = re.split(r"^#{1,3} ", documented, maxsplit=1, flags=re.MULTILINE)[0]
+    [command] = re.findall(r"^```sh\n(.*?)\n```$", section, re.MULTILINE | re.DOTALL)
+    return section, command
+
+
+linux, paste = section_command("README.md", "Linux")
+_, ssh_paste = section_command("docs/installation.md", "Install over SSH")
+if not re.search(r"\]\(https://github\.com/openai/openai-cli/releases/download/v[0-9]+\.[0-9]+\.[0-9]+/openai\.sh\)", linux):
+    raise SystemExit("The Linux download must link to a fixed, published release asset.")
+# The README can pin an earlier published launcher when the checkout advances.
+published_digest = "3b94b2ac8e73bd16f3803ceea1ba5c08b1c80a3c9b27f75c5b8a9d4d76ff7e00"
+if f"{published_digest}  openai.sh" not in paste:
+    raise SystemExit("The Linux README command must check the reviewed launcher checksum.")
 # Verify new pins against the published installer before updating these expectations.
 revision = "334f332fc6a5f8298b20548d4fbbbb30c940cdc5"
 pin = "b0c05af08bd5e168366063bde36147d880f90fba337ce57fff928aa5f3633ce5"
@@ -40,10 +55,12 @@ curl() {
   command curl "$@" --noproxy '*' --connect-to "::127.0.0.1:$PORT" --cacert "$CERT"
 }
 sha256sum() {
+  if [ "$1" = -c ]; then command sha256sum "$@"; return; fi
   read -r digest file && [ "$digest" = "$GUIDE_DIGEST" ] || return 1
   printf '%s  %s\n' "$FIXTURE_DIGEST" "$file" | command sha256sum "$@"
 }
 source() {
+  if [ "$1" = ./openai.sh ]; then builtin source "$@"; return; fi
   [ "$#" = 1 ] && [ "$1" = /usr/share/openai-cli/enable-updates.sh ] || return 1
   echo helper >> "$CALLS"
   [ "$HELPER_RC" = 0 ] || return "$HELPER_RC"
@@ -96,7 +113,28 @@ with tempfile.TemporaryDirectory() as tmp, HTTPServer(("127.0.0.1", 0), Download
                                         stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
                 if result.returncode != 1 or b"Run source ./openai.sh" not in result.stderr:
                     raise SystemExit(f"{shell} accepted an executed or noninteractive launcher")
-        routes = {"install guide": paste, "release launcher": "builtin source ./openai.sh"}
+            # A leftover file can share the expected name after a browser renames a new download.
+            stale = b'echo stale >> "$CALLS"\n'
+            for name, files in {
+                "changed download": {"openai.sh": stale},
+                "partial download": {"openai.sh": launcher[:len(launcher) // 2]},
+                "wrong filename": {"openai (1).sh": launcher},
+                "stale copy": {"openai.sh": stale, "openai (1).sh": launcher},
+            }.items():
+                with tempfile.TemporaryDirectory(dir=tmp) as folder:
+                    for filename, data in files.items():
+                        (Path(folder) / filename).write_bytes(data)
+                    calls.write_text("")
+                    trace = 'source() { echo source >> "$CALLS"; builtin source "$@"; }\n'
+                    env = {"PATH": os.environ["PATH"], "HOME": tmp, "CALLS": str(calls), "HTTPS_PROXY": "http://127.0.0.1:1"}
+                    result = subprocess.run([shell, *flags, "-ic", trace + paste], cwd=folder, env=env,
+                                            stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
+                    if result.returncode != 1 or calls.read_text():
+                        raise SystemExit(f"{shell} README: {name} passed verification or ran a file")
+                    print(f"PASS {shell} README: {name}")
+        # Bind the download fixture to its actual bytes. For the initial release these pins match.
+        readme_fixture = paste.replace(published_digest, hashlib.sha256(launcher).hexdigest())
+        routes = {"README": readme_fixture, "SSH guide": ssh_paste}
         for (shell, flags), (route, entrypoint) in product(shells.items(), routes.items()):
             for name, responses, installer_rc, helper_rc, expected_codes, expected_calls in (
                 ("retry", [(503, b"busy"), (200, installer)], 0, 0, (0,), ["installer", "helper"]),
