@@ -2,6 +2,10 @@
 
 Command errors go to stderr and keep their failing exit status.
 Readable API errors lead with guidance. The HTTP status and available request ID appear below it.
+For a missing API key, the CLI prints the setup command for the executable you launched.
+The setup guide shows how to set `OPENAI_API_KEY`. Admin commands use `OPENAI_ADMIN_KEY`.
+For a temporary server error, you can repeat a read. Check a write's result before repeating it.
+An unfamiliar HTTP error includes the available information to share with the API provider.
 The CLI suggests help for the corrected command but never runs it.
 The shell must first find the `openai` executable.
 For example, `opneai images generate` fails inside the shell before the CLI starts.

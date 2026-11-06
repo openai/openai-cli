@@ -47,16 +47,15 @@ func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *
 		setup += " admin"
 	}
 	if custom {
-		lines := []string{"Authentication failed for the custom API address.", credential}
+		message := "Authentication failed for the custom API address.\n" + credential
 		switch {
 		case override:
-			lines = append(lines, "Next: correct or remove this Authorization override.")
+			return message + "\nCorrect or remove this Authorization override."
 		case emptyFlag:
-			lines = append(lines, "Next: remove the empty --"+flag+" override.")
+			return message + "\nRemove the empty --" + flag + " override."
 		default:
-			lines = append(lines, "Next: set the credential required by this API endpoint.")
+			return message + "\nSet the credential required by this API endpoint.\nKey setup: " + clihelp.SuggestedCommand(root, output, setup)
 		}
-		return strings.Join(lines, "\n") + "\nKey setup: " + clihelp.SuggestedCommand(root, output, setup)
 	}
 	switch {
 	case override:
@@ -69,7 +68,7 @@ func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *
 		return message + "\nRemove the empty option. For help setting " + variable + ", run:\n  " +
 			clihelp.SuggestedCommand(root, output, setup)
 	case !apiAuthenticationKeyPresent(root, flag, variable):
-		return "This command needs an " + label + ".\nFor help setting " + variable + ", run:\n  " +
+		return "No " + label + " is configured.\nRun this guide to set " + variable + ".\n  " +
 			clihelp.SuggestedCommand(root, output, setup)
 	}
 	message := "OpenAI could not authenticate this request."

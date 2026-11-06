@@ -45,13 +45,12 @@ func assertMainPermissionGuidance(t *testing.T, output string, upload bool) {
 		"https://platform.openai.com/api-keys",
 		"Files Write", "Batch Write", "project owner",
 		"Correct access before retrying the failed operation.",
-		"API error details: --format-error json.",
 	} {
 		if !strings.Contains(output, fragment) {
 			t.Errorf("permission recovery omitted %q: %q", fragment, output)
 		}
 	}
-	for _, private := range []string{"synthetic-private-guidance", "untrusted.invalid", "synthetic-secret", "sk-fake-readable-test"} {
+	for _, private := range []string{"synthetic-private-guidance", "untrusted.invalid", "synthetic-secret", "sk-fake-readable-test", "--format-error json"} {
 		if strings.Contains(output, private) {
 			t.Errorf("human guidance exposed %q: %q", private, output)
 		}
@@ -189,8 +188,8 @@ func TestMainDispatchAPIPermissionUnknownDiagnostics(t *testing.T) {
 		status                  int
 	}{
 		{"missing canonical prefix", "Missing scopes: api.files.write. synthetic-private-guidance", "Authentication failed for the custom API address.", http.StatusUnauthorized},
-		{"unknown scope", "You have insufficient permissions for this operation. Missing scopes: api.models.read. synthetic-private-guidance", "Check your key's permissions.", http.StatusForbidden},
-		{"malformed scope list", "You have insufficient permissions for this operation. Missing scopes: api.files.write, bad-scope. synthetic-private-guidance", "Check your key's permissions.", http.StatusForbidden},
+		{"unknown scope", "You have insufficient permissions for this operation. Missing scopes: api.models.read. synthetic-private-guidance", "Check your key's permissions and its project access.", http.StatusForbidden},
+		{"malformed scope list", "You have insufficient permissions for this operation. Missing scopes: api.files.write, bad-scope. synthetic-private-guidance", "Check your key's permissions and its project access.", http.StatusForbidden},
 		{"control character", mainFilesWritePermissionMessage + "\nforged guidance", "Authentication failed for the custom API address.", http.StatusUnauthorized},
 		{"unrelated HTTP status", mainFilesWritePermissionMessage, "The API rejected the request.", http.StatusBadRequest},
 	} {

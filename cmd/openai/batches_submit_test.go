@@ -303,10 +303,8 @@ func TestMainBatchSubmitAuthenticationRejectionRecovery(t *testing.T) {
 						}
 						message = gjson.Get(got.stderr, "batch_submission.message").String()
 					} else {
-						for _, guidance := range []string{"HTTP " + strconv.Itoa(status), "API error details: --format-error json."} {
-							if strings.Count(got.stderr, guidance) != 1 {
-								t.Errorf("expected one %q guidance block: %s", guidance, got.stderr)
-							}
+						if strings.Count(got.stderr, "HTTP "+strconv.Itoa(status)) != 1 || strings.Contains(got.stderr, "--format-error json") {
+							t.Errorf("expected a single authentication diagnostic: %s", got.stderr)
 						}
 						if strings.Contains(got.stderr, "synthetic-private") || strings.Contains(got.stderr, path) {
 							t.Fatalf("human guidance exposed private details: %s", got.stderr)

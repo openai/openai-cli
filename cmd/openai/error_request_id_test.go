@@ -76,8 +76,8 @@ func TestMainDispatchOutputAPIErrorRequestID(t *testing.T) {
 					t.Fatalf("human error exposed unrelated or unsafe data: %q", got.stderr)
 				}
 			}
-			if !strings.Contains(got.stderr, "The API may have received the request.") ||
-				!strings.Contains(got.stderr, "Check its status before trying again.") {
+			if strings.Contains(got.stderr, "The API may have received the request.") ||
+				!strings.Contains(got.stderr, "Try fetching the data again in a moment.") {
 				t.Fatalf("request-ID display lost recovery guidance: %q", got.stderr)
 			}
 		})

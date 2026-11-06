@@ -62,7 +62,7 @@ func TestAPIAuthGuidanceConfigurationSources(t *testing.T) {
 		want []string
 		omit []string
 	}{
-		{name: "missing", args: []string{"models", "list"}, want: []string{"This command needs an API key.", "For help setting OPENAI_API_KEY", "'/tmp/synthetic app/openai' help setup"}},
+		{name: "missing", args: []string{"models", "list"}, want: []string{"No API key is configured.", "Run this guide to set OPENAI_API_KEY", "'/tmp/synthetic app/openai' help setup"}},
 		{name: "environment", env: map[string]string{"OPENAI_API_KEY": "synthetic-env"}, args: []string{"models", "list"}, want: []string{"Check the API key supplied by OPENAI_API_KEY or the --api-key override."}},
 		{name: "explicit", args: []string{"--api-key", "synthetic-flag", "models", "list"}, want: []string{"Check the API key supplied by --api-key."}},
 		{name: "rejected explicit key overrides environment", code: "invalid_api_key", env: map[string]string{"OPENAI_API_KEY": "synthetic-env"}, args: []string{"--api-key", "synthetic-flag", "files", "list"},
@@ -73,11 +73,11 @@ func TestAPIAuthGuidanceConfigurationSources(t *testing.T) {
 		{name: "explicit header", env: map[string]string{"OPENAI_API_KEY": "synthetic-env"}, args: []string{"--header", "aUtHoRiZaTiOn: Bearer synthetic-header", "models", "list"}, want: []string{"--header controls authentication", "Correct or remove this Authorization override"}, omit: []string{apiAuthenticationKeyURL}},
 		{name: "environment header", env: map[string]string{"OPENAI_CUSTOM_HEADERS": " Authorization : Bearer synthetic-header"}, args: []string{"models", "list"}, want: []string{"OPENAI_CUSTOM_HEADERS controls authentication"}, omit: []string{apiAuthenticationKeyURL}},
 		{name: "environment key replaces header", env: map[string]string{"OPENAI_API_KEY": "synthetic-env", "OPENAI_CUSTOM_HEADERS": "Authorization: Bearer synthetic-header"}, args: []string{"models", "list"}, want: []string{"API key supplied by OPENAI_API_KEY"}, omit: []string{"OPENAI_CUSTOM_HEADERS controls authentication"}},
-		{name: "admin missing", env: map[string]string{"OPENAI_API_KEY": "synthetic-env"}, args: []string{"admin", "projects", "list"}, want: []string{"This command needs an admin API key.", "For help setting OPENAI_ADMIN_KEY", "'/tmp/synthetic app/openai' help setup admin"}, omit: []string{apiAuthenticationKeyURL}},
+		{name: "admin missing", env: map[string]string{"OPENAI_API_KEY": "synthetic-env"}, args: []string{"admin", "projects", "list"}, want: []string{"No admin API key is configured.", "Run this guide to set OPENAI_ADMIN_KEY", "'/tmp/synthetic app/openai' help setup admin"}, omit: []string{apiAuthenticationKeyURL}},
 		{name: "admin colon", env: map[string]string{"OPENAI_ADMIN_KEY": "synthetic-admin"}, args: []string{"admin:organization:projects", "list"}, want: []string{"Ask an organization owner to check the admin API key", "--admin-api-key", "OPENAI_ADMIN_KEY"}, omit: []string{apiAuthenticationKeyURL}},
 		{name: "projects shortcut", env: map[string]string{"OPENAI_ADMIN_KEY": "synthetic-admin"}, args: []string{"projects", "list"}, want: []string{"Ask an organization owner to check the admin API key"}, omit: []string{apiAuthenticationKeyURL}},
-		{name: "admin key does not select admin route", env: map[string]string{"OPENAI_ADMIN_KEY": "synthetic-admin"}, args: []string{"models", "list"}, want: []string{"This command needs an API key."}, omit: []string{"An admin API key"}},
-		{name: "body project stays local", args: []string{"synthetic", "create", "--project", "synthetic-private-project"}, want: []string{"This command needs an API key."}, omit: []string{"synthetic-private-project"}},
+		{name: "admin key does not select admin route", env: map[string]string{"OPENAI_ADMIN_KEY": "synthetic-admin"}, args: []string{"models", "list"}, want: []string{"No API key is configured."}, omit: []string{"An admin API key"}},
+		{name: "body project stays local", args: []string{"synthetic", "create", "--project", "synthetic-private-project"}, want: []string{"No API key is configured."}, omit: []string{"synthetic-private-project"}},
 		{name: "custom provider", args: []string{"--base-url", "https://synthetic-private.invalid/v1", "models", "list"}, want: []string{"custom API address", "credential required by this API endpoint"}, omit: []string{apiAuthenticationKeyURL, "Next: set OPENAI_API_KEY"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -205,7 +205,7 @@ func TestAPIAuthGuidancePresenterPreservesMachineAndCancellation(t *testing.T) {
 				require.JSONEq(t, apierr.RawJSON(), out.String())
 				require.NotContains(t, out.String(), "Key setup:")
 			} else {
-				require.Equal(t, "This command needs an API key.\nFor help setting OPENAI_API_KEY, run:\n  '/tmp/synthetic app/openai' help setup\n\nHTTP 401: Unauthorized.\nRequest ID: req_files_test\nAPI error details: --format-error json.\n", out.String())
+				require.Equal(t, "No API key is configured.\nRun this guide to set OPENAI_API_KEY.\n  '/tmp/synthetic app/openai' help setup\n\nHTTP 401: Unauthorized.\nRequest ID: req_files_test\n", out.String())
 				require.NotContains(t, out.String(), "synthetic-private-body")
 				out.Reset()
 				require.NoError(t, ShowCommandError(command.Root(), errors.Join(failure, context.Canceled), &out))
