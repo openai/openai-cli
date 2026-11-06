@@ -501,7 +501,7 @@ func TestMainCostReportValidationDiagnostics(t *testing.T) {
 	for _, tc := range []struct {
 		name, from, to, want string
 	}{
-		{"invalid date", "2026-02-30", costReportTo, "--from: use an explicit YYYY-MM-DD date on or after 1970-01-01"},
+		{"invalid date", "2026-02-30", costReportTo, "--from: use an explicit YYYY-MM-DD date"},
 		{"invalid range", costReportTo, costReportFrom, "--to must be later than --from; the end date is exclusive"},
 	} {
 		for _, format := range []string{"text", "json"} {

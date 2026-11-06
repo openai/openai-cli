@@ -1,7 +1,7 @@
 # Project cost report demo
 
 Run the same command before and after this change. The baseline exits with an unknown command or option.
-The candidate reads two pages from a local fixture and prints these exact totals:
+The candidate totals two synthetic pages for October 1 through October 7 UTC:
 
 ```text
 proj_alpha  usd  12.34
@@ -31,7 +31,7 @@ The recorder uses isolated Bash terminals, fake credentials, and a loopback Cost
 It checks exit codes, pagination, request parameters, and totals.
 
 Inspect `before.png`, `after.png`, and `comparison.gif` in the media directory.
-The images show actual CLI output rendered from recorded terminals. They use 110 columns, 22 rows, and Menlo at 18 pixels.
+The images show actual CLI output rendered from recorded terminals. They use 80 columns, 15 rows, and Menlo at 18 pixels.
 The directory also contains both terminal recordings, transcripts, file hashes, and request logs.
 
 For a lossless two-frame GIF of the screenshots, use Python with Pillow:

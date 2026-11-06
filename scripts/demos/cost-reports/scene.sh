@@ -5,9 +5,8 @@ printf '\033[2J\033[H'
 printf '%s\n' "$DEMO_SCENE_LABEL"
 printf '%s\n\n' 'Synthetic Costs API | two pages | exact project totals'
 sleep 0.4
-printf '%s\n' '$ openai costs report --from 2026-10-01 --to 2026-10-08 \'
-printf '%s\n' '    --timezone UTC --group-by project'
-if openai costs report --from 2026-10-01 --to 2026-10-08 --timezone UTC --group-by project; then
+printf '%s\n' '$ openai costs report --from 2026-10-01 --to 2026-10-08'
+if openai costs report --from 2026-10-01 --to 2026-10-08; then
   demo_status=0
 else
   demo_status=$?

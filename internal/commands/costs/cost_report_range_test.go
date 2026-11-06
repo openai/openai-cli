@@ -14,6 +14,8 @@ func TestCostReportRangeBoundaries(t *testing.T) {
 	}{
 		{"2026-10-01", "2026-10-08", "UTC", "2026-10-01T00:00:00Z", 168},
 		{"2026-01-01", "2026-01-08", "Europe/London", "2026-01-01T00:00:00Z", 168},
+		// A DST change inside the reporting period does not change its boundaries.
+		{"2026-01-01", "2027-01-01", "Europe/London", "2026-01-01T00:00:00Z", 365 * 24},
 		{"2026-03-08", "2026-03-09", "Africa/Abidjan", "2026-03-08T00:00:00Z", 24},
 		{"1970-01-02", "1970-01-03", "UTC", "1970-01-02T00:00:00Z", 24},
 	} {

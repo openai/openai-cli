@@ -19,12 +19,12 @@ cp "$demo_source/scene.sh" "$demo_runtime/scene.sh"
   echo "before source commit: $demo_before_sha"
   echo "after source commit: $demo_after_sha"
   echo "after source state: ${DEMO_AFTER_SOURCE_STATE:-committed source supplied by caller}"
-  echo 'command in both scenes: openai costs report --from 2026-10-01 --to 2026-10-08 --timezone UTC --group-by project'
+  echo 'command in both scenes: openai costs report --from 2026-10-01 --to 2026-10-08'
   echo 'before: command unavailable, exit 1, zero API requests'
   echo 'after: two API pages, proj_alpha usd 12.34 and proj_beta usd 4.56, exit 0'
   echo 'capture: isolated Bash PTYs; synthetic loopback API; fake Admin key; temporary HOME'
   echo 'settings: xterm-256color, NO_COLOR=1, FORCE_COLOR=0, GOMAXPROCS=2, update checks disabled'
-  echo 'render: 110 columns x 22 rows; Menlo 18px; asciinema theme'
+  echo 'render: 80 columns x 15 rows; Menlo 18px; asciinema theme'
   echo 'scope: terminal replay; merged stdout/stderr; no native graphical terminal or live account validation'
   demo_capture_metadata
   "$demo_python" --version
@@ -36,7 +36,7 @@ shasum -a 256 "$demo_source/record.sh" "$demo_source/scene.sh" "$demo_source/ser
 if [ -n "${DEMO_SOURCE_MANIFEST:-}" ]; then
   cp "$DEMO_SOURCE_MANIFEST" "$demo_output/source-manifest.txt"
 fi
-demo_window_size=110x22
+demo_window_size=80x15
 demo_render_options=(--renderer resvg --font-family Menlo --font-size 18 --line-height 1.2 \
   --theme asciinema --fps-cap 20 --last-frame-duration 3)
 for demo_scene in before after; do
