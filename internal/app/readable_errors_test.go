@@ -249,6 +249,7 @@ func assertReadableErrorContainsNoPrivateDetails(t *testing.T, text string) {
 	// Fixed public recovery links are permitted. Arbitrary response/request
 	// URLs and credential-bearing query parameters remain forbidden.
 	for _, public := range []string{
+		"https://github.com/openai/openai-cli/issues",
 		"https://platform.openai.com/settings/organization/api-keys",
 		"https://developers.openai.com/api/docs/guides/ip-allowlist",
 	} {
