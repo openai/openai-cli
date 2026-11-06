@@ -2,6 +2,7 @@ package transform
 
 import (
 	"context"
+	"slices"
 	"strconv"
 
 	"github.com/tidwall/gjson"
@@ -9,9 +10,12 @@ import (
 
 // ListTableProjection describes one loaded screen. Empty headers request labeled output.
 type ListTableProjection struct {
-	Headers    []string
-	Rows       [][]string
-	FullValues bool
+	Headers []string
+	Rows    [][]string
+	// ProtectedColumn identifies the value to keep complete in compact rows.
+	// FullValues projections preserve every column and ignore this index.
+	ProtectedColumn int
+	FullValues      bool
 }
 
 // ProjectListTable selects columns from one loaded API page. It preserves IDs
@@ -41,8 +45,8 @@ func ProjectRecordTable(ctx context.Context, operation string, items []gjson.Res
 		object, fields = "batch", []string{"id", "status"}
 		headers = []string{"ID", "STATUS"}
 	case "(resource) admin.organization.projects > (method) list":
-		object, fields = "organization.project", []string{"id", "name", "status"}
-		headers = []string{"ID", "NAME", "STATUS"}
+		object, fields = "organization.project", []string{"name", "status", "id"}
+		headers = []string{"NAME", "STATUS", "ID"}
 	default:
 		return projectCompactListTable(ctx, operation, items)
 	}
@@ -57,8 +61,12 @@ func ProjectRecordTable(ctx context.Context, operation string, items []gjson.Res
 		var err error
 		var summary gjson.Result
 		if object == "organization.project" {
+			// An unconfigured decryption key has no list detail. Keep other values in labeled output.
+			if item.Get("psp_decryption_key_id").Type != gjson.Null {
+				return ListTableProjection{}, nil
+			}
 			summary, _, err = summarizeResourceFields(ctx, item, fields,
-				[]string{"object", "created_at", "archived_at", "external_key_id", "residency"})
+				[]string{"object", "created_at", "archived_at", "external_key_id", "residency", "psp_decryption_key_id"})
 		} else {
 			// Reuse the existing resource allowlists and duplicate-key checks.
 			summary, _, err = SummarizeResource(ctx, item, Route{operation, OutputPageItem})
@@ -104,7 +112,7 @@ func ProjectRecordTable(ctx context.Context, operation string, items []gjson.Res
 	if err := ctx.Err(); err != nil {
 		return ListTableProjection{}, err
 	}
-	return ListTableProjection{Headers: headers, Rows: rows}, nil
+	return ListTableProjection{Headers: headers, Rows: rows, ProtectedColumn: slices.Index(fields, "id")}, nil
 }
 
 func listTableEmptyString(value gjson.Result) bool {

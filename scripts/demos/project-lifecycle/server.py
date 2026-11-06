@@ -6,6 +6,7 @@ import pathlib
 import signal
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlsplit
 
 
 def main():
@@ -17,6 +18,34 @@ def main():
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_args):
                 pass
+
+            def send_json(self, result):
+                response = json.dumps(result).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+                self.wfile.flush()
+
+            def do_GET(self):
+                path = urlsplit(self.path).path
+                project = {"id": "proj_demo", "object": "organization.project", "name": "Development",
+                           "status": "active", "created_at": 1787420228, "psp_decryption_key_id": None}
+                if self.headers.get("Authorization") != "Bearer synthetic-admin-key":
+                    self.send_error(401)
+                    return
+                if path == "/v1/organization/projects":
+                    result = {"object": "list", "data": [project], "first_id": "proj_demo",
+                              "last_id": "proj_demo", "has_more": False}
+                elif path == "/v1/organization/projects/proj_demo":
+                    result = {**project, "archived_at": None, "residency": "GLOBAL"}
+                else:
+                    self.send_error(404)
+                    return
+                log.write(json.dumps({"method": "GET", "path": self.path}) + "\n")
+                log.flush()
+                self.send_json(result)
 
             def do_POST(self):
                 try:
@@ -41,13 +70,7 @@ def main():
                         "name": "Demo" if self.path.endswith("/projects") else "Renamed",
                         "status": "archived" if archived else "active", "residency": "GLOBAL",
                     }
-                    response = json.dumps(result).encode()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(response)))
-                    self.end_headers()
-                    self.wfile.write(response)
-                    self.wfile.flush()
+                    self.send_json(result)
                 except Exception as error:
                     failures.append(error)
                     self.send_error(500, "synthetic fixture failed")

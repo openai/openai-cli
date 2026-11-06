@@ -34,11 +34,13 @@ func renderProjection(projection transformers.ListTableProjection, width int, di
 	if len(projection.Headers) == 0 {
 		return "", false, nil
 	}
-	render := readable.ListTable
+	var content string
+	var fits bool
 	if projection.FullValues {
-		render = readable.ListTableFullValues
+		content, fits = readable.ListTableFullValues(projection.Headers, projection.Rows, width)
+	} else {
+		content, fits = readable.ListTable(projection.Headers, projection.Rows, width, projection.ProtectedColumn)
 	}
-	content, fits := render(projection.Headers, projection.Rows, width)
 	if !fits {
 		return "", false, nil
 	}

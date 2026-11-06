@@ -14,6 +14,22 @@ import (
 
 const projectLifecycleFixture = `{"id":"proj_returned","object":"organization.project","name":"Renamed","status":"active"}`
 
+func TestProjectRetrievePreservesRedirectedOutput(t *testing.T) {
+	input := `{"object":"organization.project","id":"proj_demo","created_at":1700000000,"psp_decryption_key_id":null}`
+	for _, format := range []string{"auto", "text", "json"} {
+		var out bytes.Buffer
+		opts := ShowJSONOpts{Context: t.Context(), Operation: "(resource) admin.organization.projects > (method) retrieve",
+			OutputKind: OutputResponse, Format: format, ExplicitFormat: format != "auto", Stdout: &out}
+		require.NoError(t, ShowJSON(gjson.Parse(input), opts))
+		if format == "json" {
+			require.JSONEq(t, input, out.String())
+			continue
+		}
+		require.Contains(t, out.String(), "Created at: 1700000000")
+		require.Contains(t, out.String(), "Psp decryption key ID: (null)")
+	}
+}
+
 func TestProjectLifecycleReceipt(t *testing.T) {
 	var out, diagnostics bytes.Buffer
 	opts := ShowJSONOpts{Context: t.Context(), Operation: "(resource) admin.organization.projects > (method) update", OutputKind: OutputResponse, Stdout: &out, Stderr: &diagnostics}

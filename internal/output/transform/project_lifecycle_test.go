@@ -9,6 +9,31 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func TestOrganizationProjectDetails(t *testing.T) {
+	input := `{"object":"organization.project","id":"proj_demo","created_at":1700000000,"name":"Test project","status":"active","residency":"GLOBAL","archived_at":null,"psp_decryption_key_id":null}`
+	details, err := OrganizationProjectDetails(t.Context(), gjson.Parse(input))
+	require.NoError(t, err)
+	require.Equal(t, `{"name":"Test project","id":"proj_demo","status":"active","created_at":"2023-11-14 22:13:20 UTC","residency":"GLOBAL"}`, details.Raw)
+
+	archived := `{"object":"organization.project","id":"proj_demo","archived_at":1700000000,"created_at":253402300800,"status":"archived","psp_decryption_key_id":"key_identifier"}`
+	details, err = OrganizationProjectDetails(t.Context(), gjson.Parse(archived))
+	require.NoError(t, err)
+	require.Equal(t, "2023-11-14 22:13:20 UTC", details.Get("archived_at").Str)
+	require.Equal(t, "253402300800", details.Get("created_at").Raw, "out-of-range timestamps stay exact")
+	require.Equal(t, "key_identifier", details.Get("psp_decryption_key_id").Str)
+
+	malformedFields := `{"object":"organization.project","id":"proj_demo","name":[],"status":"","archived_at":{},"psp_decryption_key_id":{}}`
+	details, err = OrganizationProjectDetails(t.Context(), gjson.Parse(malformedFields))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":"proj_demo","name":[],"status":"","archived_at":{},"psp_decryption_key_id":{}}`, details.Raw)
+
+	for _, extra := range []string{`,"future":null}`, `,"id":"other"}`, `,"error":"oops"}`} {
+		details, err = OrganizationProjectDetails(t.Context(), gjson.Parse(strings.TrimSuffix(input, "}")+extra))
+		require.NoError(t, err)
+		require.False(t, details.Exists(), "ambiguous and unknown records use the full view")
+	}
+}
+
 func TestProjectLifecycleReturnedData(t *testing.T) {
 	for _, method := range []string{"create", "update", "archive"} {
 		t.Run(method, func(t *testing.T) {
