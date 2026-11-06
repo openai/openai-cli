@@ -114,6 +114,7 @@ func TestMainSpeakRealtime(t *testing.T) {
 		name, format, status, header string
 	}{
 		{"PCM stdout", "pcm", "completed", ""},
+		{"debug trace", "pcm", "completed", ""},
 		{"explicit Authorization override", "pcm", "completed", "Bearer synthetic-override"},
 		{"explicit Authorization removal", "pcm", "completed", "remove"},
 		{"WAV file", "wav", "completed", ""},
@@ -143,6 +144,10 @@ func TestMainSpeakRealtime(t *testing.T) {
 			args := speechTestArgs(server, out, tc.format)
 			if tc.header != "" {
 				args = append([]string{"openai", "--header", "Authorization: " + wantAuthorization}, args[1:]...)
+			}
+			debug := tc.name == "debug trace"
+			if debug {
+				args = append([]string{"openai", "--debug", "--debug-body"}, args[1:]...)
 			}
 			var input *os.File
 			if tc.name == "WAV file" {
@@ -178,7 +183,17 @@ func TestMainSpeakRealtime(t *testing.T) {
 				t.Fatalf("speech failed: %s", got.stderr)
 			}
 			if out == "-" {
-				if !bytes.Equal([]byte(got.stdout), pcm) || got.stderr != "" {
+				if debug {
+					if strings.Count(got.stderr, "GET /custom/v1/realtime HTTP/") != 1 || strings.Contains(got.stderr, "POST /custom/v1/audio/speech") {
+						t.Error("debug trace did not match the single observed WebSocket handshake")
+					}
+					for _, private := range []string{syntheticScript, "synthetic-speech-key", "synthetic-unused-admin"} {
+						if strings.Contains(got.stderr, private) {
+							t.Fatal("private speech request appeared in debug trace")
+						}
+					}
+				}
+				if !bytes.Equal([]byte(got.stdout), pcm) || (!debug && got.stderr != "") {
 					t.Fatalf("PCM stdout=%x stderr=%q", got.stdout, got.stderr)
 				}
 				return
