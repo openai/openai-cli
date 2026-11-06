@@ -7,6 +7,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -99,9 +102,9 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 		return mainDispatchResult{result.Code, result.Stdout, result.Stderr}
 	}
 	message := "Updated to v" + app.Version + "."
-	noticeDirectory := filepath.Join(home, "cache", "openai-cli", "update-notice")
+	noticeDirectory := filepath.Join(home, "cache", "openai-cli", "update-notice-archive-"+runtime.GOOS+"-"+runtime.GOARCH)
 	if runtime.GOOS == "darwin" {
-		noticeDirectory = filepath.Join(home, "Library", "Caches", "openai-cli", "update-notice")
+		noticeDirectory = filepath.Join(home, "Library", "Caches", "openai-cli", "update-notice-archive-"+runtime.GOOS+"-"+runtime.GOARCH)
 	}
 	if err := os.MkdirAll(noticeDirectory, 0700); err != nil {
 		t.Fatal(err)
@@ -163,7 +166,7 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 		writeState()
 		first := run("", nil)
 		second := run("", nil)
-		if first.code != 0 || second.code != 0 || first.stdout != second.stdout {
+		if first.code != 0 || second.code != 0 || !sameUpdatePTYOutput(first.stdout, second.stdout) {
 			t.Fatal("updater changed help or exit status")
 		}
 		if strings.TrimSpace(first.stderr) != message || strings.Contains(second.stderr, "Updated to") {
@@ -173,32 +176,19 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 			t.Fatal("confirmation appeared without help")
 		}
 	})
-	t.Run("background_failure_preserves_help", func(t *testing.T) {
-		state["pending"], state["applied"], state["checked"], state["announced"] = nil, "", 0, false
-		writeState()
-		result := run("", nil)
-		if result.code != 0 || result.stderr != "" {
-			t.Fatalf("background failure interrupted help: %+v", result)
-		}
-		deadline := time.Now().Add(5 * time.Second)
+	waitForWorker := func(t *testing.T, key string) map[string]any {
+		t.Helper()
+		deadline := time.Now().Add(20 * time.Second)
 		for {
 			data, err := os.ReadFile(statePath)
 			if err != nil {
 				t.Fatal(err)
 			}
-			var got struct {
-				Checked             int64
-				VerifierUnavailable bool `json:"verifier_unavailable"`
-			}
-			if err := json.Unmarshal(data, &got); err != nil {
+			var state map[string]any
+			if err := json.Unmarshal(data, &state); err != nil {
 				t.Fatal(err)
 			}
-			if got.Checked > 0 {
-				if !got.VerifierUnavailable {
-					t.Fatal("unsupported verifier did not enable notice fallback")
-				}
-				// State is reserved before probing. Wait for the worker's lock
-				// release before testing the next independent invocation.
+			if timestamp, _ := state[key].(float64); timestamp > 0 {
 				lock, err := os.Open(filepath.Join(stateDirectory, ".lock"))
 				if err != nil {
 					t.Fatal(err)
@@ -206,13 +196,112 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 				err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 				lock.Close()
 				if err == nil {
-					break
+					return state
 				}
 			}
 			if time.Now().After(deadline) {
-				t.Fatal("detached helper did not reserve discovery")
+				t.Fatalf("worker did not finish %s: %s", key, data)
 			}
 			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	t.Run("ordinary_API_response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/v1/models/test-model":
+				fmt.Fprint(w, `{"object":"model","id":"test-model","created":1,"owned_by":"test-owner"}`)
+			case "/v1/responses":
+				fmt.Fprint(w, `{"id":"resp-test","object":"response","status":"completed","output":[]}`)
+			case "/v1/files/file-test/content":
+				w.Header().Set("Content-Type", "application/octet-stream")
+				fmt.Fprint(w, "test download")
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+		env := []string{"OPENAI_BASE_URL=" + server.URL + "/v1", "OPENAI_API_KEY=sk-test-only"}
+		args := []string{"models", "retrieve", "test-model"}
+		state["checked"] = 0 // A legacy receipt is due for another discovery.
+		for _, tc := range []struct {
+			name, redirect string
+			prefix, extra  []string
+			operands       []string
+		}{
+			{name: "quiet", prefix: []string{"--quiet"}},
+			{name: "format", prefix: []string{"--format", "json"}},
+			{name: "extract", prefix: []string{"--transform", "id"}},
+			{name: "raw", prefix: []string{"--raw-output"}},
+			{name: "explicit_help", operands: []string{"models", "retrieve", "--help"}},
+			{name: "save", operands: []string{"files", "download", "file-test", "--output", filepath.Join(t.TempDir(), "result")}},
+			{name: "failed_request", operands: []string{"models", "retrieve", "missing"}},
+			{name: "stdin", redirect: "stdin"}, {name: "stdout", redirect: "stdout"}, {name: "stderr", redirect: "stderr"},
+			{name: "ci", extra: []string{"CI=true"}}, {name: "dumb", extra: []string{"TERM=dumb"}},
+			{name: "no_update_check", extra: []string{"OPENAI_CLI_NO_UPDATE_CHECK=1"}},
+			{name: "no_auto_update", extra: []string{"OPENAI_CLI_NO_AUTO_UPDATE=1"}},
+			{name: "unmanaged", extra: []string{"HOME=" + t.TempDir()}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				before := writeState()
+				writeNotice()
+				operands := tc.operands
+				if operands == nil {
+					operands = args
+				}
+				got := run(tc.redirect, append(append([]string{}, env...), tc.extra...), append(tc.prefix, operands...)...)
+				if (got.code != 0) != (tc.name == "failed_request") ||
+					strings.Contains(got.stderr, "Update to ") || strings.Contains(got.stderr, "Updated to ") {
+					t.Fatalf("unexpected command result: %+v", got)
+				}
+				after, err := os.ReadFile(statePath)
+				if err != nil || string(after) != string(before) {
+					t.Fatalf("ineligible command touched update state: %v, %s", err, after)
+				}
+			})
+		}
+		baseline := run("", append(env, "OPENAI_CLI_NO_UPDATE_CHECK=1"), args...)
+		if baseline.code != 0 || !strings.Contains(baseline.stdout, "test-model") {
+			t.Fatalf("synthetic model request failed: %+v", baseline)
+		}
+		runOrdinary := func(args []string, expected mainDispatchResult) {
+			t.Helper()
+			got := run("", env, args...)
+			if got != expected {
+				t.Fatalf("ordinary command output changed: %+v", got)
+			}
+		}
+		request := []string{"responses", "create", "--model", "test-model", "--input", "test input"}
+		response := run("", append(env, "OPENAI_CLI_NO_UPDATE_CHECK=1"), request...)
+		if response.code != 0 {
+			t.Fatalf("synthetic response request failed: %+v", response)
+		}
+		writeState()
+		runOrdinary(request, response)
+		waitForWorker(t, "checked")
+		runOrdinary(args, baseline)
+		confirmed := run("", nil)
+		if confirmed.code != 0 || strings.TrimSpace(confirmed.stderr) != message {
+			t.Fatalf("silent discovery consumed the bare-help confirmation: %+v", confirmed)
+		}
+		// Seed a staged release. Revalidation uses the unreachable loopback proxy.
+		// The command must schedule activation even when discovery is throttled.
+		pending := state["pending"].(map[string]any)
+		pending["release"].(map[string]any)["version"] = "99.0.0"
+		state["checked"], state["applied"] = time.Now().Unix(), ""
+		writeState()
+		runOrdinary(args, baseline)
+		waitForWorker(t, "activation_checked")
+	})
+	t.Run("background_failure_preserves_help", func(t *testing.T) {
+		state["pending"], state["applied"], state["checked"], state["announced"] = nil, "", 0, false
+		writeState()
+		result := run("", nil)
+		if result.code != 0 || result.stderr != "" {
+			t.Fatalf("background failure interrupted help: %+v", result)
+		}
+		if got := waitForWorker(t, "checked"); got["verifier_unavailable"] != true {
+			t.Fatal("unsupported verifier did not enable notice fallback")
 		}
 		current, err := os.ReadFile(binary)
 		if err != nil || sha256.Sum256(current) != digest {
@@ -224,4 +313,31 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 			t.Fatalf("unsupported verifier suppressed manual notice: %+v", result)
 		}
 	})
+	if prefix := os.Getenv("OPENAI_CLI_TEST_HOMEBREW_PREFIX"); runtime.GOOS == "darwin" && prefix != "" {
+		t.Run("enrolled_Homebrew_worker", func(t *testing.T) {
+			// A runner-supplied Homebrew formula exercises native code signing
+			// and the actual CLI. All discovery traffic stops at loopback.
+			state = map[string]any{"schema": 1}
+			writeState()
+			enroll := exec.Command(binary, "__openai_homebrew_verifier", prefix)
+			enroll.Env = append(append([]string{}, environment...), "OPENAI_CLI_ARCHIVE_INSTALL=1")
+			if out, err := enroll.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "ready" {
+				t.Fatalf("Homebrew enrollment: %s %v", out, err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{"id":"resp-test","object":"response","status":"completed","output":[]}`)
+			}))
+			defer server.Close()
+			got := run("", []string{"OPENAI_BASE_URL=" + server.URL + "/v1", "OPENAI_API_KEY=sk-test-fixture"}, "responses", "create", "--model", "test-model", "--input", "test input")
+			if got.code != 0 {
+				t.Fatalf("ordinary request: %+v", got)
+			}
+			receipt := waitForWorker(t, "checked")
+			if receipt["verifier_unavailable"] == true || receipt["homebrew_prefix"] != prefix {
+				t.Fatal("worker lost enrolled verifier", receipt)
+			}
+		})
+	}
+
 }

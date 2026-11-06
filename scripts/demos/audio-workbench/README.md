@@ -68,14 +68,17 @@ The fixture does not synthesize spoken words.
 The workflow drives the actual bare `openai audio speak` form.
 New drafts contain the editable Instructions example `Speak warmly and clearly.`
 The workflow replaces that example with multiline instructions containing literal `@` and backslash-`@` values.
-It opens model, voice, and format choices, then changes speed to 1.25.
+Voice stays visible. Settings starts collapsed and summarizes Model, Format, and Speed.
+The workflow expands Settings, opens each chooser, and changes Speed to 1.25.
 Choices and typing must make no request.
 Ctrl+G starts one explicit synthetic generation.
 The harness checks request fields, measured duration, varying peaks, and exact saved audio bytes.
-It exercises Play and Save controls, History, 40×12, too-small blocking, explicit audition, restoration, and Clear.
+It exercises playback, Save, History, explicit audition, restoration, and Clear.
+It also resizes to 40×12 and below the minimum usable size.
 History opens directly from the form. More actions retains History, Preview voice, and Clear form.
 The ordinary form keeps command inspection in More actions and shows contextual keyboard shortcuts.
-Save coverage rejects `-`, then verifies the corrected destination contains the original audio bytes.
+Save coverage rejects `-` and verifies the corrected destination contains the original audio bytes.
+Ctrl+S opens Save from the Text editor. Escape restores focus to Save.
 Audition entries must remain absent from ordinary History.
 Clear must preserve retained results and exported files.
 
@@ -92,16 +95,17 @@ This separation avoids replaying resize events that agg 1.9.0 ignores.
 
 The `navigation` and `navigation-compact` cases use monochrome focus markers.
 They cover CSI and SS3 arrows, editor visual boundaries, multiline text, wrapped Unicode, modifiers, and active selection.
-They check forward and reverse Tab, settings boundaries, chooser navigation, and the More actions menu.
+They check forward and reverse Tab, collapsed and expanded Settings, chooser navigation, and the More actions menu.
+Enter expands Settings and selects Model. Escape collapses Settings and restores focus to Settings.
 Command inspection opens a separate scrollable modal through More actions.
 A long synthetic draft proves command scrolling at both terminal sizes.
 Help opens locally without submitting speech.
-The Result section exposes separate Play and Save actions.
+The empty Audio section shows one placeholder. A recording adds playback and Save actions.
 A private synthetic History entry supplies Result navigation without generation.
 Both cases require zero accepted or rejected fixture requests and strict cancellation cleanup.
 Settings End selects More actions. Clear is the third More action.
 Clear empties Text and Instructions without reseeding the constructor example.
-The navigation inventory contains 188 current-viewport checkpoints at each size.
+The navigation cases follow the visible action layout and enter the waveform before Play and Save.
 The navigation cases test Alt+Enter without submitting editor text.
 They leave Enter generation and the existing repeat-submit guard unchanged.
 
@@ -137,11 +141,11 @@ The first explicit Ctrl+G sends synthetic Text with the actual seeded Instructio
 The fixture returns HTTP 401 with valid Request ID `req_audio_demo_401` and malicious synthetic message canaries.
 The fixture supplies the exact error code `invalid_api_key`.
 The fixture uses a custom loopback endpoint, so Error details identifies that endpoint's authentication failure.
-The screen opens immediately with the cause, short numbered recovery steps, and Esc back.
+The screen shows the cause, one recovery instruction, and Esc back. Only multiple instructions receive numbers.
 It shows no API setup menu, nested details page, raw HTTP status, or Request ID.
 The ordinary form keeps those details hidden after dismissal.
 An unknown OpenAI authentication cause retains its generic summary instead of claiming rejection or expiration.
-Missing OpenAI keys point to `openai help setup` in the main terminal.
+Missing OpenAI keys point to `help setup` using the executable that launched the workbench.
 Application tests cover those standard OpenAI credential cases without contacting a live API.
 
 Enter, Tab, S, D, and Ctrl+G on the error screen must not start another action.
@@ -183,7 +187,8 @@ The fixture uses fake credentials and fake secrets. It reads no real credentials
 Source preparation does not establish passing behavior. Execution requires a reserved slot.
 
 Playback uses a private fake FFplay executable.
-That helper consumes the real fixture bytes, records their hash, and produces no sound.
+That helper consumes the fixture bytes, records their hash, and produces no sound.
+Its first positive clock report enables Pause. Resume preserves that measured position.
 Actual FFplay and audible device behavior require separate native evidence.
 No microphone, real credential, paid API, or remote account is used.
 
@@ -260,7 +265,7 @@ The case allows 60 seconds for two CLI sessions. Existing ownership cleanup reta
 
 Both sessions use 40×12, fake credentials, loopback, and a private HOME.
 The checker selects the actual binary through an isolated `openai` symlink.
-It enters 60 ASCII `A` characters and opens Show command.
+It enters 60 ASCII `A` characters and opens View command.
 Enter must preserve the form and make no request.
 The first session uses Ctrl+P. The second uses Ctrl+C.
 The checker requires exit 0 and 130 respectively.
@@ -269,13 +274,15 @@ The Bash parent stays alive after the CLI exits.
 The checker compares native terminal modes before releasing that parent.
 It requires final cursor and bracketed-paste cleanup before the printed command.
 It compares complete command bytes against an independent synthetic request specification.
-Only the terminal's original newline translation is accounted for.
+It sends `c` through a simulated SSH session and checks the encoded terminal clipboard request against the same specification.
+Opening View command must leave the clipboard untouched. Copy must keep the workbench open.
+The expected shell command includes each continuation, indentation level, and the terminal’s original newline translation.
 The checker preserves raw output, casts, emitted bytes, process statuses, and owned-process cleanup records.
 Both sessions must make zero accepted or rejected requests and create no audio History.
 A forced harness cleanup fails the case.
 
 This case verifies public process behavior and terminal restoration.
-It does not verify actual graphical-terminal selection, clipboard bytes, fonts, or audible playback.
+The PTY captures the clipboard request. It cannot confirm a graphical terminal accepted that request or inspect the macOS pasteboard.
 The Go Bash/zsh recorder tests separately execute printed command bytes through both shells.
 Keep unavailable platforms and deferred restore/close fault injection explicit.
 
@@ -300,4 +307,8 @@ python3 -I -B scripts/demos/audio-workbench/test_observer.py
 These tests cover partial startup, deferred interruption, continued cleanup, source integrity, and scrollback saturation.
 They do not replace the full checker run against the exact candidate binary.
 
-The `wide` case runs at 186×34. It checks the 96-cell reading column, horizontal action navigation, retained More context, zero requests, and exit cleanup. Its fixed geometry supports internal frame rendering.
+The `wide` case runs at 186×34. The frame leaves the last terminal column free to prevent a soft wrap.
+Tab moves focus to the horizontal Actions row. Right moves across its actions while the draft stays visible.
+Down from History or Help enters Recording. Up restores the selected action.
+Down from Generate returns to Script. Up from the first script line selects Generate.
+It also opens Help and checks that navigation made zero speech requests.

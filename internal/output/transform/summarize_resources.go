@@ -8,7 +8,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// SummarizeResource projects known list/get records without modifying API data.
+// SummarizeResource projects known resource records without modifying API data.
 // A zero summary asks the presenter to show the full value. Omitted reports
 // whether the projection hides fields; presentation owns any explanatory hint.
 func SummarizeResource(ctx context.Context, value gjson.Result, route Route) (gjson.Result, bool, error) {
@@ -20,7 +20,7 @@ func SummarizeResource(ctx context.Context, value gjson.Result, route Route) (gj
 	}
 	operation, ok := strings.CutPrefix(route.Operation, "(resource) ")
 	resource, method, found := strings.Cut(operation, " > (method) ")
-	if !ok || !found || !(route.OutputKind == OutputResponse && method == "retrieve" ||
+	if !ok || !found || !(route.OutputKind == OutputResponse && (method == "retrieve" || resource == "batches" && (method == "create" || method == "cancel")) ||
 		route.OutputKind == OutputPageItem && (method == "list" || resource == "vector_stores.file_batches" && method == "list_files")) ||
 		!value.IsObject() || value.Get("id").Type != gjson.String || value.Get("id").Str == "" || value.Get("object").Type != gjson.String {
 		return gjson.Result{}, false, nil
@@ -35,8 +35,7 @@ func SummarizeResource(ctx context.Context, value gjson.Result, route Route) (gj
 		fields = "id filename purpose bytes status status_details expires_at"
 		omitted = "object created_at"
 	case object == "batch" && resource == "batches":
-		fields = "id status request_counts input_file_id output_file_id error_file_id errors endpoint model expires_at usage"
-		omitted = "object completion_window created_at cancelled_at cancelling_at completed_at expired_at failed_at finalizing_at in_progress_at metadata"
+		return projectBatchMetadata(ctx, value)
 	case object == "vector_store" && resource == "vector_stores":
 		fields = "id name status file_counts usage_bytes expires_at"
 		omitted = "object created_at last_active_at metadata expires_after"
@@ -58,18 +57,16 @@ func SummarizeResource(ctx context.Context, value gjson.Result, route Route) (gj
 	return summarizeResourceFields(ctx, value, strings.Fields(fields), strings.Fields(omitted))
 }
 
-// Only declared fields may be hidden. New fields (even null), duplicate keys,
-// malformed JSON, and unfamiliar record shapes fall back to full rendering.
-// Retained JSON is copied verbatim so large numbers and nested actions/errors stay intact.
-func summarizeResourceFields(ctx context.Context, value gjson.Result, fields, omitted []string) (gjson.Result, bool, error) {
+// Return the original fields only when the record has unique, declared keys.
+func knownResourceFields(ctx context.Context, value gjson.Result, fields, omitted []string) (map[string]gjson.Result, error) {
 	// GJSON can read partial objects, including results preserved by the SDK.
 	// Do not present a partial record as a complete resource summary.
 	validJSON := gjson.Valid(value.Raw)
 	if err := ctx.Err(); err != nil {
-		return gjson.Result{}, false, err
+		return nil, err
 	}
 	if !validJSON {
-		return gjson.Result{}, false, nil
+		return nil, nil
 	}
 	allowed := make(map[string]bool, len(fields)+len(omitted))
 	for _, field := range fields {
@@ -93,10 +90,25 @@ func summarizeResourceFields(ctx context.Context, value gjson.Result, fields, om
 		return true
 	})
 	if err := ctx.Err(); err != nil {
-		return gjson.Result{}, false, err
+		return nil, err
 	}
 	if !valid {
-		return gjson.Result{}, false, nil
+		return nil, nil
+	}
+	return values, nil
+}
+
+// Only declared fields may be hidden. New fields (even null), duplicate keys,
+// malformed JSON, and unfamiliar record shapes fall back to full rendering.
+// Retained JSON is copied verbatim so large numbers and nested actions/errors stay intact.
+func summarizeResourceFields(ctx context.Context, value gjson.Result, fields, omitted []string) (gjson.Result, bool, error) {
+	return selectResourceFields(ctx, value, fields, omitted, resourceFieldPresent)
+}
+
+func selectResourceFields(ctx context.Context, value gjson.Result, fields, omitted []string, keep func(gjson.Result) bool) (gjson.Result, bool, error) {
+	values, err := knownResourceFields(ctx, value, fields, omitted)
+	if err != nil || values == nil {
+		return gjson.Result{}, false, err
 	}
 	var out strings.Builder
 	out.WriteByte('{')
@@ -106,7 +118,7 @@ func summarizeResourceFields(ctx context.Context, value gjson.Result, fields, om
 			return gjson.Result{}, false, err
 		}
 		field, exists := values[key]
-		if !exists || !resourceFieldPresent(field) {
+		if !exists || !keep(field) {
 			continue
 		}
 		if kept > 0 {

@@ -32,7 +32,7 @@ func TestWelcomeApprovedAppearance(t *testing.T) {
 					name = "default"
 				}
 				t.Run(profile.String()+"/"+strconv.Itoa(width)+"/"+name, func(t *testing.T) {
-					got := welcomeAppearanceCells(t, renderWelcome("1.38.0", width, profile, true, true, terminalProgram))
+					got := welcomeAppearanceCells(t, renderWelcome("1.38.0", width, profile, darkBackground, true, terminalProgram))
 					if len(got) != len(want) {
 						t.Fatalf("approved cell count changed: got %d, want %d", len(got), len(want))
 					}
@@ -66,8 +66,8 @@ func TestWelcomeAppleTerminalPreservesFallbacks(t *testing.T) {
 		{"long version", "1.38.0-preview.20261013", 100, colorprofile.TrueColor, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			want := renderWelcome(tc.version, tc.width, tc.profile, true, tc.unicode, "")
-			got := renderWelcome(tc.version, tc.width, tc.profile, true, tc.unicode, "Apple_Terminal")
+			want := renderWelcome(tc.version, tc.width, tc.profile, darkBackground, tc.unicode, "")
+			got := renderWelcome(tc.version, tc.width, tc.profile, darkBackground, tc.unicode, "Apple_Terminal")
 			if got != want {
 				t.Fatalf("Apple Terminal changed the fallback: got %q, want %q", got, want)
 			}

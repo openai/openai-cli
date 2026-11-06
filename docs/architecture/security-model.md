@@ -1,10 +1,20 @@
 # OpenAI CLI security model
 
+Generated files are updated through authoritative inputs or the compiler and
+regeneration; handwritten edits to them are forbidden. Code review enforces this
+ownership rule. The customization-budget reporter and publishers are retired
+and are not part of the active CI or security controls.
+
 This document is the single canonical detailed threat model for this
 repository. It is reusable across changes and is the authority for
 trust-boundary decisions during Codex Security scans. [SECURITY.md](../../SECURITY.md)
 remains the authority for private vulnerability reporting and coordinated
 disclosure.
+
+Generated-file ownership currently relies on `AGENTS.md`, contributor guidance,
+and ordinary SDK code review. There is no dedicated generated-file edit check or
+required gate. Review generated output and inventory changes together; fix
+violations in the inputs/compiler and regenerate.
 
 ## 1. Overview
 
@@ -220,13 +230,7 @@ cache entries, downloaded dependencies, runtime/API/network data, or
 post-checkout files controlled by a lower-trust actor remain lower-trust input.
 Candidate repository code reaching a protected token, signing key,
 notarization credential, release environment, or publication action is a real
-CI/release boundary. The custom-code workflow illustrates the distinction: the
-candidate workflow has read-only permissions, while its write-capable
-`workflow_run` handler checks out trusted `main` code and recomputes from Git
-objects rather than trusting candidate artifacts
-([.github/workflows/castiron-custom-code.yml:30-80](../../.github/workflows/castiron-custom-code.yml#L30-L80),
-[.github/workflows/castiron-custom-code-comment.yml:16-98](../../.github/workflows/castiron-custom-code-comment.yml#L16-L98),
-[.github/workflows/castiron-custom-code-comment.yml:116-215](../../.github/workflows/castiron-custom-code-comment.yml#L116-L215)).
+CI/release boundary.
 
 ### Assumptions and known unknowns
 
@@ -265,7 +269,7 @@ The scenarios below are hypotheses for review, not validated findings.
 | High | A lower-trust piped string crosses file-expansion logic and gains a local file read/upload. | Automation forwards untrusted YAML/JSON under trusted-stdin semantics and the process can read the target file. | Disclosure of local files to the selected API backend. | Escaped `\@` is literal; stdin is single-use; `OPENAI_UNTRUSTED_STDIN` preserves provenance and rejects stdin-derived binary paths. | Enable untrusted-stdin mode for lower-trust producers and keep explicit file flags operator-controlled. | [internal/request/file_expand.go](../../internal/request/file_expand.go), [internal/request/file_source.go](../../internal/request/file_source.go), [internal/request/stdin_policy.go](../../internal/request/stdin_policy.go), [internal/request/input_values.go](../../internal/request/input_values.go), [internal/request/stdin_reader.go](../../internal/request/stdin_reader.go) |
 | High | Candidate or dependency code crosses from a job without protected write/signing credentials into protected publish credentials or official artifacts. | A workflow change, mutable artifact, unverified dependency, or credential staging error defeats current separation. | Compromise of official binaries, signing/notarization material, publication tokens, or attestations. | Release-input generation without protected credentials, tag/SHA binding, fixed artifact verification, protected publish environment, verified GoReleaser, and isolated attestation job. | Preserve the separation and review workflow/dependency/release changes as security-sensitive. | [docs/releasing.md:3-29](../releasing.md#L3-L29), [.github/workflows/publish-release.yml:17-152](../../.github/workflows/publish-release.yml#L17-L152), [.github/workflows/publish-release.yml:247-273](../../.github/workflows/publish-release.yml#L247-L273) |
 | Medium | Hostile API/network output reaches terminal, pager, raw pipeline, debug/error logs, or an output path and gains unintended local effect or disclosure. | Response data or metadata reaches a sensitive sink; exploitability depends on selected output format and downstream consumer. | Terminal spoofing, downstream injection, overwrite, or sensitive diagnostic leakage. | Debug redacts known headers and response `Location`; the CLI uses structured rendering and explicit output modes. | Preserve sanitization, avoid shell evaluation downstream, and treat debug/raw output as sensitive. | [internal/debugmiddleware/debug_middleware.go:43-63](../../internal/debugmiddleware/debug_middleware.go#L43-L63), [internal/debugmiddleware/debug_middleware.go:91-132](../../internal/debugmiddleware/debug_middleware.go#L91-L132), [generated/commands/response.go:429-481](../../generated/commands/response.go#L429-L481) |
-| Medium | Malformed or very large lower-trust YAML/JSON, file, or response data exhausts local resources or reaches parser edge cases. | A lower-trust producer controls input size/shape and a wrapper invokes the CLI with meaningful availability requirements. | Per-invocation denial of service or parser confusion. | Multipart bodies stream and close owned files; input provenance and single-use stdin avoid some ambiguous reads. | Preserve streaming/cancellation and large-payload compatibility; do not add arbitrary rejection limits. | [internal/request/flag_options.go](../../internal/request/flag_options.go), [internal/app/flagoptions.go](../../internal/app/flagoptions.go), [internal/request/multipart_body.go](../../internal/request/multipart_body.go), [AGENTS.md:100-119](../../AGENTS.md#L100-L119) |
+| Medium | Malformed or very large lower-trust YAML/JSON, file, or response data exhausts local resources or reaches parser edge cases. | A lower-trust producer controls input size/shape and a wrapper invokes the CLI with meaningful availability requirements. | Per-invocation denial of service or parser confusion. | Multipart bodies stream and close owned files; input provenance and single-use stdin avoid some ambiguous reads. | Preserve streaming/cancellation and large-payload compatibility; do not add arbitrary rejection limits. | [internal/request/flag_options.go](../../internal/request/flag_options.go), [internal/app/flagoptions.go](../../internal/app/flagoptions.go), [internal/request/multipart_body.go](../../internal/request/multipart_body.go), [large-payload compatibility](../../AGENTS.md#large-payload-compatibility) |
 | Low | A user already controlling `PATH`, `PAGER`, proxy/CA settings, shell, or local checkout chooses a malicious executable or endpoint. | Prior local operator/environment control. | Effects within authority the actor already possessed. | Pager execution avoids a shell; mTLS rejects HTTPS proxies. | Treat as deployment hardening unless a separate lower-trust input crosses into that configuration. | [internal/output/pager.go](../../internal/output/pager.go), [internal/output/pager_unix.go](../../internal/output/pager_unix.go), [internal/request/mtls.go](../../internal/request/mtls.go) |
 | Not a new capability by itself | A PR author changes and ordinary test/build CI executes a checked-in test, executable fixture, build script, generated source, or mock script. | The changed tracked file is intentionally executed or imported as repository code in a candidate job without protected credentials. | No privilege gain beyond candidate repository-code execution. | Ordinary CI execution has no repository permissions; isolated source preparation uses read-only credentials without executing candidate code. This does not cover fixture bytes crossing a parser, the trusted CodeQL publisher's `security-events: write` boundary, or code reaching protected credentials. | Do not report solely on “PR can change executable checkout content”; instead trace an independently mutable lower-trust input or protected boundary crossing. | [.github/workflows/ci.yml:1-27](../../.github/workflows/ci.yml#L1-L27), [scripts/test:28-61](../../scripts/test#L28-L61), [.github/workflows/codeql.yml:7-47](../../.github/workflows/codeql.yml#L7-L47) |
 

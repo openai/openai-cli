@@ -4,7 +4,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -13,13 +12,6 @@ import (
 	"github.com/openai/openai-cli/internal/tokenizer"
 )
 
-// The runner owns each worker. The editor sends immutable, revision-bound input.
-type tokenizerEditorRequestMsg struct {
-	Revision uint64
-	Text     string
-	Encoding string
-}
-
 type tokenizerEditorResultMsg struct {
 	Revision uint64
 	Tokens   []tokenizerPreviewToken
@@ -27,7 +19,6 @@ type tokenizerEditorResultMsg struct {
 }
 
 type tokenizerEditorStopMsg struct{ Code int }
-type tokenizerEditorDebounceMsg struct{ revision uint64 }
 
 const (
 	tokenizerFocusText = iota
@@ -48,18 +39,22 @@ type tokenizerEditor struct {
 	cursor            int
 	boundaries        []int
 	lineStarts        []int
+	sourcePage        studioSourcePage
 	encoding          string
 	invocation        string
 	option, choice    int
+	choiceCancelFocus int
 	focus, tab, modal int
 	selected, scroll  int
 	tokenStart        int
+	rowNavigation     tokenizerRowNavigation
+	priorPageStart    int
 	width, height     int
 	color, dark       bool
+	decLineDrawing    bool
 	revision          uint64
 	tokens            []tokenizerPreviewToken
 	updating, failed  bool
-	debouncing        bool
 	note              string
 	quit              bool
 	exitCode          int
@@ -87,25 +82,18 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.rowNavigation = tokenizerRowNavigation{}
 		m.keepSelectionVisible()
 	case tea.BackgroundColorMsg:
 		m.dark = msg.IsDark()
 	case tokenizerInputPasteErrorMsg:
 		m.note = msg.message
-	case tokenizerEditorDebounceMsg:
-		m.debouncing = false
-		if msg.revision != m.revision && m.updating {
-			return m, m.debounce()
-		}
-		if m.updating {
-			request := tokenizerEditorRequestMsg{Revision: m.revision, Text: m.text, Encoding: m.encoding}
-			return m, func() tea.Msg { return request }
-		}
 	case tokenizerEditorResultMsg:
 		if msg.Revision != m.revision || !m.updating {
 			return m, nil
 		}
 		m.updating = false
+		m.rowNavigation = tokenizerRowNavigation{}
 		if msg.Err != nil || !m.validTokens(msg.Tokens) {
 			m.tokens, m.failed = nil, true
 			m.selected, m.tokenStart = 0, 0
@@ -121,13 +109,22 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.PasteMsg:
 		if m.focus == tokenizerFocusText && m.modal == tokenizerModalNone && m.usable() {
-			return m, m.insert(msg.Content)
+			m.insert(msg.Content)
+			return m, nil
 		}
 		if m.usable() {
-			m.note = "Tab to Text to paste."
+			m.note = "Focus Text to paste."
 		}
 	case tea.KeyPressMsg:
 		key := msg.String()
+		switch key {
+		case "up", "down":
+			// Continue navigating at the same column.
+		case "left", "right":
+			m.rowNavigation.column = 0
+		default:
+			m.rowNavigation = tokenizerRowNavigation{}
+		}
 		if key == "ctrl+c" {
 			m.quit, m.exitCode = true, 130
 			return m, tea.Quit
@@ -146,32 +143,64 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					if msg.Mod&tea.ModShift != 0 {
 						letter = unicode.ToUpper(letter)
 					}
-					return m, m.insert(string(letter))
+					m.insert(string(letter))
+					return m, nil
 				}
 				return m, nil
 			}
 		}
 		if m.modal == tokenizerModalView || m.modal == tokenizerModalEncoding {
-			return m, m.updateChoice(key)
+			m.updateChoice(key)
+			return m, nil
 		}
 		if m.modal != tokenizerModalNone {
 			m.updateModal(key)
 			return m, nil
 		}
-		if key == "f1" || m.focus != tokenizerFocusText && key == "?" {
+		// Printable shortcuts operate only after focus leaves the text editor.
+		shortcuts := m.focus != tokenizerFocusText && msg.Mod&(tea.ModCtrl|tea.ModMeta|tea.ModSuper|tea.ModHyper) == 0
+		switch {
+		case key == "f1" || shortcuts && key == "?":
 			m.modal, m.scroll = tokenizerModalHelp, 0
+			return m, nil
+		case key == "f2" || shortcuts && key == "v":
+			m.openChoice(0, tokenizerFocusOptions)
+			return m, nil
+		case key == "f3" || shortcuts && key == "m":
+			m.openChoice(1, tokenizerFocusOptions)
+			return m, nil
+		case key == "f4" || shortcuts && key == "d":
+			m.openDetails()
+			return m, nil
+		}
+		if m.focus == tokenizerFocusResults && key == "tab" {
+			m.cursor = m.boundaries[m.sourceRange().first]
+			m.focus = tokenizerFocusText
 			return m, nil
 		}
 		switch key {
-		case "tab", "shift+tab":
-			direction := 1
-			if key == "shift+tab" {
-				direction = -1
+		case "tab":
+			m.focus = tokenizerFocusResults
+			return m, nil
+		case "shift+tab":
+			if m.focus == tokenizerFocusOptions {
+				m.focus = tokenizerFocusText
+			} else {
+				m.focus, m.option = tokenizerFocusOptions, 0
 			}
-			m.focus = (m.focus + direction + 3) % 3
 			return m, nil
 		case "esc":
 			m.focus, m.option, m.note = tokenizerFocusText, 0, ""
+			return m, nil
+		}
+		onView := m.focus == tokenizerFocusOptions && m.option == 0
+		if onView && (key == "left" || key == "right") {
+			direction := 1
+			if key == "left" {
+				direction = -1
+			}
+			m.tab = (m.tab + direction + 3) % 3
+			m.keepSelectionVisible()
 			return m, nil
 		}
 		switch m.focus {
@@ -180,7 +209,7 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.focus, m.option = tokenizerFocusOptions, 0
 				return m, nil
 			}
-			return m, m.edit(msg)
+			m.edit(msg)
 		case tokenizerFocusOptions:
 			switch key {
 			case "up":
@@ -199,46 +228,30 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.option = 0
 			case "end":
 				m.option = 1
-			case "left", "right":
-				if m.option == 0 {
-					direction := 1
-					if key == "left" {
-						direction = -1
-					}
-					m.tab = (m.tab + direction + 3) % 3
-					m.keepSelectionVisible()
-				} else if key == "left" {
-					m.focus = tokenizerFocusText
-				} else {
-					m.openChoice()
-				}
-			case "enter":
-				m.openChoice()
+			case "left":
+				m.focus = tokenizerFocusText
+			case "right", "enter":
+				m.openChoice(m.option, tokenizerFocusText)
 			}
 		case tokenizerFocusResults:
 			switch key {
-			case "up":
-				m.focus, m.option = tokenizerFocusOptions, 1
+			case "up", "down":
+				m.moveTokenRow(key == "down")
 			case "left":
 				m.selected--
 			case "right":
 				m.selected++
-			case "pgup":
-				m.selected -= m.previousPageSize()
-			case "pgdown":
-				_, count := m.resultWindow(m.styles(), m.viewWidth())
-				m.selected += max(1, count)
+			case "pgup", "pgdown":
+				m.pageResults(key == "pgdown")
 			case "home":
 				m.selected = 0
 			case "end":
 				m.selected = len(m.tokens) - 1
 			case "enter":
-				if len(m.tokens) > 0 {
-					m.modal, m.scroll = tokenizerModalDetails, 0
-				}
+				m.openDetails()
 			case "r":
 				if m.failed {
-					return m, m.changed()
+					m.changed()
 				}
 			}
 			m.selected = max(0, min(m.selected, len(m.tokens)-1))
@@ -248,7 +261,14 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *tokenizerEditor) openChoice() {
+func (m *tokenizerEditor) openDetails() {
+	if len(m.tokens) > 0 {
+		m.focus, m.modal, m.scroll = tokenizerFocusResults, tokenizerModalDetails, 0
+	}
+}
+
+func (m *tokenizerEditor) openChoice(option, cancelFocus int) {
+	m.focus, m.option, m.choiceCancelFocus = tokenizerFocusOptions, option, cancelFocus
 	m.modal, m.choice = tokenizerModalView, m.tab
 	if m.option == 1 {
 		m.modal, m.choice = tokenizerModalEncoding, 0
@@ -261,7 +281,7 @@ func (m *tokenizerEditor) openChoice() {
 	}
 }
 
-func (m *tokenizerEditor) updateChoice(key string) tea.Cmd {
+func (m *tokenizerEditor) updateChoice(key string) {
 	last := 2
 	var encodings []string
 	if m.modal == tokenizerModalEncoding {
@@ -278,7 +298,10 @@ func (m *tokenizerEditor) updateChoice(key string) tea.Cmd {
 	case "end":
 		m.choice = last
 	case "esc":
-		m.modal, m.focus, m.option = tokenizerModalNone, tokenizerFocusText, 0
+		m.modal, m.focus = tokenizerModalNone, m.choiceCancelFocus
+		if m.focus == tokenizerFocusText {
+			m.option = 0
+		}
 	case "left", "f1":
 		m.modal = tokenizerModalNone
 	case "tab", "shift+tab":
@@ -296,11 +319,10 @@ func (m *tokenizerEditor) updateChoice(key string) tea.Cmd {
 			encoding := encodings[m.choice]
 			if encoding != m.encoding {
 				m.encoding = encoding
-				return m.changed()
+				m.changed()
 			}
 		}
 	}
-	return nil
 }
 
 func (m *tokenizerEditor) usable() bool { return m.width >= 40 && m.height >= 12 }
@@ -316,43 +338,30 @@ func (m *tokenizerEditor) validTokens(tokens []tokenizerPreviewToken) bool {
 	return int(end) == len(m.text)
 }
 
-func (m *tokenizerEditor) changed() tea.Cmd {
+func (m *tokenizerEditor) changed() {
 	m.revision++
 	m.tokens, m.failed, m.note = nil, false, ""
 	m.selected, m.tokenStart = 0, 0
 	m.updating = m.text != ""
-	if !m.updating {
-		return nil
-	}
-	return m.debounce()
 }
 
-func (m *tokenizerEditor) debounce() tea.Cmd {
-	if m.debouncing {
-		return nil
-	}
-	m.debouncing = true
-	revision := m.revision
-	return tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg { return tokenizerEditorDebounceMsg{revision: revision} })
-}
-
-func (m *tokenizerEditor) insert(text string) tea.Cmd {
+func (m *tokenizerEditor) insert(text string) {
 	if !utf8.ValidString(text) {
 		m.note = "Paste rejected: input must be valid UTF-8. Your text is unchanged."
-		return nil
+		return
 	}
 	if len(text) > tokenizer.MaxInputBytes-len(m.text) {
 		m.note = "Paste rejected: the input limit is 1 MiB. Your text is unchanged."
-		return nil
+		return
 	}
 	if text == "" {
-		return nil
+		return
 	}
 	start := m.cursor
 	m.text = m.text[:start] + text + m.text[start:]
 	m.cursor += len(text)
 	m.reindexText(start)
-	return m.changed()
+	m.changed()
 }
 
 // Source bytes stay exact. The display can escape controls without editing them.
@@ -411,14 +420,14 @@ func (m *tokenizerEditor) selectCursorToken() {
 	m.keepSelectionVisible()
 }
 
-func (m *tokenizerEditor) edit(msg tea.KeyPressMsg) tea.Cmd {
+func (m *tokenizerEditor) edit(msg tea.KeyPressMsg) {
 	index := m.cursorIndex()
 	switch msg.String() {
 	case "enter", "alt+enter":
-		return m.insert("\n")
-	case "left":
+		m.insert("\n")
+	case "left", "shift+left":
 		m.cursor = m.boundaries[max(0, index-1)]
-	case "right":
+	case "right", "shift+right":
 		m.cursor = m.boundaries[min(len(m.boundaries)-1, index+1)]
 	case "home", "ctrl+a":
 		m.cursor = m.lineStarts[m.lineIndex(m.cursor)]
@@ -437,34 +446,33 @@ func (m *tokenizerEditor) edit(msg tea.KeyPressMsg) tea.Cmd {
 	case "down":
 		m.moveLine(1)
 	case "pgup":
-		m.moveLine(-m.sourceRows())
+		m.moveSourcePage(-1)
 	case "pgdown":
-		m.moveLine(m.sourceRows())
+		m.moveSourcePage(1)
 	case "ctrl+u":
 		if m.cursor > 0 {
 			m.text, m.cursor = m.text[m.cursor:], 0
 			m.indexText()
-			return m.changed()
+			m.changed()
 		}
 	case "backspace":
 		if index > 0 {
 			start := m.boundaries[index-1]
 			m.text, m.cursor = m.text[:start]+m.text[m.cursor:], start
 			m.reindexText(start)
-			return m.changed()
+			m.changed()
 		}
 	case "delete":
 		if index < len(m.boundaries)-1 {
 			m.text = m.text[:m.cursor] + m.text[m.boundaries[index+1]:]
 			m.reindexText(m.cursor)
-			return m.changed()
+			m.changed()
 		}
 	default:
 		if msg.Text != "" && msg.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModMeta) == 0 {
-			return m.insert(msg.Text)
+			m.insert(msg.Text)
 		}
 	}
-	return nil
 }
 
 func (m *tokenizerEditor) lineEnd(position int) int {

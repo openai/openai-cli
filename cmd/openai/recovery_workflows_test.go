@@ -220,20 +220,20 @@ func TestMainCommandRecoveryPreservesExplicitContext(t *testing.T) {
 	if failed.code != 3 || failed.stdout != "" || requests.Load() != 0 {
 		t.Fatalf("typo must fail before requesting: %+v; requests=%d", failed, requests.Load())
 	}
-	_, suggestion, found := strings.Cut(failed.stderr, "Did you mean: ")
-	suggestion, _, _ = strings.Cut(suggestion, "?\n")
+	_, suggestion, found := strings.Cut(failed.stderr, "Run this help command to check the spelling.\n  ")
+	suggestion, _, _ = strings.Cut(suggestion, "\n")
 	if !found || strings.Contains(failed.stderr, "proj_override") || strings.Contains(failed.stderr, explicitServer.URL) {
 		t.Fatalf("recovery must suggest declared commands without private values: %+v", failed)
 	}
 	// Execute the literal suggestion. Appending --help would hide unsafe recovery.
 	copied := runMainDispatchWithEnv(t, "bash", environment, strings.Fields(suggestion)...)
-	if copied.code != 0 || copied.stderr != "" || requests.Load() != 0 || !strings.Contains(copied.stdout, "SYNOPSIS\n  openai vector-stores create") {
+	if copied.code != 0 || copied.stderr != "" || requests.Load() != 0 || !strings.HasPrefix(copied.stdout, "openai vector-stores create ") {
 		t.Fatalf("literal recovery must show help without an API mutation: %+v; requests=%d", copied, requests.Load())
 	}
 	if suggestion != "openai help vector-stores create" {
 		t.Fatalf("recovery lost the intended command: %q", suggestion)
 	}
-	if !strings.Contains(failed.stderr, "Keep your original options and arguments.") {
+	if !strings.Contains(failed.stderr, "Edit your original command and run it again with the same options and arguments.") {
 		t.Fatalf("recovery omitted context-preserving instructions: %+v", failed)
 	}
 	// Follow the manual instruction: change only the misspelled command token.

@@ -59,9 +59,9 @@ func TestReadableAPIErrorSummaryDoesNotEchoResponseDetails(t *testing.T) {
 		code   string
 		want   string
 	}{
-		{"authentication", http.StatusUnauthorized, "invalid_api_key", "Key setup: ./openai help setup"},
-		{"permissions", http.StatusForbidden, "synthetic-private-code", "Check your key's permissions."},
-		{"not found", http.StatusNotFound, "synthetic-private-code", "Check the resource or model ID.\nCheck your key's access to it."},
+		{"authentication", http.StatusUnauthorized, "invalid_api_key", "./openai help setup"},
+		{"permissions", http.StatusForbidden, "synthetic-private-code", "The API denied access to this resource.\nCheck your key's permissions and its project access."},
+		{"not found", http.StatusNotFound, "synthetic-private-code", "The requested resource is unavailable.\nCheck the resource or model ID and your key's access to it."},
 		{"invalid argument", http.StatusBadRequest, "synthetic-private-code", "The API rejected the request."},
 		{"unprocessable argument", http.StatusUnprocessableEntity, "synthetic-private-code", "The API rejected the request."},
 		{"quota", http.StatusTooManyRequests, "insufficient_quota", "API usage or billing limit reached."},
@@ -86,7 +86,11 @@ func TestReadableAPIErrorSummaryDoesNotEchoResponseDetails(t *testing.T) {
 			require.NoError(t, ShowCommandError(root, fmt.Errorf("synthetic-wrapper: %w", apierr), &out))
 			require.Contains(t, out.String(), test.want)
 			require.Contains(t, out.String(), fmt.Sprintf("HTTP %d", test.status))
-			require.Contains(t, out.String(), "--format-error json")
+			if test.status == http.StatusUnauthorized || test.status == http.StatusForbidden {
+				require.NotContains(t, out.String(), "--format-error json")
+			} else {
+				require.Contains(t, out.String(), "--format-error json")
+			}
 			assertReadableErrorContainsNoPrivateDetails(t, out.String())
 			if test.status == http.StatusUnauthorized {
 				require.Contains(t, out.String(), "./openai help setup")
@@ -95,23 +99,28 @@ func TestReadableAPIErrorSummaryDoesNotEchoResponseDetails(t *testing.T) {
 	}
 }
 
-func TestReadableAPIErrorHeaderHandlesUnknownOrMissingStatus(t *testing.T) {
+func TestReadableAPIErrorDetailsHandleUnknownOrMissingStatus(t *testing.T) {
 	for _, tc := range []struct {
 		status int
-		header string
+		text   string
 	}{
-		{http.StatusInternalServerError, "HTTP 500: Internal Server Error.\n"},
-		{599, "HTTP 599.\n"},
+		{http.StatusInternalServerError, "\n\nHTTP 500: Internal Server Error.\n"},
+		{599, "\n\nHTTP 599.\n"},
 		{0, "The API could not complete the request.\n"},
 	} {
 		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
 			var out bytes.Buffer
 			require.NoError(t, ShowCommandError(readableErrorTestCommand(t), &openai.Error{StatusCode: tc.status}, &out))
-			require.True(t, strings.HasPrefix(out.String(), tc.header), out.String())
+			require.Contains(t, out.String(), tc.text)
 			require.NotContains(t, out.String(), "HTTP 0")
 			require.NotContains(t, out.String(), ": .")
 		})
 	}
+	var out bytes.Buffer
+	err := requestIDError(t, 0, "req_synthetic")
+	require.NoError(t, ShowCommandError(readableErrorTestCommand(t), err, &out))
+	require.Contains(t, out.String(), "Contact the API provider with the request ID below.\n\nRequest ID: req_synthetic")
+	require.NotContains(t, out.String(), "HTTP 0")
 }
 
 func TestReadableErrorFormatRouting(t *testing.T) {
@@ -187,7 +196,12 @@ func TestCommandErrorStructuredLocalFallbackDoesNotEchoDiagnostic(t *testing.T) 
 			err := errors.New("synthetic-private-prompt https://synthetic.invalid/?token=synthetic-secret \x1b]52;c;synthetic-secret\a\u202e")
 			require.NoError(t, ShowCommandError(root, err, &out))
 			assertReadableErrorContainsNoPrivateDetails(t, out.String())
-			require.Contains(t, out.String(), "The command could not be completed.")
+			if format == "auto" || format == "text" {
+				require.Contains(t, out.String(), "The CLI could not identify why this command failed.")
+				require.Contains(t, out.String(), "./openai --help")
+			} else {
+				require.Contains(t, out.String(), "The command could not be completed.")
+			}
 		})
 	}
 }
@@ -235,6 +249,7 @@ func assertReadableErrorContainsNoPrivateDetails(t *testing.T, text string) {
 	// Fixed public recovery links are permitted. Arbitrary response/request
 	// URLs and credential-bearing query parameters remain forbidden.
 	for _, public := range []string{
+		"https://github.com/openai/openai-cli/issues",
 		"https://platform.openai.com/settings/organization/api-keys",
 		"https://developers.openai.com/api/docs/guides/ip-allowlist",
 	} {

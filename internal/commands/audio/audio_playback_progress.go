@@ -29,6 +29,8 @@ func (m *audioWorkbench) capturePlaybackProgress() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.reported {
-		m.result.position = min(m.result.seekDuration(), max(m.result.playbackPosition(), p.position))
+		duration := m.result.seekDuration()
+		m.result.position = min(duration, max(m.result.playbackPosition(), p.position))
+		m.result.resumable = m.result.position > 0 && m.result.position < duration
 	}
 }

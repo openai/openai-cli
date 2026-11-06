@@ -12,7 +12,8 @@ end
 
 function ____APPNAME___picker_command_available
     test "$(type --type __APPNAME__ 2>/dev/null)" = file; and return 0
-    functions -q ____APPNAME___suggestions_owns_command; and ____APPNAME___suggestions_owns_command
+    functions -q ____APPNAME___suggestions_owns_command; and ____APPNAME___suggestions_owns_command; and return 0
+    functions -q ____APPNAME___package_explore_owns_command; and ____APPNAME___package_explore_owns_command
 end
 
 function openai_picker_disable

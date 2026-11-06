@@ -189,3 +189,109 @@ complete -C 'openai '
 	_, err = os.Stat(filepath.Join(home, "calls"))
 	require.ErrorIs(t, err, os.ErrNotExist, "package sourcing must not route ordinary completion to another executable")
 }
+
+func TestFishPackageExploreInsertsAtFirstPrompt(t *testing.T) {
+	fixture := newSuggestionStartupFixture(t, CompletionStyleFish, false, false)
+	packageScript, err := autoCompleteFS.ReadFile("shellscripts/fish_package_explore.fish")
+	require.NoError(t, err)
+	selection, err := autoCompleteFS.ReadFile("shellscripts/fish_explore_selection.fish")
+	require.NoError(t, err)
+	module := filepath.Join(fixture.home, "explore-selection.fish")
+	require.NoError(t, os.WriteFile(module, selection, 0600))
+	vendor := filepath.Join(fixture.home, "share", "fish", "vendor_conf.d")
+	require.NoError(t, os.MkdirAll(vendor, 0700))
+	code := strings.NewReplacer(
+		"/usr/share/openai-cli/explore-selection.fish", quotePickerPath(CompletionStyleFish, module),
+		"/usr/bin/openai", quotePickerPath(CompletionStyleFish, fixture.options.Executable),
+	).Replace(string(packageScript))
+	if runtime.GOOS == "darwin" {
+		code = strings.ReplaceAll(code, "/usr/bin/test", "/bin/test")
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(vendor, "openai-explore.fish"), []byte(code), 0600))
+	// Fish skips a vendor file when a personal file has the same basename.
+	// The personal image picker must never shadow the vendor Explore registration.
+	personal := filepath.Join(filepath.Dir(fixture.options.Profile), "openai-picker.fish")
+	require.NoError(t, os.WriteFile(personal, []byte("# personal image picker settings\n"), 0600))
+	writeSuggestionStartupCLI(t, fixture, fixture.options.Executable, "one", "openai models list", false)
+	mock, err := os.ReadFile(fixture.options.Executable)
+	require.NoError(t, err)
+	script := strings.Replace(string(mock), "sed -n '1p'", `printf 'BARE_SELECTED\n' >&2
+    printf 'openai models list\n'`, 1)
+	script = strings.Replace(script, `if [ "$1" = examples ]; then`, `if [ "$1" = examples ]; then
+    if [ -n "${OPENAI_CLI_COMMANDS_FD-}" ]; then touch "$INSTALL_TEST_HOME/captured-help"; fi`, 1)
+	require.NoError(t, os.WriteFile(fixture.options.Executable, []byte(script), 0700))
+
+	runSuggestionInstalledShell(t, fixture, `
+send -- "openai examples\r"
+expect -exact "DISPLAYED_COMMAND_END\r\n"
+expect -exact "INSTALL_TEST> "
+send -- "openai explore\r"
+expect -exact "BARE_SELECTED\r\n"
+expect -exact "INSTALL_TEST> "
+send -- "\030\007"
+expect -re {CAPTURED_BUFFER\r?\n}
+send -- "\005\025"
+`)
+	buffers, err := os.ReadFile(filepath.Join(fixture.home, "buffers"))
+	require.NoError(t, err)
+	require.Equal(t, "<openai models list>|18\n", string(buffers))
+	for _, unexpected := range []string{"executed", "generation-calls", "captured-help"} {
+		_, err := os.Stat(filepath.Join(fixture.home, unexpected))
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
+
+	// A personal installation can take over during an existing session. It may
+	// replace our exact wrapper, but must leave a user's replacement in place.
+	loader, err := renderInstalledSuggestions(fixture.options.installation())
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(fixture.home, "manual.fish"), loader, 0600))
+	const reloadVendor = `source "$HOME/share/fish/vendor_conf.d/openai-explore.fish"`
+	const loadPersonal = `source "$HOME/manual.fish"`
+	const customDisable = "function openai_command_insertion_disable; set -g called_custom_disable 1; end"
+	const fileCommand = "test (type --type openai) = file"
+	config := filepath.Join(fixture.home, "config", "fish", "config.fish")
+	original, err := os.ReadFile(config)
+	require.NoError(t, err)
+	for _, tc := range []struct{ name, startup, action, verify string }{
+		{"session disable", "", "__openai_package_explore_owns_command; and openai_command_insertion_disable; and openai_command_insertion_disable; and " + reloadVendor, fileCommand},
+		{"disabled before first prompt", "openai_command_insertion_disable", reloadVendor, fileCommand},
+		{"disabled with personal loader pending", loadPersonal + "; openai_command_insertion_disable", fileCommand, "not set -q __openai_suggestions_enabled"},
+		{"explicit takeover after pending disable", loadPersonal + "; openai_command_insertion_disable", fileCommand + "; and " + loadPersonal, "__openai_suggestions_owns_command"},
+		{"custom disable in config", customDisable, reloadVendor, fileCommand + "; and openai_command_insertion_disable; and set -q called_custom_disable"},
+		{"custom command survives disable", "", "function openai; printf custom; end; openai_command_insertion_disable", "test (openai) = custom"},
+		{"personal takeover", "", loadPersonal, "__openai_suggestions_owns_command; and openai_command_insertion_disable; and " + fileCommand},
+		{"custom command before takeover", "", "function openai; printf custom; end; " + loadPersonal, "test (openai) = custom"},
+		{"custom disable before takeover", "", customDisable + "; " + loadPersonal, "__openai_package_explore_owns_command; and openai_command_insertion_disable; and set -q called_custom_disable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.startup != "" {
+				require.NoError(t, os.WriteFile(config, []byte(string(original)+"\n"+tc.startup+"\n"), 0600))
+				t.Cleanup(func() { require.NoError(t, os.WriteFile(config, original, 0600)) })
+			}
+			runSuggestionInstalledShell(t, fixture, `
+send -- {`+tc.action+`; and printf 'action\n' >"$HOME/verified"}
+send -- "\r"
+expect -exact "INSTALL_TEST> "
+send -- {`+tc.verify+`; and printf 'verified\n' >>"$HOME/verified"}
+send -- "\r"
+expect -exact "INSTALL_TEST> "
+`)
+			evidence := filepath.Join(fixture.home, "verified")
+			got, err := os.ReadFile(evidence)
+			require.NoError(t, err)
+			require.Equal(t, "action\nverified\n", string(got))
+			require.NoError(t, os.Remove(evidence))
+		})
+	}
+
+	marker := filepath.Join(fixture.home, ".openai", "shell", "command-insertion.off-fish")
+	require.NoError(t, os.MkdirAll(filepath.Dir(marker), 0700))
+	require.NoError(t, os.Symlink(filepath.Join(fixture.home, "missing"), marker))
+	runSuggestionInstalledShell(t, fixture, `
+send -- "type --type openai > \"\$HOME/kind\"\r"
+expect -exact "INSTALL_TEST> "
+`)
+	kind, err := os.ReadFile(filepath.Join(fixture.home, "kind"))
+	require.NoError(t, err)
+	require.Equal(t, "file\n", string(kind))
+}

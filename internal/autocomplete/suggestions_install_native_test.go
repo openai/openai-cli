@@ -186,6 +186,7 @@ expect eof
 	process.Dir = fixture.home
 	process.Env = []string{
 		"HOME=" + fixture.home, "ZDOTDIR=" + fixture.home, "XDG_CONFIG_HOME=" + filepath.Join(fixture.home, "config"),
+		"XDG_DATA_DIRS=" + filepath.Join(fixture.home, "share"),
 		"PATH=" + fixture.path, "TERM=xterm-256color", "LC_ALL=C", "TMPDIR=" + fixture.home,
 		"INSTALL_TEST_HOME=" + fixture.home, "INSTALL_TEST_SHELL=" + binary, "INSTALL_TEST_PROFILE=" + fixture.options.Profile,
 		"INSTALL_TEST_EXECUTABLE=" + fixture.options.Executable,

@@ -41,3 +41,15 @@ func TestAudioVoicesCreate(t *testing.T) {
 		)
 	})
 }
+
+func TestAudioVoicesDelete(t *testing.T) {
+	t.Run("regular flags", func(t *testing.T) {
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"audio:voices", "delete",
+			"--voice-id", "voice_id",
+		)
+	})
+}

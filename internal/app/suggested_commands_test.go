@@ -56,7 +56,7 @@ func TestSuggestedTypoRecoveryIncludesExecutableAndParents(t *testing.T) {
 	require.Error(t, failure)
 	out.Reset()
 	require.NoError(t, ShowCommandError(root, failure, &out))
-	require.Equal(t, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments.\n", out.String())
+	require.Equal(t, "Unknown command. Run this help command to check the spelling.\n  openai help models list\nEdit your original command and run it again with the same options and arguments.\n", out.String())
 	require.Equal(t, commandRecorder{{&out, "", "openai help models list"}}, recorder)
 }
 func TestSuggestionSetupErrorsKeepSafeGuidance(t *testing.T) {

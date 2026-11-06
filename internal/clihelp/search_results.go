@@ -26,7 +26,7 @@ func SearchResults(command *cli.Command, matches []commandsuggest.Candidate) str
 			out.WriteByte('\n')
 		}
 		label := commandsuggest.Record(command, match.Command)
-		out.WriteString(style.entry(match.Command, shortDescription(match.Description), label, width, column))
+		out.WriteString(style.entry(match.Command, shortDescription(match.Description), label, style.note, width, column))
 	}
 	return out.String()
 }

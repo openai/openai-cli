@@ -23,6 +23,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/webhooks"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/listview"
+	"github.com/openai/openai-cli/internal/readable"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -66,6 +67,7 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	var finiteListFailure *clioutput.FiniteJSONListError
 	var webhookFailure *webhooks.WorkflowError
 	var webhookCanceled *webhooks.CreateCanceledError
+	var jsonStorageFailure *readable.JSONStreamStorageError
 	switch {
 	case errors.As(failure, &structuredInputFailure):
 		return structuredInputFailure.Error()
@@ -98,6 +100,8 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 		return modelsListFailure.Error()
 	case errors.As(failure, &finiteListFailure):
 		return finiteListFailure.Error()
+	case errors.As(failure, &jsonStorageFailure):
+		return jsonStorageFailure.Error()
 	case errors.As(failure, &imageFailure):
 		return imageFailure.ReadableMessage(root, output...)
 	case errors.As(failure, &scalarFailure):
@@ -163,6 +167,11 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 		return "Could not connect to the API. Check your connection, proxy, and --base-url setting."
 	}
 	// The usage buffer is deliberately not a fallback: it repeats raw values.
+	if len(output) != 0 {
+		return parserErrorGuidance(command, "The CLI could not identify why this command failed.", output...) +
+			"\nIf the problem continues, report the command name and CLI version at https://github.com/openai/openai-cli/issues."
+	}
+	// Structured output keeps its existing fallback payload.
 	return "The command could not be completed. Check your arguments with --help."
 }
 
@@ -182,6 +191,12 @@ func knownLocalError(command *cli.Command, message string, output ...io.Writer) 
 		"cannot follow HTTP 308 redirect: streamed multipart uploads are not replayable",
 		"stdin has already been read by another parameter; it can only be read once",
 		"multiple request parameters use stdin; select only one stdin consumer",
+		"--request-file requires one JSON or YAML object",
+		"cannot read --request-file input",
+		"--request-file - and a request parameter both use stdin",
+		"use a regular --request-file when a request parameter reads stdin",
+		"invalid request parameters in --request-file",
+		"to read a field from stdin, use a named --request-file and pass the field explicitly with @-",
 		"cannot read from stdin: stdin is already being used for the request body",
 		"cannot read from stdin: stdin was already consumed by piped YAML/JSON input",
 		"Setup help takes no additional arguments.",
@@ -236,6 +251,9 @@ func knownLocalError(command *cli.Command, message string, output ...io.Writer) 
 		if rest, ok := strings.CutPrefix(tail, " for flag -"); ok {
 			name, reason, found := strings.Cut(rest, ": ")
 			if flag := declaredErrorFlag(command, name); found && flag != "" {
+				if flag == "--request-file" && reason == "can't duplicate this flag" {
+					return parserErrorGuidance(command, "Specify --request-file only once.", output...)
+				}
 				if flag == "--base-url" && (reason == flag+requestconfig.BaseURLHTTPSRequired || reason == flag+requestconfig.BaseURLHostRequired) {
 					return parserErrorGuidance(command, reason+".", output...)
 				}
@@ -312,7 +330,7 @@ func knownLocalError(command *cli.Command, message string, output ...io.Writer) 
 			message = "The " + flag + " option is not available for this command."
 		}
 		if suggestion := suggestParserFlag(command, name); suggestion != "" {
-			message += " Did you mean " + suggestion + "?"
+			message += " Try " + suggestion + " instead."
 		}
 		return parserErrorGuidance(command, message, output...)
 	case strings.HasPrefix(message, "No help topic for '"):

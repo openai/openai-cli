@@ -95,6 +95,31 @@ func TestMainReadableAPIArgumentGuidance(t *testing.T) {
 	}
 }
 
+func TestMainReadableAPIRecoveryMatchesFailure(t *testing.T) {
+	list := []string{"files", "list"}
+	create := []string{"embeddings", "create", "--model", "synthetic-model", "--input", "test"}
+	for _, tc := range []struct {
+		name, kind, want, omit string
+		status                 int
+		command                []string
+	}{
+		{"unknown", "", "Contact the API provider with the HTTP status below.", "temporarily unavailable", 418, list},
+		{"unimplemented", "", "Check the API address and the operations it supports.", "temporarily unavailable", 501, list},
+		{"rate", "rate_limit_error", "The API is limiting requests.", "billing", 429, list},
+		{"quota type without code", "insufficient_quota", "Check your project's billing and limits.", "Wait before", 429, list},
+		{"read timed out", "", "Try fetching the data again in a moment.", "may have received", 504, list},
+		{"write uncertain", "", "Check its status before trying again.", "Try fetching", 502, create},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := `{"error":{"message":"synthetic-private-detail","type":"` + tc.kind + `"}}`
+			got := runMainCommandAPIErrorResponse(t, tc.status, "application/json", payload, tc.command)
+			if !strings.Contains(got.stderr, tc.want) || strings.Contains(got.stderr, tc.omit) || strings.Contains(got.stderr, "synthetic-private-detail") {
+				t.Fatalf("unexpected recovery guidance: %q", got.stderr)
+			}
+		})
+	}
+}
+
 func TestMainLocalErrorsStayOnStderr(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -253,6 +278,9 @@ func TestMainPreservesWrappedExitCode(t *testing.T) {
 	}
 	if strings.Contains(stderr.String(), "synthetic-private-") {
 		t.Errorf("wrapped error echoed sensitive input: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "openai synthetic fail --help") {
+		t.Errorf("missing help for the failed command: %q", stderr.String())
 	}
 }
 

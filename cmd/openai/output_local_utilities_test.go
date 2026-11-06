@@ -100,7 +100,7 @@ func TestMainDispatchOutputLocalUtilityMachineGuards(t *testing.T) {
 }
 
 func TestMainDispatchOutputLocalUtilityUnsupportedModes(t *testing.T) {
-	for _, command := range [][]string{{"tokenizer", "count", "--text", "synthetic-private-input"}, {"codex"}} {
+	for _, command := range [][]string{{"tokenizer", "inspect", "--text", "synthetic-private-input"}, {"codex"}} {
 		for _, flags := range [][]string{
 			{"--format", "jsonl"}, {"--format", "yaml"}, {"--format", "raw"},
 			{"--format", "pretty"}, {"--format", "explore"},

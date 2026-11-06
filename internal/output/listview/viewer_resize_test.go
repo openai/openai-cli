@@ -5,46 +5,47 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
 
-func TestViewerResizeRendersOnlySelectedPage(t *testing.T) {
+func TestViewerResizeRendersOnlyVisibleRecords(t *testing.T) {
 	var out bytes.Buffer
 	opts := viewerOptions(t, &out)
-	render := opts.RenderPage
 	var calls []string
-	opts.RenderPage = func(items []gjson.Result, width int) (string, error) {
-		calls = append(calls, fmt.Sprintf("%s/%d", items[0].Get("id").String(), width))
-		return render(items, width)
+	opts.RenderTable = func(items []gjson.Result, width int) (string, bool, error) {
+		require.Len(t, items, 1)
+		id := items[0].Get("id").String()
+		calls = append(calls, fmt.Sprintf("%s/%d", id, width))
+		return "ID\n" + id + "\n", true, nil
 	}
-	m := New(opts, nil, func() {}, 80, 20)
+	// One table row fits in this browser. Moving forward requests the next
+	// row, while resize and backward navigation only use received records.
+	m := New(opts, func() (Page, error) { return viewerPage("second"), nil }, func() {}, 80, 3)
 	first := viewerPage("first")
+	first.More = true
 	m.Update(listPageMessage{page: first})
-	m.Update(listPageMessage{page: viewerPage("second")})
-	// A producer can reuse its slice after delivery. Cached records remain owned.
+	m.Update(viewerKey(m, ' ')())
 	first.Items[0] = gjson.Parse(`{"id":"replacement"}`)
-	m.Update(tea.WindowSizeMsg{Width: 20, Height: 20})
-	m.Update(tea.WindowSizeMsg{Width: 20, Height: 10})
+	calls = nil
+	m.Update(tea.WindowSizeMsg{Width: 20, Height: 3})
+	require.Equal(t, []string{"second/19"}, calls)
 	viewerKey(m, 'b')
-	if !strings.Contains(m.View().Content, "first") {
-		t.Fatal("cached source changed after the producer reused its slice")
-	}
-	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
-	viewerKey(m, ' ')
-	if got, want := strings.Join(calls, ","), "first/80,second/80,second/20,first/20,first/80,second/80"; got != want {
-		t.Fatalf("unexpected render sequence: got %q, want %q", got, want)
-	}
+	require.Contains(t, m.View().Content, "first", "the producer can reuse its slice after delivery")
+	require.Equal(t, "first/19", calls[len(calls)-1])
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 3})
+	require.Equal(t, "first/79", calls[len(calls)-1])
+	require.Nil(t, viewerKey(m, ' '), "forward navigation should reuse the cached second row")
+	require.Equal(t, "second/79", calls[len(calls)-1])
 	viewerKey(m, 'q')
-	if err := m.Finish(nil, nil); err != nil || out.Len() != 0 {
-		t.Fatal("resizing changed successful quit output", err, out.String())
-	}
+	require.NoError(t, m.Finish(nil, nil))
+	require.Empty(t, out.String())
 }
 
-func TestViewerResizeRenderFailureRetainsCachedPages(t *testing.T) {
+func TestViewerResizeRenderFailureRetainsReceivedPages(t *testing.T) {
 	for _, back := range []bool{false, true} {
 		for _, canceled := range []bool{false, true} {
 			t.Run(fmt.Sprintf("back%t/canceled%t", back, canceled), func(t *testing.T) {
@@ -54,39 +55,35 @@ func TestViewerResizeRenderFailureRetainsCachedPages(t *testing.T) {
 				failure := errors.New("synthetic render failure")
 				opts := viewerOptions(t, &out)
 				opts.Context = ctx
-				opts.RenderPage = func(items []gjson.Result, width int) (string, error) {
+				opts.RenderTable = func(items []gjson.Result, width int) (string, bool, error) {
 					id := items[0].Get("id").String()
-					if width == 20 && (!back || id == "first") {
+					if width == 19 && (!back || id == "first") {
 						if canceled {
 							cancel()
-							return "incomplete replacement", ctx.Err()
+							return "", false, ctx.Err()
 						}
-						return "incomplete replacement", failure
+						return "", false, failure
 					}
-					return fmt.Sprintf("%s/%d\n", id, width), nil
+					return "ID\n" + id + "\n", true, nil
 				}
-				m := New(opts, nil, func() {}, 80, 20)
-				m.Update(listPageMessage{page: viewerPage("first")})
-				m.Update(listPageMessage{page: viewerPage("second")})
-				m.Update(tea.WindowSizeMsg{Width: 20, Height: 20})
-				want := "first/80\nsecond/80\n"
+				m := New(opts, func() (Page, error) { return viewerPage("second"), nil }, func() {}, 80, 3)
+				first := viewerPage("first")
+				first.More = true
+				m.Update(listPageMessage{page: first})
+				m.Update(viewerKey(m, ' ')())
+				m.Update(tea.WindowSizeMsg{Width: 20, Height: 3})
 				if back {
 					viewerKey(m, 'b')
-					want = "first/80\nsecond/20\n"
 				}
-				if !m.quitting || m.View().Content != "" || !m.View().AltScreen {
-					t.Fatal("render failure did not preserve terminal restoration")
-				}
+				require.True(t, m.quitting)
+				require.Empty(t, m.View().Content)
+				require.True(t, m.View().AltScreen, "preserve terminal ownership through restoration")
+				want := "first\nsecond\n"
 				if canceled {
-					failure = context.Canceled
-					want = ""
+					failure, want = context.Canceled, ""
 				}
-				if err := m.Finish(nil, nil); !errors.Is(err, failure) {
-					t.Fatal("lost render failure or cancellation", err)
-				}
-				if out.String() != want {
-					t.Fatalf("cached output changed: got %q, want %q", out.String(), want)
-				}
+				require.ErrorIs(t, m.Finish(nil, nil), failure)
+				require.Equal(t, want, out.String())
 			})
 		}
 	}

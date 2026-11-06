@@ -74,6 +74,9 @@ func flagOptionsWithStdin(
 		Encoding: requestconfig.EncodingHooks{
 			PrepareMultipart: func(body map[string]any) error { return images.PrepareMultipartBody(cmd, body) },
 			ValidateJSON: func(body []byte) error {
+				if err := admin.ValidateExternalKeyCreate(cmd, body); err != nil {
+					return err
+				}
 				if err := webhooks.ValidateRequestEvents(cmd, body); err != nil {
 					return err
 				}
@@ -86,6 +89,12 @@ func flagOptionsWithStdin(
 	if audio.IsVoiceAction(cmd) {
 		hooks.EmbedMultipart = func(body map[string]any, stdin *requestconfig.OnceStdinReader) (map[string]any, error) {
 			return audio.EmbedVoiceBody(cmd, body, stdin)
+		}
+	}
+	if bodyType == ApplicationJSON && isSkillCreate(cmd) {
+		hooks.SelectBodyType = selectSkillZIP
+		hooks.EmbedMultipart = func(body map[string]any, stdin *requestconfig.OnceStdinReader) (map[string]any, error) {
+			return embedSkillZIP(cmd, body, stdin)
 		}
 	}
 	return requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)

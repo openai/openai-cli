@@ -36,9 +36,15 @@ type releaseSelection struct {
 }
 
 func archiveName(version string) string {
-	platform, extension, arch := runtime.GOOS, ".tar.gz", runtime.GOARCH
+	return platformArchiveName(version, runtime.GOOS, runtime.GOARCH)
+}
+
+func platformArchiveName(version, platform, arch string) string {
+	extension := ".tar.gz"
 	if platform == "darwin" {
 		platform, extension = "macos", ".zip"
+	} else if platform == "windows" {
+		extension = ".zip"
 	}
 	if arch == "arm" {
 		arch = "armv6"
@@ -53,8 +59,10 @@ func (s releaseSelection) valid() bool {
 }
 
 type releaseDelivery struct {
-	client   *http.Client
-	verifier string
+	verifierCleanup        func()
+	client                 *http.Client
+	verifier               string
+	privateVerifierEnabled bool
 }
 
 func updateClient() *http.Client {

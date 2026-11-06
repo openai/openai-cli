@@ -1,12 +1,14 @@
 package app
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/admin"
 	imagecommands "github.com/openai/openai-cli/internal/commands/images"
+	"github.com/openai/openai-cli/internal/commands/manpages"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -17,8 +19,13 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 	localcommands.OrderImages(root)
 	configureGlobalFlagDescriptions(root)
 	configureHelpGroups(root)
+	root.Metadata["help-key-setup-topic"] = func(command *cli.Command) string {
+		return keySetupTopic(isAdminAPICommand(command))
+	}
+	manpages.ConfigureHelp(root)
 	configureImageHelpContent(root)
 	configureLocalHelpContent(root)
+	configureBatchHelpContent(root)
 	args, handled, err := clihelp.Configure(root, args)
 	admin.ConfigureSetupHelp(root)
 	return args, handled, err
@@ -116,10 +123,17 @@ func configureImageHelpContent(root *cli.Command) {
 	if images == nil {
 		return
 	}
-	const localOutput = "This local command supports --format auto or text only.\n" +
-		"It cannot use --transform or --raw-output."
+	const formats = "This local command supports --format auto or text only."
+	const selection = "It cannot use --transform or --raw-output."
+	const localOutput = formats + "\n" + selection
+	localFlags := map[string]string{
+		"format": formats, "transform": selection, "raw-output": selection,
+		"format-error": "", "transform-error": "",
+	}
 	for name, content := range map[string]clihelp.Content{
 		"generate": {
+			CompactNote: "Run without flags to open the image picker. You can also supply --prompt or pipe JSON/YAML. Images save to ~/Downloads/gpt-images/. " +
+				"For API data without saving, use --format json without --name or --output-dir.",
 			InputNote: "Supply the prompt with --prompt or piped JSON/YAML (key: prompt).\n" +
 				"Run without flags to enter it in the interactive picker.",
 			Description: "Run without flags to choose settings in an interactive terminal.\n" +
@@ -130,6 +144,8 @@ func configureImageHelpContent(root *cli.Command) {
 			Examples: []clihelp.Example{{Description: "Generate and save an image:", Command: `images generate --prompt "A tiny cat" --name cat`}},
 		},
 		"edit": {
+			CompactNote: "Edits save to ~/Downloads/gpt-images/ and preserve your source image. " +
+				"For API data without saving, use --format json without --name or --output-dir.",
 			Description: "Replace photo.png with your image's path and the prompt with your changes.\n" +
 				"Keeps your original. Saves to ~/Downloads/gpt-images/.\n" +
 				"Use --output-dir to choose an existing folder.\n" +
@@ -138,19 +154,24 @@ func configureImageHelpContent(root *cli.Command) {
 			Examples: []clihelp.Example{{Description: "Edit and save an image:", Command: `images edit --image "photo.png" --prompt "Make the sky purple" --name purple-sky`}},
 		},
 		"create-variation": {
+			InputNote:   "Use images edit to create a new variation.",
+			CompactNote: "Use images edit with a GPT Image model instead. Edits save to ~/Downloads/gpt-images/.",
 			Description: "This endpoint is retired and no longer available. Use images edit with a GPT Image model and a prompt.\n" +
 				"Replace photo.png with your image's path. Edits save to ~/Downloads/gpt-images/.\n" +
 				"The options below describe the legacy variations contract.",
 			Examples: []clihelp.Example{{Description: "Create a variation with images edit:", Command: `images edit --image "photo.png" --prompt "Create a variation of this image" --name variation`}},
 		},
 		"preview": {
+			CompactNote: "Preview a local PNG, JPEG, or WebP in a supported terminal. The preview limit is 64 MiB and 16 megapixels.",
 			Description: imagecommands.PreviewDetails + "\nReplace photo.png with your saved image's path.\n" +
 				"Pipes, CI and terminals without supported graphics or color cannot display previews.\n" +
 				"Preview limits: 64 MiB and 16 megapixels. Larger originals are still kept.",
 			Examples:          []clihelp.Example{{Description: "View a saved image:", Command: `images preview "photo.png"`}},
 			GlobalOptionsNote: localOutput,
+			InheritedFlagHelp: localFlags,
 		},
 		"models": {
+			CompactNote: "Use --offline to skip API checks. Model visibility does not guarantee generation permissions or quota.",
 			Description: "Shows exact model names and checks metadata visibility with your key.\n" +
 				"Checks known image models individually, without loading the full API model list.\n" +
 				"No images are generated. Checks stop after 15 seconds, with no retries.\n" +
@@ -167,6 +188,16 @@ func configureImageHelpContent(root *cli.Command) {
 	} {
 		if command := images.Command(name); command != nil {
 			setCompleteHelpContent(command, content)
+			if name == "generate" || name == "edit" {
+				setBriefFlagDescriptions(command, map[string]string{
+					"image":   "Source image to edit.",
+					"prompt":  "Describe the image you want.",
+					"name":    "Filename for the saved image.",
+					"model":   "Image model to use.",
+					"size":    "Image dimensions.",
+					"quality": "Image quality.",
+				})
+			}
 		}
 	}
 	if inline := images.Command("inline"); inline != nil {
@@ -174,6 +205,7 @@ func configureImageHelpContent(root *cli.Command) {
 			Description:       inline.Description,
 			Examples:          []clihelp.Example{{Description: "Turn on automatic image previews:", Command: "images inline on"}},
 			GlobalOptionsNote: localOutput,
+			InheritedFlagHelp: localFlags,
 		})
 		for _, name := range []string{"on", "off"} {
 			if command := inline.Command(name); command != nil {
@@ -181,6 +213,7 @@ func configureImageHelpContent(root *cli.Command) {
 					Description:       command.Description,
 					Examples:          []clihelp.Example{{Description: "Remember automatic image previews " + name + ":", Command: "images inline " + name}},
 					GlobalOptionsNote: localOutput,
+					InheritedFlagHelp: localFlags,
 				})
 			}
 		}
@@ -197,11 +230,38 @@ func setCompleteHelpContent(command *cli.Command, content clihelp.Content) {
 	command.CustomHelpTemplate = ""
 }
 
+// Keep authored overviews alongside existing full guidance when help is configured again.
+func setBriefFlagDescriptions(command *cli.Command, descriptions map[string]string) {
+	existing, _ := command.Metadata["help-flag-usages"].([]clihelp.FlagUsage)
+	usages := slices.Clone(existing)
+	for _, flag := range command.Flags {
+		names := flag.Names()
+		if len(names) == 0 || descriptions[names[0]] == "" {
+			continue
+		}
+		name := names[0]
+		index := slices.IndexFunc(usages, func(entry clihelp.FlagUsage) bool {
+			return entry.Owner == command && len(entry.Names) == 1 && entry.Names[0] == name
+		})
+		if index < 0 {
+			usages = append(usages, clihelp.FlagUsage{Owner: command, Names: []string{name}, Brief: descriptions[name]})
+		} else {
+			usages[index].Brief = descriptions[name]
+		}
+	}
+	command.Metadata["help-flag-usages"] = usages
+}
+
 // Known local utilities use the shared layout while retaining their authored
 // descriptions, examples, and restrictions. Unrelated custom guides stay intact.
 func configureLocalHelpContent(root *cli.Command) {
-	localOutput := "Local output supports --format auto, text, or json. It does not support --transform or --raw-output."
-	for _, path := range [][]string{{"codex"}, {"tokenizer"}, {"tokenizer", "count"}, {"tokenizer", "inspect"}, {"tokenizer", "encodings"}, {"tokenizer", "licenses"}} {
+	const formats = "Local output supports --format auto, text, or json."
+	const selection = "It does not support --transform or --raw-output."
+	localFlags := map[string]string{
+		"format": formats, "transform": selection, "raw-output": selection,
+		"format-error": "", "transform-error": "",
+	}
+	for _, path := range [][]string{{"codex"}, {"tokenizer"}, {"tokenizer", "view"}, {"tokenizer", "count"}, {"tokenizer", "inspect"}, {"tokenizer", "encodings"}, {"tokenizer", "licenses"}} {
 		command := root
 		for _, name := range path {
 			command = command.Command(name)
@@ -214,7 +274,8 @@ func configureLocalHelpContent(root *cli.Command) {
 		}
 		content := clihelp.Content{
 			Description:       command.Description,
-			GlobalOptionsNote: localOutput,
+			GlobalOptionsNote: formats + " " + selection,
+			InheritedFlagHelp: localFlags,
 			Notes:             "This command runs locally. No API key or internet is required.",
 		}
 		switch strings.Join(path, " ") {
@@ -222,11 +283,42 @@ func configureLocalHelpContent(root *cli.Command) {
 			content.Examples = []clihelp.Example{{Description: "Show the Codex configuration guide URL:", Command: "codex --destination config"}}
 		case "tokenizer":
 			command.Metadata["help-optional-command"] = true
-			content.GlobalOptionsNote = "The editor supports --format auto or text. For JSON, use tokenizer count or inspect. --transform and --raw-output are unsupported."
-			content.Description = "Opens the live editor in a terminal. Use count or inspect for scripts.\n\n" + content.Description
-			content.Examples = []clihelp.Example{{Description: "Open the live tokenizer editor:", Command: "tokenizer"}}
+			const editorFormat = "The editor supports --format auto or text. For JSON, use tokenizer count or inspect."
+			const editorSelection = "--transform and --raw-output are unsupported."
+			content.GlobalOptionsNote = editorFormat + " " + editorSelection
+			content.InheritedFlagHelp = map[string]string{
+				"format": editorFormat, "transform": editorSelection, "raw-output": editorSelection,
+				"format-error": "", "transform-error": "",
+			}
+			content.Description = "Opens the live editor in a terminal. Pipe text into tokenizer view to explore it. Use count or inspect for scripts.\n\n" + content.Description
+			content.Examples = []clihelp.Example{
+				{Description: "Open the live tokenizer editor:", Command: "tokenizer"},
+				{Description: "Count tokens in text:", Command: `tokenizer count --text "hello world"`},
+				{Description: "See piping examples:", Command: "help piping"},
+			}
+		case "tokenizer view":
+			const editorFormat = "The editor requires --format auto and an interactive terminal. Use tokenizer count or inspect for script output."
+			content.GlobalOptionsNote = editorFormat
+			content.InheritedFlagHelp = map[string]string{
+				"format": editorFormat, "transform": selection, "raw-output": selection,
+				"format-error": "", "transform-error": "",
+			}
+			content.BashExamples = true
+			content.Examples = []clihelp.Example{{Description: "Explore a UTF-8 file in Bash or zsh", Command: "tokenizer view < draft.txt"}}
 		case "tokenizer count", "tokenizer inspect":
+			content.CompactNote = "Supply UTF-8 with --text, --file, or stdin. Input is limited to 1 MiB. Ctrl+C stops long inputs."
 			content.Examples = []clihelp.Example{{Description: "Tokenize literal text:", Command: strings.Join(path, " ") + ` --text "Hello, world!"`}}
+			if command.Name == "count" {
+				const countFormat = "Count supports --format auto, text, or json."
+				const transform = "Use --transform to select token_count, input_bytes, or encoding."
+				const raw = "Use --raw-output for unquoted strings."
+				content.GlobalOptionsNote = countFormat + " " + transform + " " + raw
+				content.InheritedFlagHelp = map[string]string{
+					"format": countFormat, "transform": transform, "raw-output": raw,
+					"format-error": "", "transform-error": "",
+				}
+				content.Examples = append(content.Examples, clihelp.Example{Description: "Print only the token count:", Command: `tokenizer count -n --text "Hello, world!"`})
+			}
 			labels, _ := command.Metadata["help-flag-labels"].([]clihelp.FlagLabel)
 			command.Metadata["help-flag-labels"] = append(labels, clihelp.FlagLabel{Owner: command, Names: []string{"encoding"}, Label: "ENCODING"})
 		}
@@ -236,6 +328,21 @@ func configureLocalHelpContent(root *cli.Command) {
 }
 
 func configureHelpGroups(root *cli.Command) {
+	batchCommands := root.Command("batches")
+	if models := root.Command("models"); models != nil {
+		if list := models.Command("list"); list != nil {
+			setCompleteHelpContent(list, clihelp.Content{
+				Description: list.Description,
+				Examples:    clihelp.CommandExamples(list, "models list"),
+				CompactNote: "In the pager, Space moves forward, b moves back, and q quits. Filtering and sorting do not support --format raw. Use --format json for complete model records.",
+			})
+			setBriefFlagDescriptions(list, map[string]string{
+				"filter":    "Match model IDs with id=VALUE or id~REGEX.",
+				"sort-by":   "Sort model IDs ascending (id) or descending (~id).",
+				"max-items": "Maximum models to return.",
+			})
+		}
+	}
 	groups := []clihelp.FlagGroup{
 		{Title: "Authentication", Names: []string{"api-key", "admin-api-key", "webhook-secret", "mtls-client-cert-file", "mtls-client-key-file"}, Owner: root},
 		{Title: "Output", Names: []string{"format", "format-error", "transform", "transform-error", "raw-output", "quiet", "verbose"}, Owner: root},
@@ -255,6 +362,58 @@ func configureHelpGroups(root *cli.Command) {
 		if command.Metadata == nil {
 			command.Metadata = map[string]any{}
 		}
+		resource := localcommands.ResourceName(command)
+		if resource == "" {
+			resource = command.Name
+		}
+		switch resource {
+		case "admin:organization:external-storage":
+			if validate := command.Command("validate"); validate != nil {
+				setCompleteHelpContent(validate, clihelp.Content{
+					Summary: "Checks access by writing test files to your cloud storage. Success enables Private Safety Processing with the project's existing retention policy.",
+				})
+			}
+		case "skills", "skills:versions":
+			if create := command.Command("create"); create != nil {
+				for _, flag := range create.Flags {
+					if files, ok := flag.(*requestflag.Flag[[]string]); ok && files.Name == "files" {
+						files.Usage = "For a ZIP upload, pass the .zip path or use - to read the ZIP from stdin."
+					}
+				}
+			}
+		case "responses", "beta:responses":
+			if create := command.Command("create"); create != nil {
+				path := strings.ReplaceAll(resource, ":", " ") + " create"
+				setCompleteHelpContent(create, clihelp.Content{
+					Summary:     "Creates a model response.",
+					Description: create.Description,
+					Examples:    clihelp.CommandExamples(create, path),
+				})
+				setBriefFlagDescriptions(create, map[string]string{
+					"model":             "Model ID to use.",
+					"input":             "Text, image, or file input.",
+					"instructions":      "System or developer instructions.",
+					"stream":            "Stream the response as it is generated.",
+					"max-output-tokens": "Output token limit, including reasoning tokens.",
+				})
+			}
+		case "chat:completions":
+			if create := command.Command("create"); create != nil {
+				setCompleteHelpContent(create, clihelp.Content{
+					Summary:     "Generate a chat completion from a conversation.",
+					Description: create.Description,
+					Examples: []clihelp.Example{{Description: "Send one message:",
+						Command: `chat completions create --model gpt-5.5 --message '{role: user, content: Hi}'`}},
+				})
+				setBriefFlagDescriptions(create, map[string]string{
+					"message":               "A message in the conversation.",
+					"model":                 "Model ID to use.",
+					"stream":                "Stream the reply as it is generated.",
+					"max-completion-tokens": "Output token limit, including reasoning tokens.",
+					"temperature":           "Sampling temperature, from 0 to 2.",
+				})
+			}
+		}
 		sections := append([]clihelp.FlagGroup(nil), groups...)
 		if image {
 			sections = append([]clihelp.FlagGroup{
@@ -268,6 +427,19 @@ func configureHelpGroups(root *cli.Command) {
 		}
 		command.Metadata["help-flag-groups"] = sections
 		commandLabels := append([]clihelp.FlagLabel(nil), labels...)
+		if batchCommands != nil && (command == batchCommands.Command("create") || command == batchCommands.Command("submit")) {
+			commandLabels = append(commandLabels, clihelp.FlagLabel{
+				Owner: command, Names: []string{"metadata", "output-expires-after"}, Label: "JSON",
+			})
+			for _, flag := range command.Flags {
+				if metadata, ok := flag.(*requestflag.Flag[map[string]any]); ok && metadata.Name == "metadata" {
+					const example = "Use a JSON object, for example: --metadata '{\"scenario\":\"example\"}'.\n\n"
+					if !strings.HasPrefix(metadata.Usage, example) {
+						metadata.Usage = example + metadata.Usage
+					}
+				}
+			}
+		}
 		if positional, ok := command.Metadata["help-positional-flags"].([]string); ok {
 			for _, name := range positional {
 				commandLabels = append(commandLabels, clihelp.FlagLabel{

@@ -2,6 +2,7 @@ package images
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -67,9 +68,10 @@ func (m *imagePickerMouseModes) disable() string {
 // Stop reporting before waiting for workers or restoring terminal input.
 // Repeated cleanup retries the same owned resets after a previous write failure.
 func (w *imagePickerWorkspace) stopMouse() error {
+	transferErr := w.stopKonsoleTransfer()
 	frame := w.mouse.disable()
 	if frame == "" {
-		return nil
+		return transferErr
 	}
 	parent := w.context
 	if parent == nil {
@@ -77,7 +79,7 @@ func (w *imagePickerWorkspace) stopMouse() error {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 250*time.Millisecond)
 	defer cancel()
-	return imagePickerDisplayFailure(terminalimage.WriteFrame(ctx, w.out, frame, ""))
+	return errors.Join(transferErr, imagePickerDisplayFailure(terminalimage.WriteFrame(ctx, w.out, frame, "")))
 }
 
 // The native-shell contract excludes remote, multiplexed, and unknown callers.

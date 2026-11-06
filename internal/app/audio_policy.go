@@ -128,7 +128,7 @@ func speechAuthenticationGuidance(command *cli.Command, apierr *openai.Error) au
 		guidance.Action = "Check your key's permissions and selected project."
 	case !apiAuthenticationKeyPresent(root, "api-key", "OPENAI_API_KEY"):
 		guidance.Summary = "No API key is configured."
-		guidance.Action = setupStep + "\nReopen this form in that terminal."
+		guidance.Action = setupStep
 	case apierr.Code == "invalid_api_key":
 		guidance.Action = "Replace the rejected API key.\nReopen this form."
 	default:

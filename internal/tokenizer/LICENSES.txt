@@ -1,7 +1,7 @@
 Tokenizer dependency notices
 
-github.com/tiktoken-go/tokenizer v0.8.1
-https://github.com/tiktoken-go/tokenizer/blob/v0.8.1/LICENSE
+github.com/tiktoken-go/tokenizer v0.10.0
+https://github.com/tiktoken-go/tokenizer/blob/v0.10.0/LICENSE
 
 MIT License
 

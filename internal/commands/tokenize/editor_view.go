@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -16,16 +17,23 @@ import (
 	"github.com/openai/openai-cli/internal/tokenizer"
 )
 
-func (m *tokenizerEditor) viewHeight() int { return min(18, max(0, m.height-1)) }
-func (m *tokenizerEditor) viewWidth() int  { return max(1, min(100, m.width-4)) }
-func (m *tokenizerEditor) roomy() bool     { return m.width >= 50 && m.viewHeight() >= 16 }
+func (m *tokenizerEditor) roomy() bool {
+	return m.studioLayout() || m.width >= 50 && m.viewHeight() >= 16
+}
 func (m *tokenizerEditor) sourceRows() int {
+	if m.studioLayout() {
+		return min(8, m.bodyHeight()/3)
+	}
 	if m.roomy() {
 		return 3
 	}
 	return 1
 }
 func (m *tokenizerEditor) resultRows() int {
+	if m.studioLayout() {
+		// Reserve the byte counts and room for the selected token and its byte details.
+		return min(4, max(1, m.bodyHeight()-6))
+	}
 	if m.roomy() {
 		return 2
 	}
@@ -33,44 +41,50 @@ func (m *tokenizerEditor) resultRows() int {
 }
 
 type tokenizerEditorStyles struct {
-	title, muted, accent, selected, focused, border, input lipgloss.Style
-	tokenSelected                                          lipgloss.Style
-	tokens                                                 [6]lipgloss.Style
+	muted, accent, selected, focused, border, warning, failure lipgloss.Style
+	fill, edge, secondary                                      string
+	tokenSelected, sourceSelected                              lipgloss.Style
+	tokens, byteCounts                                         [6]lipgloss.Style
 }
 
 func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	s := tokenizerEditorStyles{}
 	if !m.color {
+		s.tokenSelected = lipgloss.NewStyle().Reverse(true)
+		s.sourceSelected = s.tokenSelected
 		return s
 	}
+	warning, failure, tokenInk := "#885B14", "#B23A3A", "#FFFFFF"
 	focus, fill, text, muted, border := "#3159BC", "#E9EFFE", "#20283B", "#657087", "#BAC4D8"
 	if m.dark {
+		warning, failure, tokenInk = "#E2BC79", "#E59A9A", "#172338"
 		focus, fill, text, muted, border = "#8AA8FF", "#343D58", "#F2F4FA", "#A4ACC2", "#51566B"
 	}
-	palette := [6]string{"#E9F1FE", "#E7F5ED", "#FBF0D9", "#F2EAFE", "#FBE8EC", "#E4F3F5"}
+	// Alternate cool and warm fills. Each token shares its ink with its byte count.
+	palette := [6][2]string{
+		{"#C6ECE9", "#17615C"}, {"#FADCC8", "#884B2B"}, {"#E2D9F7", "#61478B"},
+		{"#F4E4AE", "#71551B"}, {"#D9E9BF", "#2E592C"}, {"#E7BFD3", "#793245"},
+	}
 	if m.dark {
-		palette = [6]string{"#263D57", "#26483F", "#51452C", "#423454", "#503438", "#294852"}
-	}
-	for i, color := range palette {
-		s.tokens[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(text)).Background(lipgloss.Color(color))
-	}
-	s.title = s.title.Bold(true)
-	s.muted = s.muted.Foreground(lipgloss.Color(muted))
-	s.accent = s.accent.Foreground(lipgloss.Color(focus)).Bold(true)
-	s.selected = s.selected.Foreground(lipgloss.Color(text)).Background(lipgloss.Color(fill))
-	s.focused = s.selected.Bold(true)
-	selectedText := "#FFFFFF"
-	if m.dark {
-		selectedText = "#101318"
-	}
-	s.tokenSelected = lipgloss.NewStyle().Foreground(lipgloss.Color(selectedText)).Background(lipgloss.Color(focus))
-	s.border = s.border.Foreground(lipgloss.Color(border))
-	if m.focus == tokenizerFocusText {
-		s.border = s.border.Foreground(lipgloss.Color(focus))
-		if m.text != "" {
-			s.input = s.selected
+		palette = [6][2]string{
+			{"#285154", "#A1E5DF"}, {"#75472C", "#FFD5AE"}, {"#563D79", "#DCC7FA"},
+			{"#674F29", "#EEDB9A"}, {"#295B2D", "#D6E7AD"}, {"#763D59", "#F7C6D8"},
 		}
 	}
+	for i, pair := range palette {
+		s.byteCounts[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(pair[1]))
+		s.tokens[i] = s.byteCounts[i].Background(lipgloss.Color(pair[0]))
+	}
+	s.fill, s.edge, s.secondary = fill, border, muted
+	s.warning = s.warning.Foreground(lipgloss.Color(warning))
+	s.failure = s.failure.Foreground(lipgloss.Color(failure))
+	s.muted = s.muted.Foreground(lipgloss.Color(muted))
+	s.accent = s.accent.Foreground(lipgloss.Color(focus))
+	s.selected = s.selected.Foreground(lipgloss.Color(text)).Background(lipgloss.Color(fill))
+	s.sourceSelected = s.selected
+	s.focused = s.selected.Bold(true)
+	s.tokenSelected = lipgloss.NewStyle().Foreground(lipgloss.Color(tokenInk)).Background(lipgloss.Color(focus))
+	s.border = s.border.Foreground(lipgloss.Color(border))
 	return s
 }
 
@@ -85,7 +99,11 @@ func (m *tokenizerEditor) View() tea.View {
 		if ansi.StringWidth(plain) <= m.width && m.height >= 3 {
 			lines = append(lines, plain)
 		}
-		view.Content = m.fit(lines, false)
+		lines = lines[:min(len(lines), m.height)]
+		for i, line := range lines {
+			lines[i] = tokenizerClip(line, m.width)
+		}
+		view.Content = strings.Join(lines, "\n")
 		return view
 	}
 	s := m.styles()
@@ -98,122 +116,197 @@ func (m *tokenizerEditor) View() tea.View {
 		return view
 	}
 	width := m.viewWidth()
-	lines := []string{s.title.Render("Tokenizer")}
-	textLabel := "Text"
-	if len(m.lineStarts) > m.sourceRows() {
-		textLabel += fmt.Sprintf(" · %d/%d", m.lineIndex(m.cursor)+1, len(m.lineStarts))
+	if m.studioLayout() {
+		width = m.sourceWidth()
 	}
-	if m.roomy() {
-		caption := "╭─ " + textLabel + " "
-		lines = append(lines, s.border.Render(caption+strings.Repeat("─", width-ansi.StringWidth(caption)-1)+"╮"))
-		for _, line := range m.editorLines(width-4, m.sourceRows()) {
-			input := s.input
-			if line == "" || line == tokenizerCaret(" ") {
-				input = lipgloss.NewStyle()
-			}
-			line = cliterminal.FitPrompt(line, width-4)
-			// Match the image prompt's explicit edge placement. Terminals can
-			// disagree about the cell width of complete emoji clusters.
-			row := s.border.Render("│") + input.Render(ansi.EraseCharacter(width-2)+" "+line+" ") +
-				ansi.CursorHorizontalAbsolute(width+2) + s.border.Render("│")
-			lines = append(lines, row)
+	lines, cursor := m.textRows(s, width)
+	if cursor != nil {
+		cursor.X += 2 // Left panel inset.
+		cursor.Y += 2 // Header and divider.
+		if m.framed() {
+			cursor.Y++
 		}
-		lines = append(lines, s.border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
-	} else {
-		prefix := "  " + textLabel + " "
-		if m.focus == tokenizerFocusText {
-			prefix = "› " + textLabel + " "
-		}
-		caption := s.muted
-		if m.focus == tokenizerFocusText {
-			caption = s.accent
-		}
-		lines = append(lines, caption.Render(prefix)+m.editorLines(width-ansi.StringWidth(prefix), m.sourceRows())[0])
+		cursor.Shape, cursor.Blink = tea.CursorBar, true
+		view.Cursor = cursor
 	}
-	if m.note == "" {
-		lines = append(lines, "")
+	if m.studioLayout() {
+		view.Content = m.studioView(s, lines)
+		return view
 	}
-	tokenLabel := "tokens"
-	if len(m.tokens) == 1 {
-		tokenLabel = "token"
-	}
-	status := fmt.Sprintf("%d %s", len(m.tokens), tokenLabel)
-	if m.updating {
-		status = "Updating…"
-	} else if m.failed {
-		status = "Count unavailable"
-	}
-	if m.tab == 2 {
-		byteLabel := "bytes"
-		if len(m.text) == 1 {
-			byteLabel = "byte"
-		}
-		status += fmt.Sprintf(" · %d %s", len(m.text), byteLabel)
-	}
-	lines = append(lines, "  "+status)
-	viewActive := m.focus == tokenizerFocusOptions && m.option == 0
-	var tabs []string
-	for i, label := range []string{"Text", "Token IDs", "Bytes"} {
-		if m.tab == i {
-			label = "[" + label + "]"
-			if viewActive {
-				label = s.focused.Render(label)
-			}
-		}
-		tabs = append(tabs, label)
-	}
-	views := m.optionRow(s, "View", strings.Join(tabs, "  "), viewActive)
-	if ansi.StringWidth(views+"  ←→") <= width {
-		views += s.muted.Render("  ←→")
-	}
-	lines = append(lines, views)
-	encodingActive := m.focus == tokenizerFocusOptions && m.option == 1
-	model, badge := tokenizerModelLabel(m.encoding)
-	model += "  " + badge
-	if encodingActive {
-		model = s.focused.Render(model)
-	}
-	modelRow := m.optionRow(s, "Model", model, encodingActive)
-	if ansi.StringWidth(modelRow+"  ›") <= width {
-		modelRow += s.muted.Render("  ›")
-	}
-	lines = append(lines, modelRow)
-	if m.note == "" {
-		lines = append(lines, "")
-	}
+	lines = append(lines, m.settingsRows(s, width)...)
 	position := "Tokens"
+	spaceLabel := ""
 	if len(m.tokens) > 0 {
 		position = fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
 		fragment, _, _ := m.fragment(m.selected)
+		spaceLabel = tokenizerSpaceLabel(fragment)
 		if !utf8.ValidString(fragment) {
-			position += " · partial UTF-8"
+			position += " (partial UTF-8)"
 		}
 	}
-	if m.focus == tokenizerFocusResults {
-		lines = append(lines, s.accent.Render("› "+position))
-	} else if len(m.tokens) != 1 {
-		lines = append(lines, "  "+s.muted.Render(position))
+	results := trimEmptyRows(m.resultLines(s, width))
+	if m.focus == tokenizerFocusResults || len(m.tokens) != 1 || spaceLabel != "" {
+		heading := s.heading(position, m.focus == tokenizerFocusResults)
+		if spaceLabel != "" {
+			if ansi.StringWidth(heading)+2+len(spaceLabel) > width {
+				lines = append(lines, heading)
+				heading = ""
+			}
+			heading += "  " + s.tokenSelected.Render(spaceLabel)
+		}
+		if len(results) == 1 && tokenizerSourceWidth(heading+results[0]) <= width {
+			results[0] = heading + results[0]
+		} else {
+			lines = append(lines, heading)
+		}
 	}
-	lines = append(lines, m.resultLines(s, width)...)
-	if m.note != "" {
-		notes := strings.Split(ansi.Wrap(m.note, width, ""), "\n")
-		available := max(0, m.viewHeight()-len(lines)-1)
-		lines = append(lines, notes[:min(len(notes), available)]...)
-	}
-	if m.note == "" && lines[len(lines)-1] != "" && len(lines)+1 < m.viewHeight() {
-		lines = append(lines, "")
-	}
-	lines = append(lines, s.muted.Render(m.footer()))
-	view.Content = m.fit(lines, true)
+	lines = append(lines, results...)
+	lines = append(lines, m.noteRows(s, width)...)
+	view.Content = m.panel(s, "Tokenizer", m.countStatus(s), lines, m.footer(s))
 	return view
 }
 
-func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, label, value string, active bool) string {
-	marker, caption := "  ", s.muted
+func (s tokenizerEditorStyles) heading(label string, active bool) string {
 	if active {
-		marker, caption = s.accent.Render("› "), s.accent
+		return s.focused.Render("› " + label)
 	}
-	return marker + caption.Render(fmt.Sprintf("%-7s", label)) + value
+	return "  " + s.muted.Render(label)
+}
+
+func (m *tokenizerEditor) sourceLabel() (string, int) {
+	total := len(m.lineStarts)
+	if total <= m.sourceRows() {
+		return "Text", 9
+	}
+	label := fmt.Sprintf("Text %d/%d", m.lineIndex(m.boundaries[m.sourceRange().first])+1, total)
+	if !m.studioLayout() {
+		return label, len(label) + 3
+	}
+	// Reserve both line numbers at their widest so paging keeps the same wrap.
+	return label, 3 + len("Text /") + 2*len(strconv.Itoa(total))
+}
+
+func (m *tokenizerEditor) textRows(s tokenizerEditorStyles, width int) ([]string, *tea.Cursor) {
+	label, indent := m.sourceLabel()
+	prefix := s.heading(label, m.focus == tokenizerFocusText) + strings.Repeat(" ", indent-2-len(label))
+	sourceLines := m.editorLines
+	if m.studioLayout() {
+		sourceLines = m.studioSourceLines
+	}
+	lines, cursor := sourceLines(s, width-indent, m.sourceRows())
+	lines = trimEmptyRows(lines)
+	if cursor != nil {
+		cursor.X += indent
+	}
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = prefix + line
+		} else {
+			lines[i] = strings.Repeat(" ", indent) + line
+		}
+	}
+	return lines, cursor
+}
+
+func (m *tokenizerEditor) settingsRows(s tokenizerEditorStyles, width int) []string {
+	tabs := []string{"Text", "Token IDs", "Bytes"}
+	model, badge := tokenizerModelLabel(m.encoding)
+	return []string{
+		m.optionRow(s, width, 0, "View", tabs, m.tab, "←→"),
+		m.optionRow(s, width, 1, "Model", []string{model, badge}, 0, "›"),
+	}
+}
+
+func (m *tokenizerEditor) noteRows(s tokenizerEditorStyles, width int) []string {
+	var lines []string
+	if m.note != "" {
+		style := s.warning
+		if m.failed {
+			style = s.failure
+		}
+		for _, line := range strings.Split(ansi.Wrap(m.note, width-2, ""), "\n") {
+			lines = append(lines, "  "+style.Render(line))
+		}
+	}
+	return lines
+}
+
+func (m *tokenizerEditor) countStatus(s tokenizerEditorStyles) string {
+	var counts []string
+	style := s.muted.Bold(m.color)
+	if m.failed {
+		counts = append(counts, "Count unavailable")
+		style = s.failure
+	} else if !m.updating {
+		label := "tokens"
+		if len(m.tokens) == 1 {
+			label = "token"
+		}
+		counts = append(counts, fmt.Sprintf("%d %s", len(m.tokens), label))
+	}
+	if m.tab == 2 {
+		counts = append(counts, tokenizerByteSize(len(m.text)))
+	}
+	if len(counts) == 0 {
+		return ""
+	}
+	return style.Render(strings.Join(counts, "  "))
+}
+
+func tokenizerByteSize(n int) string {
+	if n == 1 {
+		return "1 byte"
+	}
+	return strconv.Itoa(n) + " bytes"
+}
+
+func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, width, index int, label string, values []string, current int, hint string) string {
+	focused := m.focus == tokenizerFocusOptions && m.option == index
+	labelStyle, secondary, active := s.muted, s.muted, lipgloss.NewStyle()
+	if index == 0 {
+		secondary = lipgloss.NewStyle()
+		active = s.accent.Bold(true)
+	}
+	marker := "  "
+	if focused {
+		labelStyle = s.selected
+		secondary = s.muted.Inherit(s.selected)
+		active = s.accent.Inherit(s.selected).Bold(index == 0 || m.color)
+		markerStyle := s.focused
+		if index == 1 {
+			markerStyle = active
+		}
+		marker = markerStyle.Render("› ")
+	}
+	labelWidth, gap := 7, "  "
+	if index == 0 {
+		// Each View reserves its brackets, including the first cell before Text.
+		labelWidth, gap = 6, ""
+	}
+	for i, value := range values {
+		style := secondary
+		if i == current {
+			style = active
+			if index == 0 {
+				value = "[" + value + "]"
+			}
+		} else if index == 0 {
+			value = " " + value + " "
+		}
+		values[i] = style.Render(value)
+	}
+	row := marker + labelStyle.Render(fmt.Sprintf("%-*s", labelWidth, label)) + strings.Join(values, secondary.Render(gap))
+	if ansi.StringWidth(row+"  "+hint) <= width {
+		hintStyle := secondary
+		if index == 0 {
+			hintStyle = s.accent.Inherit(secondary)
+		}
+		row += hintStyle.Render("  " + hint)
+	}
+	if focused {
+		row += s.selected.Render(strings.Repeat(" ", max(0, width-ansi.StringWidth(row))))
+	}
+	return row
 }
 
 func tokenizerModelLabel(encoding string) (string, string) {
@@ -231,51 +324,23 @@ func tokenizerModelLabel(encoding string) (string, string) {
 	}
 }
 
-func (m *tokenizerEditor) highlightRow(s tokenizerEditorStyles, value string, active bool) string {
-	value = tokenizerClip(value, m.viewWidth()-2)
-	if active {
-		return s.accent.Render("› ") + s.focused.Render(value+strings.Repeat(" ", max(0, m.viewWidth()-2-ansi.StringWidth(value))))
+func (m *tokenizerEditor) highlightRow(s tokenizerEditorStyles, label, detail string, labelWidth int, active bool) string {
+	gap := strings.Repeat(" ", max(1, labelWidth-ansi.StringWidth(label)))
+	if !active {
+		return "  " + label + gap + s.muted.Render(detail)
 	}
-	return "  " + value
-}
-
-func (m *tokenizerEditor) footer() string {
-	footer := "Ctrl+C exit · ↑↓ move · Enter select"
-	switch m.focus {
-	case tokenizerFocusText:
-		footer = "Ctrl+C exit · Tab options"
-		if m.lineEnd(m.cursor) == len(m.text) {
-			footer = "Ctrl+C exit · ↓ options · Tab switch"
-		}
-		if len(m.lineStarts) > m.sourceRows() && ansi.StringWidth(footer+" · PgUp/PgDn") <= m.viewWidth() {
-			footer += " · PgUp/PgDn"
-		}
-	case tokenizerFocusResults:
-		footer = "Ctrl+C exit · ←→ token · Enter details"
-		if ansi.StringWidth(footer) > m.viewWidth() {
-			footer = "Ctrl+C exit · ←→ · Enter details"
-		}
-		if ansi.StringWidth(footer+" · ↑ settings") <= m.viewWidth() {
-			footer += " · ↑ settings"
-		}
-	case tokenizerFocusOptions:
-		if m.option == 0 {
-			footer = "Ctrl+C exit · ←→ view · Enter select"
-			if ansi.StringWidth(footer+" · ↑↓ move") <= m.viewWidth() {
-				footer += " · ↑↓ move"
-			}
-		}
+	padding := strings.Repeat(" ", max(0, m.viewWidth()-ansi.StringWidth(label+gap+detail)-2))
+	focused := s.focused
+	if m.modal == tokenizerModalView {
+		focused = s.accent.Inherit(s.selected).Bold(true)
 	}
-	if m.focus != tokenizerFocusText && ansi.StringWidth(footer+" · Tab switch") <= m.viewWidth() {
-		footer += " · Tab switch"
-	}
-	return footer
+	return s.selected.Render("› ") + focused.Render(label) + s.selected.Render(gap+detail+padding)
 }
 
 func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 	title := "Choose view"
 	labels := []string{"Text", "Token IDs", "Bytes"}
-	descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hex bytes"}
+	descriptions := []string{"Text in each token", "Number per token", "UTF-8 bytes in hex"}
 	labelWidth := 14
 	current := m.tab
 	var encodings []string
@@ -291,53 +356,34 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 			}
 		}
 	}
-	lines := []string{s.title.Render(title)}
-	lines = append(lines, "")
+	status := fmt.Sprintf("%d views", len(labels))
+	if m.modal == tokenizerModalEncoding {
+		status = fmt.Sprintf("%d models", len(labels))
+	}
+	var lines []string
 	for i, label := range labels {
 		if i == current {
 			label += " ✓"
 		}
-		description := descriptions[i]
-		if i != m.choice {
-			description = s.muted.Render(description)
-		}
-		line := fmt.Sprintf("%-*s%s", labelWidth, label, description)
-		if ansi.StringWidth(line) > m.viewWidth()-2 {
-			line = label
-		}
-		lines = append(lines, m.highlightRow(s, line, i == m.choice))
+		description, related := descriptions[i], ""
 		if m.modal == tokenizerModalEncoding {
 			switch encodings[i] {
 			case "o200k_base":
-				lines = append(lines, "  "+s.muted.Render("GPT-4o / 4.1 / 4.5 · o4-mini"))
+				related = "GPT-4o / 4.1 / 4.5, o4-mini"
 			case "cl100k_base":
-				lines = append(lines, "  "+s.muted.Render("Original GPT-4 / Turbo"))
+				related = "Original GPT-4 / Turbo"
 			}
 		}
-	}
-	footer := "Ctrl+C exit · ↑↓ move · Enter select · Esc cancel"
-	lines = append(lines, "")
-	if ansi.StringWidth(footer) <= m.viewWidth() {
-		lines = append(lines, s.muted.Render(footer))
-	} else {
-		lines = append(lines, s.muted.Render("Ctrl+C exit · ↑↓ move"), s.muted.Render("Enter select · Esc cancel"))
-	}
-	return m.fit(lines, true)
-}
-
-func (m *tokenizerEditor) fit(lines []string, inset bool) string {
-	height, width := m.viewHeight(), m.viewWidth()
-	if !inset {
-		height, width = m.height, m.width
-	}
-	lines = lines[:min(len(lines), max(0, height))]
-	for i, line := range lines {
-		lines[i] = tokenizerClip(line, max(1, width))
-		if inset {
-			lines[i] = "  " + lines[i]
+		if related != "" && 2+labelWidth+ansi.StringWidth(description+"  "+related) <= m.viewWidth() {
+			description, related = description+"  "+related, ""
+		}
+		lines = append(lines, m.highlightRow(s, label, description, labelWidth, i == m.choice))
+		if related != "" {
+			lines = append(lines, "  "+s.muted.Render(related))
 		}
 	}
-	return strings.Join(lines, "\n")
+	footer := s.shortcutFooter(m.viewWidth(), []string{"↑↓ choose", "Enter apply"}, []string{"Esc cancel"})
+	return m.panel(s, title, s.muted.Render(status+"  ✓ applied"), lines, footer)
 }
 
 // Escape presentation controls without normalizing source bytes or ZWJ clusters.
@@ -355,28 +401,28 @@ func tokenizerSourceDisplay(value string) string {
 	return display
 }
 
-func (m *tokenizerEditor) editorLines(width, count int) []string {
-	lineIndex := m.lineIndex(m.cursor)
-	if count > 1 && lineIndex > 0 {
+func (m *tokenizerEditor) editorLines(s tokenizerEditorStyles, width, count int) ([]string, *tea.Cursor) {
+	span := m.sourceRange()
+	anchor := m.boundaries[span.first]
+	lineIndex := m.lineIndex(anchor)
+	lastLine := m.lineIndex(m.boundaries[max(span.first, span.end-1)])
+	if count > lastLine-lineIndex+1 && lineIndex > 0 {
 		lineIndex--
 	}
 	lines := make([]string, 0, count)
+	var caret *tea.Cursor
 	for len(lines) < count {
 		start := m.lineStarts[lineIndex]
 		end := len(m.text)
 		if lineIndex+1 < len(m.lineStarts) {
 			end = m.lineStarts[lineIndex+1] - 1
 		}
-		cursor := -1
-		if m.cursor >= start && m.cursor <= end && m.focus == 0 {
-			cursor = m.cursor
+		line, column := m.editorLine(start, end, width, span, s.sourceSelected)
+		if column >= 0 {
+			caret = tea.NewCursor(column, len(lines))
 		}
-		line := m.editorLine(start, end, cursor, width)
 		if m.text == "" && len(lines) == 0 {
-			line = "Type or paste text…"
-			if m.focus == 0 {
-				line = tokenizerCaret(" ") + line
-			}
+			line = s.muted.Render("Type or paste text…")
 		}
 		lines = append(lines, tokenizerClip(line, width))
 		if end == len(m.text) {
@@ -387,69 +433,65 @@ func (m *tokenizerEditor) editorLines(width, count int) []string {
 	for len(lines) < count {
 		lines = append(lines, "")
 	}
-	return lines
+	return lines, caret
 }
 
-func (m *tokenizerEditor) editorLine(start, end, cursor, width int) string {
+func (m *tokenizerEditor) editorLine(start, end, width int, span tokenizerSourceRange, style lipgloss.Style) (string, int) {
 	// Bound work by visible graphemes, using the index built when text changes.
 	// A cursor near the end of a large line must not scan its complete prefix.
 	first := sort.SearchInts(m.boundaries, start)
 	index := first
-	if cursor >= 0 {
-		index = sort.SearchInts(m.boundaries, cursor)
-		caretWidth := 1
-		if cursor < end && index+1 < len(m.boundaries) {
-			caretWidth = tokenizerSourceWidth(tokenizerSourceDisplay(m.text[cursor:min(m.boundaries[index+1], end)]))
+	anchor := m.boundaries[span.first]
+	if anchor >= start && anchor <= end && (m.focus == tokenizerFocusText || span.first < span.end) {
+		index = span.first
+		// Reserve enough space for the selected token on this line before showing left context.
+		focusWidth := 0
+		limit := min(max(index+1, span.end), len(m.boundaries)-1)
+		for i := index; i < limit && m.boundaries[i] <= end && focusWidth < width; i++ {
+			display, _ := tokenizerSourceCell(m.text[m.boundaries[i]:m.boundaries[i+1]], span.contains(i))
+			focusWidth += tokenizerSourceWidth(display)
 		}
 		used := 0
 		for index > first {
 			part := m.text[m.boundaries[index-1]:min(m.boundaries[index], end)]
 			cells := tokenizerSourceWidth(tokenizerSourceDisplay(part))
-			if used+cells > max(0, width-caretWidth-2) {
+			if used+cells > max(0, width-max(1, focusWidth)-2) {
 				break
 			}
 			used += cells
 			index--
 		}
 	}
-	var out strings.Builder
+	var out tokenizerSourceRow
 	if index > first {
 		out.WriteRune('…')
 	}
 	used := tokenizerSourceWidth(out.String())
+	column := -1
 	for index < len(m.boundaries) && m.boundaries[index] <= end {
 		offset := m.boundaries[index]
-		if offset == end || index == len(m.boundaries)-1 {
-			if offset == cursor {
-				out.WriteString(tokenizerCaret(" "))
+		if offset == anchor && m.focus == tokenizerFocusText {
+			column = used
+		}
+		selected := span.contains(index)
+		if (offset == end && !selected) || index == len(m.boundaries)-1 {
+			if offset == anchor && m.focus == tokenizerFocusText {
+				out.WriteByte(' ')
 			}
 			break
 		}
-		part := m.text[offset:min(m.boundaries[index+1], end)]
-		display := tokenizerSourceDisplay(part)
+		display, _ := tokenizerSourceCell(m.text[offset:m.boundaries[index+1]], selected)
 		cells := tokenizerSourceWidth(display)
 		if used+cells > width-1 {
-			if offset == cursor {
-				out.WriteString(tokenizerCaret("…"))
-			} else {
-				out.WriteRune('…')
-			}
+			out.appendCell("…", selected)
 			break
 		}
-		if offset == cursor {
-			out.WriteString(tokenizerCaret(display))
-		} else {
-			out.WriteString(display)
-		}
+		out.appendCell(display, selected)
 		used += cells
 		index++
 	}
-	return out.String()
+	return out.render(style), column
 }
-
-// Inverse video marks the existing cell without inserting a source character.
-// Keep this monochrome rendition under NO_COLOR so the caret remains visible.
-func tokenizerCaret(display string) string { return "\x1b[7m" + display + "\x1b[27m" }
 
 // Source windows and padding must share the inline painter's conservative
 // grapheme widths, including terminals that render a ZWJ cluster as scalars.
@@ -500,6 +542,28 @@ func tokenizerFragmentLabel(fragment string, width int) string {
 	return tokenizerSegmentClip(label, width)
 }
 
+// Space separators are blank in the strip. Tabs and newlines already have visible escapes.
+func tokenizerSpaceLabel(fragment string) string {
+	count := 0
+	for _, r := range fragment {
+		if r != ' ' && !unicode.Is(unicode.Zs, r) {
+			return ""
+		}
+		count++
+	}
+	if count == 0 {
+		return ""
+	}
+	unit := "space"
+	if count != len(fragment) {
+		unit = "Unicode space"
+	}
+	if count != 1 {
+		unit += "s"
+	}
+	return strconv.Itoa(count) + " " + unit
+}
+
 func tokenizerSegmentClip(label string, width int) string {
 	if tokenizerSourceWidth(label) <= width {
 		return label
@@ -524,49 +588,53 @@ func (m *tokenizerEditor) resultLines(s tokenizerEditorStyles, width int) []stri
 }
 
 func (m *tokenizerEditor) resultWindow(s tokenizerEditorStyles, width int) ([]string, int) {
-	rows := m.resultRows()
 	if len(m.tokens) == 0 {
-		label := "Type or paste text above."
-		if m.updating {
-			label = "Calculating exact tokens…"
-		} else if m.failed {
-			label = "Edit text or press r here to retry."
-		}
-		lines := []string{"  " + s.muted.Render(tokenizerClip(label, width-2))}
-		for len(lines) < rows {
-			lines = append(lines, "")
-		}
-		return lines, 0
+		return nil, 0
 	}
 	start := m.resultStart(width)
-	lines := make([]string, rows)
+	lines, end := m.tokenStrip(s, width, start)
+	return lines, end - start
+}
+
+// Return the painted strip and its exclusive ending token index.
+func (m *tokenizerEditor) tokenStrip(s tokenizerEditorStyles, width, start int) ([]string, int) {
+	lines := make([]string, m.resultRows())
 	lines[0] = "  "
 	if start > 0 {
 		lines[0] = "… "
 	}
-	end := m.walkResultSegments(start, width, func(index, row, gap int, label string) {
+	separator := " "
+	if m.tab == 2 && !m.color {
+		separator = "│" // Uncolored byte pairs still need a visible token boundary.
+	}
+	end := m.walkResultSegments(start, width, m.resultRows(), func(cell tokenizerTokenCell, label string) {
+		index, row := cell.index, cell.row
 		if lines[row] == "" {
 			lines[row] = "  "
 		}
-		active := m.focus == tokenizerFocusText || m.focus == tokenizerFocusResults
-		if active && index == m.selected && !m.updating && !m.failed {
-			if m.color {
-				// Keep the whole grapheme span together, including whitespace.
-				label = s.tokenSelected.Render("\x1b[1;4m" + label + "\x1b[22;24m")
-			} else {
-				label = "\x1b[4;7m" + label + "\x1b[24;27m"
+		style := s.tokens[index%len(s.tokens)]
+		if index == m.selected && !m.updating && !m.failed {
+			style = s.tokenSelected
+			if m.tab == 0 {
+				piece, _, _ := m.fragment(index)
+				if tokenizerSpaceLabel(piece) != "" {
+					// Mark the first blank cell without changing the strip's width or page breaks.
+					_, n := utf8.DecodeRuneInString(label)
+					label = "␣" + strings.Repeat(" ", tokenizerSourceWidth(label[:n])-1) + label[n:]
+				}
 			}
-		} else {
-			label = s.tokens[index%len(s.tokens)].Render(label)
 		}
-		lines[row] += strings.Repeat(" ", gap) + label
+		if cell.column > 2 && m.tab != 0 {
+			lines[row] += separator
+		}
+		lines[row] += style.Render(label)
 	})
-	return lines, end - start
+	return lines, end
 }
 
 func (m *tokenizerEditor) keepSelectionVisible() {
 	if m.usable() {
-		m.tokenStart = m.resultStart(m.viewWidth())
+		m.tokenStart = m.resultStart(m.resultWidth())
 	}
 }
 
@@ -580,10 +648,14 @@ func (m *tokenizerEditor) resultStart(width int) int {
 	if m.selected < m.resultEnd(start, width) {
 		return start
 	}
-	// Search only the preceding visible window, not the skipped token prefix.
-	start = m.selected
-	for previous := start - 1; previous >= 0; previous-- {
-		if m.resultEnd(previous, width) <= m.selected {
+	return m.resultStartIncluding(m.selected, width, m.resultRows())
+}
+
+// Search only the preceding visible window, even when jumping to the last token.
+func (m *tokenizerEditor) resultStartIncluding(last, width, rows int) int {
+	start := last
+	for previous := last - 1; previous >= 0; previous-- {
+		if m.walkResultSegments(previous, width, rows, nil) <= last {
 			break
 		}
 		start = previous
@@ -592,32 +664,7 @@ func (m *tokenizerEditor) resultStart(width int) int {
 }
 
 func (m *tokenizerEditor) resultEnd(start, width int) int {
-	return m.walkResultSegments(start, width, nil)
-}
-
-// Painting and paging share a fixed gutter and the same conservative widths.
-func (m *tokenizerEditor) walkResultSegments(start, width int, visit func(index, row, gap int, label string)) int {
-	row, used := 0, 2
-	for index := start; index < len(m.tokens); index++ {
-		label := m.tokenSegment(index, width)
-		cells := tokenizerSourceWidth(label)
-		gap := 0
-		if used > 2 {
-			gap = m.tab // Text joins directly; IDs use one space, Bytes uses two.
-		}
-		if used > 2 && used+gap+cells > width {
-			row++
-			used, gap = 2, 0
-		}
-		if row >= m.resultRows() {
-			return index
-		}
-		if visit != nil {
-			visit(index, row, gap, label)
-		}
-		used += gap + cells
-	}
-	return len(m.tokens)
+	return m.walkResultSegments(start, width, m.resultRows(), nil)
 }
 
 func (m *tokenizerEditor) tokenSegment(index, width int) string {
@@ -636,55 +683,53 @@ func (m *tokenizerEditor) tokenSegment(index, width int) string {
 	return tokenizerFragmentLabel(fragment, max(1, width-2))
 }
 
-func (m *tokenizerEditor) previousPageSize() int {
-	start := m.selected
-	// Use the rendered window's budget, including its continuation marker.
-	// The scan stops within one preceding viewport, even for large sequences.
-	for previous := m.selected - 1; previous >= 0; previous-- {
-		if m.resultEnd(previous, m.viewWidth()) < m.selected {
-			break
+func (m *tokenizerEditor) pageResults(forward bool) {
+	width := m.resultWidth()
+	start := m.resultStart(width)
+	if forward {
+		end := m.resultEnd(start, width)
+		if end == len(m.tokens) {
+			m.selected = max(0, end-1)
+			return
 		}
-		start = previous
+		m.priorPageStart, start = start, end
+	} else {
+		// Several starts can lead to the same boundary. Prefer the page we just left.
+		previous := m.priorPageStart
+		m.priorPageStart = 0
+		if previous < start && m.resultEnd(previous, width) == start {
+			start = previous
+		} else {
+			start = m.resultStartIncluding(max(0, start-1), width, m.resultRows())
+		}
 	}
-	return max(1, m.selected-start)
+	m.selected, m.tokenStart = start, start
 }
 
 func tokenizerClip(text string, width int) string {
 	return ansi.Truncate(text, max(1, width), "…")
 }
 
-var tokenizerEditorHelp = []string{
-	"Text: type or paste exact UTF-8 text.",
-	"Enter inserts a newline. Arrows move the cursor.",
-	"The highlighted token follows the text cursor.",
-	"Home/End move to the line boundaries.",
-	"Ctrl+Home/End move to the document boundaries.",
-	"Ctrl+Left/Right skip words separated by whitespace.",
-	"Page Up/Page Down move by one visible text page.",
-	"Overflowing text shows the current line and total lines.",
-	"Backspace/Delete remove a complete grapheme.",
-	"Ctrl+U removes all text before the cursor.",
-	"Tab and Shift+Tab switch Text, options, and tokens.",
-	"On the last line, Down opens options.",
-	"Options: Up/Down move; Enter opens choices.",
-	"View: Left/Right switch Text, Token IDs, and Bytes.",
-	"Tokens: Left/Right select; Home/End select first/last.",
-	"Up returns from Tokens to the Model row.",
-	"Page Up/Page Down move by one visible page.",
-	"Enter opens every byte of the selected token.",
-	"Choices: Up/Down choose; Enter applies; Esc cancels.",
-	"Escape returns to Text. Ctrl+C exits.",
-	"View changes the display without retokenizing.",
-	"Tokenizer selects the vocabulary and splitting rules.",
-	"Bytes is an advanced view of exact token bytes.",
-	"Input is local and never saved. Maximum: 1 MiB.",
-	"Long unbroken text can take time. Editing replaces pending work.",
-	"Special-token spellings stay ordinary text.",
-	"Partial UTF-8 tokens use exact hexadecimal bytes.",
-	"Counts exclude request structure and multimodal input.",
-	"Scripts: openai tokenizer count --text \"Hello, world!\"",
-	"Files: openai tokenizer inspect --file prompt.txt",
-	"JSON: add --format json to count or inspect.",
+var tokenizerEditorHelp = []struct {
+	title     string
+	shortcuts bool
+	items     [][2]string
+}{
+	{"Controls", true, [][2]string{
+		{"Tab", "Inspect tokens or edit at the selected token. Shift+Tab opens settings."},
+		{"← →", "In Text, move the cursor. In View, switch views. In Tokens, ← → select tokens and ↑ ↓ move a row."},
+		{"PgUp/PgDn", "Page through text, tokens, or dialog rows."},
+		{"Ctrl+← →", "Move between words in Text."},
+		{"v / m / d", "Outside Text, open View, Model, or Details."},
+		{"Enter", "Add a line in Text or open the selection."},
+	}},
+	{"Views and details", false, [][2]string{
+		{"Text", "The text in each token."},
+		{"Token IDs", "The number this encoding assigns to each token."},
+		{"Bytes", "Each token's UTF-8 bytes in hex."},
+		{"Starts", "Bytes before this token (0 for the first)."},
+		{"Size", "Number of UTF-8 bytes in the token."},
+	}},
 }
 
 func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
@@ -692,12 +737,19 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 	count := m.modalPageSize(total)
 	start := max(0, min(m.scroll, total-count))
 	rows, _ := m.modalRows(start, count)
+	pageRange := ""
+	var navigation []string
+	if total > count {
+		pageRange = s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", start+1, start+len(rows), total))
+		navigation = []string{"↑↓ scroll"}
+		// Scrolling dialogs reserve one footer row for controls.
+		if shortcutWidth([]string{"↑↓ scroll", tokenizerPageHint, "Esc back", tokenizerExitHint}) <= m.viewWidth() {
+			navigation = append(navigation, tokenizerPageHint)
+		}
+	}
+	controls := s.shortcutFooter(m.viewWidth(), navigation, []string{"Esc back"})
 	if m.modal == tokenizerModalHelp {
-		lines := []string{s.title.Render("Tokenizer · controls")}
-		lines = append(lines, rows...)
-		lines = append(lines, s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", min(start+1, total), min(start+len(rows), total), total)))
-		lines = append(lines, s.muted.Render("↑↓ scroll · Esc back · Ctrl+C exit"))
-		return m.fit(lines, true)
+		return m.panel(s, "Tokenizer help", pageRange, rows, controls)
 	}
 	title := "Token details"
 	if len(m.tokens) > 0 {
@@ -705,37 +757,28 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 	}
 	model, badge := tokenizerModelLabel(m.encoding)
 	if badge != "" {
-		model += " · " + badge
+		model += "  " + badge
 	}
-	lines := []string{s.title.Render(title), s.muted.Render(model), ""}
-	for _, row := range rows {
+	for i, row := range rows {
 		if len(row) >= tokenizerDetailLabelWidth {
 			switch strings.TrimSpace(row[:tokenizerDetailLabelWidth]) {
-			case "Text", "Token ID", "Bytes", "Hex", "":
-				row = s.muted.Render(row[:tokenizerDetailLabelWidth]) + row[tokenizerDetailLabelWidth:]
+			case "Text", "Token ID", "Starts", "Size", "Hex", "":
+				rows[i] = s.muted.Render(row[:tokenizerDetailLabelWidth]) + row[tokenizerDetailLabelWidth:]
 			}
 		}
-		lines = append(lines, row)
 	}
-	lines = append(lines, "")
-	footer := "Ctrl+C exit · Esc back"
 	if total > count {
-		lines = append(lines, s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", start+1, start+len(rows), total)))
-		footer += " · ↑↓ scroll"
+		rows = append(rows, pageRange)
 	}
-	lines = append(lines, s.muted.Render(footer))
-	return m.fit(lines, true)
+	return m.panel(s, title, s.muted.Render(model), rows, controls)
 }
 
 func (m *tokenizerEditor) modalPageSize(total int) int {
-	if m.modal == tokenizerModalHelp {
-		return max(1, m.viewHeight()-3)
+	count := m.bodyHeight()
+	if m.modal == tokenizerModalDetails && total > count {
+		count-- // Show the visible range above the shortcut footer.
 	}
-	count := max(1, m.viewHeight()-5)
-	if total > count {
-		count = max(1, count-1)
-	}
-	return count
+	return max(1, count)
 }
 
 const tokenizerDetailLabelWidth = 10
@@ -751,15 +794,26 @@ func (m *tokenizerEditor) modalRows(start, count int) ([]string, int) {
 		}
 		total++
 	}
-	wrap := func(text string) {
-		for _, line := range strings.Split(ansi.Wrap(text, width, ""), "\n") {
-			emit(line)
-		}
-	}
 	if m.modal == tokenizerModalHelp {
-		for _, line := range tokenizerEditorHelp {
-			line = strings.ReplaceAll(line, "openai tokenizer", readable.Text(m.invocation)+" tokenizer")
-			wrap(line)
+		s := m.styles()
+		for _, section := range tokenizerEditorHelp {
+			emit(s.accent.Bold(m.color).Render(section.title))
+			label := s.muted
+			if section.shortcuts {
+				label = s.accent
+			}
+			keyWidth := 0
+			for _, item := range section.items {
+				keyWidth = max(keyWidth, ansi.StringWidth(item[0])+2)
+			}
+			indent := strings.Repeat(" ", keyWidth)
+			for _, item := range section.items {
+				prefix := label.Render(item[0]) + strings.Repeat(" ", keyWidth-ansi.StringWidth(item[0]))
+				for _, line := range strings.Split(ansi.Wrap(item[1], width-keyWidth, ""), "\n") {
+					emit(prefix + line)
+					prefix = indent
+				}
+			}
 		}
 		return rows, total
 	}
@@ -809,13 +863,16 @@ func (m *tokenizerEditor) modalRows(start, count int) ([]string, int) {
 			write(string(quoted[1 : len(quoted)-1]))
 		}
 		write(`"`)
+		if spaces := tokenizerSpaceLabel(fragment); spaces != "" {
+			write("  " + spaces)
+		}
 		flush()
 	} else {
 		field("Text", "partial UTF-8; see Hex.")
 	}
 	field("Token ID", strconv.FormatUint(uint64(m.tokens[m.selected].ID), 10))
-	emit("")
-	field("Bytes", fmt.Sprintf("%d · offset %d", end-begin, begin))
+	field("Starts", "After "+tokenizerByteSize(begin))
+	field("Size", tokenizerByteSize(end-begin))
 	perRow := max(1, (valueWidth+1)/3)
 	hexRows := (len(fragment) + perRow - 1) / perRow
 	// Unseen hexadecimal rows need only arithmetic, not formatted strings.

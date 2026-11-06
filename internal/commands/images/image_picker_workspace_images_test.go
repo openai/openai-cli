@@ -76,7 +76,8 @@ func TestImagePickerWorkspaceFrameSeparatesHeadingWithoutBlankLine(t *testing.T)
 	w := &imagePickerWorkspace{out: out}
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 	require.Contains(t, ansi.Strip(w.painted[0]), "╭")
-	require.Contains(t, ansi.Strip(w.painted[1]), "Create image")
+	require.Contains(t, ansi.Strip(w.painted[0]), "Create image")
+	require.Contains(t, ansi.Strip(w.painted[1]), "Prompt")
 	m.width = 80
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 	_, err = out.Seek(0, io.SeekStart)
@@ -99,7 +100,14 @@ func TestImagePickerWorkspaceWrappedTextRetainsEveryBoundaryByte(t *testing.T) {
 		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 		var reconstructed strings.Builder
 		for _, row := range w.painted[w.bodyStart:w.bodyEnd] {
-			reconstructed.WriteString(strings.TrimPrefix(ansi.Strip(row), "    "))
+			text := ansi.Strip(row)
+			if _, studio := imageStudioLayout(m.width, m.height); studio {
+				_, text, _ = strings.Cut(strings.TrimPrefix(text, "  │ "), "│  ")
+				text = strings.TrimSuffix(text, "│")
+			} else {
+				text = strings.TrimPrefix(text, "    ")
+			}
+			reconstructed.WriteString(text)
 		}
 		require.Equal(t, original, reconstructed.String())
 	}
@@ -121,7 +129,7 @@ func TestImagePickerWorkspaceSeparatesImageContent(t *testing.T) {
 	for _, width := range []int{40, 96, 240} {
 		require.LessOrEqual(t, ansi.StringWidth(m.workspaceImageFrame("Images", width, true)), width-2)
 		require.LessOrEqual(t, ansi.StringWidth(m.workspaceImageFrame("[F2] Expand images", width, false)), width-2)
-		line := ansi.Strip(m.workspaceImageRow("synthetic", width))
+		line := ansi.Strip(m.workspaceImageRow("synthetic", width, false))
 		require.Equal(t, "  │ synthetic│", line)
 	}
 	w := &imagePickerWorkspace{}

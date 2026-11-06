@@ -29,6 +29,7 @@ type SavingOptions struct {
 	RequestOptions     RequestOptions
 	DiagnosticsAllowed func(context.Context) bool
 	ErrorFormat        func(*cli.Command) string
+	ShowError          func(*cli.Command, error, io.Writer) error
 }
 
 // PreviewOptions connects local previews to receipt and error presentation.

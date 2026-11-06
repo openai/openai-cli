@@ -25,6 +25,12 @@ func webhookCommandOptions() webhooks.CommandOptions {
 }
 
 func writeWebhookHint(ctx context.Context, destination io.Writer, message string) error {
+	if currentRegisteredList(ctx) != nil {
+		if state := printedListFrom(ctx); state != nil {
+			state.out, state.hint = destination, message
+		}
+		return nil
+	}
 	return writeOutputHint(ShowJSONOpts{Context: ctx, Stderr: destination}, message)
 }
 

@@ -15,6 +15,25 @@ type ProjectLifecycleReceipt struct {
 	Details gjson.Result
 }
 
+// OrganizationProjectDetails prepares known project metadata for terminal
+// inspection. Unknown or duplicate fields retain the complete original view.
+func OrganizationProjectDetails(ctx context.Context, value gjson.Result) (gjson.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return gjson.Result{}, err
+	}
+	id := value.Get("id")
+	if !value.IsObject() || value.Get("object").Str != "organization.project" || id.Type != gjson.String || id.Str == "" {
+		return gjson.Result{}, ctx.Err()
+	}
+	details, _, err := selectResourceFields(ctx, value,
+		[]string{"name", "id", "status", "created_at", "archived_at", "residency", "external_key_id", "psp_decryption_key_id"},
+		[]string{"object"}, func(field gjson.Result) bool { return field.Type != gjson.Null })
+	if err != nil || !details.Exists() {
+		return gjson.Result{}, err
+	}
+	return formatMetadataDates(ctx, details, "archived_at", "2006-01-02 15:04:05 MST")
+}
+
 // ProjectLifecycle selects successful lifecycle responses for readable receipts.
 // Unfamiliar, ambiguous, and incomplete responses retain the full output path.
 func ProjectLifecycle(ctx context.Context, value gjson.Result, route Route) (ProjectLifecycleReceipt, bool, error) {

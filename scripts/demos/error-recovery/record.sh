@@ -27,7 +27,7 @@ run_case() {
   test "$actual" -eq "$expected" || exit 1
   printf '\n'
 }
-run_case command-typo 3 modles list
+run_case command-typo 3 model list
 run_case help-typo 3 help audio transcriptons create
 run_case missing-upload 1 files upload missing.txt --purpose user_data
 run_case missing-part 1 uploads parts create --upload-id upload_demo --data missing.bin
@@ -49,7 +49,9 @@ for phase in before after; do
   fi
 done
 grep -F 'Unknown help topic.' "$demo_output/before.txt"
-grep -F 'Did you mean: openai help models list?' "$demo_output/after.txt"
-grep -F 'Did you mean: openai help audio transcriptions create?' "$demo_output/after.txt"
+grep -F 'Unknown command. Run this help command to check the spelling.' "$demo_output/after.txt"
+grep -F '  openai help models list' "$demo_output/after.txt"
+grep -F 'Unknown help topic. Run this help command to check the spelling.' "$demo_output/after.txt"
+grep -F '  openai help audio transcriptions create' "$demo_output/after.txt"
 grep -F 'the file for --data.' "$demo_output/after.txt"
 demo_assemble_capture 250 before after

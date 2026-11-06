@@ -17,6 +17,11 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 		for _, line := range strings.Split(command.UsageText, "\n") {
 			if suffix, found := strings.CutPrefix(line, "openai "); found {
 				line = invocation + " " + suffix
+				title := invocation
+				if line == name || strings.HasPrefix(line, name+" ") {
+					title = name
+				}
+				line = style.render(style.title, title) + style.render(style.value, strings.TrimPrefix(line, title))
 			}
 			lines = append(lines, "  "+line)
 		}
@@ -42,7 +47,7 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 	if optional, _ := command.Metadata["help-optional-command"].(bool); optional && len(arguments) > 0 {
 		arguments[0] = "[" + arguments[0] + "]"
 	}
-	flags := command.VisibleFlags()
+	flags := commandHelpFlags(command)
 	positionals := positionalHelpFlags(command, flags)
 	for _, flag := range positionals {
 		label := commandFlagValueLabel(command, flag)
@@ -51,6 +56,7 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 	if command.ArgsUsage != "" {
 		arguments = append(arguments, style.render(style.value, command.ArgsUsage))
 	}
+	var localFlags, requiredFlags []cli.Flag
 	for _, flag := range flags {
 		if slices.Contains(positionals, flag) || len(flag.Names()) == 0 {
 			continue
@@ -60,6 +66,19 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 			// FLAGS still documents every visible nested field separately.
 			continue
 		}
+		localFlags = append(localFlags, flag)
+		if isRequired(flag) {
+			requiredFlags = append(requiredFlags, flag)
+		}
+	}
+	// List up to four optional flags inline. Longer lists belong in FLAGS
+	// so the synopsis keeps required inputs visible at every terminal width.
+	const maxOptionalFlags = 4
+	compact := len(localFlags)-len(requiredFlags) > maxOptionalFlags
+	if compact {
+		localFlags = requiredFlags
+	}
+	for _, flag := range localFlags {
 		argument := synopsisFlag(command, flag)
 		required, _ := flag.(cli.RequiredFlag)
 		if required == nil || !required.IsRequired() {
@@ -70,10 +89,29 @@ func commandSynopsis(command *cli.Command, name, invocation string, width int) s
 		}
 		arguments = append(arguments, argument)
 	}
-	if len(command.VisiblePersistentFlags()) > 0 {
+	if compact {
+		arguments = append(arguments, "["+style.render(style.value, "FLAGS")+"]")
+	} else if fullReferenceRequested(command) && len(command.VisiblePersistentFlags()) > 0 {
 		arguments = append(arguments, "["+style.render(style.value, "GLOBAL FLAG ...")+"]")
 	}
-	return style.synopsis(style.render(style.section, name), arguments, width)
+	return style.synopsis(style.render(style.title, name), arguments, width)
+}
+
+// On a help page, the framework's own “show help” entry adds no information.
+// The full reference still lists it alongside the other accepted options.
+func commandHelpFlags(command *cli.Command) []cli.Flag {
+	flags := command.VisibleFlags()
+	if command == command.Root() || fullReferenceRequested(command) {
+		return flags
+	}
+	if standard, ok := cli.HelpFlag.(*cli.BoolFlag); ok {
+		for i, flag := range flags {
+			if option, ok := flag.(*cli.BoolFlag); ok && option.Name == standard.Name && option.Usage == standard.Usage {
+				return slices.Delete(slices.Clone(flags), i, i+1)
+			}
+		}
+	}
+	return flags
 }
 
 // Wrap complete arguments without splitting command names or quoted paths.

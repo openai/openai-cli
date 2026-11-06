@@ -1,7 +1,7 @@
 # Shell and file input
 
-Explicit stdin references select one request parameter.
-Without an explicit reference, the CLI keeps its existing whole-request JSON/YAML behavior.
+Run `openai help piping` for examples.
+Use `@-` for one text field or `--file -` for a binary upload.
 
 ```sh
 printf 'hello\n' | openai responses create --model MODEL --input @-
@@ -115,16 +115,31 @@ The API still determines whether those values are valid.
 
 ## Whole-request input
 
+`responses create` and `chat completions create` accept one JSON or YAML object through `--request-file`.
+Use a filename on any shell. Use `-` to wait until the producer closes stdin.
+The CLI rejects an empty, malformed, or multi-document request before sending it.
+
 ```sh
-printf '%s' '{"model":"MODEL","input":"hello"}' | openai responses create
-printf 'model: MODEL\ninput: hello\n' | openai responses create
+openai responses create --request-file request.json
+printf '%s' '{"model":"MODEL","input":"hello","store":false}' | openai responses create --request-file -
 ```
 
-Explicit request flags override matching piped fields.
+Explicit flags override matching document fields.
+A regular request file leaves stdin available for an explicit field such as `--input @-`.
+Each command can use stdin once.
+Both file and stdin documents honor `OPENAI_UNTRUSTED_STDIN`.
+
+Other generated API commands check briefly for implicit whole-request input.
+A producer that starts later can miss this check. In Bash or Zsh, finish writing the document before redirecting it.
+
+```sh
+openai embeddings create < request.json
+```
+
 Both input modes preserve whole-request JSON/YAML types and the existing trust policy.
 Trusted piped values retain existing file-reference handling.
 Unknown body fields and explicit nulls retain their existing encoding behavior.
-Empty stdin contributes no whole-request fields.
+Empty implicit stdin contributes no fields.
 Required request fields still apply.
 
 A final Boolean `stream: true` selects stream dispatch for supported JSON and multipart commands.

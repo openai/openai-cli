@@ -204,6 +204,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&audioVoicesCreate,
+					&audioVoicesDelete,
 				},
 			},
 			{
@@ -829,6 +830,18 @@ func init() {
 					&adminOrganizationProjectsCertificatesList,
 					&adminOrganizationProjectsCertificatesActivate,
 					&adminOrganizationProjectsCertificatesDeactivate,
+				},
+			},
+			{
+				Name:     "admin:organization:external-keys",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationExternalKeysCreate,
+					&adminOrganizationExternalKeysRetrieve,
+					&adminOrganizationExternalKeysList,
+					&adminOrganizationExternalKeysDelete,
+					&adminOrganizationExternalKeysValidate,
 				},
 			},
 			{

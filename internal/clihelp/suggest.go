@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/commandsuggest"
 	"github.com/urfave/cli/v3"
 )
 
@@ -99,35 +100,15 @@ func jaroWinkler(a, b string) float64 {
 }
 
 // suggestionThreshold is the minimum jaro-winkler similarity required before we
-// will print a "Did you mean" suggestion. Below this, the closest match is too
+// will print a spelling suggestion. Below this, the closest match is too
 // dissimilar to be a useful guess, so we stay silent rather than mislead.
 // 0.7 matches the boostThreshold used by jaroWinkler above — the prefix boost
 // only kicks in past that, so it's a natural "plausibly the same word" cutoff.
 // Names within one edit of the input are exempt; see SuggestCommand.
 const suggestionThreshold = 0.7
 
-// WithinOneEdit reports whether a and b differ by at most one insertion,
-// deletion, substitution, or transposition of adjacent characters.
-func WithinOneEdit(a, b string) bool {
-	if len(a) < len(b) {
-		a, b = b, a
-	}
-	if len(a)-len(b) > 1 {
-		return false
-	}
-	i := 0
-	for i < len(b) && a[i] == b[i] {
-		i++
-	}
-	if i == len(a) {
-		return true
-	}
-	if len(a) != len(b) {
-		return a[i+1:] == b[i:]
-	}
-	return a[i+1:] == b[i+1:] ||
-		(i+1 < len(a) && a[i] == b[i+1] && a[i+1] == b[i] && a[i+2:] == b[i+2:])
-}
+// WithinOneEdit uses the same bounded matcher as command search.
+func WithinOneEdit(a, b string) bool { return commandsuggest.WithinOneEdit(a, b) }
 
 // SuggestCommand takes a list of commands and a provided string to suggest a
 // command name, ignoring case. A name within one edit of the input is always
@@ -146,7 +127,7 @@ func SuggestCommand(commands []*cli.Command, provided string) string {
 		parts = append(parts, command.Name)
 	}
 	slices.Reverse(parts)
-	return fmt.Sprintf("Did you mean '%s'?", strings.Join(parts, " "))
+	return fmt.Sprintf("The closest command is '%s'.", strings.Join(parts, " "))
 }
 
 func suggestCommandTarget(commands []*cli.Command, provided string) *cli.Command {

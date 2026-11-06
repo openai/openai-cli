@@ -96,13 +96,13 @@ suggestion_probe_missing replaced
 				for _, stage := range []string{"advice", "after-disable"} {
 					require.Empty(t, read(stage+".out"))
 					require.Equal(t, "127", read(stage+".status"))
-					require.Equal(t, 1, strings.Count(read(stage+".err"), "Command not found. Did you mean: openai?"))
+					require.Equal(t, 1, strings.Count(read(stage+".err"), "Command not found. Try openai as the command name."))
 					require.Equal(t, 1, strings.Count(read(stage+".err"), "Keep the remaining arguments unchanged."))
 					require.NotContains(t, read(stage+".err"), "synthetic-private")
 				}
 				require.Equal(t, "127", read("replaced.status"))
 				require.Empty(t, read("replaced.out"))
-				require.NotContains(t, read("replaced.err"), "Did you mean: openai?")
+				require.NotContains(t, read("replaced.err"), "Try openai as the command name.")
 				require.NotContains(t, read("replaced.err"), "synthetic-private")
 				if shell == "fish" {
 					transcript := strings.ReplaceAll(read("transcript"), "\r\n", "\n")
@@ -118,7 +118,7 @@ suggestion_probe_missing replaced
 						if stage == "replaced" {
 							count = 0
 						}
-						require.Equal(t, count, strings.Count(output, "Command not found. Did you mean: openai?"), stage)
+						require.Equal(t, count, strings.Count(output, "Command not found. Try openai as the command name."), stage)
 						require.Equal(t, count, strings.Count(output, "Keep the remaining arguments unchanged."), stage)
 					}
 				}
@@ -185,7 +185,7 @@ builtin printf '%s' "$?" >"$SUGGESTION_TEST_DIR/after-source.status"
 			for _, stage := range stages {
 				require.Equal(t, "127", read(stage+".status"))
 				require.Empty(t, read(stage+".out"))
-				require.NotContains(t, read(stage+".err"), "Did you mean: openai?")
+				require.NotContains(t, read(stage+".err"), "Try openai as the command name.")
 			}
 			require.NoFileExists(t, filepath.Join(dir, "calls"), "advice must never execute the CLI")
 			require.NoFileExists(t, filepath.Join(dir, "replaced-called"), "ownership checks must not execute user functions")

@@ -16,6 +16,9 @@ type imagePickerNativeRow struct {
 	expanded                   bool
 }
 
+// The suffix positions the outside border explicitly. Neither string holds image bytes.
+type imagePickerStudioNativeChrome struct{ prefix, suffix string }
+
 type imagePickerNativePayload struct {
 	text string
 	used uint64
@@ -117,6 +120,25 @@ func (w *imagePickerWorkspace) nativeViewRow(row imagePickerNativeRow, screenRow
 	return "Preparing preview…"
 }
 
+// Keep the editable left pane separate from the graphic. An editor paint must not
+// erase or retransmit an unchanged placement, even after cache eviction.
+func (w *imagePickerWorkspace) studioNativeRow(row imagePickerNativeRow, y int, prefix, suffix string) string {
+	text := w.nativeViewRow(row, y)
+	w.nativeChrome[y] = imagePickerStudioNativeChrome{prefix, suffix}
+	if w.nativeReady[y] {
+		return prefix + suffix // Attach the payload only when this row needs a new placement.
+	}
+	return prefix + text + suffix
+}
+
+func (w *imagePickerWorkspace) nativeWireLine(y int, line string) string {
+	if chrome, ok := w.nativeChrome[y]; ok && w.nativeReady[y] {
+		text, _ := w.nativePayload(w.nativeFrame[y])
+		return chrome.prefix + text + chrome.suffix
+	}
+	return line
+}
+
 // Only a successfully emitted row can stand in for an uncached payload. A full
 // repaint clears old placements, so every absent payload becomes a fresh miss.
 func (w *imagePickerWorkspace) nativePaintKeys(lines []string, repaint bool) ([]string, map[int]imagePickerNativeRow) {
@@ -128,7 +150,8 @@ func (w *imagePickerWorkspace) nativePaintKeys(lines []string, repaint bool) ([]
 		}
 		previous, present := w.nativePainted[y]
 		if w.nativeReady[y] || !repaint && present && previous == row {
-			keys[y] = row.identity()
+			chrome := w.nativeChrome[y]
+			keys[y] = chrome.prefix + row.identity() + chrome.suffix
 			placements[y] = row
 		}
 	}

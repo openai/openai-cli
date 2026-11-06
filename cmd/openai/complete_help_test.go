@@ -57,7 +57,7 @@ func TestMainDispatchHelpPreservesFlagValues(t *testing.T) {
 	if want.code != 0 || want.stderr != "" || !strings.Contains(want.stdout, "openai models list") {
 		t.Fatalf("canonical help failed: %+v", want)
 	}
-	for _, value := range []string{"--help", "-h", "--h", "--", "help", "--help=true"} {
+	for _, value := range []string{"--help", "-h", "--h", "--", "help", "--help=true", "--all", "--all=false"} {
 		for _, route := range []struct {
 			name           string
 			prefix, suffix []string
@@ -91,23 +91,38 @@ func TestMainCompleteHelpLegacyMigration(t *testing.T) {
 			if want.code != 0 || want.stderr != "" {
 				t.Fatalf("canonical help failed: %+v", want)
 			}
-			routes := [][]string{
-				append([]string{"openai", "help", "--all"}, path...),
-				append([]string{"openai", "help", "-all"}, path...),
-				append([]string{"openai", "help", "--all=false"}, path...),
-				append(append([]string{"openai", "help"}, path...), "--all"),
-				append([]string{"openai", "--help", "--all"}, path...),
+			full := runMainDispatch(t, "bash", append([]string{"openai", "help", "--all"}, path...)...)
+			if full.code != 0 || full.stderr != "" {
+				t.Fatalf("explicit full help failed: %+v", full)
 			}
-			for _, args := range routes {
-				got := runMainDispatch(t, "bash", args...)
-				if got.code != 0 || got.stderr != "" || !strings.HasSuffix(got.stdout, want.stdout) {
-					t.Errorf("legacy help lost canonical content: args=%q got=%+v", args, got)
-					continue
+			if len(path) == 0 {
+				if full.stdout != "Use openai help; --all is no longer needed.\n"+want.stdout {
+					t.Fatal("root help lost its migration notice or reference")
 				}
-				notice := strings.TrimSuffix(got.stdout, want.stdout)
-				replacement := strings.TrimSpace("openai help " + strings.Join(path, " "))
-				if !strings.Contains(notice, replacement) || strings.Count(notice, "--all") != 1 {
-					t.Errorf("legacy help lacks one precise migration notice: %q", notice)
+			} else {
+				command := "openai help --all " + strings.Join(path, " ")
+				if !strings.Contains(want.stdout, command) || strings.Contains(full.stdout, "no longer needed") || full == want {
+					t.Fatalf("concise help must point to distinct full details: %q", command)
+				}
+			}
+			for _, flag := range []string{"--all", "-all=true", "--all=false"} {
+				expected := full
+				if flag == "--all=false" && len(path) != 0 {
+					expected = want
+				}
+				routes := [][]string{
+					append([]string{"openai", "help", flag}, path...),
+					append(append([]string{"openai", "help"}, path...), flag),
+					append([]string{"openai", "--help", flag}, path...),
+					append(append([]string{"openai", flag}, path...), "-h"),
+				}
+				if len(path) > 0 {
+					routes = append(routes, append([]string{"openai", path[0], "help", flag}, path[1:]...))
+				}
+				for _, args := range routes {
+					if got := runMainDispatch(t, "bash", args...); got != expected {
+						t.Errorf("help mode differs for %q", args)
+					}
 				}
 			}
 		})

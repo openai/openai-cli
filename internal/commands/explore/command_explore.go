@@ -13,6 +13,7 @@ import (
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commandsuggest"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -42,7 +43,7 @@ func Register(root *cli.Command) {
 		Metadata:    map[string]any{localcommands.LocalUtilityMetadata: true, "help-command-section": "Local tools"},
 		Usage:       "Search local CLI commands and examples without running them.",
 		ArgsUsage:   "[SEARCH_TERMS...]",
-		Description: "Pass search terms to print all matching commands and examples, ranked by relevance. This works in pipes and does not read stdin or run the results. Search needs no API key or internet. Use auto or text formats for search output and errors.\n\nWithout search terms, open the interactive picker. Type to search. Arrow keys choose a command. Enter selects it; Escape cancels.\nWith command insertion enabled, zsh and fish fill your editable prompt. Bash stages the selection; Ctrl+X, then Tab inserts it. Without integration, selection prints the command.",
+		Description: "Pass search terms to print matching commands and examples, ranked by relevance. Search works offline and in pipes.\n\nWithout search terms, browse commands alphabetically. Type to search. Arrow keys choose a command. Enter selects it. Escape cancels.\nWith shell integration, zsh and fish put the selection at your prompt. In Bash 4.3+, press Ctrl+X, then Tab to insert it. If you installed a standalone binary, press F2 when offered to set up insertion.",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "suggestions", Hidden: true},
 			&cli.BoolFlag{Name: "shell-integration", Hidden: true},
@@ -50,25 +51,52 @@ func Register(root *cli.Command) {
 		},
 		Action: commandExplore,
 	}
+	const output = "Search supports auto or text for --format and --format-error."
 	command.Metadata["help-content"] = clihelp.Content{
-		Description: command.Description,
+		Description:       command.Description,
+		GlobalOptionsNote: output,
+		InheritedFlagHelp: map[string]string{
+			"format": output, "format-error": output,
+			"transform": "Search does not support --transform.", "raw-output": "Search does not support --raw-output.",
+			"transform-error": "Search does not support --transform-error.",
+		},
 		Examples: []clihelp.Example{
 			{Description: "Open interactive command search:", Command: "explore"},
-			{Description: "Print matching commands without opening the picker:", Command: "explore images"},
+			{Description: "Find a command by describing the task:", Command: `explore "count tokens offline"`},
 		},
 	}
 	root.Commands = append(root.Commands, command)
 }
 
-func exploreCandidates(root *cli.Command, invocation string) []commandsuggest.Candidate {
-	return commandsuggest.Catalog(root, invocation, clihelp.VisibleCommands, func(command *cli.Command, path string) []commandsuggest.Candidate {
+// Add a phrase when the ordinary command name and description miss or reverse a user task.
+var taskPhrases = map[string][]commandsuggest.TaskPhrase{
+	"models list": {
+		{Text: "show all available models", AnyWordOrder: true},
+		{Text: "see all models", AnyWordOrder: true},
+	},
+	"images generate": {
+		{Text: "image generation"},
+		{Text: "make an image", AnyWordOrder: true},
+		{Text: "create an image", AnyWordOrder: true},
+	},
+	"tokenizer count": {{Text: "count tokens offline", AnyWordOrder: true}},
+	"speak":           {{Text: "text to speech"}, {Text: "text to audio"}, {Text: "read text aloud"}},
+	"transcribe":      {{Text: "speech to text"}},
+}
+
+func exploreCandidates(root *cli.Command, native, bash, shell string) []commandsuggest.Candidate {
+	return commandsuggest.Catalog(root, native, taskPhrases, clihelp.VisibleCommands, func(command *cli.Command, path string) []commandsuggest.Candidate {
 		// Search examples describe queries, not additional destinations.
 		if path == "explore" {
 			return nil
 		}
+		if content, _ := command.Metadata["help-content"].(clihelp.Content); content.BashExamples && shell != "bash" && shell != "zsh" {
+			return nil
+		}
+		run := clihelp.ExampleInvocation(command, bash, native)
 		var candidates []commandsuggest.Candidate
 		for _, example := range clihelp.CommandExamples(command, path) {
-			candidates = append(candidates, commandsuggest.Candidate{Command: invocation + " " + example.Command, Description: example.Description})
+			candidates = append(candidates, commandsuggest.Example(run, example.Command, example.Description))
 		}
 		return candidates
 	})
@@ -100,8 +128,16 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 	if err := ctx.Err(); err != nil {
 		return exploreFailure("Command search was interrupted.", 130, err)
 	}
+	shell := command.String("shell")
+	if shell == "" {
+		shell = terminal.ParentShell(ctx)
+	}
+	native, bash := clihelp.ShellInvocations(root, clihelp.Invocation(root.Name, os.Args), shell)
+	if native == "" && !command.Bool("suggestions") {
+		return exploreFailure("Run Explore from Bash, zsh, Fish, or PowerShell 7 (pwsh) to get copyable commands for this executable.", 2, nil)
+	}
 	if query != "" {
-		matches := commandsuggest.Search(exploreCandidates(root, clihelp.Invocation(root.Name, os.Args)), query)
+		matches := commandsuggest.Search(exploreCandidates(root, native, bash, shell), query)
 		if err := ctx.Err(); err != nil {
 			return exploreFailure("Command search was interrupted.", 130, err)
 		}
@@ -127,7 +163,7 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 		(integration && !command.Bool("suggestions") && !term.IsTerminal(os.Stdin.Fd())) {
 		return exploreFailure("Run openai explore in an interactive terminal without pipes or redirection.", 2, nil)
 	}
-	candidates := exploreCandidates(root, clihelp.Invocation(root.Name, os.Args))
+	var candidates []commandsuggest.Candidate
 	title := "Explore commands"
 	if command.Bool("suggestions") {
 		title = "Recent commands"
@@ -143,14 +179,20 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 		if err != nil {
 			return exploreFailure("Recent command suggestions are unavailable or invalid. Run a CLI help command and retry.", 2, err)
 		}
+	} else {
+		candidates = exploreCandidates(root, native, bash, shell)
 	}
-	input, err := commandsuggest.OpenPickerInput(os.Stderr)
+	input, err := terminal.OpenInputFromOutput(os.Stderr)
 	if err != nil {
 		return exploreFailure("Could not open the terminal for command search.", 2, err)
 	}
 	defer input.Close()
 	fillsPrompt := integration && (command.String("shell") != "bash" || command.Bool("suggestions"))
-	selected, err := commandsuggest.Pick(ctx, input, os.Stderr, candidates, title, fillsPrompt)
+	var setup exploreInsertionSetup
+	if !integration {
+		setup = insertionSetupForPicker(ctx, terminal.ParentShell(ctx))
+	}
+	selected, err := commandsuggest.Pick(ctx, input, os.Stderr, candidates, title, fillsPrompt, setup.prompt)
 	if errors.Is(err, commandsuggest.ErrCanceled) || errors.Is(err, tea.ErrInterrupted) || errors.Is(err, context.Canceled) {
 		return exploreFailure("Command selection canceled.", 130, err)
 	}
@@ -161,11 +203,16 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 	if output == nil {
 		output = os.Stdout
 	}
-	if _, err := fmt.Fprintln(output, selected); err != nil {
+	if selected.EnableInsertion {
+		return applyCommandInsertionSetup(ctx, output, format, setup.shell, "install", setup.targets)
+	}
+	if _, err := fmt.Fprintln(output, selected.Command); err != nil {
 		return exploreFailure("Could not write the selected command.", 1, err)
 	}
-	if !integration {
-		_, err = io.WriteString(os.Stderr, "Selected command only. Enable command insertion to fill your shell prompt: openai @completion --help\n")
+	if setup.prompt != "" {
+		_, err = io.WriteString(os.Stderr, "To fill the prompt next time, open Explore and press F2 to set up insertion.\n")
+	} else if !integration {
+		_, err = fmt.Fprintln(os.Stderr, clihelp.CompletionSetupGuidance(ctx, root))
 	}
 	if err != nil {
 		return exploreFailure("Could not display command insertion guidance.", 1, err)

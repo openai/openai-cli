@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -166,7 +167,34 @@ func updateArchive(t *testing.T, content []byte, duplicate bool) []byte {
 	return data.Bytes()
 }
 
+const fixtureQuarantine = "0081;00000000;fixture;"
+
+func markUpdateFixture(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS == "darwin" {
+		if out, err := exec.Command("/usr/bin/xattr", "-w", "com.apple.quarantine", fixtureQuarantine, path).CombinedOutput(); err != nil {
+			t.Fatalf("mark fixture: %v %s", err, out)
+		}
+	}
+}
+
+func checkUpdateFixtureQuarantine(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS == "darwin" {
+		out, err := exec.Command("/usr/bin/xattr", "-p", "com.apple.quarantine", path).Output()
+		if err != nil || strings.TrimSpace(string(out)) != fixtureQuarantine {
+			t.Fatal("replacement lost quarantine", err)
+		}
+	}
+}
+
 func TestAutomaticUpdateAuthenticatedPreparation(t *testing.T) {
+	current, err := os.CreateTemp(t.TempDir(), "current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer current.Close()
+	markUpdateFixture(t, current.Name())
 	t.Setenv("OPENAI_API_KEY", "synthetic-secret")
 	t.Setenv("GH_TOKEN", "synthetic-token")
 	t.Setenv("GH_DEBUG", "api")
@@ -205,6 +233,10 @@ func TestAutomaticUpdateAuthenticatedPreparation(t *testing.T) {
 			// This fixture validates invocation policy only. The review packet
 			// separately records real gh verification of an official archive.
 			script := "#!/bin/sh\nset -eu\ntest -z \"${OPENAI_API_KEY-}${GH_TOKEN-}${GH_DEBUG-}\"\ntest \"$1 $2\" = 'attestation verify'\ntest \"$4\" = --bundle\ntest \"$6 $7\" = '--hostname github.com'\ntest \"$8 $9\" = '--repo openai/openai-cli'\ntest \"${10}\" = --cert-identity\ntest \"${11}\" = '" + workflowIdentity + "'\ntest \"${12} ${13}\" = '--source-ref refs/heads/main'\ntest \"${14} ${15} ${16}\" = '--deny-self-hosted-runners --format json'\n"
+			// gh selects the bundle parser from the filename extension.
+			script += `test "${5##*.}" = jsonl
+grep -Fxq '{"synthetic":true}' "$5"
+`
 			if scenario == "verifier_failure" {
 				script += "exit 1\n"
 			} else if scenario == "oversized_output" {
@@ -246,12 +278,13 @@ func TestAutomaticUpdateAuthenticatedPreparation(t *testing.T) {
 				}
 				return jsonUpdateResponse(t, run), nil
 			})}}
-			digest, err := d.prepare(t.Context(), cache, selected)
+			digest, err := d.prepare(t.Context(), cache, selected, current)
 			if scenario == "valid" || scenario == "bare_workflow_path" {
 				want := sha256.Sum256(binary)
 				if err != nil || digest != hex.EncodeToString(want[:]) {
 					t.Fatalf("prepare: %s %v", digest, err)
 				}
+				checkUpdateFixtureQuarantine(t, filepath.Join(cache.directory, "next"))
 			} else {
 				if err == nil {
 					t.Fatal("unverified artifact prepared")
@@ -335,6 +368,29 @@ func TestAutomaticUpdateVerifierCapabilities(t *testing.T) {
 	}
 }
 
+func TestArchiveVerifierStatus(t *testing.T) {
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	t.Setenv("GH_TOKEN", "synthetic-token")
+	t.Setenv("OPENAI_API_KEY", "synthetic-key")
+	if got := archiveVerifierStatus(); got != "missing" {
+		t.Fatalf("absent gh: %q", got)
+	}
+	gh := filepath.Join(bin, "gh")
+	script := "#!/bin/sh\ntest -z \"${GH_TOKEN-}${OPENAI_API_KEY-}\" || exit 9\n[ \"$*\" = 'attestation verify --help' ] || exit 9\n"
+	for _, tc := range []struct{ output, want string }{
+		{"old gh", "unavailable"},
+		{"--bundle --hostname --repo --cert-identity --source-ref --deny-self-hosted-runners --format", "ready"},
+	} {
+		if err := os.WriteFile(gh, []byte(script+"echo '"+tc.output+"'\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if got := archiveVerifierStatus(); got != tc.want {
+			t.Fatalf("status %q, want %q", got, tc.want)
+		}
+	}
+}
+
 func Example_updatePolicy() {
 	pin, enabled := updatePolicy(func(key string) string {
 		if key == "OPENAI_CLI_VERSION_PIN" {
@@ -388,7 +444,7 @@ func testUpdateVerifierCancellation(t *testing.T, capabilities bool) {
 			finished <- d.checkVerifier(ctx, cache)
 			return
 		}
-		_, err := d.prepare(ctx, cache, selected)
+		_, err := d.prepare(ctx, cache, selected, nil)
 		finished <- err
 	}()
 	deadline := time.Now().Add(5 * time.Second)

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/mocktest"
+	"github.com/openai/openai-cli/internal/requestflag"
 )
 
 func TestImagesCreateVariation(t *testing.T) {
@@ -57,7 +58,11 @@ func TestImagesEdit(t *testing.T) {
 			"--image", mocktest.TestFile(t, "Example data"),
 			"--prompt", "A cute baby sea otter wearing a beret",
 			"--background", "transparent",
+			"--complexity", "low",
+			"--frame-count", "2",
+			"--frame-duration-ms", "20",
 			"--input-fidelity", "high",
+			"--markup", mocktest.TestFile(t, "Example data"),
 			"--mask", mocktest.TestFile(t, "Example data"),
 			"--model", "gpt-image-1.5",
 			"--n", "1",
@@ -80,7 +85,11 @@ func TestImagesEdit(t *testing.T) {
 			"image: Example data\n" +
 			"prompt: A cute baby sea otter wearing a beret\n" +
 			"background: transparent\n" +
+			"complexity: low\n" +
+			"frame_count: 2\n" +
+			"frame_duration_ms: 20\n" +
 			"input_fidelity: high\n" +
+			"markup: Example data\n" +
 			"mask: Example data\n" +
 			"model: gpt-image-1.5\n" +
 			"'n': 1\n" +
@@ -115,6 +124,9 @@ func TestImagesGenerate(t *testing.T) {
 			"--max-items", "10",
 			"--prompt", "A cute baby sea otter",
 			"--background", "transparent",
+			"--complexity", "low",
+			"--frame-count", "2",
+			"--frame-duration-ms", "20",
 			"--model", "gpt-image-2.5-flare",
 			"--moderation", "low",
 			"--n", "1",
@@ -127,6 +139,41 @@ func TestImagesGenerate(t *testing.T) {
 			"--size", "1024x1024",
 			"--stream=false",
 			"--style", "vivid",
+			"--svg", "{model: x, reasoning: {effort: none}}",
+			"--user", "user-1234",
+		)
+	})
+
+	t.Run("inner flags", func(t *testing.T) {
+		// Check that inner flags have been set up correctly
+		requestflag.CheckInnerFlags(imagesGenerate)
+
+		// Alternative argument passing style using inner flags
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"images", "generate",
+			"--max-items", "10",
+			"--prompt", "A cute baby sea otter",
+			"--background", "transparent",
+			"--complexity", "low",
+			"--frame-count", "2",
+			"--frame-duration-ms", "20",
+			"--model", "gpt-image-2.5-flare",
+			"--moderation", "low",
+			"--n", "1",
+			"--output-compression", "100",
+			"--output-format", "png",
+			"--partial-images", "1",
+			"--quality", "medium",
+			"--response-format", "url",
+			"--safety-identifier", "user-1234",
+			"--size", "1024x1024",
+			"--stream=false",
+			"--style", "vivid",
+			"--svg.model", "x",
+			"--svg.reasoning", "{effort: none}",
 			"--user", "user-1234",
 		)
 	})
@@ -136,6 +183,9 @@ func TestImagesGenerate(t *testing.T) {
 		pipeData := []byte("" +
 			"prompt: A cute baby sea otter\n" +
 			"background: transparent\n" +
+			"complexity: low\n" +
+			"frame_count: 2\n" +
+			"frame_duration_ms: 20\n" +
 			"model: gpt-image-2.5-flare\n" +
 			"moderation: low\n" +
 			"'n': 1\n" +
@@ -148,6 +198,10 @@ func TestImagesGenerate(t *testing.T) {
 			"size: 1024x1024\n" +
 			"stream: false\n" +
 			"style: vivid\n" +
+			"svg:\n" +
+			"  model: x\n" +
+			"  reasoning:\n" +
+			"    effort: none\n" +
 			"user: user-1234\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(
 			t, pipeData,

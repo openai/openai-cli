@@ -72,14 +72,16 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 	if _, err = console.MakeRaw(); err != nil {
 		return err
 	}
-	painter := cliterminal.NewPainter(terminal, cancel)
+	cursorOutput := &audioCursorOutput{output: terminal}
+	painter := cliterminal.NewPainter(cursorOutput, cancel)
 	defer painter.Stop()
 	m := newAudioWorkbench(ctx, command, next, store)
+	m.clipboard.write = audioClipboardWriter(painter.Control)
 	m.width, m.height = width, height
 	m.dark = cliterminal.DarkBackground(os.Getenv("COLORFGBG"))
 	profile := cliterminal.ColorProfile(output, os.Environ(), term.IsTerminal(output.Fd()))
 	m.color = profile >= colorprofile.ANSI
-	inline := &audioWorkbenchInline{model: m, painter: painter, output: output, profile: profile, cancel: cancel}
+	inline := &audioWorkbenchInline{model: m, painter: painter, output: output, profile: profile, cancel: cancel, cursorOutput: cursorOutput}
 	program := tea.NewProgram(inline, tea.WithContext(ctx), tea.WithInput(input), tea.WithOutput(io.Discard), tea.WithoutSignalHandler(), tea.WithoutRenderer(), tea.WithWindowSize(width, height), tea.WithColorProfile(profile))
 	listenerDone := make(chan struct{})
 	go func() {
@@ -150,13 +152,18 @@ type audioWorkbenchInline struct {
 	profile                           colorprofile.Profile
 	cancel                            context.CancelFunc
 	started, modesActive, restoreWrap bool
+	appleTerminal                     bool
 	content                           string
+	cursor                            *tea.Cursor
+	cursorOutput                      *audioCursorOutput
+	anchored, cursorStyled            bool
 	width, height                     int
 	err                               error
 }
 
 func (p *audioWorkbenchInline) Init() tea.Cmd {
 	p.modesActive = true
+	p.appleTerminal = os.Getenv("TERM_PROGRAM") == "Apple_Terminal"
 	query := ansi.ResetModeTextCursorEnable + ansi.SetModeBracketedPaste + ansi.RequestModeAutoWrap
 	if p.model.color {
 		query += ansi.RequestBackgroundColor
@@ -187,7 +194,7 @@ func (p *audioWorkbenchInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	// Read current geometry before acting on keys. A queued resize notification
 	// must not let a hidden Generate control submit from a smaller terminal.
-	if _, key := message.(tea.KeyPressMsg); key {
+	if key, ok := message.(tea.KeyPressMsg); ok {
 		w, h, err := term.GetSize(p.output.Fd())
 		if err != nil {
 			p.err = errors.New("could not read terminal size")
@@ -195,6 +202,13 @@ func (p *audioWorkbenchInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if w != p.model.width || h != p.model.height {
 			p.model.Update(tea.WindowSizeMsg{Width: w, Height: h})
+		}
+		if p.appleTerminal {
+			switch key.String() {
+			case "enter", "tab", "shift+tab", "ctrl+c", "ctrl+d":
+				// Terminal.app can mark the cursor row even if the key leaves the view unchanged.
+				p.content = ""
+			}
 		}
 	}
 	_, cmd := p.model.Update(message)
@@ -228,27 +242,64 @@ func (p *audioWorkbenchInline) drawFrame(w, h int) {
 	if w != p.model.width || h != p.model.height {
 		p.model.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	}
+	view := p.model.View()
 	var converted strings.Builder
-	_, _ = io.WriteString(&colorprofile.Writer{Forward: &converted, Profile: max(p.profile, colorprofile.ASCII)}, p.model.View().Content)
+	_, _ = io.WriteString(&colorprofile.Writer{Forward: &converted, Profile: max(p.profile, colorprofile.ASCII)}, view.Content)
 	content := converted.String()
-	if content == p.content && w == p.width && h == p.height {
+	sameCursor := p.cursor == nil && view.Cursor == nil || p.cursor != nil && view.Cursor != nil && p.cursor.Position == view.Cursor.Position
+	if content == p.content && w == p.width && h == p.height && sameCursor {
 		return
 	}
-	p.painter.Frame(cliterminal.InlineFrame(content, w))
-	p.content, p.width, p.height = content, w, h
+	// Each replaceable frame is complete. A cursor-only update must not
+	// replace a queued content update with an incomplete repaint.
+	frame := ansi.ResetModeTextCursorEnable
+	if p.anchored {
+		frame += ansi.RestoreCursor
+	} else if p.appleTerminal && content != "" {
+		// Start a new logical line after the shell's marked command.
+		frame += "\r\n"
+	}
+	frame += cliterminal.InlineFrame(content, w) + ansi.SaveCursor
+	if view.Cursor != nil {
+		if view.Cursor.Y > 0 {
+			frame += ansi.CursorDown(view.Cursor.Y)
+		}
+		frame += ansi.CursorHorizontalAbsolute(view.Cursor.X+1) + ansi.SetCursorStyle(5) + ansi.SetModeTextCursorEnable
+		p.cursorStyled = true
+	} else if p.appleTerminal && strings.Contains(content, "\n") {
+		// The next erase preserves marks on its first row. Park the hidden cursor one row below it.
+		frame += ansi.CursorDown(1)
+	}
+	if p.anchored {
+		p.painter.Frame(frame)
+	} else {
+		// The first saved origin must precede every coalescible frame. Saving
+		// after the first render also accounts for its initial terminal scroll.
+		p.painter.Control(frame)
+		p.anchored = true
+	}
+	p.content, p.width, p.height, p.cursor = content, w, h, view.Cursor
 }
 func (p *audioWorkbenchInline) close() string {
 	if !p.modesActive {
 		return ""
 	}
 	cleanup := "\x18\x1b\\" + ansi.ResetStyle
-	if p.started {
+	originWritten := p.cursorOutput != nil && p.cursorOutput.anchored.Load()
+	if originWritten {
+		cleanup += ansi.RestoreCursor
+	}
+	if p.started && originWritten {
 		cleanup += "\r" + ansi.EraseScreenBelow
+	}
+	if p.cursorStyled {
+		cleanup += ansi.SetCursorStyle(0)
 	}
 	cleanup += ansi.ResetModeBracketedPaste + ansi.SetModeTextCursorEnable
 	if p.restoreWrap {
 		cleanup += ansi.ResetModeAutoWrap
 	}
 	p.started, p.modesActive = false, false
+	p.anchored, p.cursorStyled, p.cursor = false, false, nil
 	return cleanup
 }

@@ -107,7 +107,7 @@ func (m *imagePicker) openFolderEditor(path string) {
 	m.page, m.focus, m.selected = "path", "path", 0
 	m.folder.draft, m.folder.cursor = []rune(path), len([]rune(path))
 	m.folder.match = -1
-	m.note = ""
+	m.setNote("", imageSecondary)
 }
 
 func (m *imagePicker) commitFolder(path string) {
@@ -117,12 +117,12 @@ func (m *imagePicker) commitFolder(path string) {
 	if m.page == "" {
 		m.page = "settings"
 	}
-	m.note = ""
+	m.setNote("", imageSecondary)
 }
 
 func (m *imagePicker) backFolder() tea.Cmd {
 	m.cancelFolderWork()
-	m.note = ""
+	m.setNote("", imageSecondary)
 	switch m.page {
 	case "path":
 		m.page, m.focus, m.selected = "folder", "options", 2
@@ -157,7 +157,7 @@ func (m *imagePicker) insertFolderPath(text string) {
 	m.folder.draft = append(m.folder.draft[:m.folder.cursor], []rune(text)...)
 	m.folder.draft = append(m.folder.draft, tail...)
 	m.folder.cursor += len([]rune(text))
-	m.note = ""
+	m.setNote("", imageSecondary)
 }
 
 func (m *imagePicker) editFolderPath(key tea.KeyPressMsg) tea.Cmd {
@@ -178,7 +178,7 @@ func (m *imagePicker) editFolderPath(key tea.KeyPressMsg) tea.Cmd {
 		}
 		path := string(f.draft)
 		ctx, revision := m.folderWork("complete")
-		m.note = "Finding folders…"
+		m.setNote("Finding folders…", imageActive)
 		return func() tea.Msg {
 			matches, err := imagePickerCompleteFolders(ctx, path)
 			return imagePickerFolderMsg{revision: revision, kind: "complete", path: path, matches: matches, err: err}
@@ -234,7 +234,7 @@ func (m *imagePicker) editFolderPath(key tea.KeyPressMsg) tea.Cmd {
 func (m *imagePicker) checkFolder(kind, path string, printOnly bool) tea.Cmd {
 	ctx, revision := m.folderWork(kind)
 	snapshot := m.settings
-	m.note = "Checking save folder… Esc cancels"
+	m.setNote("Checking save folder… Esc cancels", imageActive)
 	return func() tea.Msg {
 		msg := imagePickerFolderMsg{revision: revision, kind: kind, path: path, settings: snapshot, printOnly: printOnly}
 		if err := ctx.Err(); err != nil {
@@ -278,21 +278,21 @@ func (m *imagePicker) finishFolderWork(msg imagePickerFolderMsg) tea.Cmd {
 		return nil
 	}
 	if msg.kind == "complete" {
-		m.note = ""
+		m.setNote("", imageSecondary)
 		if msg.err != nil {
-			m.note = "Could not read that folder."
+			m.setNote("Could not read that folder.", imageFailure)
 			return nil
 		}
 		m.folder.matches, m.folder.match, m.selected = msg.matches, -1, 0
 		if len(msg.matches) == 1 {
 			m.openFolderEditor(msg.matches[0])
 		} else if len(msg.matches) == 0 {
-			m.note = "No matching folders."
+			m.setNote("No matching folders.", imageSecondary)
 		}
 		return nil
 	}
 	if msg.kind == "submit" && msg.settings != m.settings {
-		m.note = ""
+		m.setNote("", imageSecondary)
 		return nil
 	}
 	if msg.err != nil {
@@ -307,7 +307,7 @@ func (m *imagePicker) finishFolderWork(msg imagePickerFolderMsg) tea.Cmd {
 			path = "."
 		}
 		m.openFolderEditor(path)
-		m.note = msg.err.Error()
+		m.setNote(msg.err.Error(), imageFailure)
 		return nil
 	}
 	if msg.kind == "select" {
@@ -315,7 +315,7 @@ func (m *imagePicker) finishFolderWork(msg imagePickerFolderMsg) tea.Cmd {
 		return nil
 	}
 	if m.width < 40 || m.height < 12 {
-		m.note = "Resize before generating."
+		m.setNote("Resize before generating.", imageWarning)
 		return nil
 	}
 	// Empty retains default intent; an explicit path is stable across cwd changes.
