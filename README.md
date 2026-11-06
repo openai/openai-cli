@@ -63,23 +63,10 @@ The installer downloads the matching ZIP and makes `openai` available in this te
 
 ## Explore commands
 
-Run `openai explore` in your terminal. A search box opens where you can describe what you want to do in your own words.
+Run `openai explore` to search for commands in your own words.
+For example, to check a prompt's length without an API key, search for `count tokens offline`.
 
-For example, say you want to check the length of a prompt before sending it to a model.
-Models measure text in pieces called *tokens*. You can count them on your computer without an API key.
-
-1. In the search box, type `count tokens offline`.
-2. Use the arrow keys to highlight `openai tokenizer count`.
-3. Press **Enter** to select it.
-
-Back in your terminal, try the command with the word `hello`.
-If `openai tokenizer count` is already at the prompt, add a space and `--text "hello"`. Otherwise, type the full line below.
-
-```sh
-openai tokenizer count --text "hello"
-```
-
-Press **Enter** to run it. Look for `Tokens: 1` in the output.
+Press **Enter** to select the result. Then try `openai tokenizer count --text "hello"` at your terminal prompt.
 
 ## Authentication
 
