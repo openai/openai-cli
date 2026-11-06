@@ -217,16 +217,16 @@ func TestMainImageModelsKeepsPartialResultsOnTimeoutResponse(t *testing.T) {
 
 func TestMainImageModelsRejectsMalformedMetadata(t *testing.T) {
 	for _, body := range []string{
-		`{"id":"gpt-image-2.6-flare","object":"file"}`,
-		`{"id":"gpt-image-2.6-flare","object":null}`,
-		`{"id":"gpt-image-2.6-flare","object":42}`,
-		`{"id":"gpt-image-2.6-flare","object":[]}`,
-		`{"id":"gpt-image-2.6-flare","object":"model"`,
-		`{"id":"gpt-image-2.6-flare" "object":"model"}`,
+		`{"id":"gpt-image-2.5-flare","object":"file"}`,
+		`{"id":"gpt-image-2.5-flare","object":null}`,
+		`{"id":"gpt-image-2.5-flare","object":42}`,
+		`{"id":"gpt-image-2.5-flare","object":[]}`,
+		`{"id":"gpt-image-2.5-flare","object":"model"`,
+		`{"id":"gpt-image-2.5-flare" "object":"model"}`,
 	} {
 		t.Run(body, func(t *testing.T) {
 			server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
-				if strings.HasSuffix(r.URL.Path, "/gpt-image-2.6-flare") {
+				if strings.HasSuffix(r.URL.Path, "/gpt-image-2.5-flare") {
 					w.Header().Set("Content-Type", "application/json")
 					fmt.Fprint(w, body)
 					return
@@ -243,7 +243,7 @@ func TestMainImageModelsRejectsMalformedMetadata(t *testing.T) {
 				t.Fatal("invalid resource metadata claimed complete checks")
 			}
 			for _, row := range report.Models {
-				if row.ID == "gpt-image-2.6-flare" {
+				if row.ID == "gpt-image-2.5-flare" {
 					if row.Status != imagemodels.StatusUnknown || row.Failure != imagemodels.FailureInvalidResponse {
 						t.Errorf("invalid metadata claimed visibility: %+v", row)
 					}
