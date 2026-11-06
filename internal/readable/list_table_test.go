@@ -33,6 +33,18 @@ func TestListTableNarrowFallbackKeepsIDs(t *testing.T) {
 	}
 }
 
+func TestListTableKeepsTrailingProjectID(t *testing.T) {
+	headers := []string{"NAME", "STATUS", "ID"}
+	id := "proj_" + strings.Repeat("a", 40)
+	rows := [][]string{{strings.Repeat("n", 60), "active", id}}
+	const minimum = len("NAME") + len("STATUS") + 4
+	text, fits := ListTable(headers, rows, minimum+len(id))
+	require.True(t, fits)
+	require.Contains(t, text, "nnn…  active  "+id+"\n")
+	_, fits = ListTable(headers, rows, minimum+len(id)-1)
+	require.False(t, fits)
+}
+
 func TestListTableEscapesEveryCell(t *testing.T) {
 	text, ok := ListTable([]string{"ID", "NAME"}, [][]string{{"file-\x1b]52;c;a\a", "a\nb\tc\r\u202e\u009b"}}, 110)
 	require.True(t, ok)

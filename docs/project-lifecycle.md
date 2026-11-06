@@ -5,6 +5,21 @@ Use an admin API key with permission for the operation.
 Configure `OPENAI_ADMIN_KEY` through your existing secure environment or credential setup.
 Use `openai help setup admin` for credential guidance without sending an API request.
 
+## Find a project
+
+List projects and use the returned ID to inspect one:
+
+```sh
+openai projects list --max-items 3
+openai projects retrieve --project-id proj_example
+```
+
+Replace `proj_example` with an ID from the list. In a terminal, the table shows the
+project name, status, and full ID. When a row has unfamiliar data or its ID cannot
+fit, the CLI shows labeled records. The interactive detail view shows the name,
+full ID, status, UTC dates, and residency on separate labeled lines.
+Use `--format json` for the original API fields.
+
 ## Create and inspect a project
 
 Create a project with a name:

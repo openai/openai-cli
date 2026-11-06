@@ -23,7 +23,8 @@ func EscapeDirectionalControls(text string) string {
 	return directionalControls.Replace(text)
 }
 
-func sanitize(text string) string {
+// InlineText escapes untrusted text for display on a single terminal line.
+func InlineText(text string) string {
 	return EscapeDirectionalControls(jsonview.SanitizeTerminalString(text))
 }
 
@@ -31,16 +32,16 @@ func sanitize(text string) string {
 // newlines and tabs. It adds no newline and does not redact sensitive content.
 func Text(text string) string {
 	if !strings.ContainsAny(text, "\n\t") {
-		return sanitize(text)
+		return InlineText(text)
 	}
 	var b strings.Builder
 	for {
 		i := strings.IndexAny(text, "\n\t")
 		if i < 0 {
-			b.WriteString(sanitize(text))
+			b.WriteString(InlineText(text))
 			return b.String()
 		}
-		b.WriteString(sanitize(text[:i]))
+		b.WriteString(InlineText(text[:i]))
 		b.WriteByte(text[i])
 		text = text[i+1:]
 	}

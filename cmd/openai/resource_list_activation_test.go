@@ -21,10 +21,10 @@ type resourceListRoute struct {
 var resourceListRoutes = []resourceListRoute{
 	{"files", "/files", "file", []string{"files", "list", "--purpose", "assistants", "--order", "asc"}, []string{"ID", "FILENAME", "PURPOSE", "SIZE", "STATUS"}},
 	{"batches", "/batches", "batch", []string{"batches", "list"}, []string{"ID", "STATUS"}},
-	{"projects-full", "/organization/projects", "organization.project", []string{"admin", "organization", "projects", "list", "--include-archived"}, []string{"ID", "NAME", "STATUS"}},
-	{"projects-admin", "/organization/projects", "organization.project", []string{"admin", "projects", "list", "--include-archived"}, []string{"ID", "NAME", "STATUS"}},
-	{"projects-short", "/organization/projects", "organization.project", []string{"projects", "list", "--include-archived"}, []string{"ID", "NAME", "STATUS"}},
-	{"projects-legacy", "/organization/projects", "organization.project", []string{"admin:organization:projects", "list", "--include-archived"}, []string{"ID", "NAME", "STATUS"}},
+	{"projects-full", "/organization/projects", "organization.project", []string{"admin", "organization", "projects", "list", "--include-archived"}, []string{"NAME", "STATUS", "ID"}},
+	{"projects-admin", "/organization/projects", "organization.project", []string{"admin", "projects", "list", "--include-archived"}, []string{"NAME", "STATUS", "ID"}},
+	{"projects-short", "/organization/projects", "organization.project", []string{"projects", "list", "--include-archived"}, []string{"NAME", "STATUS", "ID"}},
+	{"projects-legacy", "/organization/projects", "organization.project", []string{"admin:organization:projects", "list", "--include-archived"}, []string{"NAME", "STATUS", "ID"}},
 }
 
 // The state endpoint belongs to the observer, never the CLI. It lets the PTY
@@ -119,6 +119,7 @@ func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) 
 					item["status"] = "completed"
 				case "organization.project":
 					item["name"], item["status"] = "Synthetic project", "active"
+					item["psp_decryption_key_id"] = nil
 				case "webhook_endpoint":
 					item["name"], item["event_types"], item["url"] = "Synthetic hook", []string{"batch.failed"}, "https://example.test/webhook"
 				case "skill":

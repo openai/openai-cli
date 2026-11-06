@@ -41,8 +41,8 @@ func ProjectRecordTable(ctx context.Context, operation string, items []gjson.Res
 		object, fields = "batch", []string{"id", "status"}
 		headers = []string{"ID", "STATUS"}
 	case "(resource) admin.organization.projects > (method) list":
-		object, fields = "organization.project", []string{"id", "name", "status"}
-		headers = []string{"ID", "NAME", "STATUS"}
+		object, fields = "organization.project", []string{"name", "status", "id"}
+		headers = []string{"NAME", "STATUS", "ID"}
 	default:
 		return projectCompactListTable(ctx, operation, items)
 	}
@@ -57,8 +57,12 @@ func ProjectRecordTable(ctx context.Context, operation string, items []gjson.Res
 		var err error
 		var summary gjson.Result
 		if object == "organization.project" {
+			// An unconfigured decryption key has no list detail. Keep other values in labeled output.
+			if item.Get("psp_decryption_key_id").Type != gjson.Null {
+				return ListTableProjection{}, nil
+			}
 			summary, _, err = summarizeResourceFields(ctx, item, fields,
-				[]string{"object", "created_at", "archived_at", "external_key_id", "residency"})
+				[]string{"object", "created_at", "archived_at", "external_key_id", "residency", "psp_decryption_key_id"})
 		} else {
 			// Reuse the existing resource allowlists and duplicate-key checks.
 			summary, _, err = SummarizeResource(ctx, item, Route{operation, OutputPageItem})

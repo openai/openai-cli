@@ -3,12 +3,12 @@ package clihelp
 import (
 	"os"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -51,28 +51,15 @@ const (
 	lightBackground
 )
 
-// COLORFGBG describes fg;bg or fg;extra;bg. Only conventional black and
-// white slots identify a palette here. Other terminal colors can be remapped.
 func backgroundFromHint(hint string) helpBackground {
-	fields := strings.Split(hint, ";")
-	if len(fields) < 2 || len(fields) > 3 {
+	dark, known := terminal.BackgroundHint(hint)
+	if !known {
 		return unknownBackground
 	}
-	for _, field := range fields[:len(fields)-1] {
-		if field != "default" {
-			if _, err := strconv.ParseUint(field, 10, 8); err != nil {
-				return unknownBackground
-			}
-		}
-	}
-	switch fields[len(fields)-1] {
-	case "0", "16", "232":
+	if dark {
 		return darkBackground
-	case "7", "15", "231", "255":
-		return lightBackground
-	default:
-		return unknownBackground
 	}
+	return lightBackground
 }
 
 func (bg helpBackground) textColors() (accent, muted string) {

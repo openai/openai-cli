@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// ListTable renders one loaded page. The first column contains complete IDs.
+// ListTable renders one loaded page. The ID column keeps complete values.
 // A false result requests labeled output when the columns cannot fit safely.
 func ListTable(headers []string, rows [][]string, width int) (string, bool) {
 	return listTable(headers, rows, width, true)
@@ -29,8 +29,12 @@ func listTable(headers []string, rows [][]string, width int, truncate bool) (str
 	labels := make([]string, len(headers))
 	widths := make([]int, len(headers))
 	minimum := make([]int, len(headers))
+	idColumn := 0
 	for col, header := range headers {
-		labels[col] = sanitize(header)
+		if header == "ID" {
+			idColumn = col
+		}
+		labels[col] = InlineText(header)
 		minimum[col] = ansi.StringWidth(labels[col])
 		widths[col] = minimum[col]
 	}
@@ -41,16 +45,16 @@ func listTable(headers []string, rows [][]string, width int, truncate bool) (str
 		}
 		cells[index] = make([]string, len(row))
 		for col, value := range row {
-			cells[index][col] = sanitize(value)
+			cells[index][col] = InlineText(value)
 			cellWidth := ansi.StringWidth(cells[index][col])
-			if col != 0 && truncate {
+			if col != idColumn && truncate {
 				// Keep wide terminals compact. Full values remain in explicit formats.
 				cellWidth = min(cellWidth, max(minimum[col], 32))
 			}
 			widths[col] = max(widths[col], cellWidth)
 		}
 	}
-	minimum[0] = widths[0]
+	minimum[idColumn] = widths[idColumn]
 	total, required := 2*(len(headers)-1), 2*(len(headers)-1)
 	for col := range widths {
 		total += widths[col]
@@ -61,7 +65,7 @@ func listTable(headers []string, rows [][]string, width int, truncate bool) (str
 	}
 	for total > width {
 		widest := -1
-		for col := 1; col < len(widths); col++ {
+		for col := range widths {
 			if widths[col] > minimum[col] && (widest < 0 || widths[col] > widths[widest]) {
 				widest = col
 			}
@@ -70,8 +74,10 @@ func listTable(headers []string, rows [][]string, width int, truncate bool) (str
 		total--
 	}
 	for _, row := range cells {
-		for col := 1; col < len(row); col++ {
-			row[col] = ansi.Truncate(row[col], widths[col], "…")
+		for col := range row {
+			if col != idColumn {
+				row[col] = ansi.Truncate(row[col], widths[col], "…")
+			}
 		}
 	}
 	view := table.New().Headers(labels...).Rows(cells...).

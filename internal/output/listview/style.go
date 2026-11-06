@@ -5,9 +5,10 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
+	"github.com/openai/openai-cli/internal/terminal"
 )
 
-// Style decorates list presentation after layout. Its zero value preserves plain output.
+// Style decorates resource labels and list controls after layout. Its zero value preserves plain output.
 type Style struct {
 	profile colorprofile.Profile
 	accent  lipgloss.Style
@@ -26,14 +27,25 @@ func NewStyle(profile colorprofile.Profile, dark bool) Style {
 	}
 }
 
+// NewFieldStyle uses the terminal's foreground when its background is unknown.
+func NewFieldStyle(profile colorprofile.Profile, hint string) Style {
+	if dark, known := terminal.BackgroundHint(hint); known {
+		return NewStyle(profile, dark)
+	}
+	return Style{profile: profile, accent: lipgloss.NewStyle().Bold(true)}
+}
+
 // Table colors only the header of a nonempty table, preserving every data row.
 func (s Style) Table(content string) string {
 	header, rest, found := strings.Cut(content, "\n")
 	if !found {
-		return s.render(s.accent, header)
+		return s.Label(header)
 	}
-	return s.render(s.accent, header) + "\n" + rest
+	return s.Label(header) + "\n" + rest
 }
+
+// Label applies the command-help accent to a field label or table header.
+func (s Style) Label(label string) string { return s.render(s.accent, label) }
 
 // Note colors secondary text without changing its whitespace.
 func (s Style) Note(content string) string {

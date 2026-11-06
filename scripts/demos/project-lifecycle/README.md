@@ -27,3 +27,9 @@ It stops its fixture and removes its temporary homes when it exits.
 Remove the chosen output directory when you no longer need its evidence.
 
 See [the workflow guide](../../../docs/project-lifecycle.md) for ordinary CLI usage and validation limits.
+
+For a read-only list and inspection comparison, run the same command with
+`record-inspection.sh` in place of `record.sh`. It records
+`openai projects list --max-items 1` and `openai projects retrieve proj_demo`
+in a 52×21 dark terminal with truecolor enabled. The fixture returns an unset
+project key identifier. The recorder verifies both binaries made the same requests.
