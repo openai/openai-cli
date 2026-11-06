@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image/color"
 	"io"
 	"net/url"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/imageoutput"
+	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,7 +46,8 @@ func TestImagePickerWorkspaceSelectedImageMatchesItsCaption(t *testing.T) {
 	require.Contains(t, text, "pixels-0")
 	require.Contains(t, text, "pixels-1")
 	require.Contains(t, text, "pixels-3")
-	require.Contains(t, text, "› Image 3 · image-2.png")
+	require.Contains(t, text, "› image-2.png")
+	require.NotContains(t, text, "Image 3 ·")
 	require.Less(t, strings.Index(text, "Ctrl+C"), strings.Index(text, "pixels-2"))
 	require.NotContains(t, text, "[Ctrl+P]")
 	require.NotContains(t, text, "[Enter]")
@@ -146,14 +149,99 @@ func TestImagePickerWorkspaceFailurePreservesImageScroll(t *testing.T) {
 	w.selectImage(-1)
 	require.Equal(t, before, w.offset, "clamped image navigation must not move diagnostics")
 	require.Equal(t, 7, w.images[0].inlineOffset)
-	require.Contains(t, strings.Join(w.painted, "\n"), "connection to the image service failed")
+	require.Contains(t, strings.Join(w.painted, "\n"), "The connection to the image service failed")
 	p.updateWorkspace(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	require.Contains(t, strings.Join(w.painted, "\n"), "Request failed.", "scrolling past diagnostics must retain the failure cue")
+	require.Contains(t, strings.Join(w.painted, "\n"), "The connection to the image service failed.", "scrolling past diagnostics must retain the specific cause")
 	w.expanded = true
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	p.closeExpanded()
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 	require.Equal(t, 7, w.images[0].inlineOffset)
+}
+
+func TestImagePickerWorkspaceCredentialErrorIsReadable(t *testing.T) {
+	for _, color := range []bool{false, true} {
+		for _, dark := range []bool{false, true} {
+			m, w := browserForTest(t, 96, 28)
+			m.color, m.dark, m.focus, m.hasImages = color, dark, "prompt", false
+			p := &imagePickerInline{model: m, workspace: w, profile: colorprofile.TrueColor, requestCancel: func() {}}
+			p.updateWorkspace(imagePickerWorkspaceDone{err: &openai.Error{StatusCode: 401}, draftSaved: true})
+			require.NoError(t, p.err)
+			text := ansi.Strip(strings.Join(w.painted, "\n"))
+			require.Contains(t, text, "\n    Authentication failed\n    Check your API key")
+			authRow, _ := pickerNavigationLine(t, text, "Authentication failed")
+			require.Equal(t, len(strings.Split(w.header.Content, "\n")), authRow, "the cause immediately follows the form")
+			require.Contains(t, text, "Your submitted draft is saved.")
+			require.NotContains(t, text, "Setup guide")
+			require.Equal(t, 1, strings.Count(text, "Ctrl+C"))
+			require.Equal(t, 1, strings.Count(text, "Authentication failed"))
+			require.Equal(t, color, w.displayRows[0] != ansi.Strip(w.displayRows[0]))
+			if color {
+				require.Contains(t, w.displayRows[0], m.workspaceText("Authentication failed", "failure"))
+			}
+
+			w.appendImage(imagePickerWorkspaceImage{rows: []string{"saved pixels"}})
+			m.hasImages = true
+			require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+			w.expanded = true
+			require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+			require.Contains(t, ansi.Strip(w.painted[2]), "Authentication failed")
+			require.Contains(t, strings.Join(w.painted, "\n"), "saved pixels")
+		}
+	}
+}
+
+func TestImagePickerWorkspaceRecolorsRetainedDiagnostics(t *testing.T) {
+	t.Setenv("COLORFGBG", "0;15")
+	m, w := browserForTest(t, 96, 28)
+	require.False(t, m.dark, "start with the declared light background before the terminal answers")
+	m.color, m.focus = true, "prompt"
+	w.addDetail("Request failed", imageFailure)
+	w.addDetail("Copy the draft before exiting.", imageWarning)
+	w.requestFailure = "Request failed"
+	w.appendImage(imagePickerWorkspaceImage{rows: strings.Split(strings.Repeat("synthetic pixels\n", 45), "\n")})
+	require.NoError(t, w.draw(m, colorprofile.TrueColor, false, true))
+	require.Contains(t, w.displayRows[0], "178;58;58")
+	require.Contains(t, w.displayRows[1], "136;91;20")
+	w.scroll(-3)
+	offset := w.offset
+
+	m.Update(tea.BackgroundColorMsg{Color: color.Black})
+	require.NoError(t, w.draw(m, colorprofile.TrueColor, false, false))
+	require.Contains(t, w.displayRows[0], "229;154;154")
+	require.Contains(t, w.displayRows[1], "226;188;121")
+	for _, profile := range []colorprofile.Profile{colorprofile.ANSI256, colorprofile.ANSI, colorprofile.ASCII} {
+		require.NoError(t, w.draw(m, profile, false, false))
+		require.NotContains(t, strings.Join(w.painted, "\n"), "38;2;")
+		require.NotContains(t, strings.Join(w.displayRows[:2], "\n"), "38;2;")
+		require.Equal(t, profile >= colorprofile.ANSI, ansi.Strip(w.displayRows[0]) != w.displayRows[0])
+		require.Equal(t, offset, w.offset)
+	}
+}
+
+func TestImagePickerWorkspaceRequestCauseSurvivesDraftWarningAndValidation(t *testing.T) {
+	m, w := browserForTest(t, 96, 28)
+	m.color = true
+	w.appendImage(imagePickerWorkspaceImage{rows: strings.Split(strings.Repeat("saved pixels\n", 40), "\n")})
+	p := &imagePickerInline{model: m, workspace: w, requestCancel: func() {}}
+	p.updateWorkspace(imagePickerWorkspaceRows{[]string{"Could not save the draft."}})
+	p.updateWorkspace(imagePickerWorkspaceDone{err: &openai.Error{StatusCode: 401}, draftSaved: false})
+	require.NoError(t, p.err)
+	require.Equal(t, "Authentication failed", w.requestFailureSummary())
+	diagnostics := strings.Join(w.displayRows, "\n")
+	require.Contains(t, diagnostics, m.workspaceText("Authentication failed", "failure"))
+	require.Contains(t, ansi.Strip(diagnostics), "Draft not saved. Copy your prompt before exiting.")
+	require.NotContains(t, diagnostics, "Your submitted draft is saved.")
+
+	m.note = "Add a prompt first."
+	w.layoutGallery(m)
+	require.Equal(t, diagnostics, strings.Join(w.displayRows, "\n"), "validation and relayout must preserve error styling")
+	m.note = imagePickerRequestFailureNote
+	w.expanded = true
+	require.Contains(t, ansi.Strip(w.expandedView(m, false)[2]), "Authentication failed")
+	w.clearRequestDiagnostics()
+	require.Empty(t, w.requestFailure)
+	require.Empty(t, w.rows)
 }
 
 func TestImagePickerWorkspaceFailedPaintDoesNotStartGeneration(t *testing.T) {

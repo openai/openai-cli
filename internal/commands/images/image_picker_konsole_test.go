@@ -121,40 +121,53 @@ func stageKonsoleImageForTest(t *testing.T, m *imagePicker, w *imagePickerWorksp
 }
 
 func TestImagePickerKonsoleReturnsBeforeReceipts(t *testing.T) {
-	m, w := konsoleWorkspaceForTest(t)
-	m.settings.prompt = "Keep this draft"
-	m.cursor, m.selected, m.focus = 4, 2, "options"
-	w.receipts = []string{w.images[0].file.Path}
-	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-	require.Contains(t, strings.Join(w.painted, "\n"), "Color preview")
-	settings := m.settings
-	w.expanded = true
-	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
-	stageKonsoleImageForTest(t, m, w)
-	require.NotContains(t, strings.Join(w.painted, "\n"), "Color preview", "native expansion must not use the block approximation label")
-	require.Contains(t, konsoleOutputForTest(t, w), "\x1b]1337;File=")
-	p := &imagePickerInline{model: m, workspace: w}
-	p.closeExpanded()
-	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-	require.Contains(t, strings.Join(w.painted, "\n"), "Color preview", "returning must restore the automatic preview label")
-	require.Equal(t, settings, m.settings)
-	require.Equal(t, 4, m.cursor)
-	require.Equal(t, 2, m.selected)
-	require.Equal(t, "options", m.focus)
-	require.Equal(t, "blocks", w.images[0].protocol)
-	require.NotContains(t, konsoleOutputForTest(t, w), "Saved image:")
-	w.expanded = true
-	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
-	require.NoError(t, w.close())
-	require.NoError(t, w.close())
-	output := konsoleOutputForTest(t, w)
-	require.Equal(t, 2, strings.Count(output, "\x1b[?1049h"))
-	require.Equal(t, 2, strings.Count(output, "\x1b[?1049l"))
-	require.Equal(t, 1, strings.Count(output, "Saved image:"))
-	require.Less(t, strings.LastIndex(output, "\x1b[?1049l"), strings.Index(output, "Saved image:"))
-	bytes, err := os.ReadFile(w.images[0].file.Path)
-	require.NoError(t, err)
-	require.Equal(t, w.images[0].file.SHA256, sha256.Sum256(bytes))
+	for _, tc := range []struct {
+		name          string
+		width, height int
+		colorLabel    bool
+	}{
+		{"stacked", 96, 28, true},
+		{"studio minimum", 110, 28, false},
+		{"studio wide", 120, 30, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, w := konsoleWorkspaceForTest(t)
+			m.width, m.height = tc.width, tc.height
+			m.settings.prompt = "Keep this draft"
+			m.cursor, m.selected, m.focus = 4, 2, "options"
+			w.receipts = []string{w.images[0].file.Path}
+			require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+			require.Equal(t, tc.colorLabel, strings.Contains(strings.Join(w.painted, "\n"), "Color preview"))
+			settings := m.settings
+			w.expanded = true
+			require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
+			stageKonsoleImageForTest(t, m, w)
+			require.NotContains(t, strings.Join(w.painted, "\n"), "Color preview", "native expansion must not use the block approximation label")
+			require.Contains(t, konsoleOutputForTest(t, w), "\x1b]1337;File=")
+			p := &imagePickerInline{model: m, workspace: w}
+			p.closeExpanded()
+			require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+			require.Equal(t, tc.colorLabel, strings.Contains(strings.Join(w.painted, "\n"), "Color preview"), "returning must restore the inline caption")
+			require.Equal(t, settings, m.settings)
+			require.Equal(t, 4, m.cursor)
+			require.Equal(t, 2, m.selected)
+			require.Equal(t, "options", m.focus)
+			require.Equal(t, "blocks", w.images[0].protocol)
+			require.NotContains(t, konsoleOutputForTest(t, w), "Saved image:")
+			w.expanded = true
+			require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
+			require.NoError(t, w.close())
+			require.NoError(t, w.close())
+			output := konsoleOutputForTest(t, w)
+			require.Equal(t, 2, strings.Count(output, "\x1b[?1049h"))
+			require.Equal(t, 2, strings.Count(output, "\x1b[?1049l"))
+			require.Equal(t, 1, strings.Count(output, "Saved image:"))
+			require.Less(t, strings.LastIndex(output, "\x1b[?1049l"), strings.Index(output, "Saved image:"))
+			bytes, err := os.ReadFile(w.images[0].file.Path)
+			require.NoError(t, err)
+			require.Equal(t, w.images[0].file.SHA256, sha256.Sum256(bytes))
+		})
+	}
 }
 
 func TestImagePickerKonsoleStatusKeepsUncachedPlacements(t *testing.T) {

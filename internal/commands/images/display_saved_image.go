@@ -234,7 +234,7 @@ func savedImageProtocolForOS(mode string, terminal bool, getenv func(string) str
 }
 
 func savedImageBlockColor(getenv func(string) string) bool {
-	if getenv("NO_COLOR") != "" || getenv("CLICOLOR") == "0" {
+	if getenv("NO_COLOR") != "" || getenv("FORCE_COLOR") == "0" || getenv("CLICOLOR") == "0" {
 		return false
 	}
 	color := strings.ToLower(getenv("COLORTERM"))

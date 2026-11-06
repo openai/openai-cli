@@ -149,12 +149,16 @@ func TestImagePickerWorkspaceExpandedShowsRequestOutcome(t *testing.T) {
 	m := pickerForTest(t)
 	m.width, m.height = 96, 28
 	w := &imagePickerWorkspace{images: []imagePickerWorkspaceImage{{rows: []string{"retained image"}}}}
-	for _, note := range []string{"All images saved.", "Request failed. Edit your prompt or settings before trying again."} {
+	for _, note := range []string{"All images saved.", imagePickerRequestFailureNote} {
 		m.note = note
 		lines := w.expandedView(m, false)
 		require.Equal(t, "    "+note, lines[2])
 		require.Contains(t, lines[3], "retained image")
 		require.Contains(t, lines[len(lines)-1], "Esc back")
+		require.NotContains(t, lines[len(lines)-1], "scroll")
+		require.NotContains(t, lines[len(lines)-1], "images")
 	}
 	require.Contains(t, w.expandedView(m, true)[2], "Generating image")
+	m.height = 8
+	require.Contains(t, w.expandedView(m, true)[2], "Ctrl+C cancel")
 }
