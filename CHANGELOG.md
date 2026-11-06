@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.51.3](https://github.com/openai/openai-cli/compare/v1.51.2...v1.51.3) (2026-11-06)
+
+
+### Bug Fixes
+
+* package Linux setup as one downloadable launcher ([#716](https://github.com/openai/openai-cli/issues/716)) ([36129c1](https://github.com/openai/openai-cli/commit/36129c16b5c483ff4b4b5b4890fb982e0ec7aab2))
+
 ## [1.51.2](https://github.com/openai/openai-cli/compare/v1.51.1...v1.51.2) (2026-11-05)
 
 
