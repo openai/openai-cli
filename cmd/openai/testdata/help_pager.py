@@ -83,7 +83,7 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
         try:
             if action is not None:
                 read_until(b"q: quit")
-                assert b"\x1b[?1049h" in data, (name, "no alternate screen")
+                assert b"\x1b[?1049h" not in data and b"\x1b[?1006h" in data, (name, "first page must enter native scrollback")
                 assert b"What are we making today?" in data, (name, "banner not visible at startup")
                 assert b"Use the OpenAI API" in data, (name, "missing purpose below banner")
                 assert b"Help needs no API key" not in data, (name, "started at bottom")
@@ -123,15 +123,20 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
             restored_flags = fcntl.fcntl(slave, fcntl.F_GETFL) & status_flags
             assert restored_flags == original_flags, (name, "descriptor flags changed", original_flags, restored_flags)
             if action is not None:
-                _, restored_screen = bytes(data).rsplit(b"\x1b[?1049l", 1)
+                assert b"\x1b[?1006l" in data and b"\x1b[?25h" in data, (name, "terminal cleanup missing")
                 if compare_scrollback:
-                    # Compare the original terminal's scrollback, including ANSI style and trailing blank rows.
-                    capture_start = restored_screen.index("┌".encode())
-                    assert restored_screen[capture_start:] == ordinary[ordinary.index("┌".encode()):]
-                    assert restored_screen.count(b"Help needs no API key") == 1
-                    assert restored_screen.count(b"START HERE") == 1
+                    # Remove only viewer-owned footer and mode changes. All document bytes
+                    # must have appeared once, in order, with no banner replay at EOF.
+                    footer = b"Scroll or use arrows   Space: page   q: quit"
+                    normal = bytes(data)
+                    for controls in (b"\x1b[?25l", b"\x1b[?1000h", b"\x1b[?1006h", b"\x1b[?1006l", b"\x1b[?1000l", b"\x1b[?25h", b"\r\x1b[2K", footer):
+                        normal = normal.replace(controls, b"")
+                    assert normal.replace(b"\r\n", b"\n") == ordinary, (name,"changed normal scrollback")
+                    assert b"\x1b[?1049h" not in data
+                elif name == "navigation":
+                    assert b"\x1b[?1049h" in data and b"\x1b[?1049l" in data, "previous-page inspection failed"
                 else:
-                    assert b"Help needs no API key" not in restored_screen, (name, "early exit replayed unseen content")
+                    assert b"Help needs no API key" not in data, (name, "early exit replayed unseen content")
             else:
                 assert b"\x1b[?1049h" not in data, (name, "unexpected pager")
                 if startup_failure:

@@ -2,17 +2,15 @@ package clihelp
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/openai/openai-cli/internal/terminal"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/urfave/cli/v3"
 )
 
@@ -21,17 +19,13 @@ func TestHelpPagerNavigationAndResize(t *testing.T) {
 	for i := range 100 {
 		fmt.Fprintf(&content, "line %03d with readable help\n", i)
 	}
-	m := newHelpPager(content.String(), 80, 12, func(int) string { return content.String() })
+	m := newHelpPager(content.String(), 80, 12)
 	if !m.viewport.AtTop() || !strings.Contains(m.View().Content, "line 000") || strings.Contains(m.View().Content, "line 099") {
 		t.Fatal("help did not start with the first page")
 	}
 	m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	if m.viewport.AtTop() {
 		t.Fatal("Page Down did not scroll")
-	}
-	_, done := m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
-	if done == nil || !m.finished || !m.viewport.AtBottom() || !strings.Contains(m.View().Content, "line 099") {
-		t.Fatal("End did not reach the complete reference")
 	}
 	m.Update(tea.WindowSizeMsg{Width: 20, Height: 5})
 	for _, line := range strings.Split(m.View().Content, "\n") {
@@ -46,17 +40,62 @@ func TestHelpPagerNavigationAndResize(t *testing.T) {
 	if !m.viewport.AtTop() || !strings.Contains(m.View().Content, "line 000") {
 		t.Fatal("Home did not return to the top")
 	}
-	m.Update(tea.WindowSizeMsg{Width: 1, Height: 1})
-	if strings.Contains(m.View().Content, "\n") || ansi.StringWidth(m.View().Content) > 1 {
+	small := newHelpPager(content.String(), 80, 12)
+	small.Update(tea.WindowSizeMsg{Width: 1, Height: 1})
+	if strings.Contains(small.View().Content, "\n") || ansi.StringWidth(small.View().Content) > 1 {
 		t.Fatal("one-cell terminal overflowed")
 	}
-	_, quit := m.Update(tea.KeyPressMsg{Code: 'q'})
-	if quit == nil || m.interrupted {
-		t.Fatal("q must quit successfully")
+	_, done := m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	if done == nil || !m.finished || !m.viewport.AtBottom() {
+		t.Fatal("End did not reach the complete reference")
 	}
-	_, quit = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
-	if quit == nil || !m.interrupted {
-		t.Fatal("Ctrl+C must record cancellation")
+
+}
+
+func TestHelpPagerAppendsOnlyNewRowsOnForwardScroll(t *testing.T) {
+	const full = "first\nsecond\nthird\nfourth\nfifth\nsixth\n\n"
+	m := newHelpPager(full, 80, 4)
+	var out strings.Builder
+	m.output = &out
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 4})
+	if !strings.Contains(out.String(), "first\r\nsecond\r\nthird\r\n") || strings.Contains(out.String(), "fourth") {
+		t.Fatalf("unexpected first page: %q", out.String())
+	}
+	out.Reset()
+	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if !strings.Contains(out.String(), "fourth\r\n") || strings.Contains(out.String(), "third") {
+		t.Fatalf("Down should append only the next row: %q", out.String())
+	}
+	out.Reset()
+	m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	if !strings.Contains(out.String(), "\x1b[?1049h") || !strings.Contains(out.String(), "first") {
+		t.Fatal("Home did not open the previously read rows")
+	}
+	out.Reset()
+	_, done := m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	if done == nil || !strings.Contains(out.String(), "\x1b[?1049l") || !strings.Contains(out.String(), "fifth\r\nsixth\r\n\r\n") || strings.Contains(out.String(), "fourth") {
+		t.Fatalf("EOF must append only the unread tail: %q", out.String())
+	}
+	out.Reset()
+	m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if out.Len() > 0 {
+		t.Fatal("buffered wheel input emitted more text after EOF")
+	}
+}
+
+func TestHelpPagerLimitsAnUnbrokenLineToTheFirstPage(t *testing.T) {
+	// Direct executable paths can span several terminal heights.
+	m := newHelpPager("abcdefghijklmnop\nEND\n", 4, 3)
+	var out strings.Builder
+	m.output = &out
+	m.Update(tea.WindowSizeMsg{Width: 4, Height: 3})
+	if !strings.Contains(out.String(), "abcd\r\nefgh\r\n") || strings.Contains(out.String(), "ijkl") {
+		t.Fatalf("initial page overflowed: %q", out.String())
+	}
+	out.Reset()
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	if !strings.Contains(out.String(), "ijkl\r\nmnop\r\nEND") || strings.Contains(out.String(), "abcd") {
+		t.Fatalf("unexpected final rows: %q", out.String())
 	}
 }
 
@@ -66,7 +105,7 @@ func TestHelpPagerFinishesOnDownwardNavigation(t *testing.T) {
 		tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyPgDown},
 		tea.MouseWheelMsg{Button: tea.MouseWheelDown},
 	} {
-		m := newHelpPager(content, 80, 4, func(int) string { return content })
+		m := newHelpPager(content, 80, 4)
 		m.viewport.SetYOffset(1)
 		_, done := m.Update(scroll)
 		if done == nil || !m.finished || !m.viewport.AtBottom() {
@@ -88,7 +127,7 @@ func TestHelpPagerFinishesWhenResizeExposesTheEnd(t *testing.T) {
 		{"scroll then expose the last line", 2, 5, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := newHelpPager(content, 80, 3, func(int) string { return content })
+			m := newHelpPager(content, 80, 3)
 			m.viewport.SetYOffset(tc.offset)
 			_, done := m.Update(tea.WindowSizeMsg{Width: 80, Height: tc.height})
 			if (done != nil) != tc.finish || m.finished != tc.finish {
@@ -124,25 +163,11 @@ type helpShortWriter struct{}
 
 func (helpShortWriter) Write(p []byte) (int, error) { return len(p) - 1, nil }
 
-func TestHelpPagerOutputFailureCancelsWithoutClosingTerminal(t *testing.T) {
-	file, err := os.CreateTemp(t.TempDir(), "borrowed-output")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	out := &helpPagerOutput{BorrowedWriter: terminal.BorrowedWriter{Writer: helpShortWriter{}, File: file}, cancel: cancel}
-	if _, err := out.Write([]byte("frame")); !errors.Is(err, io.ErrShortWrite) {
-		t.Fatalf("short write disappeared: %v", err)
-	}
-	if ctx.Err() == nil || !errors.Is(out.failure(), io.ErrShortWrite) {
-		t.Fatal("output failure did not stop input")
-	}
-	if err := out.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.WriteString("terminal remains owned by caller"); err != nil {
-		t.Fatal(err)
+func TestHelpPagerStopsOnPartialTerminalWrite(t *testing.T) {
+	m := newHelpPager("one\ntwo\nthree\n", 80, 2)
+	m.output = clioutput.Writer{Context: t.Context(), Sink: helpShortWriter{}}
+	_, done := m.Update(tea.WindowSizeMsg{Width: 80, Height: 2})
+	if done == nil || !errors.Is(m.writeErr, io.ErrShortWrite) {
+		t.Fatalf("short write did not stop the pager: %v", m.writeErr)
 	}
 }
