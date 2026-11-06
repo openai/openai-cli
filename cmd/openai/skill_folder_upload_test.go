@@ -147,7 +147,9 @@ func TestMainSkillFolderHelp(t *testing.T) {
 			require.Zero(t, got.code, "%s", got.stderr)
 			help := strings.Join(strings.Fields(got.stdout), " ")
 			require.Contains(t, help, "hidden files")
-			require.Contains(t, help, "symbolic links")
+			full := runMainDispatch(t, "", strings.Fields("openai help --all "+route)...)
+			require.Zero(t, full.code, "%s", full.stderr)
+			require.Contains(t, strings.Join(strings.Fields(full.stdout), " "), "symbolic links")
 		})
 	}
 }
