@@ -47,6 +47,31 @@ func TestMainRequestOperandRoutes(t *testing.T) {
 			map[string]any{"input": []any{float64(123), float64(456)}},
 		},
 		{
+			"moderation input",
+			[]string{"moderations", "create", "--input", "Translate: hello"},
+			map[string]any{"input": "Translate: hello"},
+		},
+		{
+			"decision input",
+			[]string{"decisions", "create", "--model", "model_demo", "--question", `{"id":"demo","description":"Is this a greeting?"}`, "--input", "Translate: hello"},
+			map[string]any{"input": "Translate: hello"},
+		},
+		{
+			"chat prediction and audio",
+			[]string{"chat", "completions", "create", "--model", "model_demo", "--message", `{"role":"user","content":"hello"}`, "--prediction.content", "Translate: hello", "--audio.voice", "voice: demo"},
+			map[string]any{"prediction": map[string]any{"content": "Translate: hello"}, "audio": map[string]any{"voice": "voice: demo"}},
+		},
+		{
+			"thread message content",
+			[]string{"beta", "threads", "messages", "create", "--thread-id", "thread_demo", "--role", "user", "--content", "Translate: hello"},
+			map[string]any{"content": "Translate: hello"},
+		},
+		{
+			"initial thread message",
+			[]string{"beta", "threads", "create", "--message.content", "Translate: hello"},
+			map[string]any{"messages": []any{map[string]any{"content": "Translate: hello"}}},
+		},
+		{
 			"realtime token limit",
 			[]string{"realtime", "calls", "accept", "--call-id", "call_demo", "--max-output-tokens", "1024"},
 			map[string]any{"max_output_tokens": float64(1024)},

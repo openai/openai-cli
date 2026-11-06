@@ -39,16 +39,23 @@ func TestInputPolicyRejectsMissingRequestMetadata(t *testing.T) {
 }
 
 func TestUnannotatedCommandsOnlyFillAnEntireOlderSnapshot(t *testing.T) {
-	for _, annotated := range []bool{false, true} {
+	for _, annotation := range []string{"none", "action", "resource", "root"} {
 		input := &Flag[any]{Name: "prompt", BodyPath: "input"}
 		query := &Flag[any]{Name: "input", QueryPath: "input"}
-		if annotated {
-			query.InputPolicy = InputPolicyTyped
-		}
 		action := &cli.Command{Name: "create", Flags: []cli.Flag{input, query}}
-		root := &cli.Command{Commands: []*cli.Command{{Name: "responses", Commands: []*cli.Command{action}}}}
+		resource := &cli.Command{Name: "responses", Commands: []*cli.Command{action}}
+		root := &cli.Command{Commands: []*cli.Command{resource}}
+		global := &Flag[string]{Name: "api-key", InputPolicy: InputPolicyText}
+		switch annotation {
+		case "action":
+			query.InputPolicy = InputPolicyTyped
+		case "root":
+			root.Flags = []cli.Flag{global}
+		case "resource":
+			resource.Flags = []cli.Flag{global}
+		}
 		ConfigureUnannotatedCommands(root, map[string][]string{"responses create": {"input"}})
-		if annotated {
+		if annotation != "none" {
 			require.Equal(t, InputPolicyUnknown, input.InputPolicy)
 			require.ErrorContains(t, ConfigureInputMode(root, ""), "--prompt")
 			continue

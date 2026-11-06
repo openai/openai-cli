@@ -56,11 +56,9 @@ func (f *InnerFlag[T]) setInputPolicy(p InputPolicy) { f.InputPolicy = p }
 // If the producer supplied any policies, it owns the entire snapshot and
 // ConfigureInputMode will diagnose omissions instead of filling them in.
 func ConfigureUnannotatedCommands(root *cli.Command, textUnionFields map[string][]string) {
-	type assignment struct {
-		flag   inputPolicyFlag
-		policy InputPolicy
+	if hasDeclaredPolicy(root) {
+		return
 	}
-	var pending []assignment
 	for _, resource := range root.Commands {
 		for _, action := range resource.Commands {
 			fields := textUnionFields[resource.Name+" "+action.Name]
@@ -69,20 +67,23 @@ func ConfigureUnannotatedCommands(root *cli.Command, textUnionFields map[string]
 				if !ok || !isRequestOperand(flag) {
 					continue
 				}
-				if operand.inputPolicy() != InputPolicyUnknown {
-					return
-				}
 				policy := inputPolicyExistingParser
 				if len(fields) != 0 && slices.Contains(fields, operandBodyPath(flag)) {
 					policy = InputPolicyTextStructured
 				}
-				pending = append(pending, assignment{operand, policy})
+				operand.setInputPolicy(policy)
 			}
 		}
 	}
-	for _, item := range pending {
-		item.flag.setInputPolicy(item.policy)
+}
+
+func hasDeclaredPolicy(command *cli.Command) bool {
+	for _, flag := range command.Flags {
+		if operand, ok := flag.(inputPolicyFlag); ok && operand.inputPolicy() != InputPolicyUnknown {
+			return true
+		}
 	}
+	return slices.ContainsFunc(command.Commands, hasDeclaredPolicy)
 }
 
 func operandBodyPath(flag cli.Flag) string {

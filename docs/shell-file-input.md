@@ -63,7 +63,6 @@ Explicit `-structured` flags override legacy mode for their operands.
 Only processes that inherit the setting use it.
 Containers, SSH sessions, and environment-clearing launchers need separate configuration.
 An explicit `literal` assignment overrides inherited `legacy` for that process.
-The proposed legacy support duration still requires owner acceptance; no lifetime guarantee applies here.
 
 ## Text references and binary paths
 
