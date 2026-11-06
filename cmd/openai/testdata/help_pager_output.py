@@ -13,14 +13,18 @@ import termios
 import time
 
 
-def saturate(slave, fill):
-    count = 0
-    while count < 1 << 20:
-        try:
-            count += os.write(fill, b" " * 4096)
-        except BlockingIOError:
-            break
-    assert 0 < count < 1 << 20, "PTY did not saturate"
+def saturate(slave):
+    fill = os.open(os.ttyname(slave), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
+    try:
+        count = 0
+        while count < 1 << 20:
+            try:
+                count += os.write(fill, b" " * 4096)
+            except BlockingIOError:
+                break
+        assert 0 < count < 1 << 20, "PTY did not saturate"
+    finally:
+        os.close(fill)
     termios.tcflow(slave, termios.TCOOFF)
 
 
@@ -33,8 +37,6 @@ def check(binary, action, expected):
         before = termios.tcgetattr(slave)
         mask = os.O_NONBLOCK | os.O_APPEND | os.O_ASYNC
         flags = fcntl.fcntl(slave, fcntl.F_GETFL) & mask
-        fill = os.open(os.ttyname(slave), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
-        descriptors.callback(os.close, fill)
         env = dict(HOME=home, PATH="/usr/bin:/bin", TERM="xterm-256color", NO_COLOR="1",
                    OPENAI_CLI_BARE_INPUT="1", OPENAI_CLI_MAIN_DISPATCH_PROCESS="1",
                    OPENAI_CLI_NO_UPDATE_CHECK="1", OPENAI_CLI_NO_AUTO_UPDATE="1",
@@ -49,7 +51,7 @@ def check(binary, action, expected):
         proc = None
         try:
             if action == "startup":
-                saturate(slave, fill)
+                saturate(slave)
             proc = subprocess.Popen([binary, f"-test.run=^{entrypoint}$", "--", "openai"], cwd=home,
                                     env=env, stdin=slave, stdout=slave, stderr=slave, pass_fds=control[:1])
             deadline = time.monotonic() + 5
@@ -64,7 +66,7 @@ def check(binary, action, expected):
                     assert time.monotonic() < deadline, (action, "first page did not appear")
                     if select.select([master], [], [], .05)[0]:
                         data.extend(os.read(master, 65536))
-                saturate(slave, fill)
+                saturate(slave)
                 os.write(master, b"\x1b[B")  # Draw while the terminal cannot accept more output.
             if action == "key":
                 os.write(master, b"\x03")
