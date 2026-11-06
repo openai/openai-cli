@@ -28,7 +28,7 @@ func markListPager(command *cli.Command) {
 	command.Metadata[listPagerMetadata] = true
 }
 
-// Apply the same terminal behavior after the command tree and its aliases exist.
+// Decorate list actions once, including actions added later during startup.
 func configureRegisteredLists(root *cli.Command) {
 	var visit func(*cli.Command, string)
 	visit = func(parent *cli.Command, parentPath string) {
