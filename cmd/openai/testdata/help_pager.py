@@ -170,7 +170,7 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
                 if compare_scrollback:
                     # Remove only viewer-owned footer and mode changes. All document bytes
                     # must have appeared once, in order, with no banner replay at EOF.
-                    footer = b"Scroll or use arrows   Space: page   q: end   Esc: quit"
+                    footer = b"Scroll or use arrows   Space: page   q: end"
                     normal = bytes(data)
                     for controls in (b"\x1b[?25l", b"\x1b[?1000h", b"\x1b[?1006h", b"\x1b[?1006l", b"\x1b[?1000l", b"\x1b[?25h", b"\x1b[5n", b"\r\x1b[2K", footer):
                         normal = normal.replace(controls, b"")

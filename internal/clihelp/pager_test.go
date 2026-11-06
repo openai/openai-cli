@@ -14,6 +14,27 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+func TestHelpPagerFooterShowsAvailableActions(t *testing.T) {
+	for _, tc := range []struct {
+		width  int
+		typing bool
+		want   string
+	}{
+		{80, true, "Start typing your next command   Space: page   q: end"},
+		{42, true, "Start typing your next command   q: end"},
+		{32, true, "Start typing your next command"},
+		{24, true, "Start typing   q: end"},
+		{80, false, "Scroll or use arrows   Space: page   q: end"},
+		{24, false, "Scroll   q: end"},
+	} {
+		pager := newHelpPager("Help", tc.width, 8)
+		pager.draft = &helpDraft{enabled: tc.typing}
+		if got := pager.footer(); got != tc.want {
+			t.Errorf("width %d, typing %t: got %q, want %q", tc.width, tc.typing, got, tc.want)
+		}
+	}
+}
+
 func TestHelpPagerNavigationAndResize(t *testing.T) {
 	var content strings.Builder
 	for i := range 100 {

@@ -68,7 +68,8 @@ preexec() { builtin print -r -- "$1" >> "$HOME/submitted"; }
         try:
             read_until(lambda: prompt in raw)
             os.write(fd, b"openai\r")
-            read_until(lambda: b"Type a command" in raw)
+            read_until(lambda: b"Start typing your next command" in raw)
+            assert b"Esc: quit" not in raw
             assert b"START HERE" in raw
             auto_cursor = False
             queries = raw.count(cursor)

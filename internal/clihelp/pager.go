@@ -357,17 +357,21 @@ func (m *helpPager) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *helpPager) footer() string {
-	footer := "Scroll or use arrows   Space: page   q: end   Esc: quit"
-	if m.viewport.Width() < len(footer) {
-		footer = "Scroll   q: end   Esc: quit"
-	}
+	width := m.viewport.Width()
 	if m.draft != nil && m.draft.enabled {
-		footer = "Type a command   Space: page   q: end   Esc: quit"
-		if m.viewport.Width() < len(footer) {
-			footer = "Type a command   q: end   Esc: quit"
+		const hint = "Start typing your next command"
+		for _, message := range []string{hint + "   Space: page   q: end", hint + "   q: end", hint} {
+			if len(message) <= width {
+				return message
+			}
 		}
+		return ansi.Truncate("Start typing   q: end", width, "")
 	}
-	return ansi.Truncate(footer, m.viewport.Width(), "")
+	const navigation = "Scroll or use arrows   Space: page   q: end"
+	if len(navigation) <= width {
+		return navigation
+	}
+	return ansi.Truncate("Scroll   q: end", width, "")
 }
 
 func (m *helpPager) View() tea.View {

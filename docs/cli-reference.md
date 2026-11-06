@@ -6,8 +6,8 @@ As you scroll, the help stays in your terminal history. Your prompt appears belo
 Use the mouse wheel, arrow keys, or Space to scroll. Press `q` to show the rest of the help immediately.
 Press Escape to leave at your current position.
 
-With zsh command insertion enabled, look for `Type a command` at the bottom of the page.
-Start typing to show the remaining help. Your text appears at your zsh prompt for editing.
+With zsh command insertion enabled, the footer says `Start typing your next command`.
+Type to show the remaining help and continue editing at your zsh prompt.
 Press Enter at that prompt to run it. Before typing, `q` or `Q` jumps to the end and Space scrolls one page.
 To enable command insertion for the current zsh session, run:
 
