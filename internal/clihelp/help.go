@@ -28,7 +28,7 @@ const setupHelp = `{{$guide := setupGuide .}}{{$run := $guide.AfterKeyEntry}}Set
    https://platform.openai.com/settings/organization/api-keys
 
 2. ENTER IT IN YOUR SHELL
-{{if or $guide.Full (eq $guide.Shell "bash") (eq $guide.Shell "zsh")}}   Bash or zsh (macOS / Linux)
+{{if or $guide.Full (eq $guide.Shell "bash") (eq $guide.Shell "zsh")}}   Bash or zsh{{if $guide.Full}} (macOS / Linux){{end}}
      Run this line, paste your key (hidden), then press Enter:
        {{suggestFor . "read -rs OPENAI_API_KEY" "bash" "zsh"}}
      Then run this line so the CLI can read the key:
@@ -39,7 +39,7 @@ const setupHelp = `{{$guide := setupGuide .}}{{$run := $guide.AfterKeyEntry}}Set
      Run this line, paste your key (hidden), then press Enter:
        {{suggestFor . "read --silent --global --export OPENAI_API_KEY" "fish"}}
 
-{{end}}{{if or $guide.Full (eq $guide.Shell "pwsh")}}   PowerShell (Windows, macOS, or Linux)
+{{end}}{{if or $guide.Full (eq $guide.Shell "pwsh")}}   PowerShell{{if $guide.Full}} (Windows, macOS, or Linux){{end}}
 {{if or $guide.Full $guide.StartPowerShell}}     From Command Prompt (cmd.exe), run {{suggestFor . "powershell" "cmd"}} first.
      Continue in that PowerShell session.
 {{end}}     Run this line, paste your key (hidden), then press Enter:
