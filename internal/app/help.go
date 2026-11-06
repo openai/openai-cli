@@ -367,6 +367,12 @@ func configureHelpGroups(root *cli.Command) {
 			resource = command.Name
 		}
 		switch resource {
+		case "admin:organization:external-storage":
+			if validate := command.Command("validate"); validate != nil {
+				setCompleteHelpContent(validate, clihelp.Content{
+					Summary: "Checks access by writing test files to your cloud storage. Success enables Private Safety Processing with the project's existing retention policy.",
+				})
+			}
 		case "skills", "skills:versions":
 			if create := command.Command("create"); create != nil {
 				for _, flag := range create.Flags {

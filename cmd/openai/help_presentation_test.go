@@ -235,6 +235,7 @@ func TestMainActionHelpPreservesConsequencesAndPreconditions(t *testing.T) {
 		{"conversations delete", "Items in the conversation will not be deleted."},
 		{"vector-stores files delete", "the file itself will not be deleted. To delete the file, use the delete file endpoint."},
 		{"admin external-storage delete", "Repeating a deletion also completes any interrupted retention update. Cloud storage is unchanged."},
+		{"admin external-storage validate", "writing test files to your cloud storage. Success enables Private Safety Processing with the project's existing retention policy."},
 		{"batches cancel", "it will have partial results (if any) available in the output file."},
 		{"responses cancel", "Only responses created with the background parameter set to true can be cancelled."},
 		{"admin projects archive", "Archived projects cannot be used or updated."},
