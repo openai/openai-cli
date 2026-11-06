@@ -11,6 +11,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
 	"github.com/urfave/cli/v3"
@@ -175,6 +176,9 @@ func apiAuthenticationAdminCommand(root *cli.Command, failure error) bool {
 func isAdminAPICommand(command *cli.Command) bool {
 	if command == nil {
 		return false
+	}
+	if required, _ := command.Metadata[admin.CredentialsRequiredMetadata].(bool); required {
+		return true
 	}
 	// Resource metadata follows the generated admin commands into nested groups
 	// and the projects shortcut. Credential availability cannot select a route.
