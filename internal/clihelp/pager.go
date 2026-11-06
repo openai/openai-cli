@@ -144,10 +144,11 @@ func (m *helpPager) run(ctx context.Context, in, out *os.File, width, height int
 	if m.draft != nil {
 		reader = m.draft.input
 	}
+	reader, releaseInput := ownHelpProgramInput(in, reader)
 	_, err = tea.NewProgram(m, tea.WithInput(reader), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithContext(programContext),
 		tea.WithWindowSize(width, height), tea.WithColorProfile(commandHelpStyle(root).profile), tea.WithoutSignalHandler()).Run()
-	// Tea has released its input reader. A terminal can have reports in
-	// transit even if the last event the pager handled was a keyboard exit.
+	releaseInput()
+	// The terminal can have reports in transit even after a keyboard exit.
 	stopErr := m.stopMouse()
 	if stopErr == nil && m.writeErr == nil && m.active {
 		var interrupted bool

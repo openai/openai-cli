@@ -4,12 +4,42 @@ package clihelp
 
 import (
 	"context"
+	"io"
 	"os"
+	"sync"
 	"time"
 
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"golang.org/x/sys/unix"
 )
+
+// A killed Tea program cancels its reader without waiting for its last poll.
+// Revoke that reader before asking for a terminal reply. Otherwise it can
+// consume both the reply and a shell command delivered in the same write.
+type helpProgramInput struct {
+	*os.File
+	mu     sync.Mutex
+	source io.Reader
+}
+
+func ownHelpProgramInput(tty *os.File, source io.Reader) (io.Reader, func()) {
+	input := &helpProgramInput{File: tty, source: source}
+	return input, func() {
+		input.mu.Lock()
+		input.source = nil
+		input.mu.Unlock()
+	}
+}
+
+func (r *helpProgramInput) Read(buf []byte) (int, error) {
+	// Tea's cancelable Unix reader polls the file before calling Read.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.source == nil {
+		return 0, io.EOF
+	}
+	return r.source.Read(buf)
+}
 
 // Wait for the terminal to process the preceding mouse reset before restoring
 // cooked input. The terminal writes its status response after its queued mouse

@@ -29,6 +29,7 @@ def answer_status_request(master, handoff, pending_command):
         backlog = memoryview(report[5:] + report * (10000 if handoff == "large" else 180))
         while backlog:
             backlog = backlog[os.write(master, backlog):]
+    if handoff in ("split", "large", "signal typeahead"):
         reply += pending_command
     os.write(master, reply)
 
@@ -153,7 +154,7 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
             assert child.wait(timeout=2) == code, (name, child.returncode, bytes(data))
             if mouse_handoff:
                 assert answered, (name, "missing handoff request")
-                if mouse_handoff in ("split", "large"):
+                if mouse_handoff in ("split", "large", "signal typeahead"):
                     assert select.select([slave], [], [], .25)[0], "following shell input was consumed"
                     assert os.read(slave, 4096) == pending_command, "reports leaked or shell input was damaged"
             restored = termios.tcgetattr(slave)
@@ -176,6 +177,8 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
                         normal = normal.replace(controls, b"")
                     assert normal.replace(b"\r\n", b"\n") == ordinary, (name,"changed normal scrollback")
                     assert b"\x1b[?1049h" not in data
+                elif mouse_handoff == "signal typeahead":
+                    assert b"Help needs no API key" not in data, (name, "signal printed unread help")
                 elif mouse_handoff:
                     assert b"Help needs no API key" in data, (name, "missing end of help")
                 elif name == "navigation":
@@ -232,6 +235,7 @@ check("escape", action=b"\x1b")
 check("ctrl-c", action=b"\x03", code=130)
 check("interrupt", action="signal", code=130)
 check("terminate", action="terminate", code=143)
+check("cancel on first page and preserve the next command", action="terminate", code=143, mouse_handoff="signal typeahead")
 check("context-cancel", cancel_context=True, code=1)
 check("startup-failure", startup_failure=True, action=None, code=1)
 for name, args in (("explicit-help", ("--help",)), ("help-command", ("help",)),
