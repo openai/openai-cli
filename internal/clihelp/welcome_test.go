@@ -406,8 +406,12 @@ func TestWelcomeRepeatedConfigurationInteractive(t *testing.T) {
 		if got := strings.Count(out.String(), welcomeTagline); got != 0 && !wantBanner || got != 1 && wantBanner {
 			t.Fatalf("args=%q: banner count=%d, want banner=%t", args, got, wantBanner)
 		}
-		if !strings.Contains(out.String(), "models") || !strings.Contains(ansi.Strip(out.String()), "USAGE\n") {
-			t.Fatalf("missing complete reference: %q", out.String())
+		plain := ansi.Strip(out.String())
+		if !strings.Contains(plain, "USAGE\n") || strings.Contains(plain, "List models") == wantBanner {
+			t.Fatalf("args=%q: wrong startup or explicit help: %q", args, plain)
+		}
+		if wantBanner && (strings.Contains(plain, "openai explore") || !strings.Contains(plain, "openai --help")) {
+			t.Fatalf("invalid startup guidance for a tree without explore: %q", plain)
 		}
 	}
 }

@@ -56,7 +56,7 @@ func TestMainDispatchWelcomeMSYSPipes(t *testing.T) {
 				want.stdout = strings.TrimSuffix(want.stdout, "\n")
 			}
 			if tc.banner {
-				header, rest, found := strings.Cut(got.stdout, "\n\n")
+				header, _, found := strings.Cut(got.stdout, "\n\n")
 				plain := ansi.Strip(header)
 				if !found || strings.Count(plain, "What are we making today?") != 1 ||
 					!strings.Contains(plain, "OpenAI CLI") || !strings.Contains(plain, ">_") {
@@ -67,8 +67,15 @@ func TestMainDispatchWelcomeMSYSPipes(t *testing.T) {
 						t.Fatalf("welcome exceeds the existing unknown-width fallback: %q", line)
 					}
 				}
-				got.stdout = rest
-				_, want.stdout, _ = strings.Cut(control.stdout, "\n")
+				overview := ansi.Strip(got.stdout)
+				checkStartupOverview(t, overview)
+				if !strings.Contains(overview, "openai explore images") {
+					t.Fatalf("MSYS startup must offer search without a native console: %q", overview)
+				}
+				if got.code != 0 || got.stderr != "" {
+					t.Fatalf("MSYS startup failed: %+v", got)
+				}
+				return
 			}
 			got.stdout = ansi.Strip(got.stdout)
 			if got != want {

@@ -40,14 +40,13 @@ func TestMainDispatchWelcomeWindowsConsole(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := runWelcomeWindowsConsole(t, tc.args, tc.env)
-			want := control
 			if strings.Contains(got, "\x1b") {
 				t.Fatalf("classic console help contains terminal controls: %q", got)
 			}
 			if tc.banner {
 				at := strings.Index(got, description)
 				if at < 0 {
-					t.Fatalf("welcome lost complete help: %q", got)
+					t.Fatalf("welcome lost its introduction: %q", got)
 				}
 				header := got[:at]
 				if strings.Count(header, "What are we making today?") != 1 || !strings.Contains(header, "OpenAI CLI") {
@@ -58,11 +57,9 @@ func TestMainDispatchWelcomeWindowsConsole(t *testing.T) {
 						t.Fatalf("classic console welcome contains non-ASCII text or controls: %q", header)
 					}
 				}
-				got = got[at:]
-				want = control[strings.Index(control, description):]
-			}
-			if got != want {
-				t.Fatalf("existing help changed: got=%q want=%q", got, want)
+				checkStartupOverview(t, got)
+			} else if got != control {
+				t.Fatalf("existing help changed: got=%q want=%q", got, control)
 			}
 		})
 	}
