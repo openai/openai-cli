@@ -15,10 +15,17 @@ import termios
 import time
 
 
-def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width=100, height=24, cancel_context=False, startup_failure=False):
+def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width=100, height=24,
+          cancel_context=False, startup_failure=False, compare_scrollback=False):
     with tempfile.TemporaryDirectory(prefix="help-pager-") as home:
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
+        if compare_scrollback:
+            # Compare bytes written by the CLI. macOS PTY newline translation
+            # can insert a second CR at an output-buffer boundary.
+            settings = termios.tcgetattr(slave)
+            settings[1] &= ~termios.ONLCR
+            termios.tcsetattr(slave, termios.TCSANOW, settings)
         original = termios.tcgetattr(slave)
         # Compare public mutable flags. An unchanged Go --version control also
         # adds macOS's private 0x10000 flag before any viewer runs.
@@ -117,7 +124,7 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
             assert restored_flags == original_flags, (name, "descriptor flags changed", original_flags, restored_flags)
             if action is not None:
                 _, restored_screen = bytes(data).rsplit(b"\x1b[?1049l", 1)
-                if name in ("wheel to bottom", "page to bottom", "end to bottom", "resize to bottom"):
+                if compare_scrollback:
                     # Compare the original terminal's scrollback, including ANSI style and trailing blank rows.
                     capture_start = restored_screen.index("┌".encode())
                     assert restored_screen[capture_start:] == ordinary[ordinary.index("┌".encode()):]
@@ -148,11 +155,11 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
                 os.close(fd)
 
 
-ordinary = check("fits", height=600, extra={"NO_COLOR": "1"}, action=None)
-check("end to bottom", action=b"G", extra={"NO_COLOR": "1"})
-check("resize to bottom", extra={"NO_COLOR": "1"})
-check("page to bottom", action=b" " * 12, extra={"NO_COLOR": "1"})
-check("wheel to bottom", action=b"\x1b[<65;5;5M" * 100, extra={"NO_COLOR": "1"})
+ordinary = check("fits", height=600, extra={"NO_COLOR": "1"}, action=None, compare_scrollback=True)
+check("end to bottom", action=b"G", extra={"NO_COLOR": "1"}, compare_scrollback=True)
+check("resize to bottom", extra={"NO_COLOR": "1"}, compare_scrollback=True)
+check("page to bottom", action=b" " * 12, extra={"NO_COLOR": "1"}, compare_scrollback=True)
+check("wheel to bottom", action=b"\x1b[<65;5;5M" * 100, extra={"NO_COLOR": "1"}, compare_scrollback=True)
 check("navigation")
 check("quit", extra={"NO_COLOR": "1"}, width=40)
 check("escape", action=b"\x1b")
