@@ -45,6 +45,19 @@ Use a file path when an API needs a named file or a specific extension.
 Uploads containing readers stream once and do not retry or replay automatically.
 Multipart uploads preserve NUL and non-UTF8 bytes.
 
+### Skill folders
+
+Pass the folder containing `SKILL.md` to either create command.
+
+```sh
+openai skills create --files ./demo-skill
+openai skills versions create --skill-id skill_example --files ./demo-skill --default=false
+```
+
+The CLI packages the selected folder under its own name. It includes hidden files, nested folders, and executable bits.
+Select only the files you intend to share. Remove symbolic links and special files before uploading.
+Packaging uses temporary disk space. To upload an existing ZIP, pass its filename or use `--files -` for stdin.
+
 ### Windows shells
 
 Windows PowerShell 5.1 can transform binary data in pipelines and redirection.
