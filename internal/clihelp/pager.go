@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -90,25 +89,27 @@ func (m *helpPager) run(ctx context.Context, in, out *os.File, width, height int
 	// allowing cancellation to finish terminal cleanup before releasing signals.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	var signalCode atomic.Int32
+	signalCode := 0
 	listenerDone := make(chan struct{})
 	go func() {
 		defer close(listenerDone)
-		select {
-		case received := <-signals:
-			code := int32(130)
+		if received, ok := <-signals; ok {
+			signalCode = 130
 			if received == syscall.SIGTERM {
-				code = 143
+				signalCode = 143
 			}
-			signalCode.Store(code)
 			cancel()
-		case <-programContext.Done():
 		}
 	}()
 	defer func() {
+		// A signal and the terminal's final reply can arrive together. Let
+		// the listener account for queued signals before choosing the status.
 		signal.Stop(signals)
-		cancel()
+		close(signals)
 		<-listenerDone
+		if signalCode != 0 {
+			returnErr = cli.Exit(errors.Join(context.Canceled, returnErr), signalCode)
+		}
 	}()
 	defer func() {
 		if restoreErr := errors.Join(term.Restore(in.Fd(), inputState), term.Restore(out.Fd(), outputState)); restoreErr != nil {
@@ -132,9 +133,6 @@ func (m *helpPager) run(ctx context.Context, in, out *os.File, width, height int
 		m.interrupted = m.interrupted || interrupted
 	}
 	cleanupErr := errors.Join(m.writeErr, stopErr, m.close())
-	if code := signalCode.Load(); code != 0 {
-		return cli.Exit(errors.Join(context.Canceled, err, cleanupErr), int(code))
-	}
 	if m.interrupted || errors.Is(err, tea.ErrInterrupted) {
 		return cli.Exit(errors.Join(context.Canceled, err, cleanupErr), 130)
 	}

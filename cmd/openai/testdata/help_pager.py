@@ -98,6 +98,8 @@ def check(name, args=(), extra=None, redirected=None, action=b"q", code=0, width
                         if not answered and b"\x1b[5n" in data:
                             answered = True
                             assert data.index(b"\x1b[?1000l") < data.index(b"\x1b[?1006l") < data.index(b"\x1b[5n")
+                            if mouse_handoff == "signal":
+                                child.terminate()
                             answer_status_request(master, mouse_handoff, pending_command)
                         continue
                 if child.poll() is not None:
@@ -208,6 +210,8 @@ check("long launcher scrolls", launcher=launcher, width=80, action=b"G",
 check("delayed wheel reports and command typeahead", action=b"\x1b[<65;75;28M" * 200, mouse_handoff="split")
 check("large wheel backlog and command typeahead", action=b"G", mouse_handoff="large")
 check("interrupt during wheel handoff", action=b"G", mouse_handoff="interrupt", code=130)
+for attempt in range(1, 9):
+    check(f"signal arrives with final terminal reply (run {attempt})", action=b"G", mouse_handoff="signal", code=143)
 check("terminal omits status response", action=b"G", mouse_handoff="no response")
 check("navigation")
 check("quit", extra={"NO_COLOR": "1"}, width=40)
