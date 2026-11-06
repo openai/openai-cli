@@ -1,4 +1,5 @@
 """Keep a real zsh in control of submitting a typed help draft."""
+from contextlib import suppress
 import errno
 import fcntl
 import os
@@ -132,10 +133,9 @@ preexec() { builtin print -r -- "$1" >> "$HOME/submitted"; }
         finally:
             os.close(fd)
             if pid:
-                try:
+                # Closing the PTY can make zsh exit before cleanup sends the signal.
+                with suppress(ProcessLookupError):
                     os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
                 os.waitpid(pid, 0)
 
 
