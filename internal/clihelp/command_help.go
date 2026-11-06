@@ -194,7 +194,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 				out.WriteByte('\n')
 			}
 			out.WriteString(wrapDescription(example.Description, "  ", width))
-			fmt.Fprintf(&out, "    $ %s\n", commandsuggest.Record(command, run+" "+example.Command))
+			fmt.Fprintf(&out, "    $ %s\n", recordHelpExample(command, run+" "+example.Command, content.BashExamples))
 		}
 		if !supplied && (path == "files create" || path == "files upload") {
 			out.WriteString(wrapDescription("example.txt is the path to your existing file. Replace it with your file's path.", "  ", width))
@@ -278,14 +278,18 @@ func compactCommandHelp(command *cli.Command, invocation, path, summary string, 
 
 	native, exampleRun := commandHelpInvocations(command, invocation)
 	var example string
+	exampleTitle := "EXAMPLE"
 	if len(content.Examples) != 0 && exampleRun != "" {
 		example = exampleRun + " " + content.Examples[0].Command
+		if content.BashExamples {
+			exampleTitle = "EXAMPLE (BASH OR ZSH)"
+		}
 	} else {
 		example = requestPipeExample(native, path)
 	}
 	if example != "" {
-		out.WriteString("\n" + style.render(style.section, "EXAMPLE") + "\n")
-		fmt.Fprintf(&out, "  $ %s\n", commandsuggest.Record(command, example))
+		out.WriteString("\n" + style.render(style.section, exampleTitle) + "\n")
+		fmt.Fprintf(&out, "  $ %s\n", recordHelpExample(command, example, content.BashExamples))
 	}
 	if content.InputNote == "" {
 		if note := synopsisInputNote(command); note != "" {

@@ -2,7 +2,9 @@ package clihelp
 
 import (
 	"context"
+	"path/filepath"
 
+	"github.com/openai/openai-cli/internal/commandsuggest"
 	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
@@ -20,6 +22,13 @@ func CommandExamples(command *cli.Command, path string) []Example {
 // ExampleInvocation keeps Bash-specific examples copyable in their stated shell.
 func ExampleInvocation(command *cli.Command, fallback, native string) string {
 	if content, _ := command.Metadata["help-content"].(Content); content.BashExamples {
+		root := command.Root()
+		if name, ok := root.Metadata["help-executable-path"].(string); ok {
+			return terminal.ShellQuote(filepath.ToSlash(name))
+		}
+		if root.Metadata["help-control-launcher"] != true {
+			return filepath.ToSlash(fallback)
+		}
 		return fallback
 	}
 	return native
@@ -35,4 +44,22 @@ func commandHelpInvocations(command *cli.Command, invocation string) (native, ex
 	}
 	native, bash := helpInvocations(root, invocation, shell)
 	return native, ExampleInvocation(command, bash, native)
+}
+
+// Keep a visible example available for insertion only in shells that accept it.
+func recordHelpExample(command *cli.Command, text string, bashOnly bool) string {
+	if bashOnly {
+		return recordForShells(command, text, "bash", "zsh")
+	}
+	return commandsuggest.Record(command, text)
+}
+
+func recordForShells(command *cli.Command, text string, shells ...string) string {
+	rendered := text
+	for _, shell := range shells {
+		if candidate := commandsuggest.RecordFor(command, shell, text); candidate != text {
+			rendered = candidate
+		}
+	}
+	return rendered
 }

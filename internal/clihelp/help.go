@@ -454,15 +454,7 @@ func installSubcommandHelp() {
 			}
 			local["setupGuide"] = setupGuide
 			local["suggest"] = commandsuggest.Record
-			local["suggestFor"] = func(command *cli.Command, text string, shells ...string) string {
-				rendered := text
-				for _, shell := range shells {
-					if candidate := commandsuggest.RecordFor(command, shell, text); candidate != text {
-						rendered = candidate
-					}
-				}
-				return rendered
-			}
+			local["suggestFor"] = recordForShells
 			customPrinter(out, template, data, local)
 
 		}
@@ -496,7 +488,7 @@ func helpInvocations(root *cli.Command, invocation, shell string) (native, bash 
 	if shell == "pwsh" {
 		native = "& " + native
 	}
-	return native, terminal.ShellQuote(name)
+	return native, terminal.ShellQuote(filepath.ToSlash(name))
 }
 
 func fullReferenceRequested(command *cli.Command) bool {

@@ -16,6 +16,21 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+func TestBashHelpExampleUsesBashLauncherQuoting(t *testing.T) {
+	const native = `& 'preview''s build/openai'`
+	command := &cli.Command{Name: "view", Metadata: map[string]any{
+		"help-content":         Content{BashExamples: true},
+		"help-executable-path": filepath.FromSlash("preview's build/openai"),
+	}}
+	if got := ExampleInvocation(command, native, native); got != `'preview'\''s build/openai'` {
+		t.Fatalf("Bash example includes incompatible launcher syntax: %q", got)
+	}
+	command.Metadata["help-content"] = Content{}
+	if got := ExampleInvocation(command, native, native); got != native {
+		t.Fatalf("ordinary example lost the native launcher: %q", got)
+	}
+}
+
 func TestEveryActionUsesTheSameOverview(t *testing.T) {
 	const extra = "Expressions may include quoted filter operands."
 	render := func(name string, flags []cli.Flag, args ...string) string {
