@@ -24,7 +24,7 @@ import (
 const realtimeSpeechModel = "gpt-realtime-2.1-mini"
 const syntheticScript = "@synthetic-untrusted-script 雪"
 
-func serveRealtimeSpeech(t *testing.T, sendAudio func(context.Context, *websocket.Conn)) *httptest.Server {
+func serveRealtimeSpeech(t *testing.T, wantAuthorization string, sendAudio func(context.Context, *websocket.Conn)) *httptest.Server {
 	t.Helper()
 	var connections atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +34,7 @@ func serveRealtimeSpeech(t *testing.T, sendAudio func(context.Context, *websocke
 			http.NotFound(w, r)
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer synthetic-speech-key" || r.Header.Get("OpenAI-Project") != "proj_synthetic" {
+		if r.Header.Get("Authorization") != wantAuthorization || r.Header.Get("OpenAI-Project") != "proj_synthetic" {
 			t.Error("realtime speech did not preserve the requested key and project")
 			http.Error(w, "", http.StatusUnauthorized)
 			return
@@ -111,14 +111,24 @@ func speechTestArgs(server *httptest.Server, output, format string) []string {
 func TestMainSpeakRealtime(t *testing.T) {
 	pcm := []byte{0x42, 0x80, 0x53, 0x00}
 	for _, tc := range []struct {
-		name, format, status string
+		name, format, status, header string
 	}{
-		{"PCM stdout", "pcm", "completed"},
-		{"WAV file", "wav", "completed"},
-		{"incomplete after audio", "wav", "incomplete"},
+		{"PCM stdout", "pcm", "completed", ""},
+		{"explicit Authorization override", "pcm", "completed", "Bearer synthetic-override"},
+		{"explicit Authorization removal", "pcm", "completed", "remove"},
+		{"WAV file", "wav", "completed", ""},
+		{"incomplete after audio", "wav", "incomplete", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			server := serveRealtimeSpeech(t, func(ctx context.Context, conn *websocket.Conn) {
+			wantAuthorization := "Bearer synthetic-speech-key"
+			if tc.header != "" {
+				wantAuthorization = tc.header
+			}
+			if tc.header == "remove" {
+				wantAuthorization = ""
+			}
+			server := serveRealtimeSpeech(t, wantAuthorization, func(ctx context.Context, conn *websocket.Conn) {
+				writeSpeechEvent(t, ctx, conn, `{"type":"response.output_audio_transcript.delta","response_id":"resp_synthetic","delta":"Read this line."}`)
 				for _, chunk := range [][]byte{pcm[:2], pcm[2:]} {
 					writeSpeechEvent(t, ctx, conn, `{"type":"response.output_audio.delta","response_id":"resp_synthetic","delta":"`+base64.StdEncoding.EncodeToString(chunk)+`"}`)
 				}
@@ -131,6 +141,9 @@ func TestMainSpeakRealtime(t *testing.T) {
 			}
 			env := []string{"OPENAI_API_KEY=synthetic-speech-key", "OPENAI_ADMIN_KEY=synthetic-unused-admin"}
 			args := speechTestArgs(server, out, tc.format)
+			if tc.header != "" {
+				args = append([]string{"openai", "--header", "Authorization: " + wantAuthorization}, args[1:]...)
+			}
 			var input *os.File
 			if tc.name == "WAV file" {
 				// This is the protected piped request printed by the composer.
@@ -180,7 +193,7 @@ func TestMainSpeakRealtime(t *testing.T) {
 
 func TestMainSpeakRealtimeInterrupt(t *testing.T) {
 	connected, closed := make(chan struct{}), make(chan struct{})
-	server := serveRealtimeSpeech(t, func(ctx context.Context, conn *websocket.Conn) {
+	server := serveRealtimeSpeech(t, "Bearer synthetic-speech-key", func(ctx context.Context, conn *websocket.Conn) {
 		close(connected)
 		_, _, _ = conn.Read(ctx)
 		close(closed)
