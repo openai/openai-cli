@@ -63,15 +63,21 @@ The installer downloads the matching ZIP and makes `openai` available in this te
 
 ## Explore commands
 
-Run `openai` to check your installation. To find a command by describing a task, open Explore in your terminal.
-Both commands work without an API key.
+In Explore, describe what you want to do to find a command. Try counting tokens (pieces of text) without an API key.
+
+1. Run `openai explore` in your terminal.
+2. In Explore's search box, type `count tokens offline`.
+3. Use the arrow keys to highlight `openai tokenizer count`.
+4. Press **Enter** to select the command and return to your terminal.
+
+If your terminal prompt already contains `openai tokenizer count`, add a space and `--text "hello"`.
+Otherwise, type the full line below. Press **Enter** to run it.
 
 ```sh
-openai explore
+openai tokenizer count --text "hello"
 ```
 
-Type `count tokens offline`. Use the arrow keys to highlight `openai tokenizer count`, then press Enter.
-Explore selects the command. Run it from your shell when you're ready.
+Look for `Tokens: 1` in the output.
 
 ## Authentication
 
