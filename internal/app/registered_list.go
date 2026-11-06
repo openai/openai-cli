@@ -163,6 +163,9 @@ func registeredListRequest(request *http.Request, next option.MiddlewareNext) (*
 			return nil, context.Canceled
 		}
 	}
+	if err := request.Context().Err(); err != nil {
+		return nil, err
+	}
 	response, err := next(request)
 	if err == nil && response != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
 		source.seen[key] = true

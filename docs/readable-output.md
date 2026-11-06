@@ -80,8 +80,8 @@ openai files list --format jsonl > files.jsonl
 Pipes and redirected files receive each item before the CLI requests more items.
 The CLI does not collect the entire list. The SDK still loads individual pages.
 Models sorting retains its existing single-response collection.
-Terminal output retains automatic paging for long results. The CLI buffers at
-most one screen plus the item that crosses that screen before opening the pager.
+In a terminal, most lists print each API page before requesting the next page.
+With keyboard browsing enabled, Space opens the full-screen view at the next unread record.
 
 This changes `json` output at finite item boundaries, which previously emitted
 separate pretty-printed values. Migrate record consumers to `--format jsonl`.
