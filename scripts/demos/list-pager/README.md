@@ -116,3 +116,16 @@ The representative recordings visit two API pages before and three after.
 The separate large observer verifies all 150 records.
 `before-first-space.png` and `after-first-space.png` show the direct comparison.
 `comparison.gif` shows both interactions, including back navigation and the restored shell.
+
+## Webhooks and Skills
+
+Build the base and candidate CLI binaries. Run this recorder on macOS with Python 3, Pillow, and asciinema 3.
+
+```sh
+python3 -B scripts/demos/list-pager/record-resources.py /path/to/base/openai /path/to/candidate/openai /tmp/list-pager-demo
+```
+
+The recorder uses two 76×12 PTYs per resource and a loopback API with identical synthetic records.
+The Before screenshot shows the first screen of labeled output. The After screenshot shows the same command's table.
+The GIF includes Space advancing both lists. The recorder checks each range and verifies Back reuses the earlier page.
+The title bar labels each capture. The terminal contents and footer come from the CLI.

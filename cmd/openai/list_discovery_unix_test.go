@@ -61,6 +61,41 @@ func TestMainBatchWatchRetainsTerminalStream(t *testing.T) {
 	})
 }
 
+func TestMainListPagerSummarizesEncodedMedia(t *testing.T) {
+	const records = `[
+		{"id":"ig_sample","type":"image_generation_call","status":"completed","result":"AQID"},
+		{"id":"other_sample","type":"future_item","status":"completed","result":"BQQD"}
+	]`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"object":"list","has_more":false,"data":`+records+`}`)
+	}))
+	defer server.Close()
+
+	for _, route := range [][]string{
+		{"openai", "responses", "input-items", "list", "--response-id", "resp_sample"},
+		{"openai", "beta:responses:input-items", "list", "--response-id", "resp_sample"},
+		{"openai", "conversations", "items", "list", "--conversation-id", "conv_sample"},
+	} {
+		t.Run(strings.Join(route[1:len(route)-2], " "), func(t *testing.T) {
+			for _, screen := range []struct {
+				width int
+				field string
+			}{{110, "RESULT"}, {30, "Result:"}} {
+				runResourceListObserver(t, map[string]any{
+					"args": route, "home": t.TempDir(), "endpoint": server.URL,
+					"mode": "complete", "action": "discover", "expected": 0, "width": screen.width, "ready": "End",
+					"markers": []string{screen.field, "4 base64 characters", "BQQD"}, "omit": []string{"AQID"},
+				})
+			}
+			result := runMainDispatchWithEnv(t, "", []string{"OPENAI_BASE_URL=" + server.URL + "/v1", "OPENAI_API_KEY=synthetic"},
+				append(slices.Clone(route), "--format", "json")...)
+			require.Equal(t, 0, result.code, result.stderr)
+			require.JSONEq(t, records, result.stdout)
+		})
+	}
+}
+
 func testListPresentation(t *testing.T, args []string, action string, status, requests int) {
 	t.Helper()
 	var calls atomic.Int32
@@ -83,13 +118,21 @@ func testListPresentation(t *testing.T, args []string, action string, status, re
 		}
 	}))
 	t.Cleanup(server.Close)
-	markers := []string{"item_synthetic"}
-	if strings.Contains(strings.Join(args, " "), "event-types") {
-		markers = []string{"batch.failed", "response.completed"}
-	}
-	runResourceListObserver(t, map[string]any{
-		"markers": markers, "endpoint": server.URL, "home": t.TempDir(), "args": args,
+	screen := runResourceListObserver(t, map[string]any{
+		"endpoint": server.URL, "home": t.TempDir(), "args": args,
 		"mode": "empty", "action": action, "expected": status,
 	})
+	if action == "discover" {
+		if calls.Load() == 0 {
+			// Handwritten lists may read local state instead of calling the API.
+			return
+		}
+		if strings.Contains(strings.Join(args, " "), "event-types") {
+			require.Contains(t, screen, "batch.failed")
+			require.Contains(t, screen, "response.completed")
+		} else {
+			require.Contains(t, screen, "item_synthetic")
+		}
+	}
 	require.Equal(t, int32(requests), calls.Load(), "GET requests for %v", args)
 }

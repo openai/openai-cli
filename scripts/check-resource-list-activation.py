@@ -72,15 +72,20 @@ def main():
             terminal.read(min(0.05, remaining))
 
     try:
-        terminal = navigation.terminal_module.Terminal(config["binary"], args, env, width=110, height=24,
+        terminal = navigation.terminal_module.Terminal(config["binary"], args, env, width=config.get("width", 110), height=24,
                                                        stderr_file=diagnostic)
         action, mode = config["action"], config["mode"]
         if action in ("discover", "watch", "watch-without-flag", "live"):
             if action == "discover":
-                terminal.wait("End", timeout=5)
+                # A local list can contain more than one screen. Wait for the
+                # loaded controls before sampling the visible records.
+                terminal.wait(config.get("ready", "↑↓: row"), timeout=5)
                 for marker in config.get("markers") or []:
                     assert marker in terminal.text(), (marker, terminal.text())
+                for marker in config.get("omit") or []:
+                    assert marker not in terminal.text(), (marker, terminal.text())
                 assert b"\x1b[?1049h" in terminal.raw, "list did not enter the pager"
+                print(terminal.text())
                 terminal.send(b"q")
             navigation.finish(terminal, config["expected"])
             diagnostic.seek(0)
@@ -110,7 +115,14 @@ def main():
                 assert "retain-synthetic-detail" in text and "ID:" in text, text
                 assert "FILENAME" not in text, "unfamiliar fields were hidden by the table"
             elif action == "error":
-                assert "item_001" not in text, text
+                if mode == "missing-cursor":
+                    restored = bytes(terminal.raw).rsplit(b"\x1b[?1049l", 1)[1]
+                    if "groups" in config["args"]:
+                        assert re.findall(rb"item_\d{3}", restored) == [b"item_001", b"item_002"], restored
+                    else:
+                        assert restored.count(b"Synthetic skill") == 2, restored
+                else:
+                    assert "item_001" not in text, text
             else:
                 check_table()
                 assert bytes(terminal.raw).count(b"item_001") == 1, "short results were printed twice"
@@ -178,7 +190,7 @@ def main():
         else:
             error = json.loads(stderr)
             expected = "synthetic list failure" if action in ("error", "error-next") else "Request canceled."
-            if mode == "repeat-cursor":
+            if mode in ("repeat-cursor", "empty-continuation", "missing-cursor"):
                 expected = "List pagination stopped because the API returned a missing or repeated cursor. Output may be incomplete."
             assert error["message"] == expected, error
             assert expected not in terminal.text(), "diagnostics leaked into stdout"

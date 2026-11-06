@@ -68,7 +68,7 @@ func TestMainResourceListActivationTerminal(t *testing.T) {
 	}
 }
 
-func runResourceListObserver(t *testing.T, config map[string]any) {
+func runResourceListObserver(t *testing.T, config map[string]any) string {
 	t.Helper()
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -91,4 +91,5 @@ func runResourceListObserver(t *testing.T, config map[string]any) {
 	output, err := child.CombinedOutput()
 	require.NoError(t, ctx.Err(), "PTY observer timed out: %s", output)
 	require.NoError(t, err, "PTY observer failed: %s", output)
+	return string(output)
 }

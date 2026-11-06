@@ -18,12 +18,19 @@ func projectDynamicListTable(ctx context.Context, operation string, items []gjso
 	table := ListTableProjection{FullValues: true}
 	var keys []string
 	route := Route{Operation: operation, OutputKind: OutputPageItem}
+	readable := Select(route)
 	for i, item := range items {
 		if err := ctx.Err(); err != nil {
 			return ListTableProjection{}, err
 		}
 		if item.IsObject() != items[0].IsObject() || !gjson.Valid(item.Raw) {
 			return ListTableProjection{}, ctx.Err()
+		}
+		// Tables and labeled records use the same readable representation.
+		// In particular, keep encoded media out of table cells at any width.
+		item, err := readable(ctx, item)
+		if err != nil {
+			return ListTableProjection{}, err
 		}
 		fields, err := dynamicListFields(ctx, item, route)
 		if err != nil || len(fields) == 0 {

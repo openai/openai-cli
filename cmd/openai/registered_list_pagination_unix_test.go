@@ -33,4 +33,26 @@ func TestMainRegisteredListPagination(t *testing.T) {
 			fixture.assertCursors(t, tc.route, 2)
 		})
 	}
+	for _, tc := range []struct {
+		route        resourceListRoute
+		mode, action string
+		flags        []string
+		code         int
+	}{
+		{skills, "empty-continuation", "error", nil, 1},
+		{webhooks, "empty-continuation", "error", nil, 1},
+		{groups, "missing-cursor", "error", nil, 1},
+		{skills, "missing-cursor", "error", nil, 1},
+		{groups, "missing-cursor", "one", []string{"--max-items", "1"}, 0},
+	} {
+		t.Run(tc.route.name+"/"+tc.mode+"/"+tc.action, func(t *testing.T) {
+			fixture := newResourceListFixture(t, tc.route, tc.mode)
+			runResourceListObserver(t, map[string]any{
+				"endpoint": fixture.server.URL, "home": t.TempDir(),
+				"args": resourceListArgs(tc.route, append(tc.flags, "--format-error", "json")...), "headers": tc.route.headers,
+				"mode": tc.mode, "action": tc.action, "expected": tc.code,
+			})
+			fixture.assertCursors(t, tc.route, 1)
+		})
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/openai/openai-cli/generated/commands"
@@ -21,15 +22,22 @@ func TestNewListCommandProcess(t *testing.T) {
 		return
 	}
 	show := func(ctx context.Context, cmd *cli.Command) error {
+		if cmd.IsSet("max-items") && cmd.Int("max-items") == 0 {
+			return nil
+		}
 		if cmd.Bool("watch") {
 			_, err := fmt.Fprintln(os.Stdout, "Widget updated")
 			return err
 		}
-		return app.ShowJSON(gjson.Parse(`[{"id":"widget_one","calibration":42}]`), app.ShowJSONOpts{Context: ctx})
+		var rows []string
+		for n := 1; n <= 30; n++ {
+			rows = append(rows, fmt.Sprintf(`{"id":"widget_%02d","calibration":42}`, n))
+		}
+		return app.ShowJSON(gjson.Parse("["+strings.Join(rows, ",")+"]"), app.ShowJSONOpts{Context: ctx})
 	}
 	resource := &cli.Command{
 		Name: "widgets", Category: "API RESOURCE", Commands: []*cli.Command{
-			{Name: "list", Action: show, Flags: []cli.Flag{&cli.BoolFlag{Name: "watch"}}},
+			{Name: "list", Action: show, Flags: []cli.Flag{&cli.BoolFlag{Name: "watch"}, &cli.IntFlag{Name: "max-items"}}},
 			{Name: "history", Aliases: []string{"list-revisions"}, Action: show},
 		},
 	}
@@ -47,7 +55,7 @@ func TestNewListCommandsInheritPager(t *testing.T) {
 			runResourceListObserver(t, map[string]any{
 				"process": "TestNewListCommandProcess", "args": []string{"openai", "widgets", verb},
 				"home": t.TempDir(), "endpoint": "http://127.0.0.1:1", "action": "discover",
-				"mode": "complete", "expected": 0, "markers": []string{"CALIBRATION", "widget_one", "42"},
+				"mode": "complete", "expected": 0, "markers": []string{"CALIBRATION", "widget_01", "42"},
 			})
 		})
 	}
@@ -56,6 +64,13 @@ func TestNewListCommandsInheritPager(t *testing.T) {
 			"process": "TestNewListCommandProcess", "args": []string{"openai", "widgets", "list", "--watch"},
 			"home": t.TempDir(), "endpoint": "http://127.0.0.1:1", "action": "live",
 			"mode": "complete", "expected": 0, "markers": []string{"Widget updated"},
+		})
+	})
+	t.Run("zero items", func(t *testing.T) {
+		runResourceListObserver(t, map[string]any{
+			"process": "TestNewListCommandProcess", "args": []string{"openai", "widgets", "list", "--max-items", "0"},
+			"home": t.TempDir(), "endpoint": "http://127.0.0.1:1",
+			"action": "live", "mode": "empty", "expected": 0,
 		})
 	})
 }

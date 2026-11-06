@@ -102,7 +102,7 @@ func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) 
 			return
 		}
 		items := []map[string]any{}
-		if mode != "empty" {
+		if mode != "empty" && mode != "empty-continuation" {
 			for number := (request-1)*2 + 1; number <= request*2; number++ {
 				item := map[string]any{"id": fmt.Sprintf("item_%03d", number), "object": route.object}
 				switch route.object {
@@ -123,12 +123,15 @@ func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) 
 				if mode == "unfamiliar" {
 					item["unfamiliar"] = "retain-synthetic-detail"
 				}
+				if mode == "missing-cursor" && route.object == "skill" {
+					delete(item, "id")
+				}
 				items = append(items, item)
 			}
 		}
 		more := request == 1 && mode != "complete" && mode != "empty" && mode != "unfamiliar"
 		envelope := map[string]any{"object": "list", "data": items, "has_more": more, "first_id": "item_001", "last_id": nextCursor}
-		if route.object == "group" {
+		if route.object == "group" && mode != "missing-cursor" {
 			envelope["next"] = nextCursor
 			if mode == "repeat-cursor" && request == 2 {
 				envelope["has_more"] = true

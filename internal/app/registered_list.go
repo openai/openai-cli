@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/openai/openai-cli/internal/output/listview"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/pagination"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -71,7 +73,8 @@ func registerListPager(command *cli.Command, parent, title, method string) {
 			Context: ctx, Title: title, Operation: operation, OutputKind: OutputPageItem,
 			Format: cmd.Root().String("format"), Transform: cmd.Root().String("transform"), RawOutput: cmd.Root().Bool("raw-output"),
 		}
-		if !InteractiveListOutput(opts) || cmd.IsSet("max-items") && cmd.Value("max-items") == int64(0) {
+		// Generated limits use int64. Handwritten commands may use cli.IntFlag.
+		if !InteractiveListOutput(opts) || cmd.IsSet("max-items") && fmt.Sprint(cmd.Value("max-items")) == "0" {
 			return next(ctx, cmd)
 		}
 		opts.setDefaults()
@@ -87,12 +90,14 @@ type registeredListKey struct{}
 // decoded immediately before it makes its next request. This keeps cursor and
 // retry handling in the SDK, and querying the next page under keyboard control.
 type registeredList struct {
-	rows       []gjson.Result
-	notice     string
-	fullLabels bool
-	yield      func(listview.Page, error) bool
-	stopped    bool
-	seen       map[string]bool
+	rows        []gjson.Result
+	notice      string
+	fullLabels  bool
+	yield       func(listview.Page, error) bool
+	stopped     bool
+	seen        map[string]bool
+	page        *listPageContinuation
+	rowIDCursor bool
 }
 
 func runRegisteredList(opts ShowJSONOpts, action func(context.Context) error) error {
@@ -138,7 +143,9 @@ func registeredListRequest(request *http.Request, next option.MiddlewareNext) (*
 	}
 	key := request.URL.RequestURI()
 	if len(source.rows) > 0 {
-		if source.seen[key] {
+		// CursorPage derives "after" from the last row ID. Other SDK
+		// page types choose their own cursor independently of that query.
+		if source.seen[key] || source.rowIDCursor && request.URL.Query().Get("after") == "" {
 			return nil, &listview.PaginationError{}
 		}
 		if !source.yieldPending() {
@@ -148,6 +155,10 @@ func registeredListRequest(request *http.Request, next option.MiddlewareNext) (*
 	response, err := next(request)
 	if err == nil && response != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
 		source.seen[key] = true
+		if response.Body != nil {
+			source.page = &listPageContinuation{ReadCloser: response.Body}
+			response.Body = source.page
+		}
 	}
 	return response, err
 }
@@ -160,16 +171,27 @@ func collectListIterator[T any](list *registeredList, source jsonview.Iterator[T
 	if maximum == 0 {
 		return source.Err()
 	}
+	_, list.rowIDCursor = source.(*pagination.CursorPageAutoPager[T])
 	rows := clioutput.NewIterator(source, clioutput.IteratorOptions{
 		Context: opts.Context, Transform: transformers.Identity, Limit: maximum,
 	})
+	remaining := maximum
 	for rows.Next() {
 		if len(list.seen) == 0 && len(list.rows) == localListPageSize && !list.yieldPending() {
 			return context.Canceled
 		}
 		list.rows = append(list.rows, rows.Current().Result)
+		if remaining > 0 {
+			remaining--
+		}
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if remaining != 0 && list.page != nil && list.page.more {
+		return &listview.PaginationError{}
+	}
+	return nil
 }
 
 func (list *registeredList) collectResponse(value gjson.Result, opts ShowJSONOpts) error {
