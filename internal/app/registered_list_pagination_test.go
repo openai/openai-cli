@@ -20,7 +20,7 @@ import (
 func registeredSDKPages(ctx context.Context, resource string, maximum int64, respond option.Middleware) iter.Seq2[listview.Page, error] {
 	client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMaxRetries(0),
 		option.WithMiddleware(registeredListRequest, respond))
-	return registeredListPages(ctx, func(ctx context.Context) error {
+	return new(registeredList).pages(ctx, func(ctx context.Context) error {
 		opts := ShowJSONOpts{Context: ctx, OutputKind: OutputPageItem}
 		switch resource {
 		case "projects":

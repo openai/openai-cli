@@ -12,7 +12,7 @@ import (
 func collectedResponse(t *testing.T, operation, raw string) listview.Page {
 	t.Helper()
 	var result listview.Page
-	for page, err := range registeredListPages(t.Context(), func(ctx context.Context) error {
+	for page, err := range new(registeredList).pages(t.Context(), func(ctx context.Context) error {
 		return ShowJSON(gjson.Parse(raw), ShowJSONOpts{Context: ctx, Operation: operation, OutputKind: OutputResponse})
 	}) {
 		require.NoError(t, err)

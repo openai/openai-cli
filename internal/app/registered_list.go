@@ -88,9 +88,7 @@ func registerListPager(command *cli.Command, parent, title, method string) {
 			return next(ctx, cmd)
 		}
 		opts.setDefaults()
-		return runTerminalList(opts, func(opts ShowJSONOpts) error {
-			return runRegisteredList(opts, func(ctx context.Context) error { return next(ctx, cmd) })
-		})
+		return runRegisteredList(opts, func(ctx context.Context) error { return next(ctx, cmd) })
 	}
 	configureListBrowsing(command, browse)
 }
@@ -101,6 +99,7 @@ type registeredListKey struct{}
 // decoded immediately before it makes its next request. This keeps cursor and
 // retry handling in the SDK, and querying the next page under keyboard control.
 type registeredList struct {
+	preparing   bool
 	rows        []gjson.Result
 	notice      string
 	fullLabels  bool
@@ -113,23 +112,49 @@ type registeredList struct {
 
 func runRegisteredList(opts ShowJSONOpts, action func(context.Context) error) error {
 	ctx, cancel := context.WithCancel(opts.Context)
-	next, stop := iter.Pull2(registeredListPages(ctx, action))
+	source := &registeredList{preparing: true}
+	next, stop := iter.Pull2(source.pages(ctx, action))
 	defer stop()
 	defer cancel()
-	return listview.Run(listViewerOptions(opts), func() (listview.Page, error) {
-		page, err, _ := next()
-		return page, err
-	}, cancel)
+
+	// Let the command read request fields, including stdin and named pipes,
+	// before installing terminal signal handlers or reading navigation keys.
+	if _, err, ok := next(); err != nil || !ok {
+		return err
+	}
+	return runTerminalList(opts, func(opts ShowJSONOpts) error {
+		stopCancel := context.AfterFunc(opts.Context, cancel)
+		defer stopCancel()
+		return listview.Run(listViewerOptions(opts), func() (listview.Page, error) {
+			page, err, _ := next()
+			return page, err
+		}, cancel)
+	})
 }
 
-func registeredListPages(ctx context.Context, action func(context.Context) error) iter.Seq2[listview.Page, error] {
+func (list *registeredList) pages(ctx context.Context, action func(context.Context) error) iter.Seq2[listview.Page, error] {
 	return func(yield func(listview.Page, error) bool) {
-		source := &registeredList{yield: yield, seen: make(map[string]bool)}
-		err := action(context.WithValue(ctx, registeredListKey{}, source))
-		if !source.stopped {
-			yield(listview.Page{Items: source.rows, Notice: source.notice, FullLabels: source.fullLabels}, err)
+		list.yield = yield
+		list.seen = make(map[string]bool)
+		err := action(context.WithValue(ctx, registeredListKey{}, list))
+		if list.preparing && err != nil {
+			yield(listview.Page{}, err)
+			return
+		}
+		if list.beginOutput() {
+			yield(listview.Page{Items: list.rows, Notice: list.notice, FullLabels: list.fullLabels}, err)
 		}
 	}
+}
+
+// The first yield hands the terminal to the viewer before HTTP dispatch or
+// local iteration. Subsequent yields carry actual pages.
+func (list *registeredList) beginOutput() bool {
+	if list.preparing {
+		list.preparing = false
+		list.stopped = !list.yield(listview.Page{}, nil)
+	}
+	return !list.stopped
 }
 
 func (list *registeredList) yieldPending() bool {
@@ -151,6 +176,9 @@ func registeredListRequest(request *http.Request, next option.MiddlewareNext) (*
 	source := currentRegisteredList(request.Context())
 	if source == nil {
 		return next(request)
+	}
+	if !source.beginOutput() {
+		return nil, context.Canceled
 	}
 	key := request.URL.RequestURI()
 	if len(source.rows) > 0 {
@@ -182,6 +210,9 @@ func registeredListRequest(request *http.Request, next option.MiddlewareNext) (*
 const localListPageSize = 32
 
 func collectListIterator[T any](list *registeredList, source jsonview.Iterator[T], maximum int64, opts ShowJSONOpts) error {
+	if !list.beginOutput() {
+		return context.Canceled
+	}
 	if maximum == 0 {
 		return source.Err()
 	}
@@ -213,6 +244,9 @@ func collectListIterator[T any](list *registeredList, source jsonview.Iterator[T
 }
 
 func (list *registeredList) collectResponse(value gjson.Result, opts ShowJSONOpts) error {
+	if !list.beginOutput() {
+		return context.Canceled
+	}
 	if opts.Operation == "(resource) webhooks.event_types > (method) list" {
 		rows, notice, full, err := transformers.WebhookEventTypeRows(opts.Context, value)
 		list.rows = append(list.rows, rows...)

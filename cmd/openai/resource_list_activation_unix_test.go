@@ -68,6 +68,29 @@ func TestMainResourceListActivationTerminal(t *testing.T) {
 	}
 }
 
+func TestMainListStdinFlagOwnsTerminalInput(t *testing.T) {
+	files := resourceListRoutes[0]
+	files.args = []string{"files", "list", "--purpose", "@-", "--order", "asc"}
+	for _, flags := range [][]string{nil, {"--browse"}, {"--browse=false"}} {
+		mode := "default"
+		if len(flags) > 0 {
+			mode = flags[0]
+		}
+		for _, action := range []string{"stdin-value", "stdin-interrupt"} {
+			t.Run(mode+"/"+action, func(t *testing.T) {
+				fixture := newResourceListFixture(t, files, "complete")
+				runResourceListObserver(t, map[string]any{
+					"endpoint": fixture.server.URL, "home": t.TempDir(), "args": resourceListArgs(files, flags...),
+					"mode": "complete", "action": action,
+				})
+				if action == "stdin-value" {
+					fixture.assertCursors(t, files, 1)
+				}
+			})
+		}
+	}
+}
+
 func runResourceListObserver(t *testing.T, config map[string]any) string {
 	t.Helper()
 	python, err := exec.LookPath("python3")

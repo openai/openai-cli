@@ -10,7 +10,7 @@ import (
 
 func TestRegisteredLocalListStopsReadingOnQuit(t *testing.T) {
 	rows := &sliceIterator[int]{items: make([]int, localListPageSize*10)}
-	next, quit := iter.Pull2(registeredListPages(t.Context(), func(ctx context.Context) error {
+	next, quit := iter.Pull2(new(registeredList).pages(t.Context(), func(ctx context.Context) error {
 		return ShowJSONIterator(rows, -1, ShowJSONOpts{Context: ctx, OutputKind: OutputPageItem})
 	}))
 	defer quit()

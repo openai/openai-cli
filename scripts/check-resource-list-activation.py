@@ -57,6 +57,26 @@ def main():
         terminal = navigation.terminal_module.Terminal(binary, args, env, width=config.get("width", 110), height=24,
                                                        stderr_file=diagnostic)
         action, mode = config["action"], config["mode"]
+        if action in ("stdin-value", "stdin-interrupt"):
+            terminal.send(b"assistants")
+            terminal.wait("assistants")
+            navigation.drain(terminal, 0.35)
+            assert terminal.child.poll() is None and state()["requests"] == 0
+            assert "q: quit" not in terminal.text() and b"\x1b[?1049h" not in terminal.raw
+            if action == "stdin-interrupt":
+                os.kill(terminal.child.pid, signal.SIGINT)
+                status = terminal.child.wait(timeout=4)
+                assert status in (-signal.SIGINT, 128 + signal.SIGINT), status
+                navigation.finish(terminal, status)
+                assert state()["requests"] == 0
+            else:
+                # The first Ctrl+D delivers the pending bytes. The second ends the read.
+                terminal.send(b"\x04")
+                navigation.drain(terminal, 0.07)
+                terminal.send(b"\x04")
+                navigation.finish(terminal, 0)
+                assert "item_001" in terminal.text() and state()["requests"] == 1, terminal.text()
+            return
         if action == "print-return":
             # No input is sent. The second shell command must run on its own.
             terminal.wait("NEXT_COMMAND", timeout=5)
