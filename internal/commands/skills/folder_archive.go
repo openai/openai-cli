@@ -41,8 +41,14 @@ func ArchiveFolder(ctx context.Context, path string, selected os.FileInfo) (requ
 	}
 	// Clean trailing separators for Lstat; Stat alone would follow a folder link.
 	named, err := os.Lstat(abs)
-	if err != nil || !named.IsDir() || !os.SameFile(named, selected) {
-		return none, folderError("Select the actual folder instead of a symbolic link.", err)
+	if err != nil {
+		return none, changed(err)
+	}
+	if named.Mode()&os.ModeSymlink != 0 {
+		return none, folderError("Select the actual folder instead of a symbolic link.", nil)
+	}
+	if !named.IsDir() || !os.SameFile(named, selected) {
+		return none, changed(nil)
 	}
 	// The final directory component prevents a replacement FIFO from blocking OpenRoot.
 	root, err := os.OpenRoot(path + string(os.PathSeparator) + ".")

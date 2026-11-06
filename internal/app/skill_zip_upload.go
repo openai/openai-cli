@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -60,7 +61,11 @@ func selectSkillZIP(cmd *cli.Command, body map[string]any) (request.BodyContentT
 	}
 	if !request.IsStdinPath(string(path)) {
 		if info, err := os.Stat(string(path)); err == nil && info.IsDir() {
-			value = skillFolder{string(path), info}
+			folder, err := selectSkillFolder(string(path))
+			if err != nil {
+				return request.ApplicationJSON, err
+			}
+			value = folder
 		} else if !strings.EqualFold(filepath.Ext(string(path)), ".zip") {
 			return request.ApplicationJSON, nil
 		}
@@ -71,6 +76,20 @@ func selectSkillZIP(cmd *cli.Command, body map[string]any) (request.BodyContentT
 	}
 	body["files"] = value
 	return request.MultipartFormEncoded, nil
+}
+
+// Windows may resolve path-based FileInfo identity later. Capture it from a
+// directory handle before scalar references can block or the path can change.
+func selectSkillFolder(path string) (skillFolder, error) {
+	dir, err := os.Open(path + string(os.PathSeparator) + ".")
+	if err != nil {
+		return skillFolder{}, (request.FileInputSource{Option: "--files"}).Failure("open", err)
+	}
+	info, err := dir.Stat()
+	if err = errors.Join(err, dir.Close()); err != nil {
+		return skillFolder{}, (request.FileInputSource{Option: "--files"}).Failure("inspect", err)
+	}
+	return skillFolder{path, info}, nil
 }
 
 func embedSkillZIP(cmd *cli.Command, body map[string]any, stdin *request.OnceStdinReader) (map[string]any, error) {

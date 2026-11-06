@@ -260,7 +260,7 @@ jobs:
       - name: Test Windows Skills folder uploads and temporary file cleanup
         if: matrix.native-commands && runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
-        run: go test -p 1 ./internal/commands/skills ./cmd/openai -run '^(TestFolder|TestMainSkill)' -count=1 -v
+        run: go test -p 1 ./internal/commands/skills ./internal/app ./cmd/openai -run '^(TestFolder|TestSkillFolderReplacedBeforePackaging$|TestMainSkill)' -count=1 -v
       - name: Test Windows voice validation and upload ownership
         if: (matrix.native-commands && runner.os == 'Windows') && matrix.shard != 'dispatch'
         shell: pwsh
