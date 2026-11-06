@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/colorprofile"
@@ -55,6 +56,24 @@ func recoverySavedImage(t *testing.T) imagePickerWorkspaceImage {
 	path := filepath.Join(t.TempDir(), "synthetic.png")
 	require.NoError(t, os.WriteFile(path, encoded.Bytes(), 0600))
 	return imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: path, SHA256: sha256.Sum256(encoded.Bytes())}, protocol: "font"}
+}
+
+func TestImagePickerWorkspaceExpandedFontDoesNotShrink(t *testing.T) {
+	entry := recoverySavedImage(t)
+	prepare := func(_ context.Context, _ *os.File, _ image.Image, protocol string, columns int) ([]string, string, error) {
+		return []string{strings.Repeat("x", columns)}, protocol, nil
+	}
+	size := interactiveImageSize{120, 30, 8, 16}
+	inline, err := imagePickerPrepareResize(t.Context(), nil, entry, size, false, prepare)
+	require.NoError(t, err)
+	require.Greater(t, inline.columns, 32)
+	expanded, err := imagePickerPrepareResize(t.Context(), nil, entry, size, true, prepare)
+	require.NoError(t, err)
+	require.Greater(t, expanded.columns, inline.columns)
+	require.LessOrEqual(t, expanded.columns, 64)
+	narrow, err := imagePickerPrepareResize(t.Context(), nil, entry, interactiveImageSize{80, 24, 8, 16}, false, prepare)
+	require.NoError(t, err)
+	require.LessOrEqual(t, narrow.columns, 32)
 }
 
 func TestImagePickerResizePreparationPreservesUnsafeFontFailure(t *testing.T) {

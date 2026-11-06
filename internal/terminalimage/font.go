@@ -53,7 +53,10 @@ type FontError struct{ Err error }
 func (e *FontError) Error() string { return e.Err.Error() }
 func (e *FontError) Unwrap() error { return e.Err }
 
-const maxFontPreviewColumns = 32
+const (
+	maxFontPreviewColumns = 32
+	maxFontRowColumns     = 64 // The existing imagegallery and imagefont frame limit.
+)
 
 func writeImageFont(ctx context.Context, out io.Writer, img image.Image, columns int) error {
 	return writeImageFontReserved(ctx, out, img, columns, 0)
@@ -86,7 +89,10 @@ func writeImageFontReserved(ctx context.Context, out io.Writer, img image.Image,
 	// Each tab retains its own immutable glyph assignments. Reusing the same
 	// font slot would replace images already visible in that tab's scrollback.
 	session := sha256.Sum256([]byte(sessionID + "\x00" + tty))
-	directory := filepath.Join(cache, "openai", "image-terminal", fmt.Sprintf("%x", session[:16]))
+	directory, err := fontGalleryDirectory(cache, fmt.Sprintf("%x", session[:16]))
+	if err != nil {
+		return &FontError{err}
+	}
 	services := fontServices{imagefontmac.Snapshot, imagefontmac.Source, imagefontmac.Register, imagefontmac.Preserve, imagefontmac.Restore, imagefontmac.InspectProfile}
 	adopted, err := displayImageFontForSession(ctx, out, img, columns, directory, tty, func() fontViewport { return readFontViewport(file.Fd()) }, services, reserveGlyphs)
 	if err != nil {
@@ -99,6 +105,28 @@ func writeImageFontReserved(ctx context.Context, out io.Writer, img image.Image,
 		_ = cleanupClosedFontGalleries(ctx, directory, tty)
 	}
 	return nil
+}
+
+// CoreText keeps the registration URL after the renderer exits. If a temporary
+// home links its application cache to a persistent cache, register the target
+// path. Leave gallery paths below that anchor to imagegallery's private checks.
+func fontGalleryDirectory(cache, session string) (string, error) {
+	anchor := filepath.Join(cache, "openai")
+	info, err := os.Lstat(anchor)
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	if info != nil && info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(anchor)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(cache, target)
+		}
+		anchor = target
+	}
+	return filepath.Join(anchor, "image-terminal", session), nil
 }
 
 // Reconnect only the exact active font; fresh sessions retain their own gallery.
@@ -211,10 +239,16 @@ func displayImageFontReservedSession(ctx context.Context, out io.Writer, img ima
 	if err != nil {
 		return err
 	}
+	maximum := maxFontPreviewColumns
+	if _, rows := ctx.Value(fontRowsKey{}).(io.Writer); rows {
+		// Prepared rows already have a caller-bounded viewport. Keep direct
+		// output and progress reservations at their existing preview width.
+		maximum = maxFontRowColumns
+	}
 	if columns < 1 {
 		columns = maxFontPreviewColumns
 	}
-	columns = min(columns, maxFontPreviewColumns)
+	columns = min(columns, maximum)
 	if size.Columns > 0 {
 		columns = min(columns, size.Columns-1)
 	}
@@ -222,7 +256,7 @@ func displayImageFontReservedSession(ctx context.Context, out io.Writer, img ima
 		return errors.New("widen Terminal before displaying the image")
 	}
 	if size.Rows > 0 {
-		columns = FontPreviewColumns(img.Bounds(), columns, size.Rows)
+		columns = fontPreviewColumns(img.Bounds(), columns, size.Rows, maximum)
 		if columns < 1 {
 			return errors.New("enlarge Terminal before displaying the image")
 		}

@@ -62,9 +62,9 @@ func TestProjectListTableKnownResources(t *testing.T) {
 		},
 		{
 			"admin.organization.projects",
-			`{"id":"proj_example","object":"organization.project","name":"Synthetic project","status":"active","created_at":123,"archived_at":null,"external_key_id":null,"residency":"GLOBAL"}`,
-			[]string{"ID", "NAME", "STATUS"},
-			[]string{"proj_example", "Synthetic project", "active"},
+			`{"id":"proj_example","object":"organization.project","name":"Synthetic project","status":"active","created_at":123,"archived_at":null,"external_key_id":null,"psp_decryption_key_id":null,"residency":"GLOBAL"}`,
+			[]string{"NAME", "STATUS", "ID"},
+			[]string{"Synthetic project", "active", "proj_example"},
 		},
 	} {
 		t.Run(test.resource, func(t *testing.T) {
@@ -85,7 +85,7 @@ func TestProjectListTableMissingOptionalFields(t *testing.T) {
 		_, rows, ok, err := projectedListCells(t.Context(), "(resource) admin.organization.projects > (method) list", []gjson.Result{item})
 		require.NoError(t, err)
 		require.True(t, ok)
-		require.Equal(t, [][]string{{"proj_example", "-", "-"}}, rows)
+		require.Equal(t, [][]string{{"-", "-", "proj_example"}}, rows)
 	}
 }
 
@@ -173,6 +173,9 @@ func TestProjectListTablePreservesErrorsAndMalformedFields(t *testing.T) {
 		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","name":[],"status":"active"}`},
 		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","name":"Synthetic","status":false}`},
 		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","name":"Synthetic","status":"active","warning":"Review project."}`},
+		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","psp_decryption_key_id":"example"}`},
+		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","psp_decryption_key_id":null,"psp_decryption_key_id":"example"}`},
+		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","future_field":null}`},
 		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","name":"First","name":"Second","status":"active"}`},
 	} {
 		t.Run(test.resource+test.input, func(t *testing.T) {

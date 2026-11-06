@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.51.4](https://github.com/openai/openai-cli/compare/v1.51.3...v1.51.4) (2026-11-06)
+
+
+### Documentation
+
+* simplify Linux installation in the README ([#720](https://github.com/openai/openai-cli/issues/720)) ([09bac40](https://github.com/openai/openai-cli/commit/09bac4035201525c3c0fdc497379c9489e6af8cf))
+
 ## [1.51.3](https://github.com/openai/openai-cli/compare/v1.51.2...v1.51.3) (2026-11-06)
 
 

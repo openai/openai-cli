@@ -147,6 +147,10 @@ func listRangeNames(operation, title string) (singular, plural string) {
 
 // Match help's environment-only color detection without querying stdin or tmux.
 func listNavigationStyle(opts ShowJSONOpts) listview.Style {
+	return listview.NewStyle(resourceColorProfile(opts), cliterminal.DarkBackground(os.Getenv("COLORFGBG")))
+}
+
+func resourceColorProfile(opts ShowJSONOpts) colorprofile.Profile {
 	profile := colorprofile.NoTTY
 	if isTerminal(opts.Stdout) && (opts.Format == "" || strings.EqualFold(opts.Format, "auto")) &&
 		os.Getenv("TERM") != "dumb" && os.Getenv("NO_COLOR") == "" &&
@@ -156,7 +160,7 @@ func listNavigationStyle(opts ShowJSONOpts) listview.Style {
 			profile = colorprofile.NoTTY
 		}
 	}
-	return listview.NewStyle(profile, cliterminal.DarkBackground(os.Getenv("COLORFGBG")))
+	return profile
 }
 
 // Labeled output preserves values independently of compact table widths.

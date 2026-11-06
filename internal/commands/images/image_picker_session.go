@@ -39,6 +39,7 @@ func runImagePickerSession(ctx context.Context, input, output *os.File, options 
 		return imagePickerResult{}, err
 	}
 	if stateErr != nil {
+		options.initialTone = imageWarning
 		options.initialNote = "Could not restore the draft. Existing data is kept."
 		if options.initial != nil {
 			options.initialNote = "Could not read the draft. Keeping this session's choices."

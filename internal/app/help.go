@@ -373,6 +373,14 @@ func configureHelpGroups(root *cli.Command) {
 					Summary: "Checks access by writing test files to your cloud storage. Success enables Private Safety Processing with the project's existing retention policy.",
 				})
 			}
+		case "skills", "skills:versions":
+			if create := command.Command("create"); create != nil {
+				for _, flag := range create.Flags {
+					if files, ok := flag.(*requestflag.Flag[[]string]); ok && files.Name == "files" {
+						files.Usage = "For a ZIP upload, pass the .zip path or use - to read the ZIP from stdin."
+					}
+				}
+			}
 		case "responses", "beta:responses":
 			if create := command.Command("create"); create != nil {
 				path := strings.ReplaceAll(resource, ":", " ") + " create"
