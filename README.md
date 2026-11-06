@@ -165,6 +165,10 @@ openai admin organization --help
 ```
 
 `openai help COMMAND` and `openai COMMAND --help` show the same page.
+Command groups list their available commands. Each action shows its usage, required inputs, and relevant flags.
+When an action has an example, help shows it before the flag descriptions.
+To read about one flag, append it after `-h`, as in `openai responses create -h --stream`.
+For every flag's description, use `openai help --all responses create`.
 Existing colon-separated commands, such as `openai admin:organization:usage completions`,
 also work.
 

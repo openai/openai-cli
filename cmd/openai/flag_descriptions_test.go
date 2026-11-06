@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -38,7 +39,11 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 	}
 	for _, path := range [][]string{nil, {"models", "list"}, {"images"}, {"images", "generate"}} {
 		t.Run(strings.Join(append([]string{"root"}, path...), "/"), func(t *testing.T) {
-			args := append([]string{"openai", "help"}, path...)
+			args := []string{"openai", "help"}
+			if len(path) > 0 {
+				args = append(args, "--all")
+			}
+			args = append(args, path...)
 			got := runMainDispatchWithEnv(t, "bash", nil, args...)
 			require.Zero(t, got.code, got.stderr)
 			require.Empty(t, got.stderr)
@@ -146,7 +151,7 @@ func TestMainGlobalFlagHelpHidesConfiguredValues(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		for _, route := range [][]string{
 			{"--help"}, {"images", "generate", "--help"}, {"models", "list", "--help"},
-			{"help"}, {"help", "images", "generate"}, {"help", "models", "list"},
+			{"help"}, {"help", "images", "generate"}, {"help", "--all", "images", "generate"}, {"help", "models", "list"},
 		} {
 			name := "environment/"
 			if explicit {
@@ -167,8 +172,12 @@ func TestMainGlobalFlagHelpHidesConfiguredValues(t *testing.T) {
 				if len(route) == 1 {
 					require.Contains(t, got.stdout, "https://api.openai.com/v1")
 					require.Contains(t, got.stdout, "OPENAI_BASE_URL")
-				} else {
+				} else if slices.Contains(route, "images") && !slices.Contains(route, "--all") {
+					require.Contains(t, got.stdout, "openai help --all images generate")
+				} else if slices.Contains(route, "--all") {
 					require.Contains(t, got.stdout, "Run $ openai --help for details.")
+				} else {
+					require.Contains(t, got.stdout, "openai help --all models list")
 				}
 			})
 		}
@@ -182,12 +191,14 @@ func TestMainGlobalFlagDescriptionsPreserveRequestProject(t *testing.T) {
 			got := runMainDispatchWithEnv(t, "bash", nil, args...)
 			require.Zero(t, got.code, got.stderr)
 			require.Empty(t, got.stderr)
-			_, after, found := strings.Cut(got.stdout, "\n    --project=")
-			require.True(t, found, "invite help must retain its request project flag")
-			local, _, _ := strings.Cut(after, "\n    --")
-			text := strings.Join(strings.Fields(local), " ")
-			require.Contains(t, text, "An array of projects to which membership is granted")
-			require.NotContains(t, text, "OpenAI-Project request header")
+			require.Contains(t, strings.Join(strings.Fields(got.stdout), " "), "--project An array of projects to which membership is granted")
+			args = append(append([]string{"openai"}, path...), "-h", "--project")
+			flag := runMainDispatchWithEnv(t, "bash", nil, args...)
+			require.Zero(t, flag.code, flag.stderr)
+			require.Empty(t, flag.stderr)
+			require.Contains(t, flag.stdout, "--project=VALUE")
+			require.Contains(t, strings.Join(strings.Fields(flag.stdout), " "), "An array of projects to which membership is granted")
+			require.NotContains(t, flag.stdout, "OpenAI-Project request header")
 		})
 	}
 }

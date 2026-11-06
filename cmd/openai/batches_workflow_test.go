@@ -963,7 +963,11 @@ func TestMainBatchesHelpInputFormsExecute(t *testing.T) {
 				if help.code != 0 || help.stderr != "" {
 					t.Fatalf("help failed: %+v", help)
 				}
-				synopsis := strings.Join(strings.Fields(helpSection(help.stdout, "SYNOPSIS", "DESCRIPTION")), " ")
+				synopsis, _, _ := strings.Cut(help.stdout, "\n\n")
+				if spelling == "help_all" {
+					synopsis = helpSection(help.stdout, "SYNOPSIS", "DESCRIPTION")
+				}
+				synopsis = strings.Join(strings.Fields(synopsis), " ")
 				prefix, rest, found := strings.Cut(synopsis, "[")
 				choices, _, closed := strings.Cut(rest, "]")
 				if !found || !closed || strings.TrimSpace(prefix) != "openai batches "+operation ||

@@ -29,7 +29,7 @@ func TestMainWebhookWorkflowHelp(t *testing.T) {
 			t.Run(fmt.Sprintf("full=%t/%s", full, operation), func(t *testing.T) {
 				args := append([]string{"openai", "webhooks"}, strings.Fields(operation)...)
 				if full {
-					args = append([]string{"openai", "help"}, args[1:]...)
+					args = append([]string{"openai", "help", "--all"}, args[1:]...)
 				} else {
 					args = append(args, "--help")
 				}
@@ -37,9 +37,8 @@ func TestMainWebhookWorkflowHelp(t *testing.T) {
 				if got.code != 0 || got.stderr != "" {
 					t.Fatalf("webhook help failed: %+v", got)
 				}
-				section := webhookHelpExamples(t, got.stdout)
-				if strings.Count(section, "\n    $ openai ") != 1 {
-					t.Fatalf("expected one runnable example: %q", section)
+				if example := webhookHelpExample(t, got.stdout); !strings.HasPrefix(example, "openai webhooks ") {
+					t.Fatalf("unexpected webhook example: %q", example)
 				}
 				if operation == "" {
 					for _, name := range []string{"create", "retrieve", "update", "list", "test", "rotate-secret", "delete", "event-types"} {
@@ -51,7 +50,7 @@ func TestMainWebhookWorkflowHelp(t *testing.T) {
 				if operation == "create" && !strings.Contains(got.stdout, "guided creation") {
 					t.Errorf("create help omitted guided entrypoint: %s", got.stdout)
 				}
-				if operation == "test" && full && !strings.Contains(got.stdout, "exit status 0") {
+				if operation == "test" && !strings.Contains(strings.Join(strings.Fields(got.stdout), " "), "exit status 0") {
 					t.Errorf("test help omitted receiver failure status: %s", got.stdout)
 				}
 			})
@@ -59,16 +58,18 @@ func TestMainWebhookWorkflowHelp(t *testing.T) {
 	}
 }
 
-func webhookHelpExamples(t *testing.T, output string) string {
+func webhookHelpExample(t *testing.T, output string) string {
 	t.Helper()
-	_, section, ok := strings.Cut(output, "EXAMPLES\n")
-	if !ok {
-		t.Fatalf("help omitted its example: %s", output)
+	var examples []string
+	for line := range strings.SplitSeq(output, "\n") {
+		if command, found := strings.CutPrefix(strings.TrimSpace(line), "$ "); found {
+			examples = append(examples, command)
+		}
 	}
-	for _, next := range []string{"\nFLAGS\n", "\nCOMMANDS\n", "\nGLOBAL FLAGS\n", "\nNOTES\n"} {
-		section, _, _ = strings.Cut(section, next)
+	if len(examples) != 1 {
+		t.Fatalf("expected one runnable example: %s", output)
 	}
-	return "\n" + section
+	return examples[0]
 }
 
 func TestMainWebhookWorkflowStatusAdvice(t *testing.T) {
@@ -1123,13 +1124,8 @@ func TestMainWebhookWorkflowNativeCopiedCommands(t *testing.T) {
 							if help.code != 0 || help.stderr != "" || calls.Load() != before {
 								t.Fatalf("help failed or made a request: %+v", help)
 							}
-							var command string
-							for line := range strings.SplitSeq(webhookHelpExamples(t, help.stdout), "\n") {
-								if example, found := strings.CutPrefix(strings.TrimSpace(line), "$ "); found && strings.HasPrefix(example, printedInvocation+" webhooks ") {
-									command = example
-								}
-							}
-							if command == "" {
+							command := webhookHelpExample(t, help.stdout)
+							if !strings.HasPrefix(command, printedInvocation+" webhooks ") {
 								t.Fatalf("example changed executable identity %q: %s", printedInvocation, help.stdout)
 							}
 							got := runNativeShell(t, shell, directory, home, server.URL, shell.setKey+command)

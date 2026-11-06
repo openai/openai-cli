@@ -301,7 +301,11 @@ func TestMainLocalUtilitiesHelpAndCompletion(t *testing.T) {
 				require.Contains(t, got.stdout, route.flag)
 				if route.path == "tokenizer count" {
 					require.Contains(t, got.stdout, "--number")
-					require.Contains(t, got.stdout, "tokenizer count -n")
+					if full {
+						require.Contains(t, got.stdout, "tokenizer count -n")
+					} else {
+						require.Contains(t, got.stdout, "openai help --all tokenizer count")
+					}
 					require.Contains(t, got.stdout, "--transform")
 				}
 				require.NotContains(t, got.stdout, "Key setup:", "local help must not imply an API-key requirement")

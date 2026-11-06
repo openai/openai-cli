@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -165,7 +166,11 @@ func TestMainRequestFileHelp(t *testing.T) {
 		got := runShellFileCommand(t, server, stdin, nil, append(args, "--request-file", "-", "--help")...)
 		require.Equal(t, 0, got.code, got.stderr)
 		require.Empty(t, got.stderr)
-		require.Contains(t, got.stdout, "--request-file")
+		require.Contains(t, got.stdout, "help --all "+strings.Join(args, " "))
+		detail := runShellFileCommand(t, server, stdin, nil, append(args, "-h", "--request-file")...)
+		require.Equal(t, 0, detail.code, detail.stderr)
+		require.Empty(t, detail.stderr)
+		require.Contains(t, detail.stdout, "--request-file=PATH|-")
 		require.Empty(t, requests)
 		left, err := io.ReadAll(stdin)
 		require.NoError(t, err)

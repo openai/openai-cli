@@ -946,6 +946,7 @@ jobs:
                   "TestMainImageModelsHelpAndOfflineMakeNoRequests": [
                       "--format/json/images/models/--offline",
                       "--format/json/images/models/--offline/--all",
+                      "help/--all/images/models",
                       "help/images/models",
                       "images/models/--help",
                   ],
@@ -985,7 +986,7 @@ jobs:
           if os.environ["RUNNER_OS"] == "Linux":
               fish_examples = [
                   f"copy_{surface}-help_image_example{location}"
-                  for surface in ["flag", "command"]
+                  for surface in ["flag", "full"]
                   for location in ["", "_from_another_directory"]
               ]
               suites["fish-help-invocation-tests.jsonl"] = required_cases(

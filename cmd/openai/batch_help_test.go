@@ -15,7 +15,7 @@ func TestMainBatchHelpDiscoveryIsOffline(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 	}))
 	defer server.Close()
-	for _, args := range [][]string{{"batches"}, {"batches", "--help"}, {"help", "batches"}, {"explore", "batches"}, {"batches", "browse", "--help"}} {
+	for _, args := range [][]string{{"batches"}, {"batches", "--help"}, {"help", "batches"}, {"explore", "batches"}, {"batches", "browse", "--help"}, {"help", "--all", "batches", "browse"}} {
 		t.Run(strings.Join(args, "/"), func(t *testing.T) {
 			got := runMainDispatchWithEnv(t, "bash", []string{
 				"OPENAI_BASE_URL=" + server.URL, "OPENAI_API_KEY=synthetic-batch-help-key",
@@ -25,6 +25,9 @@ func TestMainBatchHelpDiscoveryIsOffline(t *testing.T) {
 			}
 			expected := []string{"batches browse", "batches submit requests.jsonl"}
 			if len(args) == 3 && args[1] == "browse" {
+				expected = []string{"Ctrl+N", "openai help --all batches browse"}
+			}
+			if len(args) == 4 && args[3] == "browse" {
 				expected = []string{"Ctrl+N", "CSV text column", "Enter or Ctrl+S", "View rows with answers", "save a spreadsheet"}
 			}
 			output := strings.Join(strings.Fields(got.stdout), " ")

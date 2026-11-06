@@ -23,9 +23,24 @@ func TestMainNormalHelpOutputOptions(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("normal help failed: %+v", got)
 			}
-			wantOptions := []string{"GLOBAL FLAGS", "--format", "--transform", "--raw-output", "Run $ openai --help for details."}
+			var wantOptions []string
 			if len(args) == 0 {
 				wantOptions = []string{"\nGLOBAL FLAGS\n", "--format=FORMAT", "--transform=PATH", "--raw-output"}
+			} else {
+				full := runMainDispatch(t, "bash", append([]string{"openai", "help", "--all"}, args...)...)
+				if full.code != 0 || full.stderr != "" {
+					t.Fatalf("full help failed: %+v", full)
+				}
+				for _, option := range []string{"GLOBAL FLAGS", "--format", "--transform", "--raw-output", "Run $ openai --help for details."} {
+					if !strings.Contains(full.stdout, option) {
+						t.Errorf("full help lacks %q", option)
+					}
+				}
+				if args[0] == "responses" {
+					wantOptions = []string{"[FLAGS]", "\nCOMMON FLAGS\n", "\n  --input ", "\n  --model ", "openai help --all responses create"}
+				} else {
+					wantOptions = []string{"openai help --all models list", "--max-items=INTEGER"}
+				}
 			}
 			for _, want := range wantOptions {
 				if !strings.Contains(got.stdout, want) {
@@ -50,15 +65,18 @@ func TestMainNormalHelpOutputOptions(t *testing.T) {
 
 func TestMainNormalHelpModelsLimit(t *testing.T) {
 	server, requests := normalHelpModelsServer(t)
-	for _, args := range [][]string{{"models", "list", "--help"}, {"help", "models", "list"}} {
+	for _, args := range [][]string{{"models", "list", "--help"}, {"help", "--all", "models", "list"}} {
 		got := runMainDispatch(t, "bash", append([]string{"openai"}, args...)...)
 		text := strings.Join(strings.Fields(got.stdout), " ")
-		if got.code != 0 || got.stderr != "" || !strings.Contains(text, "--max-items=INTEGER") ||
-			!strings.Contains(text, "omit or use -1 for unlimited, or use 0 for no items") {
+		if got.code != 0 || got.stderr != "" || !strings.Contains(text, "--max-items=INTEGER") {
 			t.Fatalf("help does not explain the limit contract: %+v", got)
 		}
-		if args[0] == "help" && !strings.Contains(text, "Default: unlimited") {
-			t.Fatalf("full help displays the wrong omitted default: %s", text)
+		if args[0] == "help" {
+			if !strings.Contains(text, "Default: unlimited") || !strings.Contains(text, "omit or use -1 for unlimited, or use 0 for no items") {
+				t.Fatalf("full help lost the limit contract: %s", text)
+			}
+		} else if !strings.Contains(text, "Maximum models to return.") {
+			t.Fatalf("ordinary help omitted the limit explanation: %s", text)
 		}
 	}
 	for _, tc := range []struct {
@@ -126,9 +144,17 @@ func TestMainNormalHelpNativeModelExamples(t *testing.T) {
 						t.Fatalf("normal help failed or made a request: %+v", help)
 					}
 					var examples []string
-					_, exampleSection, found := strings.Cut(help.stdout, "EXAMPLES\n")
+					_, exampleSection, found := strings.Cut(help.stdout, "EXAMPLE\n")
 					if !found {
 						t.Fatal("model help omitted examples")
+					}
+					if !strings.Contains(exampleSection, "$ "+printedInvocation+" models list\n") {
+						t.Fatalf("the primary example used the wrong launcher: %s", exampleSection)
+					}
+					help = runNativeShell(t, shell, directory, home, server.URL, invocation+" help --all models list")
+					_, exampleSection, found = strings.Cut(help.stdout, "EXAMPLES\n")
+					if help.code != 0 || help.stderr != "" || !found || requests.Load() != 0 {
+						t.Fatalf("full model help failed or made a request: %+v", help)
 					}
 					exampleSection, _, _ = strings.Cut(exampleSection, "\nFLAGS")
 					for line := range strings.SplitSeq(exampleSection, "\n") {

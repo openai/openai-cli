@@ -141,6 +141,11 @@ func TestMainTokenizerEditorRejectsUnsupportedModes(t *testing.T) {
 
 func TestMainTokenizerEditorHelpAndDiscoveryStayNonInteractive(t *testing.T) {
 	env := append(localUtilitiesEnvironment(t), "OPENAI_BASE_URL=://synthetic-private-endpoint")
+	for _, args := range [][]string{{"openai", "tokenizer", "view", "--help"}, {"openai", "help", "tokenizer", "view"}} {
+		got := runMainDispatchWithEnv(t, "pwsh", env, args...)
+		require.Zero(t, got.code, "%s", got.stderr)
+		require.Contains(t, got.stdout, "\nEXAMPLE (BASH OR ZSH)\n  $ openai tokenizer view < draft.txt\n")
+	}
 	for _, args := range [][]string{
 		{"openai", "tokenizer", "-h"}, {"openai", "tokenizer", "--help"},
 		{"openai", "help", "tokenizer"}, {"openai", "help", "--all", "tokenizer"},

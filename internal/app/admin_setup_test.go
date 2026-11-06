@@ -27,7 +27,7 @@ func TestAdminSetupRepeatedHelpConfiguration(t *testing.T) {
 		var output bytes.Buffer
 		cli.HelpPrinter(&output, setup.Command("admin").CustomHelpTemplate, root)
 		invocation := clihelp.Invocation(root.Name, args)
-		if !strings.Contains(output.String(), invocation+" --format text admin organization projects list") {
+		if !strings.Contains(output.String(), invocation+" help --all setup admin") {
 			t.Fatalf("guide lost current invocation %q: %s", invocation, &output)
 		}
 		root.Metadata["help-invocation"] = invocation

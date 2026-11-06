@@ -47,16 +47,11 @@ func TestMainHelpCommandRoutes(t *testing.T) {
 			if want.code != 0 || want.stderr != "" || want.stdout == "" {
 				t.Fatalf("command help failed: %+v", want)
 			}
-			headings := []string{"NAME", "SYNOPSIS", "GLOBAL FLAGS"}
-			if len(path) == 0 {
-				headings = []string{"NAME", "SYNOPSIS", "GLOBAL FLAGS"}
+			synopsis, _, _ := strings.Cut(want.stdout, "\n")
+			if !strings.Contains(synopsis, " "+strings.Join(path, " ")+" ") {
+				t.Errorf("command help must start with its invocation: %s", want.stdout)
 			}
-			for _, heading := range headings {
-				if !strings.Contains(want.stdout, heading) {
-					t.Errorf("complete help lacks %q: %s", heading, want.stdout)
-				}
-			}
-			for _, stale := range []string{"Full help:", "more in full help", "help --all"} {
+			for _, stale := range []string{"Full help:", "more in full help", "no longer needed"} {
 				if strings.Contains(want.stdout, stale) {
 					t.Errorf("complete help advertises obsolete guidance %q", stale)
 				}
@@ -78,26 +73,30 @@ func TestMainHelpCommandRoutes(t *testing.T) {
 				routes = append(routes, append([]string{"openai", path[0], "help", "--"}, path[1:]...))
 			}
 			if slices.Equal(path, []string{"images", "generate"}) {
-				// Check reference details once; every route compares the full result.
-				for _, text := range []string{"--prompt=TEXT", "-n=INTEGER, --count=INTEGER", "Default: auto", "Default: 1", "Default: png", "Default: 100", "Default: 0"} {
-					if !strings.Contains(want.stdout, text) {
-						t.Errorf("full help lost label/default %q", text)
-					}
+				common := helpSection(want.stdout, "COMMON FLAGS", "ALL FLAGS")
+				if !strings.Contains(common, "--prompt") || !strings.Contains(common, "--model") ||
+					strings.Contains(common, "--count") || !strings.Contains(want.stdout, "openai help --all images generate") {
+					t.Errorf("concise help must show frequent inputs and a path to every flag: %s", want.stdout)
 				}
 				for _, text := range []string{"--prompt dall-e-2", "-n dall-e-3", "--size gpt-image-2"} {
 					if strings.Contains(want.stdout, text) {
 						t.Errorf("misleading value label %q", text)
 					}
 				}
-				flagNames := fullHelpFlagNames(want.stdout)
+				full := runMainDispatch(t, "bash", "openai", "help", "--all", "images", "generate")
+				if full.code != 0 || full.stderr != "" {
+					t.Fatalf("full help failed: %+v", full)
+				}
+				flagNames := fullHelpFlagNames(full.stdout)
 				for _, flag := range commands.Command.Command("images").Command("generate").VisibleFlags() {
-					name := flag.Names()[0]
-					if !flagNames["--"+name] && !flagNames["-"+name] {
-						t.Errorf("full reference lost option %q", name)
+					for _, name := range flag.Names() {
+						if !flagNames["--"+name] && !flagNames["-"+name] {
+							t.Errorf("full help lost option %q", name)
+						}
 					}
 				}
-				for _, text := range []string{"32000 characters", "Legacy response format parameter for retired image models", "base64-encoded images", "divisible by 16"} {
-					if !strings.Contains(strings.Join(strings.Fields(want.stdout), " "), text) {
+				for _, text := range []string{"-n=INTEGER", "--count=INTEGER", "Default: auto", "Default: 1", "Default: png", "Default: 100", "Default: 0", "32000 characters", "Legacy response format parameter for retired image models", "base64-encoded images", "divisible by 16"} {
+					if !strings.Contains(strings.Join(strings.Fields(full.stdout), " "), text) {
 						t.Errorf("full reference lost detail %q", text)
 					}
 				}
@@ -124,7 +123,7 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 		visited++
 		flags := append(slices.Clone(inherited), command.VisibleFlags()...)
 		t.Run(strings.Join(append([]string{"openai"}, path...), "/"), func(t *testing.T) {
-			got := runMainDispatch(t, "bash", append([]string{"openai", "help"}, path...)...)
+			got := runMainDispatch(t, "bash", append([]string{"openai", "help", "--all"}, path...)...)
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("full help failed: %+v", got)
 			}
@@ -143,6 +142,9 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 					}
 				}
 				return
+			}
+			if len(path) != 0 && len(command.VisibleCommands()) == 0 && command.Metadata["help-guide"] != true {
+				checkActionOverview(t, path)
 			}
 			flagNames := fullHelpFlagNames(got.stdout)
 			for _, flag := range flags {
@@ -194,6 +196,34 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 	}
 }
 
+// Exercise every declared action through the executable, including future API
+// additions. A short command can still have a flag with several pages of prose.
+func checkActionOverview(t *testing.T, path []string) {
+	t.Helper()
+	argv := append(append([]string{"openai"}, path...), "--help")
+	result := runMainDispatch(t, "bash", argv...)
+	if result.code != 0 || result.stderr != "" {
+		t.Fatalf("action overview failed: %+v", result)
+	}
+	title, _, _ := strings.Cut(result.stdout, "\n")
+	command := "openai " + strings.Join(path, " ")
+	if title != command && !strings.HasPrefix(title, command+" ") {
+		t.Errorf("action overview should start with its usage: %q", title)
+	}
+	for _, manual := range []string{"\nSYNOPSIS\n", "\nDESCRIPTION\n", "\nGLOBAL FLAGS\n"} {
+		if strings.Contains(result.stdout, manual) {
+			t.Errorf("action overview includes reference layout %q", manual)
+		}
+	}
+	_, flags, _ := strings.Cut(result.stdout, "\nFLAGS\n")
+	if strings.HasPrefix(flags, "    --") || strings.Contains(flags, "\n    --") {
+		t.Error("action overview uses full reference blocks for its flag descriptions")
+	}
+	if strings.Contains(result.stdout, "\nCOMMON FLAGS\n") && !strings.Contains(result.stdout, "openai help --all "+strings.Join(path, " ")) {
+		t.Error("action overview lists a subset of flags without a link to the full reference")
+	}
+}
+
 // Read flag headings and inherited-flag indexes, never examples or descriptions.
 func fullHelpFlagNames(text string) map[string]bool {
 	names := map[string]bool{}
@@ -206,8 +236,11 @@ func fullHelpFlagNames(text string) map[string]bool {
 		if !inFlags || (!strings.HasPrefix(line, "    -") && !strings.HasPrefix(line, "  -")) {
 			continue
 		}
-		for _, label := range strings.Split(strings.TrimSpace(line), ",") {
-			name, _, _ := strings.Cut(strings.TrimSpace(label), "=")
+		for _, label := range strings.Fields(line) {
+			if !strings.HasPrefix(label, "-") {
+				break // Descriptions can follow a flag row on wide terminals.
+			}
+			name, _, _ := strings.Cut(strings.TrimSuffix(label, ","), "=")
 			names[name] = true
 		}
 	}
@@ -230,7 +263,7 @@ func fullHelpCommandNames(text string, sections map[string]bool) []string {
 }
 
 func TestMainHelpKeepsAPIProjectInCommandOptions(t *testing.T) {
-	got := runMainDispatch(t, "bash", "openai", "help", "admin:organization:invites", "create")
+	got := runMainDispatch(t, "bash", "openai", "help", "--all", "admin:organization:invites", "create")
 	if got.code != 0 || got.stderr != "" {
 		t.Fatalf("full help failed: %+v", got)
 	}
@@ -257,7 +290,7 @@ func TestMainHelpFullReferenceNullableDefaults(t *testing.T) {
 		{[]string{"images", "generate"}, "--output-format=FORMAT", "Default: png"},
 	} {
 		t.Run(strings.Join(tc.path, "/"), func(t *testing.T) {
-			got := runMainDispatch(t, "bash", append([]string{"openai", "help"}, tc.path...)...)
+			got := runMainDispatch(t, "bash", append([]string{"openai", "help", "--all"}, tc.path...)...)
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("full reference failed: %+v", got)
 			}
@@ -289,7 +322,7 @@ func TestMainHelpFullReferenceDoesNotPrintCredentials(t *testing.T) {
 		{"openai", "--api-key", "fake-argument-api-key", "--admin-api-key", "fake-argument-admin-key", "--webhook-secret", "fake-argument-webhook-secret"},
 	} {
 		for _, route := range [][]string{
-			{"help"}, {"help", "images", "generate"},
+			{"help"}, {"help", "images", "generate"}, {"help", "--all", "images", "generate"},
 			{"images", "help", "generate"},
 		} {
 			args := append(slices.Clone(prefix), route...)
@@ -309,7 +342,7 @@ func TestMainHelpFullReferenceDoesNotPrintCredentials(t *testing.T) {
 func TestMainHelpDoesNotAdvertiseUnshippedFeatures(t *testing.T) {
 	for _, args := range [][]string{
 		{"openai"}, {"openai", "help", "setup"}, {"openai", "images", "--help"},
-		{"openai", "images", "generate", "--help"},
+		{"openai", "images", "generate", "--help"}, {"openai", "help", "--all", "images", "generate"},
 	} {
 		got := runMainDispatch(t, "bash", args...)
 		if got.code != 0 || got.stderr != "" {
@@ -322,10 +355,14 @@ func TestMainHelpDoesNotAdvertiseUnshippedFeatures(t *testing.T) {
 		}
 	}
 	imageHelp := runMainDispatch(t, "bash", "openai", "help", "images", "generate")
-	for _, text := range []string{"--model", "--prompt", "JSON", "~/Downloads/gpt-images/", "--output-dir", "--name", "--count", "gpt-image-2.5-sunburst"} {
+	for _, text := range []string{"--model", "--prompt", "--format json", "~/Downloads/gpt-images/", "--output-dir", "--name", "openai help --all images generate"} {
 		if !strings.Contains(imageHelp.stdout, text) {
 			t.Errorf("image help does not explain the existing command's %q: %s", text, imageHelp.stdout)
 		}
+	}
+	full := runMainDispatch(t, "bash", "openai", "help", "--all", "images", "generate")
+	if full.code != 0 || full.stderr != "" || !strings.Contains(full.stdout, "gpt-image-2.5-sunburst") {
+		t.Error("full image help must identify the supported model")
 	}
 }
 
@@ -362,15 +399,24 @@ func TestMainHelpSetupIsReadOnly(t *testing.T) {
 	env := []string{"HOME=" + home, "USERPROFILE=" + home, "OPENAI_BASE_URL=" + server.URL, "OPENAI_API_KEY=fake-key-must-not-be-printed"}
 	for _, args := range [][]string{
 		{"openai", "help", "setup"}, {"openai", "help", "setup", "--help"},
-		{"openai", "--debug", "help", "setup"},
+		{"openai", "--debug", "help", "setup"}, {"openai", "help", "--all", "setup"},
 	} {
 		got := runMainDispatchWithEnv(t, "bash", env, args...)
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("setup guide failed: %+v", got)
 		}
-		for _, text := range []string{"https://platform.openai.com/", "/api-keys", "read -rs OPENAI_API_KEY", "export OPENAI_API_KEY", "-AsSecureString", "PowerShell",
-			"OPENAI_ADMIN_KEY", "--api-key overrides OPENAI_API_KEY", "--header Authorization overrides key options",
-			"OPENAI_CUSTOM_HEADERS", "OPENAI_PROJECT_ID", "OPENAI_ORG_ID", "Custom endpoints"} {
+		wants := []string{"https://platform.openai.com/", "/api-keys", "OPENAI_API_KEY", "openai models list"}
+		if slices.Contains(args, "--all") {
+			wants = append(wants, "read -rs OPENAI_API_KEY", "export OPENAI_API_KEY", "-AsSecureString", "PowerShell",
+				"OPENAI_ADMIN_KEY", "--api-key overrides OPENAI_API_KEY", "--header Authorization overrides key options",
+				"OPENAI_CUSTOM_HEADERS", "OPENAI_PROJECT_ID", "OPENAI_ORG_ID", "Custom endpoints")
+		} else {
+			wants = append(wants, "openai help --all setup")
+			if strings.Contains(got.stdout, "ALREADY HAVE A KEY?") || strings.Contains(got.stdout, "OPENAI_CUSTOM_HEADERS") {
+				t.Fatal("ordinary setup includes detailed troubleshooting")
+			}
+		}
+		for _, text := range wants {
 			if !strings.Contains(got.stdout, text) {
 				t.Errorf("setup guide lacks %q", text)
 			}

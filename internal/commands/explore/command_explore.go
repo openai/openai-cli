@@ -43,7 +43,7 @@ func Register(root *cli.Command) {
 		Metadata:    map[string]any{localcommands.LocalUtilityMetadata: true, "help-command-section": "Local tools"},
 		Usage:       "Search local CLI commands and examples without running them.",
 		ArgsUsage:   "[SEARCH_TERMS...]",
-		Description: "Pass search terms to print matching commands and examples, ranked by relevance. Search works offline and in pipes. Use auto or text formats for search output and errors.\n\nWithout search terms, browse commands alphabetically. Type to search. Arrow keys choose a command. Enter selects it. Escape cancels.\nWith shell integration, zsh and fish put the selection at your prompt. In Bash 4.3+, press Ctrl+X, then Tab to insert it. If you installed a standalone binary, press F2 when offered to set up insertion.",
+		Description: "Pass search terms to print matching commands and examples, ranked by relevance. Search works offline and in pipes.\n\nWithout search terms, browse commands alphabetically. Type to search. Arrow keys choose a command. Enter selects it. Escape cancels.\nWith shell integration, zsh and fish put the selection at your prompt. In Bash 4.3+, press Ctrl+X, then Tab to insert it. If you installed a standalone binary, press F2 when offered to set up insertion.",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "suggestions", Hidden: true},
 			&cli.BoolFlag{Name: "shell-integration", Hidden: true},
@@ -51,8 +51,15 @@ func Register(root *cli.Command) {
 		},
 		Action: commandExplore,
 	}
+	const output = "Search supports auto or text for --format and --format-error."
 	command.Metadata["help-content"] = clihelp.Content{
-		Description: command.Description,
+		Description:       command.Description,
+		GlobalOptionsNote: output,
+		InheritedFlagHelp: map[string]string{
+			"format": output, "format-error": output,
+			"transform": "Search does not support --transform.", "raw-output": "Search does not support --raw-output.",
+			"transform-error": "Search does not support --transform-error.",
+		},
 		Examples: []clihelp.Example{
 			{Description: "Open interactive command search:", Command: "explore"},
 			{Description: "Find a command by describing the task:", Command: `explore "count tokens offline"`},
@@ -77,14 +84,16 @@ var taskPhrases = map[string][]commandsuggest.TaskPhrase{
 	"transcribe":      {{Text: "speech to text"}},
 }
 
-func exploreCandidates(root *cli.Command, invocation string) []commandsuggest.Candidate {
-	native := clihelp.NativeInvocation(root, invocation)
+func exploreCandidates(root *cli.Command, native, bash, shell string) []commandsuggest.Candidate {
 	return commandsuggest.Catalog(root, native, taskPhrases, clihelp.VisibleCommands, func(command *cli.Command, path string) []commandsuggest.Candidate {
 		// Search examples describe queries, not additional destinations.
 		if path == "explore" {
 			return nil
 		}
-		run := clihelp.ExampleInvocation(command, invocation, native)
+		if content, _ := command.Metadata["help-content"].(clihelp.Content); content.BashExamples && shell != "bash" && shell != "zsh" {
+			return nil
+		}
+		run := clihelp.ExampleInvocation(command, bash, native)
 		var candidates []commandsuggest.Candidate
 		for _, example := range clihelp.CommandExamples(command, path) {
 			candidates = append(candidates, commandsuggest.Example(run, example.Command, example.Description))
@@ -119,8 +128,16 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 	if err := ctx.Err(); err != nil {
 		return exploreFailure("Command search was interrupted.", 130, err)
 	}
+	shell := command.String("shell")
+	if shell == "" {
+		shell = terminal.ParentShell(ctx)
+	}
+	native, bash := clihelp.ShellInvocations(root, clihelp.Invocation(root.Name, os.Args), shell)
+	if native == "" && !command.Bool("suggestions") {
+		return exploreFailure("Run Explore from Bash, zsh, Fish, or PowerShell 7 (pwsh) to get copyable commands for this executable.", 2, nil)
+	}
 	if query != "" {
-		matches := commandsuggest.Search(exploreCandidates(root, clihelp.Invocation(root.Name, os.Args)), query)
+		matches := commandsuggest.Search(exploreCandidates(root, native, bash, shell), query)
 		if err := ctx.Err(); err != nil {
 			return exploreFailure("Command search was interrupted.", 130, err)
 		}
@@ -163,7 +180,7 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 			return exploreFailure("Recent command suggestions are unavailable or invalid. Run a CLI help command and retry.", 2, err)
 		}
 	} else {
-		candidates = exploreCandidates(root, clihelp.Invocation(root.Name, os.Args))
+		candidates = exploreCandidates(root, native, bash, shell)
 	}
 	input, err := terminal.OpenInputFromOutput(os.Stderr)
 	if err != nil {

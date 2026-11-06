@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -30,12 +31,14 @@ import (
 func TestMainWindowsArchiveInstallHelp(t *testing.T) {
 	dir, name := buildNativeShellCLI(t)
 	exe := filepath.Join(dir, name)
-	for _, args := range [][]string{{"install", "--help"}, {"help", "install"}} {
+	for _, args := range [][]string{{"install", "--help"}, {"help", "install"}, {"help", "--all", "install"}} {
 		cmd := exec.Command(exe, args...)
 		cmd.Env = append(os.Environ(), "OPENAI_BASE_URL=bad://private-fixture")
 		out, err := cmd.CombinedOutput()
-		if err != nil || !bytes.Contains(out, []byte("--user")) {
-			t.Fatalf("missing Windows setup help: %v %s", err, out)
+		if err != nil || !bytes.Contains(out, []byte("--user")) || !bytes.Contains(out, []byte("--format-error json")) ||
+			!bytes.Contains(out, []byte("Print the managed executable path.")) || bytes.Contains(out, []byte("Key setup:")) ||
+			bytes.Contains(out, []byte("--api-key")) != slices.Contains(args, "--all") {
+			t.Fatalf("unexpected Windows setup help for %v: %v %s", args, err, out)
 		}
 	}
 	const operand = "PRIVATE_FIXTURE_INSTALL_OPERAND"

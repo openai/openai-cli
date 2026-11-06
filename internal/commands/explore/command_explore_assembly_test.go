@@ -17,7 +17,7 @@ func TestExploreBrowsesInstalledCommandsAlphabetically(t *testing.T) {
 	app.ConfigureCommand(root)
 	_, _, err := app.ConfigureHelp(root, []string{"openai", "explore"})
 	require.NoError(t, err)
-	candidates := commandsuggest.Search(explore.CandidatesForTest(root, "openai"), "")
+	candidates := commandsuggest.Search(explore.CandidatesForTest(root, "openai", "openai", "bash"), "")
 	var commands []string
 	for _, candidate := range candidates {
 		commands = append(commands, candidate.Command)
@@ -39,7 +39,7 @@ func TestEveryTaskPhraseFindsItsInstalledCommandFirst(t *testing.T) {
 	app.ConfigureCommand(root)
 	_, _, err := app.ConfigureHelp(root, []string{"openai", "explore"})
 	require.NoError(t, err)
-	candidates := explore.CandidatesForTest(root, "openai")
+	candidates := explore.CandidatesForTest(root, "openai", "openai", "bash")
 
 	for path, phrases := range explore.TaskPhrasesForTest {
 		t.Run(path, func(t *testing.T) {

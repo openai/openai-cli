@@ -259,7 +259,7 @@ func TestMainBatchReadableLargeRecordRemainsComplete(t *testing.T) {
 
 func TestMainBatchMetadataHelpMatchesAcceptedSyntax(t *testing.T) {
 	for _, command := range []string{"create", "submit"} {
-		got := runMainDispatch(t, "bash", "openai", "batches", command, "--help")
+		got := runMainDispatch(t, "bash", "openai", "help", "--all", "batches", command)
 		if got.code != 0 {
 			t.Fatalf("%s help failed: %+v", command, got)
 		}
