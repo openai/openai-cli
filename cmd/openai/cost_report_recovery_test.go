@@ -66,8 +66,11 @@ func TestMainCostReportAuthRecoveryPreservesExplicitContext(t *testing.T) {
 				got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_ADMIN_KEY=" + environmentAdmin}, invalid...)
 				require.Equal(t, 1, got.code, "%+v", got)
 				require.Empty(t, got.stdout)
-				require.Contains(t, got.stderr, "--admin-api-key")
-				require.Contains(t, got.stderr, "OPENAI_ADMIN_KEY")
+				if status == http.StatusUnauthorized {
+					require.Contains(t, got.stderr, "--admin-api-key")
+				} else {
+					require.Contains(t, got.stderr, "selected organization")
+				}
 				for _, value := range []string{costRecoveryInvalidAdmin, costRecoveryValidAdmin} {
 					require.NotContains(t, got.stderr, value)
 				}
@@ -94,8 +97,7 @@ func TestMainCostReportAuthRecoveryPreservesExplicitContext(t *testing.T) {
 func TestMainCostReportAuthorizationHeaderRecoveryPreservesContext(t *testing.T) {
 	const replacementAdmin = "synthetic-recovery-replacement-admin"
 	const invalidHeader = "Bearer synthetic-recovery-invalid-header"
-	const guidance = "An Authorization override from --header controls this cost report request.\n" +
-		"Correct or remove that override, then retry the report."
+	const guidance = "Correct or remove this Authorization override."
 	for _, tc := range []struct {
 		name    string
 		headers []string

@@ -14,24 +14,33 @@ The recovery guide below includes a failure-safe JSON export recipe.
 openai tokenizer
 ```
 
-A capable terminal opens the live editor with the same theme as image generation.
+The live editor opens below the shell command. Earlier output stays in the terminal's scrollback.
 Type or paste text to see its exact token count.
 The editor supports up to 1 MiB of UTF-8 input.
 
-- Press Tab to focus the visible View control.
-- Press Left or Right on View to switch Text, Token IDs, and Bytes immediately.
-- Press Enter on View to open the view chooser.
-- Press Down to select the Model row.
-- Press Enter on Model to open its chooser.
-- Press Up or Down in a chooser to highlight a choice.
-- Press Enter to apply that choice.
-- Press Escape to cancel a chooser and return to text.
-- Press Tab from options to focus the tokens.
-- Press Left or Right in the tokens to select a token.
-- Press Up from the tokens to return to Model settings.
-- Press Enter on a token to inspect its ID, byte offsets, and every byte.
-- Press F1 for all controls and script examples.
-- Press Ctrl+C to exit.
+Use `tokenizer view` to open a command’s output or a file in the same editor.
+
+```sh
+git diff | openai tokenizer view
+openai tokenizer view < draft.txt
+```
+
+The editor reads the complete UTF-8 input, including trailing newlines.
+When the producer finishes, the editor selects the first token. Page Down shows the next page.
+The terminal supplies the keyboard controls. Tab moves from Tokens to Text for editing.
+Empty input opens an empty draft. For output that another command can read, use `count` or `inspect`.
+
+Apple Terminal can draw brackets at both ends of the shell command.
+Choose **View > Hide Marks** to hide them.
+For one launch, submit the command with Shift+Command+Return. [Apple Terminal shortcuts](https://support.apple.com/guide/terminal/trmlshtcts/mac)
+
+Press Left or Right while typing to move the text cursor by one character.
+Tab moves directly between Text and Tokens. In Tokens, Left and Right select a token. Enter opens its details.
+Shift+Tab opens View settings from either pane. Use Left or Right there to choose Text, Token IDs, or Bytes.
+Outside the text field, `v` opens View, `m` opens Model, and `?` opens Help.
+When tokens are available, `d` opens Details for the selected token.
+In a chooser, use Up or Down to highlight a choice. Enter applies it, and Escape cancels it.
+Ctrl+C closes the panel and returns to the shell.
 
 Enter inserts a newline while editing text.
 Down opens options from any column on the last line.
@@ -39,15 +48,21 @@ On earlier lines, Down moves the text cursor. Up moves to the previous text line
 Home and End move to the current line's boundaries.
 Ctrl+Home and Ctrl+End jump to the beginning and end of the complete draft.
 Page Up and Page Down move by one visible text page and keep focus in Text.
+Wide terminals count wrapped text rows when paging.
 Ctrl+Left and Ctrl+Right move between words separated by whitespace.
 When lines exceed the visible text area, the Text label shows the current line and total lines.
 The editor keeps the complete draft even when only part is visible.
 The highlighted token follows the text cursor without recalculating tokens.
-Its stronger fill and underline make space-only tokens visible too.
-The cursor highlights the character at its position without inserting a gap between letters.
+The selected token and its byte count share a blue background. Monochrome terminals use reverse video.
+In Tokens, the text pane follows the selection and highlights its location. A selected line break appears as `↵`.
+If a token covers part of a displayed character, the text pane highlights the whole character.
+In Tokens, Up and Down select the token nearest the same column on the adjacent row.
+Tab places the text cursor at the start of the inspected token.
+If the token starts inside a displayed character, the cursor lands before that character.
+In the token strip, `␣` marks a selected space-only token. Its caption gives the exact number of spaces.
+The text editor shows a thin blinking cursor at the insertion point.
 At a token boundary, the highlight selects the token on the right. At the end, it selects the last token.
 Tokens can split a Unicode character; cursor movement still follows complete graphemes.
-Tab and Shift+Tab cycle through text, options, and tokens.
 Chooser focus uses the image picker's bold highlight. A checkmark identifies the applied choice.
 The main screen shows model families instead of encoding identifiers.
 It shows the token count and, for multiple tokens, the selected position.
@@ -58,9 +73,16 @@ An arrow beside the token position identifies keyboard focus in the results.
 The Bytes view adds the input byte count; full hexadecimal details remain available through Enter.
 Details quotes text to make leading spaces and escaped characters visible.
 Its subtitle shows the selected model family and its Default or Legacy label.
-Text and token ID share one group. Byte count, starting offset, and hexadecimal bytes share another.
-Byte offsets start at zero. Exact encoding names remain available in script output and `tokenizer encodings`.
+In Details, Token ID identifies the token in the selected encoding.
+Starts tells you how many input bytes precede the token. Size tells you how many UTF-8 bytes the token contains.
+For example, the default encoding assigns ID 220 to a single space. That space uses one byte, hexadecimal `20`.
+Exact encoding names remain available in script output and `tokenizer encodings`.
 Scrolling controls appear when the complete details exceed the visible panel.
+With Tokens focused, Page Down selects the first token beyond the visible page.
+Page Up shows the preceding tokens. Home and End select the first and last token.
+Each page holds as many tokens as the current view and terminal size allow.
+In Help and Details, the same page keys scroll the visible rows.
+On a Mac laptop, Fn+Up sends Page Up and Fn+Down sends Page Down. [Mac keyboard shortcuts](https://support.apple.com/en-us/102650)
 Text and Token IDs are the primary reading views. Bytes supports exact-byte inspection and debugging.
 Ctrl+U removes text before the cursor, matching the image prompt editor.
 Paste preserves whitespace, line endings, and Unicode normalization.
@@ -81,7 +103,8 @@ If computation fails, edit the text or press `r` while Tokens has focus.
 The draft remains available until you exit; the CLI never saves it.
 
 The editor requires terminal input and output, automatic format, and at least 40 columns by 12 rows.
-Pipes, CI, `TERM=dumb`, and explicit text format receive command guidance without consuming stdin.
+Bare `openai tokenizer` prints guidance for pipes, CI, `TERM=dumb`, and explicit text format without consuming stdin.
+`tokenizer view` requires interactive terminal output in automatic mode.
 `NO_COLOR` retains keyboard controls and visible focus markers.
 It retains the monochrome cursor and selected-token styling while suppressing token colors.
 Use `count` or `inspect` for JSON output and scripts.
@@ -94,6 +117,7 @@ openai tokenizer inspect --text "Hi!" --encoding cl100k_base
 openai tokenizer count --text "    return value" --encoding p50k_base
 openai tokenizer count --file prompt.txt
 printf 'Hello, world!' | openai tokenizer count
+printf 'Hello, world!' | openai tokenizer count -n
 openai --format json tokenizer inspect --file prompt.txt
 openai tokenizer encodings
 openai tokenizer licenses
@@ -199,8 +223,13 @@ See [configuration basics](https://learn.chatgpt.com/docs/config-file/config-bas
 
 Tokenizer subcommands and Codex support `--format auto`, `text`, and `json`.
 Bare `openai tokenizer` requires `count` or `inspect` for JSON output.
-`auto` produces readable text through pipes.
-Unsupported formats, `--transform`, and `--raw-output` return errors.
+`auto` produces readable text through pipes by default.
+`tokenizer count --number` (or `-n`) writes only the token count followed by a newline.
+The input `Hello, world!` produces `4`. You can also select the count with `--transform token_count`.
+Use `--transform input_bytes` to select the byte count.
+Use `--transform encoding --raw-output` to print the encoding name without JSON quotes.
+Extraction follows the shared CLI behavior. A missing path returns the complete count object.
+For `inspect`, use `--format json` to pipe the complete token records to a JSON reader.
 The existing `--format-error` behavior remains available.
 Invalid input, read failures, opening failures, and output failures return nonzero statuses.
 Interrupted output can be incomplete.
@@ -228,7 +257,7 @@ The live editor replaces tokenization work when you edit text or select another 
 | File cannot open or read | No token result. | Check the supplied path, file type, permissions, and producer. The error does not print private paths. |
 | Input producer has not closed stdin | The command waits for EOF. | Finish the producer or send EOF. Press Ctrl+C to stop. |
 | Producer fails after writing a valid prefix | The tokenizer can successfully count that prefix. | Check the producer's exit status too. Bash and zsh can use `set -o pipefail`. |
-| Unsupported output format or transformation | No result. | Use `--format text` or `--format json`; remove `--transform` and `--raw-output`. |
+| Unsupported output format or transformation | No result. | Use `--format text` or `--format json`. Only `tokenizer count` accepts `--transform` and `--raw-output` among these local commands. |
 | Output file or pipe fails | Previously written bytes can remain incomplete. | Fix the output destination and rerun. Discard partial output; do not append a retry to it. |
 | Tokenization is interrupted | No complete result is promised. | Rerun only if you still need the result. Long unbroken input can remain slow. |
 | Missing or unknown Codex destination | No browser launches. | Choose `docs`, `config`, `app`, or `web`. `--open` requires an explicit destination. |
@@ -265,7 +294,7 @@ The temporary-file example preserves an existing result when tokenization fails.
 
 ## Tokenizer dependencies
 
-The tokenizer reads embedded OpenAI vocabularies through `github.com/tiktoken-go/tokenizer v0.7.0`.
+The tokenizer reads embedded OpenAI vocabularies through `github.com/tiktoken-go/tokenizer`.
 It uses `github.com/pkoukk/tiktoken-go v0.1.8` for ordinary BPE encoding with fixed Unicode 16 rules.
 Each encoding initializes once, and both counting and inspection validate every returned byte against the input.
 The CLI never downloads vocabulary data during execution.

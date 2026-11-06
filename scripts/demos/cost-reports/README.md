@@ -1,62 +1,43 @@
-# Project cost-report demo
+# Project cost report demo
 
-This recipe runs the same command against the baseline and candidate binaries.
-The baseline lacks `costs report` and exits with status 1.
-The candidate reads two synthetic Costs API pages and exits with status 0.
-The resulting totals are `proj_alpha usd 12.34` and `proj_beta usd 4.56`.
-Both scenes use explicit dates, UTC, and project grouping.
-
-The recorder reuses `../capture_and_render.sh` for capture, rendering, cleanup, and assembly.
-The Python fixture serves loopback requests and checks query parameters and fake Admin credentials.
-The fixture preserves request and response hashes without logging credentials.
-SIGINT and SIGTERM stop the fixture, close its listener, and join its worker.
-No dependency installation or Go build occurs during recording.
-
-Obtain the coordinator's PTY reservation before running the recipe.
-Use existing `python3`, `asciinema`, `agg`, `ffmpeg`, and `ffprobe` installations.
-Use an empty output directory outside the repository.
-Supply full source commit IDs matching both binaries.
-Use a baseline binary from this commit:
+Run the same command before and after this change. The baseline exits with an unknown command or option.
+The candidate reads two pages from a local fixture and prints these exact totals:
 
 ```text
-e68939820415144d769ed02de6aa72d5b7d32948
+proj_alpha  usd  12.34
+proj_beta   usd  4.56
 ```
+
+Use macOS with Bash, Python 3, asciinema 3, agg, ffmpeg, ffprobe, and the Menlo font.
+Place these tools on your PATH. Run from the candidate checkout.
+Set `BASE_REF` to the comparison commit on main. Both builds and all recordings stay outside the repository.
 
 ```sh
-PATH=/absolute/terminal-replay-tools:$PATH \
-  bash scripts/demos/cost-reports/record.sh \
-  /absolute/task/evidence/baseline-openai \
-  /absolute/task/evidence/candidate-openai \
-  e68939820415144d769ed02de6aa72d5b7d32948 AFTER_COMMIT \
-  /absolute/task/evidence/cost-reports-media
+BASE_REF=origin/main
+baseline=$(git rev-parse "$BASE_REF")
+candidate=$(git rev-parse HEAD)
+artifacts=$(mktemp -d)
+mkdir "$artifacts/baseline"
+git archive "$baseline" | tar -xf - -C "$artifacts/baseline"
+(cd "$artifacts/baseline" && go build -o "$artifacts/before-openai" ./cmd/openai)
+go build -o "$artifacts/after-openai" ./cmd/openai
+bash scripts/demos/cost-reports/record.sh \
+  "$artifacts/before-openai" "$artifacts/after-openai" \
+  "$baseline" "$candidate" "$artifacts/media"
 ```
 
-Set `DEMO_AFTER_SOURCE_STATE` when the candidate contains uncommitted changes.
-Set `DEMO_SOURCE_MANIFEST` to preserve a matching source manifest.
-The recorder checks binary and runtime source hashes before and after capture.
-It requires exactly two candidate requests and no baseline requests.
-It also validates command exit statuses and exact report totals.
+Record from a clean candidate checkout, or set `DEMO_AFTER_SOURCE_STATE` to describe local changes.
+The recorder uses isolated Bash terminals, fake credentials, and a loopback Costs API.
+It checks exit codes, pagination, request parameters, and totals.
 
-The replay uses isolated Bash sessions, 110 columns, 22 rows, and Menlo at 18 pixels.
-The shared capture environment supplies fake credentials and temporary homes.
-Outputs include casts, transcripts, PNG screenshots, GIFs, request logs, status logs, and metadata.
-Inspect `before.png`, `after.png`, and `comparison.gif` before sharing them.
-Terminal captures combine stdout and stderr; public tests verify separate streams.
-These captures establish terminal replay behavior, not native graphical appearance or live account acceptance.
-Keep generated media and executables outside Git.
+Inspect `before.png`, `after.png`, and `comparison.gif` in the media directory.
+The images show actual CLI output rendered from recorded terminals. They use 110 columns, 22 rows, and Menlo at 18 pixels.
+The directory also contains both terminal recordings, transcripts, file hashes, and request logs.
 
-## Snapshot comparison
-
-For a two-frame comparison, assemble the clean labeled screenshots with Python and Pillow:
+For a lossless two-frame GIF of the screenshots, use Python with Pillow:
 
 ```sh
 python3 scripts/demos/cost-reports/assemble_snapshot_gif.py \
-  /absolute/task/evidence/cost-reports-media/before.png \
-  /absolute/task/evidence/cost-reports-media/after.png \
-  /absolute/task/evidence/cost-reports-media/comparison-snapshots.gif
+  "$artifacts/media/before.png" "$artifacts/media/after.png" \
+  "$artifacts/media/comparison-snapshots.gif"
 ```
-
-The output path must be new. The script verifies every composited GIF frame against its source screenshot.
-It rejects unequal dimensions or more than 256 combined colors instead of silently approximating them.
-Label this artifact as static snapshots from a terminal replay, with both original source commits.
-It is not a new recording of later changes. Retain any earlier defective media alongside its review findings.

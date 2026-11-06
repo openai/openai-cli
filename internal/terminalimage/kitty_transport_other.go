@@ -20,3 +20,7 @@ func RunKittyOutputHelper(_ []string) (bool, error) { return false, nil }
 func PrepareNativeImageOutput(ctx context.Context, _ io.Writer) (context.Context, func() error) {
 	return ctx, func() error { return nil }
 }
+
+func PrepareInteractiveImageOutput(ctx context.Context, out io.Writer) (context.Context, func() error) {
+	return PrepareNativeImageOutput(ctx, out)
+}

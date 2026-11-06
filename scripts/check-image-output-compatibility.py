@@ -18,7 +18,7 @@ import sys
 import zlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from terminal_test import run_terminal_test
+from terminal_test import kitty_images, run_terminal_test
 
 TEST = 'TestMainImageOutputSurvivesExecutableReplacementTerminal'
 PIXELS = bytes([230, 0, 0, 255, 0, 0, 200, 127])  # imageGenerationPNG fixture
@@ -79,20 +79,26 @@ def validate(code, captured):
         name = raw_name.decode('ascii')
         check(name in expected and name not in results, 'unexpected or duplicate replacement case')
         program = name.split('/')[1]
-        frames = (re.findall(rb'\x1b_G([^;]*);(.*?)\x1b\\', section, re.S) if program == 'kitty'
-                  else re.findall(rb'\x1b\]1337;File=([^:]*):([^\x07\x1b]*)(?:\x07|\x1b\\)', section))
+        if program == 'kitty':
+            images = kitty_images(section)
+            check(len(images) == expected[name], 'wrong native image count: ' + name)
+            for png in images:
+                check_fixture_png(png)
+            totals[program] += len(images)
+            results[name] = {'images': len(images), 'exact_rgba': True, 'passed': True}
+            continue
+        frames = re.findall(rb'\x1b\]1337;File=([^:]*):([^\x07\x1b]*)(?:\x07|\x1b\\)', section)
         check(len(frames) == expected[name], 'wrong native image count: ' + name)
         for header, payload in frames:
             image = base64.b64decode(payload, validate=True)
-            fields = dict(field.split(b'=', 1) for field in header.split(b',' if program == 'kitty' else b';'))
-            wanted = ({b'a': b'T', b'f': b'100', b'm': b'0', b'q': b'2'} if program == 'kitty'
-                      else {b'inline': b'1', b'width': b'auto', b'height': b'auto', b'size': str(len(image)).encode()})
+            fields = dict(field.split(b'=', 1) for field in header.split(b';'))
+            wanted = {b'inline': b'1', b'width': b'auto', b'height': b'auto', b'size': str(len(image)).encode()}
             check(all(fields.get(k) == v for k, v in wanted.items()), 'unexpected graphics frame: ' + name)
             check_fixture_png(image)
         totals[program] += len(frames)
         results[name] = {'images': len(frames), 'exact_rgba': True, 'passed': True}
     check(totals == {'kitty': 10, 'vscode': 10}, 'wrong per-protocol image totals')
-    check(captured.count(b'\x1b_G') == totals['kitty'], 'incomplete or unexpected Kitty output')
+    check(len(kitty_images(captured)) == totals['kitty'], 'incomplete or unexpected Kitty output')
     check(captured.count(b'\x1b]1337;') == totals['vscode'], 'incomplete or unexpected IIP output')
     return results
 

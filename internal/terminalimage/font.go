@@ -53,7 +53,10 @@ type FontError struct{ Err error }
 func (e *FontError) Error() string { return e.Err.Error() }
 func (e *FontError) Unwrap() error { return e.Err }
 
-const maxFontPreviewColumns = 32
+const (
+	maxFontPreviewColumns = 32
+	maxFontRowColumns     = 64 // The existing imagegallery and imagefont frame limit.
+)
 
 func writeImageFont(ctx context.Context, out io.Writer, img image.Image, columns int) error {
 	return writeImageFontReserved(ctx, out, img, columns, 0)
@@ -86,25 +89,92 @@ func writeImageFontReserved(ctx context.Context, out io.Writer, img image.Image,
 	// Each tab retains its own immutable glyph assignments. Reusing the same
 	// font slot would replace images already visible in that tab's scrollback.
 	session := sha256.Sum256([]byte(sessionID + "\x00" + tty))
-	directory := filepath.Join(cache, "openai", "image-terminal", fmt.Sprintf("%x", session[:16]))
+	directory, err := fontGalleryDirectory(cache, fmt.Sprintf("%x", session[:16]))
+	if err != nil {
+		return &FontError{err}
+	}
 	services := fontServices{imagefontmac.Snapshot, imagefontmac.Source, imagefontmac.Register, imagefontmac.Preserve, imagefontmac.Restore, imagefontmac.InspectProfile}
-	if err := displayImageFontReserved(ctx, out, img, columns, directory, tty, func() fontViewport {
-		return readFontViewport(file.Fd())
-	}, services, reserveGlyphs); err != nil {
+	adopted, err := displayImageFontForSession(ctx, out, img, columns, directory, tty, func() fontViewport { return readFontViewport(file.Fd()) }, services, reserveGlyphs)
+	if err != nil {
 		return err
 	}
 	// Clean up only after the selected font has been validated and rendered.
 	// A changed session identity must never discard the previous gallery.
 	// Cleanup remains best-effort and cannot fail a completed preview.
-	_ = cleanupClosedFontGalleries(ctx, directory, tty)
+	if !adopted {
+		_ = cleanupClosedFontGalleries(ctx, directory, tty)
+	}
 	return nil
+}
+
+// CoreText keeps the registration URL after the renderer exits. If a temporary
+// home links its application cache to a persistent cache, register the target
+// path. Leave gallery paths below that anchor to imagegallery's private checks.
+func fontGalleryDirectory(cache, session string) (string, error) {
+	anchor := filepath.Join(cache, "openai")
+	info, err := os.Lstat(anchor)
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	if info != nil && info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(anchor)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(cache, target)
+		}
+		anchor = target
+	}
+	return filepath.Join(anchor, "image-terminal", session), nil
+}
+
+// Reconnect only the exact active font; fresh sessions retain their own gallery.
+func displayImageFontForSession(ctx context.Context, out io.Writer, img image.Image, columns int, directory, tty string, viewport func() fontViewport, services fontServices, reserveGlyphs int) (bool, error) {
+	until := time.Now().Add(2 * time.Second)
+	for {
+		adopted, err := displayImageFontForSessionOnce(ctx, out, img, columns, directory, tty, viewport, services, reserveGlyphs)
+		if !errors.Is(err, imagegallery.ErrBusy) || !time.Now().Before(until) {
+			return adopted, err
+		}
+		timer := time.NewTimer(25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func displayImageFontForSessionOnce(ctx context.Context, out io.Writer, img image.Image, columns int, directory, tty string, viewport func() fontViewport, services fontServices, reserveGlyphs int) (bool, error) {
+	// Snapshot is read-only; its profile token does not select or modify a profile.
+	before, err := services.snapshot(ctx, "OpenAI Images 00000000", tty)
+	if err != nil {
+		return false, &FontError{err}
+	}
+	selected, err := imagegallery.FindFontGallery(ctx, filepath.Dir(directory), before.FontName)
+	if err != nil {
+		return false, &FontError{err}
+	}
+	inherited := ""
+	if selected != "" && selected != directory {
+		directory = selected
+		inherited = before.FontName
+	}
+	err = displayImageFontReservedSession(ctx, out, img, columns, directory, tty, viewport, services, reserveGlyphs, inherited)
+	return inherited != "", err
 }
 
 func displayImageFont(ctx context.Context, out io.Writer, img image.Image, columns int, directory, tty string, viewport func() fontViewport, services fontServices) (err error) {
 	return displayImageFontReserved(ctx, out, img, columns, directory, tty, viewport, services, 0)
 }
 
-func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Image, columns int, directory, tty string, viewport func() fontViewport, services fontServices, reserveGlyphs int) (err error) {
+func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Image, columns int, directory, tty string, viewport func() fontViewport, services fontServices, reserveGlyphs int) error {
+	return displayImageFontReservedSession(ctx, out, img, columns, directory, tty, viewport, services, reserveGlyphs, "")
+}
+
+func displayImageFontReservedSession(ctx context.Context, out io.Writer, img image.Image, columns int, directory, tty string, viewport func() fontViewport, services fontServices, reserveGlyphs int, inherited string) (err error) {
 	writing, rollbackFailed := false, false
 	defer func() {
 		if err != nil && !writing && !rollbackFailed {
@@ -116,8 +186,14 @@ func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Imag
 		return err
 	}
 	defer gallery.Close()
-	if err := gallery.BindTTY(ctx, tty); err != nil {
-		return err
+	var bindErr error
+	if inherited != "" {
+		bindErr = gallery.CheckTTY(ctx, tty)
+	} else {
+		bindErr = gallery.BindTTY(ctx, tty)
+	}
+	if bindErr != nil && !(inherited != "" && errors.Is(bindErr, imagegallery.ErrOtherTTY)) {
+		return bindErr
 	}
 	initial, err := gallery.Initialize(ctx)
 	if err != nil {
@@ -133,6 +209,9 @@ func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Imag
 	if err != nil {
 		return err
 	}
+	if inherited != "" && before.FontName != inherited {
+		return errors.New("Terminal font changed while reconnecting its image gallery")
+	}
 	if before.FontSize != float64(int(before.FontSize)) {
 		return errors.New("sharp previews require a whole-number Terminal font size")
 	}
@@ -144,10 +223,12 @@ func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Imag
 		if err := registerFont(ctx, services, path, true); err != nil {
 			return err
 		}
+	} else if inherited != "" {
+		return errors.New("the selected image font no longer belongs to this gallery")
 	} else if strings.HasPrefix(before.FontName, "OpenAIImages-") || strings.HasPrefix(before.FontName, "OpenAI Local ") || strings.HasPrefix(before.FontName, "OpenAI Image Gallery ") {
 		// Another gallery (or an unresolved generated family alias) may already
 		// own these codepoints in scrollback. Never replace it with a fresh font.
-		return errors.New("this tab's image font cannot be matched to the current session; open a new Terminal tab to keep earlier previews intact")
+		return errors.New("this tab's image font cannot be matched to the current session. Open a new Terminal tab with your normal text font")
 	}
 	source, err := services.source(ctx, before.FontName, int(before.FontSize))
 	if err != nil {
@@ -158,10 +239,16 @@ func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Imag
 	if err != nil {
 		return err
 	}
+	maximum := maxFontPreviewColumns
+	if _, rows := ctx.Value(fontRowsKey{}).(io.Writer); rows {
+		// Prepared rows already have a caller-bounded viewport. Keep direct
+		// output and progress reservations at their existing preview width.
+		maximum = maxFontRowColumns
+	}
 	if columns < 1 {
 		columns = maxFontPreviewColumns
 	}
-	columns = min(columns, maxFontPreviewColumns)
+	columns = min(columns, maximum)
 	if size.Columns > 0 {
 		columns = min(columns, size.Columns-1)
 	}
@@ -169,7 +256,7 @@ func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Imag
 		return errors.New("widen Terminal before displaying the image")
 	}
 	if size.Rows > 0 {
-		columns = FontPreviewColumns(img.Bounds(), columns, size.Rows)
+		columns = fontPreviewColumns(img.Bounds(), columns, size.Rows, maximum)
 		if columns < 1 {
 			return errors.New("enlarge Terminal before displaying the image")
 		}
@@ -182,23 +269,27 @@ func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Imag
 		}
 		companions = append(companions, companion)
 	}
-	limit := imagefont.MaxGlyphs
-	if reserveGlyphs > 0 {
-		for _, face := range append([]imagefont.PreserveOptions{geometry}, companions...) {
-			capacity, err := imagefont.PreservedGlyphCapacity(face)
-			if err != nil {
-				return err
-			}
-			limit = min(limit, max(0, capacity-reserveGlyphs))
+	capacity := imagefont.MaxPreservedGlyphs
+	for _, face := range append([]imagefont.PreserveOptions{geometry}, companions...) {
+		faceCapacity, err := imagefont.PreservedGlyphCapacity(face)
+		if err != nil {
+			return err
 		}
+		capacity = min(capacity, faceCapacity)
 	}
-	revision, err := gallery.PrepareWithLimit(ctx, img, columns, limit)
+	// Replaying an existing placement still rebuilds every retained glyph.
+	// Reservation affects new allocations, not the actual budget for replay.
+	if state.UsedGlyphs > capacity {
+		return fmt.Errorf("sharp-preview capacity reached: %w", imagegallery.ErrFull)
+	}
+	limit := max(0, capacity-max(0, reserveGlyphs))
+	revision, err := gallery.PreparePreservingWithLimit(ctx, img, columns, limit)
 	if err != nil {
 		if errors.Is(err, imagegallery.ErrFull) {
 			if reserveGlyphs > 0 {
 				return errors.New("sharp progress preview skipped to leave room for the final image")
 			}
-			return errors.New("this tab's image font is full; open a new Terminal tab to continue displaying sharp images")
+			return fmt.Errorf("sharp-preview capacity reached: %w", imagegallery.ErrFull)
 		}
 		return err
 	}
@@ -255,6 +346,9 @@ func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Imag
 		return err
 	}
 	writing = true
+	if target, ok := ctx.Value(fontRowsKey{}).(io.Writer); ok {
+		out = target
+	}
 	_, err = io.WriteString(contextWriter{ctx, out}, display.Text)
 	return err
 }

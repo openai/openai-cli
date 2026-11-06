@@ -3,6 +3,12 @@ version: 2
 
 release:
   replace_existing_artifacts: true
+  extra_files: &linux_release_installers
+    - glob: '{{ or (index .Env "OPENAI_LINUX_RELEASE_INSTALLER") "scripts/install-linux-release.sh" }}'
+    - glob: scripts/openai.sh
+
+checksum:
+  extra_files: *linux_release_installers
 
 builds:
   - id: macos
@@ -12,7 +18,7 @@ builds:
     main: ./cmd/openai/main.go
     mod_timestamp: '{{ .CommitTimestamp }}'
     ldflags:
-      - '-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}'
+      - '-s -w -X github.com/openai/openai-cli/internal/updatenotice.releaseVersion={{.Version}} -X github.com/openai/openai-cli/internal/updatenotice.releaseCommit={{.Commit}}'
 
   - id: linux
     goos: [linux]
@@ -23,7 +29,7 @@ builds:
     main: ./cmd/openai/main.go
     mod_timestamp: '{{ .CommitTimestamp }}'
     ldflags:
-      - '-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}'
+      - '-s -w -X github.com/openai/openai-cli/internal/updatenotice.releaseVersion={{.Version}} -X github.com/openai/openai-cli/internal/updatenotice.releaseCommit={{.Commit}}'
 
   - id: windows
     goos: [windows]
@@ -32,7 +38,7 @@ builds:
     main: ./cmd/openai/main.go
     mod_timestamp: '{{ .CommitTimestamp }}'
     ldflags:
-      - '-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}'
+      - '-s -w -X github.com/openai/openai-cli/internal/updatenotice.releaseVersion={{.Version}} -X github.com/openai/openai-cli/internal/updatenotice.releaseCommit={{.Commit}}'
 
 archives:
   - id: linux-archive
@@ -42,6 +48,9 @@ archives:
     files:
       - completions/*
       - man/*/*
+      - install.sh
+      - openai-enable-updates.sh
+      - openai-enable-updates.zsh
   - id: macos-archive
     ids: [macos]
     name_template: '{{ .ProjectName }}_{{ .Version }}_macos_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
@@ -49,6 +58,9 @@ archives:
     files:
       - completions/*
       - man/*/*
+      - install.sh
+      - openai-enable-updates.sh
+      - openai-enable-updates.zsh
   - id: windows-archive
     ids: [windows]
     name_template: '{{ .ProjectName }}_{{ .Version }}_windows_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
@@ -56,6 +68,7 @@ archives:
     files:
       - completions/*
       - man/*/*
+      - Install.cmd
 
 notarize:
   macos:
@@ -91,6 +104,26 @@ nfpms:
         dst: /usr/share/fish/vendor_conf.d/openai-picker.fish
         file_info:
           mode: 0644
+      - src: internal/autocomplete/shellscripts/fish_package_explore.fish
+        dst: /usr/share/fish/vendor_conf.d/openai-explore.fish
+        file_info:
+          mode: 0644
+      - src: internal/autocomplete/shellscripts/fish_explore_selection.fish
+        dst: /usr/share/openai-cli/explore-selection.fish
+        file_info:
+          mode: 0644
+      - src: install.sh
+        dst: /usr/share/openai-cli/install.sh
+        packager: deb
+      - src: openai-enable-updates.sh
+        dst: /usr/share/openai-cli/enable-updates.sh
+        packager: deb
+      - src: install.sh
+        dst: /usr/share/openai-cli/install.sh
+        packager: rpm
+      - src: openai-enable-updates.sh
+        dst: /usr/share/openai-cli/enable-updates.sh
+        packager: rpm
 homebrew_casks:
   - name: openai
     repository:
@@ -108,6 +141,13 @@ homebrew_casks:
     license: Apache-2.0
     binaries:
       - "openai"
+      - "openai-enable-updates.zsh"
+    caveats: |
+      Run openai help setup to get started.
+      The README installation block enables automatic updates in zsh.
+      If you ran brew install on its own, you can enable them with:
+        source "$(brew --prefix)/bin/openai-enable-updates.zsh"
+      After setup, eligible interactive API commands check for updates automatically.
     completions:
       bash: "completions/openai.bash"
       zsh: "completions/openai.zsh"

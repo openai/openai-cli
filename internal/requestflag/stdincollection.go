@@ -13,7 +13,7 @@ func setRequestFlagFromStdin(flag cli.Flag, value any, onSet func(cli.Flag)) err
 	if setter, ok := flag.(interface{ setStdinCollection(any) (bool, error) }); ok {
 		if handled, err := setter.setStdinCollection(value); handled {
 			if err != nil {
-				return fmt.Errorf("cannot set flag %q from piped data: %w", flag.Names()[0], err)
+				return stdinValueError(flag, fmt.Errorf("cannot set flag %q from piped data: %w", flag.Names()[0], err))
 			}
 			if onSet != nil {
 				onSet(flag)
@@ -23,7 +23,7 @@ func setRequestFlagFromStdin(flag cli.Flag, value any, onSet func(cli.Flag)) err
 	}
 	formatted, err := formatForFlagSet(value)
 	if err != nil {
-		return fmt.Errorf("cannot format piped value for flag %q: %w", flag.Names()[0], err)
+		return stdinValueError(flag, fmt.Errorf("cannot format piped value for flag %q: %w", flag.Names()[0], err))
 	}
 	return setFlagFromStdin(flag, formatted, onSet)
 }

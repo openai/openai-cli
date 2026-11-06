@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,7 +13,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestMainNormalHelpOutputOptions(t *testing.T) {
@@ -25,9 +23,24 @@ func TestMainNormalHelpOutputOptions(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("normal help failed: %+v", got)
 			}
-			wantOptions := []string{"GLOBAL OPTIONS:", "--format", "--transform", "--raw-output", "Global option details: openai --help"}
+			var wantOptions []string
 			if len(args) == 0 {
-				wantOptions = []string{"\n   Output\n", "--format FORMAT", "--transform PATH", "--raw-output"}
+				wantOptions = []string{"\nGLOBAL FLAGS\n", "--format=FORMAT", "--transform=PATH", "--raw-output"}
+			} else {
+				full := runMainDispatch(t, "bash", append([]string{"openai", "help", "--all"}, args...)...)
+				if full.code != 0 || full.stderr != "" {
+					t.Fatalf("full help failed: %+v", full)
+				}
+				for _, option := range []string{"GLOBAL FLAGS", "--format", "--transform", "--raw-output", "Run $ openai --help for details."} {
+					if !strings.Contains(full.stdout, option) {
+						t.Errorf("full help lacks %q", option)
+					}
+				}
+				if args[0] == "responses" {
+					wantOptions = []string{"[FLAGS]", "\nCOMMON FLAGS\n", "\n  --input ", "\n  --model ", "openai help --all responses create"}
+				} else {
+					wantOptions = []string{"openai help --all models list", "--max-items=INTEGER"}
+				}
 			}
 			for _, want := range wantOptions {
 				if !strings.Contains(got.stdout, want) {
@@ -52,15 +65,18 @@ func TestMainNormalHelpOutputOptions(t *testing.T) {
 
 func TestMainNormalHelpModelsLimit(t *testing.T) {
 	server, requests := normalHelpModelsServer(t)
-	for _, args := range [][]string{{"models", "list", "--help"}, {"help", "models", "list"}} {
+	for _, args := range [][]string{{"models", "list", "--help"}, {"help", "--all", "models", "list"}} {
 		got := runMainDispatch(t, "bash", append([]string{"openai"}, args...)...)
 		text := strings.Join(strings.Fields(got.stdout), " ")
-		if got.code != 0 || got.stderr != "" || !strings.Contains(text, "--max-items INTEGER") ||
-			!strings.Contains(text, "omit or use -1 for unlimited, or use 0 for no items") {
+		if got.code != 0 || got.stderr != "" || !strings.Contains(text, "--max-items=INTEGER") {
 			t.Fatalf("help does not explain the limit contract: %+v", got)
 		}
-		if args[0] == "help" && !strings.Contains(text, "Default: unlimited") {
-			t.Fatalf("full help displays the wrong omitted default: %s", text)
+		if args[0] == "help" {
+			if !strings.Contains(text, "Default: unlimited") || !strings.Contains(text, "omit or use -1 for unlimited, or use 0 for no items") {
+				t.Fatalf("full help lost the limit contract: %s", text)
+			}
+		} else if !strings.Contains(text, "Maximum models to return.") {
+			t.Fatalf("ordinary help omitted the limit explanation: %s", text)
 		}
 	}
 	for _, tc := range []struct {
@@ -93,12 +109,7 @@ func TestMainNormalHelpNativeModelExamples(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(work, "openai")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	build := exec.CommandContext(ctx, filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-o", binary, ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	copyShellTestCLI(t, binary)
 	invocation := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
 	server, requests := normalHelpModelsServer(t)
 	required := strings.Split(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), ",")
@@ -133,14 +144,22 @@ func TestMainNormalHelpNativeModelExamples(t *testing.T) {
 						t.Fatalf("normal help failed or made a request: %+v", help)
 					}
 					var examples []string
-					_, exampleSection, found := strings.Cut(help.stdout, "EXAMPLES:\n")
+					_, exampleSection, found := strings.Cut(help.stdout, "EXAMPLE\n")
 					if !found {
 						t.Fatal("model help omitted examples")
 					}
-					exampleSection, _, _ = strings.Cut(exampleSection, "\nOPTIONS:")
+					if !strings.Contains(exampleSection, "$ "+printedInvocation+" models list\n") {
+						t.Fatalf("the primary example used the wrong launcher: %s", exampleSection)
+					}
+					help = runNativeShell(t, shell, directory, home, server.URL, invocation+" help --all models list")
+					_, exampleSection, found = strings.Cut(help.stdout, "EXAMPLES\n")
+					if help.code != 0 || help.stderr != "" || !found || requests.Load() != 0 {
+						t.Fatalf("full model help failed or made a request: %+v", help)
+					}
+					exampleSection, _, _ = strings.Cut(exampleSection, "\nFLAGS")
 					for line := range strings.SplitSeq(exampleSection, "\n") {
-						if strings.HasPrefix(strings.TrimSpace(line), printedInvocation+" models list") {
-							examples = append(examples, strings.TrimSpace(line))
+						if strings.HasPrefix(strings.TrimSpace(line), "$ "+printedInvocation+" models list") {
+							examples = append(examples, strings.TrimPrefix(strings.TrimSpace(line), "$ "))
 						}
 					}
 					if len(examples) != 3 {
@@ -163,16 +182,16 @@ func TestMainNormalHelpNativeModelExamples(t *testing.T) {
 								}
 							}
 						case 1:
-							decoder := json.NewDecoder(strings.NewReader(got.stdout))
-							for _, id := range []string{"synthetic-model-one", "synthetic-model-two"} {
-								var item map[string]any
-								if err := decoder.Decode(&item); err != nil || item["id"] != id || item["synthetic_field"] != "retained" || len(item) != 5 {
-									t.Fatalf("JSON example lost complete model data: %q (%v)", got.stdout, err)
-								}
+							var items []map[string]any
+							if err := json.Unmarshal([]byte(got.stdout), &items); err != nil || len(items) != 2 {
+								t.Fatalf("JSON example must contain one complete array: %q (%v)", got.stdout, err)
 							}
-							var extra any
-							if err := decoder.Decode(&extra); err != io.EOF {
-								t.Fatalf("JSON example contains extra output: %q (%v)", got.stdout, err)
+							for index, id := range []string{"synthetic-model-one", "synthetic-model-two"} {
+								item := items[index]
+								if item["id"] != id || item["object"] != "model" || item["created"] != float64(index+1) ||
+									item["owned_by"] != "test" || item["synthetic_field"] != "retained" || len(item) != 5 {
+									t.Fatalf("JSON example lost complete model data: %q", got.stdout)
+								}
 							}
 						case 2:
 							if got.stdout != "synthetic-model-one\nsynthetic-model-two\n" {

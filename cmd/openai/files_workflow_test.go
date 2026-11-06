@@ -26,8 +26,16 @@ func filesWorkflowUploadServer(t *testing.T, filename string, payload []byte) (*
 
 func filesWorkflowUploadServerWithResponse(t *testing.T, filename string, payload []byte, status int, response string) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
+	handler, requests := filesWorkflowUploadHandler(t, filename, payload, status, response)
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	return server, requests
+}
+
+func filesWorkflowUploadHandler(t *testing.T, filename string, payload []byte, status int, response string) (http.Handler, *atomic.Int32) {
+	t.Helper()
 	requests := new(atomic.Int32)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		if r.Method != http.MethodPost || r.URL.Path != "/files" || !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;") {
 			t.Errorf("unexpected upload request: %s %s, type=%q", r.Method, r.URL.Path, r.Header.Get("Content-Type"))
@@ -58,9 +66,7 @@ func filesWorkflowUploadServerWithResponse(t *testing.T, filename string, payloa
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, response)
-	}))
-	t.Cleanup(server.Close)
-	return server, requests
+	}), requests
 }
 
 func TestMainFilesWorkflowUploadPaths(t *testing.T) {
@@ -467,6 +473,14 @@ func TestMainFilesWorkflowHelpExplainsPaths(t *testing.T) {
 	require.Zero(t, got.code, "%+v", got)
 	require.Empty(t, got.stderr)
 	text := strings.Join(strings.Fields(got.stdout), " ")
+	require.Contains(t, text, "Use PATH or --file PATH and set --purpose explicitly.")
+	require.Contains(t, text, "A leading @ is part of the filename.")
+	require.Contains(t, text, "Piped JSON/YAML accepts file and purpose.")
+	require.NotContains(t, text, "example.txt is the path")
+	full := runMainDispatch(t, "bash", "openai", "help", "--all", "files", "upload")
+	require.Zero(t, full.code, full.stderr)
+	require.Empty(t, full.stderr)
+	text = strings.Join(strings.Fields(full.stdout), " ")
 	require.Contains(t, text, "A path is required: use PATH or --file PATH.")
 	require.Contains(t, text, "Choose --purpose explicitly.")
 	require.Contains(t, text, "A leading @ is part of the filename; do not add @ to a plain path.")
@@ -483,8 +497,7 @@ func TestMainFilesWorkflowHelpIncludesExamples(t *testing.T) {
 			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=invalid-files-help-url"}, "openai", "files", tc.command, "--help")
 			require.Zero(t, got.code, "%+v", got)
 			require.Empty(t, got.stderr)
-			require.Contains(t, got.stdout, "EXAMPLES:")
-			require.Contains(t, got.stdout, tc.example)
+			require.Contains(t, got.stdout, "EXAMPLE\n  $ "+tc.example+"\n")
 		})
 	}
 }
@@ -523,7 +536,6 @@ func TestMainFilesWorkflowHelpAfterOperands(t *testing.T) {
 		got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=invalid-files-help-url"}, append([]string{"openai"}, args...)...)
 		require.Zero(t, got.code, "%+v", got)
 		require.Empty(t, got.stderr)
-		require.Contains(t, got.stdout, "SYNOPSIS:")
-		require.Contains(t, got.stdout, "openai files "+args[1])
+		require.True(t, strings.HasPrefix(got.stdout, "openai files "+args[1]+" "), got.stdout)
 	}
 }

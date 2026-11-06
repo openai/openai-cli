@@ -555,27 +555,48 @@ func TestPickerInstallCancelsBetweenScriptAndProfile(t *testing.T) {
 
 func TestPickerInstallWholeSetupLockCoordinatesProfilesAndCancellation(t *testing.T) {
 	options := pickerInstallFixture(t, CompletionStyleBash)
+	setupCtx, cancelSetup := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelSetup()
 	entered, release := make(chan struct{}), make(chan struct{})
+	releaseLock := sync.OnceFunc(func() { close(release) })
+	defer releaseLock()
 	finished := make(chan error, 1)
 	go func() {
-		finished <- WithPickerSetupLock(context.Background(), options.Directory, func() error {
-			_, err := InstallPicker(context.Background(), options)
+		finished <- WithPickerSetupLock(setupCtx, options.Directory, func() error {
+			if _, err := InstallPicker(setupCtx, options); err != nil {
+				return err
+			}
 			close(entered)
-			<-release
-			return err
+			select {
+			case <-release:
+				return nil
+			case <-setupCtx.Done():
+				return setupCtx.Err()
+			}
 		})
 	}()
-	<-entered
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	select {
+	case <-entered:
+	case err := <-finished:
+		t.Fatalf("first picker setup lock failed before contention check: %v", err)
+	case <-setupCtx.Done():
+		t.Fatalf("first picker setup lock did not become ready: %v", setupCtx.Err())
+	}
+	ctx, cancel := context.WithTimeout(setupCtx, 30*time.Millisecond)
 	defer cancel()
 	err := WithPickerSetupLock(ctx, options.Directory, func() error {
 		return errors.New("unexpected callback during another setup")
 	})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	close(release)
-	require.NoError(t, <-finished)
-	err = WithPickerSetupLock(context.Background(), options.Directory, func() error {
-		_, err := RemovePicker(context.Background(), options)
+	releaseLock()
+	select {
+	case err := <-finished:
+		require.NoError(t, err)
+	case <-setupCtx.Done():
+		t.Fatalf("first picker setup lock did not finish: %v", setupCtx.Err())
+	}
+	err = WithPickerSetupLock(setupCtx, options.Directory, func() error {
+		_, err := RemovePicker(setupCtx, options)
 		return err
 	})
 	require.NoError(t, err)

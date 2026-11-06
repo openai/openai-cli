@@ -57,7 +57,7 @@ func innerFieldIsSet(inner HasOuterFlag) bool {
 
 func setFlagFromStdin(flag cli.Flag, value string, onSet func(cli.Flag)) error {
 	if err := flag.Set(flag.Names()[0], value); err != nil {
-		return fmt.Errorf("cannot set flag %q from piped data: %w", flag.Names()[0], err)
+		return stdinValueError(flag, fmt.Errorf("cannot set flag %q from piped data: %w", flag.Names()[0], err))
 	}
 	if onSet != nil {
 		onSet(flag)

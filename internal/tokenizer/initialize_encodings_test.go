@@ -12,6 +12,25 @@ import (
 	"github.com/dlclark/regexp2"
 )
 
+func TestPrepareCachesBPEWithoutEncodingText(t *testing.T) {
+	for _, name := range SupportedEncodings() {
+		if err := Prepare(name); err != nil {
+			t.Fatal(err)
+		}
+		enc, err := loadEncoding(name)
+		if err != nil || enc.bpe == nil {
+			t.Fatalf("BPE engine unavailable after preparing %s: %v", name, err)
+		}
+		first := enc.bpe
+		if err := Prepare(name); err != nil || enc.bpe != first {
+			t.Fatalf("second Prepare did not reuse the %s engine: %v", name, err)
+		}
+	}
+	if err := Prepare("unsupported"); err == nil || err.Error() != unsupportedEncodingMessage {
+		t.Fatalf("unexpected Prepare error: %v", err)
+	}
+}
+
 func TestEncodingVocabularyFingerprint(t *testing.T) {
 	// Official tiktoken 0.14.0 public decode_single_token_bytes output.
 	// Each entry hashes big-endian uint32(rank), uint32(length), then raw bytes.
@@ -91,8 +110,11 @@ func TestEncodingConcurrentColdInitialization(t *testing.T) {
 					<-start
 					enc, err := cache.load(name)
 					var ids []uint
+					if err == nil && i%2 == 0 {
+						err = enc.prepareBPE()
+					}
 					if err == nil {
-						// This unranked piece also exercises concurrent lazy BPE creation.
+						// An unranked piece races lazy initialization against preparation.
 						result, resultErr := enc.encode("\U00016ea0\\u", name, true)
 						err, ids = resultErr, result.IDs
 						if err == nil && strings.Join(result.Fragments, "") != "\U00016ea0\\u" {

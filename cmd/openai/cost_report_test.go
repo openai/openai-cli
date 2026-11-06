@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -518,39 +517,33 @@ func TestMainCostReportValidationDiagnostics(t *testing.T) {
 	require.Zero(t, requests.Load())
 }
 
-func TestMainCostReportDSTRangeInstants(t *testing.T) {
-	for _, tc := range []struct {
-		name, from, to, start, end string
-	}{
-		{"spring", "2026-03-08", "2026-03-09", "2026-03-08T08:00:00Z", "2026-03-09T07:00:00Z"},
-		{"autumn", "2026-11-01", "2026-11-02", "2026-11-01T07:00:00Z", "2026-11-02T08:00:00Z"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			start, err := time.Parse(time.RFC3339, tc.start)
-			require.NoError(t, err)
-			end, err := time.Parse(time.RFC3339, tc.end)
-			require.NoError(t, err)
-			server, requests := costReportServer(t, func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, strconv.FormatInt(start.Unix(), 10), r.URL.Query().Get("start_time"))
-				assert.Equal(t, strconv.FormatInt(end.Unix(), 10), r.URL.Query().Get("end_time"))
-				_, _ = io.WriteString(w, costReportPage("", "", false))
-			})
-			got := runMainDispatchWithEnv(t, "bash", costReportEnv(server), "openai", "costs", "report", "--from", tc.from,
-				"--to", tc.to, "--timezone", "America/Los_Angeles", "--format", "json")
-			require.Zero(t, got.code, "%+v", got)
-			require.Empty(t, got.stderr)
-			require.EqualValues(t, 1, requests.Load())
-			var report struct {
-				Timezone  string `json:"timezone"`
-				StartTime int64  `json:"start_time"`
-				EndTime   int64  `json:"end_time"`
-			}
-			require.NoError(t, json.Unmarshal([]byte(got.stdout), &report))
-			require.Equal(t, "America/Los_Angeles", report.Timezone)
-			require.Equal(t, start.Unix(), report.StartTime)
-			require.Equal(t, end.Unix(), report.EndTime)
-		})
+func TestMainCostReportRequiresCompleteUTCDays(t *testing.T) {
+	server, requests := costReportServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, costReportStart, r.URL.Query().Get("start_time"))
+		assert.Equal(t, costReportEnd, r.URL.Query().Get("end_time"))
+		_, _ = io.WriteString(w, costReportPage("", "", false))
+	})
+	for _, dates := range [][2]string{{"2026-03-08", "2026-03-09"}, {"2026-11-01", "2026-11-02"}} {
+		got := runMainDispatchWithEnv(t, "bash", costReportEnv(server), "openai", "costs", "report",
+			"--from", dates[0], "--to", dates[1], "--timezone", "America/Los_Angeles")
+		require.Equal(t, 1, got.code)
+		require.Empty(t, got.stdout)
+		require.Contains(t, got.stderr, "UTC")
 	}
+	require.Zero(t, requests.Load())
+	got := runMainDispatchWithEnv(t, "bash", costReportEnv(server), costReportArgs("--timezone", "Etc/UTC", "--format", "json")...)
+	require.Zero(t, got.code, "%+v", got)
+	require.Empty(t, got.stderr)
+	require.EqualValues(t, 1, requests.Load())
+	var report struct {
+		Timezone  string `json:"timezone"`
+		StartTime int64  `json:"start_time"`
+		EndTime   int64  `json:"end_time"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(got.stdout), &report))
+	require.Equal(t, "Etc/UTC", report.Timezone)
+	require.EqualValues(t, 1790812800, report.StartTime)
+	require.EqualValues(t, 1791417600, report.EndTime)
 }
 
 func TestMainCostReportPaginationFailuresDoNotEmitPartialReport(t *testing.T) {
@@ -666,37 +659,23 @@ func TestMainCostReportLegacyGeneratedRoute(t *testing.T) {
 	}
 }
 
-func TestMainCostReportAdminAPIErrorsPreserveFormatsAndLegacyGuidance(t *testing.T) {
+func TestMainCostReportAdminAPIErrorsPreserveFormatsAndAdminGuidance(t *testing.T) {
 	const details = `{"message":"synthetic private organization detail\u001b[2J","type":"permission_error","code":"synthetic_code","param":null,"future_field":{"sequence":9007199254740993}}`
 	const requestID = "req_cost_report_test"
-	for _, tc := range []struct {
-		status                 int
-		reportText, legacyText string
-	}{
-		{
-			http.StatusUnauthorized,
-			"Cost reports require an organization Admin API key.\nReplace an explicit --admin-api-key value; otherwise set OPENAI_ADMIN_KEY.\nA project API key cannot replace an Admin key.",
-			"Check API key, organization and project.\nKey setup: openai help setup",
-		},
-		{
-			http.StatusForbidden,
-			"Check your Admin API key's access to organization costs and the selected organization.\nAn explicit --admin-api-key overrides OPENAI_ADMIN_KEY.",
-			"Check your key's permissions.\nCheck project access to this resource.",
-		},
-	} {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		for _, route := range []struct {
-			name, message string
-			args          []string
+			name string
+			args []string
 		}{
-			{"report", tc.reportText, costReportArgs()},
-			{"generated", tc.legacyText, []string{"openai", "admin:organization:usage", "costs", "--start-time", costReportStart}},
+			{"report", costReportArgs()},
+			{"generated", []string{"openai", "admin:organization:usage", "costs", "--start-time", costReportStart}},
 		} {
 			for _, format := range []string{"text", "json", "raw-error"} {
-				t.Run(fmt.Sprintf("%d/%s/%s", tc.status, route.name, format), func(t *testing.T) {
+				t.Run(fmt.Sprintf("%d/%s/%s", status, route.name, format), func(t *testing.T) {
 					server, requests := costReportServer(t, func(w http.ResponseWriter, _ *http.Request) {
 						w.Header().Set("X-Request-ID", requestID)
 						w.Header().Set("X-Should-Retry", "false")
-						w.WriteHeader(tc.status)
+						w.WriteHeader(status)
 						_, _ = io.WriteString(w, `{"error":`+details+`}`)
 					})
 					args := append([]string{}, route.args...)
@@ -711,9 +690,16 @@ func TestMainCostReportAdminAPIErrorsPreserveFormatsAndLegacyGuidance(t *testing
 					require.EqualValues(t, 1, requests.Load())
 					switch format {
 					case "text":
-						want := fmt.Sprintf("HTTP %d: %s.\nRequest ID: %s\n%s\nAPI error details: --format-error json.\n",
-							tc.status, http.StatusText(tc.status), requestID, route.message)
-						require.Equal(t, want, got.stderr)
+						require.Contains(t, got.stderr, fmt.Sprintf("HTTP %d: %s.", status, http.StatusText(status)))
+						require.Contains(t, got.stderr, "Request ID: "+requestID)
+						if status == http.StatusUnauthorized {
+							require.Contains(t, got.stderr, "custom API address")
+							require.Contains(t, got.stderr, "OPENAI_ADMIN_KEY")
+						} else if route.name == "report" {
+							require.Contains(t, got.stderr, "can read costs for the selected organization")
+						} else {
+							require.Contains(t, got.stderr, "Check your key's permissions and its project access.")
+						}
 						require.NotContains(t, got.stderr, "synthetic private organization detail")
 						require.NotContains(t, got.stderr, "\x1b")
 					case "json":

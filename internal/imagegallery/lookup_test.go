@@ -113,3 +113,112 @@ func TestLookupFontPSHonorsGalleryLifetime(t *testing.T) {
 		t.Fatal("closed gallery still resolves font files")
 	}
 }
+
+func TestFindFontGalleryMatchesExactFontAndPreservesOwnership(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(root, strings.Repeat("a", 32))
+	g, err := Open(t.Context(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := g.Initialize(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	display, err := g.FontForTypography(t.Context(), revision, typographySource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = g.Commit(t.Context(), revision); err != nil {
+		t.Fatal(err)
+	}
+	if err = g.BindTTY(t.Context(), "/dev/ttys008"); err != nil {
+		t.Fatal(err)
+	}
+	if err = g.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(directory, ".tty"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, err := FindFontGallery(t.Context(), root, display.PostScript)
+	if err != nil || found != directory {
+		t.Fatalf("found=%q err=%v", found, err)
+	}
+	after, _ := os.ReadFile(filepath.Join(directory, ".tty"))
+	if string(before) != string(after) {
+		t.Fatal("ownership changed")
+	}
+	found, err = FindFontGallery(t.Context(), root, "OpenAI Local "+strings.Repeat("a", 8))
+	if err != nil || found != "" {
+		t.Fatal("accepted alias")
+	}
+	g, err = Open(t.Context(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = FindFontGallery(t.Context(), root, display.PostScript)
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("expected contention, got %v", err)
+	}
+	_ = g.Close()
+	duplicate := filepath.Join(root, strings.Repeat("b", 32))
+	err = filepath.Walk(directory, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(directory, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(duplicate, relative)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0700)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = FindFontGallery(t.Context(), root, display.PostScript); err == nil {
+		t.Fatal("accepted ambiguous galleries")
+	}
+}
+
+func TestFindFontGallerySupportsLegacyRootWithoutBinding(t *testing.T) {
+	g := initialized(t)
+	root := g.directory
+	revision, err := g.Initialize(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	display, err := g.FontForTypography(t.Context(), revision, typographySource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = g.Commit(t.Context(), revision); err != nil {
+		t.Fatal(err)
+	}
+	_ = g.Close()
+	found, err := FindFontGallery(t.Context(), root, display.PostScript)
+	if err != nil || found != root {
+		t.Fatalf("legacy lookup %q %v", found, err)
+	}
+	if _, err = os.Lstat(filepath.Join(root, ".tty")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("legacy owner changed")
+	}
+	if err = os.Remove(display.FontPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = FindFontGallery(t.Context(), root, display.PostScript); err == nil {
+		t.Fatal("accepted missing font")
+	}
+}

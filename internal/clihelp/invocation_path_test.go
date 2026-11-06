@@ -1,9 +1,11 @@
 package clihelp
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 )
 
@@ -95,22 +97,22 @@ func TestHelpInvocationKeepsLocalPathWithImplicitLookup(t *testing.T) {
 }
 
 func TestHelpInvocationFollowsInstalledSymlink(t *testing.T) {
+	name := "openai"
 	if runtime.GOOS == "windows" {
-		t.Skip("creating Windows symlinks requires additional privileges")
+		name += ".exe"
+		t.Setenv("PATHEXT", ".EXE")
 	}
 	root := t.TempDir()
 	installed := filepath.Join(root, "bin")
 	if err := os.Mkdir(installed, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	executable := filepath.Join(root, "openai")
+	executable := filepath.Join(root, name)
 	if err := os.WriteFile(executable, nil, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(installed, "openai")
-	if err := os.Symlink(executable, link); err != nil {
-		t.Fatal(err)
-	}
+	link := filepath.Join(installed, name)
+	symlinkHelpInvocationFixture(t, executable, link)
 	t.Setenv("PATH", installed)
 	if got := Invocation("openai", []string{executable}); got != "openai" {
 		t.Fatalf("symlink installed invocation = %q; want openai", got)
@@ -156,18 +158,26 @@ func TestHelpInvocationKeepsPowerShellScriptOnPath(t *testing.T) {
 		t.Fatalf("PowerShell script changed invocation from %q to %q", want, got)
 	}
 	t.Run("dangling symlink", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("creating Windows symlinks requires additional privileges")
-		}
 		script := filepath.Join(scripts, "openai.ps1")
 		if err := os.Remove(script); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(filepath.Join(scripts, "missing.ps1"), script); err != nil {
-			t.Fatal(err)
-		}
+		symlinkHelpInvocationFixture(t, filepath.Join(scripts, "missing.ps1"), script)
 		if got := Invocation("openai", []string{executable}); got != want {
 			t.Fatalf("dangling PowerShell script changed invocation from %q to %q", want, got)
 		}
 	})
+}
+
+func symlinkHelpInvocationFixture(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		// ERROR_PRIVILEGE_NOT_HELD permits an explicit local limitation.
+		// Required hosted runs must prove the actual symlink behavior.
+		if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) &&
+			os.Getenv("OPENAI_CLI_REQUIRE_WINDOWS_SYMLINKS") != "1" {
+			t.Skipf("Windows symlink privilege is unavailable: %v", err)
+		}
+		t.Fatal(err)
+	}
 }

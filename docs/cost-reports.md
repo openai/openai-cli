@@ -17,19 +17,12 @@ openai --format json costs report --from 2026-10-01 --to 2026-10-08
 openai costs report --from 2026-10-01 --to 2026-10-08 --export csv > costs.csv
 ```
 
-The start date is inclusive. The end date is exclusive.
-Both dates must use `YYYY-MM-DD`, on or after 1970-01-01.
-The end must follow the start. Converted timestamps must not precede the Unix epoch.
-`--timezone` defaults to `UTC` and accepts IANA names such as `America/Los_Angeles`.
-The command converts each local midnight separately into Unix seconds.
-A daylight-saving day can contain 23 or 25 hours.
-Dates with nonexistent or ambiguous local midnights fail; use another boundary or UTC.
-`Local`, relative dates, and automatic date guessing are unsupported.
-
-The API accepts timestamps and daily buckets, without a timezone parameter.
-This command totals the API results without prorating or changing bucket boundaries.
-The API documentation does not promise timezone-aligned buckets.
-Client tests verify submitted timestamps, not live billing reconciliation.
+Use an inclusive start date and an exclusive end date, both in `YYYY-MM-DD`.
+For all of October, use `--from 2026-10-01 --to 2026-11-01`.
+The Costs API reports whole UTC days. UTC is the default.
+A named timezone works only when both local midnights coincide with UTC midnights.
+The CLI rejects a partial UTC day before sending a request.
+Use a start date after the Unix epoch. The API rejects a start timestamp of zero.
 
 `--group-by project` is the default and only report grouping.
 Repeat `--project-id` to filter several exact project IDs.

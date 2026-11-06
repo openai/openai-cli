@@ -17,24 +17,31 @@ var directionalControls = strings.NewReplacer(
 	"\u2068", `\u2068`, "\u2069", `\u2069`,
 )
 
-func sanitize(text string) string {
-	return directionalControls.Replace(jsonview.SanitizeTerminalString(text))
+// EscapeDirectionalControls quotes directional marks and line separators without
+// changing terminal styling. The caller must handle untrusted terminal escapes.
+func EscapeDirectionalControls(text string) string {
+	return directionalControls.Replace(text)
+}
+
+// InlineText escapes untrusted text for display on a single terminal line.
+func InlineText(text string) string {
+	return EscapeDirectionalControls(jsonview.SanitizeTerminalString(text))
 }
 
 // Text escapes terminal controls and directional marks while preserving ordinary
 // newlines and tabs. It adds no newline and does not redact sensitive content.
 func Text(text string) string {
 	if !strings.ContainsAny(text, "\n\t") {
-		return sanitize(text)
+		return InlineText(text)
 	}
 	var b strings.Builder
 	for {
 		i := strings.IndexAny(text, "\n\t")
 		if i < 0 {
-			b.WriteString(sanitize(text))
+			b.WriteString(InlineText(text))
 			return b.String()
 		}
-		b.WriteString(sanitize(text[:i]))
+		b.WriteString(InlineText(text[:i]))
 		b.WriteByte(text[i])
 		text = text[i+1:]
 	}

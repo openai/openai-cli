@@ -6,11 +6,34 @@ usage and unfamiliar fields, remains below it. Readable output applies in pipes
 as well as terminals.
 
 ```sh
-openai audio:transcriptions create --file sample.wav --model gpt-4o-transcribe
-openai audio:transcriptions create --file sample.wav --model gpt-4o-transcribe --stream=true
+openai audio:transcriptions create --file sample.wav --model gpt-transcribe
+openai audio:transcriptions create --file sample.wav --model gpt-transcribe --stream=true
 openai audio:translations create --file sample.wav --model whisper-1
 openai --format json audio:transcriptions create --file sample.wav --model whisper-1
 ```
+
+For transcript-only output, extract text from the JSON response.
+The file then contains the transcript without response metadata.
+
+```sh
+openai --transform text --raw-output audio transcribe --file sample.wav --model gpt-transcribe --response-format json > transcript.txt
+```
+
+Use `whisper-1` with `verbose_json` for word and segment timestamps.
+Use `gpt-4o-transcribe-diarize` with `diarized_json` for speaker labels and segment timestamps.
+These options use different model contracts. The translation endpoint returns English text.
+The [deprecation notice](https://developers.openai.com/api/docs/deprecations#2026-08-26-transcription-models)
+schedules `whisper-1` and `gpt-4o-transcribe-diarize` for removal on February 26, 2027.
+
+```sh
+openai audio transcribe --file sample.wav --model whisper-1 --response-format verbose_json --timestamp-granularity segment --timestamp-granularity word
+openai audio transcribe --file sample.wav --model gpt-4o-transcribe-diarize --response-format diarized_json --chunking-strategy auto
+openai audio translate --file sample.wav --model whisper-1 --response-format verbose_json
+```
+
+Readable segment groups keep each speaker, timestamp, text, and additional field together.
+Timestamps include readable times and original seconds. Word details remain available below the transcript.
+Explicit `--format json` preserves the complete response structure.
 
 Streamed transcript deltas appear immediately. A matching final text snapshot
 does not repeat the transcript. Revised final text is labeled as an update.

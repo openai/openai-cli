@@ -41,6 +41,36 @@ def fixture_png():
             + chunk(b'IEND', b''))
 
 
+
+def wait_previews(terminal, mark, count):
+    """Require fresh complete previews and the growing gallery before continuing."""
+    busy = terminal.raw.index(b'Generating image', mark)
+    deadline = time.monotonic() + 12
+    while True:
+        fresh = terminal.raw[busy:]
+        try:
+            images = compatibility.kitty_images(fresh, allow_cursor_deletes=True)
+        except AssertionError as error:
+            if str(error) not in ('incomplete Kitty frame', 'unfinished Kitty image'):
+                raise
+            images = []
+        frame = picker.screen(bytes(terminal.raw), *terminal.size())
+        # These compact gallery frames print each caption before its preview.
+        # A redraw under another caption cannot satisfy the new gallery entry.
+        sections = re.split(rb'(Image [1-9][0-9]* )', fresh)
+        new_preview = images and any(
+            compatibility.kitty_images(content, allow_cursor_deletes=True)
+            for caption, content in zip(sections[1::2], sections[2::2])
+            if caption == f'Image {count} '.encode()
+        )
+        if new_preview and all(f'Image {index} '.encode() in frame for index in range(1, count + 1)):
+            for image in images:
+                compatibility.check_fixture_png(image)
+            return len(images)
+        assert terminal.child.poll() is None and time.monotonic() < deadline, 'native preview did not complete'
+        terminal.read()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary')
@@ -99,29 +129,29 @@ def main():
                 picker.ready(terminal)
                 if phase == 'picker':
                     replace_executable()
+                preview_counts = []
                 for number in range(2):
                     mark = len(terminal.raw)
-                    terminal.send(b'\x1b[200~synthetic image ' + str(number).encode() + b'\x1b[201~\r')
-                    terminal.wait('Saved image:', after=mark)
-                    saved = terminal.raw.index(b'Saved image:', mark)
-                    terminal.wait('Describe your image', after=saved)
+                    prompt = 'synthetic image ' + str(number)
+                    terminal.send(picker.END+b'\x15\x1b[200~' + prompt.encode() + b'\x1b[201~\r')
+                    picker.wait_resumed(terminal, mark, prompt)
+                    assert server.requests[-1]['prompt'] == prompt, 'picker changed request prompt'
                     # Respect the resumed picker's existing submit-key quiet guard.
-                    until = time.monotonic() + 1
-                    while time.monotonic() < until:
-                        terminal.read(0.02)
+                    picker.wait_submit_guard(terminal)
+                    assert len(server.requests) == number + 1, 'resumed picker submitted another request'
+                    preview_counts.append(wait_previews(terminal, mark, number + 1))
                 terminal.send(b'\x03')
                 terminal.finish(130)
                 assert len(server.requests) == 2, 'unexpected request count'
                 files = list((home / 'Downloads' / 'gpt-images').glob('*.png'))
                 assert len(files) == 2 and all(path.read_bytes() == png for path in files)
-                frames = re.findall(rb'\x1b_G([^;]*);(.*?)\x1b\\', terminal.raw, re.S)
-                assert len(frames) == terminal.raw.count(b'\x1b_G') == 2, 'missing or partial preview'
-                for header, payload in frames:
-                    fields = dict(field.split(b'=', 1) for field in header.split(b','))
-                    assert all(fields.get(k) == v for k, v in
-                               {b'a': b'T', b'f': b'100', b'm': b'0', b'q': b'2'}.items())
-                    compatibility.check_fixture_png(base64.b64decode(payload, validate=True))
-                results.append({'case': name, 'requests': 2, 'exact_pixel_previews': 2,
+                picker.check_receipts(terminal, files)
+                images = compatibility.kitty_images(terminal.raw, allow_cursor_deletes=True)
+                assert len(images) >= 2, 'missing or partial preview'
+                for png_image in images:
+                    compatibility.check_fixture_png(png_image)
+                results.append({'case': name, 'requests': 2, 'exact_pixel_previews': len(images),
+                                'preview_transmissions_per_request': preview_counts,
                                 'saved_originals': 2, 'picker_returns': 2, 'exit': 130, 'passed': True})
                 print('PASS', name, flush=True)
             finally:

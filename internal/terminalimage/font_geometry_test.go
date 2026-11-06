@@ -1,12 +1,36 @@
 package terminalimage
 
 import (
+	"image"
 	"math"
 	"strconv"
 	"testing"
 
 	"github.com/openai/openai-cli/internal/imagefontmac"
 )
+
+func TestFontRowColumnsFitsExistingViewportLimits(t *testing.T) {
+	landscape := image.Rect(0, 0, 1536, 1024)
+	if got := FontPreviewColumns(landscape, 64, 24); got != 32 {
+		t.Fatalf("direct preview width changed: %d", got)
+	}
+	for _, test := range []struct {
+		bounds              image.Rectangle
+		columns, rows, want int
+	}{
+		{landscape, 64, 16, 42},
+		{landscape, 64, 24, 64},
+		{landscape, 200, 80, 64},
+		{image.Rect(0, 0, 256, 2048), 64, 18, 4},
+		{landscape, 40, 24, 40},
+		{landscape, 64, 2, 0},
+		{image.Rectangle{}, 64, 24, 0},
+	} {
+		if got := FontRowColumns(test.bounds, test.columns, test.rows); got != test.want {
+			t.Fatalf("fit %+v: got %d, want %d", test, got, test.want)
+		}
+	}
+}
 
 func TestPreservedGeometryOriginalSizes(t *testing.T) {
 	// Menlo's exact metrics are fractional even at integer point sizes. These

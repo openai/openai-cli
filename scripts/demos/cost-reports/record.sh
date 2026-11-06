@@ -23,15 +23,15 @@ cp "$demo_source/scene.sh" "$demo_runtime/scene.sh"
   echo 'before: command unavailable, exit 1, zero API requests'
   echo 'after: two API pages, proj_alpha usd 12.34 and proj_beta usd 4.56, exit 0'
   echo 'capture: isolated Bash PTYs; synthetic loopback API; fake Admin key; temporary HOME'
-  echo 'settings: xterm-256color, NO_COLOR=1, FORCE_COLOR=0, GOMAXPROCS=2'
+  echo 'settings: xterm-256color, NO_COLOR=1, FORCE_COLOR=0, GOMAXPROCS=2, update checks disabled'
   echo 'render: 110 columns x 22 rows; Menlo 18px; asciinema theme'
   echo 'scope: terminal replay; merged stdout/stderr; no native graphical terminal or live account validation'
   demo_capture_metadata
   "$demo_python" --version
 } > "$demo_output/metadata.txt"
 shasum -a 256 "$demo_source/record.sh" "$demo_source/scene.sh" "$demo_source/server.py" \
-  "$demo_root/scripts/demos/capture_and_render.sh" "$demo_root/pkg/custom/cost_report.go" \
-  "$demo_root/pkg/custom/cost_report_range.go" "$demo_root/pkg/transformers/project_cost_report.go" \
+  "$demo_root/scripts/demos/capture_and_render.sh" "$demo_root/internal/commands/costs/cost_report.go" \
+  "$demo_root/internal/commands/costs/cost_report_range.go" "$demo_root/internal/output/transform/project_cost_report.go" \
   > "$demo_output/source-sha256.txt"
 if [ -n "${DEMO_SOURCE_MANIFEST:-}" ]; then
   cp "$DEMO_SOURCE_MANIFEST" "$demo_output/source-manifest.txt"
@@ -50,7 +50,7 @@ for demo_scene in before after; do
   mkdir -p "$demo_home"
   demo_capture_scene "$demo_scene" 0 "$demo_runtime/$demo_scene" "$demo_api_url/$demo_scene" "$demo_label" \
     "HOME=$demo_home" "XDG_CONFIG_HOME=$demo_home/config" NO_COLOR=1 FORCE_COLOR=0 GOMAXPROCS=2 \
-    OPENAI_ADMIN_KEY=synthetic-cost-report-demo-admin "DEMO_SCENE=$demo_scene" \
+    OPENAI_CLI_NO_UPDATE_CHECK=1 OPENAI_ADMIN_KEY=synthetic-cost-report-demo-admin "DEMO_SCENE=$demo_scene" \
     "DEMO_EXPECTED_STATUS=$demo_expected_status" "DEMO_STATUS_LOG=$demo_output/statuses.tsv"
 done
 demo_stop_api

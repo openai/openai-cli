@@ -38,7 +38,7 @@ SCENE
     "$demo_source/image_navigation_spacing_record.sh" \
     "$demo_root/scripts/image-picker-layout/drive_picker.py" \
     "$demo_root/scripts/image_picker_harness.py" \
-    "$demo_root/pkg/custom/image_picker.go" "$demo_root/pkg/custom/image_picker_view.go"
+    "$demo_root/internal/commands/images/image_picker.go" "$demo_root/internal/commands/images/image_picker_view.go"
 } > "$demo_output/metadata.txt"
 
 demo_window_size=80x24

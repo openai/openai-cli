@@ -217,7 +217,7 @@ func TestSharpProgressWriteAndRollbackFailuresStayFatal(t *testing.T) {
 
 func TestWriteProgressKeepsNativeProtocolsAndBlockFallback(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
-	for _, protocol := range []string{"kitty", "iterm", "blocks"} {
+	for _, protocol := range []string{"kitty", "iterm", "iterm-konsole", "blocks"} {
 		var before, after bytes.Buffer
 		require.NoError(t, Write(t.Context(), &before, img, protocol, 4))
 		require.NoError(t, WriteProgress(t.Context(), &after, img, protocol, 4))

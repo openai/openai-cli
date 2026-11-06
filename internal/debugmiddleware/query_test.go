@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -50,7 +51,12 @@ func TestRequestQueryRedaction(t *testing.T) {
 					t.Errorf("Middleware(%+v) called=%v error=%v, want true and %v", test, called, err, nextErr)
 				}
 				want := "Request Content:\nGET /users HTTP/1.1\r\nHost: example.test\r\n\r\n\n"
-				if got := logs.String(); got != want {
+				event := "no response received"
+				if nextErr != nil {
+					event = "request canceled"
+				}
+				pattern := "^" + regexp.QuoteMeta(want+"HTTP attempt 1: "+event+" after ") + `[0-9]+ ms\n$`
+				if got := logs.String(); !regexp.MustCompile(pattern).MatchString(got) {
 					t.Errorf("Middleware(%+v) log=%q, want %q", test, got, want)
 				}
 				if !reflect.DeepEqual(*req.URL, originalURL) || req.RequestURI != test.requestURI {

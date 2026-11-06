@@ -26,7 +26,7 @@ printf '%s\n\n' "$DEMO_SCENE_LABEL"
 sleep 0.5
 case "$DEMO_REQUEST" in
   files-list) demo_args=(files list --max-items 2);;
-  files-retrieve) demo_args=(files retrieve file_training);;
+  files-retrieve) demo_args=(files retrieve file_batch);;
   *) demo_args=(models retrieve --model "$DEMO_MODEL");;
 esac
 case "$DEMO_FORMAT" in
@@ -106,7 +106,7 @@ for demo_scene in "${demo_scenes[@]}"; do
     demo_expected_text=invalid_api_key
     [ "$demo_scene" != after ] || demo_expected_text='help setup'
   elif [ "$demo_feature" = list-get-results ]; then
-    demo_expected_text=file_training
+    demo_expected_text=file_batch
   fi
   if ! /usr/bin/grep -Fq "$demo_expected_text" "$demo_output/$demo_scene.txt"; then
     echo "Unexpected $demo_scene output: missing $demo_expected_text" >&2

@@ -122,6 +122,11 @@ func startKittyWorker(ctx context.Context, path string, out *os.File) (*kittyOut
 		return nil, err
 	}
 	command := exec.Command(path, kittyOutputHelperArgument)
+	if isolated, _ := ctx.Value(interactiveImageOutputContextKey{}).(bool); isolated {
+		// No controlling terminal means TOSTOP cannot suspend this owned
+		// writer as a background group. The borrowed descriptor stays intact.
+		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	}
 	command.Stdout = out
 	command.ExtraFiles = []*os.File{lifeRead, child}
 	if err := command.Start(); err != nil {

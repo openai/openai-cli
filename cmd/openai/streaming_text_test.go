@@ -480,6 +480,85 @@ func TestMainStreamingTextExplicitLimitStopsWithoutCompletionError(t *testing.T)
 	}
 }
 
+func TestMainDispatchResumedResponseRequiresCompletion(t *testing.T) {
+	for _, tc := range []struct{ kind, fields string }{
+		{"response.reasoning_text.delta", `,"item_id":"item_synthetic","output_index":0,"content_index":0,"delta":"synthetic reasoning"`},
+		{"response.audio.delta", `,"delta":"c3ludGhldGlj"`},
+		{"response.code_interpreter_call.completed", `,"item_id":"item_synthetic","output_index":0`},
+		{"response.future_event.delta", `,"future":"synthetic unknown event"`},
+		{"", ""},
+	} {
+		kind := tc.kind
+		for _, mode := range []string{"text", "jsonl", "extraction"} {
+			for _, ending := range []string{"EOF", "completed", "limit"} {
+				t.Run(kind+"/"+mode+"/"+ending, func(t *testing.T) {
+					event := `{"type":"` + kind + `","sequence_number":12` + tc.fields + `}`
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if r.Method != http.MethodGet || r.URL.Path != "/responses/resp_synthetic" ||
+							r.URL.Query().Get("starting_after") != "10" || r.URL.Query().Get("stream") != "true" {
+							t.Errorf("resumed request changed: %s %s", r.Method, r.URL)
+						}
+						w.Header().Set("Content-Type", "text/event-stream")
+						if kind != "" {
+							writeStreamingTextEvent(w, event)
+						}
+						if ending == "completed" {
+							writeStreamingTextEvent(w, `{"type":"response.completed","response":{"status":"completed","output":[]}}`)
+						}
+					}))
+					t.Cleanup(server.Close)
+					args := []string{"responses", "retrieve", "resp_synthetic", "--stream=true", "--starting-after", "10"}
+					if mode == "extraction" {
+						args = append(args, "--transform", "sequence_number", "--raw-output")
+					} else {
+						args = append(args, "--format", mode)
+					}
+					if ending == "limit" {
+						args = append(args, "--max-items", "1")
+					}
+					got := runReadableCommand(t, server, args...)
+					failed := ending == "EOF" && kind != "" && kind != "response.future_event.delta"
+					if failed {
+						if got.code != 1 || !strings.Contains(got.stderr, "the stream ended before the response completed") {
+							t.Errorf("resumed unfinished response reported success: %+v", got)
+						}
+						if mode == "jsonl" {
+							var diagnostic struct{ Message string }
+							if err := json.Unmarshal([]byte(got.stderr), &diagnostic); err != nil || diagnostic.Message != "the stream ended before the response completed\nOutput may be incomplete." {
+								t.Errorf("invalid structured stream diagnostic: %+v", got)
+							}
+						}
+					} else if got.code != 0 || got.stderr != "" {
+						t.Errorf("completion, limit, or unknown stream changed: %+v", got)
+					}
+					if kind != "" {
+						want := kind
+						if mode == "jsonl" {
+							want = event + "\n"
+						} else if mode == "extraction" {
+							want = "12\n"
+						}
+						if !strings.Contains(got.stdout, want) {
+							t.Errorf("resumed stream lost selected output %q: %+v", want, got)
+						}
+						if ending != "completed" && mode != "text" && got.stdout != want {
+							t.Errorf("resumed stream changed selected bytes: %+v", got)
+						}
+					} else if ending != "completed" {
+						want := ""
+						if mode == "text" {
+							want = "No results.\n"
+						}
+						if got.stdout != want {
+							t.Errorf("empty resumed stream changed bytes: %+v", got)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestMainStreamingTextLargeEvent(t *testing.T) {
 	// High memory use is intentional. Do not reduce the probe to accommodate
 	// new output caps. Leave envelope space below the SDK's existing 32 MiB

@@ -38,12 +38,16 @@ func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, c
 		return writeKittyImage(ctx, w, img, columns)
 	case "iterm":
 		return writeITermImage(ctx, w, img, columns)
-	case "iterm-auto":
+	case "iterm-auto", "iterm-konsole":
 		// xterm's IIP renderer fits auto/auto within its current viewport.
 		// An explicit width overrides its height limit, and OS window metadata
 		// does not reliably describe VS Code's cell size (including on Windows).
+		if protocol == "iterm-auto" {
+			columns = 0
+		}
+		// Konsole keeps the measured width, but shares the cancellable worker.
 		return writeITermOutput(ctx, w, func(destination io.Writer) error {
-			return writeITermImage(ctx, destination, img, 0)
+			return writeITermImage(ctx, destination, img, columns)
 		})
 	case "blocks":
 		cellWidth, cellHeight := 1, 2
@@ -139,7 +143,22 @@ func writeKittyImage(ctx context.Context, out io.Writer, img image.Image, column
 }
 
 func writeKittyFrames(ctx context.Context, out io.Writer, encoded *bytes.Buffer, columns int) (err error) {
-	options := (&kitty.Options{Action: kitty.TransmitAndPut, Transmission: kitty.Direct, Format: kitty.PNG, Quite: 2, Columns: columns}).Options()
+	return writeKittyFramesRows(ctx, out, encoded, columns, 0)
+}
+
+func writePreviewStripe(ctx context.Context, out io.Writer, img image.Image, protocol string, columns int) error {
+	var encoded bytes.Buffer
+	if err := imagefont.EncodePNG(ctx, &png.Encoder{}, &encoded, img); err != nil {
+		return err
+	}
+	if protocol == "kitty" {
+		return writeKittyFramesRows(ctx, out, &encoded, columns, 1)
+	}
+	return writeITermPayloadRows(ctx, out, encoded.Bytes(), columns, 1)
+}
+
+func writeKittyFramesRows(ctx context.Context, out io.Writer, encoded *bytes.Buffer, columns, rows int) (err error) {
+	options := (&kitty.Options{Action: kitty.TransmitAndPut, Transmission: kitty.Direct, Format: kitty.PNG, Quite: 2, Columns: columns, Rows: rows, DoNotMoveCursor: rows > 0}).Options()
 	destination := contextWriter{ctx, out}
 	incomplete := false
 	defer func() {

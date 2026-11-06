@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -83,18 +84,13 @@ func TestCheckNameUsesActualFilesystemAndKeepsExistingFiles(t *testing.T) {
 }
 
 func TestCheckNameDoesNotFollowOrRemoveSymlinks(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("creating Windows symlinks can require elevated privileges")
-	}
 	directory := t.TempDir()
 	target := filepath.Join(t.TempDir(), "target.jpeg")
 	if err := os.WriteFile(target, []byte("keep target"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(directory, "robot.jpeg")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
+	symlinkImageOutputFixture(t, target, link)
 	if err := CheckName(t.Context(), directory, "robot"); err != nil {
 		t.Fatal(err)
 	}
@@ -156,9 +152,6 @@ func TestCheckNameReservesNumberedSuffix(t *testing.T) {
 func TestCheckNameKeepsReservedProbeCollisions(t *testing.T) {
 	for _, kind := range []string{"file", "directory", "symlink"} {
 		t.Run(kind, func(t *testing.T) {
-			if kind == "symlink" && runtime.GOOS == "windows" {
-				t.Skip("creating Windows symlinks can require elevated privileges")
-			}
 			directory := t.TempDir()
 			stem := strings.Repeat("x", 230)
 			probe := filepath.Join(directory, stem+"-9223372036854775807.jpeg")
@@ -172,9 +165,7 @@ func TestCheckNameKeepsReservedProbeCollisions(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "symlink":
-				if err := os.Symlink("missing-target", probe); err != nil {
-					t.Fatal(err)
-				}
+				symlinkImageOutputFixture(t, "missing-target", probe)
 			}
 			before, err := os.Lstat(probe)
 			if err != nil {
@@ -198,5 +189,16 @@ func TestCheckNameKeepsReservedProbeCollisions(t *testing.T) {
 				t.Fatalf("preflight left a probe: %v, %v", entries, err)
 			}
 		})
+	}
+}
+
+func symlinkImageOutputFixture(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) &&
+			os.Getenv("OPENAI_CLI_REQUIRE_WINDOWS_SYMLINKS") != "1" {
+			t.Skipf("Windows symlink privilege is unavailable: %v", err)
+		}
+		t.Fatal(err)
 	}
 }
