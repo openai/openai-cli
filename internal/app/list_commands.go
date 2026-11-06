@@ -19,6 +19,10 @@ import (
 // Configure the canonical actions before routing clones their compatibility aliases.
 // Generated declarations and request encoding remain owned by their existing paths.
 func configureListCommands(root *cli.Command) {
+	// Models has its own request, selection and sorting policy.
+	if models := root.Command("models"); models != nil && models.Command("list") != nil {
+		markListPager(models.Command("list"))
+	}
 	configureListCommand(root, "files", "(resource) files > (method) list", "",
 		func(ctx context.Context, client openai.Client, options []option.RequestOption) (*pagination.CursorPage[openai.FileObject], error) {
 			return client.Files.List(ctx, openai.FileListParams{}, options...)
@@ -44,14 +48,10 @@ func configureListCommand[P JSONListPage[P]](root *cli.Command, resourceName, op
 	if command == nil || command.Action == nil {
 		return
 	}
-	navigation := "Space moves forward, b moves back, and q quits.\nSpace shows more loaded results before requesting the next API page."
-	if resourceName == "files" {
-		navigation = "Space shows the next screen of files. Use the arrow keys to scroll up or down one row. " +
-			"Press b to go back or q to quit. The footer shows which files are visible."
-	}
+	markListPager(command)
 	command.Description = strings.TrimSpace(command.Description + "\n\n" +
 		"Automatic terminal output shows a compact table, with labeled output when a page needs more detail.\n" +
-		"Automatic terminal output uses a pager. " + navigation + "\n" +
+		"Automatic terminal output uses a pager. " + listControlsHelp + "\n" +
 		"The final page stays open until you quit.\n" +
 		"--limit controls API page size; --max-items limits total results and defaults to unlimited.\n" +
 		"Explicit text or machine formats, field extraction, and redirected input or output retain their existing output behavior.")
@@ -68,7 +68,8 @@ func configureListCommand[P JSONListPage[P]](root *cli.Command, resourceName, op
 			RawOutput: cmd.Root().Bool("raw-output"), Transform: cmd.Root().String("transform"),
 			Title: resourceName + " list",
 		}
-		if !InteractiveListOutput(opts) {
+		// Batch watch owns its snapshot stream and validates watch-only options.
+		if resourceName == "batches" && usesBatchWatchOptions(cmd) || !InteractiveListOutput(opts) {
 			return previous(ctx, cmd)
 		}
 		client := openai.NewClient(GetDefaultRequestOptions(cmd)...)
@@ -89,6 +90,10 @@ func configureListCommand[P JSONListPage[P]](root *cli.Command, resourceName, op
 			}, maximum, opts, cursorField)
 		})
 	}
+}
+
+func usesBatchWatchOptions(cmd *cli.Command) bool {
+	return cmd.Bool("watch") || cmd.IsSet("watch-count") || cmd.IsSet("poll-interval")
 }
 
 // One signal owner cancels requests before the viewer joins its fetch worker.

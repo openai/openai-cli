@@ -36,8 +36,8 @@ func Configure(root *cli.Command, policy Options) {
 	}
 	command.Usage = "List accessible model IDs and owners."
 	command.Description = `Shows IDs and owners. Narrow terminals keep both values in labeled output.
-Automatic terminal output uses a pager. Space moves forward, b moves back, and q quits.
-Interactive requests load up to 100 models in ID order. Space requests the next page after showing the loaded rows.
+Automatic terminal output uses a pager. Arrow keys move one row. Space advances one screen, b moves back, and q quits.
+Interactive requests load up to 100 models in ID order. The pager loads more records when a new screen needs them.
 Back uses previously loaded pages. Servers that return the complete list use local pages.
 The final page stays open until you quit.
 Explicit output formats keep their existing behavior.

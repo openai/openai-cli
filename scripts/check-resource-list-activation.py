@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import signal
 import sys
 import time
@@ -28,7 +29,8 @@ def main():
         "OPENAI_API_KEY": "sk-fake-resource-list", "OPENAI_ADMIN_KEY": "sk-fake-resource-list-admin",
         "OPENAI_BASE_URL": config["endpoint"] + "/v1",
     }
-    args = ["-test.run=^TestMainDispatchProcess$", "--", *config["args"]]
+    process = config.get("process", "TestMainDispatchProcess")
+    args = [f"-test.run=^{process}$", "--", *config["args"]]
     diagnostic = open(pathlib.Path(config["home"]) / "stderr", "w+b")
     terminal = None
 
@@ -73,6 +75,28 @@ def main():
         terminal = navigation.terminal_module.Terminal(config["binary"], args, env, width=110, height=24,
                                                        stderr_file=diagnostic)
         action, mode = config["action"], config["mode"]
+        if action in ("discover", "watch", "watch-without-flag", "live"):
+            if action == "discover":
+                terminal.wait("End", timeout=5)
+                for marker in config.get("markers") or []:
+                    assert marker in terminal.text(), (marker, terminal.text())
+                assert b"\x1b[?1049h" in terminal.raw, "list did not enter the pager"
+                terminal.send(b"q")
+            navigation.finish(terminal, config["expected"])
+            diagnostic.seek(0)
+            stderr = diagnostic.read().decode()
+            if action != "discover":
+                assert b"\x1b[?1049h" not in terminal.raw, "watch entered the resource pager"
+            if action == "live":
+                for marker in config.get("markers") or []:
+                    assert marker in terminal.text(), (marker, terminal.text())
+            if action == "watch":
+                assert terminal.text().count("Batch snapshot ") == 2, terminal.text()
+            if action == "watch-without-flag":
+                assert "Use --watch" in stderr, stderr
+            else:
+                assert not stderr, stderr
+            return
         if action in ("finish", "one", "error"):
             if action != "error":
                 wait_loaded_result()
@@ -115,7 +139,7 @@ def main():
                 terminal.send(b" ")
                 wait_state("requests", 2)
             if action in ("paging", "paging-legacy-keys"):
-                navigation.drain(terminal, 0.15)
+                terminal.wait("End", timeout=5)
                 assert terminal.child.poll() is None, "final page did not remain open"
                 terminal.send(b"b")
                 navigation.drain(terminal, 0.1)
@@ -140,7 +164,13 @@ def main():
             if mode.startswith("blocked-"):
                 wait_state("disconnected", 1)
             if action == "error-next":
-                assert "item_001" in terminal.text(), "later failure discarded earlier output"
+                # A transient row in the alternate screen disappears on exit.
+                # Verify the permanent output after restoration, once per received row.
+                restored = bytes(terminal.raw).rsplit(b"\x1b[?1049l", 1)[1]
+                count = 4 if mode == "repeat-cursor" else 2
+                assert re.findall(rb"item_\d{3}", restored) == [
+                    f"item_{i:03d}".encode() for i in range(1, count + 1)
+                ], restored
         diagnostic.seek(0)
         stderr = diagnostic.read().decode("utf-8")
         if config["expected"] == 0:
@@ -148,6 +178,8 @@ def main():
         else:
             error = json.loads(stderr)
             expected = "synthetic list failure" if action in ("error", "error-next") else "Request canceled."
+            if mode == "repeat-cursor":
+                expected = "List pagination stopped because the API returned a missing or repeated cursor. Output may be incomplete."
             assert error["message"] == expected, error
             assert expected not in terminal.text(), "diagnostics leaked into stdout"
         print(json.dumps({"mode": mode, "action": action, "status": terminal.child.returncode,

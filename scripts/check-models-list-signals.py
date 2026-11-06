@@ -37,14 +37,14 @@ def main():
         if config["stage"] == "loaded":
             terminal.wait("synthetic-model-00", timeout=5)
             first_model = terminal.raw.index(b"synthetic-model-00")
-            terminal.wait("Space: more", timeout=5, after=first_model)
+            terminal.wait("Space: next", timeout=5, after=first_model)
         assert terminal.child.poll() is None, "pager exited before its input action"
         deadline = time.monotonic() + config["delay"]
         while time.monotonic() < deadline:
             terminal.read(max(0, min(0.001, deadline - time.monotonic())))
         # The first footer can arrive with an already loaded frame. Record the
         # observed state instead of claiming every startup case precedes loading.
-        loaded_at_signal = "synthetic-model-00" in terminal.text() and "Space: more" in terminal.text()
+        loaded_at_signal = "synthetic-model-00" in terminal.text() and "Space: next" in terminal.text()
         started = time.monotonic()
         action = config["action"]
         if action in ("SIGINT", "SIGTERM"):

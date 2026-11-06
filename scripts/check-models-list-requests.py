@@ -123,9 +123,9 @@ def legacy_paging(binary, prefix):
     records = [record("zeta-last"), *[record(f"alpha-{i:03}") for i in reversed(range(100))]]
     with command(binary, prefix, [(200, {"object": "list", "data": records})], height=120) as (terminal, server):
         terminal.wait("alpha-000")
-        terminal.wait("Showing 100 of 101 models.")
+        terminal.wait("Models 1–100 of 101")
         send_and_wait(terminal, b" ", "zeta")
-        terminal.wait("Showing 1 of 101 models.")
+        terminal.wait("Model 101 of 101")
         send_and_wait(terminal, b"b", "alph")
         quit_cleanly(terminal)
         assert server.paths == [FIRST], "legacy response was downloaded twice"

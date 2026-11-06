@@ -9,10 +9,31 @@ openai files retrieve --file-id file-example
 openai files retrieve --file-id file-example | cat
 ```
 
-Objects show labeled fields, nested values stay grouped, and list items and
-stream events appear as separate records. Readable lists and streams print as
-records arrive without opening an automatic pager. An empty list says
-`No results.`; `--max-items 0` writes nothing.
+Objects show labeled fields. Nested values stay grouped. In a terminal, list
+commands open a pager. It shows a table when the columns fit. Wider or nested
+records use labeled fields. Pipes, explicit `--format text`, and live streams
+print individual records as they arrive. An empty list shows `No results.`
+and `--max-items 0` writes nothing.
+
+## Browsing a list
+
+Run `openai files list`, `openai webhooks list`, or `openai skills list`.
+The footer shows which records are visible, such as `Files 1–28`.
+
+| Key | Action |
+| --- | --- |
+| ↓ or ↑ | Scroll one row. |
+| Space | Show the next screen. |
+| b | Return to the previous screen. |
+| q | Quit. |
+
+Headings stay visible while you scroll. Moving forward can fetch another API
+page. Moving back reuses records you already loaded. The pager stays open on
+the final screen. Use `--format json` for the full API fields.
+
+The CLI discovers list actions during command registration, including aliases
+and names such as `list-files`. New commands using the standard JSON response
+or iterator output inherit the pager and table layout automatically.
 
 Ordinary text and unknown fields remain complete. Known base64 media fields and
 numeric embedding vectors show a size or count with a `--format json` hint.

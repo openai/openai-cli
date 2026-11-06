@@ -15,8 +15,11 @@ import (
 func filesViewerFixture(t *testing.T, width, height, pageSize, total int) (*Model, *int) {
 	t.Helper()
 	calls, count := 0, 0
-	opts := Options{Context: t.Context(), Stdout: io.Discard,
-		RenderFileLabels: func(item gjson.Result) (string, error) {
+	opts := Options{Context: t.Context(), Stdout: io.Discard, Singular: "File", Plural: "Files",
+		RenderTable: func(items []gjson.Result, width int) (string, bool, error) {
+			return RenderTable(t.Context(), "(resource) files > (method) list", items, width, false, Style{})
+		},
+		RenderRecordLabels: func(item gjson.Result, _ bool) (string, error) {
 			id := item.Get("id").Str
 			return id + "\nlabel A\nlabel B\nlabel C\n", nil
 		},
@@ -128,7 +131,7 @@ func TestFilesArrowUpReturnsToPreviousLabeledLine(t *testing.T) {
 	// The second file fits by itself but first appears beside an unknown file
 	// in labeled output. Its last line precedes the next table.
 	msg.page.Items[0] = gjson.Parse(`{"id":"f001","object":"file","future_field":"keep"}`)
-	m.opts.RenderFileLabels = func(item gjson.Result) (string, error) {
+	m.opts.RenderRecordLabels = func(item gjson.Result, _ bool) (string, error) {
 		id := item.Get("id").Str
 		parts := []string{id + " first", id + " middle", id + " last"}
 		if id == "f001" {
@@ -148,7 +151,7 @@ func TestFilesArrowUpReturnsToPreviousLabeledLine(t *testing.T) {
 func TestFilesArrowsReuseWrappedRecord(t *testing.T) {
 	m, _ := filesViewerFixture(t, 12, 4, 1, 1)
 	renders := 0
-	m.opts.RenderFileLabels = func(gjson.Result) (string, error) {
+	m.opts.RenderRecordLabels = func(gjson.Result, bool) (string, error) {
 		renders++
 		return strings.Repeat("long value\n", 50), nil
 	}
@@ -159,4 +162,25 @@ func TestFilesArrowsReuseWrappedRecord(t *testing.T) {
 	require.Equal(t, 1, renders)
 	m.Update(tea.WindowSizeMsg{Width: 10, Height: 4})
 	require.Equal(t, 2, renders)
+}
+
+func TestAmbiguousPageRetainsFullLabelsForEveryRecord(t *testing.T) {
+	m, _ := filesViewerFixture(t, 80, 4, 4, 4)
+	page := m.Init()().(listPageMessage)
+	page.page.FullLabels = true
+	page.page.Total = 4
+	m.opts.Singular, m.opts.Plural = "Model", "Models"
+	m.opts.RenderRecordLabels = func(item gjson.Result, full bool) (string, error) {
+		require.True(t, full)
+		return item.Get("id").Str + " original metadata\n", nil
+	}
+	m.opts.RenderTable = func([]gjson.Result, int) (string, bool, error) {
+		t.Fatal("an ambiguous source page reached the compact table")
+		return "", false, nil
+	}
+	m.Update(page)
+	require.Contains(t, m.View().Content, "Models 1–3 of 4")
+	moveFiles(m, ' ')
+	require.Contains(t, m.View().Content, "f004 original metadata")
+	require.Contains(t, m.View().Content, "Model 4 of 4")
 }

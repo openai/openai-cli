@@ -121,10 +121,10 @@ func TestListPagerHelp(t *testing.T) {
 			args := append([]string{"openai"}, strings.Fields(route)...)
 			require.NoError(t, root.Run(t.Context(), append(args, "list", "--help")))
 			require.Contains(t, help.String(), "Automatic terminal output uses a pager.")
-			if route == "files" {
-				require.Contains(t, help.String(), "Space shows the next screen of files.")
+			if route == "models" {
+				require.Contains(t, help.String(), "Space advances one screen, b moves back, and q quits.")
 			} else {
-				require.Contains(t, help.String(), "Space moves forward, b moves back, and q quits.")
+				require.Contains(t, help.String(), "Space shows the next screen.")
 			}
 			require.Contains(t, help.String(), "The final page stays open until you quit.")
 			for _, removed := range []string{"--pager", "--no-pager", "inline", "finish automatically", "retain noninteractive behavior"} {

@@ -17,14 +17,6 @@ import (
 )
 
 func TestMainResourceListActivationTerminal(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("Python 3 is required for private PTY list checks")
-	}
-	binary, err := os.Executable()
-	require.NoError(t, err)
-	script, err := filepath.Abs(filepath.Join("..", "..", "scripts", "check-resource-list-activation.py"))
-	require.NoError(t, err)
 	type terminalCase struct {
 		name, mode, action string
 		route              resourceListRoute
@@ -66,24 +58,37 @@ func TestMainResourceListActivationTerminal(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newResourceListFixture(t, tc.route, tc.mode)
-			config, err := json.Marshal(map[string]any{
-				"binary": binary, "endpoint": fixture.server.URL, "home": t.TempDir(),
+			runResourceListObserver(t, map[string]any{
+				"endpoint": fixture.server.URL, "home": t.TempDir(),
 				"args": resourceListArgs(tc.route, tc.flags...), "headers": tc.route.headers,
 				"mode": tc.mode, "action": tc.action, "expected": tc.code,
 			})
-			require.NoError(t, err)
-			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-			defer cancel()
-			child := exec.CommandContext(ctx, python, "-I", "-S", "-B", script)
-			child.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir(), "LANG=en_US.UTF-8"}
-			child.Stdin = bytes.NewReader(config)
-			child.Cancel = func() error { return child.Process.Signal(syscall.SIGTERM) }
-			child.WaitDelay = 2 * time.Second
-			output, err := child.CombinedOutput()
-			require.NoError(t, ctx.Err(), "PTY observer timed out: %s", output)
-			require.NoError(t, err, "PTY observer failed: %s", output)
 			fixture.assertCursors(t, tc.route, tc.calls)
-			t.Logf("%s", bytes.TrimSpace(output))
 		})
 	}
+}
+
+func runResourceListObserver(t *testing.T, config map[string]any) {
+	t.Helper()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python 3 is required for private PTY list checks")
+	}
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	script, err := filepath.Abs(filepath.Join("..", "..", "scripts", "check-resource-list-activation.py"))
+	require.NoError(t, err)
+	config["binary"] = binary
+	input, err := json.Marshal(config)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	child := exec.CommandContext(ctx, python, "-I", "-S", "-B", script)
+	child.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir(), "LANG=en_US.UTF-8"}
+	child.Stdin = bytes.NewReader(input)
+	child.Cancel = func() error { return child.Process.Signal(syscall.SIGTERM) }
+	child.WaitDelay = 2 * time.Second
+	output, err := child.CombinedOutput()
+	require.NoError(t, ctx.Err(), "PTY observer timed out: %s", output)
+	require.NoError(t, err, "PTY observer failed: %s", output)
 }

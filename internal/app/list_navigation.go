@@ -18,14 +18,8 @@ import (
 // InteractiveListOutput leaves explicit machine formats and redirected input or
 // output on their existing iterator path. It never opens a controlling terminal.
 func InteractiveListOutput(opts ShowJSONOpts) bool {
-	// Keep the initial rollout within the public-command coverage. Other
-	// generated page callbacks retain their existing iterator path.
-	switch opts.Operation {
-	case "(resource) files > (method) list", "(resource) batches > (method) list", "(resource) models > (method) list",
-		"(resource) admin.organization.projects > (method) list":
-	default:
-		return false
-	}
+	// The caller establishes that this is a read-only list. Generated iterators
+	// can also yield page items from mutations, which retain their own routing.
 	opts.setDefaults()
 	format := strings.ToLower(opts.Format)
 	eligible := (format == "" || format == "auto") && opts.OutputKind == OutputPageItem &&
@@ -54,13 +48,8 @@ func ShowJSONPages[P JSONListPage[P]](first func(context.Context) (P, error), ma
 func listViewerOptions(opts ShowJSONOpts) listview.Options {
 	style := listNavigationStyle(opts)
 	diagnostics := outputDiagnosticsAllowed(opts.Context)
-	// A standalone format hint must not consume a pager step after all records
-	// already fit. Explicit output paths retain their existing diagnostics.
-	switch opts.Operation {
-	case "(resource) files > (method) list", "(resource) batches > (method) list",
-		"(resource) admin.organization.projects > (method) list":
-		diagnostics = false
-	}
+	// Additional hints must not consume space meant for data rows.
+	diagnostics = diagnostics && opts.Operation == "(resource) models > (method) list"
 	result := listview.Options{
 		Context: opts.Context, Stdout: opts.Stdout,
 		Style:                style,
@@ -69,10 +58,19 @@ func listViewerOptions(opts ShowJSONOpts) listview.Options {
 			return renderListNavigationPage(opts, items, width, diagnostics, style)
 		},
 	}
-	if opts.Operation == "(resource) files > (method) list" && opts.OutputKind == OutputPageItem &&
-		(opts.Format == "" || strings.EqualFold(opts.Format, "auto")) && opts.Transform == "" && !opts.RawOutput {
-		result.RenderFileLabels = func(item gjson.Result) (string, error) {
+	if opts.OutputKind == OutputPageItem && (opts.Format == "" || strings.EqualFold(opts.Format, "auto")) && opts.Transform == "" && !opts.RawOutput {
+		result.Singular, result.Plural = listRangeNames(opts.Operation, opts.Title)
+		result.RenderTable = func(items []gjson.Result, width int) (string, bool, error) {
+			return listview.RenderRecordTable(opts.Context, opts.Operation, items, width, style)
+		}
+		result.RenderRecordLabels = func(item gjson.Result, _ bool) (string, error) {
 			return renderListNavigationLabels(opts, []gjson.Result{item}, false)
+		}
+		if opts.Operation == "(resource) models > (method) list" {
+			models.ConfigureRecordView(&result)
+			if diagnostics {
+				result.Hint = "Details: --format json"
+			}
 		}
 	}
 	if opts.CallerHandlesSignals {
@@ -110,6 +108,48 @@ func renderListNavigationPage(opts ShowJSONOpts, items []gjson.Result, width int
 		}
 	}
 	return renderListNavigationLabels(opts, items, diagnostics)
+}
+
+// Generated list methods name the results explicitly (list_files) or inherit
+// the final resource component. A handwritten list can supply its command path.
+func listRangeNames(operation, title string) (singular, plural string) {
+	name := ""
+	if transformers.IsResourceListOperation(operation) {
+		resource, method, _ := strings.Cut(strings.TrimPrefix(operation, "(resource) "), " > (method) ")
+		if method == "list" {
+			name = resource[strings.LastIndexByte(resource, '.')+1:]
+		} else {
+			name = strings.TrimPrefix(method, "list_")
+		}
+	} else if path := strings.Fields(title); len(path) > 1 && path[len(path)-1] == "list" {
+		name = strings.ReplaceAll(path[len(path)-2], "-", "_")
+	}
+	if name == "external_storage" {
+		return "Storage configuration", "Storage configurations"
+	}
+	if !strings.HasSuffix(name, "s") || strings.ContainsAny(name, " :") {
+		return "Result", "Results"
+	}
+	words := strings.Split(name, "_")
+	for i, word := range words {
+		if word == "" || strings.Trim(word, "abcdefghijklmnopqrstuvwxyz0123456789") != "" {
+			return "Result", "Results"
+		}
+		if word == "api" {
+			words[i] = "API"
+		}
+	}
+	words[0] = strings.ToUpper(words[0][:1]) + words[0][1:]
+	plural = strings.Join(words, " ")
+	switch {
+	case strings.HasSuffix(plural, "ches"):
+		singular = strings.TrimSuffix(plural, "es")
+	case strings.HasSuffix(plural, "ies"):
+		singular = strings.TrimSuffix(plural, "ies") + "y"
+	default:
+		singular = strings.TrimSuffix(plural, "s")
+	}
+	return singular, plural
 }
 
 // Match help's environment-only color detection without querying stdin or tmux.

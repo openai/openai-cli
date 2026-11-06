@@ -103,8 +103,11 @@ func newListPageFetcher[P JSONListPage[P]](ctx context.Context, first func(conte
 
 // Page contains loaded records and whether another page can be requested.
 type Page struct {
-	Items []gjson.Result
-	More  bool
+	Items      []gjson.Result
+	More       bool
+	Notice     string // optional catalog guidance, including a source-specific empty result
+	FullLabels bool   // an ambiguous source page needs the complete original records
+	Total      int    // known catalog count, when the source provides one
 	// Line and half-page keys can cross a local page boundary without making a request.
 	Local bool
 }
@@ -129,12 +132,13 @@ type Model struct {
 	window   tea.WindowSizeMsg
 	more     bool
 	local    bool
+	total    int
 	loaded   bool
 	loading  bool
 	quitting bool
 	pending  []string
 	viewer   *listViewer
-	files    *filesViewer
+	records  *recordViewer
 	err      error
 
 	// Fetches start in the event loop. Shutdown cancels and joins the one worker,
@@ -325,11 +329,11 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// Reflow only the loaded page. Resizing never requests data.
 		previous := m.window
 		m.window = msg
-		if m.files != nil {
+		if m.records != nil {
 			if previous == msg {
 				return m, nil
 			}
-			return m, m.resizeFiles(previous.Width != msg.Width)
+			return m, m.resizeRecords(previous.Width != msg.Width)
 		}
 		if err := m.viewer.resize(m.opts.Context, m.opts.RenderPage, msg.Width, msg.Height); err != nil {
 			m.err = errors.Join(m.err, err)
@@ -338,10 +342,13 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case listPageMessage:
 		m.loading = false
-		if m.files != nil {
+		if m.records != nil {
 			m.loaded, m.more = true, msg.page.More
+			if msg.page.Total > 0 {
+				m.total = msg.page.Total
+			}
 			m.err = errors.Join(m.err, msg.err)
-			return m, m.receiveFiles(msg.page.Items)
+			return m, m.receiveRecords(msg.page)
 		}
 		var content string
 		if len(msg.page.Items) != 0 || !m.loaded && msg.err == nil {
@@ -361,8 +368,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.quit()
 		}
-		if m.files != nil {
-			return m, m.filesKey(msg)
+		if m.records != nil {
+			return m, m.recordKey(msg)
 		}
 		return m, m.viewerKey(msg)
 	}
@@ -375,8 +382,8 @@ func (m *Model) View() tea.View {
 	// original terminal before Finish prints any received records after errors.
 	view.AltScreen = true
 	if !m.quitting {
-		if m.files != nil {
-			view.Content = m.filesView()
+		if m.records != nil {
+			view.Content = m.recordView()
 		} else {
 			view.Content = m.viewerView()
 		}
@@ -447,9 +454,12 @@ type Options struct {
 	Style      Style
 	RenderPage func([]gjson.Result, int) (string, error)
 	Interrupt  func(error) error
-	// Files uses record-based navigation. This renderer retains full labeled
-	// output when the compact Files table cannot represent a screen.
-	RenderFileLabels func(gjson.Result) (string, error)
+	// Record navigation renders a compact table with a pinned header. If the
+	// data or terminal width needs labels, it renders one complete item.
+	RenderTable        func([]gjson.Result, int) (string, bool, error)
+	Singular, Plural   string
+	Hint               string
+	RenderRecordLabels func(item gjson.Result, full bool) (string, error)
 	// The caller cancels Context on process signals and retains their exit status.
 	CallerHandlesSignals bool
 }
@@ -460,8 +470,11 @@ func New(opts Options, fetch func() (Page, error), cancel context.CancelFunc, wi
 	m := &Model{opts: opts, fetch: fetch, cancel: cancel,
 		window: tea.WindowSizeMsg{Width: width, Height: height}}
 	m.viewer = newListViewer()
-	if opts.RenderFileLabels != nil {
-		m.files = &filesViewer{}
+	if opts.RenderRecordLabels != nil && opts.RenderTable != nil {
+		if m.opts.Singular == "" || m.opts.Plural == "" {
+			m.opts.Singular, m.opts.Plural = "Record", "Records"
+		}
+		m.records = &recordViewer{}
 	}
 	return m
 }

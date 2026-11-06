@@ -40,11 +40,22 @@ func TestListPagerResizeRendersCachedRecords(t *testing.T) {
 					{gjson.Parse(input)},
 					{gjson.Parse(strings.ReplaceAll(input, "_first", "_second"))},
 				}
+				presentation := func(items []gjson.Result, width int) string {
+					text, table, err := opts.RenderTable(items, width)
+					require.NoError(t, err)
+					if !table {
+						text, err = opts.RenderRecordLabels(items[0], false)
+						require.NoError(t, err)
+					}
+					if opts.Hint != "" && len(opts.Hint) <= width {
+						text = strings.TrimSuffix(text, "\n") + "\n" + opts.Hint + "\n"
+					}
+					return text
+				}
 				// Fit exactly the longer of the two records and a footer. Space
 				// must use cached data before the injected third-request error.
 				screen := func(width int) tea.WindowSizeMsg {
-					content, err := opts.RenderPage(pages[1], width)
-					require.NoError(t, err)
+					content := presentation(pages[1], width)
 					body := ansi.Hardwrap(strings.TrimSuffix(content, "\n"), width, true)
 					return tea.WindowSizeMsg{Width: width, Height: strings.Count(body, "\n") + 2}
 				}
@@ -66,7 +77,7 @@ func TestListPagerResizeRendersCachedRecords(t *testing.T) {
 					require.Positive(t, footer, "all records and controls must fit this fixture: %q", view)
 					require.Contains(t, view[footer+1:], "q")
 					body := view[:footer]
-					require.Equal(t, strings.Join(strings.Fields(want), ""), strings.Join(strings.Fields(body), ""),
+					require.Equal(t, strings.Join(strings.Fields(presentation(pages[index], width)), ""), strings.Join(strings.Fields(body), ""),
 						"cached records must use the current width")
 					for _, line := range strings.Split(view, "\n") {
 						require.LessOrEqual(t, ansi.StringWidth(line), width)

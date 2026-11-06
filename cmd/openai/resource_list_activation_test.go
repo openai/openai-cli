@@ -38,14 +38,21 @@ type resourceListFixture struct {
 	server       *httptest.Server
 }
 
+func fixtureListCursor(route resourceListRoute) string {
+	switch route.object {
+	case "organization.project":
+		return "project-envelope-cursor" // ConversationCursorPage reads last_id.
+	case "group":
+		return "opaque:02/+?" // NextCursorPage reads next, including URL characters.
+	default:
+		return "item_002" // CursorPage reads the last row ID.
+	}
+}
+
 func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) *resourceListFixture {
 	t.Helper()
 	fixture := &resourceListFixture{}
-	nextCursor := "item_002"
-	if route.object == "organization.project" {
-		// ConversationCursorPage must use the envelope cursor, not the row ID.
-		nextCursor = "project-envelope-cursor"
-	}
+	nextCursor := fixtureListCursor(route)
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/_state" {
 			fixture.mu.Lock()
@@ -105,6 +112,13 @@ func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) 
 					item["status"] = "completed"
 				case "organization.project":
 					item["name"], item["status"] = "Synthetic project", "active"
+				case "webhook_endpoint":
+					item["name"], item["event_types"], item["url"] = "Synthetic hook", []string{"batch.failed"}, "https://example.test/webhook"
+				case "skill":
+					item["name"], item["default_version"], item["latest_version"] = "Synthetic skill", "1", "2"
+				case "group":
+					delete(item, "object") // Organization groups do not use an object discriminator.
+					item["name"], item["group_type"], item["is_scim_managed"] = "Synthetic group", "scim", true
 				}
 				if mode == "unfamiliar" {
 					item["unfamiliar"] = "retain-synthetic-detail"
@@ -113,8 +127,14 @@ func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) 
 			}
 		}
 		more := request == 1 && mode != "complete" && mode != "empty" && mode != "unfamiliar"
-		_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": items, "has_more": more,
-			"first_id": "item_001", "last_id": nextCursor})
+		envelope := map[string]any{"object": "list", "data": items, "has_more": more, "first_id": "item_001", "last_id": nextCursor}
+		if route.object == "group" {
+			envelope["next"] = nextCursor
+			if mode == "repeat-cursor" && request == 2 {
+				envelope["has_more"] = true
+			}
+		}
+		_ = json.NewEncoder(w).Encode(envelope)
 	}))
 	t.Cleanup(fixture.server.Close)
 	return fixture
@@ -133,11 +153,7 @@ func (fixture *resourceListFixture) assertCursors(t *testing.T, route resourceLi
 	defer fixture.mu.Unlock()
 	want := []string{"seed"}
 	if count == 2 {
-		cursor := "item_002"
-		if route.object == "organization.project" {
-			cursor = "project-envelope-cursor"
-		}
-		want = append(want, cursor)
+		want = append(want, fixtureListCursor(route))
 	}
 	require.Equal(t, want, fixture.cursors)
 	require.Equal(t, 1, fixture.maximum, "list requests must remain serial")

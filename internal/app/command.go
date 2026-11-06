@@ -78,6 +78,8 @@ func ConfigureCommand(root *cli.Command) {
 	manpages.Configure(root, func(command *cli.Command, message string) error {
 		return ReportSaveReceipt(command, os.Stderr, message, nil)
 	})
+	// Include generated commands, handwritten commands and compatibility routes.
+	configureRegisteredLists(root)
 	configureOutputPolicy(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)

@@ -25,6 +25,10 @@ func webhookCommandOptions() webhooks.CommandOptions {
 }
 
 func writeWebhookHint(ctx context.Context, destination io.Writer, message string) error {
+	// The pager owns list navigation and restores the terminal on exit.
+	if currentRegisteredList(ctx) != nil {
+		return nil
+	}
 	return writeOutputHint(ShowJSONOpts{Context: ctx, Stderr: destination}, message)
 }
 
