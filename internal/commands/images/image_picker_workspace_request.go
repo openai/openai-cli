@@ -274,6 +274,13 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 			draw(false)
 			return true, nil
 		}
+		if p.busy && (msg.String() == "tab" || msg.String() == "shift+tab") {
+			if _, wide := imageStudioLayout(p.model.width, p.model.height); wide && !p.model.galleryModal() {
+				p.model.studioSwitchPane()
+				draw(true)
+				return true, nil
+			}
+		}
 		if p.busy && len(p.workspace.images) > 0 && (msg.String() == "tab" || msg.String() == "shift+tab") {
 			if p.model.focus == "images" {
 				p.model.focus = "prompt"

@@ -54,7 +54,7 @@ func (m *imagePicker) studioDraft(width int) (lines []studioDraftLine, row, col 
 }
 
 func (m *imagePicker) studioMoveRow(g imageStudioGeometry, delta int) {
-	lines, row, col := m.studioDraft(g.editorWidth - 3)
+	lines, row, col := m.studioDraft(g.draftWidth())
 	to := row + delta
 	if to < 0 {
 		m.focus, m.studioAction = "actions", 0
@@ -82,6 +82,21 @@ func (m *imagePicker) studioHeading(label string, active bool) string {
 	return m.workspaceText("› "+label, imageActive)
 }
 
+func (m *imagePicker) studioSection(label string, active bool, width int) string {
+	prefix := "  "
+	if active {
+		prefix = "› "
+	}
+	heading := m.workspaceText(prefix+label, imageActive)
+	palette := m.palette()
+	rule := cliterminal.SectionDivider(max(0, width-ansi.StringWidth(heading)-2),
+		m.color && m.profile == colorprofile.TrueColor, palette.fill, palette.border, palette.secondary)
+	if m.profile != colorprofile.TrueColor {
+		rule = m.workspaceImageBorder(rule)
+	}
+	return heading + " " + rule
+}
+
 func (m *imagePicker) studioSelection() lipgloss.Style {
 	s := lipgloss.NewStyle()
 	if m.color && m.profile >= colorprofile.ANSI {
@@ -96,8 +111,8 @@ func (m *imagePicker) studioForm(g imageStudioGeometry) tea.View {
 	var view tea.View
 	width := g.editorWidth
 	var rows []string
-	if m.focus == "command" {
-		rows = append(rows, m.studioHeading("Command", !m.generating))
+	if m.focus == "command" || m.focus == "images" && m.studioEditorFocus == "command" {
+		rows = append(rows, m.studioHeading("Command", m.focus == "command" && !m.generating))
 		w, h := m.commandDimensions()
 		lines, _, _ := m.commandPreview(w, h)
 		for _, line := range lines {
@@ -106,7 +121,7 @@ func (m *imagePicker) studioForm(g imageStudioGeometry) tea.View {
 	} else {
 		active := m.focus == "prompt" && !m.generating
 		rows = append(rows, m.studioHeading("Prompt", active))
-		draft, row, col := m.studioDraft(width - 3) // Leave a real cell for the caret at line end.
+		draft, row, col := m.studioDraft(g.draftWidth()) // Leave a real cell for the caret at line end.
 		visible := min(studioDraftRows, len(draft))
 		first := max(0, min(row-1, len(draft)-visible))
 		for i, bounds := range draft[first : first+visible] {
@@ -117,31 +132,64 @@ func (m *imagePicker) studioForm(g imageStudioGeometry) tea.View {
 			rows = append(rows, "  "+line)
 		}
 		if active {
-			view.Cursor = tea.NewCursor(4+2+col, imageStudioBodyY+1+row-first)
+			view.Cursor = tea.NewCursor(g.editorX+2+col, g.bodyY+1+row-first)
 			view.Cursor.Shape = tea.CursorBar
 		}
-		rows = append(rows, m.studioHeading(m.heading(), m.focus == "path" && !m.generating))
+		for i := range rows {
+			rows[i] = m.studioSurfaceRow(rows[i], width)
+		}
+		rows = append(rows, "")
+		rows = append(rows, m.studioSection(m.heading(), m.focus == "path" && !m.generating, width))
 		if m.page == "path" {
 			path, x := imagePickerEditLine(m.folder.draft, m.folder.cursor, width-2)
 			if len(m.folder.draft) == 0 {
 				path = m.workspaceText("Enter a folder path…", imageSecondary)
 			}
 			if m.focus == "path" && !m.generating {
-				view.Cursor = tea.NewCursor(4+2+x, imageStudioBodyY+len(rows))
+				view.Cursor = tea.NewCursor(g.editorX+2+x, g.bodyY+len(rows))
 				view.Cursor.Shape = tea.CursorBar
 			}
 			rows = append(rows, "  "+cliterminal.FitPrompt(path, width-2))
 		}
 		options := m.rows()
-		begin, end := m.optionWindow(len(options), max(1, g.editorRows-len(rows)))
-		if m.settings.outputDir == "" {
-			for i := begin; i < end; i++ {
-				if options[i].id == "folder" {
+		available := g.editorRows - len(rows)
+		if m.page == "settings" {
+			available -= 2 // Output heading and separation stay outside the selectable rows.
+		}
+		begin, end := m.optionWindow(len(options), max(1, available))
+		for i := begin; i < end; i++ {
+			switch options[i].id {
+			case "size":
+				options[i].label = "Size"
+				options[i].value = strings.ReplaceAll(strings.Join(strings.Fields(options[i].value), " "), " x ", "×")
+			case "folder":
+				if m.settings.outputDir == "" {
 					options[i].value = strings.TrimSuffix(options[i].value, " (Default)")
 				}
+				// Keep the destination visible without changing the stored path.
+				value := imagePickerLine(options[i].value)
+				space := width - imagePickerOptionLabelWidth - 3
+				if cells := ansi.StringWidth(value); cells > space {
+					tail := ansi.TruncateLeft(value, cells-2*space/3, "")
+					head := ansi.Truncate(value, space-ansi.StringWidth(tail)-1, "")
+					if at := strings.LastIndexAny(head, `/\`); at >= 0 {
+						head = head[:at+1]
+					}
+					if at := strings.IndexAny(tail, `/\`); at >= 0 {
+						tail = tail[at:]
+					}
+					value = head + "…" + tail
+				}
+				options[i].value = value
 			}
 		}
-		rows = append(rows, m.optionLines(options, begin, end, width, m.studioSelection(), m.foreground(m.palette().accent), m.foreground(m.palette().secondary))...)
+		lines := m.optionLines(options, begin, end, width, m.studioSelection(), m.foreground(m.palette().accent), m.foreground(m.palette().secondary))
+		for i, line := range lines {
+			if m.page == "settings" && options[begin+i].id == "folder" {
+				rows = append(rows, "", m.studioSection("Output", false, width))
+			}
+			rows = append(rows, line)
+		}
 	}
 	view.Content = strings.Join(rows, "\n")
 	return view
@@ -174,48 +222,53 @@ func (m *imagePicker) studioActions(width int) string {
 }
 
 func (m *imagePicker) studioHints(g imageStudioGeometry, multiple, scrollable bool) string {
-	keys := [][2]string{{"Ctrl+C", "Exit"}}
+	var keys [][2]string
+	exit := [2]string{"Ctrl+C", "Exit"}
 	if m.generating {
-		keys[0][1] = "Cancel"
+		exit[1] = "Cancel"
 	}
 	switch {
 	case m.focus == "images":
-		keys = append(keys, [2]string{"Esc", "Prompt"})
+		keys = append(keys, [2]string{"Tab", "Pane"})
 		if multiple {
-			keys = append(keys, [2]string{"←→", "Images"})
+			keys = append(keys, [2]string{"←→", "Browse"})
 		}
 		if scrollable {
 			keys = append(keys, [2]string{"↑↓", "Scroll"})
 		}
-		keys = append(keys, [2]string{"Enter", "Expand"}, [2]string{"O", "Open file"})
-	case m.generating:
 		if m.hasImages {
-			keys = append(keys, [2]string{"Tab", "Images"})
+			// The enlarged viewer advertises opening the file outside the terminal.
+			keys = append(keys, [2]string{"Enter", "Zoom"})
 		}
+	case m.generating:
+		keys = append(keys, [2]string{"Tab", "Pane"})
 	case m.folder.busy == "submit" || m.folder.busy == "select":
 		keys = append(keys, [2]string{"Esc", "Cancel"})
 	case m.focus == "prompt":
-		keys = append(keys, [2]string{"↑", "Actions"}, [2]string{"Tab", "Settings"})
-		if m.hasImages {
-			keys = append(keys, [2]string{"Shift+Tab", "Images"})
-		}
-		keys = append(keys, [2]string{"Alt+Enter", "New line"})
+		keys = append(keys, [2]string{"Tab", "Pane"}, [2]string{"↑↓", "Move"}, [2]string{"Alt+Enter", "Newline"})
 	case m.focus == "actions":
-		keys = append(keys, [2]string{"←→", "Actions"}, [2]string{"Enter", "Select"}, [2]string{"↓", "Prompt"})
+		keys = append(keys, [2]string{"Tab", "Pane"}, [2]string{"←→", "Move"}, [2]string{"Enter", "Select"}, [2]string{"Esc", "Back"})
 	case m.focus == "path":
 		keys = append(keys, [2]string{"Tab", "Complete"}, [2]string{"Esc", "Back"})
 	case m.focus == "command":
-		keys = append(keys, [2]string{"Esc", "Prompt"})
+		keys = append(keys, [2]string{"Tab", "Pane"}, [2]string{"Esc", "Back"})
+		if cliterminal.ShellQuoter(m.shell) != nil {
+			keys = append(keys, [2]string{"Ctrl+P", "Print"})
+		}
 		if len(m.commandLines(g.editorWidth-2)) > g.editorRows-1 {
 			keys = append(keys, [2]string{"↑↓", "Scroll"})
 		}
 	default:
-		keys = append(keys, [2]string{"↑↓", "Choose"}, [2]string{"Enter", "Select"}, [2]string{"Esc", "Prompt"})
+		keys = append(keys, [2]string{"Tab", "Pane"}, [2]string{"↑↓", "Move"}, [2]string{"Enter", "Select"}, [2]string{"Esc", "Back"})
 	}
-	return m.workspaceKeys(keys, g.frameWidth-8)
+	return m.workspaceKeys(append(keys, exit), g.frameWidth-8)
 }
 
 func (m *imagePicker) studioKey(key string, g imageStudioGeometry) (bool, tea.Cmd) {
+	if (key == "tab" || key == "shift+tab") && !m.galleryModal() {
+		m.studioSwitchPane()
+		return true, nil
+	}
 	switch m.focus {
 	case "command":
 		// A repeated Enter after opening the inspector must never submit a request.
@@ -233,10 +286,8 @@ func (m *imagePicker) studioKey(key string, g imageStudioGeometry) (bool, tea.Cm
 		switch key {
 		case "left", "right":
 			m.studioAction = 1 - m.studioAction
-		case "down", "shift+tab":
+		case "down":
 			m.focus = "prompt"
-		case "tab":
-			m.focus, m.selected = "options", 0
 		case "enter":
 			if m.studioAction == 1 {
 				m.focus, m.commandOffset = "command", 0
@@ -251,4 +302,23 @@ func (m *imagePicker) studioKey(key string, g imageStudioGeometry) (bool, tea.Cm
 		return false, nil
 	}
 	return true, nil
+}
+
+// Keep the editor's selection, caret and command scroll when crossing panes.
+func (m *imagePicker) studioSwitchPane() {
+	if m.focus == "images" {
+		m.focus = m.studioEditorFocus
+		if m.focus == "" {
+			m.focus = "prompt"
+		}
+		return
+	}
+	m.studioFocusImages()
+}
+
+func (m *imagePicker) studioFocusImages() {
+	if m.focus != "images" {
+		m.studioEditorFocus = m.focus
+		m.focus = "images"
+	}
 }

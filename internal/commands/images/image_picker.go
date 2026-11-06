@@ -259,31 +259,32 @@ type imagePickerSettings struct {
 }
 
 type imagePicker struct {
-	settings       imagePickerSettings
-	page, field    string
-	shell          string
-	focus          string
-	studioAction   int
-	returnPage     string
-	returnSelected int
-	draft          []rune
-	cursor         int
-	selected       int
-	commandOffset  int
-	optionOffset   int
-	optionPage     string
-	optionField    string
-	width, height  int
-	color          bool
-	dark           bool
-	profile        colorprofile.Profile
-	note           string
-	noteTone       imagePickerTone
-	workspace      bool
-	hasImages      bool
-	generating     bool
-	result         imagePickerResult
-	folder         imagePickerFolder
+	settings          imagePickerSettings
+	page, field       string
+	shell             string
+	focus             string
+	studioAction      int
+	studioEditorFocus string
+	returnPage        string
+	returnSelected    int
+	draft             []rune
+	cursor            int
+	selected          int
+	commandOffset     int
+	optionOffset      int
+	optionPage        string
+	optionField       string
+	width, height     int
+	color             bool
+	dark              bool
+	profile           colorprofile.Profile
+	note              string
+	noteTone          imagePickerTone
+	workspace         bool
+	hasImages         bool
+	generating        bool
+	result            imagePickerResult
+	folder            imagePickerFolder
 }
 
 type imagePickerRow struct {
@@ -350,7 +351,7 @@ func (m *imagePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.focus == "prompt" {
 			m.insertPrompt(msg.Content)
 		} else {
-			m.setNote("Tab to Prompt to paste text.", imageWarning)
+			m.setNote("Return to Prompt to paste text.", imageWarning)
 		}
 	case tea.KeyPressMsg:
 		key := msg.String()

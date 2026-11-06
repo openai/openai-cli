@@ -118,7 +118,9 @@ func (m *imagePicker) workspaceView(view tea.View, prompt string, strong, muted,
 	if footerGap {
 		lines = append(lines, "")
 	}
-	lines = append(lines, footer...)
+	if !framed {
+		lines = append(lines, footer...)
+	}
 	body := make([]string, 0, len(lines)+frameRows)
 	if framed {
 		body = append(body, m.workspaceImageFrame(muted.Render(title), m.width, true))
@@ -133,6 +135,9 @@ func (m *imagePicker) workspaceView(view tea.View, prompt string, strong, muted,
 	}
 	if framed {
 		body = append(body, m.workspaceImageFrame("", m.width, false))
+		for _, line := range footer {
+			body = append(body, "    "+line)
+		}
 	}
 	view.Content = strings.Join(body, "\n")
 	return view
@@ -216,18 +221,20 @@ func (m *imagePicker) workspaceFooter(width int, key, muted lipgloss.Style) []st
 	return rows
 }
 
+const imagePickerShortcutSeparator = " · "
+
 // Wrap complete key/action pairs only when they do not fit on the current row.
 func imagePickerWorkspaceShortcutRows(shortcuts [][2]string, width int, key, muted lipgloss.Style) []string {
 	var rows []string
 	start, used := 0, 0
 	for i, shortcut := range shortcuts {
 		cells := ansi.StringWidth(shortcut[0] + " " + strings.ToLower(shortcut[1]))
-		if i > start && used+2+cells > width {
+		if i > start && used+ansi.StringWidth(imagePickerShortcutSeparator)+cells > width {
 			rows = append(rows, imagePickerWorkspaceShortcutLine(shortcuts[start:i], width, key, muted))
 			start, used = i, 0
 		}
 		if i > start {
-			used += 2
+			used += ansi.StringWidth(imagePickerShortcutSeparator)
 		}
 		used += cells
 	}
@@ -243,7 +250,7 @@ func imagePickerWorkspaceShortcutLine(shortcuts [][2]string, width int, key, mut
 		cells := ansi.StringWidth(shortcut[0] + " " + label)
 		gap := 0
 		if len(parts) > 0 {
-			gap = 2
+			gap = ansi.StringWidth(imagePickerShortcutSeparator)
 		}
 		if used+gap+cells > width {
 			continue
@@ -251,5 +258,5 @@ func imagePickerWorkspaceShortcutLine(shortcuts [][2]string, width int, key, mut
 		parts = append(parts, key.Bold(false).Render(shortcut[0])+" "+muted.Render(label))
 		used += gap + cells
 	}
-	return strings.Join(parts, "  ")
+	return strings.Join(parts, muted.Render(imagePickerShortcutSeparator))
 }

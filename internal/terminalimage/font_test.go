@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/imagefont"
 	"github.com/openai/openai-cli/internal/imagefontmac"
 	"github.com/openai/openai-cli/internal/imagegallery"
 	"github.com/stretchr/testify/require"
@@ -125,6 +126,65 @@ func TestImageFontRetainsScrollbackAndTextSettings(t *testing.T) {
 	for _, file := range files {
 		require.True(t, registered[file.Name()])
 	}
+}
+
+func TestImageFontPreparedRowsWidenWithoutChangingDirectOutput(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "gallery")
+	bridge := newTestFontBridge()
+	services := bridge.services(t)
+	img := image.NewRGBA(image.Rect(0, 0, 256, 64))
+	var direct bytes.Buffer
+	require.NoError(t, displayImageFont(t.Context(), &direct, img, 64, directory, "/dev/ttys001", testFontViewport, services))
+	require.Len(t, []rune(strings.Split(direct.String(), "\n")[0]), 32)
+	firstPath := bridge.registered[len(bridge.registered)-1]
+	firstFont, err := os.ReadFile(firstPath)
+	require.NoError(t, err)
+
+	var captured, output bytes.Buffer
+	ctx := context.WithValue(t.Context(), fontRowsKey{}, &captured)
+	for _, test := range [][2]int{{48, 48}, {99, 64}} {
+		captured.Reset()
+		require.NoError(t, displayImageFont(ctx, &output, img, test[0], directory, "/dev/ttys001", testFontViewport, services))
+		rows := strings.Split(strings.TrimSuffix(captured.String(), "\n"), "\n")
+		require.Len(t, rows, test[1]/8)
+		for _, row := range rows {
+			require.Len(t, []rune(row), test[1])
+		}
+		require.Empty(t, output.String(), "prepared rows must not write pixels to the live output")
+	}
+	wider := captured.String()
+	fontAfter, err := os.ReadFile(firstPath)
+	require.NoError(t, err)
+	require.Equal(t, firstFont, fontAfter, "widening must not replace an earlier immutable font")
+	latestFont, err := os.ReadFile(bridge.registered[len(bridge.registered)-1])
+	require.NoError(t, err)
+	parsed, err := sfnt.Parse(latestFont)
+	require.NoError(t, err)
+	for _, text := range []string{direct.String(), wider} {
+		glyph, err := parsed.GlyphIndex(nil, []rune(text)[0])
+		require.NoError(t, err)
+		require.NotZero(t, glyph, "current font must preserve old and wider placements")
+	}
+
+	geometry, err := preservedGeometry(testFontViewport(), 12, testFontSource())
+	require.NoError(t, err)
+	capacity, err := imagefont.PreservedGlyphCapacity(geometry)
+	require.NoError(t, err)
+	captured.Reset()
+	// Replaying a wider cached placement remains allowed with no allocation capacity.
+	require.NoError(t, displayImageFontReserved(ctx, &output, img, 64, directory, "/dev/ttys001", testFontViewport, services, capacity))
+	require.Equal(t, wider, captured.String())
+	captured.Reset()
+	require.ErrorContains(t, displayImageFontReserved(ctx, &output, img, 63, directory, "/dev/ttys001", testFontViewport, services, capacity), "leave room for the final image")
+	require.Empty(t, captured.String())
+	registered := len(bridge.registered)
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	require.ErrorIs(t, displayImageFont(canceled, &output, img, 64, directory, "/dev/ttys001", testFontViewport, services), context.Canceled)
+	require.Len(t, bridge.registered, registered)
+	require.Empty(t, captured.String())
+	require.Equal(t, 12.0, bridge.status.FontSize)
+	require.Equal(t, "Synthetic profile", bridge.status.ProfileName)
 }
 
 func TestImageFontFailureDoesNotPrintOrCommitImage(t *testing.T) {

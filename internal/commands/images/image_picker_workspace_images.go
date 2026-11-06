@@ -386,16 +386,36 @@ func imagePickerInlinePreviewWidth(size interactiveImageSize) int {
 
 func imagePickerInlinePreviewColumns(bounds image.Rectangle, size interactiveImageSize, protocol string) int {
 	if g, ok := imageStudioLayout(size.width, size.height); ok {
-		// Keep the caption and a complete image together whenever they fit.
-		rows := max(1, g.previewRows-1)
-		columns := savedImagePreviewColumns(bounds, g.previewWidth+1, rows+2, size.cellWidth, size.cellHeight)
+		// Keep the compact frame's image height, then reuse the three rows freed
+		// by its single-line receipt. Do not grow the frame to fill its width.
+		const compactRows = 15
+		columns := savedImagePreviewColumns(bounds, g.previewWidth+1, compactRows+2, size.cellWidth, size.cellHeight)
 		if protocol == "font" {
-			return terminalimage.FontPreviewColumns(bounds, columns, rows+2)
+			columns = terminalimage.FontPreviewColumns(bounds, columns, compactRows+2)
+		}
+		if columns < 1 {
+			return columns
+		}
+		cw, ch := size.cellWidth, size.cellHeight
+		if protocol == "font" {
+			cw, ch = 1, 2 // Immutable font placements use normalized two-high cells.
+		}
+		denominator := int64(ch) * int64(bounds.Dx())
+		rows := int((int64(columns)*int64(cw)*int64(bounds.Dy()) + denominator - 1) / denominator)
+		rows = min(g.previewRows-1, rows+3)
+		columns = savedImagePreviewColumns(bounds, g.previewWidth+1, rows+2, size.cellWidth, size.cellHeight)
+		if protocol == "font" {
+			return terminalimage.FontRowColumns(bounds, columns, rows+2)
 		}
 		return columns
 	}
 	form := imagePicker{height: size.height, workspace: true}
-	return imagePickerPreviewColumns(bounds, size.width, max(3, size.height-form.viewHeight()-2), size.cellWidth, size.cellHeight)
+	rows := max(3, size.height-form.viewHeight()-2)
+	columns := imagePickerPreviewColumns(bounds, size.width, rows, size.cellWidth, size.cellHeight)
+	if protocol == "font" {
+		return terminalimage.FontPreviewColumns(bounds, columns, size.height)
+	}
+	return columns
 }
 
 // The outline owns its cells; native graphics keep the existing content origin.
@@ -544,8 +564,13 @@ func imagePickerPrepareResize(ctx context.Context, out *os.File, entry imagePick
 		if !expanded {
 			columns = imagePickerInlinePreviewColumns(img.Bounds(), size, entry.protocol)
 		}
+		_, wide := imageStudioLayout(size.width, size.height)
 		if entry.protocol == "font" {
-			columns = terminalimage.FontPreviewColumns(img.Bounds(), columns, max(1, size.height-4))
+			if expanded {
+				columns = terminalimage.FontRowColumns(img.Bounds(), columns, max(1, size.height-4))
+			} else if !wide {
+				columns = terminalimage.FontPreviewColumns(img.Bounds(), columns, max(1, size.height-4))
+			}
 		}
 		if columns > 0 {
 			if prepared, actual, err := prepare(ctx, out, img, entry.protocol, columns); err == nil {

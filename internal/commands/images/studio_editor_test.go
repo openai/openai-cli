@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,14 +21,51 @@ func TestStudioEditorUsesOnlyVisibleRows(t *testing.T) {
 		promptRows := min(studioDraftRows, 1+strings.Count(text, "\n"))
 		require.NotNil(t, view.Cursor)
 		require.Equal(t, imageStudioBodyY+promptRows, view.Cursor.Y, text)
-		require.Contains(t, rows[1+promptRows], "Settings", text)
+		require.Empty(t, rows[1+promptRows], text)
+		require.Contains(t, rows[2+promptRows], "Settings", text)
 		require.Contains(t, rows[len(rows)-1], "More options", text)
+		require.Contains(t, view.Content, "Output")
+		require.NotContains(t, view.Content, "Size / aspect")
 		require.Contains(t, view.Content, "~/Downloads/gpt-images/")
 		require.NotContains(t, view.Content, "(Default)")
 	}
 	require.Empty(t, m.settings.outputDir)
 	m.settings.outputDir = "/work/art (Default)"
 	require.Contains(t, m.View().Content, "/work/art (Default)")
+}
+
+func TestStudioOutputGroupingPreservesNavigation(t *testing.T) {
+	m := pickerForTest(t)
+	m.width, m.height, m.workspace, m.focus = 110, 28, true, "prompt"
+	m.draft, m.settings.prompt = []rune("first\nsecond\nthird"), "first\nsecond\nthird"
+	m.cursor = len(m.draft)
+	m.settings.outputDir = "/synthetic/very-long-parent/code/img-samples"
+	before := m.settings
+	pickerKey(m, tea.KeyDown)
+	for i, label := range []string{"Model", "Size", "Quality", "Images", "Background", "Save to", "More options"} {
+		require.Equal(t, i, m.selected)
+		view := ansi.Strip(m.View().Content)
+		require.Contains(t, view, "› "+label)
+		require.Contains(t, view, "code/img-samples")
+		require.Contains(t, view, "…")
+		require.LessOrEqual(t, len(strings.Split(view, "\n")), 17)
+		for _, row := range strings.Split(view, "\n") {
+			require.LessOrEqual(t, ansi.StringWidth(row), 44)
+		}
+		if i < 6 {
+			pickerKey(m, tea.KeyDown)
+		}
+	}
+	require.Equal(t, before, m.settings)
+	m.settings.outputDir = "/Users/synthetic/code/img-samples"
+	require.Contains(t, ansi.Strip(m.View().Content), "/Users/…/code/img-samples")
+	pickerKey(m, tea.KeyEnter)
+	require.Equal(t, "more", m.page)
+	pickerKey(m, tea.KeyEsc)
+	require.Equal(t, "settings", m.page)
+	m.focus, m.selected = "options", 5
+	pickerKey(m, tea.KeyEnter)
+	require.Equal(t, "folder", m.page)
 }
 
 func TestStudioActionsInspectOrSubmit(t *testing.T) {
@@ -57,7 +95,7 @@ func TestStudioActionsInspectOrSubmit(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 75, Height: 24})
 	require.Equal(t, "prompt", m.focus)
 	m.Update(tea.WindowSizeMsg{Width: 133, Height: 39})
-	require.Contains(t, m.studioHints(g, false, false), "Tab settings")
+	require.Contains(t, m.studioHints(g, false, false), "Tab pane")
 	pickerKey(m, tea.KeyUp)
 	pickerKey(m, tea.KeyEnter)
 	require.NotEmpty(t, m.result.Args)
@@ -133,4 +171,24 @@ func TestStudioFolderEditorHidesUnavailableActions(t *testing.T) {
 	m.width, m.height, m.workspace = 133, 39, true
 	m.openFolderEditor("")
 	require.NotRegexp(t, `Ctrl\+G|View command`, m.studioActions(m.width-8))
+}
+
+func TestStudioPaneSwitchRestoresEditor(t *testing.T) {
+	for _, initial := range []string{"prompt", "options", "command", "actions"} {
+		for _, images := range []bool{false, true} {
+			m := pickerForTest(t)
+			m.width, m.height, m.workspace, m.hasImages = 110, 28, true, images
+			m.focus, m.selected, m.cursor, m.commandOffset = initial, 3, 2, 1
+			prompt := string(m.draft)
+			require.Nil(t, pickerKey(m, tea.KeyTab))
+			require.Equal(t, "images", m.focus)
+			m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+			require.Equal(t, initial, m.focus)
+			require.Equal(t, 3, m.selected)
+			require.Equal(t, 2, m.cursor)
+			require.Equal(t, 1, m.commandOffset)
+			require.Equal(t, prompt, string(m.draft))
+			require.Empty(t, m.result.Args)
+		}
+	}
 }

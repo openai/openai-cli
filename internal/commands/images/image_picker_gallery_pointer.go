@@ -2,7 +2,6 @@ package images
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // Wheel navigation leaves the keyboard focus and draft caret where they were.
@@ -58,47 +57,29 @@ func (p *imagePickerInline) studioClick(msg tea.MouseClickMsg) bool {
 		return false
 	}
 	x, y := msg.X-g.previewX, msg.Y-w.origin
-	if x < 0 || x >= g.previewWidth || y < w.bodyStart || y > w.bodyEnd {
+	if x < 0 || x >= g.previewWidth || y < w.bodyStart || y >= w.bodyEnd {
 		return false
-	}
-	if y == w.bodyEnd {
-		openX := g.previewWidth - len(studioOpenLabel)
-		switch {
-		case x >= openX:
-			p.openSelectedImage()
-		case x >= openX-len(studioActionGap)-len(studioExpandLabel) && x < openX-len(studioActionGap):
-			p.expandImages()
-		default:
-			return false
-		}
-		return true
 	}
 	at := w.offset + y - w.bodyStart
 	start := w.galleryStart(w.selected)
 	image := &w.images[w.selected]
 	if at == start {
-		labelWidth := g.previewWidth
-		if len(w.images) > 1 {
-			labelWidth -= studioPagerWidth
-			if x >= labelWidth {
-				delta := -1
-				if x >= labelWidth+studioPagerWidth/2 {
-					delta = 1
-				}
-				before := w.selected
-				w.selectImage(delta)
-				if before == w.selected {
-					return false
-				}
-				p.model.focus = "images"
-				return true
+		pagerStart := g.previewWidth - studioPagerWidth(len(w.images))
+		delta := 0
+		if x >= pagerStart && x < pagerStart+studioArrowWidth {
+			delta = -1
+		} else if x >= g.previewWidth-studioArrowWidth {
+			delta = 1
+		}
+		if delta != 0 {
+			before := w.selected
+			w.selectImage(delta)
+			if before == w.selected {
+				return false
 			}
-			labelWidth-- // Match the gap before the first arrow.
 		}
-		if x < ansi.StringWidth(image.caption(p.model, labelWidth)) {
-			p.model.focus = "images"
-			return true
-		}
+		p.model.studioFocusImages()
+		return true
 	}
 	if at > start && at <= start+image.rowCount() && x < image.columns && image.columns <= g.previewWidth {
 		if image.nativeRows > 0 {

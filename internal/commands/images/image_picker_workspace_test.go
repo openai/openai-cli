@@ -238,8 +238,8 @@ func TestImagePickerWorkspaceSeparatesSectionsWithoutCommandPadding(t *testing.T
 	require.Contains(t, lines[command-2], "More options")
 	require.Contains(t, lines[command], "openai images generate")
 	require.Empty(t, strings.Trim(lines[command+1], " │"))
-	require.Contains(t, lines[command+2], "Ctrl+G generate")
-	require.Contains(t, lines[command+3], "╰")
+	require.Contains(t, lines[command+2], "╰")
+	require.Contains(t, lines[command+3], "Ctrl+G generate")
 	require.Equal(t, command+4, len(lines))
 	require.NotContains(t, text, "[Enter] Generate")
 	require.NotContains(t, text, "[↓] Settings")
@@ -272,7 +272,11 @@ func TestImagePickerWorkspaceShowsAllSettingsWhileTyping(t *testing.T) {
 		m := pickerForTest(t)
 		m.width, m.height, m.workspace, m.focus = width, 40, true, "prompt"
 		text := ansi.Strip(m.View().Content)
-		for _, label := range []string{"Model", "Size / aspect", "Quality", "Images", "Background", "Save to", "More options"} {
+		sizeLabel := "Size / aspect"
+		if width == 240 {
+			sizeLabel = "Size"
+		}
+		for _, label := range []string{"Model", sizeLabel, "Quality", "Images", "Background", "Save to", "More options"} {
 			require.Contains(t, text, label)
 		}
 		require.NotContains(t, text, "[Tab] Sections")

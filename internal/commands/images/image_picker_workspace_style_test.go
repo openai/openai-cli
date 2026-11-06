@@ -24,7 +24,7 @@ func TestImagePickerWorkspaceBatchStyleKeepsFocusDistinct(t *testing.T) {
 			line := lines[index]
 			require.NotContains(t, line, "\x1b[1m", label)
 		}
-		footer := lines[len(lines)-2]
+		footer := lines[len(lines)-1]
 		require.Contains(t, ansi.Strip(footer), "Ctrl+G generate")
 		require.Contains(t, ansi.Strip(footer), "Ctrl+C exit")
 		require.NotContains(t, ansi.Strip(footer), "[")
@@ -141,7 +141,7 @@ func TestImagePickerWorkspaceCommandExpandsOnlyOnFocus(t *testing.T) {
 	require.Contains(t, line, "…")
 	footer, _ := pickerNavigationLine(t, view, "Ctrl+C")
 	require.Greater(t, footer, row)
-	require.Contains(t, strings.Split(view, "\n")[footer+1], "╰")
+	require.Contains(t, strings.Split(view, "\n")[footer-1], "╰")
 	require.NotContains(t, view, " of ")
 	m.focus = "command"
 	m.scrollCommand("home")

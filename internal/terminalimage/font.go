@@ -53,7 +53,10 @@ type FontError struct{ Err error }
 func (e *FontError) Error() string { return e.Err.Error() }
 func (e *FontError) Unwrap() error { return e.Err }
 
-const maxFontPreviewColumns = 32
+const (
+	maxFontPreviewColumns = 32
+	maxFontRowColumns     = 64 // The existing imagegallery and imagefont frame limit.
+)
 
 func writeImageFont(ctx context.Context, out io.Writer, img image.Image, columns int) error {
 	return writeImageFontReserved(ctx, out, img, columns, 0)
@@ -236,10 +239,16 @@ func displayImageFontReservedSession(ctx context.Context, out io.Writer, img ima
 	if err != nil {
 		return err
 	}
+	maximum := maxFontPreviewColumns
+	if _, rows := ctx.Value(fontRowsKey{}).(io.Writer); rows {
+		// Prepared rows already have a caller-bounded viewport. Keep direct
+		// output and progress reservations at their existing preview width.
+		maximum = maxFontRowColumns
+	}
 	if columns < 1 {
 		columns = maxFontPreviewColumns
 	}
-	columns = min(columns, maxFontPreviewColumns)
+	columns = min(columns, maximum)
 	if size.Columns > 0 {
 		columns = min(columns, size.Columns-1)
 	}
@@ -247,7 +256,7 @@ func displayImageFontReservedSession(ctx context.Context, out io.Writer, img ima
 		return errors.New("widen Terminal before displaying the image")
 	}
 	if size.Rows > 0 {
-		columns = FontPreviewColumns(img.Bounds(), columns, size.Rows)
+		columns = fontPreviewColumns(img.Bounds(), columns, size.Rows, maximum)
 		if columns < 1 {
 			return errors.New("enlarge Terminal before displaying the image")
 		}
