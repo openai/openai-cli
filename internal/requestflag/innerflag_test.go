@@ -427,7 +427,7 @@ func TestInnerFlagAfterNullElementInUntypedArray(t *testing.T) {
 		OuterIsArrayOfObjects: true,
 	}
 	require.NoError(t, name.Set(name.Name, "first"))
-	require.ErrorContains(t, outer.Set(outer.Name, "null"), "cannot combine")
+	require.NoError(t, outer.Set(outer.Name, "null"))
 	require.NoError(t, name.Set(name.Name, "second"))
 	assert.Equal(t, []map[string]any{{"name": "first"}, {"name": "second"}}, outer.Get())
 }

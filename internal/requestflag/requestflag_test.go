@@ -513,12 +513,12 @@ func TestYamlHandling(t *testing.T) {
 	t.Run("Parse YAML to any", func(t *testing.T) {
 		t.Parallel()
 
-		flag := &Flag[any]{Name: "value"}
+		flag := &Flag[any]{Name: "value", InputPolicy: InputPolicyTextStructured}
 		err := (&structuredFlag{Flag: &Flag[string]{Name: "value-structured"}, target: flag}).Set("value-structured", "name: test\nvalue: 42\n")
 		assert.NoError(t, err)
 
 		// The value should be a map
-		val, ok := flag.Get().(map[string]any)
+		val, ok := unwrappedInput(flag.Get()).(map[string]any)
 		assert.True(t, ok, "Expected map[string]any, got %T", flag.Get())
 
 		if ok {
@@ -539,12 +539,12 @@ func TestYamlHandling(t *testing.T) {
 	t.Run("Parse YAML array", func(t *testing.T) {
 		t.Parallel()
 
-		flag := &Flag[any]{Name: "value"}
+		flag := &Flag[any]{Name: "value", InputPolicy: InputPolicyTextStructured}
 		err := (&structuredFlag{Flag: &Flag[string]{Name: "value-structured"}, target: flag}).Set("value-structured", "- item1\n- item2\n- item3\n")
 		assert.NoError(t, err)
 
 		// The value should be a slice
-		val, ok := flag.Get().([]any)
+		val, ok := unwrappedInput(flag.Get()).([]any)
 		assert.True(t, ok, "Expected []any, got %T", flag.Get())
 
 		if ok {
@@ -625,17 +625,14 @@ func TestYamlHandling(t *testing.T) {
 		t.Parallel()
 
 		invalidYaml := `[not closed`
-		flag := &Flag[any]{Name: "value"}
+		flag := &Flag[any]{Name: "value", InputPolicy: InputPolicyTextStructured}
 		err := (&structuredFlag{Flag: &Flag[string]{Name: "value-structured"}, target: flag}).Set("value-structured", invalidYaml)
 		assert.Error(t, err)
 	})
 }
 
-// TestNullLiteralHandling pins how each Flag[T] type handles the literal value "null"
-// when passed via the CLI. Pointer-typed flags serialize nil as JSON null, which is how
-// nullable body fields (`anyOf: [T, null]` / `{nullable: true}`) let users clear a field
-// via `--foo null`. Non-pointer primitive flags treat "null" as a raw value — these are
-// non-nullable schemas where explicit null has no API semantics anyway.
+// TestNullLiteralHandling preserves the low-level legacy and typed parser contracts.
+// Text-bearing flag policies override those parsers; numeric pointer flags still accept null.
 func TestNullLiteralHandling(t *testing.T) {
 	t.Parallel()
 
@@ -648,9 +645,16 @@ func TestNullLiteralHandling(t *testing.T) {
 
 	t.Run("Flag[any] null is literal text", func(t *testing.T) {
 		t.Parallel()
+		flag := &Flag[any]{Name: "foo", InputPolicy: InputPolicyTextStructured}
+		assert.NoError(t, flag.Set("foo", "null"))
+		assertJSONBody(t, flag.Get(), `{"foo":"null"}`)
+	})
+
+	t.Run("legacy untyped parser preserves null", func(t *testing.T) {
+		t.Parallel()
 		cv := &cliValue[any]{}
 		assert.NoError(t, cv.Set("null"))
-		assertJSONBody(t, cv.Get(), `{"foo":"null"}`)
+		assertJSONBody(t, cv.Get(), `{"foo":null}`)
 	})
 
 	t.Run("Flag[string] null is the raw string \"null\"", func(t *testing.T) {

@@ -43,6 +43,8 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	var syntaxError *json.SyntaxError
 	var pathError *os.PathError
 	var inputFailure *requestconfig.InputFileError
+	var structuredInputFailure *requestflag.StructuredInputError
+	var inputPolicyFailure *requestflag.InputPolicyError
 	var stdinFailure *requestflag.StdinValueError
 	var pagerFailure *clioutput.PagerError
 	var imageFailure *images.SavingError
@@ -65,6 +67,10 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	var webhookFailure *webhooks.WorkflowError
 	var webhookCanceled *webhooks.CreateCanceledError
 	switch {
+	case errors.As(failure, &structuredInputFailure):
+		return structuredInputFailure.Error()
+	case errors.As(failure, &inputPolicyFailure):
+		return inputPolicyFailure.Error()
 	case errors.As(failure, &batchFailure):
 		return batchFailure.Error()
 	case errors.As(failure, &adminSetupFailure):

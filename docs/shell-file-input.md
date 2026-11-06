@@ -10,7 +10,7 @@ cat speech.wav | openai audio transcriptions create --model whisper-1 --file -
 ```
 
 The first command sends `hello\n` as the input field.
-JSON-looking text also stays text when a field explicitly selects stdin.
+In literal mode, JSON-looking text also stays text when an ordinary text field explicitly selects stdin.
 The CLI does not expand references found inside that text.
 
 Only one effective parameter can consume stdin.
@@ -19,6 +19,54 @@ Repeated scalar flags use their last value.
 Collection flags retain multiple values, so repeated stdin entries conflict.
 Arguments after `--` retain the command's positional-argument rules.
 They do not become flags or file references.
+
+## Text and structured operands
+
+Schema metadata selects each operand's parsing policy.
+Text-capable operands preserve unrestricted text, including nullable identifiers, nested text fields, and each repeated text operand.
+Numeric, Boolean, enum-only, and structured-only object or array operands keep their existing typed behavior.
+Specialized input adapters retain their existing contracts.
+
+Text operands that also accept another type expose a matching `-structured` flag.
+This includes text operands that accept null.
+Use `-structured` to parse JSON or YAML explicitly:
+
+```sh
+openai responses create --model MODEL --input 'Translate: hello'
+openai responses create --model MODEL --input-structured '[{"role":"user","content":"hello"}]'
+openai responses create --model MODEL --input-structured @input.json
+printf '%s' '[{"role":"user","content":"hello"}]' | openai responses create --model MODEL --input-structured @-
+```
+
+An explicit structured flag resolves its source once as text, then parses the result.
+This ordering also applies in legacy mode and to multipart fields.
+Strings inside the parsed result remain data, including `@file`, `@-`, and `\@` strings.
+For example, `--input-structured '"@notes.txt"'` sends literal `@notes.txt`.
+An explicit `@-` reserves stdin for that operand instead of whole-request parsing.
+Do not combine ordinary and structured assignments to the same operand.
+The CLI rejects that combination before source reads, regardless of argument order.
+
+### Migrating scripts
+
+**Literal defaults break scripts that relied on implicit JSON/YAML parsing for text-capable operands.**
+Use matching `-structured` flags, or select legacy mode for the process.
+Scripts that depend on either mode must pin a CLI version that supports it.
+Older binaries can ignore the setting.
+
+```sh
+OPENAI_CLI_INPUT_MODE=legacy openai responses create --model MODEL --input '[{"role":"user","content":"hello"}]'
+OPENAI_CLI_INPUT_MODE=literal openai responses create --model MODEL --input 'Translate: hello'
+```
+
+The CLI captures `OPENAI_CLI_INPUT_MODE` before argument parsing.
+Accepted values are `literal` and `legacy`; an unset setting selects `literal`.
+Invalid values fail.
+Legacy mode restores the original parser and its ordinary parser-before-file-expansion ordering.
+Explicit `-structured` flags override legacy mode for their operands.
+Only processes that inherit the setting use it.
+Containers, SSH sessions, and environment-clearing launchers need separate configuration.
+An explicit `literal` assignment overrides inherited `legacy` for that process.
+The proposed legacy support duration still requires owner acceptance; no lifetime guarantee applies here.
 
 ## Text references and binary paths
 
@@ -73,6 +121,8 @@ printf 'model: MODEL\ninput: hello\n' | openai responses create
 ```
 
 Explicit request flags override matching piped fields.
+Both input modes preserve whole-request JSON/YAML types and the existing trust policy.
+Trusted piped values retain existing file-reference handling.
 Unknown body fields and explicit nulls retain their existing encoding behavior.
 Empty stdin contributes no whole-request fields.
 Required request fields still apply.

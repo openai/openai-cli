@@ -113,7 +113,7 @@ func TestApplyStdinDataToFlagsWithProvenancePreservesExplicitEmptyCollections(t 
 	t.Parallel()
 
 	mapOuter := &Flag[map[string]any]{Name: "nested", BodyPath: "nested"}
-	arrayOuter := &Flag[any]{Name: "nested", BodyPath: "nested"}
+	arrayOuter := &Flag[any]{Name: "nested", BodyPath: "nested", InputPolicy: InputPolicyTextStructured}
 	tests := []struct {
 		name     string
 		outer    cli.Flag
@@ -157,7 +157,7 @@ func TestApplyStdinDataToFlagsWithProvenancePreservesExplicitEmptyCollections(t 
 			})
 
 			require.NoError(t, err)
-			require.Equal(t, test.expected, test.outer.Get())
+			require.Equal(t, test.expected, unwrappedInput(test.outer.Get()))
 			require.False(t, observed)
 		})
 	}

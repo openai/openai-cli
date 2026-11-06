@@ -11,6 +11,7 @@ import (
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	"github.com/openai/openai-cli/internal/commandsuggest"
 	requestconfig "github.com/openai/openai-cli/internal/request"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-cli/internal/updatenotice"
 	"github.com/urfave/cli/v3"
@@ -42,6 +43,10 @@ func Run(ctx context.Context, argv []string, app *cli.Command) int {
 		return 0
 	}
 	ConfigureCommand(app)
+	inputModeError := requestflag.ConfigureInputMode(app, os.Getenv(requestflag.InputModeEnv))
+	if inputModeError != nil {
+		app.Before = func(ctx context.Context, _ *cli.Command) (context.Context, error) { return ctx, inputModeError }
+	}
 	finishSuggestions := commandsuggest.Configure(app)
 	defer finishSuggestions()
 	app.Flags = append(app.Flags, requestconfig.NewRequestHeaderFlag())

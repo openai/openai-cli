@@ -90,20 +90,24 @@ func TestMainShellWholeRequestAndRepeatedFlags(t *testing.T) {
 		name, input string
 		flags       []string
 		want        map[string]any
+		mode        string
 	}{
-		{"JSON override and unknown null", `{"model":"from-pipe","input":"text","future":null}`, []string{"--model", "model_synthetic"}, map[string]any{"model": "model_synthetic", "input": "text", "future": nil}},
-		{"YAML", "model: model_synthetic\ninput: text\nfuture: null\n", nil, map[string]any{"model": "model_synthetic", "input": "text", "future": nil}},
-		{"last scalar releases stdin", `{"model":"model_synthetic"}`, []string{"--input", "@-", "--input", "literal"}, map[string]any{"model": "model_synthetic", "input": "literal"}},
-		{"last scalar selects stdin", "exact text\n", []string{"--model", "model_synthetic", "--input", "literal", "--input", "@-"}, map[string]any{"model": "model_synthetic", "input": "exact text\n"}},
-		{"nested field selects stdin", "false\n", []string{"--model", "model_synthetic", "--input-structured", `[{"role":"user","content":[{"type":"input_text","text":"@-"}]}]`}, map[string]any{"model": "model_synthetic", "input": []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "false\n"}}}}}},
-		{"nested replacement releases stdin", `{"model":"model_synthetic","future":null}`, []string{"--metadata", `{"note":"@-"}`, "--metadata", `{"note":"literal"}`}, map[string]any{"model": "model_synthetic", "future": nil, "metadata": map[string]any{"note": "literal"}}},
-		{"empty nullable replacement releases stdin", `{"model":"model_synthetic","input":"whole request"}`, []string{"--instructions", "@-", "--instructions", ""}, map[string]any{"model": "model_synthetic", "input": "whole request", "instructions": ""}},
-		{"null nullable replacement releases stdin", `{"model":"model_synthetic","input":"whole request"}`, []string{"--instructions", "@-", "--instructions", "null"}, map[string]any{"model": "model_synthetic", "input": "whole request", "instructions": nil}},
-		{"untrusted reference remains literal", `{"model":"model_synthetic","input":"@/synthetic/private.txt"}`, nil, map[string]any{"model": "model_synthetic", "input": "@/synthetic/private.txt"}},
+		{"JSON override and unknown null", `{"model":"from-pipe","input":"text","future":null}`, []string{"--model", "model_synthetic"}, map[string]any{"model": "model_synthetic", "input": "text", "future": nil}, ""},
+		{"YAML", "model: model_synthetic\ninput: text\nfuture: null\n", nil, map[string]any{"model": "model_synthetic", "input": "text", "future": nil}, ""},
+		{"last scalar releases stdin", `{"model":"model_synthetic"}`, []string{"--input", "@-", "--input", "literal"}, map[string]any{"model": "model_synthetic", "input": "literal"}, ""},
+		{"last scalar selects stdin", "exact text\n", []string{"--model", "model_synthetic", "--input", "literal", "--input", "@-"}, map[string]any{"model": "model_synthetic", "input": "exact text\n"}, ""},
+		{"legacy nested field selects stdin", "false\n", []string{"--model", "model_synthetic", "--input", `[{"role":"user","content":[{"type":"input_text","text":"@-"}]}]`}, map[string]any{"model": "model_synthetic", "input": []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "false\n"}}}}}, "legacy"},
+		{"structured nested reference releases stdin", `{"model":"model_synthetic"}`, []string{"--input-structured", `[{"role":"user","content":[{"type":"input_text","text":"@-"}]}]`}, map[string]any{"model": "model_synthetic", "input": []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "@-"}}}}}, ""},
+		{"nested replacement releases stdin", `{"model":"model_synthetic","future":null}`, []string{"--metadata", `{"note":"@-"}`, "--metadata", `{"note":"literal"}`}, map[string]any{"model": "model_synthetic", "future": nil, "metadata": map[string]any{"note": "literal"}}, ""},
+		{"empty nullable replacement releases stdin", `{"model":"model_synthetic","input":"whole request"}`, []string{"--instructions", "@-", "--instructions", ""}, map[string]any{"model": "model_synthetic", "input": "whole request", "instructions": ""}, ""},
+		{"literal null replacement releases stdin", `{"model":"model_synthetic","input":"whole request"}`, []string{"--instructions", "@-", "--instructions", "null"}, map[string]any{"model": "model_synthetic", "input": "whole request", "instructions": "null"}, ""},
+		{"legacy null replacement releases stdin", `{"model":"model_synthetic","input":"whole request"}`, []string{"--instructions", "@-", "--instructions", "null"}, map[string]any{"model": "model_synthetic", "input": "whole request", "instructions": nil}, "legacy"},
+		{"structured null replacement releases stdin", `{"model":"model_synthetic","input":"whole request"}`, []string{"--instructions-structured", "@-", "--instructions-structured", "null"}, map[string]any{"model": "model_synthetic", "input": "whole request", "instructions": nil}, ""},
+		{"untrusted reference remains literal", `{"model":"model_synthetic","input":"@/synthetic/private.txt"}`, nil, map[string]any{"model": "model_synthetic", "input": "@/synthetic/private.txt"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"responses", "create"}, tc.flags...)
-			got := runShellFileCommand(t, server, shellFileInput(t, []byte(tc.input)), []string{"OPENAI_UNTRUSTED_STDIN=true"}, args...)
+			got := runShellFileCommand(t, server, shellFileInput(t, []byte(tc.input)), []string{"OPENAI_UNTRUSTED_STDIN=true", "OPENAI_CLI_INPUT_MODE=" + tc.mode}, args...)
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("command: %+v", got)
 			}
@@ -207,21 +211,25 @@ func TestMainShellStdinConflictBeforeRead(t *testing.T) {
 	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); http.Error(w, "unexpected", 500) }))
 	defer server.Close()
-	for _, args := range [][]string{
-		{"responses", "create", "--model", "model_synthetic", "--input", "@-", "--instructions", "@-"},
-		{"audio", "transcriptions", "create", "--model", "whisper-1", "--file", "-", "--prompt", "@-"},
-		{"images", "edit", "--model", "dall-e-2", "--prompt", "synthetic", "--image", "-", "--image", "-"},
-		{"responses", "create", "--model", "model_synthetic", "--input-structured", `[{"role":"user","content":[{"type":"input_text","text":"@-"},{"type":"input_text","text":"@data://-"}]}]`},
-		{"chat", "completions", "create", "--model", "model_synthetic", "--message", `{"role":"user","content":"@-"}`, "--message", `{"role":"user","content":"@file://-"}`},
+	for _, tc := range []struct {
+		args []string
+		mode string
+	}{
+		{[]string{"responses", "create", "--model", "model_synthetic", "--input", "@-", "--instructions", "@-"}, ""},
+		{[]string{"audio", "transcriptions", "create", "--model", "whisper-1", "--file", "-", "--prompt", "@-"}, ""},
+		{[]string{"images", "edit", "--model", "dall-e-2", "--prompt", "synthetic", "--image", "-", "--image", "-"}, ""},
+		{[]string{"responses", "create", "--model", "model_synthetic", "--input", `[{"role":"user","content":[{"type":"input_text","text":"@-"},{"type":"input_text","text":"@data://-"}]}]`}, "legacy"},
+		{[]string{"responses", "create", "--model", "model_synthetic", "--input-structured", "@-", "--instructions-structured", "@-"}, ""},
+		{[]string{"chat", "completions", "create", "--model", "model_synthetic", "--message", `{"role":"user","content":"@-"}`, "--message", `{"role":"user","content":"@file://-"}`}, ""},
 	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			read, write, err := os.Pipe()
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer read.Close()
 			defer write.Close()
-			got := runShellFileCommand(t, server, read, nil, args...)
+			got := runShellFileCommand(t, server, read, []string{"OPENAI_CLI_INPUT_MODE=" + tc.mode}, tc.args...)
 			if got.code == 0 || got.stdout != "" || !strings.Contains(got.stderr, "multiple request parameters use stdin") {
 				t.Fatalf("command=%+v", got)
 			}

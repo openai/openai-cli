@@ -12,6 +12,33 @@ import (
 	"testing"
 )
 
+func TestMainRealtimeMaxOutputTokensPreservesNumber(t *testing.T) {
+	requests := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		requests <- body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	t.Cleanup(server.Close)
+	args := []string{"openai", "--base-url", server.URL, "--api-key", "sk-test", "--format", "json", "realtime", "calls", "accept", "--call-id", "call_test", "--max-output-tokens", "1024"}
+	got := runMainDispatch(t, "bash", args...)
+	if got.code != 0 {
+		t.Fatalf("main = %+v", got)
+	}
+	select {
+	case body := <-requests:
+		if body["max_output_tokens"] != float64(1024) {
+			t.Errorf("max_output_tokens = %#v, want JSON number 1024", body["max_output_tokens"])
+		}
+	default:
+		t.Fatal("no request received")
+	}
+}
+
 func TestMainUnionInputPreservesLiteralText(t *testing.T) {
 	requests := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +152,7 @@ func TestMainUnionInputRejectsConflictingModes(t *testing.T) {
 	}
 }
 
-func TestMainUnionNestedInputRejectsLiteralAndKeepsStructuredFields(t *testing.T) {
+func TestMainUnionNestedInputPreservesTypedCollections(t *testing.T) {
 	requests := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -141,34 +168,36 @@ func TestMainUnionNestedInputRejectsLiteralAndKeepsStructuredFields(t *testing.T
 		name    string
 		args    []string
 		success bool
+		want    any
 	}{
-		{"literal then nested", []string{"--additional-message", "[]", "--additional-message.role", "user"}, false},
-		{"nested then literal", []string{"--additional-message.role", "user", "--additional-message", "[]"}, false},
-		{"structured then nested", []string{"--additional-message-structured", "[]", "--additional-message.role", "user"}, true},
-		{"nested then structured", []string{"--additional-message.role", "user", "--additional-message-structured", "[]"}, false},
+		{"array then nested", []string{"--additional-message", "[]", "--additional-message.role", "user"}, true, []any{map[string]any{"role": "user"}}},
+		{"nested then parent object", []string{"--additional-message.role", "user", "--additional-message", `{"role":"assistant"}`}, true, []any{map[string]any{"role": "user"}, map[string]any{"role": "assistant"}}},
+		{"unavailable companion before nested", []string{"--additional-message-structured", "[]", "--additional-message.role", "user"}, false, nil},
+		{"unavailable companion after nested", []string{"--additional-message.role", "user", "--additional-message-structured", "[]"}, false, nil},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			base := []string{"openai", "--base-url", server.URL, "--api-key", "sk-test", "--format", "json", "beta", "threads", "runs", "create", "--thread-id", "thread_test", "--assistant-id", "asst_test"}
-			got := runMainDispatch(t, "bash", append(base, tc.args...)...)
-			if (got.code == 0) != tc.success {
-				t.Fatalf("main = %+v, want success %t", got, tc.success)
-			}
-			select {
-			case body := <-requests:
-				if !tc.success {
-					t.Fatal("conflicting flags sent a request")
+		for _, mode := range []string{"literal", "legacy"} {
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				base := []string{"openai", "--base-url", server.URL, "--api-key", "sk-test", "--format", "json", "beta", "threads", "runs", "create", "--thread-id", "thread_test", "--assistant-id", "asst_test"}
+				got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_CLI_INPUT_MODE=" + mode}, append(base, tc.args...)...)
+				if (got.code == 0) != tc.success {
+					t.Fatalf("main = %+v, want success %t", got, tc.success)
 				}
-				want := []any{map[string]any{"role": "user"}}
-				if !reflect.DeepEqual(body["additional_messages"], want) {
-					t.Errorf("additional_messages = %#v, want %#v", body["additional_messages"], want)
+				select {
+				case body := <-requests:
+					if !tc.success {
+						t.Fatal("conflicting flags sent a request")
+					}
+					if !reflect.DeepEqual(body["additional_messages"], tc.want) {
+						t.Errorf("additional_messages = %#v, want %#v", body["additional_messages"], tc.want)
+					}
+				default:
+					if tc.success {
+						t.Fatal("no request received")
+					}
 				}
-			default:
-				if tc.success {
-					t.Fatal("no request received")
-				}
-			}
-		})
+			})
+		}
 	}
 }
 

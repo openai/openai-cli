@@ -33,10 +33,9 @@ func setRequestFlagFromStdin(flag cli.Flag, value any, onSet func(cli.Flag)) err
 
 func setUntypedFlagFromStdin(flag cli.Flag, value any, onSet func(cli.Flag)) (bool, error) {
 	setter, ok := flag.(interface {
-		isUntyped() bool
 		setUntypedStdin(any) (bool, error)
 	})
-	if !ok || !setter.isUntyped() {
+	if !ok {
 		return false, nil
 	}
 	if _, err := formatForFlagSet(value); err != nil {
@@ -58,13 +57,14 @@ func setUntypedFlagFromStdin(flag cli.Flag, value any, onSet func(cli.Flag)) (bo
 func (f *Flag[T]) isUntyped() bool { return reflect.TypeFor[T]().Kind() == reflect.Interface }
 
 func (f *Flag[T]) setUntypedStdin(value any) (bool, error) {
-	if reflect.TypeFor[T]().Kind() != reflect.Interface {
+	if !acceptsParsedInput[T](f.InputPolicy) {
 		return false, nil
 	}
-	var parsed T
-	if value != nil {
-		parsed = value.(T)
+	converted, err := inputAsType(value, reflect.TypeFor[T]())
+	if err != nil {
+		return true, err
 	}
+	parsed := inputTyped[T](converted)
 	if f.Validator != nil {
 		if err := f.Validator(parsed); err != nil {
 			return true, err

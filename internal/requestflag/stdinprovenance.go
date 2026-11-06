@@ -28,7 +28,7 @@ func innerFieldIsSet(inner HasOuterFlag) bool {
 		return false
 	}
 	field := inner.GetInnerField()
-	switch values := outer.Get().(type) {
+	switch values := unwrappedInput(outer.Get()).(type) {
 	case map[string]any:
 		if len(values) == 0 {
 			return true
