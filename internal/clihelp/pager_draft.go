@@ -40,10 +40,10 @@ type helpDraftInput struct {
 	paste          []byte
 	completed      []string
 	*os.File
-	output                             io.Writer
-	mu                                 sync.Mutex
-	enabled, waiting, replied, inPaste bool
-	pending                            []byte
+	output                                      io.Writer
+	mu                                          sync.Mutex
+	enabled, probing, waiting, replied, inPaste bool
+	pending                                     []byte
 }
 
 const (
@@ -56,10 +56,32 @@ const (
 	pasteCloser      = "\x1b[201~"
 )
 
+func (r *helpDraftInput) beginProbe() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.probing = true
+	r.cursorQueries = 1
+}
+
+// A delayed first ESC can be the start of the position report, or the user's
+// Escape key on a terminal that never answers. Bound that ambiguity at startup.
+func (r *helpDraftInput) expireProbe(deadline bool) (wait, escape bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !deadline && (r.cursorMatched > 0 || r.probing && r.cursorQueries == 0) {
+		return true, false
+	}
+	escape = r.cursorMatched == 1
+	r.cursorMatched, r.cursorQueries = 0, 0
+	r.probing = false
+	return false, escape
+}
+
 func (r *helpDraftInput) enableFraming() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.enabled = true
+	r.probing = false
 }
 
 func (r *helpDraftInput) requestReply() error {
@@ -83,6 +105,7 @@ func (r *helpDraftInput) frame(data []byte) []byte {
 		if b == delimiter[len(r.pending)] {
 			r.pending = append(r.pending, b)
 			if len(r.pending) == len(delimiter) {
+				out = append(out, draftCursorReply[:r.cursorMatched]...)
 				out = append(out, r.pending...)
 				r.pending = r.pending[:0]
 				if r.inPaste {
@@ -104,46 +127,51 @@ func (r *helpDraftInput) frame(data []byte) []byte {
 				r.paste = append(r.paste, b)
 			}
 		}
-		if !r.inPaste && len(r.pending) == 1 && (b == 0x1b || b == 3) {
-			// The next escape sequence (for example the cursor position reply)
-			// proves the previous ESC was a key. Encode it as one complete key.
-			out = append(out, encodedEscape...)
-		} else {
-			out = append(out, r.pending...)
+		prefix := r.pending
+		if !r.inPaste && len(prefix) == 1 && (b == 0x1b || b == 3) {
+			// A second escape sequence proves the preceding ESC was a key.
+			prefix = []byte(encodedEscape)
 		}
-		if r.cursorQueries > 0 && !r.inPaste {
-			for _, v := range r.pending {
-				r.matchReply(v)
-			}
+		for _, v := range prefix {
+			out = r.forwardByte(out, v)
 		}
 		r.pending = r.pending[:0]
 		if b == 0x1b {
 			r.pending = append(r.pending, b)
 			continue
 		}
-		out = append(out, b)
-		if r.cursorQueries > 0 && !r.inPaste {
-			r.matchReply(b)
-		}
+		out = r.forwardByte(out, b)
 	}
 	return out
 }
 
-// Cursor reports share the terminal input stream with keystrokes. Only a
-// complete report outside bracketed paste can acknowledge a cursor query.
-func (r *helpDraftInput) matchReply(b byte) {
+// A cursor report can arrive in pieces. Give Tea the complete report in one
+// read so its Escape timeout cannot turn the last bytes into command text.
+func (r *helpDraftInput) forwardByte(out []byte, b byte) []byte {
+	if r.cursorQueries == 0 || r.inPaste {
+		return append(out, b)
+	}
 	if b == draftCursorReply[r.cursorMatched] {
 		r.cursorMatched++
-		if r.cursorMatched == len(draftCursorReply) {
-			r.cursorMatched = 0
-			r.cursorQueries--
-			r.replied = r.waiting && r.cursorQueries == 0
+		if r.cursorMatched < len(draftCursorReply) {
+			return out
 		}
-	} else if b == draftCursorReply[0] {
-		r.cursorMatched = 1
-	} else {
 		r.cursorMatched = 0
+		r.cursorQueries--
+		r.replied = r.waiting && r.cursorQueries == 0
+		return append(out, draftCursorReply...)
 	}
+	if r.cursorMatched == 1 && b == draftCursorReply[0] {
+		out = append(out, encodedEscape...)
+	} else {
+		out = append(out, draftCursorReply[:r.cursorMatched]...)
+	}
+	r.cursorMatched = 0
+	if b == draftCursorReply[0] {
+		r.cursorMatched = 1
+		return out
+	}
+	return append(out, b)
 }
 
 func (r *helpDraftInput) completeUTF8(data []byte) []byte {
@@ -175,7 +203,7 @@ func (r *helpDraftInput) Read(buf []byte) (int, error) {
 		r.spill = r.spill[n:]
 		return n, nil
 	}
-	if !r.enabled {
+	if !r.enabled && !r.probing {
 		return r.File.Read(buf)
 	}
 	if r.replied {
@@ -192,7 +220,16 @@ func (r *helpDraftInput) Read(buf []byte) (int, error) {
 		return n, err
 	}
 	r.lastRead = time.Now()
-	framed := r.completeUTF8(r.frame(buf[:n]))
+	var framed []byte
+	if r.probing {
+		// Bracketed paste is still disabled. Frame only the admission reply.
+		for _, b := range buf[:n] {
+			framed = r.forwardByte(framed, b)
+		}
+	} else {
+		framed = r.frame(buf[:n])
+	}
+	framed = r.completeUTF8(framed)
 	// Promptly disambiguate an actual Escape key. A terminal queues this
 	// cursor report behind the rest of any paste it is already transmitting.
 	if len(r.pending) == 1 && !r.inPaste && !r.waiting {
@@ -304,8 +341,16 @@ func (m *helpPager) negotiateDraft(msg tea.Msg) (bool, tea.Cmd) {
 			return true, m.leave()
 		}
 	case draftProbeExpired:
-		if len(d.early) > 0 && time.Since(d.probeInput) < 200*time.Millisecond && time.Since(d.probeStart) < 2*time.Second {
+		expired := time.Since(d.probeStart) >= 2*time.Second
+		if !expired && len(d.early) > 0 && time.Since(d.probeInput) < 200*time.Millisecond {
 			return true, tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg { return draftProbeExpired{} })
+		}
+		wait, escape := d.input.expireProbe(expired)
+		if wait {
+			return true, tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg { return draftProbeExpired{} })
+		}
+		if escape {
+			d.early = append(d.early, tea.KeyPressMsg{Code: tea.KeyEscape})
 		}
 	case tea.PasteMsg:
 		d.probeInput = time.Now()

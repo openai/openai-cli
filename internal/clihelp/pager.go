@@ -383,6 +383,7 @@ func (m *helpPager) draw() error {
 		m.active = true
 		frame.WriteString("\x1b[?25l\x1b[?1006h\x1b[?1000h")
 		if m.draft != nil {
+			m.draft.input.beginProbe()
 			frame.WriteString(draftCursorQuery)
 		}
 	}

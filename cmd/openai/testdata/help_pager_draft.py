@@ -58,7 +58,12 @@ preexec() { builtin print -r -- "$1" >> "$HOME/submitted"; }
                 if select.select([fd], [], [], .025)[0]:
                     raw.extend(os.read(fd, 65536))
                 while auto_cursor and answered_cursor < raw.count(cursor):
-                    os.write(fd, position)
+                    if kind == "split-admission" and answered_cursor == 0:
+                        os.write(fd, position[:1])
+                        time.sleep(.4)
+                        os.write(fd, position[1:])
+                    else:
+                        os.write(fd, position)
                     answered_cursor += 1
         try:
             read_until(lambda: prompt in raw)
@@ -91,8 +96,15 @@ preexec() { builtin print -r -- "$1" >> "$HOME/submitted"; }
             else:
                 os.write(fd, b"q")
                 read_until(lambda: raw.count(cursor) > queries)
-                expected = b"git status" if kind == "quit-then-type" else b""
-                os.write(fd, expected + position)
+                if kind == "quit-then-type":
+                    expected = b"git status --short"
+                    # A slow reply is one terminal event. Keep both neighboring words.
+                    os.write(fd, b"git status" + position[:3])
+                    time.sleep(.4)
+                    os.write(fd, position[3:] + b" --short")
+                else:
+                    expected = b""
+                    os.write(fd, position)
             read_until(lambda: raw.count(prompt) >= 2)
             assert b"Help needs no API key or internet." in raw
             os.write(fd, b"\x1d")
@@ -126,5 +138,5 @@ preexec() { builtin print -r -- "$1" >> "$HOME/submitted"; }
                 os.waitpid(pid, 0)
 
 
-for case in ("type", "paste", "first-paste", "quit", "quit-then-type"):
+for case in ("type", "paste", "first-paste", "quit", "quit-then-type", "split-admission"):
     check(case)
