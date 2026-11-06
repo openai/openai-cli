@@ -367,6 +367,14 @@ func configureHelpGroups(root *cli.Command) {
 			resource = command.Name
 		}
 		switch resource {
+		case "skills", "skills:versions":
+			if create := command.Command("create"); create != nil {
+				for _, flag := range create.Flags {
+					if files, ok := flag.(*requestflag.Flag[[]string]); ok && files.Name == "files" {
+						files.Usage = "For a ZIP upload, pass the .zip path or use - to read the ZIP from stdin."
+					}
+				}
+			}
 		case "responses", "beta:responses":
 			if create := command.Command("create"); create != nil {
 				path := strings.ReplaceAll(resource, ":", " ") + " create"
