@@ -10,9 +10,10 @@ import (
 // Built on the first miss and reused across keystrokes. Only installed routes
 // contribute terms. Shell history, option values and example operands do not.
 type helpIndex struct {
-	postings map[string][]helpHit
-	terms    []string // sorted for prefix lookup
-	scores   []helpScore
+	postings     map[string][]helpHit
+	basePostings map[string][]helpHit // Shared by the option-help tier.
+	terms        []string             // sorted for prefix lookup
+	scores       []helpScore
 }
 
 type helpHit struct {
@@ -34,7 +35,7 @@ const (
 	interfaceWord
 )
 
-func newHelpIndex(candidates []Candidate, entries []searchEntry, includeOptionHelp bool) *helpIndex {
+func newHelpIndex(candidates []Candidate, entries []searchEntry) *helpIndex {
 	h := &helpIndex{postings: make(map[string][]helpHit), scores: make([]helpScore, len(candidates))}
 	for i, candidate := range candidates {
 		cmd := candidate.definition
@@ -57,9 +58,6 @@ func newHelpIndex(candidates []Candidate, entries []searchEntry, includeOptionHe
 				for _, name := range flag.Names() {
 					h.add(strings.ToLower(name), i, optionWord)
 				}
-				if doc, ok := flag.(cli.DocGenerationFlag); includeOptionHelp && ok {
-					h.add(searchableProse(doc.GetUsage()), i, helpWord)
-				}
 			}
 		}
 		var prose strings.Builder
@@ -80,11 +78,38 @@ func newHelpIndex(candidates []Candidate, entries []searchEntry, includeOptionHe
 	return h
 }
 
+// Option descriptions add weak evidence to the existing vocabulary. Keep their
+// postings separate so subsequent primary searches still see only primary terms.
+func (h *helpIndex) withOptionHelp(candidates []Candidate) *helpIndex {
+	options := &helpIndex{
+		postings: make(map[string][]helpHit), basePostings: h.postings,
+		terms: slices.Clone(h.terms), scores: h.scores,
+	}
+	for i, candidate := range candidates {
+		if candidate.definition == nil {
+			continue
+		}
+		for _, flag := range candidate.definition.Flags {
+			doc, ok := flag.(interface {
+				cli.VisibleFlag
+				cli.DocGenerationFlag
+			})
+			if ok && doc.IsVisible() {
+				options.add(searchableProse(doc.GetUsage()), i, helpWord)
+			}
+		}
+	}
+	slices.Sort(options.terms)
+	return options
+}
+
 func (h *helpIndex) add(text string, index, cost int) {
 	for word := range strings.FieldsFuncSeq(text, func(r rune) bool { return !searchWordRune(r) }) {
 		hits := h.postings[word]
 		if len(hits) == 0 {
-			h.terms = append(h.terms, word)
+			if _, exists := h.basePostings[word]; !exists {
+				h.terms = append(h.terms, word)
+			}
 		} else if last := &hits[len(hits)-1]; last.index == index {
 			last.cost = min(last.cost, cost)
 			continue
@@ -117,7 +142,7 @@ func (index *searchIndex) matchHelp(words []string) []searchMatch {
 		}
 	}
 	if index.help == nil {
-		index.help = newHelpIndex(index.candidates, index.entries, false)
+		index.help = newHelpIndex(index.candidates, index.entries)
 	}
 	if matches := index.help.matches(words, index.entries); len(matches) > 0 {
 		return matches
@@ -130,7 +155,7 @@ func (index *searchIndex) matchHelp(words []string) []searchMatch {
 		return nil
 	}
 	if index.optionHelp == nil {
-		index.optionHelp = newHelpIndex(index.candidates, index.entries, true)
+		index.optionHelp = index.help.withOptionHelp(index.candidates)
 	}
 	return index.optionHelp.matches(words, index.entries)
 }
@@ -142,13 +167,13 @@ func (h *helpIndex) matches(words []string, entries []searchEntry) []searchMatch
 		first, found := slices.BinarySearch(h.terms, word)
 		switch {
 		case found:
-			h.scoreWord(i, h.postings[word])
+			h.scoreTerm(i, word)
 		case i == len(words)-1 && len(word) >= 3 && first < len(h.terms) && strings.HasPrefix(h.terms[first], word):
 			for _, term := range h.terms[first:] {
 				if !strings.HasPrefix(term, word) {
 					break
 				}
-				h.scoreWord(i, h.postings[term])
+				h.scoreTerm(i, term)
 			}
 		case !corrected && len(words) >= 2 && len(word) >= 5 && asciiLetters(word):
 			// Correct a single unambiguous spelling, with other query words
@@ -165,7 +190,7 @@ func (h *helpIndex) matches(words []string, entries []searchEntry) []searchMatch
 			if correction == "" {
 				return nil
 			}
-			h.scoreWord(i, h.postings[correction])
+			h.scoreTerm(i, correction)
 			corrected = true
 		default:
 			return nil
@@ -179,6 +204,13 @@ func (h *helpIndex) matches(words []string, entries []searchEntry) []searchMatch
 		}
 	}
 	return matches
+}
+
+func (h *helpIndex) scoreTerm(position int, word string) {
+	h.scoreWord(position, h.postings[word])
+	if h.basePostings != nil {
+		h.scoreWord(position, h.basePostings[word])
+	}
 }
 
 // For a prefix, count a candidate once and keep its best matching field.

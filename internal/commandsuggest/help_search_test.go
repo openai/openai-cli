@@ -100,3 +100,20 @@ func TestDiscoveryFromNewCommandDefinitions(t *testing.T) {
 		require.NotEqual(t, "openai unweave", catalog[i].Command)
 	}
 }
+
+func TestOptionSearchKeepsSharedWordsDistinct(t *testing.T) {
+	root := &cli.Command{Commands: []*cli.Command{
+		{Name: "paint", Usage: "Adjust the spectrum.", Flags: []cli.Flag{
+			&cli.StringFlag{Name: "mode", Usage: "Set the spectrum contrast."},
+		}},
+		{Name: "measure", Usage: "Inspect the spectrum."},
+	}}
+	catalog := Catalog(root, "openai", nil, (*cli.Command).VisibleCommands, func(_ *cli.Command, _ string) []Candidate { return nil })
+	search := newSearchIndex(catalog)
+	for _, query := range []string{"paint contrast", "paint spectrm contrast", "spectrum contr"} {
+		matches := search.search(query)
+		require.Len(t, matches, 1, query)
+		require.Equal(t, "openai paint", catalog[matches[0]].Command, query)
+	}
+	require.Equal(t, newSearchIndex(catalog).search("spectrum"), search.search("spectrum"))
+}

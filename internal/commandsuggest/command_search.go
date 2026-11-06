@@ -70,8 +70,10 @@ func newSearchIndex(candidates []Candidate) *searchIndex {
 				index.verbs[alias] = true
 			}
 			entry := &index.entries[i]
-			leafWords := len(strings.FieldsFunc(cmd.Name, func(r rune) bool { return !searchWordRune(r) }))
-			entry.resourceWords = len(entry.routeWords) - leafWords
+			entry.resourceWords = len(entry.routeWords)
+			for range strings.FieldsFuncSeq(cmd.Name, func(r rune) bool { return !searchWordRune(r) }) {
+				entry.resourceWords--
+			}
 			// Read only the first claim in the command's own summary.
 			summary := cmd.Usage
 			if end := strings.IndexAny(summary, ".;\n"); end >= 0 {
@@ -87,7 +89,12 @@ func newSearchIndex(candidates []Candidate) *searchIndex {
 }
 
 func searchableProse(text string) string {
-	description := strings.Fields(strings.ToLower(text))
+	// Matching reads individual words. Only links need the token-by-token cleanup.
+	text = strings.ToLower(text)
+	if !strings.Contains(text, "://") && !strings.Contains(text, "www.") && !strings.Contains(text, "](") {
+		return text
+	}
+	description := strings.Fields(text)
 	for i, word := range description {
 		if label, _, link := strings.Cut(word, "]("); link {
 			description[i] = label
@@ -453,5 +460,8 @@ func searchWord(text, word string) int {
 }
 
 func searchWordRune(r rune) bool {
+	if r < utf8.RuneSelf {
+		return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+	}
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r)
 }
