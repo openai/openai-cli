@@ -315,6 +315,28 @@ func TestOneFlagHelpSelectsTheVisibleDeclaration(t *testing.T) {
 	}
 }
 
+func TestOneFlagHelpUsesInstalledVersionAliases(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"--version", "--version print the version"},
+		{"-v", "--verbose, -v Local verbose flag."},
+	} {
+		var out bytes.Buffer
+		root := completeHelpFixture(&out)
+		root.Version = "synthetic"
+		root.Flags = append(root.Flags, &cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "Local verbose flag.", HideDefault: true})
+		args, _, err := Configure(root, []string{"openai", "-h", tc.name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Run(t.Context(), args); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(strings.Fields(out.String()), " "); got != tc.want {
+			t.Errorf("lookup for %s = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestOneFlagHelpLeavesOtherArgumentsToParser(t *testing.T) {
 	var out bytes.Buffer
 	root := completeHelpFixture(&out)

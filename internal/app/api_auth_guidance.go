@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
 	"github.com/urfave/cli/v3"
 )
@@ -67,7 +69,13 @@ func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *
 	if !custom && !customAuthorization && !admin {
 		lines = append(lines, "API keys: "+apiAuthenticationKeyURL)
 	}
-	lines = append(lines, "Key setup: "+clihelp.SuggestedCommand(root, output, clihelp.DisplayInvocation(root)+" help setup"))
+	topic := keySetupTopic(admin)
+	native, _ := clihelp.ShellInvocations(root, clihelp.DisplayInvocation(root), terminal.ParentShell(context.Background()))
+	if native == "" {
+		lines = append(lines, "For key setup, use the same executable with "+topic+".")
+	} else {
+		lines = append(lines, "Key setup: "+clihelp.SuggestedCommand(root, output, native+" "+topic))
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -143,6 +151,10 @@ func apiAuthenticationAdminCommand(root *cli.Command, failure error) bool {
 	if command == nil {
 		command, _, _ = parsedOutputCommand(root)
 	}
+	return isAdminAPICommand(command)
+}
+
+func isAdminAPICommand(command *cli.Command) bool {
 	if command == nil {
 		return false
 	}
@@ -152,12 +164,20 @@ func apiAuthenticationAdminCommand(root *cli.Command, failure error) bool {
 	if strings.HasPrefix(resource, "admin:") {
 		return true
 	}
+	root := command.Root()
 	for _, ancestor := range command.Lineage() {
 		if ancestor != root && (ancestor.Name == "admin" || strings.HasPrefix(ancestor.Name, "admin:")) {
 			return true
 		}
 	}
 	return false
+}
+
+func keySetupTopic(admin bool) string {
+	if admin {
+		return "help setup admin"
+	}
+	return "help setup"
 }
 
 func apiAuthenticationKeyPresent(root *cli.Command, flag, variable string) bool {

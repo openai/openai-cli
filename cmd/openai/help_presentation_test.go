@@ -19,6 +19,43 @@ func helpSection(text, start, end string) string {
 	return strings.TrimSpace(section)
 }
 
+func TestMainFullHelpLinksToTheRightKeySetup(t *testing.T) {
+	for _, tc := range []struct {
+		path, topic string
+	}{
+		{"admin", "help setup admin"},
+		{"admin roles update", "help setup admin"},
+		{"admin:organization:projects list", "help setup admin"},
+		{"projects list", "help setup admin"},
+		{"models retrieve", "help setup"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			argv := append([]string{"openai", "help", "--all"}, strings.Fields(tc.path)...)
+			got := runMainDispatch(t, "bash", argv...)
+			if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "Key setup: openai "+tc.topic+"\n") {
+				t.Fatalf("expected %q key setup in %s: %+v", tc.topic, tc.path, got)
+			}
+		})
+	}
+}
+
+func TestMainUploadOverviewExplainsFileRetention(t *testing.T) {
+	for _, path := range []string{"files upload", "files create", "uploads create"} {
+		t.Run(path, func(t *testing.T) {
+			argv := append([]string{"openai"}, strings.Fields(path)...)
+			got := runMainDispatch(t, "bash", append(argv, "--help")...)
+			text := strings.Join(strings.Fields(got.stdout), " ")
+			const retention = "Unless you set --expires-after, batch files expire after 30 days and other files stay until deleted."
+			if got.code != 0 || got.stderr != "" || strings.Count(text, retention) != 1 {
+				t.Fatalf("file retention missing or duplicated on %s: %+v", path, got)
+			}
+			if path == "uploads create" && !strings.Contains(text, "expires after an hour") {
+				t.Fatalf("intermediate upload lifetime missing: %s", text)
+			}
+		})
+	}
+}
+
 func TestMainSpeechHelpDistinguishesPrivateFormAndDirectRequests(t *testing.T) {
 	for _, path := range [][]string{{"audio", "speak"}, {"speak"}} {
 		got := runMainDispatch(t, "bash", append(append([]string{"openai"}, path...), "--help")...)
@@ -100,6 +137,42 @@ func TestMainHelpForOneFlag(t *testing.T) {
 	if header.code != 0 || header.stderr != "" || !strings.HasPrefix(strings.TrimSpace(header.stdout), "--header=") ||
 		!strings.Contains(header.stdout, "-H=") || strings.Contains(header.stdout, "SYNOPSIS") {
 		t.Errorf("inherited alias lookup failed: %+v", header)
+	}
+}
+
+func TestMainVersionAndCompletionFlagHelp(t *testing.T) {
+	for _, spelling := range []string{"--version", "-v"} {
+		got := runMainDispatch(t, "bash", "openai", "-h", spelling)
+		if got.code != 0 || got.stderr != "" || strings.Join(strings.Fields(got.stdout), " ") != "--version, -v print the version" {
+			t.Errorf("lookup for %s did not return its flag entry: %+v", spelling, got)
+		}
+	}
+	got := runMainDispatch(t, "bash", "openai", "--version")
+	if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, "openai version ") {
+		t.Errorf("version action changed: %+v", got)
+	}
+	profile := runMainDispatch(t, "bash", "openai", "@completion", "-h", "--profile")
+	if profile.code != 0 || profile.stderr != "" || !strings.HasPrefix(strings.TrimSpace(profile.stdout), "--profile=") ||
+		!strings.Contains(profile.stdout, "startup file") || strings.Contains(profile.stdout, "Shell completion") {
+		t.Errorf("completion profile lookup did not return its flag entry: %+v", profile)
+	}
+	unrelated := runMainDispatch(t, "bash", "openai", "@completion", "-h", "--api-key")
+	if unrelated.code != 0 || unrelated.stderr != "" || !strings.HasPrefix(unrelated.stdout, "Shell completion") {
+		t.Errorf("inherited request flag replaced the completion guide: %+v", unrelated)
+	}
+}
+
+func TestMainHelpDocumentsScriptingRestrictions(t *testing.T) {
+	for _, tc := range []struct{ args, want string }{
+		{"batches browse --help", "Requires terminal stdin, stdout, and stderr. Use batches list in scripts."},
+		{"models list --help", "Filtering and sorting do not support --format raw."},
+		{"models list -h --filter", "Cannot be used with --format raw."},
+		{"models list -h --sort-by", "Cannot be used with --format raw."},
+	} {
+		got := runMainDispatch(t, "bash", append([]string{"openai"}, strings.Fields(tc.args)...)...)
+		if got.code != 0 || got.stderr != "" || !strings.Contains(strings.Join(strings.Fields(got.stdout), " "), tc.want) {
+			t.Errorf("%s omitted its scripting restriction: %+v", tc.args, got)
+		}
 	}
 }
 

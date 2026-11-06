@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/openai/openai-cli/internal/terminal"
 )
 
 const authGuidanceDetails = `{"message":"synthetic-private-auth-detail\u001b]52;c;synthetic-private-data\u0007","type":"invalid_request_error","code":"invalid_api_key","param":null,"future_field":{"sequence":9007199254740993}}`
@@ -62,7 +64,11 @@ func TestMainAPIAuthGuidanceCredentialSources(t *testing.T) {
 			env := append([]string{"NO_COLOR=1", "FORCE_COLOR=0"}, test.env...)
 			got := runMainDispatchWithEnv(t, "bash", env, args...)
 			assertAuthGuidanceFailure(t, got)
-			for _, want := range append(test.want, "Key setup:", "custom API address") {
+			setup := "Key setup: openai help setup"
+			if test.admin {
+				setup += " admin"
+			}
+			for _, want := range append(test.want, setup+"\n", "custom API address") {
 				if !strings.Contains(got.stderr, want) {
 					t.Errorf("missing recovery action %q: %q", want, got.stderr)
 				}
@@ -182,6 +188,68 @@ func TestMainAPIAuthGuidanceWebhookDiscoveryPTY(t *testing.T) {
 	}
 	if !strings.Contains(got.stderr, "Key setup:") || strings.Contains(got.stdout+got.stderr, "Name (optional") || strings.Contains(got.stdout+got.stderr, "synthetic-private-") {
 		t.Fatalf("failed discovery opened the form or omitted safe recovery: %+v", got)
+	}
+}
+
+func TestMainAdmin401KeepsShellLauncher(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a Unix PATH decoy")
+	}
+	work, binary := buildNativeShellCLI(t) // Includes spaces and an apostrophe.
+	ordinary := filepath.Join(work, binary)
+	control := filepath.Join(work, "cli\u202epreview")
+	if err := os.Link(ordinary, control); err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "openai"), []byte("#!/bin/sh\nexit 99\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	const request = " --admin-api-key=sk-fake-auth-native admin organization projects retrieve --project-id proj_synthetic"
+	const endpoint = "/organization/projects/proj_synthetic"
+	const authorization = "Bearer sk-fake-auth-native"
+	t.Run("unknown parent", func(t *testing.T) {
+		server := authGuidanceServer(t, endpoint, authorization)
+		child := exec.CommandContext(t.Context(), control, strings.Fields(request)...)
+		child.Env = []string{"HOME=" + directory, "PATH=" + os.Getenv("PATH"), "OPENAI_BASE_URL=" + server.URL, "NO_COLOR=1"}
+		output, err := child.CombinedOutput()
+		if err == nil || !strings.Contains(string(output), "use the same executable with help setup admin.") ||
+			strings.Contains(string(output), "Key setup: ") || strings.ContainsRune(string(output), '\u202e') {
+			t.Fatalf("unsafe or missing non-runnable guidance: %q", output)
+		}
+	})
+	for _, tc := range []struct {
+		name, executable, keepParent string
+		args                         []string
+	}{
+		{"bash", control, "; exit $?", []string{"--noprofile", "--norc", "-c"}},
+		{"fish", control, "; exit $status", []string{"--no-config", "-c"}},
+		{"pwsh", ordinary, "", []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-Command"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, err := exec.LookPath(tc.name)
+			if err != nil {
+				t.Skipf("%s unavailable", tc.name)
+			}
+			shell := nativeShell{name: tc.name, executable: path, args: tc.args}
+			run := terminal.ShellQuoter(tc.name)(tc.executable)
+			if tc.name == "pwsh" {
+				run = "& " + run
+			}
+			server := authGuidanceServer(t, endpoint, authorization)
+			got := runNativeShell(t, shell, directory, directory, server.URL, run+request+tc.keepParent)
+			assertAuthGuidanceFailure(t, got)
+			_, command, found := strings.Cut(got.stderr, "Key setup: ")
+			command, _, _ = strings.Cut(command, "\n")
+			if !found || !strings.HasSuffix(strings.TrimSpace(command), " help setup admin") || strings.ContainsRune(command, '\u202e') {
+				t.Fatalf("wrong admin recovery command in %q", got.stderr)
+			}
+			copied := runNativeShell(t, shell, directory, directory, "bad://fixture", strings.TrimSpace(command)+tc.keepParent)
+			if copied.code != 0 || copied.stderr != "" || !strings.Contains(copied.stdout, "Set up an admin API key") {
+				t.Fatalf("copy failed: %+v", copied)
+			}
+		})
 	}
 }
 

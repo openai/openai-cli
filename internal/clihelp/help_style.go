@@ -3,6 +3,7 @@ package clihelp
 import (
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -42,22 +43,66 @@ type helpStyle struct {
 	value   lipgloss.Style
 }
 
+type helpBackground uint8
+
+const (
+	unknownBackground helpBackground = iota
+	darkBackground
+	lightBackground
+)
+
+// COLORFGBG describes fg;bg or fg;extra;bg. Only conventional black and
+// white slots identify a palette here. Other terminal colors can be remapped.
+func backgroundFromHint(hint string) helpBackground {
+	fields := strings.Split(hint, ";")
+	if len(fields) < 2 || len(fields) > 3 {
+		return unknownBackground
+	}
+	for _, field := range fields[:len(fields)-1] {
+		if field != "default" {
+			if _, err := strconv.ParseUint(field, 10, 8); err != nil {
+				return unknownBackground
+			}
+		}
+	}
+	switch fields[len(fields)-1] {
+	case "0", "16", "232":
+		return darkBackground
+	case "7", "15", "231", "255":
+		return lightBackground
+	default:
+		return unknownBackground
+	}
+}
+
+func (bg helpBackground) textColors() (accent, muted string) {
+	switch bg {
+	case darkBackground:
+		return "#8AA8FF", "#A4ACC2"
+	case lightBackground:
+		return "#3159BC", "#606B80"
+	default:
+		return "", ""
+	}
+}
+
 func newHelpStyle(profile colorprofile.Profile) helpStyle {
-	accent, muted := "#3159BC", "#657087"
-	if welcomeDarkBackground(os.Getenv("COLORFGBG")) {
-		accent, muted = "#8AA8FF", "#A4ACC2"
+	accent, muted := backgroundFromHint(os.Getenv("COLORFGBG")).textColors()
+	section := lipgloss.NewStyle().Bold(true)
+	if accent != "" {
+		section = lipgloss.NewStyle().Foreground(lipgloss.Color(accent))
 	}
 	// A 16-color light terminal can map both brand colors to the same blue.
 	// Its own text color keeps descriptions distinct from headings and flags.
 	secondary := lipgloss.NewStyle()
-	if profile >= colorprofile.ANSI256 {
+	if muted != "" && profile >= colorprofile.ANSI256 {
 		secondary = secondary.Foreground(lipgloss.Color(muted))
 	}
 	return helpStyle{
 		profile: profile,
 		text:    lipgloss.NewStyle(),
 		title:   lipgloss.NewStyle().Bold(true),
-		section: lipgloss.NewStyle().Foreground(lipgloss.Color(accent)),
+		section: section,
 		note:    secondary,
 		value:   secondary,
 	}

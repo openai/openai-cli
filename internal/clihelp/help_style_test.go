@@ -102,7 +102,11 @@ func TestHelpThemeSeparatesHeadingsFlagsAndDefinitions(t *testing.T) {
 		profile                         colorprofile.Profile
 	}{
 		{"dark", "15;0", "\x1b[38;2;138;168;255m", "\x1b[38;2;164;172;194m", colorprofile.TrueColor},
-		{"light", "0;15", "\x1b[38;2;49;89;188m", "\x1b[38;2;101;112;135m", colorprofile.TrueColor},
+		{"light", "0;15", "\x1b[38;2;49;89;188m", "\x1b[38;2;96;107;128m", colorprofile.TrueColor},
+		{"unknown", "", "\x1b[1m", "", colorprofile.TrueColor},
+		{"malformed", "broken;15", "\x1b[1m", "", colorprofile.TrueColor},
+		{"unknown 256-color", "", "\x1b[1m", "", colorprofile.ANSI256},
+		{"unknown 16-color", "", "\x1b[1m", "", colorprofile.ANSI},
 		{"16-color dark", "15;0", "\x1b[94m", "", colorprofile.ANSI},
 		{"16-color light", "0;15", "\x1b[34m", "", colorprofile.ANSI},
 	} {
@@ -111,13 +115,13 @@ func TestHelpThemeSeparatesHeadingsFlagsAndDefinitions(t *testing.T) {
 			style := newHelpStyle(tc.profile)
 			heading := style.render(style.section, "FLAGS")
 			if !strings.HasPrefix(heading, tc.accent+"FLAGS\x1b[") || ansi.Strip(heading) != "FLAGS" {
-				t.Errorf("section heading must use the blue accent: %q", heading)
+				t.Errorf("unexpected section style for this background: %q", heading)
 			}
 			value := style.render(style.value, "=MODEL")
 			note := style.render(style.note, "Model note.\n\n")
 			if tc.muted == "" {
 				if value != "=MODEL" || note != "Model note.\n\n" {
-					t.Errorf("16-color values and notes must keep the terminal foreground: %q, %q", value, note)
+					t.Errorf("values and notes must keep the terminal foreground: %q, %q", value, note)
 				}
 			} else if !strings.HasPrefix(value, tc.muted+"=MODEL\x1b[") ||
 				!strings.HasPrefix(note, tc.muted+"Model note.\x1b[") {
