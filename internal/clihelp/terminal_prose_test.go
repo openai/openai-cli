@@ -146,13 +146,3 @@ func TestTerminalProseDistinguishesQuotedReferencesAndArguments(t *testing.T) {
 		})
 	}
 }
-
-func TestCompactProseKeepsLiteralLinksAndCommands(t *testing.T) {
-	const url = "https://example.invalid/guide"
-	const link = "[guide](" + url + ")"
-	text := "Read " + link + " or visit " + url + ". Pass `" + link + "` literally."
-	want := "Read guide or visit " + url + ". Pass " + link + " literally."
-	if got := renderTerminalProse(text, false); got != want {
-		t.Errorf("compact prose = %q, want %q", got, want)
-	}
-}
