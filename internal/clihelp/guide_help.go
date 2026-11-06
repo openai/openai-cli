@@ -77,7 +77,10 @@ func formatGuide(command *cli.Command, text string) string {
 		spaces := len(line) - len(strings.TrimLeft(line, " "))
 		indent := strings.Repeat(" ", spaces-spaces%2)
 		plain := ansi.Strip(trimmed)
-		if spaces >= 6 || strings.HasPrefix(plain, invocation+" ") || native != "" && strings.HasPrefix(plain, native+" ") {
+		// A guide opened in cmd.exe can print a quoted PowerShell invocation.
+		// Its call operator identifies a command to keep on one line.
+		powerShellCall := strings.HasPrefix(plain, "& ")
+		if spaces >= 6 || powerShellCall || strings.HasPrefix(plain, invocation+" ") || native != "" && strings.HasPrefix(plain, native+" ") {
 			out.WriteString(indent + trimmed + "\n")
 			continue
 		}

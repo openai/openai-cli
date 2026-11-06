@@ -71,6 +71,19 @@ func TestGuideHelpWrapsProseAndPreservesShellLines(t *testing.T) {
 	}
 }
 
+func TestGuideKeepsPowerShellCommandsCopyableAfterLeavingCmd(t *testing.T) {
+	root := &cli.Command{Name: "openai", Writer: &bytes.Buffer{}}
+	path := `C:\Users\example\AppData\Local\Temp\a long directory\CLI with spaces & apostrophe's\openai.exe`
+	invocation := "& '" + strings.ReplaceAll(path, "'", "''") + "'"
+	for _, args := range []string{" models list", " help --all setup"} {
+		command := invocation + args
+		got := formatGuide(root, "Set up your API key\n\n   "+command+"\n")
+		if !strings.Contains(got, "\n  "+command+"\n") {
+			t.Errorf("expected one copyable PowerShell command, got:\n%s", got)
+		}
+	}
+}
+
 func TestGuideHelpStylesLabelsAndSeparatesTerminalPrompt(t *testing.T) {
 	const guide = "Shell setup\n\nCOMMANDS\nChoose a command:\n   openai help setup admin\n"
 	const plain = "Shell setup\n\nCOMMANDS\nChoose a command:\n  openai help setup admin\n"
