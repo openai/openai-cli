@@ -37,11 +37,11 @@ func TestMainAPIAuthGuidanceCredentialSources(t *testing.T) {
 		{"explicit key overrides environment", "Bearer sk-fake-auth-explicit", []string{"OPENAI_API_KEY=sk-fake-auth-environment"}, []string{"--api-key=sk-fake-auth-explicit"},
 			[]string{"OPENAI_API_KEY", "--api-key"}, []string{"OPENAI_ADMIN_KEY"}, false},
 		{"explicit empty project key", "", []string{"OPENAI_API_KEY=sk-fake-auth-environment"}, []string{"--api-key="},
-			[]string{"--api-key", "empty"}, []string{"OPENAI_ADMIN_KEY"}, false},
+			[]string{"--api-key", "empty"}, []string{"OPENAI_ADMIN_KEY", "Key setup:"}, false},
 		{"explicit authorization header", "Bearer sk-fake-auth-header", []string{"OPENAI_API_KEY=sk-fake-auth-environment"}, []string{"--header", "Authorization: Bearer sk-fake-auth-header"},
-			[]string{"Authorization", "--header"}, nil, false},
+			[]string{"Authorization", "--header"}, []string{"Key setup:"}, false},
 		{"environment authorization header", "Bearer sk-fake-auth-header", []string{"OPENAI_CUSTOM_HEADERS=Authorization: Bearer sk-fake-auth-header"}, nil,
-			[]string{"Authorization", "OPENAI_CUSTOM_HEADERS"}, nil, false},
+			[]string{"Authorization", "OPENAI_CUSTOM_HEADERS"}, []string{"Key setup:"}, false},
 		{"key overrides environment authorization", "Bearer sk-fake-auth-environment", []string{"OPENAI_API_KEY=sk-fake-auth-environment", "OPENAI_CUSTOM_HEADERS=Authorization: Bearer sk-fake-auth-header"}, nil,
 			[]string{"OPENAI_API_KEY", "--api-key"}, nil, false},
 		{"admin key cannot authenticate project command", "", []string{"OPENAI_ADMIN_KEY=sk-fake-auth-admin"}, nil,
@@ -51,7 +51,7 @@ func TestMainAPIAuthGuidanceCredentialSources(t *testing.T) {
 		{"environment admin key", "Bearer sk-fake-auth-admin", []string{"OPENAI_API_KEY=sk-fake-auth-environment", "OPENAI_ADMIN_KEY=sk-fake-auth-admin"}, nil,
 			[]string{"OPENAI_ADMIN_KEY", "--admin-api-key"}, nil, true},
 		{"explicit empty admin key", "", []string{"OPENAI_ADMIN_KEY=sk-fake-auth-admin"}, []string{"--admin-api-key="},
-			[]string{"--admin-api-key", "empty"}, nil, true},
+			[]string{"--admin-api-key", "empty"}, []string{"Key setup:"}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			command, path := projectCommand, "/models/synthetic-model"
@@ -64,11 +64,14 @@ func TestMainAPIAuthGuidanceCredentialSources(t *testing.T) {
 			env := append([]string{"NO_COLOR=1", "FORCE_COLOR=0"}, test.env...)
 			got := runMainDispatchWithEnv(t, "bash", env, args...)
 			assertAuthGuidanceFailure(t, got)
-			setup := "Key setup: openai help setup"
-			if test.admin {
-				setup += " admin"
+			if !slices.Contains(test.absent, "Key setup:") {
+				setup := "Key setup: openai help setup"
+				if test.admin {
+					setup += " admin"
+				}
+				test.want = append(test.want, setup+"\n")
 			}
-			for _, want := range append(test.want, setup+"\n", "custom API address") {
+			for _, want := range append(test.want, "custom API address") {
 				if !strings.Contains(got.stderr, want) {
 					t.Errorf("missing recovery action %q: %q", want, got.stderr)
 				}

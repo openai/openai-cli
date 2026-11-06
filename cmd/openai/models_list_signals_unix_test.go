@@ -142,7 +142,16 @@ func TestMainModelsListSignals(t *testing.T) {
 			output, err := child.CombinedOutput()
 			require.NoError(t, ctx.Err(), "PTY observer timed out: %s", output)
 			require.NoError(t, err, "PTY observer failed: %s", output)
-			require.EqualValues(t, 1, requests.Load(), "navigation must use the loaded response")
+			var observed struct {
+				Loaded bool `json:"loaded_at_signal"`
+			}
+			require.NoError(t, json.Unmarshal(output, &observed))
+			if tc.stage == "loaded" || observed.Loaded {
+				require.EqualValues(t, 1, requests.Load(), "navigation must use the loaded response")
+			} else {
+				// Loading controls are visible before the request reaches the server.
+				require.LessOrEqual(t, requests.Load(), int32(1), "startup cancellation must not fetch another page")
+			}
 			t.Logf("%s", bytes.TrimSpace(output))
 		})
 	}

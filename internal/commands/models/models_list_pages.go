@@ -94,12 +94,18 @@ func (p *modelRequestPages) next() (listview.Page, error) {
 		return p.local.next()
 	}
 
-	page := listview.Page{Items: items}
+	sorted, supported, err := sortModelRecords(p.ctx, items)
+	if err != nil {
+		return listview.Page{}, err
+	}
+	p.total += len(items)
+	page := listview.Page{Items: sorted, FullLabels: !supported}
 	if hasMore.Type != gjson.True && hasMore.Type != gjson.False {
 		return page, &ListError{"Models returned invalid pagination metadata. Output may be incomplete."}
 	}
 	if hasMore.Type == gjson.False {
 		p.done = true
+		page.Total = p.total
 		if !next.Exists() || next.Type != gjson.Null {
 			return page, &ListError{"Models returned an unexpected continuation cursor. Output may be incomplete."}
 		}

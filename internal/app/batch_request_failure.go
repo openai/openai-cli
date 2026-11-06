@@ -97,13 +97,8 @@ func batchRequestRecovery(code, kind string, status int) string {
 			return "Retry only this request in a new batch."
 		}
 	}
-	if status == 429 || status == 0 {
-		for _, category := range []string{code, kind} {
-			switch category {
-			case "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded":
-				return "Check the project's billing and usage limits before retrying."
-			}
-		}
+	if (status == 429 || status == 0) && quotaLimitError(code, kind) {
+		return "Check the project's billing and usage limits before retrying."
 	}
 	if (status == 400 || status == 404 || status == 422 || status == 0) && code == "model_not_found" {
 		return "Check the model ID in this request and the project's access to it."

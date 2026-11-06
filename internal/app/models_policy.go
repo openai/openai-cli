@@ -39,6 +39,11 @@ func configureModelsList(root *cli.Command) {
 			return stop
 		},
 	})
+	if resource := root.Command("models"); resource != nil {
+		if command := resource.Command("list"); command != nil {
+			configureModelsBrowsing(command)
+		}
+	}
 }
 
 // Explicit formats and bounded selection retain their existing single-response ordering.
@@ -61,7 +66,7 @@ func showInteractiveModelsList(ctx context.Context, cmd *cli.Command) (bool, err
 	}
 	client := openai.NewClient(GetDefaultRequestOptions(cmd)...)
 	opts.setDefaults()
-	return true, runInteractiveList(opts, func(opts ShowJSONOpts) error {
+	return true, runTerminalList(opts, func(opts ShowJSONOpts) error {
 		return models.ShowPages(listViewerOptions(opts), client, options, outputDiagnosticsAllowed(opts.Context))
 	})
 }

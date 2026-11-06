@@ -79,21 +79,29 @@ def main():
                     navigation.drain(terminal, 0.05)
                     return navigation.screen_text(terminal)
 
-                def wait_view(marker=None, previous=None):
+                def wait_view(marker=None, previous=None, allow_completion=False):
                     deadline = time.monotonic() + 10
                     while True:
+                        returned = terminal.child.poll() is not None
                         frame = visible()
-                        compact = ''.join(frame.splitlines())
-                        if "q: quit" in frame and (marker is None or marker in compact) and frame != previous:
+                        compact = ''.join(frame.split())
+                        footer = frame.rstrip().split('\n')[-1]
+                        ready = (allow_completion and returned) or footer.endswith(("q: quit", " q"))
+                        if ready and (marker is None or ''.join(marker.split()) in compact) and frame != previous:
                             views.append(frame)
                             return frame
-                        assert terminal.child.poll() is None, terminal.text()[-1500:]
+                        assert not returned, terminal.text()[-1500:]
                         assert time.monotonic() < deadline, ("pager frame missing", marker, frame)
                         terminal.read()
 
                 try:
                     if mode != "error":
-                        frame = wait_view(expected_ids[0] if expected_ids else "No results.")
+                        frame = wait_view(expected_ids[0] if expected_ids else "No results.",
+                                          allow_completion=mode == "complete")
+                        returned = terminal.child.poll() is not None
+                        assert b"\x1b[?1049h" not in terminal.raw, "preview replaced the shell screen"
+                        if scenario == "empty":
+                            assert returned and "q: quit" not in frame, frame
                         assert len(requests.read_text().splitlines()) - start == 1, "idle pager fetched another page"
                         if mode == "quit":
                             terminal.resize(20, height)
@@ -109,9 +117,9 @@ def main():
                                 wait_view(expected_ids[0])
                                 send_key(terminal, " ", keys)
                                 wait_view(expected_ids[-1])
-                        elif mode == "chunks":
+                        elif mode in {"chunks", "complete"} and not returned:
                             for _ in range(100):
-                                if "Space: more" not in frame:
+                                if " End " in frame.rstrip().split("\n")[-1]:
                                     break
                                 previous = frame
                                 send_key(terminal, " ", keys)
@@ -119,23 +127,25 @@ def main():
                                 assert len(requests.read_text().splitlines()) - start == 1, "loaded chunks fetched another page"
                             else:
                                 raise AssertionError("loaded chunks exceeded fixture bound")
-                            assert keys, "small terminal did not exercise loaded chunks"
-                        if mode != "error-next":
+                            if mode == "chunks":
+                                assert keys, "small terminal did not exercise loaded chunks"
+                        if mode != "error-next" and not returned:
                             assert terminal.child.poll() is None, "final page did not remain open"
                             send_key(terminal, "q", keys)
                     navigation.finish(terminal, expected_status)
                     final = navigation.screen_text(terminal)
+                    final_records = ''.join(final.split())
                     text = '\n'.join(views)
-                    compact = ''.join(text.splitlines())
+                    compact = ''.join(text.split())
                     for identifier in expected_ids:
                         assert identifier in compact, ("full ID missing from pager", identifier, text)
-                        if expected_status == 0:
-                            assert identifier not in final, ("quit dumped records", final)
+                        if expected_status == 0 and not returned:
+                            assert identifier not in final_records, ("quit dumped records", final)
                         else:
-                            assert final.count(identifier) == 1, ("partial results changed", final)
+                            assert final_records.count(identifier) == 1, ("retained results changed", final)
                     printed = bytes(terminal.raw)
                     if scenario == "empty":
-                        assert "No results." in text, text
+                        assert final.count("No results.") == 1, final
                     if scenario == "controls":
                         assert b"demo-\x1b[31mred" not in printed, "API text injected terminal controls"
                         assert "\u202e".encode() not in printed, "API text retained a bidi control"
@@ -144,7 +154,7 @@ def main():
                         assert "detail-002" in text, "unfamiliar data disappeared"
                     if scenario in {"error", "partial"}:
                         assert b"HTTP 400: Bad Request." in printed, "API status disappeared"
-                        assert b"API error details: --format-error json." in printed, "API error guidance disappeared"
+                        assert b"The API rejected the request." in printed, "API failure explanation disappeared"
                     (destination / f"{name}.raw").write_bytes(printed)
                     (destination / f"{name}.views.txt").write_text(text)
                     (destination / f"{name}.final.txt").write_text(final)

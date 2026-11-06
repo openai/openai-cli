@@ -50,7 +50,7 @@ func TestListStyleUsesHelpPalette(t *testing.T) {
 
 func TestListStylePreservesNavigationAndNarrowHints(t *testing.T) {
 	for _, width := range []int{1, 5, 20, 40, 80} {
-		model := New(Options{}, nil, func() {}, width, 24)
+		model := New(testOptions(t.Context()), nil, func() {}, width, 24)
 		model.more = true
 		plain := model.View().Content
 		model.opts.Style = NewStyle(colorprofile.TrueColor, true)

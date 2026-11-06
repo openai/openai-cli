@@ -18,6 +18,9 @@ def identifier(page, row=1, length=0, prefix='file-demo-'):
 
 
 def file_identifier(server, page, row=1):
+    if server.resource in ('webhooks', 'skills'):
+        prefix = 'whe' if server.resource == 'webhooks' else 'skill'
+        return f'{prefix}_demo_{(page - 1) * server.rows + row:03d}'
     if server.numbered_files and server.resource == 'files':
         return f'file-demo-{(page - 1) * server.rows + row:03d}'
     return identifier(page, row, server.id_length)
@@ -42,7 +45,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             server.inflight += 1
             server.maximum_inflight = max(server.maximum_inflight, server.inflight)
         try:
-            route = 'organization/projects' if server.resource == 'projects' else server.resource
+            route = {'projects': 'organization/projects', 'webhooks': 'webhook_endpoints'}.get(
+                server.resource, server.resource)
             if parsed.path != '/v1/' + route or not 1 <= page <= server.pages:
                 status, value = 400, {'error': {'message': 'Synthetic invalid cursor or route.', 'type': 'invalid_request_error'}}
             else:
@@ -62,7 +66,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                               'purpose': 'batch',
                               'bytes': row * 18432, 'status': 'processed', 'created_at': 1704067200}
                              for row in range(1, server.rows + 1)]
-                    if server.resource == 'models':
+                    if server.resource == 'webhooks':
+                        names = ('Batch alerts', 'Response events', 'Job monitor', 'Delivery tests')
+                        events = ('batch.failed', 'response.completed', 'batch.completed', 'response.failed')
+                        items = [{'id': file_identifier(server, page, row), 'object': 'webhook_endpoint',
+                                  'name': names[(row - 1) % 4], 'event_types': [events[(row - 1) % 4]],
+                                  'url': f'https://example.test/hooks/{row}'}
+                                 for row in range(1, server.rows + 1)]
+                    elif server.resource == 'skills':
+                        names = ('Ticket triage', 'Meeting notes', 'Data cleanup', 'Release checks')
+                        items = [{'id': file_identifier(server, page, row), 'object': 'skill',
+                                  'name': names[(row - 1) % 4], 'default_version': '1',
+                                  'latest_version': str(1 + row % 4)}
+                                 for row in range(1, server.rows + 1)]
+                    elif server.resource == 'models':
                         items = [{'id': identifier(1, row, prefix='model-demo-'), 'object': 'model',
                                   'owned_by': 'openai', 'created': 1704067200}
                                  for row in range(1, server.rows + 1)]

@@ -161,6 +161,11 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 		return "Could not connect to the API. Check your connection, proxy, and --base-url setting."
 	}
 	// The usage buffer is deliberately not a fallback: it repeats raw values.
+	if len(output) != 0 {
+		return parserErrorGuidance(command, "The CLI could not identify why this command failed.", output...) +
+			"\nIf the problem continues, report the command name and CLI version at https://github.com/openai/openai-cli/issues."
+	}
+	// Structured output keeps its existing fallback payload.
 	return "The command could not be completed. Check your arguments with --help."
 }
 

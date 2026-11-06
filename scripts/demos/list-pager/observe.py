@@ -131,7 +131,7 @@ class Session:
         for value in identifiers:
             assert logical.count(value) == 1, ('permanent ID missing or duplicated', value, visible)
         assert all(value not in visible for value in ('Space: more', 'b: back', 'q: quit', 'i: inline')), ('final controls remain', visible)
-        if self.expect_viewer and expected in (0, 130, 143):
+        if self.expect_viewer and not identifiers and expected in (0, 130, 143):
             assert 'file-demo-' not in visible and 'model-demo-' not in visible, ('pager dumped records into history', visible)
         alternate, entered = False, False
         for control in re.finditer(rb'\x1b\[\?(?:47|1047|1049)([hl])|\x1b\[([23])J', self.terminal.raw):
@@ -141,7 +141,8 @@ class Session:
                 entered = entered or alternate
             else:
                 assert erase == b'2' and alternate, 'original screen or history cleared'
-        assert entered == self.expect_viewer and not alternate, 'alternate screen policy or restoration failed'
+        expanded = self.expect_viewer and ' ' in self.keys
+        assert entered == expanded and not alternate, 'alternate screen policy or restoration failed'
         for mode in (b'25', b'2004'):
             on = self.terminal.raw.rfind(b'\x1b[?' + mode + b'h')
             off = self.terminal.raw.rfind(b'\x1b[?' + mode + b'l')
@@ -180,10 +181,26 @@ def run_case(name, binary, output, action, *, args=(), fixture_options=None, **s
             session.close()
 
 
+def list_screen(frame):
+    # The first inline screen includes the invoking shell's history.
+    return frame.replace(ORIGINAL + '\n', '').strip('\n')
+
+
+def same_rows(left, right):
+    # asciinema joins padded, soft-wrapped preview lines. The expanded browser
+    # draws hard line breaks and changes the Space hint when returning with b.
+    def normalize(frame):
+        return ' '.join(list_screen(frame).replace('Space: browse', 'Space: next screen').split())
+    return normalize(left) == normalize(right)
+
+
 def ready(s, page=1):
     prefix = 'model-demo-' if s.server.resource == 'models' else 'file-demo-'
     s.wait_visible(fixture.identifier(page, prefix=prefix))
-    return s.wait_visible('q: quit')
+    frame = s.wait_visible('q: quit')
+    if ' ' not in s.keys:
+        assert ORIGINAL in frame and b'\x1b[?1049h' not in s.terminal.raw, frame
+    return list_screen(frame)
 
 
 def lazy_back(s, server):
@@ -192,44 +209,37 @@ def lazy_back(s, server):
     s.count(1)
     s.send('i')
     s.count(1)
-    assert s.visible() == first, 'i changed the pager'
+    assert ready(s) == first, 'i changed the pager'
     s.send(' ')
-    ready(s, 2)
-    s.count(2)
+    last = ready(s, 3)
+    assert fixture.identifier(2) in last and fixture.identifier(1) not in last, last
+    s.count(3)
     s.send('b')
-    ready(s, 1)
-    s.count(2)
+    assert same_rows(ready(s, 1), first)
+    s.count(3)
     s.send(' ')
-    ready(s, 2)
-    s.count(2)
-    s.send(' ')
-    ready(s, 3)
+    assert ready(s, 3) == last
     s.count(3)
     s.send(' ')
     ready(s, 3)
     s.count(3)
     assert s.terminal.child.poll() is None, 'final page exited automatically'
     s.send('b')
-    ready(s, 2)
+    assert same_rows(ready(s, 1), first)
     s.count(3)
     s.send('q')
     s.finish(0)
 
 
 def short_page(s, server):
-    ready(s)
+    prefix = 'model-demo-' if server.resource == 'models' else 'file-demo-'
+    s.finish(0, [fixture.identifier(1, prefix=prefix)])
     s.count(1)
-    assert s.terminal.child.poll() is None, 'short page exited automatically'
-    s.send('q')
-    s.finish(0)
 
 
 def empty_page(s, server):
-    s.wait_visible('No results.')
-    s.wait_visible('q: quit')
+    s.finish(0, ['No results.'])
     s.count(1)
-    s.send('q')
-    s.finish(0)
 
 
 def loaded_chunks(s, server):
@@ -334,7 +344,7 @@ def pipe_checks(binary, baseline, output):
                 (output / (flag[2:] + '.stderr')).write_bytes(result.stderr)
                 checks.append({'name': 'removed-' + flag[2:], 'result': 'PASS', 'status': result.returncode})
         for command in (['files', 'list'], ['batches', 'list'], ['admin', 'organization', 'projects', 'list'], ['models', 'list']):
-            result = subprocess.run([str(binary), *command, '--help'], env=env, stdin=subprocess.DEVNULL,
+            result = subprocess.run([str(binary), 'help', '--all', *command], env=env, stdin=subprocess.DEVNULL,
                                     capture_output=True, timeout=10)
             assert result.returncode == 0 and b'--pager' not in result.stdout and b'--no-pager' not in result.stdout, (command, result)
             assert b'Space' in result.stdout and b'back' in result.stdout, (command, result.stdout)
@@ -382,8 +392,8 @@ def main():
         ('dumb-terminal', noninteractive, {'extra_env': {'TERM': 'dumb'}}),
         ('files-sigint', lambda s, server: external_signal(s, server, 'SIGINT', 130), {'pid_handshake': True}),
         ('files-sigterm', lambda s, server: external_signal(s, server, 'SIGTERM', 143), {'pid_handshake': True}),
-        ('models-sigint', lambda s, server: external_signal(s, server, 'SIGINT', 130), {'pid_handshake': True, 'fixture_options': {'resource': 'models', 'pages': 1}}),
-        ('models-sigterm', lambda s, server: external_signal(s, server, 'SIGTERM', 143), {'pid_handshake': True, 'fixture_options': {'resource': 'models', 'pages': 1}}),
+        ('models-sigint', lambda s, server: external_signal(s, server, 'SIGINT', 130), {'pid_handshake': True, 'fixture_options': {'resource': 'models', 'pages': 1, 'rows': 8}}),
+        ('models-sigterm', lambda s, server: external_signal(s, server, 'SIGTERM', 143), {'pid_handshake': True, 'fixture_options': {'resource': 'models', 'pages': 1, 'rows': 8}}),
     ]
     available = {name for name, _, _ in cases} | {'pipe-policy'}
     assert set(args.case) <= available, ('unknown cases', set(args.case) - available)

@@ -28,11 +28,68 @@ func renderTable(ctx context.Context, items []gjson.Result, width int, diagnosti
 	if len(models) == 0 {
 		return "No results.\n", true, nil
 	}
+	layout, _, err := modelLayout(ctx, models, width, style)
+	if err != nil {
+		return "", true, err
+	}
+	var content strings.Builder
+	content.WriteString(layout)
+	if total < 0 {
+		noun := "models"
+		if len(models) == 1 {
+			noun = "model"
+		}
+		content.WriteString(style.Note(fmt.Sprintf("\nShowing %d %s on this page.\n", len(models), noun)))
+	} else if len(models) < total {
+		content.WriteString(style.Note(fmt.Sprintf("\nShowing %d of %d models.\n", len(models), total)))
+	} else {
+		noun := "models"
+		if len(models) == 1 {
+			noun = "model"
+		}
+		content.WriteString(style.Note(fmt.Sprintf("\nListed %d %s.\n", len(models), noun)))
+	}
+	if diagnostics {
+		content.WriteString(style.Note(ansi.Wrap("Details: --format json", max(1, width), "")))
+		content.WriteByte('\n')
+	}
+	return content.String(), true, ctx.Err()
+}
+
+// ConfigureRecordView keeps complete model IDs and owners on narrow screens.
+// The fetcher establishes display order before navigation slices the records.
+func ConfigureRecordView(opts *listview.Options) {
+	ctx, style := opts.Context, opts.Style
+	fallback := opts.RenderRecordLabels
+	opts.RenderTable = func(items []gjson.Result, width int) (string, bool, error) {
+		rows, supported, err := transformers.ModelRowsInOrder(ctx, items)
+		if err != nil || !supported {
+			return "", false, err
+		}
+		return modelLayout(ctx, rows, width, style)
+	}
+	opts.RenderRecordLabels = func(item gjson.Result, full bool) (string, error) {
+		if !full {
+			rows, supported, err := transformers.ModelRowsInOrder(ctx, []gjson.Result{item})
+			if err != nil {
+				return "", err
+			}
+			if supported {
+				text, _, err := modelLayout(ctx, rows, 0, style)
+				return text, err
+			}
+		}
+		return fallback(item, true)
+	}
+}
+
+// modelLayout separates a pinned table from its complete two-field labeled fallback.
+func modelLayout(ctx context.Context, models []transformers.ModelListRow, width int, style listview.Style) (string, bool, error) {
 	rows := make([][]string, 0, len(models))
 	idWidth, ownerWidth := len("ID"), len("OWNER")
 	for _, model := range models {
 		if err := ctx.Err(); err != nil {
-			return "", true, err
+			return "", false, err
 		}
 		owner := "(unknown)"
 		if model.Owner != nil {
@@ -57,7 +114,7 @@ func renderTable(ctx context.Context, items []gjson.Result, width int, diagnosti
 	} else {
 		for index, row := range rows {
 			if err := ctx.Err(); err != nil {
-				return "", true, err
+				return "", false, err
 			}
 			if index != 0 {
 				content.WriteByte('\n')
@@ -67,26 +124,7 @@ func renderTable(ctx context.Context, items []gjson.Result, width int, diagnosti
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return "", true, err
+		return "", false, err
 	}
-	if total < 0 {
-		noun := "models"
-		if len(models) == 1 {
-			noun = "model"
-		}
-		content.WriteString(style.Note(fmt.Sprintf("\nShowing %d %s on this page.\n", len(models), noun)))
-	} else if len(models) < total {
-		content.WriteString(style.Note(fmt.Sprintf("\nShowing %d of %d models.\n", len(models), total)))
-	} else {
-		noun := "models"
-		if len(models) == 1 {
-			noun = "model"
-		}
-		content.WriteString(style.Note(fmt.Sprintf("\nListed %d %s.\n", len(models), noun)))
-	}
-	if diagnostics {
-		content.WriteString(style.Note(ansi.Wrap("Details: --format json", max(1, width), "")))
-		content.WriteByte('\n')
-	}
-	return content.String(), true, ctx.Err()
+	return content.String(), fits, nil
 }
