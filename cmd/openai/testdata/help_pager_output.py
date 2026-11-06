@@ -1,4 +1,5 @@
 """A stopped terminal must release native modes without draining its output."""
+from contextlib import ExitStack
 import fcntl
 import os
 import pty
@@ -24,27 +25,33 @@ def saturate(slave, fill):
 
 
 def check(binary, action, expected):
-    with tempfile.TemporaryDirectory() as home:
+    with tempfile.TemporaryDirectory() as home, ExitStack() as descriptors:
         master, slave = pty.openpty()
+        descriptors.callback(os.close, master)
+        descriptors.callback(os.close, slave)
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
         before = termios.tcgetattr(slave)
         mask = os.O_NONBLOCK | os.O_APPEND | os.O_ASYNC
         flags = fcntl.fcntl(slave, fcntl.F_GETFL) & mask
         fill = os.open(os.ttyname(slave), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
+        descriptors.callback(os.close, fill)
         env = dict(HOME=home, PATH="/usr/bin:/bin", TERM="xterm-256color", NO_COLOR="1",
                    OPENAI_CLI_BARE_INPUT="1", OPENAI_CLI_MAIN_DISPATCH_PROCESS="1",
                    OPENAI_CLI_NO_UPDATE_CHECK="1", OPENAI_CLI_NO_AUTO_UPDATE="1",
                    OPENAI_BASE_URL="http://127.0.0.1:1")
         control = os.pipe() if action == "context" else ()
+        for fd in control:
+            descriptors.callback(os.close, fd)
         entrypoint = "TestMainDispatchProcess"
         if control:
             env["OPENAI_CLI_HELP_PAGER_CONTEXT_FD"] = str(control[0])
             entrypoint = "TestMainHelpPagerContextProcess"
-        if action == "startup":
-            saturate(slave, fill)
-        proc = subprocess.Popen([binary, f"-test.run=^{entrypoint}$", "--", "openai"], cwd=home,
-                                env=env, stdin=slave, stdout=slave, stderr=slave, pass_fds=control[:1])
+        proc = None
         try:
+            if action == "startup":
+                saturate(slave, fill)
+            proc = subprocess.Popen([binary, f"-test.run=^{entrypoint}$", "--", "openai"], cwd=home,
+                                    env=env, stdin=slave, stdout=slave, stderr=slave, pass_fds=control[:1])
             deadline = time.monotonic() + 5
             if action == "startup":
                 # Cancellation can precede the first frame. Raw mode proves ownership.
@@ -74,12 +81,12 @@ def check(binary, action, expected):
             assert fcntl.fcntl(slave, fcntl.F_GETFL) & mask == flags, (action, "descriptor flags changed")
             print(f"PASS {action}")
         finally:
-            termios.tcflow(slave, termios.TCOON)
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
-            for fd in (*control, fill, slave, master):
-                os.close(fd)
+            try:
+                termios.tcflow(slave, termios.TCOON)
+            finally:
+                if proc is not None and proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
 
 
 for action, code in ((signal.SIGTERM, 143), (signal.SIGINT, 130), ("key", 130), ("context", 1), ("startup", 143)):
