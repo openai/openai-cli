@@ -409,7 +409,8 @@ func TestMainVectorStoreSearchPreservesRequestConfiguration(t *testing.T) {
 		flags             []string
 	}{
 		{"string", "", `{"query":"synthetic query"}`, []string{"--query", "synthetic query"}},
-		{"array", "", `{"query":["first query","second query"]}`, []string{"--query", `["first query","second query"]`}},
+		{"array", "", `{"query":["first query","second query"]}`, []string{"--query-structured", `["first query","second query"]`}},
+		{"array-looking text", "", `{"query":"[\"first query\",\"second query\"]"}`, []string{"--query", `["first query","second query"]`}},
 		{"JSON body", `{"query":["body query"],"filters":{"type":"eq","key":"category","value":"guides"},"future_input":null}`, `{"query":["body query"],"filters":{"type":"eq","key":"category","value":"guides"},"future_input":null}`, nil},
 		{"YAML body", "query: body query\nrewrite_query: false\n", `{"query":"body query","rewrite_query":false}`, nil},
 		{"file query", "", `{"query":"file query\n"}`, []string{"--query", "@" + queryFile}},
