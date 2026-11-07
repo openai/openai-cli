@@ -134,6 +134,8 @@ func TestMainExploreRanksCommandsForCommonTasks(t *testing.T) {
 		{"show service accounts in a project", "projects service-accounts list"},
 		{"start a new conversation", "conversations create"},
 		{"file expiration policy", "files upload"},
+		{"images models quota", "images models"},
+		{"files upload until deleted", "files upload"},
 		{"speech composer", "speak"},
 		{"turn text into speech", "speak"},
 		{"convert speech into text", "transcribe"},

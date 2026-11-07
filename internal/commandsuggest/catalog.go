@@ -19,6 +19,7 @@ type Candidate struct {
 	// Only installed command routes have a path. Examples and shell history carry display text alone.
 	path        string
 	taskPhrases []TaskPhrase
+	help        *CatalogHelp
 	definition  *cli.Command // Only installed routes contribute help and public option names.
 	// Catalog entries keep the command body separate from shell-specific executable quoting.
 	commandText string
@@ -37,9 +38,15 @@ type TaskPhrase struct {
 	AnyWordOrder bool
 }
 
+// CatalogHelp resolves display-only text on demand, after simpler searches miss.
+type CatalogHelp struct {
+	Command func(*cli.Command, string) (summary, detail string)
+	Flag    func(*cli.Command, cli.Flag) string
+}
+
 // Catalog derives discovery from the current command tree on every invocation.
 // The callbacks reuse help's ordering and authored examples without rendering help.
-func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]TaskPhrase, children func(*cli.Command) []*cli.Command, examples func(*cli.Command, string) []Candidate) []Candidate {
+func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]TaskPhrase, help CatalogHelp, children func(*cli.Command) []*cli.Command, examples func(*cli.Command, string) []Candidate) []Candidate {
 	var result []Candidate
 	seen := map[string]int{}
 	add := func(candidate Candidate, owner string) {
@@ -66,6 +73,7 @@ func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]Task
 				result[index].browseKey = candidate.browseKey
 				result[index].path = candidate.path
 				result[index].definition = candidate.definition
+				result[index].help = candidate.help
 				result[index].taskPhrases = candidate.taskPhrases
 			}
 			return
@@ -91,7 +99,7 @@ func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]Task
 			// Retired endpoints remain in help, but discovery should offer their
 			// authored replacement examples instead of unavailable operations.
 			if child.Metadata["help-command-section"] != "Retired commands" {
-				add(Candidate{Command: target, Description: child.Usage, definition: child, path: childPath, taskPhrases: taskPhrases[childPath]}, childPath)
+				add(Candidate{Command: target, Description: child.Usage, definition: child, help: &help, path: childPath, taskPhrases: taskPhrases[childPath]}, childPath)
 			}
 			walk(child, childPath)
 		}

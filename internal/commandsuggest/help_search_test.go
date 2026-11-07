@@ -21,7 +21,7 @@ func TestExploreSearchesPublicHelpAndOptions(t *testing.T) {
 		{Name: "hiddenroute", Hidden: true, Description: "Open the terminal form.", Usage: "Generate narration."},
 	}}
 	const invocation = "'/a b/openai'"
-	catalog := Catalog(root, invocation, nil, (*cli.Command).VisibleCommands, func(_ *cli.Command, path string) []Candidate {
+	catalog := Catalog(root, invocation, nil, fixtureHelp, (*cli.Command).VisibleCommands, func(_ *cli.Command, path string) []Candidate {
 		if path == "" {
 			// An example can register the displayed command before its installed route.
 			return []Candidate{Example(invocation, "narrate", "Read aloud")}
@@ -55,7 +55,7 @@ func TestHelpSearchKeepsAmbiguousSpellingsAndLiteralRoutesDistinct(t *testing.T)
 		{Name: "paint", Usage: "Adjust colors.", Description: "Open the terminal form to choose a shade or shape."},
 		{Name: "speak"},
 	}}
-	catalog := Catalog(root, "openai", nil, (*cli.Command).VisibleCommands, func(_ *cli.Command, _ string) []Candidate { return nil })
+	catalog := Catalog(root, "openai", nil, fixtureHelp, (*cli.Command).VisibleCommands, func(_ *cli.Command, _ string) []Candidate { return nil })
 	index := newSearchIndex(catalog)
 	require.Empty(t, index.search("paint share")) // Both "shade" and "shape" are one edit away.
 	require.Empty(t, index.search("paint banana"))
@@ -78,7 +78,7 @@ func TestDiscoveryFromNewCommandDefinitions(t *testing.T) {
 		{Name: "facets", Commands: []*cli.Command{leaf("delete", "Remove a prism facet."), leaf("list", "Browse facets.")}},
 	}}
 	root := &cli.Command{Commands: []*cli.Command{prisms, leaf("weave", "Convert strands into ribbons."), leaf("unweave", "Produce strands from ribbons.")}}
-	catalog := Catalog(root, "openai", nil, (*cli.Command).VisibleCommands, func(_ *cli.Command, _ string) []Candidate { return nil })
+	catalog := Catalog(root, "openai", nil, fixtureHelp, (*cli.Command).VisibleCommands, func(_ *cli.Command, _ string) []Candidate { return nil })
 	index := newSearchIndex(catalog)
 	for query, want := range map[string]string{
 		"polish a prism": "prisms polish", "buff a prism": "prisms polish",
@@ -108,7 +108,7 @@ func TestOptionSearchKeepsSharedWordsDistinct(t *testing.T) {
 		}},
 		{Name: "measure", Usage: "Inspect the spectrum."},
 	}}
-	catalog := Catalog(root, "openai", nil, (*cli.Command).VisibleCommands, func(_ *cli.Command, _ string) []Candidate { return nil })
+	catalog := Catalog(root, "openai", nil, fixtureHelp, (*cli.Command).VisibleCommands, func(_ *cli.Command, _ string) []Candidate { return nil })
 	search := newSearchIndex(catalog)
 	for _, query := range []string{"paint contrast", "paint spectrm contrast", "spectrum contr"} {
 		matches := search.search(query)
@@ -116,4 +116,38 @@ func TestOptionSearchKeepsSharedWordsDistinct(t *testing.T) {
 		require.Equal(t, "openai paint", catalog[matches[0]].Command, query)
 	}
 	require.Equal(t, newSearchIndex(catalog).search("spectrum"), search.search("spectrum"))
+}
+
+func TestFinalPrefixSurvivesUnrelatedExactWord(t *testing.T) {
+	narrate := &cli.Command{Name: "narrate", Usage: "Generate narration.", Description: "Open the terminal form.",
+		Flags: []cli.Flag{&cli.StringFlag{Name: "voice", Usage: "Controls orchestration and orchestrated recordings."}}}
+	compose := &cli.Command{Name: "compose", Usage: "Arrange stories."}
+	root := &cli.Command{Commands: []*cli.Command{narrate, compose}}
+	catalog := Catalog(root, "openai", nil, fixtureHelp, (*cli.Command).VisibleCommands, func(_ *cli.Command, _ string) []Candidate { return nil })
+	index := newSearchIndex(catalog)
+	for _, q := range []string{"voice compos", "voice compose", "voice composer"} {
+		t.Run(q, func(t *testing.T) {
+			hits := index.search(q)
+			require.Len(t, hits, 1)
+			require.Equal(t, "openai narrate", catalog[hits[0]].Command)
+		})
+	}
+	// An exact hit in the option tier still beats a partial hit in primary help.
+	tune := &cli.Command{Name: "tune", Flags: []cli.Flag{
+		&cli.StringFlag{Name: "voice", Usage: "Choose compose or mix."},
+	}}
+	root.Commands = append(root.Commands, tune, &cli.Command{Name: "orchestrate"})
+	catalog = Catalog(root, "openai", nil, fixtureHelp, (*cli.Command).VisibleCommands, func(_ *cli.Command, _ string) []Candidate { return nil })
+	index = newSearchIndex(catalog)
+	for _, tc := range []struct{ query, want string }{
+		{"voice compose", "openai tune"},
+		{"voice orchestrate", "openai narrate"}, // Prefix exists only in option help.
+	} {
+		hits := index.search(tc.query)
+		require.Len(t, hits, 1, tc.query)
+		require.Equal(t, tc.want, catalog[hits[0]].Command, tc.query)
+	}
+	require.Empty(t, index.search("voice co"))
+	require.Empty(t, index.search("voice orchestration nonexistent"))
+
 }

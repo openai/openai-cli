@@ -50,6 +50,10 @@ func newHelpIndex(candidates []Candidate, entries []searchEntry) *helpIndex {
 			}
 		}
 		h.add(entries[i].prose, i, summaryWord)
+		summary, detailText := candidate.help.Command(cmd, candidate.path)
+		if summary != cmd.Usage && summary != candidate.Description {
+			h.add(searchableProse(summary), i, summaryWord)
+		}
 		if cmd.Usage != candidate.Description {
 			h.add(searchableProse(cmd.Usage), i, summaryWord)
 		}
@@ -61,7 +65,7 @@ func newHelpIndex(candidates []Candidate, entries []searchEntry) *helpIndex {
 			}
 		}
 		var prose strings.Builder
-		for line := range strings.SplitSeq(cmd.Description, "\n") {
+		for line := range strings.SplitSeq(detailText, "\n") {
 			// Indented shell examples are already catalogued separately.
 			if line != "" && line[0] != ' ' && line[0] != '\t' {
 				prose.WriteString(line)
@@ -90,12 +94,8 @@ func (h *helpIndex) withOptionHelp(candidates []Candidate) *helpIndex {
 			continue
 		}
 		for _, flag := range candidate.definition.Flags {
-			doc, ok := flag.(interface {
-				cli.VisibleFlag
-				cli.DocGenerationFlag
-			})
-			if ok && doc.IsVisible() {
-				options.add(searchableProse(doc.GetUsage()), i, helpWord)
+			if visible, ok := flag.(cli.VisibleFlag); ok && visible.IsVisible() {
+				options.add(searchableProse(candidate.help.Flag(candidate.definition, flag)), i, helpWord)
 			}
 		}
 	}
@@ -144,29 +144,49 @@ func (index *searchIndex) matchHelp(words []string) []searchMatch {
 	if index.help == nil {
 		index.help = newHelpIndex(index.candidates, index.entries)
 	}
-	if matches := index.help.matches(words, index.entries); len(matches) > 0 {
+	if matches := index.help.matches(words, index.entries, false); len(matches) > 0 {
 		return matches
 	}
 	// Long option descriptions are the least specific evidence. Parse them
 	// only for a miss and keep the tiers separate so typing order cannot change results.
 	// A single word buried in an option description is a poor explanation
 	// for suggesting the command. Require a second term and a known subject.
-	if len(words) < 2 || !slices.ContainsFunc(words, func(word string) bool { return len(index.help.postings[word]) > 0 }) {
-		return nil
+	searchOptions := len(words) >= 2 && slices.ContainsFunc(words, func(word string) bool { return len(index.help.postings[word]) > 0 })
+	if searchOptions {
+		if index.optionHelp == nil {
+			index.optionHelp = index.help.withOptionHelp(index.candidates)
+		}
+		if matches := index.optionHelp.matches(words, index.entries, false); len(matches) > 0 {
+			return matches
+		}
 	}
-	if index.optionHelp == nil {
-		index.optionHelp = index.help.withOptionHelp(index.candidates)
+	// Only widen an exact final word after both existing tiers miss. An
+	// unrelated "compose" route must not hide "voice composer" during typing.
+	if matches := index.help.retryFinalPrefix(words, index.entries); len(matches) > 0 || !searchOptions {
+		return matches
 	}
-	return index.optionHelp.matches(words, index.entries)
+	return index.optionHelp.retryFinalPrefix(words, index.entries)
 }
 
-func (h *helpIndex) matches(words []string, entries []searchEntry) []searchMatch {
+func (h *helpIndex) retryFinalPrefix(words []string, entries []searchEntry) []searchMatch {
+	last := words[len(words)-1]
+	if len(last) < 3 {
+		return nil
+	}
+	first, found := slices.BinarySearch(h.terms, last)
+	if !found || first+1 == len(h.terms) || !strings.HasPrefix(h.terms[first+1], last) {
+		return nil
+	}
+	return h.matches(words, entries, true)
+}
+
+func (h *helpIndex) matches(words []string, entries []searchEntry, widenFinal bool) []searchMatch {
 	clear(h.scores)
 	corrected := false
 	for i, word := range words {
 		first, found := slices.BinarySearch(h.terms, word)
 		switch {
-		case found:
+		case found && !(widenFinal && i == len(words)-1):
 			h.scoreTerm(i, word)
 		case i == len(words)-1 && len(word) >= 3 && first < len(h.terms) && strings.HasPrefix(h.terms[first], word):
 			for _, term := range h.terms[first:] {
