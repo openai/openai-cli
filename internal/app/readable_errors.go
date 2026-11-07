@@ -200,6 +200,11 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 		message = readableAPIAuthenticationMessage(root, failure, apierr, output...)
 	case http.StatusForbidden:
 		message = "The API denied access to this resource.\nCheck your key's permissions and its project access."
+		var contextual *commandError
+		if errors.As(failure, &contextual) && contextual.command != nil &&
+			contextual.command.Name == "report" && localcommands.ResourceName(contextual.command) == "costs" {
+			message = "The API denied access to organization costs.\nCheck that your admin credential can read costs for the selected organization."
+		}
 		if permission := readableAPIAccessPermissionMessage(root, failure, apierr); permission != "" {
 			message = permission
 		}

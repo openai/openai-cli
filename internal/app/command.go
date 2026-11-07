@@ -4,11 +4,13 @@ import (
 	"context"
 	"os"
 
+	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-cli/internal/commands/codex"
+	"github.com/openai/openai-cli/internal/commands/costs"
 	"github.com/openai/openai-cli/internal/commands/explore"
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/images"
@@ -16,6 +18,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/tokenize"
 	"github.com/openai/openai-cli/internal/commands/webhooks"
 	requestconfig "github.com/openai/openai-cli/internal/request"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
 )
 
@@ -50,6 +53,12 @@ func ConfigureCommand(root *cli.Command) {
 	images.RegisterPreview(root, ImagePreviewOptions())
 	audio.ConfigureText(root)
 	configureReadableSpeech(root)
+	costs.Register(root, costs.Options{
+		DefaultRequestOptions: GetDefaultRequestOptions,
+		PrepareRequest: func(command *cli.Command) ([]option.RequestOption, error) {
+			return FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, EmptyBody, true)
+		},
+	})
 	registerAdminSetup(root)
 	admin.ConfigureCredentials(root)
 	admin.ConfigureProjectLifecycle(root)
