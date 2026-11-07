@@ -1,7 +1,9 @@
 package requestflag_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -119,7 +121,11 @@ func TestInputPolicyUntrustedPipedInnerUnderStructuredParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = requestconfig.ReadPipedInput(cmd, strings.NewReader(`{"entry":{"content":"@`+path+`"}}`), &contents, security, true)
+	piped, err := json.Marshal(map[string]map[string]string{"entry": {"content": "@" + path}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = requestconfig.ReadPipedInput(cmd, bytes.NewReader(piped), &contents, security, true)
 	if err != nil {
 		t.Fatal(err)
 	}
