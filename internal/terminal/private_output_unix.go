@@ -1,6 +1,6 @@
 //go:build !windows
 
-package commandsuggest
+package terminal
 
 import (
 	"io"
@@ -9,14 +9,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func privateSink(fd int) io.WriteCloser {
+// OpenPrivateOutput duplicates a writable, empty, private regular file supplied by the shell.
+func OpenPrivateOutput(fd int, name string) *os.File {
 	// Own only the duplicate. Invalid configuration must not close a caller's FD.
-	duplicate, err := unix.Dup(fd)
+	duplicate, err := unix.FcntlInt(uintptr(fd), unix.F_DUPFD_CLOEXEC, 0)
 	if err != nil {
 		return nil
 	}
-	unix.CloseOnExec(duplicate)
-	file := os.NewFile(uintptr(duplicate), "command-suggestions")
+	file := os.NewFile(uintptr(duplicate), name)
 	flags, err := unix.FcntlInt(uintptr(duplicate), unix.F_GETFL, 0)
 	if err != nil || flags&unix.O_ACCMODE == unix.O_RDONLY {
 		_ = file.Close()

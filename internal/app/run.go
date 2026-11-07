@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	"github.com/openai/openai-cli/internal/commandsuggest"
 	requestconfig "github.com/openai/openai-cli/internal/request"
@@ -57,7 +58,9 @@ func Run(ctx context.Context, argv []string, app *cli.Command) int {
 	if err == nil {
 		SetupImagePickerShellOnFirstRun(ctx, argv, app)
 		err = RunWithOutputPolicy(ctx, app, func(ctx context.Context) error {
-			return runWithRequestConfiguration(ctx, app, args, completing)
+			return clihelp.RunWithPager(ctx, app, argv, func() error {
+				return runWithRequestConfiguration(ctx, app, args, completing)
+			})
 		})
 	}
 	if err != nil {

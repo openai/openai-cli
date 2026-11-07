@@ -1,7 +1,21 @@
 # CLI configuration and input reference
 
 For installation and common tasks, see the [README](../README.md).
-Run `openai --help` for the full set of global options.
+In an interactive zsh with command insertion enabled, type `openai` on a line by itself.
+If the reference exceeds the terminal height, it opens at the top.
+Scroll with the wheel, arrow keys, or Space. Press `q` to show the rest, or Escape to leave early.
+Each line stays in your terminal history.
+
+When the footer says `Start typing your next command`, type to continue at your zsh prompt.
+Press Enter at that prompt to run the command. An initial `q`, `Q`, or Space keeps its pager action.
+To enable command insertion for the current zsh session, run:
+
+```zsh
+source <(openai @completion zsh --suggestions --suggestions-only)
+```
+
+Command chains such as `openai; pwd` print help and continue immediately.
+Explicit help, pipes, redirects, and shells without this integration also use ordinary output.
 
 ## Environment variables
 
