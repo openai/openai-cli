@@ -114,7 +114,7 @@ func (m *imagePicker) studioForm(g imageStudioGeometry) tea.View {
 	if m.focus == "command" || m.focus == "images" && m.studioEditorFocus == "command" {
 		rows = append(rows, m.studioHeading("Command", m.focus == "command" && !m.generating))
 		w, h := m.commandDimensions()
-		lines, _, _ := m.commandPreview(w, h)
+		lines, _, _ := m.commandViewport(w, h)
 		for _, line := range lines {
 			rows = append(rows, "  "+line)
 		}

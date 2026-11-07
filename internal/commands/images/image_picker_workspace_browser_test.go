@@ -196,9 +196,7 @@ func TestImagePickerWorkspaceRecolorsRetainedDiagnostics(t *testing.T) {
 	m, w := browserForTest(t, 96, 28)
 	require.False(t, m.dark, "start with the declared light background before the terminal answers")
 	m.color, m.focus = true, "prompt"
-	w.addDetail("Request failed", imageFailure)
-	w.addDetail("Copy the draft before exiting.", imageWarning)
-	w.requestFailure = "Request failed"
+	w.diagnostics = []imagePickerDiagnostic{{heading: "Request failed", details: []imagePickerDetail{{text: "Copy the draft before exiting.", tone: imageWarning}}}}
 	w.appendImage(imagePickerWorkspaceImage{rows: strings.Split(strings.Repeat("synthetic pixels\n", 45), "\n")})
 	require.NoError(t, w.draw(m, colorprofile.TrueColor, false, true))
 	require.Contains(t, w.displayRows[0], "178;58;58")
@@ -240,8 +238,33 @@ func TestImagePickerWorkspaceRequestCauseSurvivesDraftWarningAndValidation(t *te
 	w.expanded = true
 	require.Contains(t, ansi.Strip(w.expandedView(m, false)[2]), "Authentication failed")
 	w.clearRequestDiagnostics()
-	require.Empty(t, w.requestFailure)
-	require.Empty(t, w.rows)
+	require.Equal(t, imagePickerRequestFailureNote, w.requestFailureSummary())
+	require.Empty(t, w.diagnostics)
+}
+
+func TestImagePickerWorkspaceDiagnosticRolesDoNotDependOnText(t *testing.T) {
+	m, w := browserForTest(t, 110, 28)
+	m.color, m.dark = true, true
+	diagnostic := imagePickerRequestDiagnostic(&openai.Error{StatusCode: 401}, false)
+	// Wording changes must not turn an action into a heading or hide a warning.
+	diagnostic.details[0].text = diagnostic.heading
+	diagnostic.details[1].text = strings.Repeat("Copy the unsaved prompt. ", 8)
+	w.addDetail(diagnostic.heading, imageWarning)
+	w.diagnostics = append(w.diagnostics, diagnostic)
+	w.addDetail("A later warning.", imageWarning)
+	require.NoError(t, w.draw(m, colorprofile.TrueColor, false, true))
+	require.Equal(t, m.workspaceText(diagnostic.heading, imageWarning), w.displayRows[0])
+	require.Equal(t, m.workspaceText(diagnostic.heading, imageFailure), w.displayRows[1])
+	require.Equal(t, m.workspaceText(diagnostic.heading, imageSecondary), w.displayRows[2])
+	require.Greater(t, w.messageRows, 5, "the warning must wrap to several physical rows")
+	for _, row := range w.displayRows[3:w.messageRows] {
+		require.Equal(t, m.workspaceText(ansi.Strip(row), imageWarning), row)
+	}
+	require.Equal(t, diagnostic.heading, w.requestFailureSummary(), "later warnings cannot replace the request cause")
+	w.clearRequestDiagnostics()
+	require.NoError(t, w.draw(m, colorprofile.TrueColor, false, true))
+	require.Zero(t, w.messageRows)
+	require.Equal(t, imagePickerRequestFailureNote, w.requestFailureSummary())
 }
 
 func TestImagePickerWorkspaceFailedPaintDoesNotStartGeneration(t *testing.T) {
@@ -270,7 +293,7 @@ func TestImagePickerWorkspaceValidationVisibleAfterFailure(t *testing.T) {
 					if scrolled {
 						p.updateWorkspace(tea.KeyPressMsg{Code: tea.KeyPgDown})
 					}
-					diagnostics := append([]string(nil), w.rows...)
+					diagnostics := append([]imagePickerDiagnostic(nil), w.diagnostics...)
 					offset := w.offset
 					m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 					m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
@@ -280,7 +303,7 @@ func TestImagePickerWorkspaceValidationVisibleAfterFailure(t *testing.T) {
 					require.Empty(t, m.result.Args, "invalid input must not submit another request")
 					require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 					require.Contains(t, ansi.Strip(strings.Join(w.painted, "\n")), m.note)
-					require.Equal(t, diagnostics, w.rows, "validation must retain request diagnostics")
+					require.Equal(t, diagnostics, w.diagnostics, "validation must retain request diagnostics")
 					require.Equal(t, offset, w.offset, "validation must preserve gallery scrolling")
 					require.Len(t, w.images, 1)
 				})
@@ -335,7 +358,7 @@ func TestImagePickerWorkspaceFailureKeepsControlsAttachedAndDetailsScrollable(t 
 		require.Equal(t, footer, failedFooter)
 		require.NotContains(t, failed, "Request details")
 		require.NotContains(t, failed, "Request failed. Edit")
-		require.NotEmpty(t, w.rows)
+		require.NotEmpty(t, w.diagnostics)
 		// Every diagnostic row remains reachable in the small viewport.
 		seen := append([]string(nil), w.painted[w.bodyStart:w.bodyEnd]...)
 		for offset := 0; offset < len(w.displayRows); offset++ {
