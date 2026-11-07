@@ -53,12 +53,15 @@ PROCESS_CASES = {
     ],
     "TestMainShellWholeRequestAndRepeatedFlags": [
         "JSON_override_and_unknown_null", "YAML", "last_scalar_releases_stdin", "last_scalar_selects_stdin",
-        "nested_field_selects_stdin", "nested_replacement_releases_stdin",
-        "empty_nullable_replacement_releases_stdin", "null_nullable_replacement_releases_stdin",
+        "legacy_nested_field_selects_stdin", "structured_nested_reference_releases_stdin",
+        "nested_replacement_releases_stdin", "empty_nullable_replacement_releases_stdin",
+        "literal_null_replacement_releases_stdin", "legacy_null_replacement_releases_stdin",
+        "structured_null_replacement_releases_stdin",
         "untrusted_reference_remains_literal",
     ],
     "TestMainShellStdinConflictBeforeRead": [
         "responses_create_--model_model_synthetic_--input_@-_--instructions_@-",
+        "responses_create_--model_model_synthetic_--input-structured_@-_--instructions-structured_@-",
         "audio_transcriptions_create_--model_whisper-1_--file_-_--prompt_@-",
         "images_edit_--model_dall-e-2_--prompt_synthetic_--image_-_--image_-",
         "responses_create_--model_model_synthetic_--input_[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"@-\"},{\"type\":\"input_text\",\"text\":\"@data://-\"}]}]",
@@ -627,7 +630,7 @@ def load_local_cases():
     raw = LOCAL_CASES_PATH.read_bytes()
     suites = json.loads(raw, object_pairs_hook=unique_object)
     counts = {"imageprefs": (9, 30), "custom": (12, 29), "autocomplete": (5, 59),
-              "process": (29, 147), "clihelp": (5, 6)}
+              "process": (29, 149), "clihelp": (5, 6)}
     if not isinstance(suites, dict) or set(suites) != set(counts):
         raise RuntimeError("Invalid local-state packages")
     excluded = set(PROCESS_CASES) | {ROOT, "TestMainDispatchProcess", "TestImagePreferenceWaitingWriterProcess"}
