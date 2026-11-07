@@ -101,7 +101,15 @@ func (s *StdinSecurity) ProtectFlagValues(contents *requestflag.RequestContents)
 }
 
 func protectInnerFlagValue(inner requestflag.HasOuterFlag) {
-	switch outer := inner.GetOuterFlag().Get().(type) {
+	value := inner.GetOuterFlag().Get()
+	for {
+		input, ok := value.(requestflag.InputValue)
+		if !ok {
+			break
+		}
+		value = input.Value
+	}
+	switch outer := value.(type) {
 	case map[string]any:
 		protectRequestValue(outer, inner.GetInnerField())
 	case []map[string]any:
@@ -129,6 +137,9 @@ func protectRequestValue(values map[string]any, path string) {
 // ProtectStdinValue marks ordinary string leaves while preserving other values.
 func ProtectStdinValue(value any) any {
 	switch value := value.(type) {
+	case requestflag.InputValue:
+		value.Value = ProtectStdinValue(value.Value)
+		return value
 	case string:
 		return UntrustedStdinValue(value)
 	case *string:

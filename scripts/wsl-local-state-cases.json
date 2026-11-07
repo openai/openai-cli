@@ -191,8 +191,10 @@
       "mTLS/codex"
     ],
     "TestMainLocalUtilitiesPreserveRemoteTokenCounter": [
-      "nested",
-      "legacy",
+      "literal_multiline_input",
+      "literal_input_on_colon_route",
+      "legacy_nested",
+      "legacy_colon_route",
       "YAML_scalar_compatibility",
       "piped_JSON"
     ],

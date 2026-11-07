@@ -28,7 +28,7 @@ func innerFieldIsSet(inner HasOuterFlag) bool {
 		return false
 	}
 	field := inner.GetInnerField()
-	switch values := outer.Get().(type) {
+	switch values := unwrappedInput(outer.Get()).(type) {
 	case map[string]any:
 		if len(values) == 0 {
 			return true
@@ -51,8 +51,10 @@ func innerFieldIsSet(inner HasOuterFlag) bool {
 		}
 		_, exists := last[field]
 		return exists
+	default:
+		// An explicit scalar outer value overrides all piped inner fields.
+		return true
 	}
-	return false
 }
 
 func setFlagFromStdin(flag cli.Flag, value string, onSet func(cli.Flag)) error {

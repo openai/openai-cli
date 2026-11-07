@@ -64,6 +64,7 @@ type Flag[
 		string | float64 | int64 | bool |
 		*string | *float64 | *int64 | *bool | *DateTimeValue | *DateValue | *TimeValue,
 ] struct {
+	InputPolicy InputPolicy          // schema policy for one flag operand
 	Name        string               // name of the flag
 	Category    string               // category of the flag, if any
 	DefaultText string               // default text of the flag for usage purposes
@@ -98,10 +99,14 @@ type Flag[
 	DataAliases []string
 
 	// unexported fields for internal use
-	count      int       // number of times the flag has been set
-	hasBeenSet bool      // whether the flag has been set from env or file
-	applied    bool      // whether the flag has been applied to a flag set already
-	value      cli.Value // value representing this flag's value
+	count           int       // number of times the flag has been set
+	hasBeenSet      bool      // whether the flag has been set from env or file
+	applied         bool      // whether the flag has been applied to a flag set already
+	value           cli.Value // value representing this flag's value
+	structured      bool      // the explicit structured alternative was used
+	legacyInput     bool
+	structuredInput *InputValue
+	innerSet        bool // at least one nested flag was applied
 }
 
 // Type assertions to verify we implement the relevant urfave/cli interfaces
@@ -185,6 +190,12 @@ func applyStdinDataToFlags(cmd *cli.Command, data map[string]any, onSet func(cli
 				continue
 			}
 			if innerFieldIsSet(inner) {
+				continue
+			}
+			if handled, err := setUntypedFlagFromStdin(flag, val, onSet); handled {
+				if err != nil {
+					return err
+				}
 				continue
 			}
 			setVal, err := formatForFlagSet(val)
@@ -331,6 +342,12 @@ func (f *Flag[T]) PostParse() error {
 }
 
 func (f *Flag[T]) Set(name string, val string) error {
+	if f.structured {
+		return fmt.Errorf("cannot combine --%s with --%s-structured", f.Name, f.Name)
+	}
+	if !f.legacyInput && f.InputPolicy.preservesText() && f.innerSet {
+		return fmt.Errorf("cannot combine --%s with nested --%s flags", f.Name, f.Name)
+	}
 	// Initialize flag if needed
 	if !f.applied {
 		if err := f.PreParse(); err != nil {
@@ -352,7 +369,11 @@ func (f *Flag[T]) Set(name string, val string) error {
 		}
 	}
 
-	if err := f.value.Set(val); err != nil {
+	if !f.legacyInput && f.InputPolicy.preservesText() {
+		if err := f.setLiteralValue(val); err != nil {
+			return err
+		}
+	} else if err := f.value.Set(val); err != nil {
 		return err
 	}
 
@@ -367,6 +388,9 @@ func (f *Flag[T]) Set(name string, val string) error {
 }
 
 func (f *Flag[T]) Get() any {
+	if f.structuredInput != nil {
+		return *f.structuredInput
+	}
 	if f.value != nil {
 		return f.value.Get()
 	}
@@ -763,7 +787,9 @@ func (c *cliValue[T]) Set(value string) error {
 				if elemType.Kind() == reflect.Map && elemType.Key().Kind() == reflect.String {
 					singleElem, err = parseCLIArg[map[string]any](value)
 				} else {
-					singleElem, err = parseCLIArg[any](value)
+					// Elements of an explicitly typed array retain their existing
+					// structured YAML/JSON parsing behavior.
+					singleElem, err = parseUntypedCollectionElement(value)
 				}
 			}
 		}
@@ -795,6 +821,25 @@ func (c *cliValue[T]) Set(value string) error {
 	}
 
 	return nil
+}
+
+// parseUntypedCollectionElement preserves the established syntax for []any
+// flags, whose individual values are not themselves untyped union flags.
+func parseUntypedCollectionElement(value string) (any, error) {
+	if strings.HasPrefix(value, "@") {
+		return value, nil
+	}
+	var parsed any
+	if err := UnmarshalYAMLOrJSON([]byte(value), &parsed); err != nil {
+		if allowAsLiteralString(value) {
+			return value, nil
+		}
+		return nil, fmt.Errorf("failed to parse as YAML: %w", err)
+	}
+	if parsed == nil {
+		return (*struct{})(nil), nil
+	}
+	return parsed, nil
 }
 
 func (c *cliValue[T]) Get() any {
@@ -944,7 +989,11 @@ func (f *Flag[T]) SetInnerField(field string, val any) {
 
 	if settableInnerField, ok := f.value.(SettableInnerField); ok {
 		settableInnerField.SetInnerField(field, val)
+		if f.structuredInput != nil {
+			f.structuredInput.Value = f.value.Get()
+		}
 		f.hasBeenSet = true
+		f.innerSet = true
 	} else {
 		panic(fmt.Sprintf("Cannot set inner field: %v", f.value))
 	}

@@ -26,7 +26,8 @@ func configureCertificateCompatibility(root *cli.Command) {
 	for i, flag := range create.Flags {
 		if slices.Contains(flag.Names(), "certificate") {
 			create.Flags = slices.Insert(create.Flags, i+1, cli.Flag(&requestflag.Flag[string]{
-				Name: "content", Hidden: true, BodyPath: "content",
+				InputPolicy: requestflag.InputPolicyText,
+				Name:        "content", Hidden: true, BodyPath: "content",
 			}))
 			return
 		}
