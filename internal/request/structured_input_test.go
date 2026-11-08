@@ -3,7 +3,6 @@ package request
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,18 +15,21 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func parseStructuredTestJSON(text string) (any, error) {
-	var value any
-	err := json.Unmarshal([]byte(text), &value)
-	return value, err
+func structuredTestCommand(t *testing.T, validate func(any) error, args ...string) (*cli.Command, any) {
+	t.Helper()
+	parent := &requestflag.Flag[any]{Name: "input", BodyPath: "input", InputPolicy: requestflag.InputPolicyTextStructured, Default: "default", Validator: validate}
+	content := &requestflag.InnerFlag[any]{Name: "input.content", OuterFlag: parent, InnerField: "content", DataAliases: []string{"alias"}, InputPolicy: requestflag.InputPolicyTextStructured}
+	extra := &requestflag.InnerFlag[any]{Name: "input.extra", OuterFlag: parent, InnerField: "extra", InputPolicy: requestflag.InputPolicyTextStructured}
+	cmd := &cli.Command{Name: "test", Flags: []cli.Flag{parent, content, extra}, Writer: io.Discard, ErrWriter: io.Discard}
+	requestflag.AddStructuredFlags(cmd)
+	require.NoError(t, cmd.Run(t.Context(), append([]string{"test"}, args...)))
+	return cmd, parent.Get()
 }
 
 func TestStructuredInputSourcesResolveOnce(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "input.json")
 	payload := `{"literal":"@-","escaped":"\\@-","nested":["@private/missing.json",null,false,2]}`
 	require.NoError(t, os.WriteFile(path, []byte(payload), 0600))
-	want, err := parseStructuredTestJSON(payload)
-	require.NoError(t, err)
 
 	for styleName, style := range map[string]FileEmbedStyle{"text": EmbedText, "multipart": EmbedIOReader} {
 		for _, source := range []struct{ name, raw string }{
@@ -36,15 +38,17 @@ func TestStructuredInputSourcesResolveOnce(t *testing.T) {
 		} {
 			t.Run(styleName+"/"+source.name, func(t *testing.T) {
 				calls := 0
-				input := requestflag.InputValue{Raw: source.raw, Parse: func(text string) (any, error) {
+				_, input := structuredTestCommand(t, func(any) error {
 					calls++
-					require.Equal(t, payload, text)
-					return parseStructuredTestJSON(text)
-				}}
+					return nil
+				}, "--input-structured", source.raw)
+				calls = 0 // Ignore validation of the flag default.
 				stdin := &OnceStdinReader{Reader: strings.NewReader(payload)}
 				got, err := EmbedFiles(input, style, stdin)
 				require.NoError(t, err)
-				require.Equal(t, want, got)
+				wire, err := json.Marshal(got)
+				require.NoError(t, err)
+				require.JSONEq(t, payload, string(wire))
 				require.Equal(t, 1, calls)
 			})
 		}
@@ -57,38 +61,47 @@ func TestStructuredInputSourceGrammarPrecedesParsing(t *testing.T) {
 	for _, test := range []struct{ name, raw, want string }{
 		{"base64 file", "@data://" + path, base64.StdEncoding.EncodeToString([]byte("synthetic text"))},
 		{"base64 stdin", "@data://-", base64.StdEncoding.EncodeToString([]byte("synthetic text"))},
-		{"escaped at", `\@private/missing.txt`, "@private/missing.txt"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			input := requestflag.InputValue{Raw: test.raw, Parse: func(text string) (any, error) {
-				require.Equal(t, test.want, text)
-				return text, nil
-			}}
+			_, input := structuredTestCommand(t, nil, "--input-structured", test.raw)
 			got, err := EmbedFiles(input, EmbedIOReader, &OnceStdinReader{Reader: strings.NewReader("synthetic text")})
 			require.NoError(t, err)
 			require.Equal(t, test.want, got)
 		})
 	}
+	t.Run("escaped at", func(t *testing.T) {
+		const raw = `\@private/missing.txt`
+		_, literal := structuredTestCommand(t, nil, "--input", raw)
+		got, err := EmbedFiles(literal, EmbedText, nil)
+		require.NoError(t, err)
+		require.Equal(t, "@private/missing.txt", got)
+
+		// The structured parser receives the unescaped text. YAML rejects a bare @.
+		_, structured := structuredTestCommand(t, nil, "--input-structured", raw)
+		_, err = EmbedFiles(structured, EmbedIOReader, nil)
+		var failure *requestflag.StructuredInputError
+		require.ErrorAs(t, err, &failure)
+	})
 }
 
 func TestStructuredInputProtectsParsedValuesAndResolvesNestedFlags(t *testing.T) {
-	inner := requestflag.InputValue{Raw: "@-", Parse: parseStructuredTestJSON}
-	value := map[string]any{
-		"literal": "@private/missing.json", "escaped": `\@-`, "stdin": "@-",
-		"nested": []any{inner, requestflag.InputValue{Value: nil}},
-	}
-	input := requestflag.InputValue{Value: value}
+	_, input := structuredTestCommand(t, nil,
+		"--input-structured", `[{"literal":"@private/missing.json","escaped":"\\@-","stdin":"@-","nested":[null]}]`,
+		"--input.content-structured", "@-")
 	count, err := StdinConsumers(requestflag.RequestContents{Body: input}, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
-	got, err := EmbedFiles(input, EmbedText, &OnceStdinReader{Reader: strings.NewReader(`"@-"`)})
-	require.NoError(t, err)
-	require.Equal(t, map[string]any{
-		"literal": "@private/missing.json", "escaped": `\@-`, "stdin": "@-",
-		"nested": []any{"@-", nil},
-	}, got)
-	_, stillWrapped := value["nested"].([]any)[0].(requestflag.InputValue)
-	require.True(t, stillWrapped, "request resolution must not mutate flag values")
+	// Both evaluations read the supplied stream. The first must not mutate the flag.
+	for _, text := range []string{"@-", "@file://-"} {
+		data, err := json.Marshal(text)
+		require.NoError(t, err)
+		got, err := EmbedFiles(input, EmbedText, &OnceStdinReader{Reader: strings.NewReader(string(data))})
+		require.NoError(t, err)
+		require.Equal(t, []any{map[string]any{
+			"literal": "@private/missing.json", "escaped": `\@-`, "stdin": "@-",
+			"nested": []any{nil}, "content": text,
+		}}, got)
+	}
 }
 
 func TestStructuredInputPreservesExplicitNestedSources(t *testing.T) {
@@ -102,10 +115,9 @@ func TestStructuredInputPreservesExplicitNestedSources(t *testing.T) {
 			{"file", "@" + path, 0}, {"stdin", "@-", 1},
 		} {
 			t.Run(styleName+"/"+source.name, func(t *testing.T) {
-				input := requestflag.InputValue{Value: map[string]any{
-					"literal": "@private/missing.json", "stdin_data": "@-",
-					"content": requestflag.InputValue{Value: source.value, Option: "--entry.content", ResolveSources: true},
-				}}
+				_, input := structuredTestCommand(t, nil,
+					"--input-structured", `{"literal":"@private/missing.json","stdin_data":"@-"}`,
+					"--input.content", source.value)
 				count, err := StdinConsumers(requestflag.RequestContents{Body: input}, false)
 				require.NoError(t, err)
 				require.Equal(t, source.consumers, count)
@@ -130,84 +142,74 @@ func TestStructuredInputPreservesExplicitNestedSources(t *testing.T) {
 }
 
 func TestStructuredInputNestedSourcesPreserveLegacyAndUntrustedValues(t *testing.T) {
-	input := requestflag.InputValue{Value: requestflag.InputValue{ResolveSources: true, Value: map[string]any{
-		"source": "@-", "escaped": `\@-`, "untrusted": UntrustedStdinValue("@private/missing.json"),
-		"untrusted_stdin": UntrustedStdinValue("@-"), "structured": requestflag.InputValue{Value: "@-"},
-	}}}
-	count, err := StdinConsumers(requestflag.RequestContents{Body: input}, false)
+	t.Setenv(UntrustedStdinEnv, "true")
+	command, _ := structuredTestCommand(t, nil, "--input-structured", `{"structured":"@-"}`, "--input.content", `\@-`)
+	security, err := NewStdinSecurity()
 	require.NoError(t, err)
-	require.Equal(t, 1, count)
-	got, err := EmbedFiles(input, EmbedText, &OnceStdinReader{Reader: strings.NewReader("synthetic text")})
+	contents := requestflag.ExtractRequestContents(command)
+	piped := `{"input":{"extra":{"untrusted":"@private/missing.json","untrusted_stdin":"@-"}}}`
+	consumed, err := ReadPipedInput(command, strings.NewReader(piped), &contents, security, true)
 	require.NoError(t, err)
-	require.Equal(t, map[string]any{
-		"source": "synthetic text", "escaped": "@-", "untrusted": "@private/missing.json",
-		"untrusted_stdin": "@-", "structured": "@-",
-	}, got)
+	require.True(t, consumed)
+	count, err := StdinConsumers(contents, false)
+	require.NoError(t, err)
+	require.Zero(t, count)
+	got, err := EmbedFiles(contents.Body, EmbedText, &OnceStdinReader{FailureReason: "already consumed"})
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"input": map[string]any{
+		"content": "@-", "structured": "@-",
+		"extra": map[string]any{"untrusted": "@private/missing.json", "untrusted_stdin": "@-"},
+	}}, got)
 }
 
 func TestStructuredInputExplicitNestedSourceAliases(t *testing.T) {
 	t.Setenv(UntrustedStdinEnv, "true")
-	input := &requestflag.Flag[any]{Name: "entry", BodyPath: "entry", Const: true, Default: requestflag.InputValue{
-		Value: map[string]any{
-			"literal": "@private/missing.json",
-			"alias":   requestflag.InputValue{Value: "@-", Option: "--entry.content", ResolveSources: true},
-		},
-	}}
-	inner := &requestflag.InnerFlag[any]{Name: "entry.content", OuterFlag: input, InnerField: "content", DataAliases: []string{"alias"}}
+	command, _ := structuredTestCommand(t, nil, "--input-structured", `{"alias":"@private/missing.json"}`, "--input.extra", "@-")
 	var observed []byte
-	_, err := FlagOptions(&cli.Command{Name: "create", Flags: []cli.Flag{input, inner}},
+	_, err := FlagOptions(command,
 		apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatRepeat, ApplicationJSON, false,
 		strings.NewReader("synthetic child text"), PreparationHooks{
 			Encoding: EncodingHooks{ObserveJSON: []func([]byte){func(body []byte) { observed = body }}},
 		})
 	require.NoError(t, err)
-	require.JSONEq(t, `{"entry":{"literal":"@private/missing.json","content":"synthetic child text"}}`, string(observed))
+	require.JSONEq(t, `{"input":{"content":"@private/missing.json","extra":"synthetic child text"}}`, string(observed))
 }
 
 func TestStructuredInputCompositionPreservesSourceOrder(t *testing.T) {
-	var order []string
-	previous := requestflag.InputValue{Raw: `\@first`, Parse: func(text string) (any, error) {
-		order = append(order, "previous")
-		return []any{text}, nil
-	}}
-	input := requestflag.InputValue{
-		Previous: &previous, Raw: `\@second`,
-		Parse: func(text string) (any, error) {
-			order = append(order, "current")
-			return text, nil
-		},
-		Combine: func(previous, current any) (any, error) {
-			order = append(order, "combine")
-			return append(previous.([]any), current), nil
-		},
-	}
+	dir := t.TempDir()
+	first, second := filepath.Join(dir, "first.json"), filepath.Join(dir, "second.json")
+	require.NoError(t, os.WriteFile(first, []byte(`["@first"]`), 0600))
+	require.NoError(t, os.WriteFile(second, []byte(`"@second"`), 0600))
+	var validated []any
+	_, input := structuredTestCommand(t, func(value any) error {
+		validated = append(validated, value)
+		return nil
+	}, "--input-structured", "@"+first, "--input-structured", "@"+second)
+	validated = nil
 	got, err := EmbedFiles(input, EmbedText, nil)
 	require.NoError(t, err)
 	require.Equal(t, []any{"@first", "@second"}, got)
-	require.Equal(t, []string{"previous", "current", "combine"}, order)
+	require.Equal(t, []any{[]any{"@first"}, []any{"@first", "@second"}}, validated)
 }
 
 func TestStructuredInputCountsOnlyExplicitStdinSources(t *testing.T) {
-	deferred := requestflag.InputValue{Raw: "@-", Parse: parseStructuredTestJSON}
 	for _, test := range []struct {
 		name  string
-		input requestflag.InputValue
+		args  []string
 		count int
 	}{
-		{"parsed string", requestflag.InputValue{Value: "@-"}, 0},
-		{"parsed array", requestflag.InputValue{Value: []any{"@-", "@file://-"}}, 0},
-		{"deferred", deferred, 1},
-		{"escaped", requestflag.InputValue{Raw: `\@-`, Parse: parseStructuredTestJSON}, 0},
-		{"previous", requestflag.InputValue{Previous: &deferred, Value: "@-"}, 1},
-		{"duplicate", requestflag.InputValue{Previous: &deferred, Raw: "@file://-", Parse: parseStructuredTestJSON}, 2},
-		{"nested", requestflag.InputValue{Value: []any{deferred, deferred}}, 2},
-		{"ordinary nested", requestflag.InputValue{Value: []any{
-			requestflag.InputValue{Value: "@-", ResolveSources: true},
-			requestflag.InputValue{Value: "@file://-", ResolveSources: true},
-		}}, 2},
+		{"parsed string", []string{"--input-structured", `"@-"`}, 0},
+		{"parsed array", []string{"--input-structured", `["@-","@file://-"]`}, 0},
+		{"deferred", []string{"--input-structured", "@-"}, 1},
+		{"escaped", []string{"--input-structured", `\@-`}, 0},
+		{"previous", []string{"--input-structured", "@-", "--input-structured", `"@-"`}, 1},
+		{"duplicate", []string{"--input-structured", "@-", "--input-structured", "@file://-"}, 2},
+		{"nested", []string{"--input-structured", "[]", "--input.content-structured", "@-", "--input.content-structured", "@-"}, 2},
+		{"ordinary nested", []string{"--input-structured", "[]", "--input.content", "@-", "--input.content", "@file://-"}, 2},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			count, err := StdinConsumers(requestflag.RequestContents{Body: test.input}, false)
+			_, input := structuredTestCommand(t, nil, test.args...)
+			count, err := StdinConsumers(requestflag.RequestContents{Body: input}, false)
 			require.Equal(t, test.count, count)
 			require.Equal(t, test.count > 1, err != nil)
 		})
@@ -215,51 +217,49 @@ func TestStructuredInputCountsOnlyExplicitStdinSources(t *testing.T) {
 }
 
 func TestStructuredInputSourceFailurePreservesOption(t *testing.T) {
-	input := requestflag.InputValue{
-		Option: "--input-structured", Raw: "@" + filepath.Join(t.TempDir(), "missing.json"),
-		Parse: func(string) (any, error) { t.Fatal("parse ran after a source failure"); return nil, nil },
-	}
+	validations := 0
+	_, input := structuredTestCommand(t, func(any) error {
+		validations++
+		return nil
+	}, "--input-structured", "@"+filepath.Join(t.TempDir(), "missing.json"))
+	validations = 0
 	_, err := EmbedFiles(input, EmbedText, nil)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	var failure *InputFileError
 	require.ErrorAs(t, err, &failure)
 	require.Equal(t, "--input-structured", failure.Option)
+	require.Zero(t, validations)
 }
 
 func TestStructuredInputPreparationReservesStdinAndResolvesAliases(t *testing.T) {
 	t.Setenv(UntrustedStdinEnv, "true")
-	input := &requestflag.Flag[any]{Name: "input", BodyPath: "input", Const: true, Default: requestflag.InputValue{
-		Raw: "@-", Parse: parseStructuredTestJSON,
-	}}
-	inner := &requestflag.InnerFlag[any]{Name: "input.value", OuterFlag: input, InnerField: "value", DataAliases: []string{"alias"}}
-	command := &cli.Command{Name: "create", Flags: []cli.Flag{input, inner}}
+	command, _ := structuredTestCommand(t, nil, "--input-structured", "@-")
 	var observed []byte
 	_, err := FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatRepeat,
 		ApplicationJSON, false, strings.NewReader(`{"alias":"@private/missing.json"}`), PreparationHooks{
 			ValidateResolvedInputs: func(contents requestflag.RequestContents) error {
-				require.Equal(t, map[string]any{"input": map[string]any{"value": "@private/missing.json"}}, contents.Body)
+				require.Equal(t, map[string]any{"input": map[string]any{"content": "@private/missing.json"}}, contents.Body)
 				return nil
 			},
 			Encoding: EncodingHooks{ObserveJSON: []func([]byte){func(body []byte) { observed = body }}},
 		})
 	require.NoError(t, err)
-	require.JSONEq(t, `{"input":{"value":"@private/missing.json"}}`, string(observed))
+	require.JSONEq(t, `{"input":{"content":"@private/missing.json"}}`, string(observed))
 }
 
 func TestStructuredInputParseFailureStopsPreparation(t *testing.T) {
 	t.Setenv(UntrustedStdinEnv, "false")
-	failure := errors.New("invalid structured input for --input-structured")
-	input := &requestflag.Flag[any]{Name: "input", BodyPath: "input", Const: true, Default: requestflag.InputValue{
-		Raw: "@-", Parse: func(string) (any, error) { return nil, failure },
-	}}
-	_, err := FlagOptions(&cli.Command{Name: "create", Flags: []cli.Flag{input}},
+	command, _ := structuredTestCommand(t, nil, "--input-structured", "@-")
+	_, err := FlagOptions(command,
 		apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatRepeat, ApplicationJSON, false,
-		strings.NewReader("private malformed content"), PreparationHooks{
+		strings.NewReader("[private malformed content"), PreparationHooks{
 			ValidateResolvedInputs: func(requestflag.RequestContents) error {
 				t.Fatal("resolved validation ran after a parse failure")
 				return nil
 			},
 		})
-	require.ErrorIs(t, err, failure)
+	var failure *requestflag.StructuredInputError
+	require.ErrorAs(t, err, &failure)
+	require.ErrorContains(t, err, "--input-structured")
 	require.NotContains(t, err.Error(), "private malformed content")
 }
