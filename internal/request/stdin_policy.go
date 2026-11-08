@@ -50,7 +50,7 @@ func (s *StdinSecurity) RecordFlag(flag cli.Flag) {
 	}
 	s.stdinFlags[flag] = struct{}{}
 	if inner, ok := flag.(requestflag.HasOuterFlag); ok {
-		protectInnerFlagValue(inner)
+		requestflag.ProtectPipedInnerValue(inner, ProtectStdinValue)
 	}
 }
 
@@ -100,23 +100,6 @@ func (s *StdinSecurity) ProtectFlagValues(contents *requestflag.RequestContents)
 	}
 }
 
-func protectInnerFlagValue(inner requestflag.HasOuterFlag) {
-	switch outer := inner.GetOuterFlag().Get().(type) {
-	case map[string]any:
-		protectRequestValue(outer, inner.GetInnerField())
-	case []map[string]any:
-		if len(outer) > 0 {
-			protectRequestValue(outer[len(outer)-1], inner.GetInnerField())
-		}
-	case []any:
-		if len(outer) > 0 {
-			if nested, ok := outer[len(outer)-1].(map[string]any); ok {
-				protectRequestValue(nested, inner.GetInnerField())
-			}
-		}
-	}
-}
-
 func protectRequestValue(values map[string]any, path string) {
 	if path == "" {
 		return
@@ -129,6 +112,8 @@ func protectRequestValue(values map[string]any, path string) {
 // ProtectStdinValue marks ordinary string leaves while preserving other values.
 func ProtectStdinValue(value any) any {
 	switch value := value.(type) {
+	case requestflag.InputValue:
+		return value.ProtectStdin(ProtectStdinValue)
 	case string:
 		return UntrustedStdinValue(value)
 	case *string:

@@ -26,7 +26,8 @@ func (w workflow) newBatchDownloadCommand() *cli.Command {
 		Description:     "Downloads exact file bytes without overwriting existing files. Use --output - for stdout. Output formats affect receipts and errors, never file bytes.",
 		HideHelpCommand: true, Suggest: true,
 		Flags: []cli.Flag{
-			&requestflag.Flag[string]{Name: "batch-id", PathParam: "batch_id", Required: true},
+			&requestflag.Flag[string]{
+				InputPolicy: requestflag.InputPolicyText, Name: "batch-id", PathParam: "batch_id", Required: true},
 			&cli.StringFlag{Name: "file", Value: "output", Usage: "Select output, error, or input"},
 			&cli.StringFlag{Name: "output", Required: true, TakesFile: true, Usage: "Save to a new file, or use - for exact bytes on stdout"},
 		},

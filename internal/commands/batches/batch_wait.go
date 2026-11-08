@@ -113,7 +113,8 @@ func (w workflow) newBatchWaitCommand() *cli.Command {
 		Description:     "Waits without submitting or canceling remote work. Use --output-dir to save available output.jsonl and error.jsonl without overwriting files.",
 		HideHelpCommand: true, Suggest: true,
 		Flags: []cli.Flag{
-			&requestflag.Flag[string]{Name: "batch-id", PathParam: "batch_id", Required: true},
+			&requestflag.Flag[string]{
+				InputPolicy: requestflag.InputPolicyText, Name: "batch-id", PathParam: "batch_id", Required: true},
 			&cli.DurationFlag{Name: "poll-interval", Value: 10 * time.Second, Usage: "Delay between successful status checks"},
 			&cli.DurationFlag{Name: "wait-timeout", Usage: "Total local duration, including downloads; 0 waits without a deadline"},
 			&cli.StringFlag{Name: "output-dir", TakesFile: true, Usage: "Save available result files in this directory; create it if absent"},

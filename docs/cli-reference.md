@@ -118,9 +118,51 @@ mTLS endpoint, so configure `OPENAI_BASE_URL` or `--base-url` explicitly. HTTP
 and SOCKS proxies remain supported, but HTTPS proxies are rejected to prevent
 presenting the client certificate during the proxy's own TLS handshake.
 
+## Text and structured request values
+
+If a flag has a matching `-structured` flag, its ordinary form sends exactly the text you supply.
+For example, `responses create --input 'Translate: hello'` sends a string.
+This also applies to completion prompts and stop sequences, embedding inputs, and vector store search queries.
+Run `openai help --all responses create` to see which flags support both forms.
+Other flags keep their existing parsers.
+Use that flag to parse JSON or YAML, including explicit nulls:
+
+```sh
+openai responses create --model MODEL --input 'Translate: hello'
+openai responses create --model MODEL --input-structured '[{"role":"user","content":"hello"}]'
+openai responses create --model MODEL --input-structured null
+```
+
+Do not combine a flag with its `-structured` alternative in one command.
+The CLI rejects that combination before reading sources, regardless of argument order.
+Whole-request JSON/YAML preserves its types and existing trust policy in both input modes.
+
+### Script compatibility
+
+**This default change breaks scripts that relied on implicit JSON/YAML conversion for text-capable operands.**
+Migrate those operands to `-structured`, or select legacy parsing for the process.
+Pin a CLI version that supports this contract; older binaries can ignore the setting.
+
+`OPENAI_CLI_INPUT_MODE` accepts `literal` or `legacy`.
+An unset setting selects `literal`.
+The CLI captures the setting before argument parsing; invalid values fail.
+Legacy mode restores the original parser, including parsing ordinary operands before file expansion.
+Explicit `-structured` flags override legacy mode for their operands.
+
+```sh
+OPENAI_CLI_INPUT_MODE=legacy openai responses create --model MODEL --input '[{"role":"user","content":"hello"}]'
+OPENAI_CLI_INPUT_MODE=literal openai responses create --model MODEL --input 'Translate: hello'
+```
+
+Only processes that inherit the setting use it.
+Configure containers, SSH sessions, and environment-clearing launchers separately.
+An explicit `literal` assignment overrides inherited `legacy` for that process.
+
 ## Passing files as arguments
 
-For JSON input values, `@myfile.ext` reads local file contents:
+Ordinary text operands retain `@myfile.ext`, `@-`, and escaped `\@` source syntax.
+File and stdin text remains text in literal mode.
+The CLI resolves each source once.
 
 Binary upload flags use plain paths. For example, use `files upload --file "upload space.txt" --purpose user_data`.
 Here, `--file "@upload space.txt"` names an actual file starting with `@`; it does not expand another file reference.
@@ -130,14 +172,23 @@ See [working with files](files.md).
 openai <command> --arg @abe.jpg
 ```
 
-Files can also be passed inside JSON or YAML blobs:
+Explicit structured flags also accept file and stdin sources:
 
 ```bash
-openai <command> --arg '{image: "@abe.jpg"}'
-# Equivalent:
-openai <command> <<YAML
-arg:
-  image: "@abe.jpg"
+openai responses create --model MODEL --input-structured @input.json
+printf '%s' '[{"role":"user","content":"hello"}]' | openai responses create --model MODEL --input-structured @-
+```
+
+The CLI resolves the source as text before parsing JSON or YAML.
+Strings inside the parsed value remain data, including strings beginning with `@` or `\@`.
+For example, `--input-structured '"@notes.txt"'` sends the string `@notes.txt`.
+
+Trusted whole-request JSON/YAML retains its existing embedded-reference handling:
+
+```bash
+openai responses create <<YAML
+model: MODEL
+input: "@notes.txt"
 YAML
 ```
 

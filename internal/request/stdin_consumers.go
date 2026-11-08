@@ -24,6 +24,10 @@ func StdinConsumers(contents requestflag.RequestContents, reserved bool) (int, e
 }
 
 func stdinConsumers(value reflect.Value) int {
+	return stdinInputConsumers(value, false)
+}
+
+func stdinInputConsumers(value reflect.Value, structured bool) int {
 	if !value.IsValid() {
 		return 0
 	}
@@ -31,24 +35,30 @@ func stdinConsumers(value reflect.Value) int {
 		if value.IsNil() {
 			return 0
 		}
-		return stdinConsumers(value.Elem())
+		return stdinInputConsumers(value.Elem(), structured)
+	}
+	if value.Type() == reflect.TypeFor[requestflag.InputValue]() {
+		input := value.Interface().(requestflag.InputValue)
+		return input.CountSources(func(value any, expandSources bool) int {
+			return stdinInputConsumers(reflect.ValueOf(value), !expandSources)
+		})
 	}
 	switch value.Kind() {
 	case reflect.Map:
 		count := 0
 		iter := value.MapRange()
 		for iter.Next() {
-			count += stdinConsumers(iter.Value())
+			count += stdinInputConsumers(iter.Value(), structured)
 		}
 		return count
 	case reflect.Array, reflect.Slice:
 		count := 0
 		for i := 0; i < value.Len(); i++ {
-			count += stdinConsumers(value.Index(i))
+			count += stdinInputConsumers(value.Index(i), structured)
 		}
 		return count
 	case reflect.String:
-		if value.Type() == reflect.TypeFor[UntrustedStdinValue]() {
+		if structured || value.Type() == reflect.TypeFor[UntrustedStdinValue]() {
 			return 0
 		}
 		path := value.String()
