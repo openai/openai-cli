@@ -74,8 +74,8 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		}
 	}
 	switch msg := msg.(type) {
-	case imagePickerKonsoleWritten:
-		if err := p.workspace.finishKonsoleTransfer(msg.transfer); err != nil {
+	case imagePickerNativeWritten:
+		if err := p.workspace.finishNativeTransfer(msg.transfer); err != nil {
 			p.err = errors.Join(p.err, imagePickerDisplayFailure(err))
 			p.output.cancel()
 			return true, tea.Quit

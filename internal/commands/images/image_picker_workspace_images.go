@@ -167,7 +167,7 @@ func (w *imagePickerWorkspace) acquireFontPreview(ctx context.Context) (func(), 
 // Decode and encode outside the input loop. Only one expanded frame is cached.
 func (p *imagePickerInline) prepareExpanded() {
 	w := p.workspace
-	if len(w.images) == 0 || w.konsoleTransfer != nil {
+	if len(w.images) == 0 || w.nativeTransfer != nil {
 		return
 	}
 	expanded := w.expanded

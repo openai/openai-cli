@@ -269,7 +269,7 @@ func (p *imagePickerInline) close() {
 	if p.restoreWrap {
 		cleanup += ansi.ResetModeAutoWrap
 	}
-	if p.workspace != nil && p.workspace.konsole {
+	if p.workspace != nil && (p.workspace.konsole || p.workspace.iterm) {
 		parent := p.workspace.context
 		if parent == nil {
 			parent = context.Background()

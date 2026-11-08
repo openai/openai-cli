@@ -71,10 +71,10 @@ type imagePickerWorkspace struct {
 	nameCounts                                map[string]int
 	selected                                  int
 	expanded                                  bool
-	konsole, konsoleScreen                    bool
+	iterm, konsole, konsoleScreen             bool
 	konsoleViewport                           interactiveImageSize
-	konsoleTransfer                           *imagePickerKonsoleTransfer
-	konsoleWorkers                            sync.WaitGroup
+	nativeTransfer                            *imagePickerNativeTransfer
+	transferWorkers                           sync.WaitGroup
 	mouse                                     imagePickerMouseModes
 	expandedRows                              []string
 	expandedNativeRows, expandedColumns       int
@@ -231,10 +231,14 @@ func (w *imagePickerWorkspace) progress(m *imagePicker) string {
 }
 
 func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile, busy, headerChanged bool) (err error) {
-	if transfer := w.konsoleTransfer; transfer != nil {
-		cw, ch := terminalimage.CellSize(w.out.Fd())
-		size := interactiveImageSize{m.width, m.height, cw, ch}
-		if !w.expanded || w.selected != transfer.index || size != transfer.size {
+	if transfer := w.nativeTransfer; transfer != nil {
+		size := interactiveImageSize{width: m.width, height: m.height}
+		expanded := transfer.expanded
+		if transfer.inlineColumn == 0 {
+			size.cellWidth, size.cellHeight = terminalimage.CellSize(w.out.Fd())
+			expanded = true
+		}
+		if w.expanded != expanded || w.selected != transfer.index || size != transfer.size {
 			select {
 			case transfer.replace <- struct{}{}:
 			default:
@@ -352,7 +356,10 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		w.kitty = w.kitty || strings.Contains(line, "\x1b_G")
 	}
 	output.WriteString(ansi.RestoreCursor)
-	if !w.originKnown && !w.originQueryPending && w.originQueryRevision != w.frameRevision {
+	// A replaced transfer may never emit its final controls. The completion
+	// redraw sends a new cursor query after the native bytes have committed.
+	transferImage := w.iterm && strings.Contains(output.String(), "\x1b]1337;File=")
+	if !transferImage && !w.originKnown && !w.originQueryPending && w.originQueryRevision != w.frameRevision {
 		// Report the saved panel origin, before returning to the prompt cursor.
 		w.originQueryPending, w.originQueryRevision = true, w.frameRevision
 		output.WriteString(ansi.RequestCursorPositionReport)
@@ -364,6 +371,9 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		}
 		output.WriteString(ansi.CursorHorizontalAbsolute(cursor.X + 1))
 		output.WriteString(ansi.SetCursorStyle(5) + ansi.SetModeTextCursorEnable)
+	}
+	if transferImage {
+		return w.startNativeTransfer(ctx, []string{output.String()}, keys, placements, column)
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
@@ -407,7 +417,7 @@ func imagePickerDeleteGraphics(column int) string {
 
 func (w *imagePickerWorkspace) close() error {
 	mouseErr := w.stopMouse()
-	w.konsoleWorkers.Wait()
+	w.transferWorkers.Wait()
 	if w.openCancel != nil {
 		w.openCancel()
 	}
