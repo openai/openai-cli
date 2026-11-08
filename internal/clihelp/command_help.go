@@ -56,6 +56,14 @@ func configureCommandHelp(command *cli.Command, invocation, path string) {
 	}
 }
 
+func commandContent(command *cli.Command, path string) (Content, bool) {
+	content, supplied := command.Metadata["help-content"].(Content)
+	if !supplied {
+		content = Content{Description: command.Description, Examples: examples[path]}
+	}
+	return content, supplied
+}
+
 func commandHelpAtWidth(command *cli.Command, invocation, path string, width int) string {
 	return commandHelpAtWidths(command, invocation, path, width, width)
 }
@@ -69,10 +77,7 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	if path == "" {
 		usage = "Use the OpenAI API from your terminal."
 	}
-	content, supplied := command.Metadata["help-content"].(Content)
-	if !supplied {
-		content = Content{Description: command.Description, Examples: examples[path]}
-	}
+	content, supplied := commandContent(command, path)
 	if flag := requestedHelpFlag(command); flag != nil {
 		if content.InheritedFlagHelp == nil || slices.Contains(command.Flags, flag) {
 			return flagList(command, []cli.Flag{flag}, width)

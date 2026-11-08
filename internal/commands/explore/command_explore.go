@@ -85,7 +85,8 @@ var taskPhrases = map[string][]commandsuggest.TaskPhrase{
 }
 
 func exploreCandidates(root *cli.Command, native, bash, shell string) []commandsuggest.Candidate {
-	return commandsuggest.Catalog(root, native, taskPhrases, clihelp.VisibleCommands, func(command *cli.Command, path string) []commandsuggest.Candidate {
+	help := commandsuggest.CatalogHelp{Command: clihelp.SearchCommandText, Flag: clihelp.SearchFlagText}
+	return commandsuggest.Catalog(root, native, taskPhrases, help, clihelp.VisibleCommands, func(command *cli.Command, path string) []commandsuggest.Candidate {
 		// Search examples describe queries, not additional destinations.
 		if path == "explore" {
 			return nil

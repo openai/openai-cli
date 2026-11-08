@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.51.5](https://github.com/openai/openai-cli/compare/v1.51.4...v1.51.5) (2026-11-07)
+
+
+### Documentation
+
+* consolidate AGENTS.md guidance ([#731](https://github.com/openai/openai-cli/issues/731)) ([f51f83a](https://github.com/openai/openai-cli/commit/f51f83acc6f30549c51cecc2a833b14657c64809))
+
 ## [1.51.4](https://github.com/openai/openai-cli/compare/v1.51.3...v1.51.4) (2026-11-06)
 
 
