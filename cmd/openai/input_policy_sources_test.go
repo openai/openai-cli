@@ -132,18 +132,19 @@ func TestMainInputPolicyConflictPrecedesSources(t *testing.T) {
 		for _, structuredFirst := range []bool{false, true} {
 			for _, source := range []string{"inline", "missing file", "stdin"} {
 				t.Run(mode+"/"+source+"/structured-first="+map[bool]string{false: "false", true: "true"}[structuredFirst], func(t *testing.T) {
-					operand := `["value"]`
+					text, structured := "second", `["first"]`
 					var stdin *os.File
 					switch source {
 					case "missing file":
-						operand = "@" + filepath.Join(t.TempDir(), "synthetic-private-missing.txt")
+						text = "@" + filepath.Join(t.TempDir(), "synthetic-private-missing.txt")
+						structured = text
 					case "stdin":
-						operand = "@-"
+						text, structured = "@-", "@-"
 						stdin = shellFileInput(t, []byte(`{"input":"synthetic whole request"}`))
 					}
-					flags := []string{"--input", operand, "--input-structured", operand}
+					flags := []string{"--input", text, "--input-structured", structured}
 					if structuredFirst {
-						flags = []string{"--input-structured", operand, "--input", operand}
+						flags = []string{"--input-structured", structured, "--input", text}
 					}
 					args := append([]string{"responses", "create", "--model", "model_synthetic"}, flags...)
 					got := runShellFileCommand(t, server, stdin, []string{"OPENAI_CLI_INPUT_MODE=" + mode}, args...)
