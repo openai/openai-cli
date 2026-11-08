@@ -2,6 +2,7 @@ package requestflag
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 
@@ -54,12 +55,15 @@ func TestInputPolicyNullableReplacementDiscardsDeferredSource(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			flag := &Flag[*string]{Name: "instructions", BodyPath: "instructions", InputPolicy: InputPolicyTextStructured}
 			require.NoError(t, flag.setStructuredRaw("@-"))
+			require.ErrorContains(t, flag.setStructuredRaw("{}"), "incompatible value type")
 			require.NoError(t, flag.setStructuredRaw(value))
 			input, ok := flag.Get().(InputValue)
 			require.True(t, ok)
-			resolved, known, err := knownInput(input)
+			resolved, err := input.Resolve(func(string) (string, error) {
+				t.Fatal("a replaced scalar must not read its previous source")
+				return "", nil
+			}, nil)
 			require.NoError(t, err)
-			require.True(t, known, "a replaced scalar must not retain its previous source")
 			if value == "null" {
 				require.Equal(t, (*string)(nil), resolved)
 			} else {
@@ -77,11 +81,13 @@ func TestInputPolicyArrayRetainsDeferredPredecessor(t *testing.T) {
 		require.NoError(t, flag.setStructuredRaw("@-"))
 		require.NoError(t, flag.setStructuredRaw(`"next"`))
 		input := flag.Get().(InputValue)
-		_, known, err := knownInput(input)
+		var reads []string
+		_, err := input.Resolve(func(raw string) (string, error) {
+			reads = append(reads, raw)
+			return `"first"`, nil
+		}, nil)
 		require.NoError(t, err)
-		require.False(t, known, "array concatenation must retain its earlier source")
-		require.NotNil(t, input.Previous)
-		require.Equal(t, "@-", input.Previous.Raw)
+		require.Equal(t, []string{"@-"}, reads)
 	}
 }
 
@@ -104,6 +110,43 @@ func TestInputPolicyRepeatedStructuredArrays(t *testing.T) {
 			require.Equal(t, test.want, unwrappedInput(flag.Get()))
 		})
 	}
+}
+
+func TestDeferredInputValidationOrder(t *testing.T) {
+	var validations []int
+	flag := &Flag[[]any]{Name: "item", Validator: func(items []any) error {
+		validations = append(validations, len(items))
+		if len(items) == 3 {
+			return errors.New("rejected aggregate")
+		}
+		return nil
+	}}
+	for _, operand := range []string{`"first"`, "@second", `"third"`, "@unused"} {
+		require.NoError(t, flag.setStructuredRaw(operand))
+	}
+	require.Equal(t, []int{1}, validations)
+	var reads []string
+	_, err := flag.Get().(InputValue).Resolve(func(source string) (string, error) {
+		reads = append(reads, source)
+		return `"from source"`, nil
+	}, nil)
+	require.ErrorContains(t, err, "value failed validation")
+	require.Equal(t, []int{1, 2, 3}, validations)
+	require.Equal(t, []string{"@second"}, reads)
+}
+
+func TestDeferredInputRepeatedResolutionPreservesEarlierResult(t *testing.T) {
+	flag := &Flag[[]string]{Name: "item"}
+	for _, operand := range []string{"one", "two", "three", "@last"} {
+		require.NoError(t, flag.setStructuredRaw(operand))
+	}
+	input := flag.Get().(InputValue)
+	first, err := input.Resolve(func(string) (string, error) { return "four", nil }, nil)
+	require.NoError(t, err)
+	second, err := input.Resolve(func(string) (string, error) { return "other", nil }, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"one", "two", "three", "four"}, first)
+	require.Equal(t, []string{"one", "two", "three", "other"}, second)
 }
 
 func TestInputPolicyRepeatedNestedOperands(t *testing.T) {

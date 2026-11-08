@@ -14,9 +14,9 @@ type structuredTarget interface {
 	describeStructured(string)
 }
 
-// structuredOperand checks the adapter type without converting text to numbers
+// decodeStructuredOperand checks the adapter type without converting text to numbers
 // or numbers to text. The schema, not a Go interface, selects this entrypoint.
-func structuredOperand(raw string, typ reflect.Type, name string) (any, error) {
+func decodeStructuredOperand(raw string, typ reflect.Type, name string) (any, error) {
 	var value any
 	if err := UnmarshalYAMLOrJSON([]byte(raw), &value); err != nil {
 		return nil, structuredInputError(name, "expected JSON or YAML")
@@ -70,42 +70,6 @@ func inputAsType(value any, typ reflect.Type) (reflect.Value, error) {
 	return reflect.Value{}, fmt.Errorf("incompatible value type")
 }
 
-func newStructuredInput(raw, name string, typ reflect.Type) (InputValue, error) {
-	parse := func(text string) (any, error) { return structuredOperand(text, typ, name) }
-	value := InputValue{Option: "--" + name}
-	if strings.HasPrefix(raw, "@") || strings.HasPrefix(raw, "\\@") {
-		value.Raw, value.Parse = raw, parse
-		return value, nil
-	}
-	parsed, err := parse(raw)
-	if err != nil {
-		return value, err
-	}
-	value.Value = parsed
-	return value, nil
-}
-
-func knownInput(value InputValue) (any, bool, error) {
-	if value.Parse != nil {
-		return nil, false, nil
-	}
-	current := value.Value
-	var previous any
-	if value.Previous != nil {
-		var known bool
-		var err error
-		previous, known, err = knownInput(*value.Previous)
-		if !known || err != nil {
-			return nil, known, err
-		}
-	}
-	if value.Combine != nil {
-		result, err := value.Combine(previous, current)
-		return result, true, err
-	}
-	return current, true, nil
-}
-
 func (f *Flag[T]) setStructuredRaw(raw string) error {
 	if f.innerSet {
 		return fmt.Errorf("set --%s-structured before nested --%s flags", f.Name, f.Name)
@@ -113,46 +77,17 @@ func (f *Flag[T]) setStructuredRaw(raw string) error {
 	if f.IsSet() && !f.structured {
 		return fmt.Errorf("cannot combine --%s with --%s-structured", f.Name, f.Name)
 	}
-	input, err := newStructuredInput(raw, f.Name+"-structured", reflect.TypeFor[T]())
+	kind := reflect.TypeFor[T]().Kind()
+	var previous *InputValue
+	if kind == reflect.Interface || kind == reflect.Slice {
+		previous = f.structuredInput
+	}
+	input, err := structuredFlagInput(raw, f.Name+"-structured", f.Validator, true, previous)
 	if err != nil {
 		return err
 	}
-	if kind := reflect.TypeFor[T]().Kind(); kind == reflect.Interface || kind == reflect.Slice {
-		input.Previous = f.structuredInput
-	}
-	input.Combine = func(previous, current any) (any, error) {
-		result := current
-		if previous != nil {
-			prior := reflect.ValueOf(previous)
-			if prior.Kind() == reflect.Slice {
-				values, ok := previous.([]any)
-				if !ok {
-					values = make([]any, prior.Len(), prior.Len()+1)
-					for i := range prior.Len() {
-						values[i] = prior.Index(i).Interface()
-					}
-				}
-				result = append(values, current)
-			}
-		} else if reflect.TypeFor[T]().Kind() == reflect.Slice {
-			result = []any{current}
-		}
-		parsed, err := inputAsType(result, reflect.TypeFor[T]())
-		if err != nil {
-			return nil, structuredInputError(f.Name+"-structured", "incompatible value type")
-		}
-		if f.Validator != nil {
-			if err := f.Validator(inputTyped[T](parsed)); err != nil {
-				return nil, structuredInputError(f.Name+"-structured", "value failed validation")
-			}
-		}
-		return parsed.Interface(), nil
-	}
-	if known, ok, err := knownInput(input); err != nil {
-		return err
-	} else if ok {
-		input = InputValue{Value: known, Option: input.Option}
-		f.value = &cliValue[T]{inputTyped[T](reflect.ValueOf(known))}
+	if len(input.pending) == 0 {
+		f.value = &cliValue[T]{inputTyped[T](reflect.ValueOf(input.value))}
 	}
 	f.structuredInput = &input
 	f.structured = true
@@ -165,26 +100,9 @@ func (f *InnerFlag[T]) setStructuredRaw(raw string) error {
 	if f.literal {
 		return fmt.Errorf("cannot combine --%s with --%s-structured", f.Name, f.Name)
 	}
-	input, err := newStructuredInput(raw, f.Name+"-structured", reflect.TypeFor[T]())
+	input, err := structuredFlagInput(raw, f.Name+"-structured", f.Validator, false, nil)
 	if err != nil {
 		return err
-	}
-	input.Combine = func(_, value any) (any, error) {
-		parsed, err := inputAsType(value, reflect.TypeFor[T]())
-		if err != nil {
-			return nil, structuredInputError(f.Name+"-structured", "incompatible value type")
-		}
-		if f.Validator != nil {
-			if err := f.Validator(inputTyped[T](parsed)); err != nil {
-				return nil, structuredInputError(f.Name+"-structured", "value failed validation")
-			}
-		}
-		return parsed.Interface(), nil
-	}
-	if known, ok, err := knownInput(input); err != nil {
-		return err
-	} else if ok {
-		input = InputValue{Value: known, Option: input.Option}
 	}
 	if err := f.setInnerValue(input); err != nil {
 		return err

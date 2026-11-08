@@ -969,7 +969,7 @@ func (f *Flag[T]) SetInnerField(field string, val any) {
 	if settableInnerField, ok := f.value.(SettableInnerField); ok {
 		settableInnerField.SetInnerField(field, val)
 		if f.structuredInput != nil {
-			f.structuredInput.Value = f.value.Get()
+			f.structuredInput.value = f.value.Get()
 		}
 		f.hasBeenSet = true
 		f.innerSet = true

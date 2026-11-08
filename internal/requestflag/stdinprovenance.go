@@ -27,34 +27,41 @@ func innerFieldIsSet(inner HasOuterFlag) bool {
 	if !outer.IsSet() {
 		return false
 	}
-	field := inner.GetInnerField()
-	switch values := unwrappedInput(outer.Get()).(type) {
-	case map[string]any:
-		if len(values) == 0 {
-			return true
-		}
-		_, exists := values[field]
-		return exists
-	case []map[string]any:
-		if len(values) == 0 {
-			return true
-		}
-		_, exists := values[len(values)-1][field]
-		return exists
-	case []any:
-		if len(values) == 0 {
-			return true
-		}
-		last, ok := values[len(values)-1].(map[string]any)
-		if !ok {
-			return false
-		}
-		_, exists := last[field]
-		return exists
-	default:
-		// An explicit scalar outer value overrides all piped inner fields.
+	fields, acceptsPiped := pipedInnerFields(outer)
+	if !acceptsPiped {
 		return true
 	}
+	_, exists := fields[inner.GetInnerField()]
+	return exists
+}
+
+// ProtectPipedInnerValue marks only the field that just came from stdin, so
+// explicit siblings retain their own source handling.
+func ProtectPipedInnerValue(inner HasOuterFlag, protect func(any) any) {
+	fields, _ := pipedInnerFields(inner.GetOuterFlag())
+	key := inner.GetInnerField()
+	if value, exists := fields[key]; exists {
+		fields[key] = protect(value)
+	}
+}
+
+// A piped inner field targets the last object in an array. Explicit empty
+// containers and scalars suppress all piped fields.
+func pipedInnerFields(outer cli.Flag) (map[string]any, bool) {
+	switch value := unwrappedInput(outer.Get()).(type) {
+	case map[string]any:
+		return value, len(value) != 0
+	case []map[string]any:
+		if len(value) != 0 {
+			return value[len(value)-1], true
+		}
+	case []any:
+		if len(value) != 0 {
+			fields, _ := value[len(value)-1].(map[string]any)
+			return fields, true
+		}
+	}
+	return nil, false
 }
 
 func setFlagFromStdin(flag cli.Flag, value string, onSet func(cli.Flag)) error {

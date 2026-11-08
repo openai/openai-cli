@@ -24,19 +24,6 @@ const (
 
 const InputModeEnv = "OPENAI_CLI_INPUT_MODE"
 
-// InputValue retains explicit structured input until request preparation resolves
-// its source. Parsed strings must never be interpreted as another file source.
-type InputValue struct {
-	Raw      string
-	Value    any
-	Option   string
-	Parse    func(string) (any, error)
-	Previous *InputValue
-	Combine  func(previous, current any) (any, error)
-	// ResolveSources retains ordinary source handling for an explicitly supplied nested flag.
-	ResolveSources bool
-}
-
 type inputPolicyFlag interface {
 	cli.Flag
 	inputPolicy() InputPolicy
@@ -174,8 +161,8 @@ func literalArgument[T any](raw string) (T, error) {
 }
 
 func unwrappedInput(value any) any {
-	if input, ok := value.(InputValue); ok && input.Parse == nil && input.Previous == nil {
-		return input.Value
+	if input, ok := value.(InputValue); ok && len(input.pending) == 0 {
+		return input.value
 	}
 	return value
 }

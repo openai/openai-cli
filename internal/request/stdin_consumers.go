@@ -39,14 +39,9 @@ func stdinInputConsumers(value reflect.Value, structured bool) int {
 	}
 	if value.Type() == reflect.TypeFor[requestflag.InputValue]() {
 		input := value.Interface().(requestflag.InputValue)
-		count := 0
-		if input.Previous != nil {
-			count = stdinInputConsumers(reflect.ValueOf(*input.Previous), true)
-		}
-		if input.Parse != nil {
-			return count + stdinInputConsumers(reflect.ValueOf(input.Raw), false)
-		}
-		return count + stdinInputConsumers(reflect.ValueOf(input.Value), !input.ResolveSources)
+		return input.CountSources(func(value any, expandSources bool) int {
+			return stdinInputConsumers(reflect.ValueOf(value), !expandSources)
+		})
 	}
 	switch value.Kind() {
 	case reflect.Map:

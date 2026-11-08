@@ -107,14 +107,14 @@ func (f *InnerFlag[T]) setParsedValue(parsedValue T) error {
 		}
 	}
 	if _, protected := f.OuterFlag.Get().(InputValue); protected {
-		return f.setInnerValue(InputValue{Value: parsedValue, Option: "--" + f.Name, ResolveSources: true})
+		return f.setInnerValue(InputValue{value: parsedValue, option: f.Name, expandSources: true})
 	}
 	return f.setInnerValue(parsedValue)
 }
 
 func (f *InnerFlag[T]) setInnerValue(parsedValue any) error {
 	if f.OuterFlag.IsSet() {
-		if input, ok := f.OuterFlag.Get().(InputValue); ok && (input.Parse != nil || input.Previous != nil) {
+		if input, ok := f.OuterFlag.Get().(InputValue); ok && len(input.pending) != 0 {
 			return structuredInputError(f.Name, "cannot combine nested flags with a structured parent source")
 		}
 		v := reflect.ValueOf(unwrappedInput(f.OuterFlag.Get()))

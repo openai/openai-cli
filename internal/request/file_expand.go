@@ -68,46 +68,30 @@ func embedInputValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *OnceStdi
 	}
 	if v.Type() == reflect.TypeFor[requestflag.InputValue]() {
 		input := v.Interface().(requestflag.InputValue)
-		if input.Option != "" {
-			source.Option = input.Option
+		if option := input.Option(); option != "" {
+			source.Option = option
 		}
-		var previous any
-		if input.Previous != nil {
-			resolved, err := embedInputValue(reflect.ValueOf(*input.Previous), embedStyle, stdin, goos, source, true)
+		value, err := input.Resolve(func(raw string) (string, error) {
+			// Structured sources must resolve as text even in multipart requests.
+			text, err := embedInputValue(reflect.ValueOf(raw), EmbedText, stdin, goos, source, false)
 			if err != nil {
-				return reflect.Value{}, err
+				return "", err
 			}
-			previous = resolved.Interface()
-		}
-		value := input.Value
-		if input.Parse != nil {
-			// Structured sources always resolve as text, including multipart fields.
-			// Parsing never grants source semantics to strings within the result.
-			text, err := embedInputValue(reflect.ValueOf(input.Raw), EmbedText, stdin, goos, source, false)
+			return text.String(), nil
+		}, func(value any, expandSources bool) (any, error) {
+			resolved, err := embedInputValue(reflect.ValueOf(value), embedStyle, stdin, goos, source, !expandSources)
 			if err != nil {
-				return reflect.Value{}, err
+				return nil, err
 			}
-			value, err = input.Parse(text.String())
-			if err != nil {
-				return reflect.Value{}, err
-			}
-		}
-		protectStrings := input.Parse != nil || !input.ResolveSources
-		resolved, err := embedInputValue(reflect.ValueOf(value), embedStyle, stdin, goos, source, protectStrings)
+			return resolved.Interface(), nil
+		})
 		if err != nil {
 			return reflect.Value{}, err
 		}
-		if input.Combine != nil {
-			value, err := input.Combine(previous, resolved.Interface())
-			if err != nil {
-				return reflect.Value{}, err
-			}
-			if value == nil {
-				return reflect.Zero(reflect.TypeFor[any]()), nil
-			}
-			return reflect.ValueOf(value), nil
+		if value == nil {
+			return reflect.Zero(reflect.TypeFor[any]()), nil
 		}
-		return resolved, nil
+		return reflect.ValueOf(value), nil
 	}
 	// Nullable string flags use pointers. Expand their values just like ordinary
 	// strings, retaining nil as JSON null and leaving other pointer types alone.
