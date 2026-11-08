@@ -141,6 +141,28 @@ func TestStructuredInputPreservesExplicitNestedSources(t *testing.T) {
 	}
 }
 
+func TestProtectStdinValueCopiesStructuredNestedSources(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested.txt")
+	require.NoError(t, os.WriteFile(path, []byte("file contents"), 0600))
+	_, original := structuredTestCommand(t, nil, "--input-structured", "{}",
+		"--input.content", "@-", "--input.extra", "@"+path)
+
+	protected := ProtectStdinValue(original)
+	count, err := StdinConsumers(requestflag.RequestContents{Body: protected}, false)
+	require.NoError(t, err)
+	require.Zero(t, count)
+	got, err := EmbedFiles(protected, EmbedText, &OnceStdinReader{FailureReason: "protected input must not read stdin"})
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"content": "@-", "extra": "@" + path}, got)
+
+	count, err = StdinConsumers(requestflag.RequestContents{Body: original}, false)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	got, err = EmbedFiles(original, EmbedText, &OnceStdinReader{Reader: strings.NewReader("stdin contents")})
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"content": "stdin contents", "extra": "file contents"}, got)
+}
+
 func TestStructuredInputNestedSourcesPreserveLegacyAndUntrustedValues(t *testing.T) {
 	t.Setenv(UntrustedStdinEnv, "true")
 	command, _ := structuredTestCommand(t, nil, "--input-structured", `{"structured":"@-"}`, "--input.content", `\@-`)
