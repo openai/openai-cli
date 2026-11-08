@@ -8,6 +8,18 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+func TestUntypedCollectionLiteralFallback(t *testing.T) {
+	// YAML rejects content immediately after the document end marker.
+	const identifier = "...suffix"
+	scalar := &Flag[any]{Name: "value", InputPolicy: InputPolicyTyped}
+	require.Error(t, scalar.Set("value", identifier))
+
+	repeated := &Flag[[]any]{Name: "item", InputPolicy: InputPolicyTyped}
+	require.NoError(t, repeated.Set("item", identifier))
+	require.Error(t, repeated.Set("item", "{broken"))
+	require.Equal(t, []any{identifier}, repeated.Get())
+}
+
 func TestUntypedStdinKeepsTypesAndProvenance(t *testing.T) {
 	values := []any{"a: b", "null", `[{"x":1}]`, "@local-file", nil, true, float64(42), []any{"one", "two"}, map[string]any{"key": "value"}}
 	for _, value := range values {

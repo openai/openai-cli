@@ -703,12 +703,8 @@ func parseCLIArg[
 		} else {
 			var yamlValue T
 			err = UnmarshalYAMLOrJSON([]byte(value), &yamlValue)
-			if err == nil {
-				parsedValue = yamlValue
-			} else if allowAsLiteralString(value) {
-				parsedValue = value
-			} else {
-				parsedValue = nil
+			parsedValue = yamlValue
+			if err != nil && !allowAsLiteralString(value) {
 				err = fmt.Errorf("failed to parse as YAML: %w", err)
 			}
 		}
@@ -787,9 +783,11 @@ func (c *cliValue[T]) Set(value string) error {
 				if elemType.Kind() == reflect.Map && elemType.Key().Kind() == reflect.String {
 					singleElem, err = parseCLIArg[map[string]any](value)
 				} else {
-					// Elements of an explicitly typed array retain their existing
-					// structured YAML/JSON parsing behavior.
-					singleElem, err = parseUntypedCollectionElement(value)
+					singleElem, err = parseCLIArg[any](value)
+					// Repeated untyped flags also accept identifier-like text rejected by YAML.
+					if err != nil && allowAsLiteralString(value) {
+						singleElem, err = value, nil
+					}
 				}
 			}
 		}
@@ -821,25 +819,6 @@ func (c *cliValue[T]) Set(value string) error {
 	}
 
 	return nil
-}
-
-// parseUntypedCollectionElement preserves the established syntax for []any
-// flags, whose individual values are not themselves untyped union flags.
-func parseUntypedCollectionElement(value string) (any, error) {
-	if strings.HasPrefix(value, "@") {
-		return value, nil
-	}
-	var parsed any
-	if err := UnmarshalYAMLOrJSON([]byte(value), &parsed); err != nil {
-		if allowAsLiteralString(value) {
-			return value, nil
-		}
-		return nil, fmt.Errorf("failed to parse as YAML: %w", err)
-	}
-	if parsed == nil {
-		return (*struct{})(nil), nil
-	}
-	return parsed, nil
 }
 
 func (c *cliValue[T]) Get() any {
