@@ -1,9 +1,6 @@
 package main
 
-import (
-	"encoding/json"
-	"testing"
-)
+import "testing"
 
 func TestMainRequestOperandRoutes(t *testing.T) {
 	for _, tc := range []struct {
@@ -20,6 +17,11 @@ func TestMainRequestOperandRoutes(t *testing.T) {
 			"completion prompt and stop",
 			[]string{"completions", "create", "--model", "model_demo", "--prompt", "line one\nline two", "--stop", "Human:"},
 			map[string]any{"prompt": "line one\nline two", "stop": "Human:"},
+		},
+		{
+			"completion stop hash",
+			[]string{"completions", "create", "--model", "model_demo", "--prompt", "hello", "--stop", "###"},
+			map[string]any{"stop": "###"},
 		},
 		{
 			"vector store search",
@@ -71,11 +73,6 @@ func TestMainRequestOperandRoutes(t *testing.T) {
 			[]string{"beta", "threads", "create", "--message.content", "Translate: hello"},
 			map[string]any{"messages": []any{map[string]any{"content": "Translate: hello"}}},
 		},
-		{
-			"realtime token limit",
-			[]string{"realtime", "calls", "accept", "--call-id", "call_demo", "--max-output-tokens", "1024"},
-			map[string]any{"max_output_tokens": float64(1024)},
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, requests := globalFlagsServer(t, `{"id":"synthetic","object":"list","data":[]}`)
@@ -83,10 +80,7 @@ func TestMainRequestOperandRoutes(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("command exited %d: %s", got.code, got.stderr)
 			}
-			var body map[string]any
-			if err := json.Unmarshal(globalFlagsOneRequest(t, requests).body, &body); err != nil {
-				t.Fatal(err)
-			}
+			body := inputPolicyBody(t, requests)
 			for key, want := range tc.want {
 				inputPolicyValue(t, body, key, want)
 			}

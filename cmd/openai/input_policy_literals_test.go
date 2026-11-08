@@ -2,8 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -12,38 +10,21 @@ import (
 	"testing"
 )
 
-func inputPolicyServer(t *testing.T) (*httptest.Server, <-chan map[string]any) {
+func inputPolicyServer(t *testing.T) (*httptest.Server, <-chan globalFlagsRequest) {
 	t.Helper()
-	requests := make(chan map[string]any, 8)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("decode request: %v", err)
-		}
-		select {
-		case requests <- body:
-		default:
-			t.Error("unexpected extra request")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"resp_synthetic","object":"response","status":"completed","output":[]}`)
-	}))
-	t.Cleanup(server.Close)
-	return server, requests
+	return globalFlagsServer(t, `{"id":"resp_synthetic","object":"response","status":"completed","output":[]}`)
 }
 
-func inputPolicyBody(t *testing.T, requests <-chan map[string]any) map[string]any {
+func inputPolicyBody(t *testing.T, requests <-chan globalFlagsRequest) map[string]any {
 	t.Helper()
-	select {
-	case body := <-requests:
-		return body
-	default:
-		t.Fatal("command did not send a request")
-		return nil
+	var body map[string]any
+	if err := json.Unmarshal(globalFlagsOneRequest(t, requests).body, &body); err != nil {
+		t.Fatalf("decode request: %v", err)
 	}
+	return body
 }
 
-func inputPolicyNoRequest(t *testing.T, requests <-chan map[string]any) {
+func inputPolicyNoRequest(t *testing.T, requests <-chan globalFlagsRequest) {
 	t.Helper()
 	select {
 	case <-requests:
@@ -62,7 +43,11 @@ func inputPolicyValue(t *testing.T, body map[string]any, key string, want any) {
 
 func TestMainInputPolicyAmbiguousText(t *testing.T) {
 	server, requests := inputPolicyServer(t)
-	for _, value := range []string{"", " \t\n ", `"quoted text"`, "true", "~", "[]", "{}", "[unfinished", "line one\r\nline two\n"} {
+	for _, value := range []string{
+		"", " \t\n ", `"quoted text"`, "true", "~", "[]", "{}", "[unfinished", "line one\r\nline two\n",
+		"Translate: hello", "#1 priority", "line one\nline two", "  hello # world  ",
+		"null", "42", `[{"role":"user"}]`, "*Important*: read this",
+	} {
 		t.Run(value, func(t *testing.T) {
 			got := runShellFileCommand(t, server, nil, nil, "responses", "create", "--model", "model_synthetic", "--input", value)
 			if got.code != 0 || got.stderr != "" {
@@ -174,6 +159,7 @@ func TestMainInputPolicyRepeatedAndNestedOperands(t *testing.T) {
 		want any
 	}{
 		{"last literal", []string{"responses", "create", "--model", "model_synthetic", "--input", "first", "--input", "null"}, "input", "null"},
+		{"array then object", []string{"responses", "create", "--model", "model_synthetic", "--input-structured", `[{"role":"user","content":"first"}]`, "--input-structured", `{"role":"user","content":"second"}`}, "input", []any{map[string]any{"role": "user", "content": "first"}, map[string]any{"role": "user", "content": "second"}}},
 		{"last nullable literal", []string{"responses", "create", "--model", "model_synthetic", "--instructions", "first", "--instructions", "null"}, "instructions", "null"},
 		{"nested literal", []string{"beta", "threads", "runs", "create", "--thread-id", "thread_synthetic", "--assistant-id", "asst_synthetic", "--additional-message.role", "user", "--additional-message.content", "Translate: hello"}, "additional_messages", []any{map[string]any{"role": "user", "content": "Translate: hello"}}},
 		{"nested structured", []string{"beta:threads:runs", "create", "--thread-id", "thread_synthetic", "--assistant-id", "asst_synthetic", "--additional-message.role", "user", "--additional-message.content-structured", `[{"type":"text","text":"synthetic"}]`}, "additional_messages", []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": "synthetic"}}}}},

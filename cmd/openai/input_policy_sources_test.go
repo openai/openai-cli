@@ -37,6 +37,8 @@ func TestMainInputPolicyStructuredSources(t *testing.T) {
 		{"null", "null", nil},
 		{"JSON list", `["one","two"]`, []any{"one", "two"}},
 		{"YAML list", "- one\n- two\n", []any{"one", "two"}},
+		{"JSON message list", `[{"role":"user","content":"hello"}]`, []any{map[string]any{"role": "user", "content": "hello"}}},
+		{"YAML message list", "- role: user\n  content: hello", []any{map[string]any{"role": "user", "content": "hello"}}},
 		{"JSON object", `{"role":"user","content":"synthetic"}`, map[string]any{"role": "user", "content": "synthetic"}},
 		{"YAML object", "role: user\ncontent: synthetic\n", map[string]any{"role": "user", "content": "synthetic"}},
 	} {
@@ -109,6 +111,9 @@ func TestMainInputPolicyMalformedStructuredSources(t *testing.T) {
 				if got.code == 0 || got.stdout != "" || !strings.Contains(got.stderr, "input-structured") {
 					t.Fatalf("malformed source did not fail locally: %+v", got)
 				}
+				if source == "flag" && !strings.Contains(got.stderr, "Expected valid JSON or YAML") {
+					t.Fatalf("missing structured input guidance: %s", got.stderr)
+				}
 				if strings.Contains(got.stderr, "synthetic-private-invalid") || strings.Contains(got.stderr, "\x1b") || (source == "file" && strings.Contains(got.stderr, operand[1:])) {
 					t.Fatalf("diagnostic disclosed structured input: %q", got.stderr)
 				}
@@ -125,11 +130,14 @@ func TestMainInputPolicyConflictPrecedesSources(t *testing.T) {
 	server, requests := inputPolicyServer(t)
 	for _, mode := range []string{"literal", "legacy"} {
 		for _, structuredFirst := range []bool{false, true} {
-			for _, source := range []string{"missing file", "stdin"} {
+			for _, source := range []string{"inline", "missing file", "stdin"} {
 				t.Run(mode+"/"+source+"/structured-first="+map[bool]string{false: "false", true: "true"}[structuredFirst], func(t *testing.T) {
-					operand := "@" + filepath.Join(t.TempDir(), "synthetic-private-missing.txt")
+					operand := `["value"]`
 					var stdin *os.File
-					if source == "stdin" {
+					switch source {
+					case "missing file":
+						operand = "@" + filepath.Join(t.TempDir(), "synthetic-private-missing.txt")
+					case "stdin":
 						operand = "@-"
 						stdin = shellFileInput(t, []byte(`{"input":"synthetic whole request"}`))
 					}
