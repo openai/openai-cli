@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-cli/internal/output/listview"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -33,7 +34,13 @@ func registeredSDKPages(ctx context.Context, resource string, maximum int64, res
 		case "groups":
 			return ShowJSONIterator(client.Admin.Organization.Groups.ListAutoPaging(ctx, openai.AdminOrganizationGroupListParams{}), maximum, opts)
 		default:
-			return ShowJSONIterator(client.Files.ListAutoPaging(ctx, openai.FileListParams{Limit: openai.Int(2)}), maximum, opts)
+			files := client.Files.ListAutoPaging(ctx, openai.FileListParams{Limit: openai.Int(2)})
+			if resource == "decorated files" {
+				return ShowJSONIterator(struct {
+					jsonview.Iterator[openai.FileObject]
+				}{files}, maximum, opts)
+			}
+			return ShowJSONIterator(files, maximum, opts)
 		}
 	})
 }
@@ -85,6 +92,25 @@ func TestRegisteredListWaitsAndPreservesPageSize(t *testing.T) {
 			require.False(t, ok)
 		})
 	}
+}
+
+func TestDecoratedListIteratorWaitsBeforeTheNextRequest(t *testing.T) {
+	var cursors []string
+	pages := registeredSDKPages(t.Context(), "decorated files", -1, func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+		cursors = append(cursors, r.URL.Query().Get("after"))
+		return listResponse(r, fmt.Sprintf(`{"data":[{"id":"row_%d"}],"has_more":%t}`, len(cursors), len(cursors) == 1)), nil
+	})
+	displayed := 0
+	for page, err := range pages {
+		displayed++
+		require.NoError(t, err)
+		require.Len(t, cursors, displayed, "another request started before the current page was displayed")
+		require.Len(t, page.Items, 1)
+		require.Equal(t, fmt.Sprintf("row_%d", displayed), page.Items[0].Get("id").Str)
+		require.Equal(t, displayed == 1, page.More)
+	}
+	require.Equal(t, []string{"", "row_1"}, cursors)
+	require.Equal(t, 2, displayed)
 }
 
 func TestRegisteredListZeroRetainsRequestErrors(t *testing.T) {
@@ -306,6 +332,248 @@ func TestSeparatelyBoundPreparedListsCanBeConsumedInReverse(t *testing.T) {
 	require.NoError(t, ShowJSONIterator(containers, -1, opts))
 	require.Equal(t, []string{`{"id":"skill_other"}`, `{"id":"container_a"}`, `{"id":"container_b"}`}, strings.Fields(out.String()))
 	require.Equal(t, []string{"/v1/containers", "/v1/skills", "/v1/containers?after=container_a"}, requests)
+}
+
+func TestPreparedListReportsOnlyItsOwnContinuation(t *testing.T) {
+	for _, page := range []struct{ name, path, data string }{
+		{"empty row ID", "files", "[]"},
+		{"empty opaque", "organization/groups", "[]"},
+		{"same row, missing opaque cursor", "organization/groups", `[{"id":"same"}]`},
+	} {
+		for _, incomplete := range []int{0, 1} {
+			for _, tc := range []struct {
+				name    string
+				read    []int
+				maximum int64
+			}{
+				{"in order", []int{0, 1}, -1}, {"reversed", []int{1, 0}, -1},
+				{"first unused", []int{1}, -1}, {"second unused", []int{0}, -1},
+				{"capped", []int{1, 0}, 1},
+			} {
+				t.Run(fmt.Sprintf("%s/incomplete-%d/%s", page.name, incomplete, tc.name), func(t *testing.T) {
+					var requests []string
+					respond := func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+						requests = append(requests, r.URL.RequestURI())
+						if len(requests) > 2 {
+							return nil, errors.New("a page without a cursor triggered another request")
+						}
+						body := fmt.Sprintf(`{"data":%s,"has_more":%t}`, page.data, len(requests)-1 == incomplete)
+						return listResponse(r, body), nil
+					}
+					ctx := context.WithValue(t.Context(), registeredListKey{}, new(registeredList))
+					client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMaxRetries(0),
+						option.WithBaseURL("http://127.0.0.1:1/v1/"),
+						option.WithMiddleware(registeredListRequest, respond))
+					var output strings.Builder
+					opts := ShowJSONOpts{Context: ctx, Format: "jsonl", Stdout: &output}
+					var show [2]func() error
+					for i := range show {
+						if page.path == "files" {
+							source := PrepareListIterator(ctx, func(ctx context.Context) jsonview.Iterator[openai.FileObject] {
+								return client.Files.ListAutoPaging(ctx, openai.FileListParams{})
+							})
+							show[i] = func() error { return ShowJSONIterator(source, tc.maximum, opts) }
+						} else {
+							source := PrepareListIterator(ctx, func(ctx context.Context) jsonview.Iterator[openai.Group] {
+								return client.Admin.Organization.Groups.ListAutoPaging(ctx, openai.AdminOrganizationGroupListParams{})
+							})
+							show[i] = func() error { return ShowJSONIterator(source, tc.maximum, opts) }
+						}
+					}
+					// Both lists use the identical URL. Only their SDK iterators distinguish them.
+					wantRequests := []string{"/v1/" + page.path, "/v1/" + page.path}
+					require.Equal(t, wantRequests, requests)
+					containsRow := page.data != "[]"
+					for _, i := range tc.read {
+						err := show[i]()
+						if i == incomplete && !(containsRow && tc.maximum == 1) {
+							require.ErrorAs(t, err, new(*listview.PaginationError), "source %d", i)
+						} else {
+							require.NoError(t, err, "source %d", i)
+						}
+					}
+					wantRows := ""
+					if containsRow {
+						wantRows = strings.Repeat("{\"id\":\"same\"}\n", len(tc.read))
+					}
+					require.Equal(t, wantRows, output.String())
+					require.Equal(t, wantRequests, requests)
+				})
+			}
+		}
+	}
+}
+
+func TestUnboundPreparedListRequiresOwnershipAtAmbiguousEOF(t *testing.T) {
+	for _, tc := range []struct {
+		name, data string
+		more       bool
+		maximum    int64
+		ambiguous  bool
+	}{
+		{"empty incomplete", "[]", true, -1, true},
+		{"identical opaque rows", `[{"id":"same"}]`, true, -1, true},
+		{"exact row cap", `[{"id":"same"}]`, true, 1, false},
+		{"both empty and complete", "[]", false, -1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			respond := func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+				calls++
+				return listResponse(r, fmt.Sprintf(`{"data":%s,"has_more":%t}`, tc.data, tc.more && calls == 1)), nil
+			}
+			ctx := context.WithValue(t.Context(), registeredListKey{}, new(registeredList))
+			client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMaxRetries(0), option.WithMiddleware(registeredListRequest, respond))
+			first := client.Admin.Organization.Groups.ListAutoPaging(ctx, openai.AdminOrganizationGroupListParams{})
+			second := client.Admin.Organization.Groups.ListAutoPaging(ctx, openai.AdminOrganizationGroupListParams{})
+			var output strings.Builder
+			err := ShowJSONIterator(first, tc.maximum, ShowJSONOpts{Context: ctx, Format: "jsonl", Stdout: &output})
+			if tc.ambiguous {
+				require.ErrorContains(t, err, "PrepareListIterator")
+				require.False(t, errors.As(err, new(*listview.PaginationError)), "unbound sources cannot identify which response failed")
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, 2, calls)
+			require.Equal(t, tc.data != "[]", strings.Contains(output.String(), `"id":"same"`))
+			opts := ShowJSONOpts{Context: ctx, Format: "jsonl", Stdout: io.Discard}
+			if err := ShowJSONIterator(second, tc.maximum, opts); err != nil {
+				require.True(t, tc.ambiguous)
+				require.ErrorContains(t, err, "PrepareListIterator")
+			}
+			// Both previous readers have finished. The next first page has one owner.
+			third := client.Admin.Organization.Groups.ListAutoPaging(ctx, openai.AdminOrganizationGroupListParams{})
+			require.NoError(t, ShowJSONIterator(third, -1, opts))
+			require.Equal(t, 3, calls)
+		})
+	}
+}
+
+func TestConcurrentPreparedListsWaitForTerminalAdmission(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	var attempts, calls atomic.Int32
+	var admitted, premature atomic.Bool
+	bothPrepared, bothDispatched := make(chan struct{}), make(chan struct{})
+	firstDispatch := make(chan struct{})
+	enter := func(r *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+		if attempts.Add(1) == 2 {
+			close(bothPrepared)
+		}
+		select {
+		case <-bothPrepared:
+			return next(r)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	respond := func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+		if !admitted.Load() {
+			premature.Store(true)
+		}
+		switch calls.Add(1) {
+		case 1:
+			close(firstDispatch)
+		case 2:
+			close(bothDispatched)
+		}
+		select {
+		case <-bothDispatched:
+			body := fmt.Sprintf(`{"data":[{"id":%q}],"has_more":false}`, r.URL.Query().Get("fixture"))
+			return listResponse(r, body), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMaxRetries(0), option.WithMiddleware(enter, registeredListRequest, respond))
+	list := &registeredList{preparing: true}
+	next, stop := iter.Pull2(list.pages(ctx, func(ctx context.Context) error {
+		var sources [2]jsonview.Iterator[openai.FileObject]
+		var wg sync.WaitGroup
+		for i, id := range []string{"shown", "unused"} {
+			wg.Go(func() {
+				sources[i] = PrepareListIterator(ctx, func(ctx context.Context) *pagination.CursorPageAutoPager[openai.FileObject] {
+					return client.Files.ListAutoPaging(ctx, openai.FileListParams{}, option.WithQuery("fixture", id))
+				})
+			})
+		}
+		wg.Wait()
+		return ShowJSONIterator(sources[0], -1, ShowJSONOpts{Context: ctx})
+	}))
+	defer stop()
+	defer cancel()
+	page, err, ok := next()
+	require.True(t, ok)
+	require.NoError(t, err)
+	require.Empty(t, page.Items)
+	require.EqualValues(t, 2, attempts.Load())
+	// Both constructors have already reached the observer. Keep the viewer
+	// paused while the other constructor tries to dispatch its first request.
+	select {
+	case <-firstDispatch:
+		t.Fatal("a list request reached the transport before terminal admission")
+	case <-time.After(25 * time.Millisecond):
+	}
+	admitted.Store(true)
+	page, err, ok = next()
+	require.True(t, ok)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, calls.Load())
+	require.False(t, premature.Load())
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "shown", page.Items[0].Get("id").Str)
+	_, _, ok = next()
+	require.False(t, ok)
+}
+
+func TestPreparedListReadersKeepConcurrentContinuationsSeparate(t *testing.T) {
+	ctx := context.WithValue(t.Context(), registeredListKey{}, new(registeredList))
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var first, next atomic.Int32
+	both := make(chan struct{})
+	respond := func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+		after := r.URL.Query().Get("after")
+		if after == "" {
+			body := fmt.Sprintf(`{"data":[{"id":"file_%d"}],"has_more":true}`, first.Add(1))
+			return listResponse(r, body), nil
+		}
+		if next.Add(1) == 2 {
+			close(both)
+		}
+		select {
+		case <-both:
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		}
+		switch after {
+		case "file_1":
+			return listResponse(r, `{"data":[],"has_more":true}`), nil
+		case "file_2":
+			return listResponse(r, `{"data":[{"id":"file_final"}],"has_more":false}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected cursor %q", after)
+		}
+	}
+	client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMaxRetries(0), option.WithMiddleware(registeredListRequest, respond))
+	prepare := func(ctx context.Context) *pagination.CursorPageAutoPager[openai.FileObject] {
+		return client.Files.ListAutoPaging(ctx, openai.FileListParams{})
+	}
+	sources := []jsonview.Iterator[openai.FileObject]{PrepareListIterator(ctx, prepare), PrepareListIterator(ctx, prepare)}
+	require.EqualValues(t, 2, first.Load())
+	var wg sync.WaitGroup
+	var outputs [2]strings.Builder
+	var results [2]error
+	for i, source := range sources {
+		wg.Go(func() {
+			results[i] = ShowJSONIterator(source, -1, ShowJSONOpts{Context: ctx, Format: "jsonl", Stdout: &outputs[i]})
+		})
+	}
+	wg.Wait()
+	require.ErrorAs(t, results[0], new(*listview.PaginationError))
+	require.NoError(t, results[1])
+	require.Equal(t, []string{`{"id":"file_1"}`}, strings.Fields(outputs[0].String()))
+	require.Equal(t, []string{`{"id":"file_2"}`, `{"id":"file_final"}`}, strings.Fields(outputs[1].String()))
+	require.EqualValues(t, 2, next.Load())
 }
 
 func TestPreparedListIteratorsDoNotSharePages(t *testing.T) {

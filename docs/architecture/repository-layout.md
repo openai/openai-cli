@@ -58,6 +58,11 @@ Reserve `list`, `ls`, and `list-*` names and aliases for read-only list actions.
 Command assembly automatically selects the shared list viewer for those actions.
 Pass the command context through the standard response or iterator output path. Nested commands inherit the same interactive and piped behavior.
 
+Use `app.PrepareListIterator` for each SDK pager when an action prepares multiple lists or performs HTTP lookups before displaying them.
+Pass the callback context to that pager's `ListAutoPaging` call. Use the command context for unrelated HTTP lookups.
+Pass each returned iterator to `ShowJSONIterator` in the order you need to display it.
+Without this binding, the CLI returns an error when it cannot identify which pager owns a continuation.
+
 ## Compatibility and validation
 
 Preserve command paths and aliases, flags, defaults, environment variables,

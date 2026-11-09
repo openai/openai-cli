@@ -409,7 +409,7 @@ type hasRawJSON interface {
 // ShowJSONIterator displays an iterator of values to the user. Use itemsToDisplay = -1 for no limit.
 func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts) error {
 	if list := registeredListState(opts.Context); list != nil && opts.OutputKind != OutputStreamEvent {
-		iter = checkListPagination(iter, list)
+		iter = checkListPagination(iter, list, nil)
 		if list.yield != nil {
 			return collectListIterator(list, iter, itemsToDisplay, opts)
 		}

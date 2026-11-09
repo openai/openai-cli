@@ -2,10 +2,12 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"io"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-cli/internal/output/listview"
 	"github.com/openai/openai-go/v3/packages/pagination"
@@ -119,9 +121,83 @@ type listPageMetadata struct {
 }
 
 type listCursorHistory struct {
-	page        *listPageMetadata
-	seen        map[[sha256.Size]byte]bool
-	rowIDCursor bool
+	page               *listPageMetadata
+	seen               map[[sha256.Size]byte]bool
+	rowIDCursor        bool
+	reading            bool
+	overlap            bool
+	readNumber         uint64
+	requested          bool
+	accepted           bool
+	unboundMore        bool
+	unboundMissingFlag bool
+}
+
+type listCursorKey struct{ list *registeredList }
+
+// Generated actions prepare one immediate pager. If several responses arrive
+// without a binding, retain only the possible EOF conditions, never their order.
+type unboundListPages struct {
+	count       int
+	single      *listPageMetadata
+	more        bool
+	missingFlag bool
+}
+
+func (pages *unboundListPages) add(page *listPageMetadata) {
+	pages.count++
+	if pages.count == 1 {
+		pages.single = page
+	} else {
+		pages.single = nil
+	}
+	pages.more = pages.more || page.more
+	pages.missingFlag = pages.missingFlag || !page.hasMoreField
+}
+
+func (pages *unboundListPages) claim(history *listCursorHistory) {
+	history.page = pages.single
+	history.unboundMore = pages.more
+	history.unboundMissingFlag = pages.missingFlag
+	if pages.count <= 1 {
+		*pages = unboundListPages{}
+	} else {
+		pages.count--
+	}
+}
+
+// An SDK Next accepts at most one response; retries discard their bodies.
+// Additional successful responses can belong to separately prepared pagers.
+func (pages *unboundListPages) acceptDuringRead(history *listCursorHistory, page *listPageMetadata) {
+	if !history.accepted {
+		history.accepted = true
+		history.page = page
+		return
+	}
+	if first := history.page; first != nil {
+		history.unboundMore = history.unboundMore || first.more
+		history.unboundMissingFlag = history.unboundMissingFlag || !first.hasMoreField
+	}
+	history.unboundMore = history.unboundMore || page.more
+	history.unboundMissingFlag = history.unboundMissingFlag || !page.hasMoreField
+	history.page = nil
+	pages.count++
+	pages.single = nil
+	pages.more = pages.more || history.unboundMore
+	pages.missingFlag = pages.missingFlag || history.unboundMissingFlag
+}
+
+// PrepareListIterator binds one SDK pager to its HTTP requests before
+// ListAutoPaging fetches the first page. Compound actions use a separate call
+// for each pager and the callback's context only for that pager's constructor.
+func PrepareListIterator[T any, I jsonview.Iterator[T]](ctx context.Context, prepare func(context.Context) I) jsonview.Iterator[T] {
+	list := registeredListState(ctx)
+	if list == nil {
+		return prepare(ctx)
+	}
+	history := new(listCursorHistory)
+	source := prepare(context.WithValue(ctx, listCursorKey{list}, history))
+	return checkListPagination[T](source, list, history)
 }
 
 // SDK pagers can report EOF despite a promised continuation. Check EOF in
@@ -131,26 +207,34 @@ type listPageIterator[T any] struct {
 	jsonview.Iterator[T]
 	list       *registeredList
 	usesLastID bool
-	history    listCursorHistory
+	history    *listCursorHistory
+	bound      bool
+	hadItems   bool
 	err        error
 }
 
-func checkListPagination[T any](source jsonview.Iterator[T], list *registeredList) jsonview.Iterator[T] {
-	checked := &listPageIterator[T]{Iterator: source, list: list}
+func checkListPagination[T any](source jsonview.Iterator[T], list *registeredList, history *listCursorHistory) jsonview.Iterator[T] {
+	checked := &listPageIterator[T]{Iterator: source, list: list, history: history, bound: history != nil}
 	switch source.(type) {
-	case *pagination.CursorPageAutoPager[T]:
-		checked.history.rowIDCursor = true
+	case *listPageIterator[T], *pagination.PageAutoPager[T]:
+		return source
 	case *pagination.ConversationCursorPageAutoPager[T]:
 		checked.usesLastID = true
-	case *pagination.NextCursorPageAutoPager[T], *pagination.TokenPageAutoPager[T]:
+	case *pagination.CursorPageAutoPager[T], *pagination.NextCursorPageAutoPager[T], *pagination.TokenPageAutoPager[T]:
 	default:
-		return source
+		if !checked.bound {
+			return source
+		}
 	}
-	if source.Err() == nil {
-		list.mu.Lock()
-		checked.history.page, list.initial = list.initial, nil
-		list.mu.Unlock()
+	if !checked.bound {
+		checked.history = new(listCursorHistory)
+		if source.Err() == nil {
+			list.mu.Lock()
+			list.pending.claim(checked.history)
+			list.mu.Unlock()
+		}
 	}
+	_, checked.history.rowIDCursor = source.(*pagination.CursorPageAutoPager[T])
 	return checked
 }
 
@@ -159,16 +243,25 @@ func (it *listPageIterator[T]) Next() bool {
 	// iterator in the same command, including one with the same URL, starts fresh.
 	list := it.list
 	list.mu.Lock()
-	list.readers++
-	if list.readers == 1 {
-		list.history = &it.history
-	} else {
-		// Concurrent calls sharing a command context have no unique caller.
-		if list.history != nil {
-			list.history.page = nil
+	it.history.reading = true
+	if !it.bound {
+		it.history.readNumber++
+		it.history.requested, it.history.accepted, it.history.overlap = false, false, false
+		list.readers++
+		if list.readers == 1 {
+			list.history = it.history
+		} else {
+			// Unbound callers lack a source identity during concurrent reads.
+			it.history.overlap = true
+			it.history.unboundMore = true
+			if list.history != nil {
+				list.history.overlap = true
+				list.history.unboundMore = true
+				list.history.page = nil
+			}
+			it.history.page = nil
+			list.history = nil
 		}
-		it.history.page = nil
-		list.history, list.initial, list.ambiguous = nil, nil, true
 	}
 	list.mu.Unlock()
 
@@ -176,9 +269,13 @@ func (it *listPageIterator[T]) Next() bool {
 
 	list.mu.Lock()
 	defer list.mu.Unlock()
-	list.readers--
-	list.history = nil
+	it.history.reading = false
+	if !it.bound {
+		list.readers--
+		list.history = nil
+	}
 	if advanced {
+		it.hadItems = true
 		// A successful HTTP status alone does not establish that the SDK
 		// accepted the page. It may still retry the request.
 		if page := it.history.page; page != nil && !page.hadItems {
@@ -191,9 +288,18 @@ func (it *listPageIterator[T]) Next() bool {
 		return true
 	}
 	page := it.history.page
-	if page != nil && it.Iterator.Err() == nil &&
-		(page.more || it.usesLastID && !page.hasMoreField && page.hadItems) {
-		it.err = &listview.PaginationError{}
+	if it.Iterator.Err() == nil {
+		if page != nil && (page.more || it.usesLastID && !page.hasMoreField && page.hadItems) {
+			it.err = &listview.PaginationError{}
+		} else if page == nil && !it.bound {
+			// A row-ID pager with a row must ask for another page unless the
+			// current one is explicitly final. This proves EOF on a serial read.
+			provenFinal := it.history.rowIDCursor && it.hadItems && !it.history.requested && !it.history.overlap
+			couldContinue := it.history.unboundMore || it.usesLastID && it.hadItems && it.history.unboundMissingFlag
+			if it.history.overlap || !provenFinal && couldContinue {
+				it.err = &localcommands.LocalError{Message: "Cannot verify which prepared list owns the continuation. Use PrepareListIterator for each SDK pager. Output may be incomplete."}
+			}
+		}
 	}
 	return false
 }

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
@@ -112,18 +113,19 @@ type registeredList struct {
 	notice     string
 	fullLabels bool
 	yield      func(listview.Page, error) bool
-	stopped    bool
+	start      sync.Once
+	stopped    atomic.Bool
 	// Local iterators use the same screen capacity without sending an HTTP query.
 	pageSizeQuery string
 	pageSize      int
 	unknownTotal  bool
 	// SDK responses can arrive concurrently when an action prepares several lists.
-	mu           sync.Mutex
-	history      *listCursorHistory
-	readers      int
-	initial      *listPageMetadata
-	ambiguous    bool
-	receivedHTTP bool
+	mu         sync.Mutex
+	history    *listCursorHistory
+	displayed  *listCursorHistory
+	collecting bool
+	readers    int
+	pending    unboundListPages
 }
 
 func runRegisteredList(opts ShowJSONOpts, cmd *cli.Command, action cli.ActionFunc, pageMaximum int) error {
@@ -170,7 +172,9 @@ func runRegisteredList(opts ShowJSONOpts, cmd *cli.Command, action cli.ActionFun
 				if remaining := maximum - int64(loaded); remaining > 0 && remaining < int64(rows) {
 					rows = int(remaining)
 				}
+				source.mu.Lock()
 				source.pageSize = rows
+				source.mu.Unlock()
 			}
 			page, err, _ := next()
 			loaded += len(page.Items)
@@ -201,18 +205,20 @@ func (list *registeredList) pages(ctx context.Context, action func(context.Conte
 // The first yield hands the terminal to the viewer before HTTP dispatch or
 // local iteration. Subsequent yields carry actual pages.
 func (list *registeredList) beginOutput() bool {
-	if list.preparing {
-		list.preparing = false
-		list.stopped = !list.yield(listview.Page{}, nil)
-	}
-	return !list.stopped
+	list.start.Do(func() {
+		if list.preparing {
+			list.preparing = false
+			list.stopped.Store(!list.yield(listview.Page{}, nil))
+		}
+	})
+	return !list.stopped.Load()
 }
 
 func (list *registeredList) yieldPending() bool {
 	page := listview.Page{Items: list.rows, More: true}
 	list.rows = nil
-	list.stopped = !list.yield(page, nil)
-	return !list.stopped
+	list.stopped.Store(!list.yield(page, nil))
+	return !list.stopped.Load()
 }
 
 // Only the terminal renderer owns page delivery and deferred hints.
@@ -277,15 +283,28 @@ func registeredListRequest(request *http.Request, next option.MiddlewareNext) (*
 	key := sha256.Sum256([]byte(request.URL.RequestURI()))
 	query := request.URL.Query()
 	after := query["after"]
+	history, bound := request.Context().Value(listCursorKey{source}).(*listCursorHistory)
 	source.mu.Lock()
-	history := source.history
+	var readNumber uint64
+	if !bound {
+		history = source.history
+		if history != nil {
+			readNumber = history.readNumber
+			history.requested = true
+		}
+	}
+	// A forwarding iterator can hide the SDK type from the output writer.
+	// Its continuation still forms a boundary. A separate bound preparation
+	// has neither the displayed history nor an active Next call.
+	displaying := source.collecting && (history == source.displayed ||
+		source.displayed == nil && bound && history.reading)
 	stalled := history != nil && (history.seen[key] ||
 		history.rowIDCursor && len(after) != 0 && after[0] == "")
 	source.mu.Unlock()
 	if stalled {
 		return nil, &listview.PaginationError{}
 	}
-	if source.yield != nil && len(source.rows) > 0 && !source.yieldPending() {
+	if source.yield != nil && displaying && len(source.rows) > 0 && !source.yieldPending() {
 		return nil, context.Canceled
 	}
 	if err := request.Context().Err(); err != nil {
@@ -297,15 +316,13 @@ func registeredListRequest(request *http.Request, next option.MiddlewareNext) (*
 			metadata := &listPageMetadata{requestKey: key, hasMoreField: page.hasMoreField, more: page.more}
 			source.mu.Lock()
 			defer source.mu.Unlock()
-			source.receivedHTTP = true
-			if history != nil && source.history == history {
+			if bound {
 				history.page = metadata
-			} else if source.initial != nil || source.readers != 0 {
-				// The SDK does not expose its first response through the autopager.
-				// Prepared lists may be consumed in any order or left unused.
-				source.ambiguous, source.initial = true, nil
-			} else if !source.ambiguous {
-				source.initial = metadata
+			} else if history != nil && source.history == history && readNumber == history.readNumber {
+				source.pending.acceptDuringRead(history, metadata)
+			} else if source.readers == 0 || history != nil && (!history.reading || readNumber != history.readNumber) {
+				// A synchronous SDK continuation cannot finish after its Next returned.
+				source.pending.add(metadata)
 			}
 		}}
 	}
@@ -321,7 +338,10 @@ func boundListRequest(command *cli.Command) option.Middleware {
 			query := request.URL.Query()
 			if !query.Has(source.pageSizeQuery) {
 				request = request.Clone(request.Context())
-				query.Set(source.pageSizeQuery, strconv.Itoa(source.pageSize))
+				source.mu.Lock()
+				size := source.pageSize
+				source.mu.Unlock()
+				query.Set(source.pageSizeQuery, strconv.Itoa(size))
 				request.URL.RawQuery = query.Encode()
 			}
 		}
@@ -344,11 +364,22 @@ func collectListIterator[T any](list *registeredList, source jsonview.Iterator[T
 		Context: opts.Context, Transform: transformers.Identity, Limit: maximum,
 	})
 	list.mu.Lock()
-	local := !list.receivedHTTP
-	list.mu.Unlock()
+	previous, wasCollecting := list.displayed, list.collecting
+	list.displayed, list.collecting = nil, true
+	local := true
+	if pager, ok := source.(*listPageIterator[T]); ok {
+		list.displayed = pager.history
+		local = pager.history.page == nil
+	}
 	if local && list.pageSize == 0 {
 		list.pageSize = localListPageSize
 	}
+	list.mu.Unlock()
+	defer func() {
+		list.mu.Lock()
+		list.displayed, list.collecting = previous, wasCollecting
+		list.mu.Unlock()
+	}()
 	for rows.Next() {
 		if local && len(list.rows) >= list.pageSize && !list.yieldPending() {
 			return context.Canceled

@@ -13,6 +13,7 @@ import (
 	"github.com/openai/openai-cli/generated/commands"
 	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/app"
+	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
@@ -62,7 +63,17 @@ func TestNewListCommandProcess(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		rows := client.Containers.ListAutoPaging(ctx, openai.ContainerListParams{}, options...)
+		prepare := func(ctx context.Context) jsonview.Iterator[openai.ContainerListResponse] {
+			return client.Containers.ListAutoPaging(ctx, openai.ContainerListParams{}, options...)
+		}
+		var rows jsonview.Iterator[openai.ContainerListResponse]
+		if cmd.Name == "list-prepared" {
+			// This compound action prepares a second source but only displays the first.
+			rows = app.PrepareListIterator(ctx, prepare)
+			_ = app.PrepareListIterator(ctx, prepare)
+		} else {
+			rows = prepare(ctx)
+		}
 		maximum := int64(-1)
 		if cmd.IsSet("max-items") {
 			maximum = cmd.Value("max-items").(int64)
@@ -70,6 +81,7 @@ func TestNewListCommandProcess(t *testing.T) {
 		return app.ShowJSONIterator(rows, maximum, app.ShowJSONOpts{Context: ctx, OutputKind: app.OutputPageItem,
 			Format: cmd.Root().String("format"), ExplicitFormat: cmd.Root().IsSet("format")})
 	}
+	resource.Commands = append(resource.Commands, &cli.Command{Name: "list-prepared", Action: sdkList})
 	for _, spec := range []struct {
 		name   string
 		size   cli.Flag

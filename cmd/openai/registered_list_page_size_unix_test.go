@@ -108,6 +108,8 @@ func TestMainRegisteredListLookupKeepsPrimaryPagination(t *testing.T) {
 		{"lookup-jsonl", "list-limit", "jsonl", []string{broken}, false, nil, 1},
 		{"lookup-json", "list-limit", "json", []string{broken}, false, nil, 1},
 		{"single-list-control", "list-nullable", "jsonl", []string{broken}, false, nil, 1},
+		{"prepared-broken-primary", "list-prepared", "jsonl", []string{broken, last}, false, nil, 1},
+		{"prepared-broken-unused", "list-prepared", "jsonl", []string{last, broken}, false, []string{"container_b"}, 0},
 		{"complete", "list-limit", "jsonl", []string{first, last}, false, []string{"container_a", "container_b"}, 0},
 		{"capped", "list-limit", "jsonl", []string{first}, true, []string{"container_a"}, 0},
 	} {
@@ -126,7 +128,11 @@ func TestMainRegisteredListLookupKeepsPrimaryPagination(t *testing.T) {
 					w.WriteHeader(http.StatusBadRequest)
 					return
 				}
-				if n == 2 && r.URL.Query().Get("after") != "container_a" {
+				wantAfter := ""
+				if n == 2 && tc.verb != "list-prepared" {
+					wantAfter = "container_a"
+				}
+				if r.URL.Query().Get("after") != wantAfter {
 					t.Errorf("unexpected SDK continuation: %s", r.URL)
 				}
 				io.WriteString(w, tc.pages[n-1])
@@ -158,6 +164,9 @@ func TestMainRegisteredListLookupKeepsPrimaryPagination(t *testing.T) {
 			if tc.exit != 0 {
 				require.Contains(t, stderr.String(), "missing or repeated cursor")
 				require.NotContains(t, stdout.String(), "batch.completed")
+				if tc.format == "jsonl" {
+					require.Empty(t, stdout.String())
+				}
 				return
 			}
 			require.NoError(t, err)
