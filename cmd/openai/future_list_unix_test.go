@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -20,6 +22,8 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
+
+const rawLookupMetadata = `{"data":[],"has_more":true,"visible_to":"lookup_only"}`
 
 // Exercise normal command assembly with a resource unknown to the CLI.
 func TestNewListCommandProcess(t *testing.T) {
@@ -59,6 +63,16 @@ func TestNewListCommandProcess(t *testing.T) {
 				return err
 			}
 		}
+		if cmd.Name == "read-raw-lookup" {
+			// Read ordinary metadata from the same URL as the SDK pager.
+			var metadata json.RawMessage
+			if err := client.Get(ctx, "containers", nil, &metadata); err != nil {
+				return err
+			}
+			if string(metadata) != rawLookupMetadata {
+				return errors.New("raw lookup metadata changed")
+			}
+		}
 		options, err := app.FlagOptions(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, app.EmptyBody, false)
 		if err != nil {
 			return err
@@ -67,11 +81,14 @@ func TestNewListCommandProcess(t *testing.T) {
 			return client.Containers.ListAutoPaging(ctx, openai.ContainerListParams{}, options...)
 		}
 		var rows jsonview.Iterator[openai.ContainerListResponse]
-		if cmd.Name == "list-prepared" {
+		switch cmd.Name {
+		case "read-limit", "read-raw-lookup":
+			rows = app.PrepareListIterator(ctx, prepare)
+		case "list-prepared":
 			// This compound action prepares a second source but only displays the first.
 			rows = app.PrepareListIterator(ctx, prepare)
 			_ = app.PrepareListIterator(ctx, prepare)
-		} else {
+		default:
 			rows = prepare(ctx)
 		}
 		maximum := int64(-1)
@@ -88,6 +105,7 @@ func TestNewListCommandProcess(t *testing.T) {
 		paging cli.Flag
 	}{
 		{"limit", &requestflag.Flag[int64]{Name: "limit", QueryPath: "limit"}, &requestflag.Flag[int64]{Name: "max-items"}},
+		{"raw-lookup", &requestflag.Flag[int64]{Name: "limit", QueryPath: "limit"}, &requestflag.Flag[int64]{Name: "max-items"}},
 		{"nullable", &requestflag.Flag[*int64]{Name: "limit", QueryPath: "limit"}, &requestflag.Flag[int64]{Name: "max-items"}},
 		{"page-size", &requestflag.Flag[int64]{Name: "page-size", QueryPath: "page_size", Aliases: []string{"n"}}, &requestflag.Flag[string]{Name: "after", QueryPath: "after"}},
 		{"per-page", &requestflag.Flag[int64]{Name: "per-page", QueryPath: "per_page"}, &requestflag.Flag[string]{Name: "after", QueryPath: "after"}},

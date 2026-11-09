@@ -218,10 +218,42 @@ type listPageIterator[T any] struct {
 	err        error
 }
 
+// This unnamed struct can only forward the embedded methods. Named decorators
+// can override them and must receive the checked pager from PrepareListIterator.
+type forwardedListIterator[T any] = struct{ jsonview.Iterator[T] }
+
+func forwardedListSource[T any](source jsonview.Iterator[T]) jsonview.Iterator[T] {
+	var pointers map[*forwardedListIterator[T]]bool
+	for {
+		switch wrapped := source.(type) {
+		case forwardedListIterator[T]:
+			source = wrapped.Iterator
+		case *forwardedListIterator[T]:
+			if wrapped == nil || pointers[wrapped] {
+				return nil
+			}
+			if pointers == nil {
+				pointers = make(map[*forwardedListIterator[T]]bool)
+			}
+			pointers[wrapped] = true
+			source = wrapped.Iterator
+		default:
+			return source
+		}
+	}
+}
+
 func checkListPagination[T any](source jsonview.Iterator[T], list *registeredList, history *listCursorHistory) jsonview.Iterator[T] {
-	checked := &listPageIterator[T]{Iterator: source, list: list, history: history, bound: history != nil}
-	switch source.(type) {
-	case *listPageIterator[T], *pagination.PageAutoPager[T]:
+	underlying := forwardedListSource(source)
+	if underlying == nil {
+		return &listPageIterator[T]{list: list, history: new(listCursorHistory),
+			err: &localcommands.LocalError{Message: "The list iterator has an empty or cyclic forwarding source."}}
+	}
+	checked := &listPageIterator[T]{Iterator: underlying, list: list, history: history, bound: history != nil}
+	switch underlying.(type) {
+	case *listPageIterator[T]:
+		return underlying
+	case *pagination.PageAutoPager[T]:
 		return source
 	case *pagination.ConversationCursorPageAutoPager[T]:
 		checked.usesLastID = true
@@ -233,17 +265,20 @@ func checkListPagination[T any](source jsonview.Iterator[T], list *registeredLis
 	}
 	if !checked.bound {
 		checked.history = new(listCursorHistory)
-		if source.Err() == nil {
+		if underlying.Err() == nil {
 			list.mu.Lock()
 			list.pending.claim(checked.history)
 			list.mu.Unlock()
 		}
 	}
-	_, checked.history.rowIDCursor = source.(*pagination.CursorPageAutoPager[T])
+	_, checked.history.rowIDCursor = underlying.(*pagination.CursorPageAutoPager[T])
 	return checked
 }
 
 func (it *listPageIterator[T]) Next() bool {
+	if it.err != nil {
+		return false
+	}
 	// The SDK issues follow-up requests synchronously inside Next. A separate
 	// iterator in the same command, including one with the same URL, starts fresh.
 	list := it.list

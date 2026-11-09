@@ -60,8 +60,12 @@ Pass the command context through the standard response or iterator output path. 
 
 Use `app.PrepareListIterator` for each SDK pager when an action prepares multiple lists or performs HTTP lookups before displaying them.
 Pass the callback context to that pager's `ListAutoPaging` call. Use the command context for unrelated HTTP lookups.
-Pass each returned iterator to `ShowJSONIterator` in the order you need to display it.
+The action can display the resulting iterators in any order.
 Without this binding, the CLI returns an error when it cannot identify which pager owns a continuation.
+
+The transparent Go wrapper `struct{ jsonview.Iterator[T] }` preserves pagination checks.
+For a custom decorator, bind the concrete SDK pager with `PrepareListIterator` before wrapping it.
+Forward errors from the bound iterator and pass the decorated result to `ShowJSONIterator`.
 
 ## Compatibility and validation
 

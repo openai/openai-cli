@@ -159,6 +159,119 @@ func checkDecoratedFilesPages(t *testing.T, bound, more bool) {
 	require.Equal(t, len(wantCursors), displayed)
 }
 
+func TestForwardedFilesIteratorValidatesPagination(t *testing.T) {
+	const (
+		empty = `{"data":[],"has_more":true}`
+		row   = `{"data":[{"id":"a"}],"has_more":true}`
+	)
+	for _, tc := range []struct {
+		name    string
+		pages   []string
+		limit   int64
+		rows    string
+		invalid bool
+	}{
+		{"empty incomplete", []string{empty}, -1, "", true},
+		{"partial", []string{row, empty}, -1, "{\"id\":\"a\"}\n", true},
+		{"missing row ID", []string{`{"data":[{"filename":"partial"}],"has_more":true}`}, -1, "{\"filename\":\"partial\"}\n", true},
+		{"cursor cycle", []string{row, row}, -1, "{\"id\":\"a\"}\n{\"id\":\"a\"}\n", true},
+		{"exact cap", []string{row}, 1, "{\"id\":\"a\"}\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cursors []string
+			respond := func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+				cursors = append(cursors, r.URL.Query().Get("after"))
+				if len(cursors) > len(tc.pages) {
+					return nil, errors.New("unexpected extra request")
+				}
+				return listResponse(r, tc.pages[len(cursors)-1]), nil
+			}
+			ctx := context.WithValue(t.Context(), registeredListKey{}, new(registeredList))
+			client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMaxRetries(0),
+				option.WithMiddleware(registeredListRequest, respond))
+			files := client.Files.ListAutoPaging(ctx, openai.FileListParams{})
+			forwarded := struct {
+				jsonview.Iterator[openai.FileObject]
+			}{files}
+			var out strings.Builder
+			err := ShowJSONIterator(forwarded, tc.limit, ShowJSONOpts{Context: ctx, Format: "jsonl", Stdout: &out})
+			if tc.invalid {
+				require.ErrorAs(t, err, new(*listview.PaginationError))
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.rows, out.String())
+			require.Equal(t, []string{"", "a"}[:len(tc.pages)], cursors)
+		})
+	}
+}
+
+func TestForwardedLocalIteratorIgnoresUnrelatedHTTPPage(t *testing.T) {
+	const body = `{"data":[],"has_more":true}`
+	ctx := context.WithValue(t.Context(), registeredListKey{}, new(registeredList))
+	client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMiddleware(registeredListRequest,
+		func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+			return listResponse(r, body), nil
+		}))
+	var raw []byte
+	require.NoError(t, client.Get(ctx, "files", nil, &raw))
+	require.Equal(t, body, string(raw))
+
+	// Even the item type is identical to a Files pager. The wrapped source is local.
+	local := new(sliceIterator[openai.FileObject])
+	inner := struct {
+		jsonview.Iterator[openai.FileObject]
+	}{local}
+	outer := &struct {
+		jsonview.Iterator[openai.FileObject]
+	}{inner}
+	var out strings.Builder
+	opts := ShowJSONOpts{Context: ctx, Format: "jsonl", Stdout: &out}
+	require.NoError(t, ShowJSONIterator(outer, -1, opts))
+	require.Empty(t, out.String())
+
+	outer.Iterator = outer
+	require.ErrorContains(t, ShowJSONIterator(outer, -1, opts), "cyclic")
+}
+
+// Select the second File of each pair and project it to a string.
+type projectedFilePairs struct {
+	jsonview.Iterator[openai.FileObject]
+}
+
+func (p projectedFilePairs) Next() bool      { return p.Iterator.Next() && p.Iterator.Next() }
+func (p projectedFilePairs) Current() string { return "selected " + p.Iterator.Current().ID }
+func (p projectedFilePairs) Err() error {
+	if err := p.Iterator.Err(); err != nil {
+		return fmt.Errorf("file projection: %w", err)
+	}
+	return nil
+}
+
+func TestNamedDecoratorRetainsProjectionAndPaginationError(t *testing.T) {
+	ctx := context.WithValue(t.Context(), registeredListKey{}, new(registeredList))
+	var cursors []string
+	respond := func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+		cursor := r.URL.Query().Get("after")
+		cursors = append(cursors, cursor)
+		if cursor == "" {
+			return listResponse(r, `{"data":[{"id":"a"},{"id":"b"}],"has_more":true}`), nil
+		}
+		return listResponse(r, `{"data":[],"has_more":true}`), nil
+	}
+	client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMaxRetries(0),
+		option.WithMiddleware(registeredListRequest, respond))
+	files := PrepareListIterator(ctx, func(ctx context.Context) *pagination.CursorPageAutoPager[openai.FileObject] {
+		return client.Files.ListAutoPaging(ctx, openai.FileListParams{})
+	})
+	var out strings.Builder
+	err := ShowJSONIterator(projectedFilePairs{files}, -1, ShowJSONOpts{Context: ctx, Format: "jsonl", Stdout: &out})
+	require.ErrorAs(t, err, new(*listview.PaginationError))
+	require.ErrorContains(t, err, "file projection")
+	require.Equal(t, "\"selected b\"\n", out.String())
+	require.Equal(t, []string{"", "b"}, cursors)
+}
+
 func TestRegisteredListZeroRetainsRequestErrors(t *testing.T) {
 	failure := errors.New("synthetic first request failure")
 	calls := 0

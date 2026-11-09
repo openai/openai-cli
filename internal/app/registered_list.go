@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
-	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -242,35 +241,6 @@ func registeredListState(ctx context.Context) *registeredList {
 	return source
 }
 
-// Webhooks.EventTypes.List returns a single catalog and cannot supply an SDK
-// paginator. Other lookups can prepare a real iterator for later consumption.
-func webhookEventCatalogRequest(request *http.Request, command *cli.Command) bool {
-	const route = "webhook_event_types"
-	path := request.URL.EscapedPath()
-	if request.Method != http.MethodGet || request.URL.RawQuery != "" || !strings.HasSuffix(path, "/"+route) {
-		return false
-	}
-	var base string
-	if command != nil {
-		base = command.Root().String("base-url")
-	}
-	if base == "" {
-		base = os.Getenv("OPENAI_BASE_URL")
-	}
-	if base == "" {
-		base = "https://api.openai.com/v1"
-	}
-	endpoint, err := url.Parse(base)
-	if err != nil || request.URL.Scheme != endpoint.Scheme || !strings.EqualFold(request.URL.Host, endpoint.Host) {
-		return false
-	}
-	// The SDK resolves resource paths against the base as a directory.
-	if !strings.HasSuffix(endpoint.Path, "/") {
-		endpoint.Path += "/"
-	}
-	return path == endpoint.ResolveReference(&url.URL{Path: route}).EscapedPath()
-}
-
 func registeredListRequest(request *http.Request, next option.MiddlewareNext) (*http.Response, error) {
 	source := registeredListState(request.Context())
 	if source == nil {
@@ -278,9 +248,6 @@ func registeredListRequest(request *http.Request, next option.MiddlewareNext) (*
 	}
 	if source.yield != nil && !source.beginOutput() {
 		return nil, context.Canceled
-	}
-	if webhookEventCatalogRequest(request, source.command) {
-		return next(request)
 	}
 	// Fixed-size request fingerprints detect cycles of any length without
 	// retaining cursors, query parameters, or response records for pipes.

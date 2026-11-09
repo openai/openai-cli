@@ -90,13 +90,14 @@ func TestMainRegisteredListPageSizes(t *testing.T) {
 	}
 }
 
-// A static lookup and a primary SDK list can share one client.
+// Unrelated lookups and a primary SDK list can share the client and request URL.
 func TestMainRegisteredListLookupKeepsPrimaryPagination(t *testing.T) {
 	binary, err := os.Executable()
 	require.NoError(t, err)
 	const broken = `{"object":"list","data":[],"has_more":true}`
 	const first = `{"object":"list","data":[{"id":"container_a"}],"has_more":true}`
 	const last = `{"object":"list","data":[{"id":"container_b"}],"has_more":false}`
+	const basePath = "/tenant/custom-api"
 	for _, tc := range []struct {
 		name, verb, format string
 		pages              []string
@@ -107,6 +108,9 @@ func TestMainRegisteredListLookupKeepsPrimaryPagination(t *testing.T) {
 		{"lookup-default", "list-limit", "", []string{broken}, false, nil, 1},
 		{"lookup-jsonl", "list-limit", "jsonl", []string{broken}, false, nil, 1},
 		{"lookup-json", "list-limit", "json", []string{broken}, false, nil, 1},
+		{"raw-lookup-same-url", "list-raw-lookup", "jsonl", []string{broken}, false, nil, 1},
+		{"raw-lookup-complete", "list-raw-lookup", "jsonl", []string{first, last}, false, []string{"container_a", "container_b"}, 0},
+		{"raw-lookup-capped", "list-raw-lookup", "jsonl", []string{first}, true, []string{"container_a"}, 0},
 		{"single-list-control", "list-nullable", "jsonl", []string{broken}, false, nil, 1},
 		{"prepared-broken-primary", "list-prepared", "jsonl", []string{broken, last}, false, nil, 1},
 		{"prepared-broken-unused", "list-prepared", "jsonl", []string{last, broken}, false, []string{"container_b"}, 0},
@@ -117,13 +121,20 @@ func TestMainRegisteredListLookupKeepsPrimaryPagination(t *testing.T) {
 			var calls, lookups atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				if r.URL.Path == "/v1/webhook_event_types" {
+				if r.URL.Path == basePath+"/webhook_event_types" {
 					lookups.Add(1)
 					io.WriteString(w, `{"object":"list","data":["batch.completed"]}`)
 					return
 				}
+				if tc.verb == "list-raw-lookup" && r.URL.Path == basePath+"/containers" && lookups.CompareAndSwap(0, 1) {
+					if r.Method != http.MethodGet || r.URL.RawQuery != "" {
+						t.Errorf("raw lookup received collection options: %s %s", r.Method, r.URL)
+					}
+					io.WriteString(w, rawLookupMetadata)
+					return
+				}
 				n := int(calls.Add(1))
-				if r.URL.Path != "/v1/containers" || r.URL.Query().Has("limit") || n > len(tc.pages) {
+				if r.URL.Path != basePath+"/containers" || r.URL.Query().Has("limit") || n > len(tc.pages) {
 					t.Errorf("unexpected primary request %d: %s", n, r.URL)
 					w.WriteHeader(http.StatusBadRequest)
 					return
@@ -149,14 +160,14 @@ func TestMainRegisteredListLookupKeepsPrimaryPagination(t *testing.T) {
 			defer cancel()
 			child := exec.CommandContext(ctx, binary, args...)
 			child.Env = []string{"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "CI=1", "HOME=" + t.TempDir(),
-				"OPENAI_BASE_URL=" + server.URL + "/v1", "OPENAI_API_KEY=synthetic-widget-key", "NO_COLOR=1"}
+				"OPENAI_BASE_URL=" + server.URL + basePath, "OPENAI_API_KEY=synthetic-widget-key", "NO_COLOR=1"}
 			var stdout, stderr bytes.Buffer
 			child.Stdout, child.Stderr = &stdout, &stderr
 			err := child.Run()
 			require.NotNil(t, child.ProcessState, "start child process: %v", err)
 			require.Equal(t, tc.exit, child.ProcessState.ExitCode(), stderr.String())
 			require.EqualValues(t, len(tc.pages), calls.Load())
-			if tc.verb == "list-limit" {
+			if tc.verb == "list-limit" || tc.verb == "list-raw-lookup" {
 				require.EqualValues(t, 1, lookups.Load())
 			} else {
 				require.Zero(t, lookups.Load())
