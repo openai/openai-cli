@@ -408,8 +408,17 @@ type hasRawJSON interface {
 
 // ShowJSONIterator displays an iterator of values to the user. Use itemsToDisplay = -1 for no limit.
 func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts) error {
-	if list := currentRegisteredList(opts.Context); list != nil && opts.OutputKind != OutputStreamEvent {
-		return collectListIterator(list, iter, itemsToDisplay, opts)
+	if list := registeredListState(opts.Context); list != nil && opts.OutputKind != OutputStreamEvent {
+		source := checkListPagination(iter, list, nil)
+		if list.yield != nil {
+			return collectListIterator(list, source, itemsToDisplay, opts)
+		}
+		iter = source
+	}
+	// Specialized writers recognize concrete single-response and local iterators.
+	// Their presentation-only wrapper has no cursor checks to run outside the browser.
+	if pager, ok := iter.(*listPageIterator[T]); ok && pager.history == nil && pager.err == nil {
+		iter = pager.Iterator
 	}
 	route := transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}
 	if transformers.IsAgentsStream(route) {

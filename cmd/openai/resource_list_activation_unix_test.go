@@ -68,6 +68,34 @@ func TestMainResourceListActivationTerminal(t *testing.T) {
 	}
 }
 
+func TestMainFilesListSpaceWaitsAtAPIBoundaries(t *testing.T) {
+	runResourceListObserver(t, map[string]any{
+		"action": "page-boundaries", "mode": "normal", "home": t.TempDir(), "width": 110, "height": 9,
+		"args": []string{"openai", "files", "list", "--limit", "8"},
+	})
+}
+
+func TestMainFilesPagerSwitchesAtAPIBoundaries(t *testing.T) {
+	runResourceListObserver(t, map[string]any{
+		"action": "pager-boundaries", "mode": "normal", "home": t.TempDir(), "width": 101, "height": 27,
+		"args": []string{"openai", "files", "list", "--pager", "--limit", "25"},
+	})
+}
+
+func TestMainFilesPagerWaitsForVisibleRowAfterResize(t *testing.T) {
+	files := resourceListRoutes[0]
+	for _, flag := range []string{"--browse", "--pager"} {
+		t.Run(flag, func(t *testing.T) {
+			fixture := newResourceListFixture(t, files, "normal")
+			runResourceListObserver(t, map[string]any{
+				"endpoint": fixture.server.URL, "home": t.TempDir(), "args": resourceListArgs(files, flag),
+				"mode": "normal", "action": "pager-collapsed", "height": 1, "expected": 0,
+			})
+			fixture.assertCursors(t, files, 2)
+		})
+	}
+}
+
 func TestMainListStdinFlagOwnsTerminalInput(t *testing.T) {
 	files := resourceListRoutes[0]
 	files.args = []string{"files", "list", "--purpose", "@-", "--order", "asc"}

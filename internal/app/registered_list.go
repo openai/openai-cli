@@ -2,19 +2,23 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"iter"
 	"net/http"
+	"os"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
-	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/listview"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/packages/pagination"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -60,15 +64,9 @@ func registerListPager(command *cli.Command, parent, title, method string) {
 		return
 	}
 	markListPager(command)
-	// These resources already opened a pager before list tables were generalized.
-	browse := method == "list" && (parent == "files" || parent == "batches" || parent == "admin organization projects")
-	help := "Terminal output prints all requested rows and returns to the shell. Use --browse for an interactive preview."
-	if browse {
-		help = listview.ControlsHelp
-	}
-	command.Description = strings.TrimSpace(command.Description + "\n\n" + help)
+	command.Description = strings.TrimSpace(command.Description + "\n\n" + listview.ControlsHelp)
 	if content, ok := command.Metadata["help-content"].(clihelp.Content); ok {
-		content.Description = strings.TrimSpace(content.Description + "\n\n" + help)
+		content.Description = strings.TrimSpace(content.Description + "\n\n" + listview.ControlsHelp)
 		command.Metadata["help-content"] = content
 	}
 
@@ -84,13 +82,21 @@ func registerListPager(command *cli.Command, parent, title, method string) {
 			Format: cmd.Root().String("format"), Transform: cmd.Root().String("transform"), RawOutput: cmd.Root().Bool("raw-output"),
 		}
 		// Generated limits use int64. Handwritten commands may use cli.IntFlag.
-		if !InteractiveListOutput(opts) || cmd.IsSet("max-items") && fmt.Sprint(cmd.Value("max-items")) == "0" {
+		if cmd.IsSet("max-items") && fmt.Sprint(cmd.Value("max-items")) == "0" {
+			return next(ctx, cmd)
+		}
+		if !InteractiveListOutput(opts) {
+			// Generated iterators make their first request before reaching the
+			// output writer. Observe it without taking ownership of rendering.
+			if opts.Format != "raw" {
+				ctx = context.WithValue(ctx, registeredListKey{}, &registeredList{command: cmd})
+			}
 			return next(ctx, cmd)
 		}
 		opts.setDefaults()
-		return runRegisteredList(opts, func(ctx context.Context) error { return next(ctx, cmd) })
+		return runRegisteredList(opts, cmd, next, listPageMaximum(parent))
 	}
-	configureListBrowsing(command, browse)
+	configureListBrowsing(command)
 }
 
 type registeredListKey struct{}
@@ -99,21 +105,44 @@ type registeredListKey struct{}
 // decoded immediately before it makes its next request. This keeps cursor and
 // retry handling in the SDK, and querying the next page under keyboard control.
 type registeredList struct {
-	preparing   bool
-	rows        []gjson.Result
-	notice      string
-	fullLabels  bool
-	yield       func(listview.Page, error) bool
-	stopped     bool
-	seen        map[string]bool
-	page        *listPageContinuation
-	rowIDCursor bool
+	command    *cli.Command
+	preparing  bool
+	rows       []gjson.Result
+	notice     string
+	fullLabels bool
+	yield      func(listview.Page, error) bool
+	start      sync.Once
+	stopped    atomic.Bool
+	// Local iterators use the same screen capacity without sending an HTTP query.
+	pageSizeQuery string
+	pageSize      int
+	unknownTotal  bool
+	// SDK responses can arrive concurrently when an action prepares several lists.
+	mu      sync.Mutex
+	history *listCursorHistory
+	display *listCursorHistory
+	readers int
+	pending unboundListPages
 }
 
-func runRegisteredList(opts ShowJSONOpts, action func(context.Context) error) error {
+func runRegisteredList(opts ShowJSONOpts, cmd *cli.Command, action cli.ActionFunc, pageMaximum int) error {
 	ctx, cancel := context.WithCancel(opts.Context)
-	source := &registeredList{preparing: true}
-	next, stop := iter.Pull2(source.pages(ctx, action))
+	source := &registeredList{command: cmd, preparing: true}
+	flags := pageFlags(cmd)
+	var maximum int64
+	if flags.hasCap && cmd.IsSet("max-items") {
+		switch n := cmd.Value("max-items").(type) {
+		case int64:
+			maximum = n
+		case int:
+			maximum = int64(n)
+		}
+	}
+	browse := printedListFrom(opts.Context) == nil
+	if browse && flags.size != nil && !cmd.IsSet(flags.size.Names()[0]) {
+		source.pageSizeQuery = flags.size.GetQueryPath()
+	}
+	next, stop := iter.Pull2(source.pages(ctx, func(ctx context.Context) error { return action(ctx, cmd) }))
 	defer stop()
 	defer cancel()
 
@@ -125,8 +154,32 @@ func runRegisteredList(opts ShowJSONOpts, action func(context.Context) error) er
 	return runTerminalList(opts, func(opts ShowJSONOpts) error {
 		stopCancel := context.AfterFunc(opts.Context, cancel)
 		defer stopCancel()
-		return listview.Run(listViewerOptions(opts), func() (listview.Page, error) {
+		fromStart := !slices.ContainsFunc(flags.cursors, cmd.IsSet)
+		loaded := 0
+		view := listViewerOptions(opts)
+		return listview.Run(view, func() (listview.Page, error) {
+			if browse {
+				rows, err := listview.TerminalTableRows(opts.Stdout.(*os.File), view.Hint)
+				if err != nil {
+					return listview.Page{}, err
+				}
+				if source.pageSizeQuery != "" && pageMaximum > 0 {
+					rows = min(rows, pageMaximum)
+				}
+				if remaining := maximum - int64(loaded); remaining > 0 && remaining < int64(rows) {
+					rows = int(remaining)
+				}
+				source.mu.Lock()
+				source.pageSize = rows
+				source.mu.Unlock()
+			}
 			page, err, _ := next()
+			loaded += len(page.Items)
+			// A starting cursor, cap, or opaque response can hide the collection size.
+			if fromStart && !page.More && err == nil && !source.unknownTotal && page.Notice == "" &&
+				(maximum <= 0 || int64(loaded) < maximum) {
+				page.Total = loaded
+			}
 			return page, err
 		}, cancel)
 	})
@@ -135,7 +188,6 @@ func runRegisteredList(opts ShowJSONOpts, action func(context.Context) error) er
 func (list *registeredList) pages(ctx context.Context, action func(context.Context) error) iter.Seq2[listview.Page, error] {
 	return func(yield func(listview.Page, error) bool) {
 		list.yield = yield
-		list.seen = make(map[string]bool)
 		err := action(context.WithValue(ctx, registeredListKey{}, list))
 		if list.preparing && err != nil {
 			yield(listview.Page{}, err)
@@ -150,21 +202,32 @@ func (list *registeredList) pages(ctx context.Context, action func(context.Conte
 // The first yield hands the terminal to the viewer before HTTP dispatch or
 // local iteration. Subsequent yields carry actual pages.
 func (list *registeredList) beginOutput() bool {
-	if list.preparing {
-		list.preparing = false
-		list.stopped = !list.yield(listview.Page{}, nil)
-	}
-	return !list.stopped
+	list.start.Do(func() {
+		if list.preparing {
+			list.preparing = false
+			list.stopped.Store(!list.yield(listview.Page{}, nil))
+		}
+	})
+	return !list.stopped.Load()
 }
 
 func (list *registeredList) yieldPending() bool {
 	page := listview.Page{Items: list.rows, More: true}
 	list.rows = nil
-	list.stopped = !list.yield(page, nil)
-	return !list.stopped
+	list.stopped.Store(!list.yield(page, nil))
+	return !list.stopped.Load()
 }
 
+// Only the terminal renderer owns page delivery and deferred hints.
 func currentRegisteredList(ctx context.Context) *registeredList {
+	list := registeredListState(ctx)
+	if list != nil && list.yield != nil {
+		return list
+	}
+	return nil
+}
+
+func registeredListState(ctx context.Context) *registeredList {
 	if ctx == nil {
 		return nil
 	}
@@ -173,74 +236,129 @@ func currentRegisteredList(ctx context.Context) *registeredList {
 }
 
 func registeredListRequest(request *http.Request, next option.MiddlewareNext) (*http.Response, error) {
-	source := currentRegisteredList(request.Context())
+	source := registeredListState(request.Context())
 	if source == nil {
 		return next(request)
 	}
-	if !source.beginOutput() {
+	if source.yield != nil && !source.beginOutput() {
 		return nil, context.Canceled
 	}
-	key := request.URL.RequestURI()
-	if len(source.rows) > 0 {
-		// CursorPage derives "after" from the last row ID. Other SDK
-		// page types choose their own cursor independently of that query.
-		if source.seen[key] || source.rowIDCursor && request.URL.Query().Get("after") == "" {
-			return nil, &listview.PaginationError{}
+	// Fixed-size request fingerprints detect cycles of any length without
+	// retaining cursors, query parameters, or response records for pipes.
+	key := sha256.Sum256([]byte(request.URL.RequestURI()))
+	query := request.URL.Query()
+	after := query["after"]
+	history, bound := request.Context().Value(listCursorKey{source}).(*listCursorHistory)
+	source.mu.Lock()
+	var readNumber uint64
+	var differentRequest bool
+	if !bound {
+		history = source.history
+		if history != nil {
+			readNumber = history.readNumber
+			if history.requested {
+				// A retry repeats the same URL. Another URL during one SDK
+				// Next cannot be classified using this pager's cursor history.
+				differentRequest = history.readKey != key
+			} else {
+				history.readKey = key
+			}
+			history.requested = true
 		}
-		if !source.yieldPending() {
-			return nil, context.Canceled
+	}
+	// Only the displayed pager's continuation can yield its pending rows.
+	displaying := history != nil && history == source.display
+	stalled := history != nil && (history.seen[key] ||
+		history.rowIDCursor && len(after) != 0 && after[0] == "")
+	source.mu.Unlock()
+	if stalled {
+		if differentRequest {
+			return nil, listSourceOwnershipError()
 		}
+		return nil, &listview.PaginationError{}
+	}
+	if source.yield != nil && displaying && len(source.rows) > 0 && !source.yieldPending() {
+		return nil, context.Canceled
 	}
 	if err := request.Context().Err(); err != nil {
 		return nil, err
 	}
 	response, err := next(request)
-	if err == nil && response != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
-		source.seen[key] = true
-		if response.Body != nil {
-			source.page = &listPageContinuation{ReadCloser: response.Body}
-			response.Body = source.page
-		}
+	if err == nil && response != nil && response.Body != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+		response.Body = &listPageContinuation{ReadCloser: response.Body, accepted: func(page *listPageContinuation) {
+			metadata := &listPageMetadata{requestKey: key, hasMoreField: page.hasMoreField, more: page.more}
+			source.mu.Lock()
+			defer source.mu.Unlock()
+			if bound {
+				history.page = metadata
+			} else if history != nil && source.history == history && readNumber == history.readNumber {
+				source.pending.acceptDuringRead(history, metadata)
+			} else if source.readers == 0 || history != nil && (!history.reading || readNumber != history.readNumber) {
+				// A synchronous SDK continuation cannot finish after its Next returned.
+				source.pending.add(metadata)
+			}
+		}}
 	}
 	return response, err
+}
+
+// Apply an automatic size only to requests using the owning list's flags,
+// after the client's page boundary observer has yielded and fingerprinted the URL.
+func boundListRequest(command *cli.Command) option.Middleware {
+	return func(request *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+		source := registeredListState(request.Context())
+		if source != nil && source.command == command && source.pageSizeQuery != "" && request.Method == http.MethodGet {
+			query := request.URL.Query()
+			if !query.Has(source.pageSizeQuery) {
+				request = request.Clone(request.Context())
+				source.mu.Lock()
+				size := source.pageSize
+				source.mu.Unlock()
+				query.Set(source.pageSizeQuery, strconv.Itoa(size))
+				request.URL.RawQuery = query.Encode()
+			}
+		}
+		return next(request)
+	}
 }
 
 // Local iterators have no HTTP boundary. Backpressure keeps even an unlimited
 // producer responsive and lets quit stop it after at most one lookahead item.
 const localListPageSize = 32
 
-func collectListIterator[T any](list *registeredList, source jsonview.Iterator[T], maximum int64, opts ShowJSONOpts) error {
+func collectListIterator[T any](list *registeredList, source PreparedListIterator[T], maximum int64, opts ShowJSONOpts) error {
 	if !list.beginOutput() {
 		return context.Canceled
 	}
 	if maximum == 0 {
 		return source.Err()
 	}
-	_, list.rowIDCursor = source.(*pagination.CursorPageAutoPager[T])
 	rows := clioutput.NewIterator(source, clioutput.IteratorOptions{
 		Context: opts.Context, Transform: transformers.Identity, Limit: maximum,
 	})
-	remaining := maximum
+	history, loadedPage := source.listPageSource()
+	list.mu.Lock()
+	previous := list.display
+	list.display = history
+	if !loadedPage && list.pageSize == 0 {
+		list.pageSize = localListPageSize
+	}
+	list.mu.Unlock()
+	defer func() {
+		list.mu.Lock()
+		list.display = previous
+		list.mu.Unlock()
+	}()
 	for rows.Next() {
-		if len(list.seen) == 0 && len(list.rows) == localListPageSize && !list.yieldPending() {
+		if !loadedPage && len(list.rows) >= list.pageSize && !list.yieldPending() {
 			return context.Canceled
 		}
 		list.rows = append(list.rows, rows.Current().Result)
-		if remaining > 0 {
-			remaining--
-		}
 	}
-	if err := rows.Err(); err != nil {
-		return err
+	if rows.LimitReached() {
+		list.unknownTotal = true
 	}
-	// ConversationCursorPage uses last_id. Its SDK iterator also stops if
-	// that cursor is missing from a legacy response without has_more.
-	_, usesLastID := source.(*pagination.ConversationCursorPageAutoPager[T])
-	if remaining != 0 && list.page != nil &&
-		(list.page.more || usesLastID && !list.page.hasMoreField && len(list.rows) > 0) {
-		return &listview.PaginationError{}
-	}
-	return nil
+	return rows.Err()
 }
 
 func (list *registeredList) collectResponse(value gjson.Result, opts ShowJSONOpts) error {
@@ -251,6 +369,7 @@ func (list *registeredList) collectResponse(value gjson.Result, opts ShowJSONOpt
 		rows, notice, full, err := transformers.WebhookEventTypeRows(opts.Context, value)
 		list.rows = append(list.rows, rows...)
 		list.notice, list.fullLabels = notice, full
+		list.unknownTotal = list.unknownTotal || full
 		return err
 	}
 	if value.IsArray() {
@@ -290,6 +409,7 @@ func (list *registeredList) collectResponse(value gjson.Result, opts ShowJSONOpt
 		list.fullLabels = true
 		list.notice = "Showing the complete response."
 	}
+	list.unknownTotal = true
 	list.rows = append(list.rows, value)
 	return nil
 }

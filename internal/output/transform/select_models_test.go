@@ -39,7 +39,7 @@ func TestSelectModelsFiltersSortsThenLimits(t *testing.T) {
 		{"large_limit", ModelSelection{Pattern: pattern, Limit: math.MaxInt64}, []int{2, 3, 1}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			selected, supported, err := SelectModels(t.Context(), items, test.selection)
+			selected, _, supported, err := SelectModels(t.Context(), items, test.selection)
 			require.NoError(t, err)
 			require.True(t, supported)
 			require.Len(t, selected, len(test.indices))
@@ -64,7 +64,7 @@ func TestSelectModelsPreservesExactIdentityAndUnknownMetadata(t *testing.T) {
 		{ExactID: &id, Limit: -1},
 		{Pattern: regexp.MustCompile(`(?s)^synthetic\.\* 日本語 .*long-id-$`), Limit: -1},
 	} {
-		selected, supported, err := SelectModels(t.Context(), []gjson.Result{item}, selection)
+		selected, _, supported, err := SelectModels(t.Context(), []gjson.Result{item}, selection)
 		require.NoError(t, err)
 		require.True(t, supported)
 		require.Equal(t, []gjson.Result{item}, selected)
@@ -77,7 +77,7 @@ func TestSelectModelsPreservesExactIdentityAndUnknownMetadata(t *testing.T) {
 		{ExactID: &missing, Limit: -1},
 		{Pattern: regexp.MustCompile(`^nested$`), Limit: -1},
 	} {
-		selected, supported, err := SelectModels(t.Context(), []gjson.Result{item}, selection)
+		selected, _, supported, err := SelectModels(t.Context(), []gjson.Result{item}, selection)
 		require.NoError(t, err)
 		require.True(t, supported)
 		require.Empty(t, selected, "Filters match only the complete top-level ID.")
@@ -100,7 +100,7 @@ func TestSelectModelsRejectsMalformedIdentityBeforeFiltering(t *testing.T) {
 		t.Run(input, func(t *testing.T) {
 			items := []gjson.Result{valid, gjson.Parse(input), valid}
 			original := append([]gjson.Result(nil), items...)
-			selected, supported, err := SelectModels(t.Context(), items, selection)
+			selected, _, supported, err := SelectModels(t.Context(), items, selection)
 			require.NoError(t, err)
 			require.False(t, supported)
 			require.Nil(t, selected, "Do not hide malformed records through filtering or a result limit.")
@@ -110,14 +110,14 @@ func TestSelectModelsRejectsMalformedIdentityBeforeFiltering(t *testing.T) {
 }
 
 func TestSelectModelsEmptyAndCancellation(t *testing.T) {
-	selected, supported, err := SelectModels(t.Context(), nil, ModelSelection{Limit: -1})
+	selected, _, supported, err := SelectModels(t.Context(), nil, ModelSelection{Limit: -1})
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.Empty(t, selected)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	selected, supported, err = SelectModels(ctx, nil, ModelSelection{Limit: -1})
+	selected, _, supported, err = SelectModels(ctx, nil, ModelSelection{Limit: -1})
 	require.ErrorIs(t, err, context.Canceled)
 	require.False(t, supported)
 	require.Nil(t, selected)
@@ -129,7 +129,7 @@ func TestSelectModelsEmptyAndCancellation(t *testing.T) {
 	for _, after := range []int32{2, 3, 5, 9, 13, 14, 15, 16, 17} {
 		ctx, cancel := context.WithCancel(t.Context())
 		polls := &cancelSummaryContext{Context: ctx, cancel: cancel, after: after}
-		selected, supported, err := SelectModels(polls, items, ModelSelection{Limit: -1})
+		selected, _, supported, err := SelectModels(polls, items, ModelSelection{Limit: -1})
 		cancel()
 		require.ErrorIs(t, err, context.Canceled, "cancel after %d checks", after)
 		require.False(t, supported)

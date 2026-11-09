@@ -11,7 +11,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// Local pages bound terminal rendering without limiting the number of displayed models.
+// The Models API accepts up to 100 records per paginated request.
+// Print-only output also uses this size for local pages of a complete response.
 const modelListPageSize = 100
 
 // WriteList opens the pager for loaded terminal records, including short and empty results.
@@ -29,12 +30,15 @@ func WriteList[T any](iter *clioutput.Iterator[T], opts listview.Options, width,
 	if height > 0 && iter.Err() == nil {
 		ctx, cancel := context.WithCancel(opts.Context)
 		defer cancel()
-		pages, err := localModelPages(ctx, items)
+		pages, err := localModelPages(ctx, items, !opts.PrintOnly, iter.LimitReached())
 		if err != nil {
 			return err
 		}
 		if pages.size < len(items) {
-			total := len(items)
+			total := pages.total
+			if total == 0 {
+				total = -1
+			}
 			opts.RenderPage = func(page []gjson.Result, width int) (string, error) {
 				// localModelPages checked every model identity before splitting.
 				content, _, err := renderTable(ctx, page, width, diagnostics, opts.Style, total)
@@ -60,10 +64,19 @@ type modelPages struct {
 	fullLabels bool
 }
 
-func localModelPages(ctx context.Context, items []gjson.Result) (modelPages, error) {
+func localModelPages(ctx context.Context, items []gjson.Result, browse, limitReached bool) (modelPages, error) {
 	pages := modelPages{ctx: ctx, items: items, size: min(modelListPageSize, len(items)), total: len(items)}
+	if browse {
+		// The browser already has this entire response. Only an API boundary should stop a screen early.
+		pages.size = len(items)
+	}
 	options, _ := ctx.Value(modelsListOptionsKey{}).(modelsListOptions)
-	if !options.applied {
+	if options.applied {
+		pages.total = options.matches
+	} else {
+		if limitReached {
+			pages.total = 0 // The SDK iterator does not expose its complete response length.
+		}
 		sorted, supported, err := sortModelRecords(ctx, items)
 		if err != nil {
 			return pages, err
@@ -91,7 +104,7 @@ func (p *modelPages) next() (listview.Page, error) {
 // independently could show an ID twice and skip another when moving one row.
 func sortModelRecords(ctx context.Context, items []gjson.Result) ([]gjson.Result, bool, error) {
 	options, _ := ctx.Value(modelsListOptionsKey{}).(modelsListOptions)
-	sorted, supported, err := transformers.SelectModels(ctx, items, transformers.ModelSelection{
+	sorted, _, supported, err := transformers.SelectModels(ctx, items, transformers.ModelSelection{
 		Descending: options.selection.Descending, Limit: -1,
 	})
 	if err != nil || !supported {
