@@ -17,10 +17,20 @@ and `--max-items 0` writes nothing.
 
 ## Browsing a list
 
-In an interactive terminal, standard list commands start with one screen of results.
-For example, run `openai webhooks list` or `openai skills list` without extra flags.
+Standard list commands now browse by default when both input and output are terminals.
+In v1.51.5, only Files, Batches, Models, and organization Projects browsed by default.
+Other list commands, including `openai webhooks list` and `openai skills list`, printed all requested rows and returned.
 Use `--pager` to open the full-screen viewer immediately.
-Use `--browse=false` to print all requested rows and return without waiting for keys.
+
+This is a breaking change for terminal-attached scripts and shell chains.
+If more results remain, the list waits for keyboard input before the next command runs.
+Use `--browse=false` to print all requested rows into scrollback and continue automatically.
+
+```sh
+openai skills list --browse=false && echo "Skills listed"
+```
+
+Pipes, redirected output, and runs with a nonempty `CI` environment variable still paginate without keyboard input.
 
 The preview shows as many loaded rows as fit in your terminal. A wrapped record can use several lines.
 Complete results that fit return to the shell. Longer results show a footer, such as `Files 1–38`.
@@ -104,7 +114,6 @@ With `openai files list --format raw`, the CLI returns the first API page as rec
 Pipes and redirected files receive each item before the CLI requests more items.
 The CLI does not collect the entire list. The SDK still loads individual pages.
 Models sorting retains its existing single-response collection.
-For unattended shell commands with terminal output, use `--browse=false`. Pipes and redirected output already run without keyboard input.
 
 This changes `json` output at finite item boundaries, which previously emitted
 separate pretty-printed values. Migrate record consumers to `--format jsonl`.
