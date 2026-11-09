@@ -22,6 +22,7 @@ type imagePickerNativeTransfer struct {
 	index        int
 	inlineColumn int // Zero for the Konsole alternate screen.
 	expanded     bool
+	scrollOffset int
 	size         interactiveImageSize
 	keys         []string
 	placements   map[int]imagePickerNativeRow
@@ -42,6 +43,7 @@ func (w *imagePickerWorkspace) startNativeTransfer(ctx context.Context, parts, k
 	}
 	if inlineColumn != 0 {
 		transfer.size = interactiveImageSize{width: w.width, height: w.height}
+		transfer.scrollOffset = w.itermScrollOffset()
 	}
 	w.nativeTransfer = transfer
 	out, send := w.out, w.send

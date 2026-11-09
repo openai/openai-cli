@@ -94,9 +94,9 @@ func TestImagePickerNativeCacheEvictsOptionalRowsBeforeVisibleAdmission(t *testi
 	w.stageNativeRows(1, false, 32, []string{row})
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 	require.Contains(t, nativeCacheOutput(t, w), row)
-	_, present := w.nativeCache[imagePickerNativeRow{1, 0, 32, 1, false}]
+	_, present := w.nativeCache[imagePickerNativeRow{image: 1, row: 0, columns: 32, count: 1, expanded: false}]
 	require.True(t, present, "a row that fits alone must evict older optional payload")
-	_, present = w.nativeCache[imagePickerNativeRow{0, 0, 32, 40, false}]
+	_, present = w.nativeCache[imagePickerNativeRow{image: 0, row: 0, columns: 32, count: 40, expanded: false}]
 	require.False(t, present, "the offscreen payload must yield to the visible row")
 	requireNativeCacheBound(t, w)
 }
@@ -110,7 +110,7 @@ func TestImagePickerNativeCacheExactWireByteBoundary(t *testing.T) {
 				require.Len(t, row, imagePickerNativeCacheBytes+delta)
 				w := &imagePickerWorkspace{}
 				w.appendImage(imagePickerWorkspaceImage{columns: 32, rows: []string{row}})
-				_, admitted := w.nativeCache[imagePickerNativeRow{0, 0, 32, 1, false}]
+				_, admitted := w.nativeCache[imagePickerNativeRow{image: 0, row: 0, columns: 32, count: 1, expanded: false}]
 				require.Equal(t, delta <= 0, admitted)
 				require.Equal(t, 1, w.images[0].rowCount())
 				requireNativeCacheBound(t, w)
@@ -320,7 +320,7 @@ func TestImagePickerNativeCacheRejectsStaleAndOffscreenCompletions(t *testing.T)
 		{revision: 2, index: 1, inline: true, columns: 32, rows: []string{row}},
 	} {
 		p.updateWorkspace(result)
-		_, present := w.nativeCache[imagePickerNativeRow{1, 0, 32, 1, false}]
+		_, present := w.nativeCache[imagePickerNativeRow{image: 1, row: 0, columns: 32, count: 1, expanded: false}]
 		require.False(t, present)
 		requireNativeCacheBound(t, w)
 	}

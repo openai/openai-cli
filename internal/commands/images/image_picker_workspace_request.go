@@ -147,7 +147,9 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 			w.selected = len(w.images) - 1
 			w.galleryJump = true
 		}
-		w.stageNativeRows(len(w.images)-1, false, msg.columns, msg.rows)
+		if msg.itermBounds.Empty() {
+			w.stageNativeRows(len(w.images)-1, false, msg.columns, msg.rows)
+		}
 		draw(true)
 		return true, nil
 	case imagePickerExpandedRows:
@@ -158,6 +160,15 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		geometryCurrent := msg.size == w.previewSize && (msg.size.width == 0 || p.model != nil && msg.size.width == p.model.width && msg.size.height == p.model.height)
 		if msg.revision == w.previewRevision && geometryCurrent && msg.index >= 0 && msg.index < len(w.images) && (msg.inline || msg.index == w.selected) {
 			w.previewPending = false
+			if msg.placement.region.rows > 0 {
+				if len(msg.rows) == 1 {
+					w.nativeTransient = map[imagePickerNativeRow]string{msg.placement: msg.rows[0]}
+				} else {
+					w.invalidateITermImage(msg.index)
+				}
+				draw(false)
+				return true, nil
+			}
 			if msg.inline {
 				w.replaceImageRows(msg)
 				w.stageNativeRows(msg.index, false, msg.columns, msg.rows)

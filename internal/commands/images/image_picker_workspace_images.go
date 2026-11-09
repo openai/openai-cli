@@ -23,6 +23,7 @@ import (
 
 type imagePickerWorkspaceImage struct {
 	file                 imageoutput.SavedImage
+	itermBounds          image.Rectangle
 	nameOrdinal          int
 	protocol             string
 	rows                 []string
@@ -42,6 +43,7 @@ type imagePickerExpandedRows struct {
 	inline              bool
 	columns             int
 	viewportUnavailable bool
+	placement           imagePickerNativeRow
 }
 
 // FontError guarantees that no image glyphs were written and rollback succeeded.
@@ -128,7 +130,7 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 			row := ""
 			if native {
 				if columns <= max(1, m.width-6) {
-					row = w.nativeViewRow(imagePickerNativeRow{w.selected, offset + i, columns, count, expanded}, i+3)
+					row = w.nativeViewRow(imagePickerNativeRow{image: w.selected, row: offset + i, columns: columns, count: count, expanded: expanded}, i+3)
 				}
 			} else {
 				row = rows[offset+i]
@@ -209,7 +211,11 @@ func (p *imagePickerInline) prepareExpanded() {
 		// automatic-preview protocol, including disabled previews, unchanged.
 		entry.protocol = "iterm-konsole"
 	}
-	if w.previewPending && w.previewIndex == index && w.previewSize == size && w.previewExpanded == expanded && w.previewReload == reload && w.previewColumns == columns {
+	if w.previewPending && w.previewIndex == index && w.previewSize == size && w.previewExpanded == expanded && w.previewReload == reload && w.previewColumns == columns && w.previewRegion == missing {
+		return
+	}
+	if expanded && !cacheMiss && w.iterm && entry.protocol == "iterm" {
+		// Region layout owns both the expanded fit and the unavailable-file fallback.
 		return
 	}
 	if expanded && !cacheMiss && w.expandedIndex == w.selected && w.expandedSize == size && w.expandedRowCount() > 0 {
@@ -221,7 +227,7 @@ func (p *imagePickerInline) prepareExpanded() {
 	w.previewRevision++
 	revision := w.previewRevision
 	w.previewPending, w.previewIndex, w.previewSize, w.previewExpanded = true, index, size, expanded
-	w.previewReload, w.previewColumns = reload, columns
+	w.previewReload, w.previewColumns, w.previewRegion = reload, columns, missing
 	parent := w.context
 	if parent == nil {
 		parent = context.Background()
@@ -264,7 +270,9 @@ func (p *imagePickerInline) prepareExpanded() {
 		}
 		var prepared imagePickerExpandedRows
 		var failure error
-		if reload {
+		if missing.region.rows > 0 {
+			prepared, failure = prepareITermPlacement(ctx, entry, missing)
+		} else if reload {
 			prepared, failure = imagePickerPrepareReload(ctx, w.out, entry, columns, prepare)
 		} else {
 			prepared, failure = imagePickerPrepareResize(ctx, w.out, entry, size, expanded, prepare)
@@ -379,12 +387,24 @@ func (w *imagePickerWorkspace) appendImage(entry imagePickerWorkspaceImage) {
 	name := imagePickerLine(filepath.Base(entry.file.Path))
 	w.nameCounts[name]++
 	entry.nameOrdinal = w.nameCounts[name]
-	if imagePickerNativeRows(entry.rows) {
+	if !entry.itermBounds.Empty() {
+		if len(entry.rows) == 1 && entry.nativeRows > 0 {
+			key := imagePickerNativeRow{image: len(w.images), columns: entry.columns, count: entry.nativeRows, region: imagePickerRegion{rows: entry.nativeRows}}
+			w.nativeTransient = map[imagePickerNativeRow]string{key: entry.rows[0]}
+			if len(entry.rows[0]) <= imagePickerNativeCacheBytes-w.nativeBytes {
+				w.storeNativeRow(key, entry.rows[0])
+			}
+		}
+		entry.rows = nil
+	} else if imagePickerNativeRows(entry.rows) {
 		entry.nativeRows = len(entry.rows)
 		w.cacheNativeArrival(len(w.images), entry.columns, entry.rows)
 		entry.rows = nil
 	}
 	w.images = append(w.images, entry)
+	if !entry.itermBounds.Empty() && w.itermViewport.width > 0 {
+		w.fitITermImage(len(w.images)-1, w.itermViewport)
+	}
 	w.galleryRevision++
 }
 
@@ -633,6 +653,9 @@ func imagePickerPrepareResize(ctx context.Context, out *os.File, entry imagePick
 func (w *imagePickerWorkspace) inlineResizeIndex(size interactiveImageSize) int {
 	needs := func(i int) bool {
 		entry := &w.images[i]
+		if !entry.itermBounds.Empty() {
+			return false
+		}
 		if entry.unavailableSize != nil {
 			return *entry.unavailableSize != size
 		}
