@@ -236,16 +236,65 @@ func TestForwardedLocalIteratorIgnoresUnrelatedHTTPPage(t *testing.T) {
 
 // Select the second File of each pair and project it to a string.
 type projectedFilePairs struct {
-	jsonview.Iterator[openai.FileObject]
+	PreparedListIterator[openai.FileObject]
 }
 
-func (p projectedFilePairs) Next() bool      { return p.Iterator.Next() && p.Iterator.Next() }
-func (p projectedFilePairs) Current() string { return "selected " + p.Iterator.Current().ID }
+func (p projectedFilePairs) Next() bool {
+	return p.PreparedListIterator.Next() && p.PreparedListIterator.Next()
+}
+func (p projectedFilePairs) Current() string {
+	return "selected " + p.PreparedListIterator.Current().ID
+}
 func (p projectedFilePairs) Err() error {
-	if err := p.Iterator.Err(); err != nil {
+	if err := p.PreparedListIterator.Err(); err != nil {
 		return fmt.Errorf("file projection: %w", err)
 	}
 	return nil
+}
+
+func TestPreparedSinglePageRetainsModelSelection(t *testing.T) {
+	ctx := modelSelectionContext(t, "id=a", true, "id")
+	ctx = context.WithValue(ctx, registeredListKey{}, new(registeredList))
+	source := PrepareListIterator(ctx, func(context.Context) *pagination.PageAutoPager[openai.Model] {
+		pager, _ := staticModelIterator(t, `[{"object":"model","id":"b"},{"object":"model","id":"a"}]`, -1, nil)
+		return pager
+	})
+	var out strings.Builder
+	err := ShowJSONIterator(source, -1, ShowJSONOpts{Context: ctx, Operation: "(resource) models > (method) list",
+		OutputKind: OutputPageItem, Format: "json", Stdout: &out})
+	require.NoError(t, err)
+	require.JSONEq(t, `[{"object":"model","id":"a"}]`, out.String())
+}
+
+func TestNamedDecoratorRetainsLoadedPage(t *testing.T) {
+	var cursors []string
+	respond := func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+		cursors = append(cursors, r.URL.Query().Get("after"))
+		if len(cursors) == 1 {
+			return listResponse(r, `{"data":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"}],"has_more":true}`), nil
+		}
+		return listResponse(r, `{"data":[{"id":"e"},{"id":"f"}],"has_more":false}`), nil
+	}
+	client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMaxRetries(0), option.WithMiddleware(registeredListRequest, respond))
+	list := &registeredList{pageSize: 1}
+	next, stop := iter.Pull2(list.pages(t.Context(), func(ctx context.Context) error {
+		files := PrepareListIterator(ctx, func(ctx context.Context) *pagination.CursorPageAutoPager[openai.FileObject] {
+			return client.Files.ListAutoPaging(ctx, openai.FileListParams{})
+		})
+		return ShowJSONIterator(projectedFilePairs{files}, -1, ShowJSONOpts{Context: ctx})
+	}))
+	defer stop()
+	for i, want := range [][]string{{"selected b", "selected d"}, {"selected f"}} {
+		page, err, ok := next()
+		require.True(t, ok)
+		require.NoError(t, err)
+		require.Equal(t, []string{"", "d"}[:i+1], cursors)
+		require.Equal(t, i == 0, page.More)
+		require.Len(t, page.Items, len(want))
+		for j, item := range page.Items {
+			require.Equal(t, want[j], item.Str)
+		}
+	}
 }
 
 func TestNamedDecoratorRetainsProjectionAndPaginationError(t *testing.T) {

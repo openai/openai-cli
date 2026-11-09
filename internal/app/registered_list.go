@@ -15,7 +15,6 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
-	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/listview"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
@@ -102,11 +101,6 @@ func registerListPager(command *cli.Command, parent, title, method string) {
 
 type registeredListKey struct{}
 
-type listDisplay struct {
-	history *listCursorHistory
-	http    atomic.Bool
-}
-
 // The SDK hides page boundaries behind Next. Yield the records it has already
 // decoded immediately before it makes its next request. This keeps cursor and
 // retry handling in the SDK, and querying the next page under keyboard control.
@@ -126,7 +120,7 @@ type registeredList struct {
 	// SDK responses can arrive concurrently when an action prepares several lists.
 	mu      sync.Mutex
 	history *listCursorHistory
-	display *listDisplay
+	display *listCursorHistory
 	readers int
 	pending unboundListPages
 }
@@ -272,12 +266,8 @@ func registeredListRequest(request *http.Request, next option.MiddlewareNext) (*
 			history.requested = true
 		}
 	}
-	// A forwarding iterator can hide the SDK type from the output writer.
-	// Its continuation still forms a boundary. A separate bound preparation
-	// has neither the displayed history nor an active Next call.
-	display := source.display
-	displaying := display != nil && (history == display.history ||
-		display.history == nil && bound && history.reading)
+	// Only the displayed pager's continuation can yield its pending rows.
+	displaying := history != nil && history == source.display
 	stalled := history != nil && (history.seen[key] ||
 		history.rowIDCursor && len(after) != 0 && after[0] == "")
 	source.mu.Unlock()
@@ -336,7 +326,7 @@ func boundListRequest(command *cli.Command) option.Middleware {
 // producer responsive and lets quit stop it after at most one lookahead item.
 const localListPageSize = 32
 
-func collectListIterator[T any](list *registeredList, source jsonview.Iterator[T], maximum int64, opts ShowJSONOpts) error {
+func collectListIterator[T any](list *registeredList, source PreparedListIterator[T], maximum int64, opts ShowJSONOpts) error {
 	if !list.beginOutput() {
 		return context.Canceled
 	}
@@ -346,19 +336,11 @@ func collectListIterator[T any](list *registeredList, source jsonview.Iterator[T
 	rows := clioutput.NewIterator(source, clioutput.IteratorOptions{
 		Context: opts.Context, Transform: transformers.Identity, Limit: maximum,
 	})
+	history, loadedPage := source.listPageSource()
 	list.mu.Lock()
 	previous := list.display
-	display := new(listDisplay)
-	list.display = display
-	if pager, ok := source.(*listPageIterator[T]); ok {
-		display.history = pager.history
-		display.http.Store(pager.history.page != nil)
-	} else {
-		// A forwarding wrapper around a bare SDK pager still owns a fetched
-		// page. Explicitly bound preparations never enter this fallback.
-		display.http.Store(list.pending.single != nil)
-	}
-	if !display.http.Load() && list.pageSize == 0 {
+	list.display = history
+	if !loadedPage && list.pageSize == 0 {
 		list.pageSize = localListPageSize
 	}
 	list.mu.Unlock()
@@ -368,7 +350,7 @@ func collectListIterator[T any](list *registeredList, source jsonview.Iterator[T
 		list.mu.Unlock()
 	}()
 	for rows.Next() {
-		if !display.http.Load() && len(list.rows) >= list.pageSize && !list.yieldPending() {
+		if !loadedPage && len(list.rows) >= list.pageSize && !list.yieldPending() {
 			return context.Canceled
 		}
 		list.rows = append(list.rows, rows.Current().Result)

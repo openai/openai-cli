@@ -64,8 +64,10 @@ The action can display the resulting iterators in any order.
 Without this binding, the CLI returns an error when it cannot identify which pager owns a continuation.
 
 The transparent Go wrapper `struct{ jsonview.Iterator[T] }` preserves pagination checks.
-For a custom decorator, bind the concrete SDK pager with `PrepareListIterator` before wrapping it.
-Forward errors from the bound iterator and pass the decorated result to `ShowJSONIterator`.
+For a custom decorator, bind the concrete SDK pager with `PrepareListIterator`.
+Embed the returned `app.PreparedListIterator[T]` to retain the API page boundaries when overriding `Next` or `Current`.
+Forward its errors through `Err` and pass the decorated result to `ShowJSONIterator`.
+The viewer reads a local producer one screen at a time, including when the action performs unrelated HTTP lookups.
 
 ## Compatibility and validation
 

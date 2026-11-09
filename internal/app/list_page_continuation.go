@@ -192,17 +192,24 @@ func (pages *unboundListPages) acceptDuringRead(history *listCursorHistory, page
 	pages.missingFlag = pages.missingFlag || history.unboundMissingFlag
 }
 
+// PreparedListIterator carries the displayed pager's ownership through a named
+// decorator. Embed this interface when overriding Next, Current, or Err.
+type PreparedListIterator[T any] interface {
+	jsonview.Iterator[T]
+	listPageSource() (*listCursorHistory, bool)
+}
+
 // PrepareListIterator binds one SDK pager to its HTTP requests before
 // ListAutoPaging fetches the first page. Compound actions use a separate call
 // for each pager and the callback's context only for that pager's constructor.
-func PrepareListIterator[T any, I jsonview.Iterator[T]](ctx context.Context, prepare func(context.Context) I) jsonview.Iterator[T] {
+func PrepareListIterator[T any, I jsonview.Iterator[T]](ctx context.Context, prepare func(context.Context) I) PreparedListIterator[T] {
 	list := registeredListState(ctx)
-	if list == nil {
-		return prepare(ctx)
+	var history *listCursorHistory
+	if list != nil {
+		history = new(listCursorHistory)
+		ctx = context.WithValue(ctx, listCursorKey{list}, history)
 	}
-	history := new(listCursorHistory)
-	source := prepare(context.WithValue(ctx, listCursorKey{list}, history))
-	return checkListPagination[T](source, list, history)
+	return checkListPagination[T](prepare(ctx), list, history)
 }
 
 // SDK pagers can report EOF despite a promised continuation. Check EOF in
@@ -212,6 +219,7 @@ type listPageIterator[T any] struct {
 	jsonview.Iterator[T]
 	list       *registeredList
 	usesLastID bool
+	loadedPage bool
 	history    *listCursorHistory
 	bound      bool
 	hadItems   bool
@@ -243,51 +251,63 @@ func forwardedListSource[T any](source jsonview.Iterator[T]) jsonview.Iterator[T
 	}
 }
 
-func checkListPagination[T any](source jsonview.Iterator[T], list *registeredList, history *listCursorHistory) jsonview.Iterator[T] {
+func checkListPagination[T any](source jsonview.Iterator[T], list *registeredList, history *listCursorHistory) PreparedListIterator[T] {
 	underlying := forwardedListSource(source)
 	if underlying == nil {
 		return &listPageIterator[T]{list: list, history: new(listCursorHistory),
 			err: &localcommands.LocalError{Message: "The list iterator has an empty or cyclic forwarding source."}}
 	}
+	if prepared, ok := underlying.(PreparedListIterator[T]); ok {
+		return prepared
+	}
 	checked := &listPageIterator[T]{Iterator: underlying, list: list, history: history, bound: history != nil}
 	switch underlying.(type) {
-	case *listPageIterator[T]:
-		return underlying
 	case *pagination.PageAutoPager[T]:
-		return source
+		// This SDK pager already holds its only page and has no cursor to check.
+		checked.history = nil
+		checked.loadedPage = true
+		return checked
 	case *pagination.ConversationCursorPageAutoPager[T]:
 		checked.usesLastID = true
 	case *pagination.CursorPageAutoPager[T], *pagination.NextCursorPageAutoPager[T], *pagination.TokenPageAutoPager[T]:
 	default:
 		if !checked.bound {
-			return source
+			return checked
 		}
 	}
+	if list == nil {
+		return checked
+	}
+	list.mu.Lock()
+	defer list.mu.Unlock()
 	if !checked.bound {
 		checked.history = new(listCursorHistory)
 		if underlying.Err() == nil {
-			list.mu.Lock()
 			list.pending.claim(checked.history)
-			list.mu.Unlock()
 		}
 	}
+	// Without an observed SDK page the middleware cannot signal its end.
+	checked.loadedPage = checked.history.page != nil
 	_, checked.history.rowIDCursor = underlying.(*pagination.CursorPageAutoPager[T])
 	return checked
+}
+
+func (it *listPageIterator[T]) listPageSource() (*listCursorHistory, bool) {
+	return it.history, it.loadedPage
 }
 
 func (it *listPageIterator[T]) Next() bool {
 	if it.err != nil {
 		return false
 	}
+	if it.history == nil {
+		return it.Iterator.Next()
+	}
 	// The SDK issues follow-up requests synchronously inside Next. A separate
 	// iterator in the same command, including one with the same URL, starts fresh.
 	list := it.list
 	list.mu.Lock()
 	it.history.reading = true
-	if it.bound && it.history.page != nil && list.display != nil && list.display.history == nil {
-		// A forwarding iterator may hide the bound pager from ShowJSONIterator.
-		list.display.http.Store(true)
-	}
 	if !it.bound {
 		it.history.readNumber++
 		it.history.requested, it.history.accepted, it.history.overlap = false, false, false
