@@ -103,6 +103,11 @@ func registerListPager(command *cli.Command, parent, title, method string) {
 
 type registeredListKey struct{}
 
+type listDisplay struct {
+	history *listCursorHistory
+	http    atomic.Bool
+}
+
 // The SDK hides page boundaries behind Next. Yield the records it has already
 // decoded immediately before it makes its next request. This keeps cursor and
 // retry handling in the SDK, and querying the next page under keyboard control.
@@ -120,12 +125,11 @@ type registeredList struct {
 	pageSize      int
 	unknownTotal  bool
 	// SDK responses can arrive concurrently when an action prepares several lists.
-	mu         sync.Mutex
-	history    *listCursorHistory
-	displayed  *listCursorHistory
-	collecting bool
-	readers    int
-	pending    unboundListPages
+	mu      sync.Mutex
+	history *listCursorHistory
+	display *listDisplay
+	readers int
+	pending unboundListPages
 }
 
 func runRegisteredList(opts ShowJSONOpts, cmd *cli.Command, action cli.ActionFunc, pageMaximum int) error {
@@ -286,22 +290,34 @@ func registeredListRequest(request *http.Request, next option.MiddlewareNext) (*
 	history, bound := request.Context().Value(listCursorKey{source}).(*listCursorHistory)
 	source.mu.Lock()
 	var readNumber uint64
+	var differentRequest bool
 	if !bound {
 		history = source.history
 		if history != nil {
 			readNumber = history.readNumber
+			if history.requested {
+				// A retry repeats the same URL. Another URL during one SDK
+				// Next cannot be classified using this pager's cursor history.
+				differentRequest = history.readKey != key
+			} else {
+				history.readKey = key
+			}
 			history.requested = true
 		}
 	}
 	// A forwarding iterator can hide the SDK type from the output writer.
 	// Its continuation still forms a boundary. A separate bound preparation
 	// has neither the displayed history nor an active Next call.
-	displaying := source.collecting && (history == source.displayed ||
-		source.displayed == nil && bound && history.reading)
+	display := source.display
+	displaying := display != nil && (history == display.history ||
+		display.history == nil && bound && history.reading)
 	stalled := history != nil && (history.seen[key] ||
 		history.rowIDCursor && len(after) != 0 && after[0] == "")
 	source.mu.Unlock()
 	if stalled {
+		if differentRequest {
+			return nil, listSourceOwnershipError()
+		}
 		return nil, &listview.PaginationError{}
 	}
 	if source.yield != nil && displaying && len(source.rows) > 0 && !source.yieldPending() {
@@ -364,24 +380,28 @@ func collectListIterator[T any](list *registeredList, source jsonview.Iterator[T
 		Context: opts.Context, Transform: transformers.Identity, Limit: maximum,
 	})
 	list.mu.Lock()
-	previous, wasCollecting := list.displayed, list.collecting
-	list.displayed, list.collecting = nil, true
-	local := true
+	previous := list.display
+	display := new(listDisplay)
+	list.display = display
 	if pager, ok := source.(*listPageIterator[T]); ok {
-		list.displayed = pager.history
-		local = pager.history.page == nil
+		display.history = pager.history
+		display.http.Store(pager.history.page != nil)
+	} else {
+		// A forwarding wrapper around a bare SDK pager still owns a fetched
+		// page. Explicitly bound preparations never enter this fallback.
+		display.http.Store(list.pending.single != nil)
 	}
-	if local && list.pageSize == 0 {
+	if !display.http.Load() && list.pageSize == 0 {
 		list.pageSize = localListPageSize
 	}
 	list.mu.Unlock()
 	defer func() {
 		list.mu.Lock()
-		list.displayed, list.collecting = previous, wasCollecting
+		list.display = previous
 		list.mu.Unlock()
 	}()
 	for rows.Next() {
-		if local && len(list.rows) >= list.pageSize && !list.yieldPending() {
+		if !display.http.Load() && len(list.rows) >= list.pageSize && !list.yieldPending() {
 			return context.Canceled
 		}
 		list.rows = append(list.rows, rows.Current().Result)

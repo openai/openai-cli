@@ -34,13 +34,7 @@ func registeredSDKPages(ctx context.Context, resource string, maximum int64, res
 		case "groups":
 			return ShowJSONIterator(client.Admin.Organization.Groups.ListAutoPaging(ctx, openai.AdminOrganizationGroupListParams{}), maximum, opts)
 		default:
-			files := client.Files.ListAutoPaging(ctx, openai.FileListParams{Limit: openai.Int(2)})
-			if resource == "decorated files" {
-				return ShowJSONIterator(struct {
-					jsonview.Iterator[openai.FileObject]
-				}{files}, maximum, opts)
-			}
-			return ShowJSONIterator(files, maximum, opts)
+			return ShowJSONIterator(client.Files.ListAutoPaging(ctx, openai.FileListParams{Limit: openai.Int(2)}), maximum, opts)
 		}
 	})
 }
@@ -95,22 +89,74 @@ func TestRegisteredListWaitsAndPreservesPageSize(t *testing.T) {
 }
 
 func TestDecoratedListIteratorWaitsBeforeTheNextRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		bound, more bool
+	}{
+		{"single page", false, false}, {"two pages", false, true},
+		{"bound single page", true, false}, {"bound two pages", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) { checkDecoratedFilesPages(t, tc.bound, tc.more) })
+	}
+}
+
+func checkDecoratedFilesPages(t *testing.T, bound, more bool) {
+	t.Helper()
 	var cursors []string
-	pages := registeredSDKPages(t.Context(), "decorated files", -1, func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+	respond := func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
 		cursors = append(cursors, r.URL.Query().Get("after"))
-		return listResponse(r, fmt.Sprintf(`{"data":[{"id":"row_%d"}],"has_more":%t}`, len(cursors), len(cursors) == 1)), nil
+		switch len(cursors) {
+		case 1:
+			var rows []string
+			for i := 1; i <= 12; i++ {
+				rows = append(rows, fmt.Sprintf(`{"id":"row_%d"}`, i))
+			}
+			return listResponse(r, fmt.Sprintf(`{"data":[%s],"has_more":%t}`, strings.Join(rows, ","), more)), nil
+		case 2:
+			return listResponse(r, `{"data":[{"id":"row_13"}],"has_more":false}`), nil
+		default:
+			return nil, errors.New("request after the final Files page")
+		}
+	}
+	client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMaxRetries(0), option.WithMiddleware(registeredListRequest, respond))
+	list := &registeredList{pageSize: 6}
+	pages := list.pages(t.Context(), func(ctx context.Context) error {
+		prepare := func(ctx context.Context) *pagination.CursorPageAutoPager[openai.FileObject] {
+			return client.Files.ListAutoPaging(ctx, openai.FileListParams{Limit: openai.Int(12)})
+		}
+		var files jsonview.Iterator[openai.FileObject]
+		if bound {
+			files = PrepareListIterator(ctx, prepare)
+		} else {
+			files = prepare(ctx)
+		}
+		decorated := struct {
+			jsonview.Iterator[openai.FileObject]
+		}{files}
+		return ShowJSONIterator(decorated, -1, ShowJSONOpts{Context: ctx, OutputKind: OutputPageItem})
 	})
-	displayed := 0
+	displayed, row := 0, 0
 	for page, err := range pages {
 		displayed++
 		require.NoError(t, err)
 		require.Len(t, cursors, displayed, "another request started before the current page was displayed")
-		require.Len(t, page.Items, 1)
-		require.Equal(t, fmt.Sprintf("row_%d", displayed), page.Items[0].Get("id").Str)
-		require.Equal(t, displayed == 1, page.More)
+		size := 1
+		if displayed == 1 {
+			size = 12 // Inline output needs every loaded row, including rows below the screen.
+		}
+		require.Len(t, page.Items, size)
+		for _, item := range page.Items {
+			row++
+			require.Equal(t, fmt.Sprintf("row_%d", row), item.Get("id").Str)
+		}
+		require.Equal(t, displayed == 1 && more, page.More)
 	}
-	require.Equal(t, []string{"", "row_1"}, cursors)
-	require.Equal(t, 2, displayed)
+	wantCursors := []string{""}
+	if more {
+		wantCursors = append(wantCursors, "row_12")
+	}
+	require.Equal(t, wantCursors, cursors)
+	require.Equal(t, len(wantCursors), displayed)
 }
 
 func TestRegisteredListZeroRetainsRequestErrors(t *testing.T) {

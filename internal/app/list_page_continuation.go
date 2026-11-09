@@ -127,6 +127,7 @@ type listCursorHistory struct {
 	reading            bool
 	overlap            bool
 	readNumber         uint64
+	readKey            [sha256.Size]byte
 	requested          bool
 	accepted           bool
 	unboundMore        bool
@@ -134,6 +135,10 @@ type listCursorHistory struct {
 }
 
 type listCursorKey struct{ list *registeredList }
+
+func listSourceOwnershipError() error {
+	return &localcommands.LocalError{Message: "Cannot verify which prepared list owns the continuation. Use PrepareListIterator for each SDK pager. Output may be incomplete."}
+}
 
 // Generated actions prepare one immediate pager. If several responses arrive
 // without a binding, retain only the possible EOF conditions, never their order.
@@ -244,6 +249,10 @@ func (it *listPageIterator[T]) Next() bool {
 	list := it.list
 	list.mu.Lock()
 	it.history.reading = true
+	if it.bound && it.history.page != nil && list.display != nil && list.display.history == nil {
+		// A forwarding iterator may hide the bound pager from ShowJSONIterator.
+		list.display.http.Store(true)
+	}
 	if !it.bound {
 		it.history.readNumber++
 		it.history.requested, it.history.accepted, it.history.overlap = false, false, false
@@ -297,7 +306,7 @@ func (it *listPageIterator[T]) Next() bool {
 			provenFinal := it.history.rowIDCursor && it.hadItems && !it.history.requested && !it.history.overlap
 			couldContinue := it.history.unboundMore || it.usesLastID && it.hadItems && it.history.unboundMissingFlag
 			if it.history.overlap || !provenFinal && couldContinue {
-				it.err = &localcommands.LocalError{Message: "Cannot verify which prepared list owns the continuation. Use PrepareListIterator for each SDK pager. Output may be incomplete."}
+				it.err = listSourceOwnershipError()
 			}
 		}
 	}
