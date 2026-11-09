@@ -30,6 +30,8 @@ func TestMainListCommandsBrowseByDefault(t *testing.T) {
 func testConfiguredListCommands(t *testing.T, direct bool) {
 	t.Helper()
 	app.ConfigureCommand(commands.Command)
+	// Limit concurrent PTYs, CLI processes, and fixture servers on large hosts.
+	observerSlots := make(chan struct{}, 4)
 	count := 0
 	var walk func(*cli.Command, []string)
 	walk = func(parent *cli.Command, path []string) {
@@ -63,6 +65,9 @@ func testConfiguredListCommands(t *testing.T, direct bool) {
 					if direct {
 						args = append(args, "--pager")
 					}
+					t.Parallel()
+					observerSlots <- struct{}{}
+					t.Cleanup(func() { <-observerSlots })
 					testListPresentation(t, args, "discover", 0, 1, pageLimit)
 				})
 			}
