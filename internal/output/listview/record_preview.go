@@ -2,6 +2,7 @@ package listview
 
 import (
 	"io"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -21,7 +22,7 @@ type recordPreviewModel struct {
 
 func (p *recordPreviewModel) Init() tea.Cmd {
 	p.started = true
-	_, _ = io.WriteString(p.out, ansi.SaveCursor+ansi.SetModeAutoWrap+ansi.ResetModeTextCursorEnable+ansi.SetModeBracketedPaste)
+	_, _ = io.WriteString(p.out, ansi.ResetModeTextCursorEnable+ansi.SetModeBracketedPaste)
 	cmd := p.model.Init()
 	p.draw()
 	return cmd
@@ -49,14 +50,21 @@ func (p *recordPreviewModel) draw() {
 	if p.width == 1 {
 		frame = "\r" + ansi.EraseScreenBelow + "q\r"
 	}
-	_, _ = io.WriteString(p.out, frame)
+	// Restore the caller's rendition and autowrap before the next event.
+	// If this draw scrolled, clamping down to the frame's last row and
+	// back up lands on its new top. Keeping a saved screen coordinate
+	// across resizes would restore a stale row after terminal reflow.
+	position := ""
+	if extra := strings.Count(content, "\n"); extra > 0 && p.width > 1 {
+		position = ansi.CursorDown(extra) + ansi.CursorUp(extra)
+	}
+	_, _ = io.WriteString(p.out, ansi.SaveCursor+ansi.SetModeAutoWrap+frame+ansi.RestoreCursor+position+"\r")
 }
 
 func (p *recordPreviewModel) View() tea.View { return tea.NewView("") }
 
 func (p *recordPreviewModel) close() {
 	if p.started {
-		_, _ = io.WriteString(p.out, "\r"+ansi.EraseScreenBelow+ansi.RestoreCursor+
-			"\r"+ansi.ResetModeBracketedPaste+ansi.SetModeTextCursorEnable)
+		_, _ = io.WriteString(p.out, "\r"+ansi.EraseScreenBelow+ansi.ResetModeBracketedPaste+ansi.SetModeTextCursorEnable)
 	}
 }

@@ -21,6 +21,7 @@ func TestMainListNavigationNoninteractive(t *testing.T) {
 	}{
 		{"files", "/files", "file", []string{"files", "list"}},
 		{"batches", "/batches", "batch", []string{"batches", "list"}},
+		{"skills", "/skills", "skill", []string{"skills", "list"}},
 		{"projects", "/organization/projects", "organization.project", []string{"admin", "organization", "projects", "list"}},
 	} {
 		for _, mode := range []struct {

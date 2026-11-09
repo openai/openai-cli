@@ -8,12 +8,17 @@ import (
 	"iter"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/openai/openai-cli/internal/output/listview"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/pagination"
 	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v3"
 )
 
 // Exercise the three SDK cursor types used by list commands with synthetic responses.
@@ -178,6 +183,215 @@ func TestRegisteredListCancellationPreventsRequests(t *testing.T) {
 			require.True(t, ok)
 			require.ErrorIs(t, err, context.Canceled)
 			require.Equal(t, wantCalls, calls)
+		})
+	}
+}
+
+func TestListCursorChecksAllowSDKRetries(t *testing.T) {
+	for _, retryStatus := range []int{http.StatusServiceUnavailable, http.StatusOK} {
+		t.Run(http.StatusText(retryStatus), func(t *testing.T) {
+			var cursors []string
+			respond := func(request *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+				cursors = append(cursors, request.URL.Query().Get("after"))
+				switch len(cursors) {
+				case 1:
+					return listResponse(request, `{"data":[{"id":"one"}],"has_more":true}`), nil
+				case 2:
+					// The SDK can also retry a successful status when requested.
+					res := listResponse(request, `{"data":[{"id":"discarded"}],"has_more":false}`)
+					res.StatusCode = retryStatus
+					res.Header.Set("X-Should-Retry", "true")
+					res.Header.Set("Retry-After-Ms", "1")
+					return res, nil
+				case 3:
+					return listResponse(request, `{"data":[{"id":"two"}],"has_more":false}`), nil
+				default:
+					t.Fatalf("unexpected request %d", len(cursors))
+					return nil, nil
+				}
+			}
+			client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMaxRetries(1),
+				option.WithMiddleware(registeredListRequest, respond))
+			ctx := context.WithValue(t.Context(), registeredListKey{}, new(registeredList))
+			var out strings.Builder
+			err := ShowJSONIterator(client.Files.ListAutoPaging(ctx, openai.FileListParams{}), -1,
+				ShowJSONOpts{Context: ctx, OutputKind: OutputPageItem, Format: "json", Stdout: &out})
+			require.NoError(t, err)
+			require.JSONEq(t, `[{"id":"one"},{"id":"two"}]`, out.String())
+			require.Equal(t, []string{"", "one", "one"}, cursors)
+		})
+	}
+}
+
+func TestRegisteredListWithoutLimitFlagsStopsTokenCycle(t *testing.T) {
+	t.Setenv("CI", "1")
+	var queries []string
+	next := []string{"opaque/1 +", "opaque/2 +", "opaque/1 +"}
+	respond := func(request *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+		queries = append(queries, request.URL.Query().Get("page"))
+		if len(queries) > len(next) {
+			t.Fatalf("attempted repeated page %q", queries[len(queries)-1])
+		}
+		body := fmt.Sprintf(`{"data":[{"id":"row-%d"}],"has_more":true,"next":%q}`, len(queries), next[len(queries)-1])
+		return listResponse(request, body), nil
+	}
+	var out strings.Builder
+	// A new list action can use an SDK iterator without declaring either limit flag.
+	command := &cli.Command{Name: "list", Action: func(ctx context.Context, cmd *cli.Command) error {
+		options := append(GetDefaultRequestOptions(cmd), option.WithAPIKey("synthetic"),
+			option.WithMaxRetries(0), option.WithMiddleware(respond))
+		client := openai.NewClient(options...)
+		pages := client.Beta.Agents.Environments.Files.ListAutoPaging(ctx, "env_fake", openai.BetaAgentEnvironmentFileListParams{})
+		return ShowJSONIterator(pages, -1, ShowJSONOpts{Context: ctx, Format: "jsonl", Stdout: &out})
+	}}
+	root := &cli.Command{Name: "test", Commands: []*cli.Command{command}}
+	configureRegisteredLists(root)
+	err := root.Run(t.Context(), []string{"test", "list"})
+	require.ErrorAs(t, err, new(*listview.PaginationError))
+	require.Equal(t, []string{"", "opaque/1 +", "opaque/2 +"}, queries)
+	require.Contains(t, out.String(), "row-3")
+}
+
+func TestListCursorHistoryEndsWithItsIterator(t *testing.T) {
+	for _, firstLimit := range []int64{-1, 1} {
+		t.Run(fmt.Sprint(firstLimit), func(t *testing.T) {
+			calls := 0
+			respond := func(request *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+				calls++
+				// The first output can finish naturally or reach its item limit.
+				// In both cases the next list starts at the same URL and cursor.
+				more := calls == 1 && firstLimit == 1
+				return listResponse(request, fmt.Sprintf(`{"data":[{"id":"same"}],"has_more":%t}`, more)), nil
+			}
+			ctx := context.WithValue(t.Context(), registeredListKey{}, new(registeredList))
+			client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMaxRetries(0),
+				option.WithMiddleware(registeredListRequest, respond))
+			var out strings.Builder
+			for _, maximum := range []int64{firstLimit, -1} {
+				source := client.Files.ListAutoPaging(ctx, openai.FileListParams{})
+				err := ShowJSONIterator(source, maximum, ShowJSONOpts{Context: ctx, Format: "jsonl", Stdout: &out})
+				require.NoError(t, err)
+			}
+			require.Equal(t, 2, calls)
+			require.Equal(t, 2, strings.Count(out.String(), "same"))
+		})
+	}
+}
+
+func TestSeparatelyBoundPreparedListsCanBeConsumedInReverse(t *testing.T) {
+	owner, other := &cli.Command{Name: "containers"}, &cli.Command{Name: "skills"}
+	ctx := context.WithValue(t.Context(), registeredListKey{}, &registeredList{command: owner})
+	client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithBaseURL("http://127.0.0.1:1/v1/"),
+		option.WithMaxRetries(0), option.WithMiddleware(registeredListRequest))
+	var requests []string
+	respond := func(request *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+		path := request.URL.RequestURI()
+		requests = append(requests, path)
+		switch path {
+		case "/v1/containers":
+			return listResponse(request, `{"data":[{"id":"container_a"}],"has_more":true}`), nil
+		case "/v1/containers?after=container_a":
+			return listResponse(request, `{"data":[{"id":"container_b"}],"has_more":false}`), nil
+		case "/v1/skills":
+			return listResponse(request, `{"data":[{"id":"skill_other"}],"has_more":false}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected synthetic request: %s", path)
+		}
+	}
+	containers := client.Containers.ListAutoPaging(ctx, openai.ContainerListParams{}, option.WithMiddleware(boundListRequest(owner), respond))
+	skills := client.Skills.ListAutoPaging(ctx, openai.SkillListParams{}, option.WithMiddleware(boundListRequest(other), respond))
+	var out strings.Builder
+	opts := ShowJSONOpts{Context: ctx, Format: "jsonl", Stdout: &out}
+	require.NoError(t, ShowJSONIterator(skills, -1, opts))
+	require.NoError(t, ShowJSONIterator(containers, -1, opts))
+	require.Equal(t, []string{`{"id":"skill_other"}`, `{"id":"container_a"}`, `{"id":"container_b"}`}, strings.Fields(out.String()))
+	require.Equal(t, []string{"/v1/containers", "/v1/skills", "/v1/containers?after=container_a"}, requests)
+}
+
+func TestPreparedListIteratorsDoNotSharePages(t *testing.T) {
+	for _, tc := range []struct {
+		name                                  string
+		reverse, omitFiles, missing, parallel bool
+		skillLimit                            int64
+	}{
+		{name: "prepared", skillLimit: -1},
+		{name: "reverse", reverse: true, skillLimit: -1},
+		{name: "omitted", omitFiles: true, skillLimit: -1},
+		{name: "capped", reverse: true, skillLimit: 1},
+		{name: "missing cursor", missing: true, skillLimit: -1},
+		{name: "parallel preparation", reverse: true, parallel: true, skillLimit: -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			bothDispatched := make(chan struct{})
+			respond := func(request *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+				call := calls.Add(1)
+				if tc.parallel && call <= 2 {
+					if call == 2 {
+						close(bothDispatched)
+					}
+					select {
+					case <-bothDispatched:
+					case <-time.After(3 * time.Second):
+						return nil, errors.New("independent list requests did not run concurrently")
+					}
+				}
+				if strings.HasSuffix(request.URL.Path, "/files") {
+					return listResponse(request, `{"data":[{"id":"file_final"}],"has_more":false}`), nil
+				}
+				if tc.missing {
+					return listResponse(request, `{"data":[{"name":"missing_id"}],"has_more":true}`), nil
+				}
+				if request.URL.Query().Get("after") == "skill_first" {
+					return listResponse(request, `{"data":[{"id":"skill_final"}],"has_more":false}`), nil
+				}
+				return listResponse(request, `{"data":[{"id":"skill_first"}],"has_more":true}`), nil
+			}
+			ctx := context.WithValue(t.Context(), registeredListKey{}, new(registeredList))
+			client := openai.NewClient(option.WithAPIKey("synthetic"), option.WithMaxRetries(0),
+				option.WithMiddleware(registeredListRequest, respond))
+			var files *pagination.CursorPageAutoPager[openai.FileObject]
+			var skills *pagination.CursorPageAutoPager[openai.Skill]
+			prepareFiles := func() { files = client.Files.ListAutoPaging(ctx, openai.FileListParams{}) }
+			prepareSkills := func() { skills = client.Skills.ListAutoPaging(ctx, openai.SkillListParams{}) }
+			if tc.parallel {
+				var wg sync.WaitGroup
+				wg.Go(prepareFiles)
+				wg.Go(prepareSkills)
+				wg.Wait()
+			} else {
+				prepareFiles()
+				prepareSkills()
+			}
+			var out strings.Builder
+			opts := ShowJSONOpts{Context: ctx, Format: "jsonl", Stdout: &out}
+			showFiles := func() {
+				if !tc.omitFiles {
+					require.NoError(t, ShowJSONIterator(files, -1, opts))
+				}
+			}
+			if !tc.reverse {
+				showFiles()
+			}
+			err := ShowJSONIterator(skills, tc.skillLimit, opts)
+			if tc.reverse {
+				showFiles()
+			}
+			if tc.missing {
+				require.ErrorAs(t, err, new(*listview.PaginationError))
+				require.Contains(t, out.String(), "missing_id")
+			} else {
+				require.NoError(t, err)
+				require.Contains(t, out.String(), "skill_first")
+			}
+			require.Equal(t, !tc.omitFiles, strings.Contains(out.String(), "file_final"))
+			if tc.missing || tc.skillLimit == 1 {
+				require.NotContains(t, out.String(), "skill_final")
+				require.EqualValues(t, 2, calls.Load())
+			} else {
+				require.Contains(t, out.String(), "skill_final")
+				require.EqualValues(t, 3, calls.Load())
+			}
 		})
 	}
 }

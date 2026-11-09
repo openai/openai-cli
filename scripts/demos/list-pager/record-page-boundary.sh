@@ -31,11 +31,11 @@ exit "$demo_status"
 SCENE
 cp "$demo_runtime/scene.sh" "$demo_output/shell-scene.sh"
 {
-  echo 'comparison: before and after the pager format-hint fix; same Space, Space, b, Space, q inputs'
+  echo 'comparison: before and after demand-driven API paging; same Space, Space, b, Space, q inputs'
   echo 'view: actual PTY 101x27; Menlo 18; blue headers; not a native Terminal screenshot'
-  echo 'before: first Space reveals the format hint; second Space fetches API page two'
-  echo 'after: first Space fetches API page two; second Space fetches API page three'
-  echo 'fixture: 150 numbered files; recording loads 50 files before and 75 after'
+  echo 'before: first Space fetches API page two; second Space fetches API page three'
+  echo 'after: the initial screen shows all 25 loaded files; each forward Space at the loaded boundary fetches one page'
+  echo 'fixture: 150 numbered files; both recordings load 75 files'
   echo "before source commit: $demo_before_sha"
   echo "after source commit: $demo_after_sha"
   demo_capture_metadata
@@ -44,11 +44,11 @@ demo_window_size=101x27
 demo_render_options=(--renderer swash --font-family Menlo --font-size 18 --line-height 1.2 --theme github-dark --fps-cap 20 --last-frame-duration 2)
 for demo_version in before after; do
   mkdir "$demo_runtime/home-$demo_version"
-  demo_markers='001 025 026 025 026'
-  demo_label='Before: the first Space shows the same 25 files'
+  demo_markers='001 006 031 006 031'
+  demo_label='Before: Space fetches more files to fill the screen'
   if [ "$demo_version" = after ]; then
-    demo_markers='001 006 031 006 031'
-    demo_label='After: five inline rows, then 25 files per screen'
+    demo_markers='001 026 051 026 051'
+    demo_label='After: the first screen shows the first API page'
   fi
   demo_actions="$("$demo_python" -I -B - "$demo_markers" <<'ACTIONS'
 import json,sys
@@ -94,18 +94,18 @@ for version in ('before','after'):
     recording.write_text('\n'.join(json.dumps(event) for event in prefix)+'\n')
     subprocess.run([sys.argv[4],'convert','-f','txt',str(recording),str(text)],check=True)
     screen=text.read_text()
-    first=1 if version=='before' else 6
+    first,last=(6,30) if version=='before' else (26,50)
     ids=re.findall(r'\bfile-demo-\d{3}\b',screen)
-    assert ids==[f'file-demo-{value:03d}' for value in range(first,first+25)]
-    assert ('Full data:' in screen)==(version=='before')
+    assert ids==[f'file-demo-{value:03d}' for value in range(first,last+1)]
+    assert 'Full data:' not in screen
     assert 'q: quit' in screen and 'Space:' in screen
     (output/f'{version}-first-space.time').write_text(str(cutoff))
     report[version]={'first_space_ids':ids,'relay_sha256':relay['sha256'],'original_screen_restored':True}
 requests=[json.loads(line) for line in (output/'requests.jsonl').read_text().splitlines()]
-assert requests==[{'page':page,'status':200,'cursor_valid':True} for page in [1,2,1,2,3]]
+assert requests==[{'page':page,'status':200,'cursor_valid':True} for page in [1,2,3,1,2,3]]
 report.update(result='PASS',requests=requests)
 (output/'validation.json').write_text(json.dumps(report,indent=2)+'\n')
-print('PASS first-Space comparison: same inputs; exact bytes; files 001–025 before, 006–030 after; restored shell')
+print('PASS first-Space comparison: same inputs; exact bytes; files 006–030 before, 026–050 after; restored shell')
 VERIFY
 for demo_version in before after; do
   "$demo_agg" --quiet "${demo_render_options[@]}" --select "$(cat "$demo_output/$demo_version-first-space.time")" \

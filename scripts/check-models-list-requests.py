@@ -13,6 +13,7 @@ import socket
 import subprocess
 import tempfile
 import threading
+import time
 from urllib.parse import urlencode
 
 spec = importlib.util.spec_from_file_location(
@@ -20,9 +21,19 @@ spec = importlib.util.spec_from_file_location(
 navigation = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(navigation)
 
-FIRST = "/v1/models?limit=100"
 TOKEN = "https://cursor.fixture.invalid/a?x=1+2&y=%/界"
-SECOND = "/v1/models?" + urlencode([("limit", "100"), ("page", TOKEN)])
+
+
+def request_path(limit, cursor=None):
+    query = {"limit": limit}
+    if cursor is not None:
+        query["page"] = cursor
+    return "/v1/models?" + urlencode(query)
+
+
+# The 90-by-16 default reserves one row each for the header, hint, and footer.
+FIRST = request_path(13)
+SECOND = request_path(13, TOKEN)
 
 
 def record(identifier):
@@ -58,15 +69,15 @@ class Fixture(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         if status == 503:
-            self.send_header("Retry-After-Ms", "10")
+            self.send_header("Retry-After-Ms", str(server.retry_ms))
         self.end_headers()
         self.wfile.write(body)
 
 
 @contextmanager
-def command(binary, prefix, replies, flags=(), height=16, redirect_stdout=False):
+def command(binary, prefix, replies, flags=(), height=16, redirect_stdout=False, width=90, retry_ms=10):
     with tempfile.TemporaryDirectory() as home, ThreadingHTTPServer(("127.0.0.1", 0), Fixture) as server:
-        server.paths, server.replies = [], replies
+        server.paths, server.replies, server.retry_ms = [], replies, retry_ms
         server.pending, server.closed, server.finished = (threading.Event() for _ in range(3))
         worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
         worker.start()
@@ -78,7 +89,7 @@ def command(binary, prefix, replies, flags=(), height=16, redirect_stdout=False)
         terminal = None
         try:
             terminal = navigation.terminal_module.Terminal(binary, [*prefix, "models", "list", *flags],
-                                                         env, width=90, height=height,
+                                                         env, width=width, height=height,
                                                          output_file=subprocess.DEVNULL if redirect_stdout else None)
             yield terminal, server
         finally:
@@ -93,9 +104,26 @@ def send_and_wait(terminal, key, marker):
     terminal.wait(marker, timeout=5, after=offset)
 
 
+def wait_frame(terminal, *markers):
+    deadline = time.monotonic() + 5
+    while True:
+        terminal.read(.02)
+        frame = navigation.terminal_module.screen(terminal.raw, *terminal.size()).decode()
+        if all(marker in " ".join(frame.split()) for marker in markers):
+            return
+        assert terminal.child.poll() is None and time.monotonic() < deadline, (markers, frame)
+
+
 def quit_cleanly(terminal):
     terminal.send(b"q")
     navigation.finish(terminal, 0)
+
+
+def wait_requests(terminal, server, count):
+    deadline = time.monotonic() + 5
+    while len(server.paths) < count:
+        terminal.read(.02)
+        assert time.monotonic() < deadline, server.paths
 
 
 def successful_paging(binary, prefix):
@@ -104,11 +132,9 @@ def successful_paging(binary, prefix):
         terminal.wait("alpha-first")
         terminal.resize(56, 10)
         navigation.drain(terminal, 0.15)
-        terminal.resize(90, 16)
-        navigation.drain(terminal, 0.15)
         assert server.paths == [FIRST], "initial display or resize fetched a continuation"
         send_and_wait(terminal, b" ", "zeph")
-        assert server.paths == [FIRST, SECOND], "continuation changed route, token encoding, or page size"
+        assert server.paths == [FIRST, request_path(7, TOKEN)], "continuation lost the cursor or resized page capacity"
         # These keys may revisit either cached page without requesting another page.
         for back, forward in [(b"k", b"j"), (b"\x1b[A", b"\x1b[B"), (b"u", b"d"), (b"\x15", b"\x04")]:
             send_and_wait(terminal, back, "alph")
@@ -116,19 +142,59 @@ def successful_paging(binary, prefix):
         send_and_wait(terminal, b"b", "alph")
         send_and_wait(terminal, b" ", "zeph")
         quit_cleanly(terminal)
-        assert server.paths == [FIRST, SECOND], "cached navigation fetched another page"
+        assert server.paths == [FIRST, request_path(7, TOKEN)], "cached navigation fetched another page"
 
 
 def legacy_paging(binary, prefix):
     records = [record("zeta-last"), *[record(f"alpha-{i:03}") for i in reversed(range(100))]]
-    with command(binary, prefix, [(200, {"object": "list", "data": records})], height=120) as (terminal, server):
+    replies = [(200, {"object": "list", "data": records})]
+    with command(binary, prefix, replies, height=19) as (terminal, server):
         terminal.wait("alpha-000")
-        terminal.wait("Models 1–5 of 101")
-        send_and_wait(terminal, b" ", "zeta")
-        terminal.wait("Models 6–101 of 101")
-        send_and_wait(terminal, b"b", "1–5 of 101")
+        terminal.wait("Models 1–16 of 101")
+        assert b"\x1b[?1049h" not in terminal.raw
+        terminal.send(b" ")
+        wait_frame(terminal, "Models 17–32 of 101", "alpha-016", "alpha-031")
+        assert b"\x1b[?1049h" in terminal.raw
+        terminal.send(b"b")
+        wait_frame(terminal, "1–16 of 101", "alpha-000", "alpha-015")
         quit_cleanly(terminal)
-        assert server.paths == [FIRST], "legacy response was downloaded twice"
+        assert server.paths == [request_path(16)], "cached legacy models fetched another response"
+    with command(binary, prefix, replies, height=120) as (terminal, server):
+        navigation.finish(terminal, 0)
+        assert b"\x1b[?1049h" not in terminal.raw
+        shown = terminal.text()
+        assert all(shown.count(item["id"]) == 1 for item in records)
+        assert server.paths == [request_path(100)], "tall terminals must respect the Models API maximum"
+
+
+def screen_sizes(binary, prefix):
+    responses = [
+        (200, {"object": "page", "data": [record(f"model-{i:03}") for i in range(start, start + 37)],
+               "has_more": start == 1, "next": TOKEN if start == 1 else None})
+        for start in (1, 38)
+    ]
+    for flags in [(), ("--browse",), ("--pager",)]:
+        with command(binary, prefix, responses, flags, width=120, height=40) as (terminal, server):
+            terminal.wait("model-037")
+            terminal.wait("1–37")
+            navigation.drain(terminal, .1)
+            assert (b"\x1b[?1049h" in terminal.raw) == ("--pager" in flags)
+            assert server.paths == [request_path(37)]
+            terminal.send(b" ")
+            wait_frame(terminal, "38–74", "model-038", "model-074")
+            quit_cleanly(terminal)
+            assert server.paths == [request_path(37), request_path(37, TOKEN)]
+    for width, height, limit in [(12, 16, 14), (1, 40, 1), (80, 1, 1), (80, 2, 1)]:
+        with command(binary, prefix, [(200, page("alpha-first", True, TOKEN))], ("--pager",),
+                     width=width, height=height) as (terminal, server):
+            wait_requests(terminal, server, 1)
+            navigation.drain(terminal, .1)
+            assert server.paths == [request_path(limit)], (width, height, server.paths)
+            quit_cleanly(terminal)
+    with command(binary, prefix, [(200, page("alpha-first", True, TOKEN)), (200, page("zephyr-last"))],
+                 ("--browse=false",), height=8) as (terminal, server):
+        navigation.finish(terminal, 0)
+        assert server.paths == [request_path(100), request_path(100, TOKEN)]
 
 
 def explicit_modes(binary, prefix):
@@ -168,12 +234,33 @@ def failing_pages(binary, prefix):
             assert server.paths == [FIRST, SECOND], "bad continuation triggered another request"
 
 
+def capped_ranges(binary, prefix):
+    catalog = {"object": "list", "data": [record(f"model-{i:03d}") for i in range(1, 21)]}
+    for flags, count, position in [
+        (("--max-items", "3"), 3, "1–3"),
+        (("--filter", "id~model-00[1-5]", "--max-items", "2"), 2, "1–2/5"),
+    ]:
+        with command(binary, prefix, [(200, catalog)], ("--pager", *flags)) as (terminal, server):
+            terminal.wait(f"model-{count:03d}")
+            terminal.wait("i: inline")
+            frame = navigation.terminal_module.screen(terminal.raw, 90, 16).decode()
+            positions = [line.split()[0] for line in frame.splitlines() if "i: inline" in line]
+            assert positions == [position], (flags, frame)
+            assert f"model-{count + 1:03d}" not in frame, (flags, frame)
+            terminal.send(b"q")
+            navigation.finish(terminal, 0)
+            assert server.paths == ["/v1/models"]
+
+
 def transient_failures(binary, prefix):
     first = (200, page("alpha-first", True, TOKEN))
     busy = (503, {"error": {"type": "server_error", "message": "fixture busy"}})
-    with command(binary, prefix, [first, busy, (200, page("zephyr-last"))]) as (terminal, server):
+    with command(binary, prefix, [first, busy, (200, page("zephyr-last"))], retry_ms=500) as (terminal, server):
         terminal.wait("alpha-first")
-        send_and_wait(terminal, b" ", "zeph")
+        terminal.send(b" ")
+        wait_requests(terminal, server, 2)
+        terminal.resize(90, 10)
+        terminal.wait("zeph")
         quit_cleanly(terminal)
         assert server.paths == [FIRST, SECOND, SECOND], "a transient failure must retry the same cursor"
     with command(binary, prefix, [first, busy, busy, busy]) as (terminal, server):
@@ -231,7 +318,7 @@ def main():
         raise TimeoutError("pagination observer interrupted")
 
     signal.signal(signal.SIGTERM, interrupted)
-    for check in [successful_paging, legacy_paging, explicit_modes, failing_pages, transient_failures,
+    for check in [successful_paging, legacy_paging, screen_sizes, explicit_modes, capped_ranges, failing_pages, transient_failures,
                   mixed_rollout, cancel_pending]:
         check(binary, prefix)
         print(f"{check.__name__}: passed", flush=True)

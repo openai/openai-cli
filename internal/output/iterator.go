@@ -130,6 +130,9 @@ func (it *Iterator[T]) Next() bool {
 
 func (it *Iterator[T]) Current() JSON { return it.current }
 
+// LimitReached reports whether the configured cap stopped iteration before EOF could be established.
+func (it *Iterator[T]) LimitReached() bool { return it.remaining == 0 }
+
 func (it *Iterator[T]) Err() error {
 	it.errorMu.RLock()
 	defer it.errorMu.RUnlock()

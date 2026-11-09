@@ -6,12 +6,22 @@ import "testing"
 
 func TestMainRegisteredListPagination(t *testing.T) {
 	webhooks := resourceListRoute{"webhooks", "/webhook_endpoints", "webhook_endpoint",
-		[]string{"webhooks", "list", "--browse"}, []string{"ID", "NAME", "EVENTS"}}
-	skills := resourceListRoute{"skills", "/skills", "skill", []string{"skills", "list", "--browse"},
+		[]string{"webhooks", "list"}, []string{"ID", "NAME", "EVENTS"}}
+	skills := resourceListRoute{"skills", "/skills", "skill", []string{"skills", "list"},
 		[]string{"ID", "NAME", "DEFAULT VERSION", "LATEST VERSION"}}
-	groups := resourceListRoute{"groups", "/organization/groups", "group", []string{"admin", "organization", "groups", "list", "--browse"},
+	groups := resourceListRoute{"groups", "/organization/groups", "group", []string{"admin", "organization", "groups", "list"},
 		[]string{"ID", "NAME", "GROUP TYPE", "IS SCIM MANAGED"}}
 	projects := resourceListRoutes[2]
+	for _, route := range []resourceListRoute{webhooks, skills, groups} {
+		t.Run(route.name+"/pager-inline", func(t *testing.T) {
+			fixture := newResourceListFixture(t, route, "normal")
+			runResourceListObserver(t, map[string]any{
+				"endpoint": fixture.server.URL, "home": t.TempDir(), "args": resourceListArgs(route, "--pager"),
+				"mode": "normal", "action": "pager-inline", "headers": route.headers, "expected": 0,
+			})
+			fixture.assertCursors(t, route, 2)
+		})
+	}
 	for _, tc := range []struct {
 		route        resourceListRoute
 		mode, action string
@@ -31,7 +41,7 @@ func TestMainRegisteredListPagination(t *testing.T) {
 			fixture := newResourceListFixture(t, tc.route, tc.mode)
 			runResourceListObserver(t, map[string]any{
 				"endpoint": fixture.server.URL, "home": t.TempDir(),
-				"args": resourceListArgs(tc.route, "--format-error", "json"), "headers": tc.route.headers,
+				"args": resourceListArgs(tc.route, "--browse", "--format-error", "json"), "headers": tc.route.headers,
 				"mode": tc.mode, "action": tc.action, "expected": tc.code,
 			})
 			fixture.assertCursors(t, tc.route, 2)
@@ -56,7 +66,7 @@ func TestMainRegisteredListPagination(t *testing.T) {
 			fixture := newResourceListFixture(t, tc.route, tc.mode)
 			runResourceListObserver(t, map[string]any{
 				"endpoint": fixture.server.URL, "home": t.TempDir(),
-				"args": resourceListArgs(tc.route, append(tc.flags, "--format-error", "json")...), "headers": tc.route.headers,
+				"args": resourceListArgs(tc.route, append(tc.flags, "--browse", "--format-error", "json")...), "headers": tc.route.headers,
 				"mode": tc.mode, "action": tc.action, "expected": tc.code,
 			})
 			fixture.assertCursors(t, tc.route, 1)

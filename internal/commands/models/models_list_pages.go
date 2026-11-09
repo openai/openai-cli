@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 
@@ -20,6 +21,10 @@ func ShowPages(opts listview.Options, client openai.Client, options []option.Req
 	ctx, cancel := context.WithCancel(opts.Context)
 	defer cancel()
 	pages := &modelRequestPages{ctx: ctx, client: client, options: options}
+	if !opts.PrintOnly {
+		pages.terminal = opts.Stdout.(*os.File)
+		pages.hint = opts.Hint
+	}
 	render := opts.RenderPage
 	opts.RenderPage = func(items []gjson.Result, width int) (string, error) {
 		total := -1 // Cursor responses need not count the entire catalog.
@@ -39,14 +44,16 @@ func ShowPages(opts listview.Options, client openai.Client, options []option.Req
 }
 
 type modelRequestPages struct {
-	ctx     context.Context
-	client  openai.Client
-	options []option.RequestOption
-	cursor  string
-	seen    map[string]bool
-	done    bool
-	local   *modelPages
-	total   int
+	ctx      context.Context
+	client   openai.Client
+	options  []option.RequestOption
+	cursor   string
+	seen     map[string]bool
+	done     bool
+	terminal *os.File
+	hint     string
+	local    *modelPages
+	total    int
 }
 
 func (p *modelRequestPages) next() (listview.Page, error) {
@@ -86,7 +93,7 @@ func (p *modelRequestPages) next() (listview.Page, error) {
 	if legacy {
 		// Legacy servers ignore the optional limit and return the complete list.
 		// Reuse this exact response, including its original fallback for malformed IDs.
-		local, err := localModelPages(p.ctx, items)
+		local, err := localModelPages(p.ctx, items, p.terminal != nil, false)
 		if err != nil {
 			return listview.Page{}, err
 		}
@@ -126,7 +133,15 @@ func (p *modelRequestPages) next() (listview.Page, error) {
 func (p *modelRequestPages) request(paginated bool) (gjson.Result, error) {
 	options := slices.Clone(p.options)
 	if paginated {
-		options = append(options, option.WithQuery("limit", strconv.Itoa(modelListPageSize)))
+		limit := modelListPageSize
+		if p.terminal != nil {
+			rows, err := listview.TerminalTableRows(p.terminal, p.hint)
+			if err != nil {
+				return gjson.Result{}, err
+			}
+			limit = min(rows, modelListPageSize)
+		}
+		options = append(options, option.WithQuery("limit", strconv.Itoa(limit)))
 		if p.cursor != "" {
 			// A cursor is data. The SDK encodes it on the original Models route.
 			options = append(options, option.WithQuery("page", p.cursor))

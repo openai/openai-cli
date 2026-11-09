@@ -50,7 +50,7 @@ demo_render_options=(--renderer swash --font-family Menlo --font-size 18 --line-
   --theme github-dark --fps-cap 20 --last-frame-duration 2)
 demo_actions="$("$demo_python" -I -B - <<'ACTIONS'
 import json
-starts = [1, *range(6, 151, 18)]  # Five inline rows, then 18 rows per full screen.
+starts = [first for page in range(1, 151, 25) for first in range(page, page + 25, 18)]
 actions = [{'marker': f'file-demo-{n:03d}', 'footer': 'q: quit', 'key': ' '} for n in starts[:-1]]
 actions.extend([
     {'marker': 'file-demo-150', 'footer': 'q: quit', 'key': 'b'},
@@ -87,7 +87,8 @@ raw = raw.encode()
 relay = json.loads((output/'after.relay.json').read_text())
 assert relay['exit_status'] == 0
 keys = [item['key'] for item in relay['inputs']]
-assert keys == [' '] * 9 + ['b', ' ', 'q']
+# Each of the six API pages occupies two screens. The first screen is already visible.
+assert keys == [' '] * (6 * 2 - 1) + ['b', ' ', 'q']
 assert hashlib.sha256(raw).hexdigest() == relay['sha256']
 assert b'\x1b[38;2;138;168;255mID' in raw
 assert not re.search(rb'\x1b\[\?(?:2026|2027)\$p', raw)

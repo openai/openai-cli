@@ -13,12 +13,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/tidwall/gjson"
 )
 
 // ControlsHelp describes the shared terminal interaction in command help.
-const ControlsHelp = "Terminal lists start with up to five table rows or a short labeled preview. Complete results that fit return to the shell. Press Space to browse the next screen. Use the arrow keys to scroll one row, b to go back, or q to quit."
+const ControlsHelp = "Terminal lists start with one screen of table rows or labeled fields. Complete results that fit return to the shell. Space shows unread rows first. After the last loaded row, Space requests one more API page if available. Use the arrow keys to scroll one row, b to go back, or q to quit. Use --pager to open the full-screen viewer immediately. In the viewer, press i to print loaded rows and continue in scrollback with Space or q."
 
 // Page contains loaded records and whether another page can be requested.
 type Page struct {
@@ -26,7 +27,7 @@ type Page struct {
 	More       bool
 	Notice     string // optional catalog guidance, including a source-specific empty result
 	FullLabels bool   // an ambiguous source page needs the complete original records
-	Total      int    // known catalog count, when the source provides one
+	Total      int    // known record count, when established by the source
 }
 
 // PaginationError is a fixed diagnostic that never includes API cursors or response data.
@@ -54,6 +55,7 @@ type Model struct {
 	quitting bool
 	pending  []string
 	records  recordViewer
+	inline   *inlineList
 	err      error
 
 	// Fetches start in the event loop. Shutdown cancels and joins the one worker,
@@ -74,21 +76,34 @@ func Run(opts Options, fetch func() (Page, error), cancel context.CancelFunc) er
 		return printPages(opts, width, fetch)
 	}
 	m := New(opts, fetch, cancel, width, height)
-	outputErr, runErr, signaled := runPrompt(m, opts, width, height)
-	if m.records.mode == recordOpening && !m.quitting && !signaled &&
-		outputErr == nil && runErr == nil && opts.Context.Err() == nil {
+	for {
+		outputErr, runErr, signaled := runPrompt(m, opts, width, height)
+		if signaled {
+			m.pending = nil
+			m.quitting = true
+		}
+		if m.quitting || outputErr != nil || runErr != nil || opts.Context.Err() != nil {
+			return m.Finish(outputErr, runErr)
+		}
 		width, height, err = term.GetSize(opts.Stdout.(*os.File).Fd())
 		if err != nil {
-			return m.Finish(outputErr, err)
+			return m.Finish(nil, err)
 		}
 		m.window = tea.WindowSizeMsg{Width: width, Height: height}
-		outputErr, runErr, signaled = runPrompt(m, opts, width, height)
+		switch {
+		case m.records.mode == recordOpening:
+			continue
+		case m.records.mode == recordBrowser && m.inline != nil && !m.loading:
+			err = m.printLoaded()
+		case m.records.mode == recordInline && len(m.pending) > 0:
+			err = m.printPending()
+		default:
+			return m.Finish(nil, nil)
+		}
+		if err != nil || m.err != nil || !m.more && len(m.inline.lines) == 0 {
+			return m.Finish(err, nil)
+		}
 	}
-	if signaled {
-		m.pending = nil
-		m.quitting = true
-	}
-	return m.Finish(outputErr, runErr)
 }
 
 func runPrompt(m *Model, opts Options, width, height int) (error, error, bool) {
@@ -101,7 +116,7 @@ func runPrompt(m *Model, opts Options, width, height int) (error, error, bool) {
 	var model tea.Model = m
 	var output io.Writer = out
 	var preview *recordPreviewModel
-	if m.records.mode == recordPreview {
+	if m.records.mode == recordPreview || m.records.mode == recordInline {
 		preview = &recordPreviewModel{model: m, out: out, width: width, height: height}
 		model = preview
 		// Tea owns native input modes, resize notifications and key decoding.
@@ -274,7 +289,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// Reflow only the loaded page. Resizing never requests data.
 		previous := m.window
 		m.window = msg
-		if previous == msg {
+		if previous == msg || m.records.mode == recordInline {
 			return m, nil
 		}
 		return m, m.resizeRecords(previous.Width != msg.Width)
@@ -284,6 +299,9 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.total = msg.page.Total
 		}
 		m.err = errors.Join(m.err, msg.err)
+		if m.records.mode == recordInline {
+			return m, m.receiveInline(msg.page)
+		}
 		return m, m.receiveRecords(msg.page)
 	case tea.KeyPressMsg:
 		switch msg.String() {
@@ -294,6 +312,12 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.quit()
 		}
+		if m.records.mode == recordInline {
+			if msg.String() == "space" && !m.loading && len(m.pending) == 0 {
+				return m, m.advanceInline()
+			}
+			return m, nil
+		}
 		return m, m.recordKey(msg)
 	}
 	return m, nil
@@ -301,10 +325,13 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) View() tea.View {
 	view := tea.NewView("")
-	// Start record lists in the shell. Only an explicit page-forward key
-	// enters the alternate screen. Keep that screen stable through cleanup.
+	// Keep the alternate screen stable until Tea restores the terminal.
 	view.AltScreen = m.records.mode == recordBrowser
-	if !m.quitting && m.records.mode != recordOpening {
+	if m.records.mode == recordInline {
+		if !m.quitting && len(m.pending) == 0 {
+			view.Content = m.inlinePrompt()
+		}
+	} else if !m.quitting && m.records.mode != recordOpening {
 		view.Content = m.recordView()
 	}
 	return view
@@ -369,6 +396,7 @@ func (w *listNavigationOutput) WriteString(data string) (int, error) {
 // RenderPage formats static output and received pages after a failure.
 // Run requires a terminal file for Stdout. New permits buffered output for an embedded event loop.
 type Options struct {
+	Pager      bool // start directly in the full-screen viewer
 	PrintOnly  bool // write all pages to scrollback without reading keys
 	Context    context.Context
 	Stdout     io.Writer
@@ -377,6 +405,8 @@ type Options struct {
 	Interrupt  func(error) error
 	// Record navigation renders a compact table with a pinned header. If the
 	// data or terminal width needs labels, it renders one complete item.
+	// ProjectPrintTable supplies raw columns to the multi-page scrollback layout.
+	ProjectPrintTable  func([]gjson.Result) (transform.ListTableProjection, error)
 	RenderTable        func([]gjson.Result, int) (string, bool, error)
 	Singular, Plural   string
 	Hint               string
@@ -391,6 +421,10 @@ func New(opts Options, fetch func() (Page, error), cancel context.CancelFunc, wi
 	if opts.Singular == "" || opts.Plural == "" {
 		opts.Singular, opts.Plural = "Record", "Records"
 	}
-	return &Model{opts: opts, fetch: fetch, cancel: cancel,
+	mode := recordPreview
+	if opts.Pager {
+		mode = recordBrowser
+	}
+	return &Model{opts: opts, fetch: fetch, cancel: cancel, records: recordViewer{mode: mode},
 		window: tea.WindowSizeMsg{Width: width, Height: height}}
 }

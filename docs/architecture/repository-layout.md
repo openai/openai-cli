@@ -54,6 +54,10 @@ cross-package tests may exercise application assembly; generated tests stay with
 their generated implementation. Use explicit functions and small contracts rather
 than a generic plugin framework.
 
+Reserve `list`, `ls`, and `list-*` names and aliases for read-only list actions.
+Command assembly automatically selects the shared list viewer for those actions.
+Pass the command context through the standard response or iterator output path. Nested commands inherit the same interactive and piped behavior.
+
 ## Compatibility and validation
 
 Preserve command paths and aliases, flags, defaults, environment variables,
