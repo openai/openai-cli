@@ -49,7 +49,7 @@ exit "$demo_status"
 SCENE
 cp "$demo_runtime/scene.sh" "$demo_output/shell-scene.sh"
 {
-  echo 'comparison: historical inline pagination versus the compact preview'
+  echo 'comparison: historical inline pagination versus the terminal-sized preview'
   echo 'before: viewer-switch-20261026; verified source snapshot and binary'
   echo "after: candidate $demo_after_commit"
   echo "before source HEAD: $demo_before_commit"

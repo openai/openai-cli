@@ -16,6 +16,7 @@ type modelsListOptionsKey struct{}
 type modelsListOptions struct {
 	selection transformers.ModelSelection
 	applied   bool
+	matches   int // matching records before the user's limit
 }
 
 // ListError contains only fixed guidance, never filter values or response data.
@@ -38,7 +39,7 @@ func Configure(root *cli.Command, policy Options) {
 	command.Usage = "List accessible model IDs and owners."
 	command.Description = `Shows IDs and owners. Narrow terminals keep both values in labeled output.
 ` + listview.ControlsHelp + `
-Interactive requests load up to 100 models in ID order. The pager loads more records when a new screen needs them.
+The pager requests one table screen of models in ID order, up to 100 per API page. At the last loaded model, Space requests the next page.
 Back uses previously loaded pages. Servers that return the complete list use local pages.
 Explicit output formats keep their existing behavior.
 Slow interactive requests show loading feedback.

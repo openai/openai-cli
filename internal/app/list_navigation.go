@@ -46,6 +46,7 @@ func listViewerOptions(opts ShowJSONOpts) listview.Options {
 	diagnostics = diagnostics && opts.Operation == "(resource) models > (method) list"
 	result := listview.Options{
 		Context: opts.Context, Stdout: opts.Stdout,
+		Pager:                opts.Context != nil && opts.Context.Value(fullScreenListKey{}) == true,
 		PrintOnly:            printedListFrom(opts.Context) != nil,
 		Style:                style,
 		CallerHandlesSignals: opts.CallerHandlesSignals,
@@ -54,6 +55,9 @@ func listViewerOptions(opts ShowJSONOpts) listview.Options {
 		},
 	}
 	result.Singular, result.Plural = listRangeNames(opts.Operation, opts.Title)
+	result.ProjectPrintTable = func(items []gjson.Result) (transformers.ListTableProjection, error) {
+		return transformers.ProjectRecordTable(opts.Context, opts.Operation, items)
+	}
 	result.RenderTable = func(items []gjson.Result, width int) (string, bool, error) {
 		return listview.RenderRecordTable(opts.Context, opts.Operation, items, width, style)
 	}

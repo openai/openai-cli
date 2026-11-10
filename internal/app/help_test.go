@@ -43,6 +43,60 @@ func TestConfigureHelpPaginationMetadataPreservesValues(t *testing.T) {
 	}
 }
 
+func TestPaginationHelpOnlyExplainsPairedListFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		list       bool
+		queryLimit bool
+		hasTotal   bool
+	}{
+		{name: "bucket limit on a report", queryLimit: true, hasTotal: true},
+		{name: "list with a body field", list: true, hasTotal: true},
+		{name: "list without a total limit", list: true, queryLimit: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			page := &requestflag.Flag[int64]{Name: "limit", Usage: "Resource-specific limit."}
+			if tc.queryLimit {
+				page.QueryPath = "limit"
+			} else {
+				page.BodyPath = "limit"
+			}
+			command := &cli.Command{Flags: []cli.Flag{page}}
+			if tc.list {
+				markListPager(command)
+			}
+			if tc.hasTotal {
+				command.Flags = append(command.Flags, &requestflag.Flag[int64]{Name: "max-items"})
+			}
+			describePaginationFlags(command)
+			if page.Usage != "Resource-specific limit." {
+				t.Fatalf("unrelated limit received page-size guidance: %q", page.Usage)
+			}
+		})
+	}
+}
+
+func TestNullablePageSizeHelpPreservesSchemaDefault(t *testing.T) {
+	initial := int64(12)
+	for _, tc := range []struct {
+		value *int64
+		want  string
+	}{
+		{nil, "one terminal screen when browsing, otherwise the API default"},
+		{&initial, "one terminal screen when browsing, 12 otherwise"},
+	} {
+		page := &requestflag.Flag[*int64]{Name: "limit", QueryPath: "limit", Default: tc.value, Usage: "API-specific bounds."}
+		cursor := &requestflag.Flag[string]{Name: "after", QueryPath: "after"}
+		cmd := &cli.Command{Metadata: map[string]any{listPagerMetadata: true}, Flags: []cli.Flag{page, cursor}}
+		describePaginationFlags(cmd)
+		describePaginationFlags(cmd)
+		if page.IsSet() || page.Default != tc.value || page.DefaultText != tc.want ||
+			page.Usage != "Items per API page (one terminal screen when browsing). API-specific bounds." {
+			t.Fatalf("nullable page-size help changed its default, bounds or presence: %q %q", page.DefaultText, page.Usage)
+		}
+	}
+}
+
 func TestConfigureHelpHidesConfiguredGlobalValues(t *testing.T) {
 	for _, name := range []string{"api-key", "admin-api-key", "webhook-secret", "organization", "project"} {
 		for _, order := range []string{"plain", "wrapped-first", "wrapped-after"} {

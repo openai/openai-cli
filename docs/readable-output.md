@@ -17,27 +17,58 @@ and `--max-items 0` writes nothing.
 
 ## Browsing a list
 
-Most lists, including `openai webhooks list` and `openai skills list`, print all requested rows and return.
-Pass `--browse` to use keyboard navigation, for example `openai skills list --browse`.
-Files, Batches, Models, and Projects already browse by default. Pass `--browse=false` to print and return.
+Standard list commands now browse by default when both input and output are terminals.
+In v1.51.5, only Files, Batches, Models, and organization Projects browsed by default.
+Other list commands, including `openai webhooks list` and `openai skills list`, printed all requested rows and returned.
+Use `--pager` to open the full-screen viewer immediately.
 
-Browsing starts with up to five table rows or a short block of labeled fields.
-Complete results that fit return to the shell. Longer results show a footer, such as `Files 1–5`.
+This is a breaking change for terminal-attached scripts and shell chains.
+If more results remain, the list waits for keyboard input before the next command runs.
+Use `--browse=false` to print all requested rows into scrollback and continue automatically.
+
+```sh
+openai skills list --browse=false && echo "Skills listed"
+```
+
+Pipes, redirected output, and runs with a nonempty `CI` environment variable still paginate without keyboard input.
+
+The preview shows as many loaded rows as fit in your terminal. A wrapped record can use several lines.
+Complete results that fit return to the shell. Longer results show a footer, such as `Files 1–38`.
 
 | Key | Action |
 | --- | --- |
 | ↓ or ↑ | Scroll one row. |
-| Space | Open the full-screen view at the next unread row. Subsequent presses advance one screen. |
+| Space | Open the full-screen view at the next unread row, then advance one screen at a time. |
 | b | Return to the previous screen. |
+| i | Leave the full-screen viewer, print all loaded rows in order, and continue in the terminal. |
 | q | Quit. |
 
-Headings stay visible while you scroll. Moving forward can fetch another API
-page. Moving back reuses records you already loaded. Once you start browsing,
-the final screen stays open until you quit. Use `--format json` for the full API fields.
+When browsing, the CLI requests one screen of rows wherever the API supports page sizing.
+The CLI reserves room for the heading, controls, and any visible hint.
+Wrapped records can take multiple lines. The footer counts the records actually visible.
+API page limits and the remaining `--max-items` count can shorten a request.
+An explicit `--limit` sets the API page size. Resizing changes the next automatic request.
+Single-response catalogs, such as webhook event types, use the same controls over the rows already loaded.
+Models also pages locally with a filter, sort override, or finite `--max-items`.
 
-The CLI discovers list actions during command registration, including aliases
-and names such as `list-files`. New commands using the standard JSON response
-or iterator output inherit both the table layout and the `--browse` option automatically.
+The browser waits after the first API page when more results remain.
+Space shows unread loaded rows without making a request.
+At the last loaded row, Space requests one API page if more results remain.
+A short page waits for another key, even when more rows would fit on screen.
+Moving back uses cached rows. Pressing q cancels a pending fetch.
+The full-screen viewer keeps headings visible and waits on the final screen.
+Its footer shows the visible record range. A known total appears after a slash, such as `26–50/1000`.
+When the API omits a total, a complete traversal establishes it.
+Starting from a cursor or reaching an item cap can leave the total unknown.
+The CLI does not fetch ahead to count records.
+For filtered Models, a known total counts matching models before the item cap.
+After `i`, compatible pages share one heading and aligned columns in your terminal history.
+When columns change or a complete ID cannot fit, the CLI uses labeled records.
+Space continues inline. The final inline page returns to the shell automatically.
+Use `--format json` for the full API fields.
+
+The CLI discovers `list`, `ls`, and `list-*` actions during registration, including nested commands and aliases.
+New list actions using the standard response or iterator output inherit this default automatically.
 
 Ordinary text and unknown fields remain complete. Known base64 media fields and
 numeric embedding vectors show a size or count with a `--format json` hint.
@@ -77,11 +108,12 @@ openai files list --format jsonl > files.jsonl
 
 `files.json` contains one array, including `[]` for an empty list or
 `--max-items 0`. `--max-items -1` retains unlimited pagination.
+On lists with both flags, `--limit` sets the API page size and `--max-items` caps total listed items.
+For example, `openai files list --limit 10 --max-items 25 --format json` lists up to 25 files across pages.
+With `openai files list --format raw`, the CLI returns the first API page as received.
 Pipes and redirected files receive each item before the CLI requests more items.
 The CLI does not collect the entire list. The SDK still loads individual pages.
 Models sorting retains its existing single-response collection.
-In a terminal, most lists print each API page before requesting the next page.
-With keyboard browsing enabled, Space opens the full-screen view at the next unread record.
 
 This changes `json` output at finite item boundaries, which previously emitted
 separate pretty-printed values. Migrate record consumers to `--format jsonl`.

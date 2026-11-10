@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -14,13 +13,8 @@ import (
 
 const imagePickerRequestFailureNote = "Couldn't create your image."
 
-// Keep semantic roles alongside the unstyled diagnostics so a theme change can repaint them.
 func (w *imagePickerWorkspace) addDetail(text string, tone imagePickerTone) {
-	if w.detailTones == nil {
-		w.detailTones = make(map[int]imagePickerTone)
-	}
-	w.detailTones[len(w.rows)] = tone
-	w.rows = append(w.rows, text)
+	w.diagnostics = append(w.diagnostics, imagePickerDiagnostic{details: []imagePickerDetail{{text: text, tone: tone}}})
 }
 
 func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
@@ -197,19 +191,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 				p.err = errors.Join(p.err, msg.err)
 				return true, tea.Quit
 			}
-			message := imagePickerRequestMessage(msg.err, msg.draftSaved)
-			heading, _, _ := strings.Cut(message, "\n")
-			p.workspace.requestFailure = imagePickerLine(heading)
-			for _, line := range strings.Split(message, "\n") {
-				tone := imageSecondary
-				switch line {
-				case heading:
-					tone = imageFailure
-				case imagePickerUnsavedDraft:
-					tone = imageWarning
-				}
-				p.workspace.addDetail(imagePickerLine(line), tone)
-			}
+			p.workspace.diagnostics = append(p.workspace.diagnostics, imagePickerRequestDiagnostic(msg.err, msg.draftSaved))
 			p.workspace.offset = 0
 			p.workspace.galleryDetails = true
 			p.model.setNote(imagePickerRequestFailureNote, imageFailure)

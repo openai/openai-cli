@@ -159,6 +159,12 @@ func commonFlagRows(command *cli.Command, example string, width int) (string, bo
 
 	labels := make([]string, len(selected))
 	for i, flag := range selected {
+		// Keep the list cap's value syntax visible when the synopsis folds
+		// the optional flags into [FLAGS].
+		if slices.Contains(flag.Names(), "max-items") {
+			labels[i], _ = flagReference(command, flag)
+			continue
+		}
 		var names []string
 		for _, name := range flag.Names() {
 			if len(name) == 1 {

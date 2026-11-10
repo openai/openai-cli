@@ -97,5 +97,11 @@ func flagOptionsWithStdin(
 			return embedSkillZIP(cmd, body, stdin)
 		}
 	}
-	return requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
+	options, err = requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
+	if err == nil && bodyType == EmptyBody && cmd.Metadata[listPagerMetadata] == true {
+		// Scope the automatic size to requests that use the owning command's flags.
+		// The same SDK client can also perform independently bound lookups.
+		options = append(options, option.WithMiddleware(boundListRequest(cmd)))
+	}
+	return options, err
 }

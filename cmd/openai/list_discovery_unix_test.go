@@ -20,7 +20,18 @@ import (
 )
 
 func TestMainListCommandsOpenPager(t *testing.T) {
+	testConfiguredListCommands(t, true)
+}
+
+func TestMainListCommandsBrowseByDefault(t *testing.T) {
+	testConfiguredListCommands(t, false)
+}
+
+func testConfiguredListCommands(t *testing.T, direct bool) {
+	t.Helper()
 	app.ConfigureCommand(commands.Command)
+	// Limit concurrent PTYs, CLI processes, and fixture servers on large hosts.
+	observerSlots := make(chan struct{}, 4)
 	count := 0
 	var walk func(*cli.Command, []string)
 	walk = func(parent *cli.Command, path []string) {
@@ -33,9 +44,8 @@ func TestMainListCommandsOpenPager(t *testing.T) {
 				args := append(slices.Clone(path), name)
 				if len(command.Commands) != 0 {
 					walk(command, args)
-					continue
 				}
-				if !list {
+				if !list || command.Action == nil {
 					continue
 				}
 				count++
@@ -43,7 +53,22 @@ func TestMainListCommandsOpenPager(t *testing.T) {
 					for _, flag := range requestflag.GetMissingRequiredFlags(command, nil) {
 						args = append(args, "--"+flag.Names()[0], "parent_synthetic")
 					}
-					testListPresentation(t, append(args, "--browse"), "discover", 0, 1)
+					pageLimit := slices.ContainsFunc(command.Flags, func(flag cli.Flag) bool {
+						switch size := flag.(type) {
+						case *requestflag.Flag[int64]:
+							return size.QueryPath == "limit"
+						case *requestflag.Flag[*int64]:
+							return size.QueryPath == "limit"
+						}
+						return false
+					})
+					if direct {
+						args = append(args, "--pager")
+					}
+					t.Parallel()
+					observerSlots <- struct{}{}
+					t.Cleanup(func() { <-observerSlots })
+					testListPresentation(t, args, "discover", 0, 1, pageLimit)
 				})
 			}
 		}
@@ -55,10 +80,10 @@ func TestMainListCommandsOpenPager(t *testing.T) {
 func TestMainBatchWatchRetainsTerminalStream(t *testing.T) {
 	base := []string{"openai", "batches", "list"}
 	t.Run("watch", func(t *testing.T) {
-		testListPresentation(t, append(slices.Clone(base), "--watch", "--watch-count", "2", "--poll-interval", "1ms"), "watch", 0, 2)
+		testListPresentation(t, append(slices.Clone(base), "--watch", "--watch-count", "2", "--poll-interval", "1ms"), "watch", 0, 2, false)
 	})
 	t.Run("watch-only option", func(t *testing.T) {
-		testListPresentation(t, append(slices.Clone(base), "--watch-count", "1"), "watch-without-flag", 1, 0)
+		testListPresentation(t, append(slices.Clone(base), "--watch-count", "1"), "watch-without-flag", 1, 0, false)
 	})
 }
 
@@ -80,6 +105,9 @@ func TestMainTerminalListPrintsEveryPageAndReturns(t *testing.T) {
 				if got := r.URL.Query().Get("after"); got != expectedCursor {
 					t.Errorf("cursor = %q, want %q", got, expectedCursor)
 				}
+				if r.URL.Query().Has("limit") {
+					t.Errorf("printed list added a page limit: %s", r.URL)
+				}
 				var rows []string
 				for i := 1; i <= 15; i++ {
 					id := (int(page)-1)*15 + i
@@ -94,7 +122,7 @@ func TestMainTerminalListPrintsEveryPageAndReturns(t *testing.T) {
 			}))
 			defer server.Close()
 			screen := runResourceListObserver(t, map[string]any{
-				"endpoint": server.URL, "home": t.TempDir(), "args": []string{"openai", resource, "list"},
+				"endpoint": server.URL, "home": t.TempDir(), "args": []string{"openai", resource, "list", "--browse=false"},
 				"mode": "complete", "action": "print-return", "expected": 0,
 			})
 			require.EqualValues(t, 2, calls.Load())
@@ -105,6 +133,27 @@ func TestMainTerminalListPrintsEveryPageAndReturns(t *testing.T) {
 			require.Greater(t, strings.Index(screen, "NEXT_COMMAND"), strings.Index(screen, "item_030"))
 		})
 	}
+}
+
+func TestMainListReturningMutationDoesNotBrowse(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/organization/certificates/activate" || r.URL.RawQuery != "" {
+			t.Errorf("unexpected activation request: %s %s", r.Method, r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// More records than fit in this pane must still print to completion.
+		rows := []string{`{"id":"cert_one"}`, `{"id":"cert_two"}`, `{"id":"cert_three"}`}
+		fmt.Fprintf(w, `{"object":"list","data":[%s],"has_more":false}`, strings.Join(rows, ","))
+	}))
+	t.Cleanup(server.Close)
+	out := runResourceListObserver(t, map[string]any{
+		"endpoint": server.URL, "home": t.TempDir(), "height": 3, "mode": "complete", "action": "print-return",
+		"args": []string{"openai", "admin", "certificates", "activate", "--certificate-id", "cert_one"},
+	})
+	require.EqualValues(t, 1, calls.Load())
+	require.Contains(t, out, "cert_three")
 }
 
 func TestMainModelsPrintsOneHintAfterAllRows(t *testing.T) {
@@ -152,7 +201,7 @@ func TestMainListPagerSummarizesEncodedMedia(t *testing.T) {
 				field string
 			}{{110, "RESULT"}, {30, "Result:"}} {
 				runResourceListObserver(t, map[string]any{
-					"args": append(slices.Clone(route), "--browse"), "home": t.TempDir(), "endpoint": server.URL,
+					"args": route, "home": t.TempDir(), "endpoint": server.URL,
 					"mode": "complete", "action": "inspect", "expected": 0, "width": screen.width,
 					"markers": []string{screen.field, "4 base64 characters", "BQQD"}, "omit": []string{"AQID"},
 				})
@@ -165,14 +214,28 @@ func TestMainListPagerSummarizesEncodedMedia(t *testing.T) {
 	}
 }
 
-func testListPresentation(t *testing.T, args []string, action string, status, requests int) {
+func testListPresentation(t *testing.T, args []string, action string, status, requests int, pageLimit bool) {
 	t.Helper()
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
+		if r.URL.Path == "/_state" {
+			fmt.Fprintf(w, `{"requests":%d}`, calls.Load())
+			return
+		}
+		call := calls.Add(1)
 		if r.Method != http.MethodGet {
 			t.Errorf("list attempted %s %s", r.Method, r.URL.Path)
 			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+			return
+		}
+		if action == "discover" && r.URL.Path != "/v1/models" {
+			query := r.URL.Query()
+			if query.Has("limit") != pageLimit || pageLimit && query.Get("limit") != "6" {
+				t.Errorf("8-line list GET %s: limit=%q, declared HTTP page limit=%t", r.URL.Path, query["limit"], pageLimit)
+			}
+		}
+		if action == "discover" && call > 1 {
+			http.Error(w, "fetched past the initial page before input", http.StatusBadRequest)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -182,10 +245,10 @@ func testListPresentation(t *testing.T, args []string, action string, status, re
 			// An unfamiliar record still belongs in the pager. Focus this check on
 			// routing and leave resource-specific projections to their fixtures.
 			var records []string
-			for n := 1; n <= 8; n++ {
+			for n := 1; n <= 6; n++ {
 				records = append(records, fmt.Sprintf(`{"id":"item_synthetic_%d","future":"value"}`, n))
 			}
-			fmt.Fprintf(w, `{"object":"list","data":[%s],"has_more":false}`, strings.Join(records, ","))
+			fmt.Fprintf(w, `{"object":"page","data":[%s],"has_more":true,"next":"cursor_synthetic","last_id":"item_synthetic_6"}`, strings.Join(records, ","))
 		} else {
 			io.WriteString(w, `{"object":"list","data":[],"has_more":false}`)
 		}
@@ -193,14 +256,14 @@ func testListPresentation(t *testing.T, args []string, action string, status, re
 	t.Cleanup(server.Close)
 	screen := runResourceListObserver(t, map[string]any{
 		"endpoint": server.URL, "home": t.TempDir(), "args": args,
-		"mode": "empty", "action": action, "expected": status,
+		"mode": "empty", "action": action, "expected": status, "height": 8, "requirePaused": action == "discover",
 	})
 	if action == "discover" {
-		if calls.Load() == 0 {
-			// Handwritten lists may read local state instead of calling the API.
-			return
+		if slices.Contains(args, "--pager") {
+			require.Contains(t, screen, "i: inline")
+		} else {
+			require.Contains(t, screen, "Space: browse")
 		}
-		require.Contains(t, screen, "Space: browse", "the multi-screen fixture must offer browsing")
 		if strings.Contains(strings.Join(args, " "), "event-types") {
 			require.Contains(t, screen, "batch.failed")
 			require.Contains(t, screen, "response.completed")

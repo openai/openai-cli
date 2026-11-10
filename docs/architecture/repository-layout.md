@@ -54,6 +54,21 @@ cross-package tests may exercise application assembly; generated tests stay with
 their generated implementation. Use explicit functions and small contracts rather
 than a generic plugin framework.
 
+Reserve `list`, `ls`, and `list-*` names and aliases for read-only list actions.
+Command assembly automatically selects the shared list viewer for those actions.
+Pass the command context through the standard response or iterator output path. Nested commands inherit the same interactive and piped behavior.
+
+Use `app.PrepareListIterator` for each SDK pager when an action prepares multiple lists or performs HTTP lookups before displaying them.
+Pass the callback context to that pager's `ListAutoPaging` call. Use the command context for unrelated HTTP lookups.
+The action can display the resulting iterators in any order.
+Without this binding, the CLI returns an error when it cannot identify which pager owns a continuation.
+
+The transparent Go wrapper `struct{ jsonview.Iterator[T] }` preserves pagination checks.
+For a custom decorator, bind the concrete SDK pager with `PrepareListIterator`.
+Embed the returned `app.PreparedListIterator[T]` to retain the API page boundaries when overriding `Next` or `Current`.
+Forward its errors through `Err` and pass the decorated result to `ShowJSONIterator`.
+The viewer reads a local producer one screen at a time, including when the action performs unrelated HTTP lookups.
+
 ## Compatibility and validation
 
 Preserve command paths and aliases, flags, defaults, environment variables,
