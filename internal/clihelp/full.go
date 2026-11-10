@@ -159,6 +159,12 @@ func commonFlagRows(command *cli.Command, example string, width int) (string, bo
 
 	labels := make([]string, len(selected))
 	for i, flag := range selected {
+		// Keep the list cap's value syntax visible when the synopsis folds
+		// the optional flags into [FLAGS].
+		if slices.Contains(flag.Names(), "max-items") {
+			labels[i], _ = flagReference(command, flag)
+			continue
+		}
 		var names []string
 		for _, name := range flag.Names() {
 			if len(name) == 1 {
@@ -185,12 +191,19 @@ func commonFlagRows(command *cli.Command, example string, width int) (string, bo
 	return out.String(), localCount == len(selected)
 }
 
-func commonFlagDescription(command *cli.Command, flag cli.Flag) string {
+func configuredFlagBrief(command *cli.Command, flag cli.Flag) string {
 	configured, _ := command.Metadata["help-flag-usages"].([]FlagUsage)
 	for _, entry := range configured {
 		if entry.Brief != "" && entry.matches(flag) {
 			return entry.Brief
 		}
+	}
+	return ""
+}
+
+func commonFlagDescription(command *cli.Command, flag cli.Flag) string {
+	if brief := configuredFlagBrief(command, flag); brief != "" {
+		return brief
 	}
 	_, description := flagReference(command, flag)
 	usage, _, _ := strings.Cut(description, "\nDefault:")
@@ -305,7 +318,7 @@ func flagReference(command *cli.Command, flag cli.Flag) (string, string) {
 		names = append(names, prefix+name)
 	}
 	heading = strings.Join(names, ", ")
-	usage := fileInputUsage(flag, commandFlagUsage(command, flag, doc.GetUsage()))
+	usage := flagUsageText(command, flag, doc)
 	if multi, ok := flag.(cli.DocGenerationMultiValueFlag); ok && multi.IsMultiValueFlag() &&
 		!strings.Contains(strings.ToLower(usage), "repeat") {
 		usage += "\nCan be used more than once."
@@ -376,6 +389,10 @@ func fullFlag(flag cli.Flag) string {
 	}
 	// Keep descriptions, defaults, and environment hints after file-input wording.
 	return fullFlagNames(flag, flagValueLabel(flag)) + "\t" + details
+}
+
+func flagUsageText(command *cli.Command, flag cli.Flag, doc cli.DocGenerationFlag) string {
+	return fileInputUsage(flag, commandFlagUsage(command, flag, doc.GetUsage()))
 }
 
 func fileInputUsage(flag cli.Flag, text string) string {

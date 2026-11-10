@@ -63,6 +63,27 @@ func TestMainNormalHelpOutputOptions(t *testing.T) {
 	}
 }
 
+func TestMainListHelpExplainsPageSizeAndTotal(t *testing.T) {
+	for _, path := range [][]string{{"files", "list"}, {"admin", "projects", "list"}, {"skills", "list"}} {
+		for _, args := range [][]string{
+			append(slices.Clone(path), "--help"),
+			append([]string{"help", "--all"}, path...),
+		} {
+			t.Run(strings.Join(args, " "), func(t *testing.T) {
+				got := runMainDispatch(t, "bash", append([]string{"openai"}, args...)...)
+				text := strings.Join(strings.Fields(got.stdout), " ")
+				want := "Items per API page (one terminal screen when browsing, use --max-items to limit the total)."
+				if got.code != 0 || got.stderr != "" || !strings.Contains(text, want) {
+					t.Fatalf("help must distinguish page size from total items: %+v", got)
+				}
+				if args[0] == "help" && path[0] == "files" && !strings.Contains(text, "1 and 10,000") {
+					t.Fatal("full help lost the Files API page-size range")
+				}
+			})
+		}
+	}
+}
+
 func TestMainNormalHelpModelsLimit(t *testing.T) {
 	server, requests := normalHelpModelsServer(t)
 	for _, args := range [][]string{{"models", "list", "--help"}, {"help", "--all", "models", "list"}} {

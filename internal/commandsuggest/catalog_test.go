@@ -9,6 +9,16 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+var fixtureHelp = CatalogHelp{
+	Command: func(c *cli.Command, _ string) (string, string) { return c.Usage, c.Description },
+	Flag: func(_ *cli.Command, flag cli.Flag) string {
+		if doc, ok := flag.(cli.DocGenerationFlag); ok {
+			return doc.GetUsage()
+		}
+		return ""
+	},
+}
+
 func TestCatalogUsesCurrentDefinitionsWithoutActions(t *testing.T) {
 	called := false
 	root := &cli.Command{Name: "openai", Commands: []*cli.Command{
@@ -22,7 +32,7 @@ func TestCatalogUsesCurrentDefinitionsWithoutActions(t *testing.T) {
 		return nil
 	}
 	children := func(c *cli.Command) []*cli.Command { return c.VisibleCommands() }
-	got := Catalog(root, "openai", nil, children, examples)
+	got := Catalog(root, "openai", nil, fixtureHelp, children, examples)
 	require.Len(t, got, 3)
 	require.Equal(t, "openai models --help", got[0].Command)
 	require.Equal(t, "models", got[0].path)
@@ -32,7 +42,7 @@ func TestCatalogUsesCurrentDefinitionsWithoutActions(t *testing.T) {
 	require.Equal(t, "openai models list --format json", got[2].Command)
 	require.Equal(t, "Print JSON", got[2].Description)
 	root.Commands = append(root.Commands, &cli.Command{Name: "future"})
-	require.Equal(t, "openai future", Catalog(root, "openai", nil, children, examples)[3].Command)
+	require.Equal(t, "openai future", Catalog(root, "openai", nil, fixtureHelp, children, examples)[3].Command)
 	require.False(t, called)
 }
 
@@ -53,7 +63,7 @@ func TestCatalogRanksTaskPhrasesOnInstalledRoutes(t *testing.T) {
 		}
 	}
 	phrases := map[string][]TaskPhrase{"speak": {{Text: "read aloud"}}, "hidden": {{Text: "read aloud"}}}
-	catalog := Catalog(root, "openai", phrases, (*cli.Command).VisibleCommands, examples)
+	catalog := Catalog(root, "openai", phrases, fixtureHelp, (*cli.Command).VisibleCommands, examples)
 
 	commands := func(query string) []string {
 		var result []string
@@ -85,7 +95,7 @@ func TestCatalogRetiredCommandsOfferTheirDeclaredReplacement(t *testing.T) {
 		{Name: "retired", Metadata: map[string]any{"help-command-section": "Retired commands"}},
 		{Name: "replacement"},
 	}}
-	got := Catalog(root, "openai", nil, func(c *cli.Command) []*cli.Command { return c.VisibleCommands() },
+	got := Catalog(root, "openai", nil, fixtureHelp, func(c *cli.Command) []*cli.Command { return c.VisibleCommands() },
 		func(_ *cli.Command, path string) []Candidate {
 			if path == "retired" {
 				return []Candidate{{Command: "openai replacement --name example", Description: "Replacement operation"}}
@@ -112,7 +122,7 @@ func TestBrowseUsesCommandNamesAndPreservesRecentOrder(t *testing.T) {
 		}
 		return nil
 	}
-	catalog := Catalog(root, native, nil, (*cli.Command).VisibleCommands, examples)
+	catalog := Catalog(root, native, nil, fixtureHelp, (*cli.Command).VisibleCommands, examples)
 	picker := newCommandPicker(catalog, "Explore commands", false)
 	var commands []string
 	for _, i := range picker.matches {

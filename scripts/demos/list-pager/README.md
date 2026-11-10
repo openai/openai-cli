@@ -1,7 +1,7 @@
 # Automatic list pager evidence
 
-Eligible terminal lists start below the command and show up to five table rows or a short labeled preview.
-For Files, Space opens the full-screen view at the first unread row. The pager fetches enough records to fill that screen when available.
+The inline preview shows as many loaded rows as fit in the terminal.
+Space opens the full-screen view at the first unread row. At the end of the loaded records, Space fetches one API page.
 The footer identifies the visible file range. The table keeps its headings on screen.
 Resource pagers omit the optional JSON-format hint.
 This prevents a hint-only Space step when all loaded rows already fit.
@@ -14,7 +14,7 @@ An API failure preserves received records after restoring the terminal.
 Explicit formats, redirected output, CI, and dumb terminals retain their existing paths.
 
 The fixture serves synthetic Files, Batches, Projects, and Models data on loopback.
-The recording compares the verified inline default with the compact preview.
+The recording compares the historical inline default with the terminal-sized preview.
 Both recordings run `openai files list --limit 1 --max-items -1` against two API pages.
 Before sends Space and exits automatically.
 After sends Space, `b`, Space, and `q`.
@@ -52,7 +52,7 @@ python3 -I -B scripts/demos/list-pager/observe.py \
 ```
 
 The observer checks lazy requests, cached back navigation, final pages, narrow widths, resizing, cancellation, errors, and terminal restoration.
-It also checks Models, explicit formats, redirected output, CI, dumb terminals, removed flags, and executable help.
+It also checks Models, explicit formats, redirected output, CI, dumb terminals, list flags, and executable help.
 Each case retains raw output, casts, key events, request logs, and its result.
 The observer verifies binary hashes before and after execution.
 Use repeated `--case` options for focused reruns.
@@ -93,8 +93,8 @@ The separate observer also verifies lazy requests and terminal restoration.
 ## First-Space boundary
 
 The large observer accepts `--width` and `--height`; defaults are 98 columns and 20 rows.
-At 101 columns and 27 rows, the preview shows the first five records from a 25-record API page.
-Space opens a 25-row screen starting at record six. Only five rows come from the second API page.
+At 101 columns and 27 rows, the preview shows the first 25 records.
+Space requests the second API page and shows records 26–50.
 
 ```sh
 python3 -I -B scripts/demos/list-pager/check-large.py \
@@ -102,7 +102,7 @@ python3 -I -B scripts/demos/list-pager/check-large.py \
   --asciinema /absolute/path/to/asciinema --width 101 --height 27
 ```
 
-Record the hint-only boundary regression with the same keys before and after:
+Record the change in demand-driven API paging with the same keys before and after:
 
 ```sh
 bash scripts/demos/list-pager/record-page-boundary.sh \
@@ -112,8 +112,8 @@ bash scripts/demos/list-pager/record-page-boundary.sh \
 ```
 
 Both recordings send Space, Space, `b`, Space, and `q` at 101 columns and 27 rows.
-Before shows records 001–025 after the first Space; After shows records 006–030.
-The representative recordings visit two API pages before and three after.
+The v1.51.5 preview shows records 006–030 after the first Space. The candidate shows records 026–050.
+Both recordings visit three API pages. Back reuses cached records.
 The separate large observer verifies all 150 records.
 `before-first-space.png` and `after-first-space.png` show the direct comparison.
 `comparison.gif` shows both interactions, including back navigation and the restored shell.
@@ -126,8 +126,8 @@ Build the base and candidate CLI binaries. Run this recorder on macOS with Pytho
 python3 -B scripts/demos/list-pager/record-resources.py /path/to/base/openai /path/to/candidate/openai /tmp/list-pager-demo
 ```
 
-The recorder uses two 76×12 PTYs per resource and a loopback API with identical synthetic records.
-The Before screenshot shows labeled output. The After screenshot shows the default printed table.
-Both default commands print all 30 fixture rows and exit without input.
-The GIF also shows the five-row `--browse` preview. Space advances and Back reuses the cached page.
+The recorder uses 76×12 PTYs and a loopback API with identical synthetic records.
+The previous default printed all 30 records. The new default shows ten rows, then waits.
+Space requests the second API page. Back returns to the first ten rows from the cache.
+The GIF also shows `--browse=false` printing all 30 rows without waiting.
 The title bar labels each capture. The terminal contents and footer come from the CLI.

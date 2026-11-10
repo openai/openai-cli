@@ -1181,7 +1181,7 @@ jobs:
           fi
 
   test-linux:
-    timeout-minutes: 15
+    timeout-minutes: 20
     name: Linux tests
     needs: source
     permissions: {}

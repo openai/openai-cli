@@ -55,7 +55,7 @@ func moveFiles(m *Model, code rune) {
 	finishFilesMove(m, cmd)
 }
 
-func TestFilesScreenNavigationCrossesAPIPages(t *testing.T) {
+func TestFilesScreenNavigationReadsCachedRowsBeforeFetching(t *testing.T) {
 	m, calls := filesViewerFixture(t, 120, 30, 30, 65)
 	finishFilesMove(m, m.Init())
 	check := func(first, last, wantCalls int) {
@@ -70,29 +70,130 @@ func TestFilesScreenNavigationCrossesAPIPages(t *testing.T) {
 		require.Equal(t, wantCalls, *calls)
 	}
 	require.False(t, m.View().AltScreen)
-	check(1, 5, 1)
+	check(1, 28, 1)
 	moveFiles(m, tea.KeyDown)
-	check(2, 6, 1)
+	check(2, 29, 1)
 	moveFiles(m, tea.KeyDown)
-	check(3, 7, 1)
+	check(3, 30, 1)
 	moveFiles(m, tea.KeyUp)
-	check(2, 6, 1)
+	check(2, 29, 1)
 	moveFiles(m, 'b')
-	check(1, 5, 1)
+	check(1, 28, 1)
 	moveFiles(m, ' ')
 	require.True(t, m.View().AltScreen)
-	check(6, 33, 2)
+	check(29, 30, 1)
 	moveFiles(m, ' ')
-	check(34, 61, 3)
+	check(31, 58, 2)
 	moveFiles(m, ' ')
-	check(62, 65, 3)
+	check(59, 60, 2)
+	moveFiles(m, ' ')
+	check(61, 65, 3)
 	require.Contains(t, m.View().Content, "End")
 	moveFiles(m, 'b')
-	check(34, 61, 3)
+	check(59, 60, 3)
 	moveFiles(m, 'b')
-	check(6, 33, 3)
+	check(31, 58, 3)
 	moveFiles(m, 'b')
-	check(1, 5, 3)
+	check(29, 30, 3)
+	moveFiles(m, 'b')
+	check(1, 28, 3)
+}
+
+func TestInlinePreviewReturnsCompleteResultsThatFitTheTerminal(t *testing.T) {
+	for _, tc := range []struct {
+		hint string
+		rows int
+	}{{"", 38}, {"Details: --format json", 37}} {
+		for _, extra := range []int{0, 1} {
+			t.Run(fmt.Sprintf("hint=%q/overflow=%d", tc.hint, extra), func(t *testing.T) {
+				count := tc.rows + extra
+				m, calls := filesViewerFixture(t, 120, 40, count, count)
+				m.opts.Hint = tc.hint
+				finishFilesMove(m, m.Init())
+				require.Equal(t, 1, *calls)
+				require.False(t, m.View().AltScreen)
+				require.Len(t, m.records.screen.rows, tc.rows)
+				if extra == 0 {
+					require.True(t, m.quitting)
+					require.Len(t, m.pending, 1)
+					require.Contains(t, m.pending[0], fmt.Sprintf("f%03d", count))
+				} else {
+					require.False(t, m.quitting)
+					require.Len(t, strings.Split(m.View().Content, "\n"), 40)
+					moveFiles(m, ' ')
+					require.Contains(t, m.View().Content, fmt.Sprintf("f%03d", count))
+					require.Equal(t, 1, *calls)
+				}
+			})
+		}
+	}
+}
+
+func TestPagerShowsVisibleRangeAcrossFetchBackResizeAndEOF(t *testing.T) {
+	for _, count := range []struct{ total, page int }{{}, {1000, 1}, {55, 3}} {
+		t.Run(fmt.Sprintf("total=%d/page=%d", count.total, count.page), func(t *testing.T) {
+			fixture, calls := filesViewerFixture(t, 100, 27, 25, 55)
+			opts := fixture.opts
+			opts.Pager = true
+			m := New(opts, func() (Page, error) {
+				page, err := fixture.fetch()
+				if *calls == count.page {
+					page.Total = count.total
+				}
+				return page, err
+			}, fixture.cancel, 100, 27)
+			t.Cleanup(func() { require.NoError(t, m.Finish(nil, nil)) })
+			check := func(span, control string, requests int) {
+				t.Helper()
+				if count.total != 0 && *calls >= count.page {
+					span += fmt.Sprintf("/%d", count.total)
+				}
+				lines := strings.Split(m.View().Content, "\n")
+				require.Equal(t, span, strings.Fields(lines[len(lines)-1])[0])
+				require.Contains(t, lines[len(lines)-1], control)
+				require.Equal(t, requests, *calls)
+			}
+			finishFilesMove(m, m.Init())
+			check("1–25", "Space: more", 1)
+			moveFiles(m, ' ')
+			check("26–50", "Space: more", 2)
+			moveFiles(m, 'b')
+			check("1–25", "i: inline", 2)
+			moveFiles(m, ' ')
+			check("26–50", "i: inline", 2)
+			m.Update(tea.WindowSizeMsg{Width: 100, Height: 4})
+			check("26–27", "q: quit", 2)
+			m.Update(tea.WindowSizeMsg{Width: 100, Height: 27})
+			moveFiles(m, ' ')
+			check("51–55", "End", 3)
+			moveFiles(m, 'b')
+			check("26–50", "Space: more", 3)
+			require.NotNil(t, viewerKey(m, 'i'))
+			require.NoError(t, m.printLoaded())
+			require.Equal(t, count.total, m.total)
+			require.Equal(t, 3, *calls)
+		})
+	}
+}
+
+func TestPagerCountsWrappedRecordsOnceAndKeepsWholeOrdinals(t *testing.T) {
+	fixture, calls := filesViewerFixture(t, 12, 3, 1, 3)
+	opts := fixture.opts
+	opts.Pager = true
+	m := New(opts, fixture.fetch, fixture.cancel, 12, 3)
+	t.Cleanup(func() { require.NoError(t, m.Finish(nil, nil)) })
+	page := m.Init()().(listPageMessage)
+	page.page.Total = 1000
+	m.Update(page)
+	require.Contains(t, m.View().Content, "1/1000  q")
+	moveFiles(m, ' ')
+	require.Contains(t, m.View().Content, "1/1000  q")
+	require.Equal(t, 1, *calls)
+	m.Update(tea.WindowSizeMsg{Width: 7, Height: 3})
+	require.Contains(t, m.View().Content, "1  q")
+	require.NotContains(t, m.View().Content, "/")
+	m.Update(tea.WindowSizeMsg{Width: 2, Height: 3})
+	require.Equal(t, "q", strings.Split(m.View().Content, "\n")[2])
 }
 
 func TestFilesShortFirstScreenCanBeRestored(t *testing.T) {
@@ -101,14 +202,22 @@ func TestFilesShortFirstScreenCanBeRestored(t *testing.T) {
 	require.Contains(t, m.View().Content, "Files 1–2")
 	require.Equal(t, 1, *calls)
 	moveFiles(m, ' ')
-	require.Contains(t, m.View().Content, "Files 3–8")
-	require.Equal(t, 4, *calls)
+	require.Contains(t, m.View().Content, "Files 3–4")
+	require.Equal(t, 2, *calls)
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
 	moveFiles(m, 'b')
 	require.Contains(t, m.View().Content, "Files 1–2")
 	moveFiles(m, ' ')
-	require.Contains(t, m.View().Content, "Files 3–8")
-	require.Equal(t, 4, *calls)
+	require.Contains(t, m.View().Content, "Files 3–4")
+	require.Equal(t, 2, *calls)
+	moveFiles(m, ' ')
+	require.Contains(t, m.View().Content, "Files 5–6")
+	require.Equal(t, 3, *calls)
+	moveFiles(m, 'b')
+	moveFiles(m, 'b')
+	moveFiles(m, ' ')
+	require.Contains(t, m.View().Content, "Files 3–4")
+	require.Equal(t, 3, *calls)
 }
 
 func TestFilesWrapsAndPaginatesLabeledOutput(t *testing.T) {
@@ -136,6 +245,40 @@ func TestFilesWrapsAndPaginatesLabeledOutput(t *testing.T) {
 	}
 }
 
+func TestFilesNavigationWaitsForVisibleRecords(t *testing.T) {
+	for _, pager := range []bool{false, true} {
+		for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 1}, {Width: 1, Height: 10}} {
+			t.Run(fmt.Sprintf("pager=%t/%dx%d", pager, size.Width, size.Height), func(t *testing.T) {
+				fixture, calls := filesViewerFixture(t, size.Width, size.Height, 1, 3)
+				opts := fixture.opts
+				opts.Pager, opts.Hint = pager, "Details: --format json"
+				m := New(opts, fixture.fetch, fixture.cancel, size.Width, size.Height)
+				t.Cleanup(func() { require.NoError(t, m.Finish(nil, nil)) })
+				finishFilesMove(m, m.Init())
+				for _, key := range []rune{' ', tea.KeyDown, 'd', 'b', tea.KeyUp} {
+					require.Nil(t, viewerKey(m, key))
+				}
+				require.Equal(t, 1, *calls)
+				require.Equal(t, pager, m.View().AltScreen)
+				require.NotContains(t, m.View().Content, "Space")
+				m.Update(tea.WindowSizeMsg{Width: 80, Height: 2})
+				require.Contains(t, m.View().Content, "f001")
+				moveFiles(m, ' ')
+				require.Contains(t, m.View().Content, "f002")
+				m.Update(size)
+				moveFiles(m, 'b')
+				moveFiles(m, ' ')
+				m.Update(tea.WindowSizeMsg{Width: 80, Height: 4})
+				require.Contains(t, m.View().Content, "f002")
+				require.Equal(t, 2, *calls)
+				moveFiles(m, 'b')
+				require.Contains(t, m.View().Content, "f001")
+				require.Equal(t, 2, *calls)
+			})
+		}
+	}
+}
+
 func TestFilesArrowUpReturnsToPreviousLabeledLine(t *testing.T) {
 	m, _ := filesViewerFixture(t, 80, 6, 12, 12)
 	msg := m.Init()().(listPageMessage)
@@ -159,12 +302,13 @@ func TestFilesArrowUpReturnsToPreviousLabeledLine(t *testing.T) {
 	require.True(t, strings.HasPrefix(m.View().Content, "f002 last\n"))
 }
 
-func TestWrappedRecordContinuesFromTheCompactPreview(t *testing.T) {
+func TestWrappedRecordContinuesFromTheInlinePreview(t *testing.T) {
 	m, _ := filesViewerFixture(t, 12, 9, 1, 1)
-	const text = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789--end-of-the-label"
+	text := strings.Repeat("abcdefghijk", 12) + "--end-of-the-label"
 	m.opts.RenderRecordLabels = func(gjson.Result, bool) (string, error) { return text, nil }
 	finishFilesMove(m, m.Init())
 	first := strings.ReplaceAll(m.records.screen.content, "\n", "")
+	require.Equal(t, 8, len(m.records.screen.rows))
 	require.True(t, strings.HasPrefix(text, first))
 	require.Less(t, len(first), len(text))
 	moveFiles(m, ' ')

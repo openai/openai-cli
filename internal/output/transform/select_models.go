@@ -17,12 +17,12 @@ type ModelSelection struct {
 	Limit      int64
 }
 
-// SelectModels retains original records and stable ordering for equal IDs.
+// SelectModels retains original records, stable equal-ID order, and the match count before the limit.
 // Ambiguous identities make the whole selection unsupported, including records
 // that would otherwise be filtered out. Metadata does not affect selection.
-func SelectModels(ctx context.Context, items []gjson.Result, selection ModelSelection) ([]gjson.Result, bool, error) {
+func SelectModels(ctx context.Context, items []gjson.Result, selection ModelSelection) ([]gjson.Result, int, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
 	type model struct {
 		id   string
@@ -32,7 +32,7 @@ func SelectModels(ctx context.Context, items []gjson.Result, selection ModelSele
 	for _, item := range items {
 		id, supported, err := modelIdentity(ctx, item)
 		if err != nil || !supported {
-			return nil, false, err
+			return nil, 0, false, err
 		}
 		if selection.ExactID != nil && id != *selection.ExactID ||
 			selection.Pattern != nil && !selection.Pattern.MatchString(id) {
@@ -41,7 +41,7 @@ func SelectModels(ctx context.Context, items []gjson.Result, selection ModelSele
 		selected = append(selected, model{id, item})
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
 	sort.SliceStable(selected, func(i, j int) bool {
 		if selection.Descending {
@@ -50,20 +50,21 @@ func SelectModels(ctx context.Context, items []gjson.Result, selection ModelSele
 		return selected[i].id < selected[j].id
 	})
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
-	if selection.Limit >= 0 && selection.Limit < int64(len(selected)) {
+	matches := len(selected)
+	if selection.Limit >= 0 && selection.Limit < int64(matches) {
 		selected = selected[:int(selection.Limit)]
 	}
 	result := make([]gjson.Result, 0, len(selected))
 	for _, model := range selected {
 		if err := ctx.Err(); err != nil {
-			return nil, false, err
+			return nil, 0, false, err
 		}
 		result = append(result, model.item)
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
-	return result, true, nil
+	return result, matches, true, nil
 }

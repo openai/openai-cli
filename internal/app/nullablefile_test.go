@@ -39,12 +39,15 @@ func TestNullableFileReferencesEndToEnd(t *testing.T) {
 		want        any
 		present     bool
 		wantErr     bool
+		legacyInput bool
 	}{
 		{name: "implicit file", flags: []string{"--instructions", "@" + path}, want: content, present: true},
 		{name: "text file", flags: []string{"--instructions", "@file://" + path}, want: content, present: true},
 		{name: "base64 file", flags: []string{"--instructions", "@data://" + path}, want: base64.StdEncoding.EncodeToString([]byte(content)), present: true},
 		{name: "escaped", flags: []string{"--instructions", `\@literal`}, want: "@literal", present: true},
-		{name: "null", flags: []string{"--instructions", "null"}, present: true},
+		{name: "literal null", flags: []string{"--instructions", "null"}, want: "null", present: true},
+		{name: "structured null", flags: []string{"--instructions-structured", "null"}, present: true},
+		{name: "legacy null", flags: []string{"--instructions", "null"}, present: true, legacyInput: true},
 		{name: "unset"},
 		{name: "missing file", flags: []string{"--instructions", "@file://" + path + ".missing"}, wantErr: true},
 		{name: "untrusted stdin", stdin: `{"instructions":"@file://` + path + `"}`, want: "@file://" + path, present: true},
@@ -61,6 +64,9 @@ func TestNullableFileReferencesEndToEnd(t *testing.T) {
 				}
 			}
 			command.Env = append(command.Env, "OPENAI_API_KEY=sk-fake-test", "OPENAI_UNTRUSTED_STDIN=true")
+			if tt.legacyInput {
+				command.Env = append(command.Env, "OPENAI_CLI_INPUT_MODE=legacy")
+			}
 			command.Stdin = strings.NewReader(tt.stdin)
 			var stderr bytes.Buffer
 			command.Stderr = &stderr

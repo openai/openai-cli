@@ -21,7 +21,9 @@ import (
 )
 
 func TestListPagerAdvanceAtVisibleRecordBoundary(t *testing.T) {
-	for _, count := range []int{4, 5, 6} {
+	const height = 27
+	const capacity = height - 2 // The heading and controls each use one row.
+	for _, count := range []int{capacity - 1, capacity, capacity + 1} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			var out bytes.Buffer
 			var requests atomic.Int32
@@ -39,29 +41,37 @@ func TestListPagerAdvanceAtVisibleRecordBoundary(t *testing.T) {
 					return listview.Page{Items: items, More: true}, nil
 				}
 				return listview.Page{Items: []gjson.Result{gjson.Parse(`{"id":"file-next","object":"file","filename":"next.jsonl","purpose":"batch","bytes":1024,"status":"processed"}`)}}, nil
-			}, cancel, 101, 27)
+			}, cancel, 101, height)
 			model.Update(model.Init()())
 			require.EqualValues(t, 1, requests.Load())
 			require.NotContains(t, model.View().Content, "Full data:")
-			if count <= 5 {
+			if count <= capacity {
 				require.Contains(t, model.View().Content, last)
 			} else {
 				require.NotContains(t, model.View().Content, last)
 			}
 			_, advance := model.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
-			require.NotNil(t, advance, "the next screen spans the API page boundary")
+			require.NotNil(t, advance)
 			require.IsType(t, tea.QuitMsg{}, advance(), "the inline renderer releases the shell first")
-			model.Update(model.Init()())
+			fetch := model.Init()
+			previousID := "file-001"
+			if count > capacity {
+				require.Nil(t, fetch, "the next file was already loaded")
+				require.EqualValues(t, 1, requests.Load())
+				require.Contains(t, model.View().Content, last)
+				previousID = last
+				_, fetch = model.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+			}
+			require.NotNil(t, fetch)
+			model.Update(fetch())
 			require.EqualValues(t, 2, requests.Load())
 			nextScreen := model.View().Content
 			require.Contains(t, nextScreen, "file-next")
 			require.Contains(t, nextScreen, "End")
-			if count == 6 {
-				require.Contains(t, nextScreen, last, "keep the last unshown file from the first API response")
-			}
+			require.NotContains(t, nextScreen, last)
 			require.NotContains(t, nextScreen, "file-001")
 			model.Update(tea.KeyPressMsg{Code: 'b', Text: "b"})
-			require.Contains(t, model.View().Content, "file-001")
+			require.Contains(t, model.View().Content, previousID)
 			require.NotContains(t, model.View().Content, "file-next")
 			_, cached := model.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 			require.Nil(t, cached)
@@ -113,6 +123,35 @@ func TestListPagerCommandRoutes(t *testing.T) {
 	}
 }
 
+func TestLateListCommandsBrowseByDefault(t *testing.T) {
+	t.Setenv("CI", "1")
+	for _, tc := range []struct {
+		name, alias string
+	}{{"list", ""}, {"ls", ""}, {"list-changes", ""}, {"history", "list-revisions"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			resource := &cli.Command{Name: "widgets"}
+			root := &cli.Command{Name: "openai", Commands: []*cli.Command{resource}}
+			configureRegisteredLists(root)
+			called := false
+			command := &cli.Command{Name: tc.name, Action: func(ctx context.Context, cmd *cli.Command) error {
+				called = true
+				require.True(t, cmd.Bool("browse"))
+				require.False(t, cmd.IsSet("browse"))
+				require.Nil(t, printedListFrom(ctx))
+				return nil
+			}}
+			verb := tc.name
+			if tc.alias != "" {
+				command.Aliases, verb = []string{tc.alias}, tc.alias
+			}
+			resource.Commands = append(resource.Commands, command)
+			configureRegisteredLists(root)
+			require.NoError(t, root.Run(t.Context(), []string{"openai", "widgets", verb}))
+			require.True(t, called)
+		})
+	}
+}
+
 func TestListPagerHelp(t *testing.T) {
 	for _, route := range listPagerRoutes {
 		t.Run(route, func(t *testing.T) {
@@ -121,28 +160,40 @@ func TestListPagerHelp(t *testing.T) {
 			root.Writer = &help
 			args := append([]string{"openai"}, strings.Fields(route)...)
 			require.NoError(t, root.Run(t.Context(), append(args, "list", "--help")))
-			require.Contains(t, help.String(), "Terminal lists start with up to five table rows or a short labeled preview.")
+			require.Contains(t, help.String(), "Terminal lists start with one screen of table rows or labeled fields.")
 			require.Contains(t, help.String(), "Complete results that fit return to the shell.")
-			require.Contains(t, help.String(), "Press Space to browse the next screen.")
-			for _, removed := range []string{"--pager", "--no-pager", "inline", "finish automatically", "retain noninteractive behavior"} {
-				require.NotContains(t, help.String(), removed)
-			}
+			require.Contains(t, help.String(), "--pager")
+			require.Contains(t, help.String(), "Press i to continue paging in your terminal.")
 		})
 	}
 }
 
-func TestListPagerHasNoModeFlags(t *testing.T) {
+func TestListPagerOpensDirectlyOnRegisteredRoutes(t *testing.T) {
 	for _, route := range listPagerRoutes {
-		for _, flag := range []string{"--pager", "--no-pager"} {
-			t.Run(route+"/"+flag, func(t *testing.T) {
-				called := false
-				root := listPagerCommand(func(context.Context, *cli.Command) error { called = true; return nil })
-				args := append([]string{"openai"}, strings.Fields(route)...)
-				require.ErrorContains(t, root.Run(t.Context(), append(args, "list", flag)), "flag provided but not defined")
-				require.False(t, called)
+		t.Run(route, func(t *testing.T) {
+			called := false
+			root := listPagerCommand(func(ctx context.Context, _ *cli.Command) error {
+				called = true
+				require.True(t, listViewerOptions(ShowJSONOpts{Context: ctx}).Pager)
+				return nil
 			})
-		}
+			args := append([]string{"openai"}, strings.Fields(route)...)
+			require.NoError(t, root.Run(t.Context(), append(args, "list", "--pager")))
+			require.True(t, called)
+		})
 	}
+}
+
+func TestListPagerConflictingPrintFlag(t *testing.T) {
+	called := false
+	root := listPagerCommand(func(context.Context, *cli.Command) error {
+		called = true
+		return nil
+	})
+	root.ExitErrHandler = func(context.Context, *cli.Command, error) {}
+	err := root.Run(t.Context(), []string{"openai", "files", "list", "--pager", "--browse=false"})
+	require.ErrorContains(t, err, "--pager and --browse=false cannot be combined")
+	require.False(t, called)
 }
 
 func TestListPagerPreservesAdmission(t *testing.T) {

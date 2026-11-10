@@ -63,10 +63,6 @@ func TestViewerBackKeepsFetchFrontier(t *testing.T) {
 	if !strings.Contains(m.View().Content, "first") || requests.Load() != 2 || out.Len() != 0 {
 		t.Fatal("back navigation fetched or printed data")
 	}
-	view := m.View().Content
-	if viewerKey(m, 'i') != nil || m.View().Content != view {
-		t.Fatal("removed inline shortcut changed the pager")
-	}
 	if viewerKey(m, ' ') != nil || !strings.Contains(m.View().Content, "second") || requests.Load() != 2 {
 		t.Fatal("forward navigation refetched cached data")
 	}
@@ -101,7 +97,7 @@ func TestViewerPendingFetchIgnoresNavigation(t *testing.T) {
 			m.Update(listPageMessage{page: first})
 			cmd := viewerKey(m, ' ')
 			<-started
-			for _, key := range " bi " {
+			for _, key := range " b  " {
 				if viewerKey(m, key) != nil || m.quitting || !m.loading {
 					t.Fatal("input changed the pending request")
 				}
@@ -134,7 +130,7 @@ func TestViewerFinalPageStaysUntilQuit(t *testing.T) {
 	m.Update(listPageMessage{page: first})
 	m.fetch = func() (Page, error) { return viewerPage("final"), nil }
 	m.Update(viewerKey(m, ' ')())
-	for _, key := range []rune{' ', 'i', 'p'} {
+	for _, key := range []rune{' ', 'p'} {
 		if viewerKey(m, key) != nil || m.quitting || !strings.Contains(m.View().Content, "End") {
 			t.Fatal("viewer closed or fetched at the final page")
 		}

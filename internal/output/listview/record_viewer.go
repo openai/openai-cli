@@ -2,8 +2,8 @@ package listview
 
 import (
 	"errors"
-	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -25,7 +25,6 @@ type recordScreen struct {
 	recordRange
 	rows    []recordPosition
 	content string
-	full    bool
 }
 
 type recordPage struct {
@@ -39,6 +38,7 @@ const (
 	recordPreview recordMode = iota
 	recordOpening
 	recordBrowser
+	recordInline
 )
 
 type recordViewer struct {
@@ -56,7 +56,6 @@ type recordViewer struct {
 	endLimit              recordPosition // exclusive boundary when restoring a previous screen
 	rowLimit              int            // retain the current screen height when moving one row
 	restoreLabels         bool           // restore a labeled screen exactly when paging back
-	fill                  bool           // only a navigation key can request more records
 }
 
 func (m *Model) receiveRecords(page Page) tea.Cmd {
@@ -76,8 +75,12 @@ func (m *Model) receiveRecords(page Page) tea.Cmd {
 		f.items = append(f.items, page.Items...)
 		f.pages = append(f.pages, recordPage{end: len(f.items), fullLabels: page.FullLabels})
 	}
+	if m.inline != nil {
+		// An inline switch waits for the already requested page.
+		return tea.Quit
+	}
 	cmd := m.refreshRecords()
-	if first && cmd == nil && m.err == nil && !m.more && f.screen.end.item == len(f.items) {
+	if f.mode == recordPreview && first && cmd == nil && m.err == nil && !m.more && f.screen.end.item == len(f.items) {
 		// A complete result that fits in the preview belongs in scrollback.
 		// Finish writes it once after Tea releases the terminal.
 		body := f.screen.content
@@ -114,7 +117,7 @@ func (v *recordViewer) fullRecordLabels(from, end int) bool {
 func (m *Model) resizeRecords(widthChanged bool) tea.Cmd {
 	f := &m.records
 	f.history = nil
-	f.rowLimit, f.endLimit, f.fill, f.restoreLabels = 0, recordPosition{}, false, false
+	f.rowLimit, f.endLimit, f.restoreLabels = 0, recordPosition{}, false
 	// Anchor reflow to the record. A wrapped line can move when the width changes.
 	if widthChanged {
 		f.from.line = 0
@@ -142,6 +145,10 @@ func (m *Model) refreshRecords() tea.Cmd {
 		}
 	}
 	if m.err != nil {
+		if m.opts.Pager {
+			m.inline = &inlineList{}
+			return tea.Quit
+		}
 		// Print each original API page once, after terminal restoration. Successful
 		// navigation only renders the visible records, regardless of API page size.
 		start := 0
@@ -158,19 +165,10 @@ func (m *Model) refreshRecords() tea.Cmd {
 		}
 		return m.quit()
 	}
-	// Keep the old screen visible while waiting for the first new row. Only
-	// continue a requested move until its screen fits or the API reaches EOF.
-	if !m.loading && m.more && f.fill && (f.from.item >= len(f.items) ||
-		(!f.screen.full && f.screen.end.item == len(f.items))) {
-		return m.load()
-	}
-	if !m.loading {
-		f.fill = false
-		if f.from.item >= len(f.items) {
-			f.from = f.screen.from
-			if n := len(f.history); n > 0 && f.history[n-1].from == f.from {
-				f.history = f.history[:n-1]
-			}
+	if !m.loading && f.from.item >= len(f.items) {
+		f.from = f.screen.from
+		if n := len(f.history); n > 0 && f.history[n-1].from == f.from {
+			f.history = f.history[:n-1]
 		}
 	}
 	return nil
@@ -183,7 +181,7 @@ func (m *Model) renderRecords() (recordScreen, error) {
 	// A regular screen has one pinned table header and one footer. A two-row
 	// terminal can still display one complete record row above the footer.
 	pinned := height > 1
-	capacity := max(1, height-1)
+	capacity := tableDataRows(height)
 	if f.rowLimit > 0 {
 		capacity = min(capacity, f.rowLimit)
 	}
@@ -205,7 +203,6 @@ func (m *Model) renderRecords() (recordScreen, error) {
 			for i := f.from.item; i < end; i++ {
 				s.rows = append(s.rows, recordPosition{item: i})
 			}
-			s.full = len(s.rows) == capacity || s.end == f.endLimit
 			return s, nil
 		}
 	}
@@ -235,7 +232,6 @@ func (m *Model) renderRecords() (recordScreen, error) {
 		}
 	}
 	s.content, s.end = strings.Join(body, "\n"), pos
-	s.full = len(body) == height || pos == f.endLimit
 	return s, nil
 }
 
@@ -262,7 +258,13 @@ var recordKeys = viewport.DefaultKeyMap()
 func (m *Model) recordKey(msg tea.KeyPressMsg) tea.Cmd {
 	f := &m.records
 	s := &f.screen
-	if m.loading || len(s.rows) == 0 {
+	if msg.String() == "i" && f.mode == recordBrowser && m.inline == nil {
+		m.inline = &inlineList{}
+		if !m.loading {
+			return tea.Quit
+		}
+	}
+	if m.inline != nil || m.loading || len(s.rows) == 0 {
 		return nil
 	}
 	var forward, page bool
@@ -290,7 +292,7 @@ func (m *Model) recordKey(msg tea.KeyPressMsg) tea.Cmd {
 
 func (m *Model) advanceRecords(page bool, step int) tea.Cmd {
 	f, s := &m.records, &m.records.screen
-	if s.end.item == len(f.items) && !m.more {
+	if !m.roomForRecords() || s.end.item == len(f.items) && !m.more {
 		return nil
 	}
 	if page && f.mode == recordPreview {
@@ -299,10 +301,15 @@ func (m *Model) advanceRecords(page bool, step int) tea.Cmd {
 		f.mode = recordOpening
 		return tea.Quit
 	}
-	f.endLimit, f.fill, f.restoreLabels = recordPosition{}, true, false
+	f.endLimit, f.restoreLabels = recordPosition{}, false
 	if page {
 		f.history = append(f.history, s.recordRange)
 		f.from, f.rowLimit = s.end, 0
+		if f.from.item < len(f.items) {
+			// Revisiting a short screen after Back must still stop at the same API boundary.
+			i := sort.Search(len(f.pages), func(i int) bool { return f.pages[i].end > f.from.item })
+			f.endLimit = recordPosition{item: f.pages[i].end}
+		}
 	} else {
 		f.history = nil
 		f.from, f.rowLimit = s.end, len(s.rows)
@@ -310,15 +317,20 @@ func (m *Model) advanceRecords(page bool, step int) tea.Cmd {
 			f.from = s.rows[step]
 		}
 	}
+	// Only a forward key at the end of the loaded rows may fetch another page.
+	// Keep the current screen visible until that single fetch finishes.
+	if s.end.item == len(f.items) {
+		return m.load()
+	}
 	return m.refreshRecords()
 }
 
 func (m *Model) backRecords(page bool, step int) tea.Cmd {
 	f, s := &m.records, &m.records.screen
-	if s.from == (recordPosition{}) {
+	if !m.roomForRecords() || s.from == (recordPosition{}) {
 		return nil
 	}
-	f.endLimit, f.fill, f.rowLimit, f.restoreLabels = recordPosition{}, false, 0, false
+	f.endLimit, f.rowLimit, f.restoreLabels = recordPosition{}, 0, false
 	if page && len(f.history) != 0 {
 		last := f.history[len(f.history)-1]
 		f.history = f.history[:len(f.history)-1]
@@ -379,7 +391,12 @@ func (m *Model) recordTable(from, end, width int) (string, bool, error) {
 
 // Keep optional detail guidance below the records, so it cannot add a paging step.
 func (m *Model) showRecordHint() bool {
-	return m.opts.Hint != "" && m.window.Height >= 4 && ansi.StringWidth(m.opts.Hint) <= m.recordWidth()
+	return recordHintFits(m.window.Width, m.window.Height, m.opts.Hint)
+}
+
+// The footer reserves one row, and the inline preview reserves one right-edge cell.
+func (m *Model) roomForRecords() bool {
+	return m.window.Height > 1 && m.window.Width > 1
 }
 
 // Keep wrapped line offsets stable when the inline frame (which reserves
@@ -389,49 +406,53 @@ func (m *Model) recordWidth() int {
 }
 
 func (m *Model) recordHeight() int {
-	height := m.window.Height - 1
-	if m.showRecordHint() {
-		height--
+	return max(1, recordBodyHeight(m.window.Width, m.window.Height, m.opts.Hint))
+}
+
+// Count records, including a partly visible labeled record only once.
+func (m *Model) recordPosition(width int) string {
+	rows := m.records.screen.rows
+	if !m.roomForRecords() {
+		return ""
 	}
-	if m.records.mode != recordBrowser {
-		// Reserve a header plus five data rows for tables. Labeled records
-		// use those same six physical lines, even for a single long value.
-		height = min(height, 6)
+	label, span := m.opts.Plural, ""
+	if len(rows) > 0 {
+		first, last := rows[0].item+1, rows[len(rows)-1].item+1
+		span = strconv.Itoa(first)
+		if first == last {
+			label = m.opts.Singular
+		} else {
+			span += "–" + strconv.Itoa(last)
+		}
+	} else if m.loaded {
+		span = "0"
 	}
-	return max(1, height)
+	position, separator := span, "/"
+	if !m.opts.Pager {
+		position, separator = strings.TrimSpace(label+" "+span), " of "
+	}
+	// A completed request can be capped. Only a source-supplied total is authoritative.
+	if m.total > 0 && len(rows) > 0 && m.total >= len(m.records.items) {
+		withTotal := position + separator + strconv.Itoa(m.total)
+		if ansi.StringWidth(withTotal+"  q") <= width {
+			return withTotal
+		}
+	}
+	if m.opts.Pager && ansi.StringWidth(position+"  q") > width {
+		return "" // Never truncate an ordinal into a different number.
+	}
+	return position
 }
 
 func (m *Model) recordView() string {
 	f := &m.records
 	width := m.recordWidth()
-	position := m.opts.Plural
-	if len(f.screen.rows) != 0 {
-		first := f.screen.from.item + 1
-		last := f.screen.rows[len(f.screen.rows)-1].item + 1
-		position = fmt.Sprintf("%s %d", m.opts.Singular, first)
-		if first != last {
-			position = fmt.Sprintf("%s %d–%d", m.opts.Plural, first, last)
-		}
-		if m.total > 0 {
-			count := fmt.Sprintf(" of %d", m.total)
-			if ansi.StringWidth(position+count+"  q") <= width {
-				position += count
-			}
-		}
-	} else if m.loaded {
-		position = m.opts.Plural + " 0"
-	}
-	controls := "↑↓: row   Space: next screen   b: back   q: quit"
-	medium, short := "Space: next  b: back  q: quit", "↑↓ Space b q"
-	if f.mode == recordPreview {
-		controls, medium, short = "↑↓: row   Space: browse   b: back   q: quit", "Space: browse  b: back  q: quit", "Space: browse  q"
-	}
-	if m.loading || !m.loaded {
-		controls, medium, short = "Loading…   q: quit", "Loading…  q: quit", "Loading… q"
-	} else if !m.more && f.screen.end.item == len(f.items) {
-		controls, medium, short = "End   ↑↓: row   b: back   q: quit", "End  b: back  q: quit", "End ↑↓ b q"
-	}
+	position := m.recordPosition(width)
+	controls, medium, short := m.recordControls()
 	padding := "    "
+	if position == "" {
+		padding = ""
+	}
 	if ansi.StringWidth(position+padding+controls) > width {
 		controls, padding = medium, "  "
 	}
@@ -449,7 +470,7 @@ func (m *Model) recordView() string {
 		position = ansi.Truncate(position, width-ansi.StringWidth(padding+controls), "")
 		footer = strings.TrimSpace(position + padding + m.opts.Style.controls(controls))
 	}
-	if m.window.Height <= 1 {
+	if !m.roomForRecords() {
 		return footer
 	}
 	if f.screen.content != "" {
@@ -467,4 +488,40 @@ func (m *Model) recordView() string {
 		return strings.Join(lines[:min(len(lines), max(1, m.window.Height-1))], "\n") + "\n" + footer
 	}
 	return footer
+}
+
+// Full-screen and preview footers advertise only keys available in their mode.
+func (m *Model) recordControls() (full, medium, short string) {
+	browser := m.records.mode == recordBrowser
+	if m.loading || !m.loaded {
+		switch {
+		case m.inline != nil:
+			return "Switching after loading…   q: quit", "Switching…  q", "q"
+		case browser:
+			return "Loading…   i: inline   q: quit", "Loading…  i  q", "Loading… q"
+		default:
+			return "Loading…   q: quit", "Loading…  q: quit", "Loading… q"
+		}
+	}
+	if !m.roomForRecords() {
+		if browser {
+			return "Resize terminal   i: inline   q: quit", "Resize   i   q", "q"
+		}
+		return "Resize terminal   q: quit", "Resize   q", "q"
+	}
+	end := !m.more && m.records.screen.end.item == len(m.records.items)
+	switch {
+	case m.opts.Pager && end:
+		return "End   b: back   i: inline   q: quit", "End  b  i  q", "End b i q"
+	case m.opts.Pager:
+		return "Space: more   b: back   i: inline   q: quit", "Space: more  b  i  q", "Space b i q"
+	case browser && end:
+		return "End   ↑↓: row   b: back   i: inline   q: quit", "End  b: back  i: inline  q: quit", "End ↑↓ b i q"
+	case browser:
+		return "↑↓: row   Space: next screen   b: back   i: inline   q: quit", "Space: next  b: back  i: inline  q: quit", "↑↓ Space b i q"
+	case end:
+		return "End   ↑↓: row   b: back   q: quit", "End  b: back  q: quit", "End ↑↓ b q"
+	default:
+		return "↑↓: row   Space: browse   b: back   q: quit", "Space: browse  b: back  q: quit", "Space: browse  q"
+	}
 }

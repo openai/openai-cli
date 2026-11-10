@@ -183,15 +183,20 @@ func TestMainLocalUtilitiesPreserveRemoteTokenCounter(t *testing.T) {
 	for _, route := range []struct {
 		name, stdin, want string
 		args              []string
+		legacyInput       bool
 	}{
-		{"nested", "", `{"model":"codex","input":"tokenizer\nsynthetic"}`,
-			[]string{"responses", "input-tokens", "count", "--model", "codex", "--input", `"tokenizer\nsynthetic"`}},
-		{"legacy", "", `{"model":"tokenizer","input":"codex\nsynthetic"}`,
-			[]string{"responses:input-tokens", "count", "--model", "tokenizer", "--input", `"codex\nsynthetic"`}},
+		{"literal multiline input", "", `{"model":"codex","input":"tokenizer\nsynthetic"}`,
+			[]string{"responses", "input-tokens", "count", "--model", "codex", "--input", "tokenizer\nsynthetic"}, false},
+		{"literal input on colon route", "", `{"model":"tokenizer","input":"count: hello"}`,
+			[]string{"responses:input-tokens", "count", "--model", "tokenizer", "--input", "count: hello"}, false},
+		{"legacy nested", "", `{"model":"codex","input":"tokenizer\nsynthetic"}`,
+			[]string{"responses", "input-tokens", "count", "--model", "codex", "--input", `"tokenizer\nsynthetic"`}, true},
+		{"legacy colon route", "", `{"model":"tokenizer","input":"codex\nsynthetic"}`,
+			[]string{"responses:input-tokens", "count", "--model", "tokenizer", "--input", `"codex\nsynthetic"`}, true},
 		{"YAML scalar compatibility", "", `{"model":"codex","input":"tokenizer synthetic"}`,
-			[]string{"responses", "input-tokens", "count", "--model", "codex", "--input", "tokenizer\nsynthetic"}},
+			[]string{"responses", "input-tokens", "count", "--model", "codex", "--input", "tokenizer\nsynthetic"}, true},
 		{"piped JSON", `{"model":"codex","input":"tokenizer\nsynthetic"}`,
-			`{"model":"codex","input":"tokenizer\nsynthetic"}`, []string{"responses", "input-tokens", "count"}},
+			`{"model":"codex","input":"tokenizer\nsynthetic"}`, []string{"responses", "input-tokens", "count"}, false},
 	} {
 		t.Run(route.name, func(t *testing.T) {
 			var requests atomic.Int32
@@ -224,6 +229,9 @@ func TestMainLocalUtilitiesPreserveRemoteTokenCounter(t *testing.T) {
 			t.Cleanup(server.Close)
 			env := append(localUtilitiesEnvironment(t), "OPENAI_BASE_URL="+server.URL+"/v1",
 				"OPENAI_API_KEY=sk-synthetic-local-utilities-test")
+			if route.legacyInput {
+				env = append(env, "OPENAI_CLI_INPUT_MODE=legacy")
+			}
 			var stdin *os.File
 			if route.stdin != "" {
 				path := filepath.Join(t.TempDir(), "synthetic-request.json")

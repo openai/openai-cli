@@ -23,8 +23,8 @@ navigation = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'check-lis
 
 def capture(binary, resource, mode):
     args = [resource, 'list']
-    if mode == 'browse':
-        args.append('--browse')
+    if mode == 'print':
+        args.append('--browse=false')
     prefix = 'whe' if resource == 'webhooks' else 'skill'
     with serve(resource=resource, pages=3, rows=ROWS) as server, tempfile.TemporaryDirectory() as home:
         env = {'HOME': home, 'XDG_CONFIG_HOME': home, 'PATH': '/usr/bin:/bin', 'LANG': 'en_US.UTF-8',
@@ -38,7 +38,7 @@ def capture(binary, resource, mode):
                      env, width=WIDTH, height=HEIGHT)
         try:
             if mode != 'browse':
-                # Both default invocations must return without keyboard input.
+                # The previous default and the explicit print mode return without keyboard input.
                 navigation['finish'](t, 0)
                 first = b'\n'.join(t.raw.split(b'\n')[:HEIGHT])
                 visible = screen(first, WIDTH, HEIGHT).decode()
@@ -60,16 +60,20 @@ def capture(binary, resource, mode):
                         return visible
                 raise AssertionError(t.text())
 
-            first = wait_for_range(1, 5, preview=True)
+            first = wait_for_range(1, ROWS, preview=True)
+            navigation['drain'](t, 0.25)
             assert len(server.requests) == 1, server.requests
-            assert command in first, "the first table hid the command that opened it"
+            history = []
+            screen(t.raw, WIDTH, HEIGHT, history=history)
+            assert command in first or command in history, "the preview lost the invoking command"
             assert 'Space: browse' in first, "preview controls must explain how to expand"
             assert b'\x1b[?1049h' not in t.raw, "preview replaced the shell screen"
             t.send(b' ')
-            second = wait_for_range(6, 5 + ROWS)
+            second = wait_for_range(ROWS + 1, 2 * ROWS)
             assert b'\x1b[?1049h' in t.raw, "Space did not open the full-screen view"
+            assert len(server.requests) == 2, server.requests
             t.send(b'b')
-            wait_for_range(1, 5)
+            wait_for_range(1, ROWS)
             assert len(server.requests) == 2, server.requests
             t.send(b'q')
             navigation['finish'](t, 0)
@@ -104,11 +108,11 @@ def main():
     transcript = {}
     for resource in ('webhooks', 'skills'):
         before = capture(args.before.resolve(), resource, 'before')[0]
-        printed = capture(args.after.resolve(), resource, 'print')[0]
         preview, advanced = capture(args.after.resolve(), resource, 'browse')
+        printed = capture(args.after.resolve(), resource, 'print')[0]
         transcript[resource] = {'before': before, 'printed': printed, 'preview': preview, 'next': advanced}
         group = [render(text, resource, label, font) for text, label in
-                 [(before, 'Before'), (printed, 'After'), (preview, 'After · --browse'), (advanced, 'After · Space')]]
+                 [(before, 'Before'), (preview, 'After'), (advanced, 'After · Space'), (printed, 'After · --browse=false')]]
         if resource == 'webhooks':
             group[0].save(args.output / 'before.png')
             group[1].save(args.output / 'after.png')

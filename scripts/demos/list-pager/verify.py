@@ -63,7 +63,7 @@ final_page = (output/'after-final-page.txt').read_text()
 assert final_page.count('file-demo--002-001') == 1, final_page
 assert 'file-demo--001-001' not in final_page, final_page
 assert 'b: back' in final_page and 'q: quit' in final_page, final_page
-assert 'i: inline' not in final_page and 'p: print' not in final_page, final_page
+assert 'i: inline' in final_page and 'p: print' not in final_page, final_page
 reports['final_page'] = {'second_page_visible': True, 'waits_for_quit': True, 'back_available': True}
 reports['scope'] = 'Actual PTY replay. Native terminal appearance and clipboard behavior remain unverified.'
 (output / 'validation.json').write_text(json.dumps(reports, indent=2) + '\n')

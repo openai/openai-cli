@@ -200,6 +200,10 @@ func FlagOptions(
 		return nil, err
 	}
 	requestContents.Body = embedded
+	// Structured source maps become available only after their source is resolved.
+	if resolvedBody, ok := embedded.(map[string]any); ok {
+		ApplyDataAliases(cmd, resolvedBody)
+	}
 	if bodyType == MultipartFormEncoded {
 		pendingMultipartUploads = embedded
 	}

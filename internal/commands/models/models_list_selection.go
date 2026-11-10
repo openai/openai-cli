@@ -33,14 +33,14 @@ func Select[T any](ctx context.Context, source jsonview.Iterator[T], maximum int
 		return ctx, nil, true, err
 	}
 	options.selection.Limit = maximum
-	selected, supported, err := transformers.SelectModels(ctx, items, options.selection)
+	selected, matches, supported, err := transformers.SelectModels(ctx, items, options.selection)
 	if err != nil {
 		return ctx, nil, true, err
 	}
 	if !supported {
 		return ctx, nil, true, &ListError{"Cannot select model records with missing, invalid, or ambiguous IDs."}
 	}
-	options.applied = true
+	options.applied, options.matches = true, matches
 	ctx = context.WithValue(ctx, modelsListOptionsKey{}, options)
 	return ctx, &selectedModelsIterator{items: selected}, true, nil
 }

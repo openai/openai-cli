@@ -33,7 +33,8 @@ def exercise(session, server):
     first = session.wait_visible('q: quit')
     assert observer.ORIGINAL in first and b'\x1b[?1049h' not in session.terminal.raw, first
     frame = observer.list_screen(first)
-    assert IDS.findall(frame) == expected[:max(1, min(5, session.terminal.initial_size[1] - 2))], frame
+    visible_rows = max(1, session.terminal.initial_size[1] - 2)
+    assert IDS.findall(frame) == expected[:min(server.rows, visible_rows)], frame
     session.count(1)
     seen, frames = [], []
     checked_back = False
@@ -55,9 +56,8 @@ def exercise(session, server):
         session.send(' ')
         frame = changed(session, previous)
         after = len(observer.requests(server))
-        last_visible = int(IDS.findall(frame)[-1].rsplit('-', 1)[1])
-        needed = (last_visible + server.rows - 1) // server.rows
-        assert after == max(before, needed), ('fetched beyond the next screen', before, after, frame)
+        loaded_to_end = len(seen) == before * server.rows
+        assert after == before + int(loaded_to_end), ('unexpected fetch on Space', before, after, seen[-1], frame)
         if after > before and not checked_back:
             session.send('b')
             assert observer.same_rows(changed(session, frame), previous), 'back did not restore the previous chunk'
@@ -76,7 +76,7 @@ def exercise(session, server):
     session.count(6)
     assert observer.list_screen(session.visible()) == frame, 'Space changed the final page'
     session.send('b')
-    assert changed(session, frame) == frames[-2]['frame'], 'back failed on the final page'
+    assert observer.same_rows(changed(session, frame), frames[-2]['frame'], known_total=len(expected)), 'back failed on the final page'
     session.send(' ')
     assert changed(session, frames[-2]['frame']) == frame, 'cached final page changed'
     session.count(6)
