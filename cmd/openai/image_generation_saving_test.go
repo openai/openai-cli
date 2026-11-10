@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/openai/openai-cli/internal/modeldefaults"
 )
 
 func imageGenerationPNG(t *testing.T) []byte {
@@ -103,7 +105,7 @@ func TestMainImageGenerationDefaultsAndRequestOverrides(t *testing.T) {
 	if err := os.WriteFile(promptFile, []byte("synthetic red fox"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	defaults := map[string]any{"prompt": "synthetic red fox", "model": "gpt-image-2.6-sunburst", "n": float64(1), "size": "auto", "quality": "auto", "background": "auto", "moderation": "auto", "output_format": "png", "partial_images": float64(0), "stream": false}
+	defaults := map[string]any{"prompt": "synthetic red fox", "model": modeldefaults.SavedImage, "n": float64(1), "size": "auto", "quality": "auto", "background": "auto", "moderation": "auto", "output_format": "png", "partial_images": float64(0), "stream": false}
 	for _, tc := range []struct {
 		name, stdin string
 		args        []string
@@ -113,7 +115,7 @@ func TestMainImageGenerationDefaultsAndRequestOverrides(t *testing.T) {
 		{"explicit model retains API defaults", "", []string{"--prompt", "synthetic red fox", "--model", "gpt-image-2.5-flare-2026-09-08"}, map[string]any{"prompt": "synthetic red fox", "model": "gpt-image-2.5-flare-2026-09-08"}},
 		{"dall-e base64", "", []string{"--prompt", "synthetic red fox", "--model", "dall-e-3"}, map[string]any{"prompt": "synthetic red fox", "model": "dall-e-3", "response_format": "b64_json"}},
 		{"explicit b64 format retains API model", "", []string{"--prompt", "synthetic red fox", "--response-format", "b64_json"}, map[string]any{"prompt": "synthetic red fox", "response_format": "b64_json"}},
-		{"count and settings", "", []string{"--prompt", "synthetic red fox", "--count", "2", "--quality", "low", "--size", "1536x1024", "--background", "transparent", "--moderation", "low", "--output-format", "webp", "--output-compression", "37"}, map[string]any{"prompt": "synthetic red fox", "model": "gpt-image-2.6-sunburst", "n": float64(2), "size": "1536x1024", "quality": "low", "background": "transparent", "moderation": "low", "output_format": "webp", "output_compression": float64(37), "partial_images": float64(0), "stream": false}},
+		{"count and settings", "", []string{"--prompt", "synthetic red fox", "--count", "2", "--quality", "low", "--size", "1536x1024", "--background", "transparent", "--moderation", "low", "--output-format", "webp", "--output-compression", "37"}, map[string]any{"prompt": "synthetic red fox", "model": modeldefaults.SavedImage, "n": float64(2), "size": "1536x1024", "quality": "low", "background": "transparent", "moderation": "low", "output_format": "webp", "output_compression": float64(37), "partial_images": float64(0), "stream": false}},
 		{"piped JSON with nulls and flag override", `{"prompt":"stdin prompt","model":null,"quality":null,"n":null,"size":null,"output_format":null,"background":null,"moderation":null,"partial_images":null,"stream":null,"metadata":{"custom":true}}`, []string{"--prompt", "synthetic red fox"}, map[string]any{"prompt": "synthetic red fox", "model": nil, "quality": nil, "n": nil, "size": nil, "output_format": nil, "background": nil, "moderation": nil, "partial_images": nil, "stream": nil, "metadata": map[string]any{"custom": true}}},
 		{"piped YAML model", "prompt: synthetic red fox\nmodel: dall-e-2\nn: 2\nquality: standard\n", nil, map[string]any{"prompt": "synthetic red fox", "model": "dall-e-2", "n": float64(2), "quality": "standard", "response_format": "b64_json"}},
 		{"prompt file merged with stdin", `{"prompt":"stdin prompt","model":"gpt-image-2","quality":"high"}`, []string{"--prompt", "@" + promptFile, "--quality", "low"}, map[string]any{"prompt": "synthetic red fox", "model": "gpt-image-2", "quality": "low"}},
