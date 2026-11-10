@@ -83,7 +83,8 @@ without claiming that an image was saved.
 
 ## Editing and variations
 
-The `images create-variation` endpoint is retired and no longer available.
+OpenAI retired the `images create-variation` endpoint. The CLI shows an edit command before uploading an image.
+Custom providers that implement variations still receive the original request.
 To create a variation, use `images edit` with a GPT Image model and a prompt:
 
 ```sh

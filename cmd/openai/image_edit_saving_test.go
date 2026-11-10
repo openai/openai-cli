@@ -63,6 +63,40 @@ func imageUploadArgs(operation, source string) []string {
 	return args
 }
 
+func TestMainRetiredImageVariationStopsBeforeUpload(t *testing.T) {
+	var requests atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer proxy.Close()
+	source, _ := imageUploadSource(t)
+	for _, tc := range []struct {
+		name, base string
+		flags      []string
+	}{
+		{name: "default"},
+		{name: "regional environment", base: "https://au.api.openai.com/v1"},
+		{name: "flag overrides provider", base: proxy.URL, flags: []string{"--base-url", "https://mtls.api.openai.com/v1/"}},
+		{name: "machine error", base: "https://api.openai.com:443/v1/?source=fixture", flags: []string{"--format-error", "json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := adminCredentialsProxyEnv(proxy.URL, []string{"OPENAI_BASE_URL=" + tc.base, "OPENAI_API_KEY=synthetic-variation-key"})
+			args := append([]string{"openai"}, tc.flags...)
+			got := runMainDispatchWithEnv(t, "bash", env, append(args, imageUploadArgs("create-variation", source)...)...)
+			require.Equal(t, 1, got.code)
+			require.Empty(t, got.stdout)
+			require.Contains(t, got.stderr, "OpenAI retired the image variations endpoint")
+			require.Contains(t, got.stderr, "openai images edit --image")
+			require.NotContains(t, got.stderr, source)
+			if tc.name == "machine error" {
+				require.True(t, json.Valid([]byte(got.stderr)), got.stderr)
+			}
+		})
+	}
+	require.Zero(t, requests.Load(), "retired variations must never reach the proxy or custom provider")
+}
+
 func TestMainImageUploadSavingDefaultsAndSources(t *testing.T) {
 	for _, operation := range []string{"edit", "create-variation"} {
 		t.Run(operation, func(t *testing.T) {

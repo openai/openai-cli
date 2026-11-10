@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/openai/openai-cli/internal/apiquery"
 	clioutput "github.com/openai/openai-cli/internal/output"
@@ -102,6 +104,10 @@ type imagePresentation struct {
 // handler still owns SDK dispatch and response/stream lifetime.
 func imageSavingWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc {
 	return func(ctx context.Context, command *cli.Command) (resultErr error) {
+		if command.Name == "create-variation" && usesOpenAIImagesAPI(command) {
+			const edit = "openai " + imageVariationExample
+			return imageSavingFailure("OpenAI retired the image variations endpoint. Use images edit instead:\n  "+edit+"\nReplace photo.png with your image path.", nil, edit)
+		}
 		inline := command.String("inline")
 		if inline != "auto" && inline != "on" && inline != "off" {
 			return imageSavingFailure("--inline must be auto, on or off.", nil)
@@ -185,6 +191,23 @@ func imageSavingWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 		}
 		return nil
 	}
+}
+
+// Custom providers can still implement the legacy variations endpoint.
+func usesOpenAIImagesAPI(command *cli.Command) bool {
+	base := command.Root().String("base-url")
+	if base == "" {
+		base = os.Getenv("OPENAI_BASE_URL")
+	}
+	if base == "" {
+		return true
+	}
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	return host == "api.openai.com" || strings.HasSuffix(host, ".api.openai.com")
 }
 
 // ConsumeSavingRequest returns one prepared request to its generated handler.
