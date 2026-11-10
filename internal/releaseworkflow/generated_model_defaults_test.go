@@ -3,6 +3,7 @@ package releaseworkflow
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"testing"
 
 	"github.com/openai/openai-cli/generated/commands"
@@ -25,12 +26,13 @@ func checkGeneratedCommand(t *testing.T, command *cli.Command, name string) {
 	contents := requestflag.ExtractRequestContents(command)
 	fields := map[string]any{"body": contents.Body, "query": contents.Queries, "header": contents.Headers}
 	// Generated handlers read path arguments directly. Required, unset paths cannot send a request.
+	missing := requestflag.GetMissingRequiredFlags(command, contents.Body)
 	for _, flag := range command.Flags {
 		operand, ok := flag.(requestflag.InRequest)
 		if !ok || operand.GetPathParam() == "" {
 			continue
 		}
-		if required, ok := flag.(cli.RequiredFlag); ok && required.IsRequired() && !flag.IsSet() {
+		if slices.Contains(missing, flag) {
 			continue
 		}
 		fields["path."+operand.GetPathParam()] = flag.Get()
