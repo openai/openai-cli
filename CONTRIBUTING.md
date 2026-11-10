@@ -345,15 +345,19 @@ Add its endpoint and official recommendation to `scripts/check-model-defaults.py
 For nested model fields, verify guidance for that field on the actual endpoint.
 Keep explicit model selections, saved settings, and provider-specific behavior in their existing paths.
 
-Run the same documentation check as release CI from the repository root:
+Run the same model check as release CI from the repository root:
 
 ```sh
 python3 scripts/check-model-defaults.py
 ```
 
 The check reads current public guidance, model endpoint support, and deprecation notices without an API key.
-It reports each verified model in the CI log. An unchanged recommendation keeps the same model ID.
-If a recommendation changes, update the default and test the affected command.
+It tests the actual CLI request against local fixtures and reports each verified model in the CI log.
+An unchanged recommendation keeps the same model ID.
+
+If model advice changes, read the linked guide before updating its reviewed digest.
+The digest covers model guidance in prose and excludes fenced examples.
+Update the model and its routing if the guide recommends a different choice.
 If the documentation changes format, verify the guidance before updating the parser and its offline fixtures.
 A failed download or ambiguous recommendation blocks verification. Retry a temporary outage after documentation access returns.
 

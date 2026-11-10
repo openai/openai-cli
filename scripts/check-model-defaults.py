@@ -2,9 +2,11 @@
 """Verify the automatic CLI model choices against fresh public OpenAI guidance."""
 
 from functools import lru_cache
+import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
 from urllib.request import Request, urlopen
 
@@ -19,6 +21,32 @@ CAPTION_EVENTS = SITE + "api/reference/resources/realtime/translation-client-eve
 DEPRECATIONS = DOCS + "deprecations.md"
 INVENTORY = Path("internal/modeldefaults/defaults.go")
 MODEL_ID = r"[a-z0-9][a-z0-9.-]*"
+
+# Review changes to model advice even if the source retains an older recommendation.
+REVIEWED_GUIDANCE = {
+    SPEECH: "663261dd93d150897cde19c2b0c5c5ceb8b5fd5e9bddde06bd6e0e8944def260",
+    IMAGE: "b082b47700f6dbc23cbaca0c8633da9a2946135db13000cc0213c5ed4b5817dd",
+    TRANSLATION: "6f0a0899681c2104fd630b9d02e56109ad3d847fbf41cd1c0d8121ab55d28162",
+    CAPTIONS: "12691f04050a84b97f366e8741e7825e517a3a0a814fc4fa0130f1f378f58578",
+}
+
+
+def guidance_digest(page):
+    prose = re.sub(r"^```[^\n]*\n.*?^```[ \t]*$", "", page, flags=re.MULTILINE | re.DOTALL)
+    advice = r"\b(?:recommend\w*|migrat\w*|start with|use|choose|configure|new integrations|instead|replac\w*|default\w*)\b"
+    named_model = r"\b(?:gpt|tts|whisper|dall-e|chatgpt)[ -]|/docs/models/|\b(?:flare|sunburst)\b"
+    paragraphs = [
+        " ".join(p.split()) for p in re.split(r"\n\s*\n", prose)
+        if re.search(advice, p, re.IGNORECASE) and re.search(named_model, p, re.IGNORECASE)
+    ]
+    return hashlib.sha256("\n".join(paragraphs).encode()).hexdigest()
+
+
+def verify_reviewed_guidance(read, reviewed):
+    for url, recorded in reviewed.items():
+        fresh = guidance_digest(read(url))
+        if fresh != recorded:
+            raise ValueError(f"Model guidance changed. Review {url} before recording its new digest {fresh}")
 
 
 @lru_cache(maxsize=None)
@@ -65,7 +93,7 @@ def image_recommendation(guide):
     raise ValueError(f"Missing recommended image model section in {IMAGE}")
 
 
-def retired_models(page):
+def retirements(page):
     # Only the affected model column denotes a retirement. Replacements can be current.
     deprecated = set()
     active_table = False
@@ -78,25 +106,40 @@ def retired_models(page):
             active_table = True
         elif active_table and len(cells) > 1 and not cells[0].startswith("-"):
             deprecated.update(re.findall(r"(?<![\w.-])(" + MODEL_ID + r")(?![\w.-])", cells[1]))
+            deprecated.update(re.findall(r"\b(v1/[\w/-]+)", cells[1]))
     if not deprecated:
         raise ValueError(f"Missing model retirement data in {DEPRECATIONS}")
     return deprecated
 
 
+def check_caption_field(page, model):
+    # Translation accepts a nested transcriber, not a standalone transcription request.
+    documented = set()
+    for block in re.findall(r"```json\s*\n(.*?)\n```", page, re.DOTALL):
+        event = json.loads(block)
+        if event.get("type") == "session.update":
+            audio_input = event["session"].get("audio", {}).get("input", {})
+            if audio_input.get("transcription"):
+                documented.add(audio_input["transcription"]["model"])
+    if documented != {model}:
+        raise ValueError(f"Could not confirm session.update input transcription at {CAPTION_EVENTS}")
+
+
 def verify(models, read):
+    speech = unique(r"Migrate to `(" + MODEL_ID + r")` using the\s+\[Realtime API\]", read(SPEECH), SPEECH)
+    translation = unique(r"Use \[`(" + MODEL_ID + r")`\]\([^)]+\) when your application should translate",
+                         read(TRANSLATION), TRANSLATION)
+    captions = unique(r"configure input transcription with `(" + MODEL_ID + r")`", read(CAPTIONS), CAPTIONS)
     recommendations = {
-        "Speech": (unique(r"Migrate to `(" + MODEL_ID + r")` using the\s+\[Realtime API\]",
-                          read(SPEECH), SPEECH), SPEECH, ["v1/realtime"]),
+        "Speech": (speech, SPEECH, ["v1/realtime"]),
         "SavedImage": (image_recommendation(read(IMAGE)), IMAGE, ["v1/images/generations", "v1/images/edits"]),
-        "Translation": (unique(r"Use \[`(" + MODEL_ID + r")`\]\([^)]+\) when your application should translate",
-                               read(TRANSLATION), TRANSLATION), TRANSLATION, ["v1/realtime/translations"]),
-        "TranslationTranscript": (unique(r"configure input transcription with `(" + MODEL_ID + r")`",
-                                         read(CAPTIONS), CAPTIONS), CAPTIONS, []),
+        "Translation": (translation, TRANSLATION, ["v1/realtime/translations"]),
+        "TranslationTranscript": (captions, CAPTIONS, ["v1/realtime/translations"]),
     }
     if models.keys() != recommendations.keys():
         roles = ", ".join(sorted(models.keys() ^ recommendations.keys()))
         raise ValueError(f"Runtime and release guidance disagree about model roles: {roles}")
-    retired = retired_models(read(DEPRECATIONS))
+    retired = retirements(read(DEPRECATIONS))
     for role, (recommended, guide, endpoints) in recommendations.items():
         model = models[role]
         if model != recommended:
@@ -107,23 +150,25 @@ def verify(models, read):
         detail = read(model_url)
         if unique(r"^Model ID: `(" + MODEL_ID + r")`$", detail, model_url) != model:
             raise ValueError(f"Could not confirm model identity at {model_url}")
-        for endpoint in endpoints:
-            pattern = r"^\|[^|]+\|\s*`" + re.escape(endpoint) + r"`\s*\|\s*Supported\s*\|$"
-            if not re.search(pattern, detail, re.MULTILINE):
-                raise ValueError(f"{model} lacks documented support for {endpoint}. See {model_url}")
-        if role == "TranslationTranscript":
-            # A nested field in the translation session has no standalone endpoint.
-            blocks = re.findall(r"```json\s*\n(.*?)\n```", read(CAPTION_EVENTS), re.DOTALL)
-            events = (json.loads(block) for block in blocks)
-            documented = {e.get("session", {}).get("audio", {}).get("input", {}).get("transcription", {}).get("model")
-                          for e in events if e.get("type") == "session.update"}
-            if documented - {None} != {model}:
-                raise ValueError(f"Could not confirm session.update input transcription at {CAPTION_EVENTS}")
-        print(f"{role}: {model} ({', '.join(endpoints) or 'v1/realtime/translations, input transcription'}) {guide}")
+        statuses = re.findall(r"^Status:\s*(.+)$", detail, re.MULTILINE)
+        if any(status.strip().lower() not in {"active", "generally available"} for status in statuses):
+            raise ValueError(f"{role} selects a model with an inactive or unrecognized status. See {model_url}")
+        for route in endpoints:
+            if route in retired:
+                raise ValueError(f"{role} uses deprecated endpoint {route}. See {DEPRECATIONS}")
+            if role == "TranslationTranscript":
+                check_caption_field(read(CAPTION_EVENTS), model)
+            else:
+                route_pattern = r"^\|[^|]+\|\s*`" + re.escape(route) + r"`\s*\|\s*([^|]+?)\s*\|$"
+                if unique(route_pattern, detail, model_url) != "Supported":
+                    raise ValueError(f"{model} lacks documented support for {route}. See {model_url}")
+        print(f"{role}: {model} ({', '.join(endpoints)}) {guide}", flush=True)
 
 
 if __name__ == "__main__":
     try:
         verify(runtime_models(INVENTORY.read_text()), fetch)
-    except (OSError, ValueError) as error:
+        verify_reviewed_guidance(fetch, REVIEWED_GUIDANCE)
+        subprocess.run([sys.executable, "-I", "scripts/ci/verify_model_requests.py"], check=True)
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
         sys.exit(f"Model default verification failed: {error}")

@@ -66,6 +66,15 @@ class ModelDefaultsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unambiguous"):
             self.verify()
 
+    def test_new_advice_alongside_previous_recommendation(self):
+        previous = "Migrate to `gpt-voice` using the [Realtime API](guide)."
+        reviewed = {check.SPEECH: check.guidance_digest(previous)}
+        changed = previous + "\n\nFor new clients, use `gpt-new` over Realtime."
+        with self.assertRaisesRegex(ValueError, "Model guidance changed"):
+            check.verify_reviewed_guidance(lambda url: changed, reviewed)
+        new_example = previous + '\n\n```python\n# use gpt-example in this example\n```'
+        check.verify_reviewed_guidance(lambda url: new_example, reviewed)
+
     def test_deprecation_even_if_guide_lags(self):
         self.pages[check.DEPRECATIONS] += "\n| Tomorrow | `older` \\| `image` | `new` |"
         with self.assertRaisesRegex(ValueError, "deprecated image"):
@@ -75,6 +84,16 @@ class ModelDefaultsTest(unittest.TestCase):
         url = check.DOCS + "models/image.md"
         self.pages[url] = self.pages[url].replace("`v1/images/edits` | Supported", "`v1/images/edits` | Not supported")
         with self.assertRaisesRegex(ValueError, "v1/images/edits"):
+            self.verify()
+
+    def test_model_card_independently_reports_deprecation(self):
+        self.pages[check.DOCS + "models/voice.md"] += "\nStatus: Deprecated"
+        with self.assertRaisesRegex(ValueError, "inactive or unrecognized status"):
+            self.verify()
+
+    def test_retired_route_despite_supported_model_card(self):
+        self.pages[check.DEPRECATIONS] += "\n| Tomorrow | `/v1/realtime/translations` | `/v1/new` |"
+        with self.assertRaisesRegex(ValueError, "deprecated endpoint v1/realtime/translations"):
             self.verify()
 
     def test_wrong_nested_caption_model(self):
