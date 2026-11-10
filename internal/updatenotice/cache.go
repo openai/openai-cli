@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"runtime"
@@ -16,6 +17,7 @@ import (
 const stateName = "state.json"
 
 var errCache = errors.New("update notice cache is unavailable")
+var errCacheBusy = fmt.Errorf("%w: another process holds the lock", errCache)
 
 type cacheState struct {
 	Schema   int    `json:"schema"`
@@ -33,6 +35,29 @@ type noticeCache struct {
 	identity          os.FileInfo
 	stateIdentity     os.FileInfo
 	stateData         []byte
+}
+
+// An explicit installation can wait for a running update. Interactive API
+// commands still use the nonblocking cache lock.
+func openInstallerCache(ctx context.Context, wait bool, acquire func() (*noticeCache, error)) (*noticeCache, error) {
+	cache, err := acquire()
+	if !wait || !errors.Is(err, errCacheBusy) {
+		return cache, err
+	}
+	fmt.Fprintln(os.Stderr, "Waiting for the current OpenAI CLI update to finish...")
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			cache, err := acquire()
+			if !errors.Is(err, errCacheBusy) {
+				return cache, err
+			}
+		}
+	}
 }
 
 func openCache(ctx context.Context, directory string) (*noticeCache, error) {
@@ -77,9 +102,13 @@ func openCache(ctx context.Context, directory string) (*noticeCache, error) {
 		return nil, errCache
 	}
 	locked, err := tryLock(lock)
-	if err != nil || !locked || !cache.validLock() {
+	if err != nil || !cache.validLock() {
 		cache.close()
 		return nil, errCache
+	}
+	if !locked {
+		cache.close()
+		return nil, errCacheBusy
 	}
 	return cache, nil
 }

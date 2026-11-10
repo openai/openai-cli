@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/urfave/cli/v3"
 )
@@ -32,6 +33,11 @@ func TestLocalErrorMessageDoesNotExposeDiagnostics(t *testing.T) {
 		want string
 	}{
 		{"unknown", errors.New(secret), "The command could not be completed."},
+		{"help pager", &clihelp.PagerError{Cause: errors.New(secret)}, "Could not display help. Run openai --help for plain output."},
+		{"wrapped help pager", fmt.Errorf("%s: %w", secret, &clihelp.PagerError{Cause: errors.New(secret)}), "Could not display help. Run openai --help for plain output."},
+		{"joined help pager", errors.Join(errors.New(secret), &clihelp.PagerError{Cause: errors.New(secret)}), "Could not display help. Run openai --help for plain output."},
+		{"canceled help pager", &clihelp.PagerError{Cause: context.Canceled}, "Request canceled."},
+		{"timed out help pager", &clihelp.PagerError{Cause: context.DeadlineExceeded}, "Could not display help. Run openai --help for plain output."},
 		{"wrapped unknown", fmt.Errorf("https://%s@example.invalid: %w", secret, errors.New(secret)), "The command could not be completed."},
 		{"canceled", fmt.Errorf("%s: %w", secret, context.Canceled), "Request canceled."},
 		{"deadline", fmt.Errorf("%s: %w", secret, context.DeadlineExceeded), "The request timed out."},
@@ -121,6 +127,12 @@ func TestLocalErrorMessagePreservesSafeGuidance(t *testing.T) {
 		"mTLS does not support HTTPS proxies",
 		"cannot follow HTTP 307 redirect: streamed multipart uploads are not replayable",
 		"cannot follow HTTP 308 redirect: streamed multipart uploads are not replayable",
+		"--request-file requires one JSON or YAML object",
+		"cannot read --request-file input",
+		"--request-file - and a request parameter both use stdin",
+		"use a regular --request-file when a request parameter reads stdin",
+		"invalid request parameters in --request-file",
+		"to read a field from stdin, use a named --request-file and pass the field explicitly with @-",
 		"header 1: expected 'Name: Value'",
 		"header 1: name must not be empty",
 		"header 2: invalid character in name",
@@ -141,14 +153,18 @@ func TestLocalErrorMessageUsesDeclaredFlags(t *testing.T) {
 		want string
 	}{
 		{[]string{"--limit", "fake-sensitive-value"}, "Invalid value for --limit."},
+		{[]string{"--request-file", "-", "--request-file", "fake-sensitive-path"}, "Specify --request-file only once."},
 		{[]string{"--model"}, "Add a value for --model."},
 		{nil, "Missing required options: --model."},
 	} {
 		t.Run(strings.Join(test.args, " "), func(t *testing.T) {
 			var failedCommand *cli.Command
 			leaf := &cli.Command{
-				Name:  "retrieve",
-				Flags: []cli.Flag{&cli.StringFlag{Name: "model", Required: true}, &cli.IntFlag{Name: "limit"}},
+				Name: "retrieve",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "model", Required: true}, &cli.IntFlag{Name: "limit"},
+					&cli.StringFlag{Name: "request-file", OnlyOnce: true},
+				},
 				OnUsageError: func(_ context.Context, command *cli.Command, err error, _ bool) error {
 					failedCommand = command
 					return err

@@ -22,20 +22,20 @@ func TestInteractiveListOutputScope(t *testing.T) {
 	}
 	t.Setenv("CI", "")
 	t.Setenv("TERM", "xterm-256color")
-	for operation, want := range map[string]bool{
-		"(resource) files > (method) list":                       true,
-		"(resource) batches > (method) list":                     true,
-		"(resource) admin.organization.projects > (method) list": true,
-		"(resource) vector_stores > (method) list":               false,
-		"(resource) models > (method) list":                      false,
-		"(resource) files > (method) retrieve":                   false,
-		"unknown":                                                false,
-		"":                                                       false,
+	for _, operation := range []string{
+		"(resource) files > (method) list",
+		"(resource) batches > (method) list",
+		"(resource) admin.organization.projects > (method) list",
+		"(resource) vector_stores > (method) list",
+		"(resource) models > (method) list",
+		"(resource) vector_stores.file_batches > (method) list_files",
+		"custom read-only list",
+		"",
 	} {
 		for _, format := range []string{"", "auto"} {
 			t.Run(operation+"/"+format, func(t *testing.T) {
-				if got := InteractiveListOutput(ShowJSONOpts{Operation: operation, OutputKind: OutputPageItem, Format: format}); got != want {
-					t.Fatalf("got %v, want %v", got, want)
+				if !InteractiveListOutput(ShowJSONOpts{Operation: operation, OutputKind: OutputPageItem, Format: format}) {
+					t.Fatalf("eligible list bypassed the pager")
 				}
 			})
 		}
@@ -203,3 +203,21 @@ func TestListNavigationErrorPresentation(t *testing.T) {
 type navigationWriteFunc func([]byte) (int, error)
 
 func (write navigationWriteFunc) Write(data []byte) (int, error) { return write(data) }
+
+func TestListRangeNames(t *testing.T) {
+	for _, tc := range []struct {
+		operation, title, singular, plural string
+	}{
+		{"(resource) batches > (method) list", "", "Batch", "Batches"},
+		{"(resource) admin.organization.projects.api_keys > (method) list", "", "API key", "API keys"},
+		{"(resource) vector_stores.file_batches > (method) list_files", "", "File", "Files"},
+		{"(resource) admin.organization.external_storage > (method) list", "", "Storage configuration", "Storage configurations"},
+		{"", "audio voices list", "Voice", "Voices"},
+		{"", "unknown", "Result", "Results"},
+	} {
+		singular, plural := listRangeNames(tc.operation, tc.title)
+		if singular != tc.singular || plural != tc.plural {
+			t.Errorf("%q %q: got %q/%q, want %q/%q", tc.operation, tc.title, singular, plural, tc.singular, tc.plural)
+		}
+	}
+}

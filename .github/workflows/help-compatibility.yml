@@ -271,6 +271,14 @@ jobs:
           go test -p 1 ./internal/commands/audio -count=1 -timeout=2m -v -json -run '^(TestAudioVoiceBodyEmbeddingCancellationReleasesOwnedRead|TestAudioVoiceBodyEmbeddingPartialFailureClosesOnce|TestAudioVoiceBodyEmbeddingPreservesReplayAndOwnership|TestAudioVoiceBodyEmbeddingReadFailureRetainsCauses|TestAudioVoiceBodyEmbeddingTypeOpenFailureClosesOwnedInputs|TestAudioVoiceBodyEmbeddingValidationFailureClosesOwnedInputs)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-voice-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Windows vector store file selection
+        if: matrix.native-commands && runner.os == 'Windows' && matrix.shard != 'dispatch'
+        shell: pwsh
+        timeout-minutes: 4
+        run: |
+          go test -p 1 ./internal/commands/vectorstores -count=1 -timeout=2m -v -json -run '^TestWorkspaceBrowserUploadsExactSelectedPath$/^directional_mark$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-vector-file-selection.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test help
         if: runner.os != 'Windows' && matrix.shard != 'dispatch'
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
@@ -395,6 +403,22 @@ jobs:
           go test -p 1 ./internal/autocomplete -count=1 -timeout=3m -v -json \
             -run '^(TestShellSuggestionsAdaptersUnavailableExecutable|TestShellSuggestionsAdaptersRefuseShadowedExecutable|TestShellSuggestionsAdaptersRecheckExecutablePrecedence|TestShellSuggestionsAdaptersRecheckRemovedExecutable)$/^fish$' \
             | tee "$RUNNER_TEMP/fish-suggestion-adapter-tests.jsonl"
+      - name: Test Homebrew verifier enrollment on Intel
+        if: matrix.os == 'macos-15-intel' && matrix.shard == 'contracts'
+        shell: bash
+        timeout-minutes: 8
+        run: |
+          go test -count=1 ./internal/darwinacl ./internal/updatenotice -run 'TestDirectoryACLBounds|TestNativeVerifierDirectoryACL|TestHomebrewVerifierSelection|TestDarwin.*Quarantine|TestAutomaticUpdateAuthenticatedPreparation|TestPackageEnrollmentTransitions|TestAutomaticUpdateTransactions'
+          export OPENAI_CLI_TEST_HOMEBREW_PREFIX="$(brew --prefix)"
+          test -x "$OPENAI_CLI_TEST_HOMEBREW_PREFIX/opt/gh/bin/gh"
+          go test -count=1 ./cmd/openai -run '^TestMainAutomaticUpdateEligibilityAndConfirmation$/^enrolled_Homebrew_worker$'
+
+      - name: Test Linux package enrollment in Bash and zsh
+        if: (runner.os == 'Linux') && matrix.shard != 'dispatch'
+        shell: bash
+        timeout-minutes: 5
+        run: ./scripts/ci/test-linux-package-enrollment
+
       - name: Test Linux Bash and zsh executable suggestions
         if: (runner.os == 'Linux') && matrix.shard != 'dispatch'
         shell: bash
@@ -537,18 +561,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test -p 2 ./internal/app ./internal/output/listview -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLabelsPreserveLongIDs|TestListNavigationErrorPresentation|TestListNavigationFinishRetainsInterruptDuringCompletion|TestListNavigationRemovedKeysAndResizeDoNotFetch|TestListNavigationCompletePageStaysOpenWithoutPrinting|TestListNavigationPartialPagePreservesErrorAndRecords|TestListNavigationFinalEmptyPageKeepsLoadedResults|TestListNavigationUsesCompactPagerControls|TestViewerBackKeepsFetchFrontier|TestViewerPendingFetchIgnoresNavigation|TestViewerFinalPageStaysUntilQuit|TestViewerLargeLineAndResizePreserveOriginal|TestViewerTabsPreserveValuesAndFooter|TestViewerErrorRetainsPreviouslyLoadedResults|TestViewerHistoryWriteFailureDoesNotRetry|TestViewerLoadingCanCancel|TestViewerPreservesViewportKeyboardBindings|TestViewerPageKeysPreserveLazyCachedNavigation|TestViewerKeyboardWhileLoadingKeepsCancellation|TestViewerResizeRendersOnlySelectedPage|TestViewerResizeRenderFailureRetainsCachedPages|TestListPagerResizeRendersCachedRecords|TestListPagerAdvanceAtVisibleRecordBoundary|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' \
+          go test -p 2 ./internal/app ./internal/output/listview -count=1 -timeout=2m -v -json -run '^(TestRegisteredListWaitsAndPreservesPageSize|TestRegisteredListZeroRetainsRequestErrors|TestRegisteredListStopsEmptyAndStalledCursors|TestRegisteredListCancellationPreventsRequests|TestRegisteredListQuitPreventsNextRequest|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLabelsPreserveLongIDs|TestListNavigationErrorPresentation|TestListNavigationFinishRetainsInterruptDuringCompletion|TestListNavigationRemovedKeysAndResizeDoNotFetch|TestListNavigationShortCompletePagePrintsOnce|TestListNavigationPartialPagePreservesErrorAndRecords|TestListNavigationFinalEmptyPageKeepsLoadedResults|TestListNavigationUsesCompactPagerControls|TestViewerBackKeepsFetchFrontier|TestViewerPendingFetchIgnoresNavigation|TestViewerFinalPageStaysUntilQuit|TestViewerLargeLineAndResizePreserveOriginal|TestViewerTabsPreserveValuesAndFooter|TestViewerErrorRetainsPreviouslyLoadedResults|TestViewerHistoryWriteFailureDoesNotRetry|TestViewerPartialOutputRetainsFullLabels|TestPrintedListRetainsPageAndOutputFailures|TestListPageContinuationObservesOnlyEnvelope|TestRegisteredLocalListStopsReadingOnQuit|TestViewerLoadingCanCancel|TestViewerPreservesViewportKeyboardBindings|TestViewerPageKeysPreserveLazyCachedNavigation|TestViewerLineKeysUseLoadedRowsFirst|TestViewerKeyboardWhileLoadingKeepsCancellation|TestViewerResizeRendersOnlyVisibleRecords|TestViewerResizeRenderFailureRetainsReceivedPages|TestListPagerResizeRendersCachedRecords|TestListPagerAdvanceAtVisibleRecordBoundary|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported|TestProjectTableProtectsIDAfterRelabeling)$' \
             | tee "$RUNNER_TEMP/list-navigation-helper-tests.jsonl"
           go test -p 2 ./internal/output/transform -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' \
             | tee "$RUNNER_TEMP/list-projection-helper-tests.jsonl"
-          go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' \
+          go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableKeepsTrailingProjectID|TestListTableInvalidProtectedColumn|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' \
             | tee "$RUNNER_TEMP/list-renderer-helper-tests.jsonl"
       - name: Test Windows list navigation and table helpers
         if: matrix.list-helpers && runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./internal/app ./internal/output/listview -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLabelsPreserveLongIDs|TestListNavigationErrorPresentation|TestListNavigationFinishRetainsInterruptDuringCompletion|TestListNavigationRemovedKeysAndResizeDoNotFetch|TestListNavigationCompletePageStaysOpenWithoutPrinting|TestListNavigationPartialPagePreservesErrorAndRecords|TestListNavigationFinalEmptyPageKeepsLoadedResults|TestListNavigationUsesCompactPagerControls|TestViewerBackKeepsFetchFrontier|TestViewerPendingFetchIgnoresNavigation|TestViewerFinalPageStaysUntilQuit|TestViewerLargeLineAndResizePreserveOriginal|TestViewerTabsPreserveValuesAndFooter|TestViewerErrorRetainsPreviouslyLoadedResults|TestViewerHistoryWriteFailureDoesNotRetry|TestViewerLoadingCanCancel|TestViewerPreservesViewportKeyboardBindings|TestViewerPageKeysPreserveLazyCachedNavigation|TestViewerKeyboardWhileLoadingKeepsCancellation|TestViewerResizeRendersOnlySelectedPage|TestViewerResizeRenderFailureRetainsCachedPages|TestListPagerResizeRendersCachedRecords|TestListPagerAdvanceAtVisibleRecordBoundary|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' |
+          go test -p 2 ./internal/app ./internal/output/listview -count=1 -timeout=2m -v -json -run '^(TestRegisteredListWaitsAndPreservesPageSize|TestRegisteredListZeroRetainsRequestErrors|TestRegisteredListStopsEmptyAndStalledCursors|TestRegisteredListCancellationPreventsRequests|TestRegisteredListQuitPreventsNextRequest|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLabelsPreserveLongIDs|TestListNavigationErrorPresentation|TestListNavigationFinishRetainsInterruptDuringCompletion|TestListNavigationRemovedKeysAndResizeDoNotFetch|TestListNavigationShortCompletePagePrintsOnce|TestListNavigationPartialPagePreservesErrorAndRecords|TestListNavigationFinalEmptyPageKeepsLoadedResults|TestListNavigationUsesCompactPagerControls|TestViewerBackKeepsFetchFrontier|TestViewerPendingFetchIgnoresNavigation|TestViewerFinalPageStaysUntilQuit|TestViewerLargeLineAndResizePreserveOriginal|TestViewerTabsPreserveValuesAndFooter|TestViewerErrorRetainsPreviouslyLoadedResults|TestViewerHistoryWriteFailureDoesNotRetry|TestViewerPartialOutputRetainsFullLabels|TestPrintedListRetainsPageAndOutputFailures|TestListPageContinuationObservesOnlyEnvelope|TestRegisteredLocalListStopsReadingOnQuit|TestViewerLoadingCanCancel|TestViewerPreservesViewportKeyboardBindings|TestViewerPageKeysPreserveLazyCachedNavigation|TestViewerLineKeysUseLoadedRowsFirst|TestViewerKeyboardWhileLoadingKeepsCancellation|TestViewerResizeRendersOnlyVisibleRecords|TestViewerResizeRenderFailureRetainsReceivedPages|TestListPagerResizeRendersCachedRecords|TestListPagerAdvanceAtVisibleRecordBoundary|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported|TestProjectTableProtectsIDAfterRelabeling)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-navigation-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test image preferences and picker state
@@ -710,6 +734,8 @@ jobs:
               fish_suggestion_cases = {
                   'TestFishFileCompletionPreservesAssignments': [
                       'openai_--file_assets/lo',
+                      'openai_responses_create_--request-file_-',
+                      'openai_responses_create_--request-file=-',
                       'openai_--file=assets/lo',
                       'openai_--image=assets/lo',
                       'openai_--file=assets/a=',
@@ -920,6 +946,7 @@ jobs:
                   "TestMainImageModelsHelpAndOfflineMakeNoRequests": [
                       "--format/json/images/models/--offline",
                       "--format/json/images/models/--offline/--all",
+                      "help/--all/images/models",
                       "help/images/models",
                       "images/models/--help",
                   ],
@@ -959,7 +986,7 @@ jobs:
           if os.environ["RUNNER_OS"] == "Linux":
               fish_examples = [
                   f"copy_{surface}-help_image_example{location}"
-                  for surface in ["flag", "command"]
+                  for surface in ["flag", "full"]
                   for location in ["", "_from_another_directory"]
               ]
               suites["fish-help-invocation-tests.jsonl"] = required_cases(
@@ -1199,7 +1226,7 @@ jobs:
                   "TestMainResourceSummaryPreservesPartialPageOnFailure": ["text", "json"],
                   "TestMainResourceSummaryWritesBeforeNextPageArrives": [],
                   "TestMainListNavigationNoninteractive": [f"{resource}/{mode}"
-                      for resource in ["files", "batches", "projects"]
+                      for resource in ["files", "batches", "projects", "skills"]
                       for mode in ["default", "auto", "text", "json", "jsonl", "raw", "extraction", "raw_extraction",
                                    "raw_output", "unlimited", "zero", "one", "page_boundary", "partial_second_page"]],
               }
@@ -1270,12 +1297,13 @@ jobs:
               ))
           if os.environ["CHECK_LIST_HELPERS"] == "true":
               navigation_helper_cases = {
-                  'TestListPageFetcherWaitsAndPreservesPageSize': ['-1', '0', '1', '2', '3'],
-                  'TestShowJSONPagesZeroRetainsRequestErrors': [],
-                  'TestListPageFetcherStopsEmptyAndStalledCursors': [
+                  'TestRegisteredListWaitsAndPreservesPageSize': ['-1', '0', '1', '2', '3'],
+                  'TestRegisteredListZeroRetainsRequestErrors': [],
+                  'TestRegisteredListStopsEmptyAndStalledCursors': [
                       'empty', 'last', 'missing', 'repeated', 'last_id', 'next',
                   ],
-                  'TestListPageFetcherCancellationPreventsRequests': [],
+                  'TestRegisteredListCancellationPreventsRequests': ['before_first', 'before_next'],
+                  'TestRegisteredListQuitPreventsNextRequest': [],
                   'TestListNavigationUsesLoadedRowsBeforeOneRequest': [],
                   'TestListNavigationOutputPreservesFailureAndRestoresModes': [],
                   'TestListNavigationOutputFailureDiagnostic': [
@@ -1296,7 +1324,7 @@ jobs:
                   ],
                   'TestListNavigationFinishRetainsInterruptDuringCompletion': [],
                   'TestListNavigationRemovedKeysAndResizeDoNotFetch': [],
-                  'TestListNavigationCompletePageStaysOpenWithoutPrinting': [],
+                  'TestListNavigationShortCompletePagePrintsOnce': [],
                   'TestListNavigationPartialPagePreservesErrorAndRecords': [],
                   'TestListNavigationFinalEmptyPageKeepsLoadedResults': [],
                   'TestListNavigationUsesCompactPagerControls': [],
@@ -1311,15 +1339,22 @@ jobs:
                   ],
                   'TestViewerErrorRetainsPreviouslyLoadedResults': [],
                   'TestViewerHistoryWriteFailureDoesNotRetry': [],
+                  'TestViewerPartialOutputRetainsFullLabels': [],
+                  'TestPrintedListRetainsPageAndOutputFailures': [],
+                  'TestListPageContinuationObservesOnlyEnvelope': [],
+                  'TestRegisteredLocalListStopsReadingOnQuit': [],
                   'TestViewerLoadingCanCancel': [],
                   'TestViewerPreservesViewportKeyboardBindings': [
                       'arrows', 'vim', 'half_page', 'control_half_page',
                       'page_keys', 'f_b', 'space_b',
                   ],
-                  'TestViewerPageKeysPreserveLazyCachedNavigation': ['page_keys', 'f_b', 'space_b'],
+                  'TestViewerPageKeysPreserveLazyCachedNavigation': [
+                      'page_keys', 'f_b', 'space_b', 'arrows', 'vim', 'half_page', 'control_half_page',
+                  ],
+                  'TestViewerLineKeysUseLoadedRowsFirst': [],
                   'TestViewerKeyboardWhileLoadingKeepsCancellation': [],
-                  'TestViewerResizeRendersOnlySelectedPage': [],
-                  'TestViewerResizeRenderFailureRetainsCachedPages': [
+                  'TestViewerResizeRendersOnlyVisibleRecords': [],
+                  'TestViewerResizeRenderFailureRetainsReceivedPages': [
                       f'back{back}/canceled{canceled}'
                       for back in ['false', 'true']
                       for canceled in ['false', 'true']
@@ -1359,6 +1394,7 @@ jobs:
                   'TestRenderListNavigationPageCancelsProjection': ['files', 'batches', 'admin.organization.projects'],
                   'TestRenderListTablePage': [],
                   'TestRenderListTablePageEmptyAndUnsupported': [],
+                  'TestProjectTableProtectsIDAfterRelabeling': [],
               }
               suites['list-navigation-helper-tests.jsonl'] = set().union(*(
                   required_cases(root, children) for root, children in navigation_helper_cases.items()
@@ -1406,6 +1442,9 @@ jobs:
                       'admin.organization.projects{"id":"proj_example","object":"organization.project","name":[],"status":"active"}',
                       'admin.organization.projects{"id":"proj_example","object":"organization.project","name":"Synthetic","status":false}',
                       'admin.organization.projects{"id":"proj_example","object":"organization.project","name":"Synthetic","status":"active","warning":"Review_project."}',
+                      'admin.organization.projects{"id":"proj_example","object":"organization.project","psp_decryption_key_id":"example"}',
+                      'admin.organization.projects{"id":"proj_example","object":"organization.project","psp_decryption_key_id":null,"psp_decryption_key_id":"example"}',
+                      'admin.organization.projects{"id":"proj_example","object":"organization.project","future_field":null}',
                       'admin.organization.projects{"id":"proj_example","object":"organization.project","name":"First","name":"Second","status":"active"}',
                   ],
                   'TestProjectListTableByteSizes': [
@@ -1419,6 +1458,8 @@ jobs:
               renderer_helper_cases = {
                   'TestListTableKeepsIDsAndFitsWidth': [],
                   'TestListTableNarrowFallbackKeepsIDs': [],
+                  'TestListTableKeepsTrailingProjectID': [],
+                  'TestListTableInvalidProtectedColumn': [],
                   'TestListTableEscapesEveryCell': [],
                   'TestListTableUnicodeWidths': [],
                   'TestListTableEmptyAndMalformedRows': [],
@@ -1640,6 +1681,8 @@ jobs:
               suites["native-command-tests.jsonl"] = selected
               strict_packages["native-command-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
               if os.environ["RUNNER_OS"] == "Windows":
+                  suites["windows-vector-file-selection.jsonl"] = required_cases("TestWorkspaceBrowserUploadsExactSelectedPath", ["directional_mark"])
+                  strict_packages["windows-vector-file-selection.jsonl"] = "github.com/openai/openai-cli/internal/commands/vectorstores"
                   for filename, key, package, roots, total in [
                       ("windows-voice-public-tests.jsonl", "windows_voice_public", "github.com/openai/openai-cli/cmd/openai", 4, 138),
                       ("windows-voice-helper-tests.jsonl", "windows_voice_helpers", "github.com/openai/openai-cli/internal/commands/audio", 6, 8),

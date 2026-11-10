@@ -5,9 +5,47 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
+
+func TestCommonFlagRowsPrioritizeRequiredAndExampleFlags(t *testing.T) {
+	file := &requestflag.Flag[string]{Name: "file", Required: true, BodyPath: "file", Usage: "Path to the input file. Only WAV and FLAC files are accepted."}
+	output := &cli.StringFlag{Name: "output-path", Aliases: []string{"o"}, Usage: "Save the result."}
+	command := &cli.Command{Name: "create", Flags: []cli.Flag{
+		&cli.IntFlag{Name: "level", Usage: "Choose a level.", Value: 5},
+		&cli.IntFlag{Name: "size", Usage: "Image size."},
+		&cli.StringFlag{Name: "model", Usage: "Model ID."},
+		&cli.StringFlag{Name: "quality", Usage: "Image quality."},
+		output, file,
+	}}
+	for _, width := range []int{24, 40, 80} {
+		rows, _ := commonFlagRows(command, "files create -o output.wav", width)
+		plain := strings.Join(strings.Fields(rows), " ")
+		if !strings.HasPrefix(plain, "--file Path to the input file. --output-path, -o Save the result.") {
+			t.Fatalf("width %d: inputs in wrong order or without descriptions: %s", width, rows)
+		}
+		for _, want := range []string{"--model Model ID.", "--size Image size.", "--quality Image quality."} {
+			if !strings.Contains(plain, want) {
+				t.Errorf("width %d: missing %q: %s", width, want, rows)
+			}
+		}
+		for _, absent := range []string{"--level", "Only WAV", "Default:"} {
+			if strings.Contains(rows, absent) {
+				t.Errorf("width %d: unexpected %q: %s", width, absent, rows)
+			}
+		}
+		for _, line := range strings.Split(rows, "\n") {
+			if ansi.StringWidth(line) > width {
+				t.Errorf("width %d: row too wide: %q", width, line)
+			}
+		}
+	}
+	if full := fullFlagGroups(command, command.Flags, 80); !strings.Contains(full, "Only WAV and FLAC") || !strings.Contains(full, "Default: 5") {
+		t.Errorf("full flag reference lost details: %s", full)
+	}
+}
 
 func TestFlagAliasesWrapWithoutSplittingValues(t *testing.T) {
 	command := &cli.Command{Writer: &bytes.Buffer{}}
@@ -25,6 +63,18 @@ func TestFlagAliasesWrapWithoutSplittingValues(t *testing.T) {
 		if len(line) > 30 {
 			t.Fatalf("alias separator exceeds terminal width: %q", line)
 		}
+	}
+}
+
+func TestCommonFlagRowsKeepAllRequiredInputs(t *testing.T) {
+	command := &cli.Command{Name: "create"}
+	for _, name := range []string{"project", "model", "file", "format", "type", "region"} {
+		command.Flags = append(command.Flags, &cli.StringFlag{Name: name, Required: true, Usage: "Required input."})
+	}
+	command.Flags = append(command.Flags, &cli.StringFlag{Name: "extra", Usage: "Additional option."})
+	rows, _ := commonFlagRows(command, "create --extra example", 80)
+	if strings.Count(rows, "Required input.") != 6 || strings.Contains(rows, "--extra") {
+		t.Fatalf("all required inputs must appear before optional flags: %s", rows)
 	}
 }
 
@@ -189,14 +239,37 @@ func TestFullHelpGroupingKeepsEachFlagAndItsDetails(t *testing.T) {
 	}
 }
 
-func TestFullHelpSeparatesFlagEntries(t *testing.T) {
+func TestFullHelpAlignsShortFlagEntries(t *testing.T) {
 	flags := []cli.Flag{
 		&cli.StringFlag{Name: "first", Usage: "First setting."},
 		&cli.StringFlag{Name: "second", Usage: "Second setting."},
 	}
 	got := fullFlagGroups(&cli.Command{}, flags, 80)
-	if !strings.Contains(got, "First setting.\n\n    --second=TEXT\n") {
-		t.Fatalf("flag entries lack a blank line: %q", got)
+	if got != "  --first=TEXT            First setting.\n  --second=TEXT           Second setting.\n" {
+		t.Fatalf("short flags must use navigation columns: %q", got)
+	}
+	if narrow := fullFlagGroups(&cli.Command{}, flags, 40); !strings.Contains(narrow, "First setting.\n\n    --second=TEXT\n") {
+		t.Fatalf("narrow flags must keep the stacked reference: %q", narrow)
+	}
+}
+
+func TestFullHelpStacksTheWholeFlagListWhenDetailsNeedSpace(t *testing.T) {
+	command := &cli.Command{}
+	for _, flag := range []cli.Flag{
+		&cli.StringFlag{Name: "path", Usage: "Read the guide at https://example.invalid/file."},
+		&cli.IntFlag{Name: "count", Value: 5},
+		&cli.StringFlag{Name: "mode", Sources: cli.EnvVars("OPENAI_TEST_MODE")},
+		&cli.StringFlag{Name: "details", Usage: "First paragraph.\n\nSecond paragraph."},
+		&cli.StringFlag{Name: "wide", Usage: strings.Repeat("界", 28)},
+	} {
+		flags := []cli.Flag{&cli.StringFlag{Name: "simple", Usage: "Short option."}, flag}
+		if err := flag.PreParse(); err != nil {
+			t.Fatal(err)
+		}
+		got := fullFlagGroups(command, flags, 80)
+		if want := flagList(command, flags, 80); got != want {
+			t.Errorf("%s: got %q, want the complete reference %q", flag.Names(), got, want)
+		}
 	}
 }
 
@@ -240,12 +313,31 @@ func TestFlagReferenceNormalizesProseWithoutChangingValues(t *testing.T) {
 	}
 }
 
+func TestFlagReferenceSeparatesMetadataWithoutAnExtraBlankLine(t *testing.T) {
+	const usage = "First paragraph.\n\nCopy this example:\n```sh\nopenai models list\n\nopenai --help\n```\r\n\r\n"
+	flags := []cli.Flag{
+		&cli.IntFlag{Name: "limit", Value: 4, Usage: usage},
+		&cli.StringFlag{Name: "mode", HideDefault: true, Usage: "Choose a mode.\n", Sources: cli.EnvVars("OPENAI_TEST_MODE")},
+	}
+	got := fullFlagGroups(&cli.Command{}, flags, 80)
+	for _, want := range []string{
+		"First paragraph.\n\n      Copy this example:",
+		"```sh\n      openai models list\n\n      openai --help\n      ```\n      Default: 4\n\n    --mode",
+		"Choose a mode.\n      Env: OPENAI_TEST_MODE\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in rendered flags:\n%s", want, got)
+		}
+	}
+}
+
 func TestFlagUsageOverrideRequiresDeclaringOwner(t *testing.T) {
 	rootFlag := &cli.StringFlag{Name: "model", Aliases: []string{"m"}, Usage: "Root model."}
 	localFlag := &cli.StringFlag{Name: "model", Usage: "", Value: "declared-model"}
 	root := &cli.Command{Flags: []cli.Flag{rootFlag}}
 	leaf := &cli.Command{Flags: []cli.Flag{localFlag}}
 	leaf.Metadata = map[string]any{"help-flag-usages": []FlagUsage{
+		{Owner: root, Names: []string{"m"}, Brief: "Choose the root model."},
 		{Owner: root, Names: []string{"m"}, Usage: "Root `model` guidance."},
 		{Owner: leaf, Names: []string{"model"}, Usage: "ID of the `model` to retrieve."},
 	}}
@@ -253,6 +345,15 @@ func TestFlagUsageOverrideRequiresDeclaringOwner(t *testing.T) {
 		if err := flag.PreParse(); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if brief := commonFlagDescription(leaf, rootFlag); brief != "Choose the root model." {
+		t.Fatalf("flag alias did not select its owner's brief guidance: %q", brief)
+	}
+	if brief := commonFlagDescription(leaf, localFlag); brief != "ID of the model to retrieve." {
+		t.Fatalf("shadowing flag lost its own guidance: %q", brief)
+	}
+	if _, full := flagReference(leaf, rootFlag); full != "Root `model` guidance." {
+		t.Fatalf("brief override replaced the full reference: %q", full)
 	}
 	got := fullFlagGroups(leaf, []cli.Flag{localFlag}, 80)
 	if !strings.Contains(got, "ID of the model to retrieve.") || strings.Contains(got, "Root model guidance") {
@@ -264,5 +365,21 @@ func TestFlagUsageOverrideRequiresDeclaringOwner(t *testing.T) {
 	delete(leaf.Metadata, "help-flag-usages")
 	if got := fullFlagGroups(leaf, []cli.Flag{localFlag}, 80); strings.Contains(got, "ID of the model") {
 		t.Fatalf("usage override persisted after its metadata was removed: %s", got)
+	}
+}
+
+func TestFlagUsageDescribesOnlyAnUndocumentedRequestModel(t *testing.T) {
+	for _, tc := range []struct {
+		flag *requestflag.Flag[string]
+		want string
+	}{
+		{&requestflag.Flag[string]{Name: "model", BodyPath: "model"}, pathInputDescription("model")},
+		{&requestflag.Flag[string]{Name: "model", BodyPath: "model", Usage: "Choose an audio model.\n"}, "Choose an audio model.\n"},
+		{&requestflag.Flag[string]{Name: "model", QueryPath: "model"}, ""},
+		{&requestflag.Flag[string]{Name: "engine", Aliases: []string{"model"}, BodyPath: "model"}, ""},
+	} {
+		if got := commandFlagUsage(&cli.Command{}, tc.flag, tc.flag.Usage); got != tc.want {
+			t.Errorf("%s flag usage = %q, want %q", tc.flag.Name, got, tc.want)
+		}
 	}
 }

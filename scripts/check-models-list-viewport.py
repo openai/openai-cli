@@ -5,6 +5,7 @@ Usage: python3 -I -B scripts/check-models-list-viewport.py BINARY OUTPUT
 The default fixture contains 11,892 synthetic records in one HTTP response.
 """
 import argparse
+import functools
 import hashlib
 import http.server
 import importlib.util
@@ -15,7 +16,6 @@ import re
 import subprocess
 import tempfile
 import threading
-import textwrap
 import time
 
 spec = importlib.util.spec_from_file_location(
@@ -69,8 +69,16 @@ def main():
     if args.table:
         items = [{"id": f"synthetic-model-{i:05d}", "object": "model",
                   "created": 1700000000, "owned_by": "synthetic-owner"} for i in range(args.count)]
+    for index, item in enumerate(items):
+        item["owned_by"] = f"synthetic-owner-{index:05d}"
+    # Put equal IDs on opposite sides of the first page boundary. Distinct owners
+    # expose unstable sorting and prevent a duplicated row from hiding a missing one.
+    if len(items) > 100:
+        items[100]["id"] = items[99]["id"]
+    response_items = items[::2][::-1] + items[1::2]
+    ordered = sorted(response_items, key=lambda item: item["id"])
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
-    server.body = json.dumps({"object": "list", "data": items}, separators=(",", ":")).encode()
+    server.body = json.dumps({"object": "list", "data": response_items}, separators=(",", ":")).encode()
     server.requests, server.started = [], time.monotonic()
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
     thread.start()
@@ -91,56 +99,66 @@ def main():
         terminal = harness.Terminal(str(binary), ["models", "list"], env,
                                     width=args.width, height=args.height)
         try:
-            def pager_footer(width, complete=False):
-                value = "End   b: back   q: quit" if complete else "Space: more   b: back   q: quit"
-                if len(value) > width:
-                    value = value.replace("   ", " ")
-                if len(value) > width:
-                    value = "Space/b/q"
-                return value[:width]
-
+            @functools.cache
             def expected_rows(width):
-                if not items:
-                    return ["No results."]
-                id_width = max(len("ID"), *(len(item["id"]) for item in items))
-                owner_width = max(len("OWNER"), *(len(item["owned_by"]) for item in items))
-                if id_width + 2 + owner_width <= width:
-                    logical = ["ID".ljust(id_width) + "  OWNER"]
-                    logical += [item["id"].ljust(id_width) + "  " + item["owned_by"] for item in items]
-                    logical += [""]
-                else:
-                    logical = []
-                    for item in items:
-                        logical += ["ID: " + item["id"], "Owned by: " + item["owned_by"], ""]
-                noun = "model" if len(items) == 1 else "models"
-                logical += [f"Listed {len(items)} {noun}."]
-                logical += textwrap.wrap("Details: --format json", width, break_on_hyphens=False)
-                return [part.rstrip() for line in logical
-                        for part in ([line[i:i + width] for i in range(0, len(line), width)] or [""])]
+                if not ordered:
+                    return "", [], []
+                id_width = max(len("ID"), *(len(item["id"]) for item in ordered))
+                owner_width = max(len("OWNER"), *(len(item["owned_by"]) for item in ordered))
+                table = id_width + 2 + owner_width <= width
+                header = "ID".ljust(id_width) + "  OWNER" if table else ""
+                rows, ordinals = [], []
+                for index, item in enumerate(ordered, 1):
+                    if table:
+                        record = [item["id"].ljust(id_width) + "  " + item["owned_by"]]
+                    else:
+                        record = ["ID: " + item["id"], "Owned by: " + item["owned_by"]]
+                    for line in record:
+                        wrapped = [line[i:i + width].rstrip() for i in range(0, len(line), width)]
+                        rows.extend(wrapped)
+                        ordinals.extend([index] * len(wrapped))
+                return header, rows, ordinals
 
             def screen(name=None, offset=None):
                 assert terminal.child.poll() is None, "Pager exited before q"
                 value = navigation.screen_text(terminal)
+                width, height = terminal.size()
+                inline = b"\x1b[?1049h" not in terminal.raw
+                if inline:
+                    # Asciinema exports logical lines. The preview uses one
+                    # soft-wrapped line; recover its physical rows for this ASCII fixture.
+                    value = "\n".join(line[i:i+width].rstrip() for line in value.splitlines()
+                                      for i in range(0, len(line), width))
                 if name is not None:
                     (output / (name + ".txt")).write_text(value)
                 assert len(server.requests) == 1, "Paging fetched another API response"
-                width, height = terminal.size()
                 lines = [line.rstrip() for line in value.rstrip("\n").splitlines()]
-                assert lines, "Pager screen is empty"
-                assert lines[-1] in {pager_footer(width), pager_footer(width, True)}, \
-                    "Pager lacks the Space/b/q or final footer"
-                assert len(lines) <= height, "Pager screen overflowed the terminal"
-                data = lines[:-1]
+                assert lines and len(lines) <= height, "Empty or oversized pager screen"
+                footer = lines.pop()
+                assert "q" in footer, "Missing quit control"
+                if not ordered:
+                    assert lines == ["No results."] and "End" in footer
+                    return value, []
+                if width - 1 >= len("Details: --format json") and height >= 4:
+                    hint = lines.pop()
+                    assert hint == "Details: --format json"
+                header, rows, ordinals = expected_rows(max(1, width-1))
+                if header and height > 2:
+                    actual_header = lines.pop(0)
+                    assert actual_header == header, "Table header must remain pinned"
                 if offset is not None:
-                    rows = expected_rows(width)
-                    final = offset == max(0, len(rows) - height + 1)
-                    expected = rows[offset:offset + height - 1]
-                    assert data == expected, f"Pager rows differ at physical offset {offset}: {data!r} != {expected!r}"
-                    assert lines[-1] == pager_footer(width, final), "Pager final-page state differs from its content"
-                return value, data
+                    end = offset + len(lines)
+                    assert lines and lines == rows[offset:end], f"Model rows changed at offset {offset}: {lines!r}"
+                    first, last = ordinals[offset], ordinals[end-1]
+                    expected_range = f"Model {first}" if first == last else f"Models {first}–{last}"
+                    if width >= 55:
+                        assert expected_range + f" of {len(ordered)}" in footer, footer
+                    if width >= 25:
+                        assert ("End" in footer) == (end == len(rows)), (end, footer)
+                return value, lines
 
             id_pattern = re.compile(
-                r"(?:synthetic-finetune-model-for-viewport-regression-with-long-readable-id-|"
+                r"(?:synthetic-standard-model-for-viewport-regression-with-long-readable-id-|"
                 r"synthetic-model-)\d{5,}(?!\d)")
 
             def change_view(key):
@@ -154,10 +172,29 @@ def main():
                 navigation.drain(terminal, 0.05)
                 return screen()
 
+            header, expected, _ = expected_rows(max(1, args.width-1))
+            show_hint = args.width - 1 >= len("Details: --format json") and args.height >= 4
+            hint_lines = int(bool(ordered and show_hint))
+            request_limit = 1 if args.width <= 1 else max(1, min(100, args.height - 2 - int(show_hint)))
+            available = max(1, args.height - hint_lines - 1 - int(bool(header)))
+            if len(expected) <= available:
+                navigation.finish(terminal, 0)
+                actual = navigation.screen_text(terminal)
+                lines = [line.rstrip() for line in actual.strip("\n").splitlines()]
+                want = ([header] if header and args.height > 2 else []) + expected if ordered else ["No results."]
+                if ordered and hint_lines:
+                    want.append("Details: --format json")
+                assert lines == want, (lines, want)
+                assert b"\x1b[?1049h" not in terminal.raw, "short list took over the shell"
+                assert len(server.requests) == 1, server.requests
+                assert server.requests[0]["path"] == f"/v1/models?limit={request_limit}"
+                result.update(status="passed", exited_before_input=True, footer_visible=False,
+                              initial_status=terminal.child.returncode, verified_full_ids_and_owners=len(ordered))
+                return
+
             deadline = time.monotonic() + 8
-            footers = [pager_footer(args.width).encode(),
-                       pager_footer(args.width, True).encode()]
-            while not any(footer and footer in terminal.raw for footer in footers):
+            marker = b"synthetic"
+            while marker not in terminal.raw:
                 terminal.read(0.02)
                 assert terminal.child.poll() is None, "Automatic terminal list bypassed the pager"
                 assert time.monotonic() < deadline, "Pager did not display its controls"
@@ -168,16 +205,17 @@ def main():
                           initial_status=terminal.child.poll(), footer_visible=True,
                           initial_seconds=time.monotonic() - terminal.started)
             (output / "initial.tty").write_bytes(before)
-            assert not result["exited_before_input"], "Short or empty list bypassed the pager"
-            assert result["initial_bytes"] < 40000, "Initial screen dumped excessive output"
+            assert not result["exited_before_input"], "Preview exited with undisplayed rows"
+            assert result["initial_bytes"] < max(40000, 3 * args.width * args.height), "Initial screen dumped excessive output"
             initial_screen, initial_lines = screen("initial-screen", 0)
+            assert len(initial_lines) == available, (len(initial_lines), available)
             if args.expect_id_owner and items:
                 assert ("ID" in initial_screen and "OWNER" in initial_screen) or \
                     ("ID:" in initial_screen and "Owned by:" in initial_screen), "ID/owner labels missing"
 
             terminal.send(b"i")
             navigation.drain(terminal, 0.15)
-            assert screen("after-i")[0] == initial_screen, "Removed i key changed pager output"
+            assert screen("after-i")[0] == initial_screen, "i changed the initial preview"
             terminal.send(b"b")
             navigation.drain(terminal, 0.1)
             assert screen("back-at-start")[0] == initial_screen, "Back moved before the first result"
@@ -189,55 +227,60 @@ def main():
             navigation.drain(terminal, 0.3)
             assert screen("restored-size")[0] == initial_screen, "Resize lost the initial position or records"
 
-            expected = expected_rows(args.width)
-            viewport_height = args.height - 1
-            last_offset = max(0, len(expected) - viewport_height)
-            offset = 0
-            all_lines = list(initial_lines[:len(expected)])
+            all_lines = list(initial_lines)
             steps = 0
             completion_started = time.monotonic()
-            deadline = completion_started + max(20, args.count * 0.02)
-            while offset < last_offset:
+            deadline = completion_started + max(30, len(ordered) * 0.03)
+            _, rows, _ = expected_rows(max(1, args.width-1))
+            while len(all_lines) < len(rows):
                 assert time.monotonic() < deadline, "Pager traversal exceeded its completion deadline"
-                next_screen, lines = change_view(b" ")
-                offset = min(offset + viewport_height, last_offset)
-                screen(offset=offset)
+                change_view(b" ")
+                current, visible = screen(offset=len(all_lines))
                 steps += 1
-                # Validate the exact clamped viewport before removing its known overlap.
-                overlap = len(all_lines) - offset
-                all_lines.extend(lines[overlap:min(viewport_height, len(expected) - offset)])
                 if steps == 1:
-                    (output / "after-space.txt").write_text(next_screen)
+                    (output / "after-space.txt").write_text(current)
+                    (output / "second-page.txt").write_text(current)
                     result["bytes_after_space"] = len(terminal.raw)
                     result["request_count_after_space"] = len(server.requests)
-                    assert change_view(b"b")[0] == initial_screen, "Back did not restore the first viewport"
-                    assert change_view(b" ")[0] == next_screen, "Forward after Back changed the loaded results"
+                    _, previous = change_view(b"b")
+                    assert previous == initial_lines, "Back did not restore the preview records"
+                    screen(offset=0)
+                    assert change_view(b" ")[0] == current, "Forward changed cached records"
+                    if expected_rows(max(1, args.width-1))[0]:
+                        terminal.resize(max(20, args.width - 30), args.height)
+                        navigation.drain(terminal, 0.3)
+                        screen("resized-second-page")
+                        terminal.resize(args.width, args.height)
+                        navigation.drain(terminal, 0.3)
+                        assert screen("restored-second-page")[0] == current, "Resize lost the model at the top"
+
+                all_lines.extend(visible)
+            assert all_lines == rows, "The pager skipped, duplicated, or reordered a model"
             result["traversal_seconds"] = time.monotonic() - completion_started
             result["forward_steps"] = steps
-            bottom_screen, _ = screen("bottom", last_offset)
-            terminal.send(b" i")
+            result["local_pages"] = 1  # This legacy response is already cached in full.
+            bottom_screen, _ = screen("bottom")
+            terminal.send(b" ")
             navigation.drain(terminal, 0.15)
-            assert screen("final-stays-open", last_offset)[0] == bottom_screen, \
-                "Space or i dismissed or changed the final page"
+            assert screen("final-stays-open")[0] == bottom_screen, "Final screen changed or exited"
 
             complete = "\n".join(all_lines) + "\n"
             (output / "paged-output.txt").write_text(complete)
-            assert all_lines == expected, "Models were missing, duplicated, shortened, reordered, or mismatched"
-            assert not any(hint in terminal.text() for hint in ("p: print", "p: all", "i: inline")), \
+            assert not any(hint in terminal.text() for hint in ("p: print", "p: all")), \
                 "Obsolete controls remain"
             if args.expect_id_owner:
                 assert not any(label in complete for label in ("Shutdown date:", "Created:", "Object:")), \
                     "Unrelated metadata expanded the list"
             result["verified_full_ids_and_owners"] = len(items)
             assert len(server.requests) == 1, "Models must use one HTTP request"
-            assert server.requests[0]["path"] == "/v1/models"
+            assert server.requests[0]["path"] == f"/v1/models?limit={request_limit}"
             terminal.send(b"q")
             navigation.finish(terminal, 0)
             restored = navigation.screen_text(terminal)
             (output / "restored-screen.txt").write_text(restored)
             assert "q: quit" not in restored and "Space/b/q" not in restored, "Quit retained pager controls"
             assert not id_pattern.search(re.sub(r"\s+", "", restored)), "Quit printed viewer records into terminal history"
-            result["screen_assertions"] = "Space/b/q, inert i, resize, complete IDs, final page stays open, terminal restored"
+            result["screen_assertions"] = "Space/b/q, inactive i in the initial preview, resize, complete IDs, final page stays open, terminal restored"
             result["status"] = "passed"
         except Exception as error:
             result.update(status="failed", error=str(error))

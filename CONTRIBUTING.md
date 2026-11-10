@@ -308,8 +308,9 @@ terminal:
 ./scripts/mock
 ```
 
-The mock server uses the checked-in OpenAPI specification by default. To use a
-different OpenAPI specification, pass its local path or trusted URL explicitly:
+The mock server uses the checked-in OpenAPI specification by default.
+The default list fixtures return one page. An explicit local path or trusted URL
+uses the supplied specification unchanged.
 
 ```sh
 ./scripts/mock path/to/openapi.yml

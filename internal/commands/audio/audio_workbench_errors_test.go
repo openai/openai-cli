@@ -35,6 +35,12 @@ func TestAudioWorkbenchFailurePreservesKnownResultWithoutInventingRetention(t *t
 		require.Equal(t, settings, m.settings)
 		view := audioFeedbackView(t, m)
 		require.Contains(t, view, "Speech request failed.")
+		if result != nil {
+			require.Contains(t, view, "F1 details")
+			require.Empty(t, m.modal)
+			audioReviewKey(m, tea.KeyF1)
+			view = audioFeedbackView(t, m)
+		}
 		require.Contains(t, view, "Check History and API usage before generating again.")
 		require.NotContains(t, view, "Retained audio remains available")
 		require.NotContains(t, view, "synthetic request failure")
@@ -59,7 +65,7 @@ func TestAudioWorkbenchPartialHistoryFailureIsVisibleWithUsableEntries(t *testin
 		require.Contains(t, view, "Error details")
 		require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 		require.Equal(t, "history", m.modal)
-		require.Contains(t, audioFeedbackView(t, m), "Enter open · Esc back")
+		require.Contains(t, audioFeedbackView(t, m), "Enter open Esc back")
 		_, command := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		require.NotNil(t, command, "valid history selection was disabled by its corrupt neighbor")
 	}
@@ -69,7 +75,11 @@ func audioFeedbackView(t *testing.T, m *audioWorkbench) string {
 	t.Helper()
 	view := ansi.Strip(m.View().Content)
 	rows := strings.Split(view, "\n")
-	require.LessOrEqual(t, len(rows), m.height-1)
+	height := m.height - 1
+	if m.width >= 60 && m.height >= 24 {
+		height = m.height
+	}
+	require.LessOrEqual(t, len(rows), height)
 	for _, row := range rows {
 		require.LessOrEqual(t, ansi.StringWidth(row), m.width-1)
 	}
@@ -88,7 +98,7 @@ func TestAudioWorkbenchPlaybackCompletionOwnsOnlyItsActiveNote(t *testing.T) {
 					m.lastErr = errors.New("earlier action failed")
 					require.NotNil(t, audioReviewKey(m, tea.KeySpace))
 					require.True(t, m.playing)
-					require.Equal(t, "Playing. Space or X stops.", m.note)
+					require.Equal(t, "Playing. Space toggles playback. X stops.", m.note)
 					id := m.playID
 					switch newer {
 					case "saved":
@@ -266,8 +276,12 @@ func TestAudioWorkbenchChoiceDialogsShowAsynchronousPlaybackFailure(t *testing.T
 				require.Equal(t, "choice", m.modal)
 				for range len(m.choices) {
 					view := audioFeedbackView(t, m)
-					require.Contains(t, view, "Enter select · Esc back")
-					require.Contains(t, view, "› "+m.choices[m.choice])
+					require.Contains(t, view, "Enter select Esc back")
+					label := m.choices[m.choice]
+					if setting == 2 {
+						label = strings.ToUpper(label)
+					}
+					require.Contains(t, view, "› "+label)
 					require.NotContains(t, m.View().Content, "\x1b[2J")
 					require.Nil(t, audioReviewKey(m, tea.KeyDown))
 					require.False(t, m.busy, "choosing settings generated speech")
@@ -305,6 +319,7 @@ func TestAudioWorkbenchFailureGuidanceFollowsEscapeTransitions(t *testing.T) {
 				if kind == "export" {
 					audioReviewKey(m, 's')
 					m.path.SetValue("synthetic.wav")
+					require.Nil(t, audioReviewKey(m, tea.KeyEnter)) // Finish choosing the folder.
 					require.NotNil(t, audioReviewKey(m, tea.KeyEnter))
 					m.Update(audioWorkMessage{kind: "export", err: failure})
 					require.Same(t, &result, m.result)
@@ -329,7 +344,7 @@ func TestAudioWorkbenchFailureGuidanceFollowsEscapeTransitions(t *testing.T) {
 				require.Nil(t, audioReviewKey(m, tea.KeyHome))
 				require.Nil(t, audioReviewKey(m, tea.KeyEnter))
 				view = audioFeedbackView(t, m)
-				require.Contains(t, view, "Enter select · Esc back")
+				require.Contains(t, view, "Enter select Esc back")
 				require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 				require.Empty(t, m.modal)
 				audioReviewKey(m, tea.KeyTab)

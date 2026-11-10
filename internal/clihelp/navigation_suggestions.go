@@ -13,7 +13,7 @@ import (
 func navigationSuggestions(command *cli.Command, invocation, path string) func(*cli.Command) string {
 	prefix := strings.TrimSpace(invocation + " " + path)
 	return func(child *cli.Command) string {
-		if !ShellSafeCommandPath(command) || !safeNavigationName(child.Name) {
+		if invocation == "" || !ShellSafeCommandPath(command) || !safeNavigationName(child.Name) {
 			return child.Name
 		}
 		return commandsuggest.RecordLabel(command, child.Name, prefix+" "+child.Name+" --help")

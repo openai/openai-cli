@@ -24,6 +24,9 @@ type PreparationHooks struct {
 	DebugCapture        debugmiddleware.CaptureOptions
 	PreflightMultipart  func(map[string]any) error
 	ValidateCredentials func() error
+	// SelectBodyType resolves file unions after stdin policy has checked file
+	// paths, but before opening them.
+	SelectBodyType func(*cli.Command, map[string]any) (BodyContentType, error)
 	// ValidateResolvedInputs runs after file expansion, while preparation owns opened uploads.
 	ValidateResolvedInputs func(requestflag.RequestContents) error
 	// ResolvedJSONOptions inspects finalized inputs before JSON observers run.
@@ -104,10 +107,31 @@ func FlagOptions(
 	}
 
 	stdinConsumedByPipe := false
-	if bodyType != ApplicationOctetStream && !ignoreStdin && explicitStdin == 0 && cliinput.IsPiped(os.Stdin) {
+	hasRequestFile := RequestFileFlag(cmd) != nil && cmd.IsSet("request-file")
+	if hasRequestFile {
+		object, err := readRequestFile(cmd.String("request-file"), stdin, explicitStdin)
+		if err != nil {
+			return nil, err
+		}
+		if err := mergeRequestObject(cmd, object, &requestContents, stdinSecurity, bodyType != EmptyBody); err != nil {
+			return nil, errors.New("invalid request parameters in --request-file")
+		}
+	} else if bodyType != ApplicationOctetStream && !ignoreStdin && explicitStdin == 0 && cliinput.IsPiped(os.Stdin) {
 		stdinConsumedByPipe, err = ReadPipedInput(cmd, stdin, &requestContents, stdinSecurity, bodyType != EmptyBody)
 		if err != nil {
 			return nil, err
+		}
+	}
+
+	// Feature preflight owns branch-aware requirements and their error ordering.
+	// Run it before generic presence checks, credentials, or file expansion.
+	if bodyType == MultipartFormEncoded {
+		if bodyMap, ok := requestContents.Body.(map[string]any); ok {
+			if hooks.PreflightMultipart != nil {
+				if err := hooks.PreflightMultipart(bodyMap); err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 
@@ -123,16 +147,6 @@ func FlagOptions(
 		}
 	}
 
-	if bodyType == MultipartFormEncoded {
-		if bodyMap, ok := requestContents.Body.(map[string]any); ok {
-			if hooks.PreflightMultipart != nil {
-				if err := hooks.PreflightMultipart(bodyMap); err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
-
 	if hooks.ValidateCredentials != nil {
 		if err := hooks.ValidateCredentials(); err != nil {
 			return nil, err
@@ -144,8 +158,12 @@ func FlagOptions(
 	if err := WrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
 		return nil, err
 	}
-	if _, err := StdinConsumers(requestContents, ignoreStdin); err != nil {
+	resolvedStdin, err := StdinConsumers(requestContents, ignoreStdin)
+	if err != nil {
 		return nil, err
+	}
+	if hasRequestFile && explicitStdin == 0 && resolvedStdin > 0 {
+		return nil, errors.New("to read a field from stdin, use a named --request-file and pass the field explicitly with @-")
 	}
 
 	// Determine stdin availability for FileInput params that use "-".
@@ -158,6 +176,14 @@ func FlagOptions(
 		stdinReader = OnceStdinReader{Reader: stdin}
 	}
 
+	bodyMap, bodyIsMap := requestContents.Body.(map[string]any)
+	if bodyIsMap && hooks.SelectBodyType != nil {
+		bodyType, err = hooks.SelectBodyType(cmd, bodyMap)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Embed files passed as "@file.jpg" in the request body, headers, and query:
 	embedStyle := EmbedText
 	if bodyType == ApplicationOctetStream || bodyType == MultipartFormEncoded {
@@ -165,7 +191,6 @@ func FlagOptions(
 	}
 
 	var embedded any
-	bodyMap, bodyIsMap := requestContents.Body.(map[string]any)
 	if bodyType == MultipartFormEncoded && bodyIsMap && hooks.EmbedMultipart != nil {
 		embedded, err = hooks.EmbedMultipart(bodyMap, &stdinReader)
 	} else {
@@ -175,6 +200,10 @@ func FlagOptions(
 		return nil, err
 	}
 	requestContents.Body = embedded
+	// Structured source maps become available only after their source is resolved.
+	if resolvedBody, ok := embedded.(map[string]any); ok {
+		ApplyDataAliases(cmd, resolvedBody)
+	}
 	if bodyType == MultipartFormEncoded {
 		pendingMultipartUploads = embedded
 	}

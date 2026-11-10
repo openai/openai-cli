@@ -18,6 +18,12 @@ func ProjectFileMetadata(ctx context.Context, value gjson.Result) (gjson.Result,
 	if !value.IsObject() || value.Get("object").Str != "file" || !gjson.Valid(value.Raw) {
 		return value, ctx.Err()
 	}
+	return formatMetadataDates(ctx, value, "expires_at", time.RFC3339)
+}
+
+// formatMetadataDates formats creation and lifecycle timestamps in UTC. Invalid
+// timestamps and every other field retain their original JSON representation.
+func formatMetadataDates(ctx context.Context, value gjson.Result, lifecycleKey, layout string) (gjson.Result, error) {
 	var out strings.Builder
 	out.WriteByte('{')
 	first := true
@@ -31,11 +37,11 @@ func ProjectFileMetadata(ctx context.Context, value gjson.Result) (gjson.Result,
 		first = false
 		out.WriteString(key.Raw)
 		out.WriteByte(':')
-		if key.Str == "created_at" || key.Str == "expires_at" {
+		if key.Str == "created_at" || key.Str == lifecycleKey {
 			if seconds, err := strconv.ParseInt(field.Raw, 10, 64); field.Type == gjson.Number && err == nil {
 				date := time.Unix(seconds, 0).UTC()
 				if date.Year() >= 0 && date.Year() <= 9999 {
-					out.WriteString(strconv.Quote(date.Format(time.RFC3339)))
+					out.WriteString(strconv.Quote(date.Format(layout)))
 					return true
 				}
 			}

@@ -31,11 +31,20 @@ type fileInvocation struct {
 const (
 	fileUploadCommand = "upload"
 	fileGetCommand    = "get"
+	fileRetention     = "Unless you set --expires-after, batch files expire after 30 days and other files stay until deleted."
 )
 
 // Configure extends task routes after cloning so compatibility commands keep their output.
 func Configure(root *cli.Command) {
 	configurePurposeValidation(root)
+	// Generated create operations use the first description sentence in ordinary help.
+	for _, name := range []string{"files", "uploads"} {
+		if resource := root.Command(name); resource != nil {
+			if create := resource.Command("create"); create != nil && !strings.HasPrefix(create.Description, fileRetention) {
+				create.Description = strings.TrimSpace(fileRetention + "\n\n" + create.Description)
+			}
+		}
+	}
 	files := root.Command("files")
 	if files == nil {
 		return
@@ -58,10 +67,12 @@ func Configure(root *cli.Command) {
 			upload.Metadata = map[string]any{}
 		}
 		upload.Metadata["completion-positional-file"] = "file"
-		upload.Usage = "Upload a local file with an explicit purpose."
-		upload.UsageText = clihelp.Invocation(root.Name, os.Args) + " files upload [PATH | --file PATH] --purpose PURPOSE [options]"
+		upload.Usage = "Upload a local file with an explicit purpose, such as a JSONL file for a future batch job."
+		upload.UsageText = "openai files upload [PATH | --file PATH] --purpose PURPOSE [options]"
 		upload.Description = "Pass a plain local path. Paths with spaces need quotes.\nA leading @ is part of the filename; do not add @ to a plain path.\nUse --purpose PURPOSE -- -name for a filename starting with a dash.\nThe API validates file types and purposes. Upload success does not mean processing is complete."
 		upload.Metadata["help-content"] = clihelp.Content{
+			CompactNote: "Use PATH or --file PATH and set --purpose explicitly. A leading @ is part of the filename. " +
+				"Piped JSON/YAML accepts file and purpose. " + fileRetention,
 			InputNote: "A path is required: use PATH or --file PATH. Choose --purpose explicitly. " +
 				"The existing piped JSON/YAML keys are file and purpose.",
 			Description: upload.Description,

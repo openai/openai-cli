@@ -39,6 +39,25 @@ func TestLinuxFishPickerPackageArtifacts(t *testing.T) {
 		"man/man1/openai.1.gz":           "synthetic manual",
 		"completions/picker/openai.fish": picker,
 	}
+	assets := map[string]string{"usr/share/fish/vendor_conf.d/openai-picker.fish": picker}
+	for src, dst := range map[string]string{
+		"fish_package_explore.fish":   "usr/share/fish/vendor_conf.d/openai-explore.fish",
+		"fish_explore_selection.fish": "usr/share/openai-cli/explore-selection.fish",
+	} {
+		path := filepath.Join("internal", "autocomplete", "shellscripts", src)
+		data, err := os.ReadFile(filepath.Join("..", path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[path], assets[dst] = string(data), string(data)
+	}
+	for _, helper := range []string{"install.sh", "openai-enable-updates.sh"} {
+		data, err := os.ReadFile(filepath.Join("..", helper))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[helper] = string(data)
+	}
 	for relative, data := range files {
 		path := filepath.Join(root, relative)
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -99,12 +118,13 @@ func TestLinuxFishPickerPackageArtifacts(t *testing.T) {
 			if strings.HasPrefix(header.Name, "usr/share/openai/") {
 				t.Errorf("unnecessary secondary picker file: %s", header.Name)
 			}
-			if header.Name != "usr/share/fish/vendor_conf.d/openai-picker.fish" {
+			want, ok := assets[header.Name]
+			if !ok {
 				continue
 			}
 			installed++
 			data, err := io.ReadAll(reader)
-			if err != nil || string(data) != picker {
+			if err != nil || string(data) != want {
 				t.Fatalf("packaged picker = %q, error = %v", data, err)
 			}
 			if header.Typeflag != tar.TypeReg || header.Mode != 0644 || header.Uid != 0 || header.Gid != 0 {
@@ -118,7 +138,7 @@ func TestLinuxFishPickerPackageArtifacts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if installed != 1 {
-		t.Fatalf("installed picker files = %d, want exactly one", installed)
+	if installed != len(assets) {
+		t.Fatalf("installed fish assets = %d, want %d", installed, len(assets))
 	}
 }

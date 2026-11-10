@@ -117,13 +117,24 @@ func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 			t.Fatalf("compatibility help failed: %+v", got)
 		}
 	}
-	for _, hidden := range []string{"__complete", "@completion", "@manpages"} {
-		got := runMainDispatch(t, "bash", "openai", "help", hidden)
-		if got.code == 0 || !strings.Contains(got.stderr, "Unknown help topic") {
-			t.Fatalf("internal command exposed as a help topic: %+v", got)
-		}
+	// Completion setup has a user-facing guide even though discovery omits its command.
+	direct := runMainDispatch(t, "bash", "openai", "@completion", "--help")
+	if !strings.HasPrefix(direct.stdout, "Shell completion\n") || direct.code != 0 || direct.stderr != "" {
+		t.Fatalf("completion setup guide failed: %+v", direct)
+	}
+	if topic := runMainDispatch(t, "bash", "openai", "help", "@completion"); topic != direct {
+		t.Fatalf("completion setup topic differs from direct help: %+v", topic)
+	}
+	if got := runMainDispatch(t, "bash", "openai", "help", "__complete"); got.code == 0 || !strings.Contains(got.stderr, "Unknown help topic") {
+		t.Fatalf("completion protocol exposed as a help topic: %+v", got)
 	}
 	got := runMainDispatch(t, "zsh", mainCompletionArgs("zsh", "")...)
+	for record := range strings.SplitSeq(got.stdout, "\n") {
+		name, _, _ := strings.Cut(record, ":")
+		if name == "__complete" || name == "@completion" || name == "@manpages" {
+			t.Fatalf("internal command exposed in root completion: %s", name)
+		}
+	}
 	if strings.Contains(got.stdout, "admin:organization") || !strings.Contains(got.stdout, "admin") {
 		t.Fatalf("root completion does not prefer subgroups: %+v", got)
 	}
@@ -239,7 +250,7 @@ func TestMainCommandSubgroupsPreserveAudioAndErrors(t *testing.T) {
 		}
 	}
 	got = runMainDispatch(t, "bash", "openai", "admin", "organizatio")
-	if got.code != 3 || got.stdout != "" || got.stderr != "Unknown command. Did you mean: openai help admin organization?\nTo run it, correct only the command spelling. Keep your original options and arguments.\n" {
+	if got.code != 3 || got.stdout != "" || got.stderr != "Unknown command. Run this help command to check the spelling.\n  openai help admin organization\nEdit your original command and run it again with the same options and arguments.\n" {
 		t.Fatalf("nested typo suggestion failed: %+v", got)
 	}
 }

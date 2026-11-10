@@ -26,7 +26,7 @@ func TestBashFileCompletionPreservesAssignments(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"assets/logo.png", "assets/long name.png", "assets/a=b.png", "assets/雪-file.txt", "--file=logo.png", "=literal.wav",
-		"@week:notes.txt", "@week::notes.txt", "@week:=notes.txt", ":notes.txt",
+		"@week:notes.txt", "@week::notes.txt", "@week:=notes.txt", ":notes.txt", "-",
 		"quote's recording.wav", "quote's second.wav", `say"hello.txt`, `back\slash.txt`,
 		"dir's/quote's recording.wav", "glob[dir]/file[1].txt", "glob[dir]/file1.txt",
 		"literal*.txt", "literal-other.txt", "question?.txt", "questionX.txt", "雪's file.txt",
@@ -43,6 +43,8 @@ func TestBashFileCompletionPreservesAssignments(t *testing.T) {
 		words, want          []string
 	}{
 		{"root command", "openai mo", "mo", []string{"mo"}, []string{"models"}},
+		{"stdin and file", "openai responses create --request-file -", "-", []string{"responses", "create", "--request-file", "-"}, []string{"-", "--file=logo.png"}},
+		{"assigned stdin and file", "openai responses create --request-file=-", "-", []string{"responses", "create", "--request-file", "=", "-"}, []string{"-", "--file=logo.png"}},
 		{"nested command", "openai models l", "l", []string{"models", "l"}, []string{"list"}},
 		{"no matching command", "openai models missing", "missing", []string{"models", "missing"}, nil},
 		{"bash3 assignment", "openai --file=assets/lo", "assets/lo", []string{"--file=assets/lo"}, []string{"assets/logo.png", "assets/long name.png"}},

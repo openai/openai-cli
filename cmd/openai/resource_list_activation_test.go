@@ -21,10 +21,10 @@ type resourceListRoute struct {
 var resourceListRoutes = []resourceListRoute{
 	{"files", "/files", "file", []string{"files", "list", "--purpose", "assistants", "--order", "asc"}, []string{"ID", "FILENAME", "PURPOSE", "SIZE", "STATUS"}},
 	{"batches", "/batches", "batch", []string{"batches", "list"}, []string{"ID", "STATUS"}},
-	{"projects-full", "/organization/projects", "organization.project", []string{"admin", "organization", "projects", "list", "--include-archived"}, []string{"ID", "NAME", "STATUS"}},
-	{"projects-admin", "/organization/projects", "organization.project", []string{"admin", "projects", "list", "--include-archived"}, []string{"ID", "NAME", "STATUS"}},
-	{"projects-short", "/organization/projects", "organization.project", []string{"projects", "list", "--include-archived"}, []string{"ID", "NAME", "STATUS"}},
-	{"projects-legacy", "/organization/projects", "organization.project", []string{"admin:organization:projects", "list", "--include-archived"}, []string{"ID", "NAME", "STATUS"}},
+	{"projects-full", "/organization/projects", "organization.project", []string{"admin", "organization", "projects", "list", "--include-archived"}, []string{"NAME", "STATUS", "ID"}},
+	{"projects-admin", "/organization/projects", "organization.project", []string{"admin", "projects", "list", "--include-archived"}, []string{"NAME", "STATUS", "ID"}},
+	{"projects-short", "/organization/projects", "organization.project", []string{"projects", "list", "--include-archived"}, []string{"NAME", "STATUS", "ID"}},
+	{"projects-legacy", "/organization/projects", "organization.project", []string{"admin:organization:projects", "list", "--include-archived"}, []string{"NAME", "STATUS", "ID"}},
 }
 
 // The state endpoint belongs to the observer, never the CLI. It lets the PTY
@@ -38,13 +38,23 @@ type resourceListFixture struct {
 	server       *httptest.Server
 }
 
+func fixtureListCursor(route resourceListRoute) string {
+	switch route.object {
+	case "organization.project":
+		return "project-envelope-cursor" // ConversationCursorPage reads last_id.
+	case "group":
+		return "opaque:02/+?" // NextCursorPage reads next, including URL characters.
+	default:
+		return "item_002" // CursorPage reads the last row ID.
+	}
+}
+
 func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) *resourceListFixture {
 	t.Helper()
 	fixture := &resourceListFixture{}
-	nextCursor := "item_002"
-	if route.object == "organization.project" {
-		// ConversationCursorPage must use the envelope cursor, not the row ID.
-		nextCursor = "project-envelope-cursor"
+	nextCursor := fixtureListCursor(route)
+	if mode == "repeat-from-start" {
+		nextCursor = "seed" // resourceListArgs sends --after seed on the first request.
 	}
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/_state" {
@@ -72,8 +82,15 @@ func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) 
 		if query.Get("after") != wantCursor {
 			t.Errorf("request %d cursor=%q, want %q", request, query.Get("after"), wantCursor)
 		}
-		if r.Header.Get("X-List-Test") != "preserved" || r.Header.Get("OpenAI-Organization") != "org-synthetic" {
-			t.Error("list request discarded the explicit header or organization")
+		if r.Header.Get("X-List-Test") != "preserved" || r.Header.Get("OpenAI-Organization") != "org-synthetic" || r.Header.Get("OpenAI-Project") != "proj-synthetic" {
+			t.Error("list request discarded a header or its organization/project context")
+		}
+		key := "sk-fake-list-override"
+		if strings.HasPrefix(route.path, "/organization/") {
+			key = "sk-fake-list-admin-override"
+		}
+		if r.Header.Get("Authorization") != "Bearer "+key {
+			t.Error("list request used the wrong credential")
 		}
 		if route.object == "file" && (query.Get("purpose") != "assistants" || query.Get("order") != "asc") {
 			t.Errorf("file query changed: %v", query)
@@ -95,9 +112,12 @@ func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) 
 			return
 		}
 		items := []map[string]any{}
-		if mode != "empty" {
+		if mode != "empty" && mode != "empty-continuation" && !(mode == "empty-next-continuation" && request == 2) {
 			for number := (request-1)*2 + 1; number <= request*2; number++ {
 				item := map[string]any{"id": fmt.Sprintf("item_%03d", number), "object": route.object}
+				if route.object == "file" && number == request*2 && (mode == "repeat-from-start" || mode == "repeat-cursor" && request == 2) {
+					item["id"] = nextCursor // The Files SDK derives its cursor from the last row.
+				}
 				switch route.object {
 				case "file":
 					item["filename"], item["purpose"], item["bytes"], item["status"] = "synthetic.jsonl", "assistants", 1024, "processed"
@@ -105,23 +125,47 @@ func newResourceListFixture(t *testing.T, route resourceListRoute, mode string) 
 					item["status"] = "completed"
 				case "organization.project":
 					item["name"], item["status"] = "Synthetic project", "active"
+					item["psp_decryption_key_id"] = nil
+				case "webhook_endpoint":
+					item["name"], item["event_types"], item["url"] = "Synthetic hook", []string{"batch.failed"}, "https://example.test/webhook"
+				case "skill":
+					item["name"], item["default_version"], item["latest_version"] = "Synthetic skill", "1", "2"
+				case "group":
+					delete(item, "object") // Organization groups do not use an object discriminator.
+					item["name"], item["group_type"], item["is_scim_managed"] = "Synthetic group", "scim", true
 				}
 				if mode == "unfamiliar" {
 					item["unfamiliar"] = "retain-synthetic-detail"
+				}
+				if mode == "missing-cursor" && route.object == "skill" {
+					delete(item, "id")
 				}
 				items = append(items, item)
 			}
 		}
 		more := request == 1 && mode != "complete" && mode != "empty" && mode != "unfamiliar"
-		_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": items, "has_more": more,
-			"first_id": "item_001", "last_id": nextCursor})
+		envelope := map[string]any{"object": "list", "data": items, "has_more": more, "first_id": "item_001", "last_id": nextCursor}
+		if route.object == "group" && mode != "missing-cursor" {
+			envelope["next"] = nextCursor
+		}
+		if (mode == "repeat-cursor" || mode == "empty-next-continuation") && request == 2 {
+			envelope["has_more"] = true
+		}
+		if route.object == "organization.project" && (mode == "missing-cursor" || mode == "missing-legacy-cursor") {
+			delete(envelope, "last_id")
+		}
+		if request == 1 && (mode == "legacy" || mode == "missing-legacy-cursor") {
+			delete(envelope, "has_more")
+		}
+		_ = json.NewEncoder(w).Encode(envelope)
 	}))
 	t.Cleanup(fixture.server.Close)
 	return fixture
 }
 
 func resourceListArgs(route resourceListRoute, extra ...string) []string {
-	args := []string{"openai", "--organization", "org-synthetic", "--header", "X-List-Test: preserved"}
+	args := []string{"openai", "--api-key", "sk-fake-list-override", "--admin-api-key", "sk-fake-list-admin-override",
+		"--organization", "org-synthetic", "--project", "proj-synthetic", "--header", "X-List-Test: preserved"}
 	args = append(args, route.args...)
 	args = append(args, "--limit", "2", "--after", "seed")
 	return append(args, extra...)
@@ -133,11 +177,7 @@ func (fixture *resourceListFixture) assertCursors(t *testing.T, route resourceLi
 	defer fixture.mu.Unlock()
 	want := []string{"seed"}
 	if count == 2 {
-		cursor := "item_002"
-		if route.object == "organization.project" {
-			cursor = "project-envelope-cursor"
-		}
-		want = append(want, cursor)
+		want = append(want, fixtureListCursor(route))
 	}
 	require.Equal(t, want, fixture.cursors)
 	require.Equal(t, 1, fixture.maximum, "list requests must remain serial")
@@ -200,6 +240,85 @@ func TestMainResourceListActivationPipe(t *testing.T) {
 				}
 			}
 			fixture.assertCursors(t, route, tc.calls)
+		})
+	}
+}
+
+func TestMainPipedListCursorFailures(t *testing.T) {
+	files := resourceListRoutes[0]
+	projects := resourceListRoutes[2]
+	groups := resourceListRoute{name: "groups", path: "/organization/groups", object: "group",
+		args: []string{"admin", "organization", "groups", "list"}}
+	for _, tc := range []struct {
+		name, mode string
+		route      resourceListRoute
+		flags      []string
+		calls      int
+	}{
+		{"files-default", "repeat-cursor", files, nil, 2},
+		{"files-repeat-first-after", "repeat-from-start", files, []string{"--format", "json"}, 1},
+		{"groups-repeat-first-after", "repeat-from-start", groups, []string{"--format", "jsonl"}, 1},
+		{"projects-alias-repeat-first-after", "repeat-from-start", resourceListRoutes[4], []string{"--format", "json"}, 1},
+		{"files-json", "repeat-cursor", files, []string{"--format", "json", "--max-items", "-1"}, 2},
+		{"groups-jsonl", "repeat-cursor", groups, []string{"--format", "jsonl"}, 2},
+		{"projects-extract", "repeat-cursor", projects, []string{"--transform", "id", "--raw-output"}, 2},
+		{"groups-missing-next", "missing-cursor", groups, []string{"--format", "json"}, 1},
+		{"projects-missing-last-id", "missing-cursor", projects, nil, 1},
+		{"files-empty-with-continuation", "empty-continuation", files, nil, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newResourceListFixture(t, tc.route, tc.mode)
+			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=" + fixture.server.URL + "/v1"},
+				resourceListArgs(tc.route, append(tc.flags, "--format-error", "json")...)...)
+			fixture.assertCursors(t, tc.route, tc.calls)
+			require.Equal(t, 1, got.code, got.stderr)
+			diagnostic := decodeMainStructuredError(t, "json", got.stderr)
+			require.Equal(t, map[string]any{"message": "List pagination stopped because the API returned a missing or repeated cursor. Output may be incomplete."}, diagnostic)
+			if tc.mode != "empty-continuation" {
+				require.Contains(t, got.stdout, "item_001", "preserve the first page on failure")
+			}
+			if slices.Contains(tc.flags, "json") {
+				require.True(t, strings.HasPrefix(strings.TrimSpace(got.stdout), "["))
+				require.False(t, json.Valid([]byte(got.stdout)), "a partial list must not claim to be complete")
+			}
+		})
+	}
+}
+
+func TestMainPipedListLimitsStopBeforeAStalledCursor(t *testing.T) {
+	files := resourceListRoutes[0]
+	for _, tc := range []struct {
+		format, maximum string
+		items           int
+	}{
+		{"json", "0", 0},
+		{"json", "1", 1},
+		{"json", "2", 2},
+		{"raw", "0", 2}, // Raw returns the original response envelope.
+	} {
+		t.Run(tc.format+"/"+tc.maximum, func(t *testing.T) {
+			fixture := newResourceListFixture(t, files, "repeat-from-start")
+			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=" + fixture.server.URL + "/v1"},
+				resourceListArgs(files, "--format", tc.format, "--max-items", tc.maximum)...)
+			require.Equal(t, 0, got.code, got.stderr)
+			var items []map[string]any
+			if tc.format == "raw" {
+				var result struct {
+					Data    []map[string]any
+					HasMore bool `json:"has_more"`
+				}
+				require.NoError(t, json.Unmarshal([]byte(got.stdout), &result))
+				require.True(t, result.HasMore)
+				items = result.Data
+			} else {
+				require.NoError(t, json.Unmarshal([]byte(got.stdout), &items))
+				require.NotNil(t, items, "finite JSON output must be an array, including at zero items")
+			}
+			require.Len(t, items, tc.items)
+			if tc.items > 0 {
+				require.Equal(t, "item_001", items[0]["id"])
+			}
+			fixture.assertCursors(t, files, 1)
 		})
 	}
 }

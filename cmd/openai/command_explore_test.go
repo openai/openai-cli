@@ -1,9 +1,31 @@
 package main
 
 import (
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/openai/openai-cli/internal/terminal"
+	"github.com/stretchr/testify/require"
 )
+
+func TestMainExploreHelpShowsLocalOptions(t *testing.T) {
+	got := runMainDispatch(t, "zsh", "openai", "explore", "--help")
+	if got.code != 0 || got.stderr != "" {
+		t.Fatalf("Explore help failed: %+v", got)
+	}
+	for _, want := range []string{"--format", "--format-error", "openai help --all explore"} {
+		if !strings.Contains(got.stdout, want) {
+			t.Errorf("Explore help omitted %q", want)
+		}
+	}
+	for _, unrelated := range []string{"--api-key", "--mtls-client-key-file", "Key setup:", "\nNOTES\n"} {
+		if strings.Contains(got.stdout, unrelated) {
+			t.Errorf("Explore help included %q", unrelated)
+		}
+	}
+}
 
 func TestMainExploreRootHelpIntroducesOfflineSearch(t *testing.T) {
 	for _, args := range [][]string{{"openai"}, {"openai", "--help"}, {"openai", "help"}, {"openai", "help", "--all"}} {
@@ -89,10 +111,78 @@ func TestMainExploreQueryWorksOfflineInPipes(t *testing.T) {
 	}
 }
 
+func TestMainExploreRanksCommandsForCommonTasks(t *testing.T) {
+	for _, tc := range []struct{ query, first string }{
+		{"explore text", "tokenizer --help"},
+		{"modles list", "models list"},
+		{"models ls", "models list"},
+		{"show models", "models list"},
+		{"see all models", "models list"},
+		{"list all models", "models list"},
+		{"image generation", "images generate"},
+		{"make image", "images generate"},
+		{"create an image", "images generate"},
+		{"images genrate", "images generate"},
+		{"retrieve model", "models retrieve"},
+		{"download file", "files download"},
+		{"list my files", "files list"},
+		{"how do I count tokens offline", "tokenizer count"},
+		{"show me all vector stores", "vector-stores list"},
+		{"look up a batch by id", "batches retrieve"},
+		{"remove a vector store", "vector-stores delete"},
+		{"list files in a vector store", "vector-stores files list"},
+		{"show service accounts in a project", "projects service-accounts list"},
+		{"start a new conversation", "conversations create"},
+		{"file expiration policy", "files upload"},
+		{"images models quota", "images models"},
+		{"files upload until deleted", "files upload"},
+		{"speech composer", "speak"},
+		{"turn text into speech", "speak"},
+		{"convert speech into text", "transcribe"},
+		{"open the speech editor", "speak"},
+		{"speech compo", "speak"},
+		{"speach composer", "speak"},
+		{"voice editor", "speak"},
+		{"image studio", "images generate"},
+		{"image quality settings", "images generate"},
+		{"upload mime type", "uploads create"},
+		{"embedding dimensions", "embeddings create"},
+		{"transcribe timestamps", "transcribe"},
+		{"text-to-speech", "speak"},
+		{"speech-to-text", "transcribe"},
+		{"count tokens offline", "tokenizer count"},
+		{"offline token count", "tokenizer count"},
+		{"tokens offline co", "tokenizer count"},
+		{"  COUNT   tokens off  ", "tokenizer count"},
+		{"text to speec", "speak"},
+		{"text to audio", "speak"},
+		{"read text aloud", "speak"},
+		{"speech to text", "transcribe"},
+		{"audio to text", "audio transcribe"},
+		{"upload a JSONL file", "files upload"},
+		{"upload a file for a future batch", "files upload"},
+		{"start a batch", "batches submit requests.jsonl"},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			got := runMainDispatchWithEnv(t, "zsh", []string{"OPENAI_BASE_URL=not%url"}, "openai", "explore", tc.query)
+			_, results, found := strings.Cut(got.stdout, "MATCHING COMMANDS\n")
+			line, _, _ := strings.Cut(results, "\n")
+			first, _, _ := strings.Cut(strings.TrimSpace(line), "  ")
+			if got.code != 0 || got.stderr != "" || !found || first != "openai "+tc.first {
+				t.Fatalf("unexpected search result for %q: %+v", tc.query, got)
+			}
+		})
+	}
+}
+
 func TestMainExploreHelpAndStructuredErrors(t *testing.T) {
 	help := runMainDispatch(t, "zsh", "openai", "explore", "--help")
-	if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, "openai explore") {
+	if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, "$ openai explore\n") {
 		t.Fatalf("explore help failed: %+v", help)
+	}
+	full := runMainDispatch(t, "zsh", "openai", "help", "--all", "explore")
+	if full.code != 0 || full.stderr != "" || !strings.Contains(full.stdout, `openai explore "count tokens offline"`) {
+		t.Fatalf("full Explore help omitted the search example: %+v", full)
 	}
 	got := runMainDispatch(t, "zsh", "openai", "--format", "json", "explore")
 	if got.code != 2 || got.stdout != "" {
@@ -113,4 +203,43 @@ func TestMainExploreExplicitMachineErrorsStayStructured(t *testing.T) {
 	if !strings.Contains(payload["message"].(string), "error output") {
 		t.Fatalf("missing error-format guidance: %#v", payload)
 	}
+}
+
+// PowerShell needs its call operator when the executable path is quoted.
+func TestMainExploreCopiesTaskFromHelpInPowerShell(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("PowerShell unavailable")
+	}
+	work, binary := buildNativeShellCLI(t)
+	shell := nativeShell{name: "pwsh", executable: pwsh, args: []string{"-NoProfile", "-NonInteractive", "-Command"}}
+	directory, home := t.TempDir(), t.TempDir()
+	run := func(command string) string {
+		result := runNativeShell(t, shell, directory, home, "invalid-for-requests", command)
+		require.Zero(t, result.code, result.stderr)
+		require.Empty(t, result.stderr)
+		return strings.ReplaceAll(result.stdout, "\r\n", "\n")
+	}
+	invocation := "& " + terminal.PowerShellQuote(filepath.Join(work, binary))
+	short := run(invocation + " explore --help")
+	_, reference, found := strings.Cut(short, "\nFULL REFERENCE\n")
+	require.True(t, found)
+	reference, _, _ = strings.Cut(strings.TrimSpace(reference), "\n")
+	require.Equal(t, invocation+" help --all explore", reference)
+	help := run(reference)
+	var example string
+	for line := range strings.SplitSeq(help, "\n") {
+		if strings.HasSuffix(line, ` explore "count tokens offline"`) {
+			example = strings.TrimPrefix(strings.TrimSpace(line), "$ ")
+			break
+		}
+	}
+	require.NotEmpty(t, example)
+	output := run(example)
+	_, results, found := strings.Cut(output, "MATCHING COMMANDS\n")
+	require.True(t, found)
+	first, _, _ := strings.Cut(results, "\n")
+	command, _, _ := strings.Cut(strings.TrimSpace(first), "  ")
+	require.Equal(t, invocation+" tokenizer count", command)
+	require.Equal(t, "1", strings.TrimSpace(run(command+" -n --text hello")))
 }

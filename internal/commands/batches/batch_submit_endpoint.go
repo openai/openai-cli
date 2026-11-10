@@ -37,7 +37,17 @@ func inferBatchSubmitEndpoint(ctx context.Context, path string) (endpoint string
 	return endpoint, snapshot, err
 }
 
+type batchJSONLInfo struct {
+	endpoint string
+	requests int
+}
+
 func inferBatchSubmitJSONL(ctx context.Context, reader io.Reader) (string, error) {
+	info, err := inspectBatchJSONL(ctx, reader)
+	return info.endpoint, err
+}
+
+func inspectBatchJSONL(ctx context.Context, reader io.Reader) (batchJSONLInfo, error) {
 	allowed := make(map[string]bool, len(batchSubmitEndpoints))
 	capture := 0
 	for _, endpoint := range batchSubmitEndpoints {
@@ -46,22 +56,22 @@ func inferBatchSubmitJSONL(ctx context.Context, reader io.Reader) (string, error
 		capture = max(capture, 6*len(endpoint)+2)
 	}
 	scanner := batchJSONScanner{ctx: ctx, in: bufio.NewReader(reader), out: bufio.NewWriter(io.Discard), urlCapture: capture}
-	endpoint := ""
+	var info batchJSONLInfo
 	for line := 1; ; line++ {
 		err := scanner.outerSpace()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return "", err
+			return batchJSONLInfo{}, err
 		}
 		b, err := scanner.peek()
 		if err != nil {
-			return "", err
+			return batchJSONLInfo{}, err
 		}
 		if b == '\n' {
 			if _, err := scanner.take(false); err != nil {
-				return "", err
+				return batchJSONLInfo{}, err
 			}
 			continue
 		}
@@ -74,46 +84,47 @@ func inferBatchSubmitJSONL(ctx context.Context, reader io.Reader) (string, error
 		}
 		switch {
 		case errors.Is(err, errBatchRecordDuplicateURL):
-			return "", batchSubmitEndpointLineError(line, "repeats url", "Keep one top-level url per request, then retry.")
+			return batchJSONLInfo{}, batchSubmitEndpointLineError(line, "repeats url", "Keep one top-level url per request, then retry.")
 		case errors.Is(err, errBatchRecordURL):
-			return "", batchSubmitEndpointLineError(line, "has a non-string url", "Set url to the request endpoint, then retry.")
+			return batchJSONLInfo{}, batchSubmitEndpointLineError(line, "has a non-string url", "Set url to the request endpoint, then retry.")
 		case errors.Is(err, errBatchRecordJSON), errors.Is(err, errBatchRecordID), err == io.EOF:
-			return "", batchSubmitEndpointLineError(line, "is not a valid JSON request object", "Fix the JSONL file, then retry.")
+			return batchJSONLInfo{}, batchSubmitEndpointLineError(line, "is not a valid JSON request object", "Fix the JSONL file, then retry.")
 		case err != nil:
-			return "", err
+			return batchJSONLInfo{}, err
 		}
 		if scanner.urlFields == 0 {
-			return "", batchSubmitEndpointLineError(line, "has no top-level url", "Add the request endpoint as url, then retry.")
+			return batchJSONLInfo{}, batchSubmitEndpointLineError(line, "has no top-level url", "Add the request endpoint as url, then retry.")
 		}
 		if !allowed[scanner.url] {
-			return "", batchSubmitEndpointLineError(line, "has an unsupported url", "Check the request endpoint, or provide --endpoint explicitly for a custom endpoint.")
+			return batchJSONLInfo{}, batchSubmitEndpointLineError(line, "has an unsupported url", "Check the request endpoint, or provide --endpoint explicitly for a custom endpoint.")
 		}
-		if endpoint != "" && endpoint != scanner.url {
-			return "", batchSubmitEndpointLineError(line, "uses a different endpoint", "Split requests into separate files, with one endpoint per batch.")
+		if info.endpoint != "" && info.endpoint != scanner.url {
+			return batchJSONLInfo{}, batchSubmitEndpointLineError(line, "uses a different endpoint", "Split requests into separate files, with one endpoint per batch.")
 		}
-		endpoint = scanner.url
+		info.endpoint = scanner.url
+		info.requests++
 		err = scanner.outerSpace()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return "", err
+			return batchJSONLInfo{}, err
 		}
 		b, err = scanner.take(false)
 		if err != nil {
-			return "", err
+			return batchJSONLInfo{}, err
 		}
 		if b != '\n' {
-			return "", batchSubmitEndpointLineError(line, "has content after its request object", "Put each JSON request on its own line, then retry.")
+			return batchJSONLInfo{}, batchSubmitEndpointLineError(line, "has content after its request object", "Put each JSON request on its own line, then retry.")
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return batchJSONLInfo{}, err
 	}
-	if endpoint == "" {
-		return "", batchError("Cannot determine the batch endpoint: the input has no requests. Add JSONL requests, then retry.")
+	if info.endpoint == "" {
+		return batchJSONLInfo{}, batchError("Cannot determine the batch endpoint: the input has no requests. Add JSONL requests, then retry.")
 	}
-	return endpoint, nil
+	return info, nil
 }
 
 func batchSubmitEndpointLineError(line int, problem, recovery string) error {

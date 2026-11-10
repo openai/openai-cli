@@ -12,7 +12,7 @@ func TestMainNestedFlagErrorRecovery(t *testing.T) {
 	for _, route := range [][]string{{"chat", "completions"}, {"chat:completions"}} {
 		for _, tc := range []struct{ name, operation, flag, message string }{
 			{"invalid boolean", "create", "--stream-options.include-usage=synthetic-private-value", "Invalid value for --stream-options.include-usage. Expected a boolean (true or false)."},
-			{"nested typo", "create", "--stream-options.include-usgae=synthetic-private-value", "An option is not recognized. Did you mean --stream-options.include-usage?"},
+			{"nested typo", "create", "--stream-options.include-usgae=synthetic-private-value", "An option is not recognized. Try --stream-options.include-usage instead."},
 			{"nested option elsewhere", "list", "--stream-options.include-usage=synthetic-private-value", "The --stream-options.include-usage option is not available for this command."},
 		} {
 			for _, format := range []string{"text", "json"} {

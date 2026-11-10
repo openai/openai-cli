@@ -42,9 +42,10 @@ func configureBatchCommands(root *cli.Command) {
 				Transform: root.String("transform"), Title: "batches " + operation, Stdout: out, Stderr: diagnostics,
 			})
 		},
-		ShowRecords:     showBatchRecords,
-		HumanTerminal:   batchHumanTerminal,
-		APIErrorMessage: readableAPIErrorMessage,
+		ShowBrowserDetails: showBatchBrowserDetails,
+		ShowRecords:        showBatchRecords,
+		HumanTerminal:      batchHumanTerminal,
+		APIErrorMessage:    readableAPIErrorMessage,
 	})
 }
 

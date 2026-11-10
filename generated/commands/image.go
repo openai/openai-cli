@@ -84,9 +84,30 @@ var imagesEdit = cli.Command{
 			BodyPath: "background",
 		},
 		&requestflag.Flag[*string]{
+			Name:     "complexity",
+			Usage:    "Computation spent planning the image, independently of rendering quality. Uses the image model's configured default when omitted. For SVG output, controls the reference image, independently of the SVG author's reasoning.",
+			BodyPath: "complexity",
+		},
+		&requestflag.Flag[*int64]{
+			Name:     "frame-count",
+			Usage:    "Number of frames for GIF output. Accepts integers from 2 through 16. Defaults to 9 when omitted. Only supported with output_format=gif. The requested size must satisfy the selected model's GIF size limits. GIF output does not support streaming, partial images, masks, or custom output compression. Requires access to the GIF preview for the selected model.",
+			BodyPath: "frame_count",
+		},
+		&requestflag.Flag[*int64]{
+			Name:     "frame-duration-ms",
+			Usage:    "Requested delay per GIF frame, in milliseconds. Defaults to 200 when omitted. GIF output rounds to the nearest 10 ms and caps the encoded delay at 655,350 ms per frame. Only supported with output_format=gif.",
+			BodyPath: "frame_duration_ms",
+		},
+		&requestflag.Flag[*string]{
 			Name:     "input-fidelity",
 			Usage:    "Control how much effort the model will exert to match the style and features, especially facial features, of input images. Supports `high` and `low` on `gpt-image-1.5`; `gpt-image-1-mini` supports only `low`. For `gpt-image-2`, omit this parameter. Defaults to `low` on supported models.",
 			BodyPath: "input_fidelity",
+		},
+		&requestflag.Flag[string]{
+			Name:      "markup",
+			Usage:     "A transparent PNG overlaid on the first image to guide the edit. Must match that image's dimensions after orientation and contain transparent pixels. Supports GPT Image 2.5 and 2.6. Cannot be combined with mask.",
+			BodyPath:  "markup",
+			FileInput: true,
 		},
 		&requestflag.Flag[string]{
 			Name:      "mask",
@@ -96,7 +117,7 @@ var imagesEdit = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "model",
-			Usage:    "The GPT image model to use for image editing\n(`gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`,\n`gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`,\n`gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`,\n`gpt-image-2.5-flare-2026-09-08`, or `chatgpt-image-latest`).\n\n`gpt-image-1` was shut down on October 23, 2026. Use\n`gpt-image-2.5-sunburst` or `gpt-image-2.5-flare` instead.\n",
+			Usage:    "The GPT image model to use for image editing\n(`gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`,\n`gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`,\n`gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`,\n`gpt-image-2.5-flare-2026-09-08`, `gpt-image-2.6-sunburst`, `gpt-image-2.6-flare`,\nor `chatgpt-image-latest`).\n\n`gpt-image-1` was shut down on October 23, 2026. Use\n`gpt-image-2.5-sunburst` or `gpt-image-2.5-flare` instead.\n",
 			BodyPath: "model",
 		},
 		&requestflag.Flag[*int64]{
@@ -113,7 +134,7 @@ var imagesEdit = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "output-format",
-			Usage:    "The format in which the generated images are returned. This parameter is\nonly supported for the GPT image models. Must be one of `png`, `jpeg`, or `webp`.\nThe default value is `png`.\n",
+			Usage:    "The format in which the generated images are returned. This parameter is\nonly supported for the GPT image models.\nThe default value is `png`.\n",
 			Default:  requestflag.Ptr[string]("png"),
 			BodyPath: "output_format",
 		},
@@ -164,7 +185,7 @@ var imagesEdit = cli.Command{
 	HideHelpCommand: true,
 }
 
-var imagesGenerate = cli.Command{
+var imagesGenerate = requestflag.WithInnerFlags(cli.Command{
 	Name:    "generate",
 	Usage:   "Creates an image given a prompt using a GPT Image model.\n[Learn more](https://developers.openai.com/api/docs/guides/images-vision).",
 	Suggest: true,
@@ -182,8 +203,23 @@ var imagesGenerate = cli.Command{
 			BodyPath: "background",
 		},
 		&requestflag.Flag[*string]{
+			Name:     "complexity",
+			Usage:    "Computation spent planning the image, independently of rendering quality. Uses the image model's configured default when omitted. For SVG output, controls the reference image, independently of the SVG author's reasoning.",
+			BodyPath: "complexity",
+		},
+		&requestflag.Flag[*int64]{
+			Name:     "frame-count",
+			Usage:    "Number of frames for GIF output. Accepts integers from 2 through 16. Defaults to 9 when omitted. Only supported with output_format=gif. The requested size must satisfy the selected model's GIF size limits. GIF output does not support streaming, partial images, masks, or custom output compression. Requires access to the GIF preview for the selected model.",
+			BodyPath: "frame_count",
+		},
+		&requestflag.Flag[*int64]{
+			Name:     "frame-duration-ms",
+			Usage:    "Requested delay per GIF frame, in milliseconds. Defaults to 200 when omitted. GIF output rounds to the nearest 10 ms and caps the encoded delay at 655,350 ms per frame. Only supported with output_format=gif.",
+			BodyPath: "frame_duration_ms",
+		},
+		&requestflag.Flag[*string]{
 			Name:     "model",
-			Usage:    "The GPT image model to use for image generation. Specify a model explicitly.\nSupported models include `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`,\n`gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`,\n`gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`,\n`gpt-image-2.5-flare-2026-09-08`, and `chatgpt-image-latest`.\n\n`gpt-image-1` was shut down on October 23, 2026. Use\n`gpt-image-2.5-sunburst` or `gpt-image-2.5-flare` instead.\n",
+			Usage:    "The GPT image model to use for image generation. Specify a model explicitly.\nSupported models include `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`,\n`gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`,\n`gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`,\n`gpt-image-2.5-flare-2026-09-08`, `gpt-image-2.6-sunburst`, `gpt-image-2.6-flare`,\nand `chatgpt-image-latest`.\n\n`gpt-image-1` was shut down on October 23, 2026. Use\n`gpt-image-2.5-sunburst` or `gpt-image-2.5-flare` instead.\n",
 			BodyPath: "model",
 		},
 		&requestflag.Flag[*string]{
@@ -206,7 +242,7 @@ var imagesGenerate = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "output-format",
-			Usage:    "The format in which the generated images are returned. This parameter is only supported for the GPT image models. Must be one of `png`, `jpeg`, or `webp`.",
+			Usage:    "The format in which the generated images are returned. This parameter is only supported for the GPT image models.",
 			Default:  requestflag.Ptr[string]("png"),
 			BodyPath: "output_format",
 		},
@@ -248,6 +284,11 @@ var imagesGenerate = cli.Command{
 			Usage:    "Legacy style parameter for retired image models. Unsupported for GPT image models; describe the desired style in the prompt instead.",
 			BodyPath: "style",
 		},
+		&requestflag.Flag[map[string]any]{
+			Name:     "svg",
+			Usage:    "Selects the model and reasoning effort used to author SVG output. Requires output_format=svg and access to SVG model selection. When model selection is enabled, supply svg.model. When model selection is disabled, omit this object. The top-level model selects the image model that creates the reference image. SVG generation requires n=1 and does not support streaming, partial images, prompt_rewriter, or output_compression. SVG edits are not supported.",
+			BodyPath: "svg",
+		},
 		&requestflag.Flag[string]{
 			Name:     "user",
 			Usage:    "Deprecated: use `safety_identifier` instead. This parameter remains accepted for backward compatibility and is used when `safety_identifier` is omitted, null, or empty. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).",
@@ -260,7 +301,20 @@ var imagesGenerate = cli.Command{
 	},
 	Action:          handleImagesGenerate,
 	HideHelpCommand: true,
-}
+}, map[string][]requestflag.HasOuterFlag{
+	"svg": {
+		&requestflag.InnerFlag[string]{
+			Name:       "svg.model",
+			Usage:      "Model used to author the SVG. Required when SVG model selection is enabled.",
+			InnerField: "model",
+		},
+		&requestflag.InnerFlag[map[string]any]{
+			Name:       "svg.reasoning",
+			Usage:      "Reasoning settings for the SVG author, independent of image complexity. Omitted or null effort uses the author model's default. Supported efforts depend on the selected author model.",
+			InnerField: "reasoning",
+		},
+	},
+})
 
 func handleImagesCreateVariation(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)

@@ -89,7 +89,7 @@ func TestSuggestedCommandsRegisterOnlyRenderedHelp(t *testing.T) {
 	}
 	want := helpSuggestionRecorder{
 		{"", `openai responses create --model gpt-5.5 --input "Say hello"`},
-		{"", "openai help setup"},
+		{"", "openai help --all responses create"},
 	}
 	if !reflect.DeepEqual(recorder, want) {
 		t.Fatalf("suggestions = %#v; want %#v", recorder, want)
@@ -101,7 +101,7 @@ func TestSuggestedSetupCommandsKeepShellAnnotations(t *testing.T) {
 	root := &cli.Command{Name: "openai", Writer: &out}
 	var recorder helpSuggestionRecorder
 	commandsuggest.SetRecorder(root, &recorder)
-	args, _, err := Configure(root, []string{"openai", "help", "setup"})
+	args, _, err := Configure(root, []string{"openai", "help", "--all", "setup"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +125,34 @@ func TestSuggestedSetupCommandsKeepShellAnnotations(t *testing.T) {
 	}
 }
 
+func TestHelpRegistersBashExamplesOnlyForBashAndZsh(t *testing.T) {
+	const example = "view < draft.txt"
+	for _, args := range [][]string{{"openai", "view", "--help"}, {"openai", "help", "--all", "view"}} {
+		var output bytes.Buffer
+		var recorder helpSuggestionRecorder
+		root := &cli.Command{Name: "openai", Writer: &output, Commands: []*cli.Command{{Name: "view", Metadata: map[string]any{
+			"help-content": Content{BashExamples: true, Examples: []Example{{Description: "Read a file in Bash or zsh.", Command: example}}},
+		}}}}
+		commandsuggest.SetRecorder(root, &recorder)
+		argv, _, err := Configure(root, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Run(t.Context(), argv); err != nil {
+			t.Fatal(err)
+		}
+		var shells []string
+		for _, suggestion := range recorder {
+			if suggestion.text == "openai "+example {
+				shells = append(shells, suggestion.shell)
+			}
+		}
+		if !reflect.DeepEqual(shells, []string{"bash", "zsh"}) {
+			t.Errorf("%v registered the Bash example for %q", args, shells)
+		}
+	}
+}
+
 func TestSuggestedHelpRegistersTypedExamplesWithoutInspectingProse(t *testing.T) {
 	var out bytes.Buffer
 	const example = "widgets inspect --mode safe"
@@ -144,7 +172,7 @@ func TestSuggestedHelpRegistersTypedExamplesWithoutInspectingProse(t *testing.T)
 	if err := root.Run(t.Context(), args); err != nil {
 		t.Fatal(err)
 	}
-	if want := (helpSuggestionRecorder{{"", "openai " + example}, {"", "openai help setup"}}); !reflect.DeepEqual(recorder, want) {
+	if want := (helpSuggestionRecorder{{"", "openai " + example}}); !reflect.DeepEqual(recorder, want) {
 		t.Fatalf("help captured undeclared or undisplayed commands: %#v", recorder)
 	}
 	if !strings.Contains(out.String(), "openai widgets delete") || !strings.Contains(out.String(), "openai "+example) {

@@ -9,6 +9,16 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+var fixtureHelp = CatalogHelp{
+	Command: func(c *cli.Command, _ string) (string, string) { return c.Usage, c.Description },
+	Flag: func(_ *cli.Command, flag cli.Flag) string {
+		if doc, ok := flag.(cli.DocGenerationFlag); ok {
+			return doc.GetUsage()
+		}
+		return ""
+	},
+}
+
 func TestCatalogUsesCurrentDefinitionsWithoutActions(t *testing.T) {
 	called := false
 	root := &cli.Command{Name: "openai", Commands: []*cli.Command{
@@ -17,16 +27,53 @@ func TestCatalogUsesCurrentDefinitionsWithoutActions(t *testing.T) {
 	}}
 	examples := func(_ *cli.Command, path string) []Candidate {
 		if path == "models list" {
-			return []Candidate{{`openai models list --format json`, "Print JSON"}}
+			return []Candidate{{Command: `openai models list --format json`, Description: "Print JSON"}}
 		}
 		return nil
 	}
 	children := func(c *cli.Command) []*cli.Command { return c.VisibleCommands() }
-	got := Catalog(root, "openai", children, examples)
-	require.Equal(t, []Candidate{{"openai models --help", ""}, {"openai models list", "List available models"}, {"openai models list --format json", "Print JSON"}}, got)
+	got := Catalog(root, "openai", nil, fixtureHelp, children, examples)
+	require.Len(t, got, 3)
+	require.Equal(t, "openai models --help", got[0].Command)
+	require.Equal(t, "models", got[0].path)
+	require.Equal(t, "openai models list", got[1].Command)
+	require.Equal(t, "models list", got[1].path)
+	require.Equal(t, "List available models", got[1].Description)
+	require.Equal(t, "openai models list --format json", got[2].Command)
+	require.Equal(t, "Print JSON", got[2].Description)
 	root.Commands = append(root.Commands, &cli.Command{Name: "future"})
-	require.Equal(t, "openai future", Catalog(root, "openai", children, examples)[3].Command)
+	require.Equal(t, "openai future", Catalog(root, "openai", nil, fixtureHelp, children, examples)[3].Command)
 	require.False(t, called)
+}
+
+func TestCatalogRanksTaskPhrasesOnInstalledRoutes(t *testing.T) {
+	root := &cli.Command{Name: "openai", Commands: []*cli.Command{
+		{Name: "read", Commands: []*cli.Command{{Name: "aloud"}}},
+		{Name: "speak"},
+		{Name: "hidden", Hidden: true},
+	}}
+	// A help example can introduce a command before the catalog visits its route.
+	examples := func(_ *cli.Command, path string) []Candidate {
+		if path != "" {
+			return nil
+		}
+		return []Candidate{
+			{Command: "openai speak", Description: "Synthesize audio"},
+			{Command: "openai speak --help", Description: "Read aloud options"},
+		}
+	}
+	phrases := map[string][]TaskPhrase{"speak": {{Text: "read aloud"}}, "hidden": {{Text: "read aloud"}}}
+	catalog := Catalog(root, "openai", phrases, fixtureHelp, (*cli.Command).VisibleCommands, examples)
+
+	commands := func(query string) []string {
+		var result []string
+		for _, candidate := range Search(catalog, query) {
+			result = append(result, candidate.Command)
+		}
+		return result
+	}
+	require.Equal(t, []string{"openai read aloud", "openai speak", "openai speak --help"}, commands("read aloud"))
+	require.Equal(t, []string{"openai speak", "openai read aloud", "openai speak --help"}, commands("read alo"))
 }
 
 func TestReadCandidatesPreservesQuotesAndRejectsMalformedInput(t *testing.T) {
@@ -48,12 +95,45 @@ func TestCatalogRetiredCommandsOfferTheirDeclaredReplacement(t *testing.T) {
 		{Name: "retired", Metadata: map[string]any{"help-command-section": "Retired commands"}},
 		{Name: "replacement"},
 	}}
-	got := Catalog(root, "openai", func(c *cli.Command) []*cli.Command { return c.VisibleCommands() },
+	got := Catalog(root, "openai", nil, fixtureHelp, func(c *cli.Command) []*cli.Command { return c.VisibleCommands() },
 		func(_ *cli.Command, path string) []Candidate {
 			if path == "retired" {
-				return []Candidate{{"openai replacement --name example", "Replacement operation"}}
+				return []Candidate{{Command: "openai replacement --name example", Description: "Replacement operation"}}
 			}
 			return nil
 		})
-	require.Equal(t, []Candidate{{"openai replacement --name example", "Replacement operation"}, {"openai replacement", ""}}, got)
+	require.Len(t, got, 2)
+	require.Equal(t, "openai replacement --name example", got[0].Command)
+	require.Equal(t, "Replacement operation", got[0].Description)
+	require.Equal(t, "openai replacement", got[1].Command)
+	require.Equal(t, "replacement", got[1].path)
+}
+
+func TestBrowseUsesCommandNamesAndPreservesRecentOrder(t *testing.T) {
+	root := &cli.Command{Commands: []*cli.Command{{Name: "zebra"}, {Name: "Banana"}, {Name: "apple"}}}
+	const native = "& '/tmp/a b/openai'"
+	const bash = "'/tmp/a b/openai'"
+	examples := func(_ *cli.Command, path string) []Candidate {
+		if path == "Banana" {
+			return []Candidate{
+				Example(bash, "zebra --output file", "Print a zebra"),
+				Example(bash, "--format json Banana", "Print a banana"),
+			}
+		}
+		return nil
+	}
+	catalog := Catalog(root, native, nil, fixtureHelp, (*cli.Command).VisibleCommands, examples)
+	picker := newCommandPicker(catalog, "Explore commands", false)
+	var commands []string
+	for _, i := range picker.matches {
+		commands = append(commands, catalog[i].Command)
+	}
+	require.Equal(t, []string{
+		native + " apple", native + " Banana", bash + " --format json Banana",
+		native + " zebra", bash + " zebra --output file",
+	}, commands)
+
+	recent, err := ReadCandidates(strings.NewReader("openai zebra\nopenai apple\n"))
+	require.NoError(t, err)
+	require.Equal(t, []int{0, 1}, newCommandPicker(recent, "Recent commands", true).matches)
 }

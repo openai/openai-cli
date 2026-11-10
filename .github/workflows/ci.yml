@@ -703,7 +703,7 @@ jobs:
           retention-days: 7
 
   windows-picker-permissions:
-    timeout-minutes: 15
+    timeout-minutes: 30
     name: ${{ matrix.name }}
     needs: source
     permissions: {}
@@ -832,6 +832,10 @@ jobs:
           }
           $proof | ConvertTo-Json -Depth 4 |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'shell-suggestion-platform.json') -Encoding utf8NoBOM -ErrorAction Stop
+      - name: Verify Windows ZIP setup and automatic updates
+        if: matrix.powershell == 'current'
+        shell: pwsh
+        run: ./scripts/test-windows-archive-update.ps1
       - name: Check native Windows ownership, ACLs and profile transactions
         if: matrix.existing-checks
         run: go test ./internal/autocomplete -run '^TestPicker(ProfileRecovery.*|Rename.*|RecoveryDirectory.*|Windows.*|FileMetadataPreservesZoneIdentifierAtSnapshotRecheck|ReplacementMetadataKeepsSameInheritedPermissions|SecurityDescriptorComparisonPreservesPermissions|InstallRoundTrip|InstallConfigDirectoryChanges|InstallIgnoresUnusedConfigDirectory|InstallConfigDirectoryRefusalPreservesFiles|InstallPreservesHardLinkedProfiles|ProfileHardLinkAddedAfterSnapshot|ScriptContentChecksLegacyNamespaces|InstallRetriesSupersededScriptCleanup|RemoveRetriesScriptCleanup|RemoveMissingProfileParentCleansOwnedScripts|RemoveMissingProfileAndScriptDirectoriesNoOp|RemoveMissingProfileParentReappearsWhileWaiting|RemovePreservesPersonalLineBoundaries|InstalledDetectsAndRefreshesOlderScript)$' -count=1 -v
@@ -1088,22 +1092,20 @@ jobs:
           go-version-file: .go-version
           check-latest: true
           cache: false
-      - name: Locate Go caches
+      - name: Locate Go module cache
         id: artifact-cache-paths
         run: |
-          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
           echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
-      - name: Cache artifact build dependencies and compilation
+      - name: Cache artifact build dependencies
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ${{ steps.artifact-cache-paths.outputs.build }}
-            ${{ steps.artifact-cache-paths.outputs.modules }}
-          # A new revision saves its completed cross-platform build; subsequent
-          # revisions restore the most recent compatible artifact-build cache.
-          key: artifact-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          path: ${{ steps.artifact-cache-paths.outputs.modules }}
+          # Keep downloaded modules, but start each job with a fresh build cache.
+          # SDK changes invalidate large compiled archives for every platform;
+          # restoring their old versions can exhaust disk during the next build.
+          key: artifact-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
           restore-keys: |
-            artifact-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
+            artifact-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
       - uses: ./.github/actions/link-go-sdk
       - name: Bootstrap
         run: ./scripts/bootstrap
@@ -1179,7 +1181,7 @@ jobs:
           fi
 
   test-linux:
-    timeout-minutes: 15
+    timeout-minutes: 20
     name: Linux tests
     needs: source
     permissions: {}

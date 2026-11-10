@@ -7,11 +7,16 @@ import (
 
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/listview"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/tidwall/gjson"
 )
 
+// The Models API accepts up to 100 records per paginated request.
+// Print-only output also uses this size for local pages of a complete response.
+const modelListPageSize = 100
+
 // WriteList opens the pager for loaded terminal records, including short and empty results.
-func WriteList[T any](iter *clioutput.Iterator[T], opts listview.Options, width, height int) error {
+func WriteList[T any](iter *clioutput.Iterator[T], opts listview.Options, width, height int, diagnostics bool) error {
 	var items []gjson.Result
 	for iter.Next() {
 		items = append(items, iter.Current().Result)
@@ -23,18 +28,24 @@ func WriteList[T any](iter *clioutput.Iterator[T], opts listview.Options, width,
 		return errors.Join(err, iter.Err())
 	}
 	if height > 0 && iter.Err() == nil {
-		// This callback serves only the response already loaded by the SDK.
-		// Browsing and resizing cannot fetch another API page.
 		ctx, cancel := context.WithCancel(opts.Context)
 		defer cancel()
-		loaded := false
-		return listview.Run(opts, func() (listview.Page, error) {
-			if loaded || ctx.Err() != nil {
-				return listview.Page{}, ctx.Err()
+		pages, err := localModelPages(ctx, items, !opts.PrintOnly, iter.LimitReached())
+		if err != nil {
+			return err
+		}
+		if pages.size < len(items) {
+			total := pages.total
+			if total == 0 {
+				total = -1
 			}
-			loaded = true
-			return listview.Page{Items: items, More: false}, nil
-		}, cancel)
+			opts.RenderPage = func(page []gjson.Result, width int) (string, error) {
+				// localModelPages checked every model identity before splitting.
+				content, _, err := renderTable(ctx, page, width, diagnostics, opts.Style, total)
+				return content, err
+			}
+		}
+		return listview.Run(opts, pages.next, cancel)
 	}
 	content, err := opts.RenderPage(items, width)
 	if err != nil {
@@ -43,4 +54,61 @@ func WriteList[T any](iter *clioutput.Iterator[T], opts listview.Options, width,
 	out := clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}
 	_, err = io.WriteString(out, content)
 	return errors.Join(err, iter.Err())
+}
+
+type modelPages struct {
+	ctx        context.Context
+	items      []gjson.Result
+	size       int
+	total      int
+	fullLabels bool
+}
+
+func localModelPages(ctx context.Context, items []gjson.Result, browse, limitReached bool) (modelPages, error) {
+	pages := modelPages{ctx: ctx, items: items, size: min(modelListPageSize, len(items)), total: len(items)}
+	if browse {
+		// The browser already has this entire response. Only an API boundary should stop a screen early.
+		pages.size = len(items)
+	}
+	options, _ := ctx.Value(modelsListOptionsKey{}).(modelsListOptions)
+	if options.applied {
+		pages.total = options.matches
+	} else {
+		if limitReached {
+			pages.total = 0 // The SDK iterator does not expose its complete response length.
+		}
+		sorted, supported, err := sortModelRecords(ctx, items)
+		if err != nil {
+			return pages, err
+		}
+		pages.items = sorted
+		if !supported {
+			pages.size, pages.fullLabels = len(items), true
+		}
+	}
+	return pages, ctx.Err()
+}
+
+// The SDK has already loaded the response. Navigation only consumes this slice.
+func (p *modelPages) next() (listview.Page, error) {
+	if err := p.ctx.Err(); err != nil {
+		return listview.Page{}, err
+	}
+	count := min(p.size, len(p.items))
+	page := listview.Page{Items: p.items[:count], More: count < len(p.items), Total: p.total, FullLabels: p.fullLabels}
+	p.items = p.items[count:]
+	return page, nil
+}
+
+// Sort once before the viewer selects a screen. Reordering overlapping screens
+// independently could show an ID twice and skip another when moving one row.
+func sortModelRecords(ctx context.Context, items []gjson.Result) ([]gjson.Result, bool, error) {
+	options, _ := ctx.Value(modelsListOptionsKey{}).(modelsListOptions)
+	sorted, _, supported, err := transformers.SelectModels(ctx, items, transformers.ModelSelection{
+		Descending: options.selection.Descending, Limit: -1,
+	})
+	if err != nil || !supported {
+		return items, false, err
+	}
+	return sorted, true, nil
 }

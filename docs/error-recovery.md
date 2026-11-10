@@ -1,6 +1,12 @@
 # Recovering from command errors
 
 Command errors go to stderr and keep their failing exit status.
+Readable API errors lead with guidance. The HTTP status and available request ID appear below it.
+For a missing API key, the CLI prints the setup command for the executable you launched.
+The setup guide shows how to set `OPENAI_API_KEY`. Admin commands use `OPENAI_ADMIN_KEY`.
+For a temporary server error, you can repeat a read. Check a write's result before repeating it.
+An unfamiliar HTTP error includes the available information to share with the API provider.
+For an unknown local failure, the CLI shows help for the command you ran and explains how to report it.
 The CLI suggests help for the corrected command but never runs it.
 The shell must first find the `openai` executable.
 For example, `opneai images generate` fails inside the shell before the CLI starts.
@@ -8,12 +14,18 @@ Correct the executable name to `openai`; keep the remaining arguments unchanged.
 Optional shell integration is described below.
 
 ```text
-$ openai modles list
-Unknown command. Did you mean: openai help models list?
-To run it, correct only the command spelling. Keep your original options and arguments.
+$ openai model list
+Unknown command. Run this help command to check the spelling.
+  openai help models list
+Edit your original command and run it again with the same options and arguments.
 
 $ openai help modles list
-Unknown help topic. Did you mean: openai help models list?
+Unknown help topic. Run this help command to check the spelling.
+  openai help models list
+
+$ openai models list --max-itmes 2
+An option is not recognized. Try --max-items instead.
+Options and examples: openai models list --help
 
 $ openai models list --file missing.txt
 The --file option is not available for this command.
@@ -84,6 +96,14 @@ These local errors do not invent an HTTP status or request ID.
 
 Optional shell integration can identify nearby spellings of `openai`, including `opneai`.
 It prints advice without executing the corrected command.
+For example, the hook prints the following message and returns control to the shell.
+
+```text
+$ opneai models list
+Command not found. Try openai as the command name.
+Keep the remaining arguments unchanged.
+```
+
 The setup command prints a standalone hook. It does not require or enable ordinary completion.
 Shell advice uses stderr independently of CLI output options because the CLI has not started.
 It inspects only the executable name and never reads stdin or shell history.

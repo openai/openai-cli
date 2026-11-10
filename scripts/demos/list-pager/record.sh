@@ -49,9 +49,9 @@ exit "$demo_status"
 SCENE
 cp "$demo_runtime/scene.sh" "$demo_output/shell-scene.sh"
 {
-  echo 'comparison: verified inline default versus pager-only default'
+  echo 'comparison: historical inline pagination versus the terminal-sized preview'
   echo 'before: viewer-switch-20261026; verified source snapshot and binary'
-  echo 'after: pager-only-20261026; uncommitted candidate source'
+  echo "after: candidate $demo_after_commit"
   echo "before source HEAD: $demo_before_commit"
   echo "after source HEAD: $demo_after_commit"
   echo 'terminal: real PTY; 98x20; TERM=xterm-256color; TERM_PROGRAM=Apple_Terminal'
@@ -72,7 +72,7 @@ for demo_version in before after; do
   demo_label='Before: inline default; Space appends; final page exits'
   demo_actions='[{"marker":"page-001-item-001.jsonl","footer":"Space: more","key":" "}]'
   if [ "$demo_version" = after ]; then
-    demo_label='After: pager default; Space forward; b back; q exits'
+    demo_label='After: preview; Space opens next screen; b back; q exits'
     demo_actions='[{"marker":"page-001-item-001.jsonl","footer":"q: quit","key":" "},{"marker":"page-002-item-001.jsonl","footer":"q: quit","key":"b"},{"marker":"page-001-item-001.jsonl","footer":"q: quit","key":" "},{"marker":"page-002-item-001.jsonl","footer":"q: quit","key":"q"}]'
   fi
   demo_requests_before="$(wc -l < "$demo_output/requests.jsonl")"

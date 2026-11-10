@@ -23,7 +23,7 @@ func TestFishFileCompletionPreservesAssignments(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"assets/logo.png", "assets/long name.png", "assets/a=b.png", "assets/l[bracket].png", "--file=logo.png",
-		"assets/equals space=.png", "assets/colon:name.png", `assets/back\slash=.png`,
+		"assets/equals space=.png", "assets/colon:name.png", `assets/back\slash=.png`, "-",
 	} {
 		path := filepath.Join(dir, name)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
@@ -38,6 +38,8 @@ complete -C "$OPENAI_CLI_COMPLETION_LINE"
 		want []string
 	}{
 		{"openai --file assets/lo", []string{"assets/logo.png", "assets/long name.png"}},
+		{"openai responses create --request-file -", []string{"-", "--file=logo.png"}},
+		{"openai responses create --request-file=-", []string{"--request-file=-", "--request-file=--file=logo.png"}},
 		{"openai --file=assets/lo", []string{"--file=assets/logo.png", "--file=assets/long name.png"}},
 		{"openai --image=assets/lo", []string{"--image=assets/logo.png", "--image=assets/long name.png"}},
 		{"openai --file=assets/a=", []string{"--file=assets/a=b.png"}},

@@ -48,9 +48,22 @@ func TestListStyleUsesHelpPalette(t *testing.T) {
 	}
 }
 
+func TestFieldLabelBackground(t *testing.T) {
+	for _, example := range []struct{ hint, prefix string }{
+		{"15;0", "\x1b[38;2;138;168;255m"},
+		{"0;15", "\x1b[38;2;49;89;188m"},
+		{"", "\x1b[1m"},
+		{"invalid;15", "\x1b[1m"},
+	} {
+		style := NewFieldStyle(colorprofile.TrueColor, example.hint)
+		require.Equal(t, example.prefix+"Name:\x1b[m", style.Label("Name:"))
+		require.Equal(t, "Name:", NewFieldStyle(colorprofile.NoTTY, example.hint).Label("Name:"))
+	}
+}
+
 func TestListStylePreservesNavigationAndNarrowHints(t *testing.T) {
 	for _, width := range []int{1, 5, 20, 40, 80} {
-		model := New(Options{}, nil, func() {}, width, 24)
+		model := New(testOptions(t.Context()), nil, func() {}, width, 24)
 		model.more = true
 		plain := model.View().Content
 		model.opts.Style = NewStyle(colorprofile.TrueColor, true)

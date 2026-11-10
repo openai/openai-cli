@@ -721,6 +721,40 @@ func TestCodeQLAnalysisCannotPublish(t *testing.T) {
 	}
 }
 
+func TestCIStatusPublisherBoundary(t *testing.T) {
+	publisher := readWorkflow(t, "codeql-upload.yml").Jobs["ci-status"]
+	if publisher.If != "github.event.workflow_run.path == '.github/workflows/ci.yml' && github.event.workflow_run.event == 'pull_request'" {
+		t.Fatal("CI status publication must only consume pull request CI runs")
+	}
+	if !reflect.DeepEqual(publisher.Permissions, map[string]string{"contents": "read", "actions": "read", "pull-requests": "read", "statuses": "write"}) {
+		t.Fatalf("unexpected CI status publisher permissions: %v", publisher.Permissions)
+	}
+	_, checkout := requireStep(t, publisher, "Check out trusted publisher")
+	if checkout.Uses != checkoutAction || checkout.With["ref"] != "${{ github.workflow_sha }}" || checkout.With["persist-credentials"] != false {
+		t.Fatal("CI status publisher must only execute trusted tooling")
+	}
+	_, publish := requireStep(t, publisher, "Publish verified CI statuses")
+	if len(publisher.Steps) != 2 || publish.Run != "python3 -I .github/scripts/codeql_upload.py publish-ci" {
+		t.Fatal("CI status publisher must not execute candidate code or artifacts")
+	}
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "codeql-upload.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Concurrency struct {
+			Group  string `yaml:"group"`
+			Cancel bool   `yaml:"cancel-in-progress"`
+		} `yaml:"concurrency"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(config.Concurrency.Group, "${{ github.event.workflow_run.workflow_id }}") || config.Concurrency.Cancel {
+		t.Fatal("CI and CodeQL publishers must have separate queues without canceling active publication")
+	}
+}
+
 func TestSDKSnapshotSurvivesFailedProducerRerun(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -971,10 +1005,10 @@ func TestErrorAuditShardsRemainRequired(t *testing.T) {
 	}
 }
 
-func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
+func TestArtifactBuildCacheIsModuleOnlyAndRefreshable(t *testing.T) {
 	job := readWorkflow(t, "ci.yml").Jobs["build-artifacts"]
 	setupIndex, setup := requireStep(t, job, "Set up Go for artifact builds")
-	cacheIndex, cache := requireStep(t, job, "Cache artifact build dependencies and compilation")
+	cacheIndex, cache := requireStep(t, job, "Cache artifact build dependencies")
 	bootstrapIndex, _ := requireStep(t, job, "Bootstrap")
 	buildIndex, _ := requireStep(t, job, "Run GoReleaser")
 	if setup.Uses != setupGoAction || setup.With["cache"] != false {
@@ -983,9 +1017,16 @@ func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
 	if !(setupIndex < cacheIndex && cacheIndex < bootstrapIndex && bootstrapIndex < buildIndex) {
 		t.Errorf("artifact setup/cache/bootstrap/build order=%v, want setup before restore before bootstrap before build", []int{setupIndex, cacheIndex, bootstrapIndex, buildIndex})
 	}
-	prefix := "artifact-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-"
+	prefix := "artifact-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-"
 	if cache.With["key"] != prefix+"${{ github.sha }}" || strings.TrimSpace(fmt.Sprint(cache.With["restore-keys"])) != prefix {
 		t.Errorf("artifact cache inputs=%v, want revision-specific save and compatible artifact-only restore", cache.With)
+	}
+	pathsIndex, paths := requireStep(t, job, "Locate Go module cache")
+	if pathsIndex <= setupIndex || pathsIndex >= cacheIndex || paths.Run != "echo \"modules=$(go env GOMODCACHE)\" >> \"$GITHUB_OUTPUT\"\n" {
+		t.Errorf("artifact cache discovery must locate only modules after Go setup and before restore: %+v", paths)
+	}
+	if cache.With["path"] != "${{ steps.artifact-cache-paths.outputs.modules }}" {
+		t.Errorf("artifact cache must retain only downloaded modules, not stale compiled archives: %v", cache.With["path"])
 	}
 	if cache.Uses != "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" {
 		t.Errorf("artifact cache action=%q, want reviewed cache action with success-only post-save", cache.Uses)

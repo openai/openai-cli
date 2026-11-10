@@ -24,6 +24,8 @@ import (
 
 func TestImageModelsErrorClassification(t *testing.T) {
 	const private = "synthetic-private-detail\x1b]52;c;synthetic-private-control\a"
+	const unknown = "The CLI could not identify why this command failed.\nOptions and examples: openai --help\n" +
+		"If the problem continues, report the command name and CLI version at https://github.com/openai/openai-cli/issues."
 	for _, extraArguments := range []bool{false, true} {
 		diagnostic := images.ModelsErrorForTest("openai", extraArguments, []imagemodels.Result{
 			{Entry: imagemodels.Entry{ID: private}, Status: imagemodels.StatusUnknown, Failure: imagemodels.Failure(private), ShutdownDate: private},
@@ -35,7 +37,7 @@ func TestImageModelsErrorClassification(t *testing.T) {
 			t.Errorf("typed diagnostic = %q, want controlled guidance %q", got, want)
 		}
 		for _, arbitrary := range []error{errors.New(want), errors.New(want + private), errors.New(private)} {
-			if got := imageErrorMessage(nil, arbitrary); got != "The command could not be completed. Check your arguments with --help." {
+			if got := imageErrorMessage(nil, arbitrary); got != unknown {
 				t.Errorf("untyped diagnostic became trusted: %q", got)
 			}
 		}

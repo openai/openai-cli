@@ -18,10 +18,26 @@ func TestConfigureExploreReusesDeclaredHelpExamples(t *testing.T) {
 	Register(root)
 	Register(root)
 	require.Len(t, root.Commands, 2)
-	candidates := exploreCandidates(root, "openai")
+	candidates := exploreCandidates(root, "openai", "openai", "fish")
 	require.Equal(t, `openai future --name "quoted value"`, candidates[1].Command)
 	require.Equal(t, "Future example", candidates[1].Description)
 	require.NotNil(t, root.Command("explore"))
+}
+
+func TestExploreOffersShellSpecificExamplesOnlyInTheirShell(t *testing.T) {
+	const example = "inspect < draft.txt"
+	root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "inspect", Metadata: map[string]any{
+		"help-content": clihelp.Content{BashExamples: true, Examples: []clihelp.Example{{Command: example}}},
+	}}}}
+	for _, shell := range []string{"bash", "zsh", "fish", "pwsh", ""} {
+		found := false
+		for _, result := range exploreCandidates(root, "openai", "openai", shell) {
+			if result.Command == "openai "+example {
+				found = true
+			}
+		}
+		require.Equal(t, shell == "bash" || shell == "zsh", found, "shell %q", shell)
+	}
 }
 
 func TestExploreRejectsUnsupportedOutputAndFlagsWithoutOutput(t *testing.T) {

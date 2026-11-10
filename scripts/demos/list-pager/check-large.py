@@ -19,7 +19,7 @@ IDS = re.compile(r'\bfile-demo-[0-9]{3}\b')
 def changed(session, previous):
     deadline = time.monotonic() + 8
     while True:
-        frame = session.visible()
+        frame = observer.list_screen(session.visible())
         if frame != previous and IDS.search(frame) and 'q: quit' in frame and 'Loading' not in frame:
             return frame
         assert session.terminal.child.poll() is None, 'pager exited during navigation'
@@ -30,7 +30,11 @@ def changed(session, previous):
 def exercise(session, server):
     expected = [f'file-demo-{number:03d}' for number in range(1, 151)]
     session.wait_visible(expected[0])
-    frame = session.wait_visible('q: quit')
+    first = session.wait_visible('q: quit')
+    assert observer.ORIGINAL in first and b'\x1b[?1049h' not in session.terminal.raw, first
+    frame = observer.list_screen(first)
+    visible_rows = max(1, session.terminal.initial_size[1] - 2)
+    assert IDS.findall(frame) == expected[:min(server.rows, visible_rows)], frame
     session.count(1)
     seen, frames = [], []
     checked_back = False
@@ -38,11 +42,13 @@ def exercise(session, server):
         found = IDS.findall(frame)
         assert found and len(found) == len(set(found)), ('duplicate visible row', found)
         assert all(f'dataset-{identifier[-3:]}.jsonl' in frame for identifier in found), frame
-        new = [value for value in found if value not in seen]
-        assert new == expected[len(seen):len(seen)+len(new)], ('missing or reordered files', len(seen), new)
-        seen.extend(new)
+        assert found == expected[len(seen):len(seen)+len(found)], ('repeated, missing or reordered files', len(seen), found)
+        start = len(seen) + 1
+        seen.extend(found)
+        position = f'File {start}' if len(found) == 1 else f'Files {start}–{len(seen)}'
+        assert position in frame and 'FILENAME' in frame, frame
         frames.append({'request_count': len(observer.requests(server)), 'ids': found, 'frame': frame})
-        if 'Space: more' not in frame:
+        if 'End' in frame:
             break
         before = len(observer.requests(server))
         session.count(before)
@@ -50,18 +56,15 @@ def exercise(session, server):
         session.send(' ')
         frame = changed(session, previous)
         after = len(observer.requests(server))
-        assert after in (before, before+1), ('unexpected requests', before, after)
-        if len(frames) == 1 and len(found) == server.rows:
-            assert after == before+1, 'Space did not fetch the next page after all loaded rows were visible'
-        if after != before:
-            assert f'file-demo-{before*25:03d}' in seen, 'API page fetched before its loaded rows were visited'
-        if after == 2 and not checked_back:
+        loaded_to_end = len(seen) == before * server.rows
+        assert after == before + int(loaded_to_end), ('unexpected fetch on Space', before, after, seen[-1], frame)
+        if after > before and not checked_back:
             session.send('b')
-            assert changed(session, frame) == previous, 'back did not restore the previous chunk'
-            session.count(2)
+            assert observer.same_rows(changed(session, frame), previous), 'back did not restore the previous chunk'
+            session.count(after)
             session.send(' ')
             assert changed(session, previous) == frame, 'cached forward navigation changed the chunk'
-            session.count(2)
+            session.count(after)
             checked_back = True
     else:
         raise AssertionError('150-file fixture exceeded navigation bound')
@@ -71,9 +74,9 @@ def exercise(session, server):
     assert 'End' in frame and session.terminal.child.poll() is None, 'final page did not remain open'
     session.send(' ')
     session.count(6)
-    assert session.visible() == frame, 'Space changed the final page'
+    assert observer.list_screen(session.visible()) == frame, 'Space changed the final page'
     session.send('b')
-    assert changed(session, frame) == frames[-2]['frame'], 'back failed on the final page'
+    assert observer.same_rows(changed(session, frame), frames[-2]['frame'], known_total=len(expected)), 'back failed on the final page'
     session.send(' ')
     assert changed(session, frames[-2]['frame']) == frame, 'cached final page changed'
     session.count(6)

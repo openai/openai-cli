@@ -86,7 +86,12 @@ func TestTextStreamFailurePresentationWithJoinedCauses(t *testing.T) {
 					require.NoError(t, json.Unmarshal(diagnostic.Bytes(), &payload))
 					message = payload.Message
 				}
-				require.Equal(t, tc.want, message)
+				if tc.name == "untyped lookalike" && format == "text" {
+					require.Equal(t, "The CLI could not identify why this command failed.\nOptions and examples: ./openai --help\n"+
+						"If the problem continues, report the command name and CLI version at https://github.com/openai/openai-cli/issues.", message)
+				} else {
+					require.Equal(t, tc.want, message)
+				}
 				assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
 			})
 		}
@@ -132,7 +137,7 @@ func TestTextStreamInterleavedDetailsKeepPartIdentity(t *testing.T) {
 func streamItems(values ...string) *transformTestIterator {
 	iter := &transformTestIterator{}
 	for _, value := range values {
-		iter.items = append(iter.items, outputJSON{gjson.Parse(value)})
+		iter.items = append(iter.items, outputJSON{Result: gjson.Parse(value)})
 	}
 	return iter
 }

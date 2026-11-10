@@ -115,17 +115,22 @@ func TestSpendErrorGuidanceAdminMetadata(t *testing.T) {
 			failure := &openai.Error{StatusCode: http.StatusUnauthorized, Message: "synthetic-private-auth\x1b[2J"}
 			contextual := withCommandError(command, failure)
 			message := readableAPIErrorMessage(root, contextual, failure)
-			require.Contains(t, strings.Split(message, "\n"), "Key setup: '/tmp/synthetic app/openai' help setup")
+			variable, flag, topic := "OPENAI_API_KEY", "--api-key", "help setup"
 			if strings.HasPrefix(resource, "admin:") {
-				require.Contains(t, message, "Credential source: OPENAI_ADMIN_KEY. An explicit --admin-api-key takes precedence.")
-				require.Contains(t, message, "ask an organization owner to check this admin key's access")
+				variable, flag, topic = "OPENAI_ADMIN_KEY", "--admin-api-key", "help setup admin"
+				require.Contains(t, message, "Ask an organization owner to check the admin API key supplied by "+variable)
 				require.NotContains(t, message, "OPENAI_API_KEY")
 			} else {
-				require.Contains(t, message, "Credential source: OPENAI_API_KEY. An explicit --api-key takes precedence.")
+				require.Contains(t, message, "Check the API key supplied by "+variable)
 				require.NotContains(t, message, "OPENAI_ADMIN_KEY")
 			}
+			t.Setenv("OPENAI_BASE_URL", "https://synthetic-private.invalid/v1")
+			customMessage := readableAPIErrorMessage(root, contextual, failure)
+			require.Contains(t, strings.Split(customMessage, "\n"), "Key setup: '/tmp/synthetic app/openai' "+topic)
+			require.Contains(t, customMessage, "Credential source: "+variable+". An explicit "+flag+" takes precedence.")
 			for _, private := range []string{"synthetic-private", "sk-fake-", "\x1b"} {
 				require.NotContains(t, message, private)
+				require.NotContains(t, customMessage, private)
 			}
 			var machine bytes.Buffer
 			require.NoError(t, ShowCommandError(readableErrorTestCommand(t, "--format-error", "json"), contextual, &machine))

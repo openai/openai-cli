@@ -40,8 +40,9 @@ func ConfigureLiveTranslation(root *cli.Command, policy TranslationOptions) {
 		command.Metadata = map[string]any{}
 	}
 	command.Metadata["help-content"] = clihelp.Content{
-		Summary:   command.Usage,
-		InputNote: "File mode requires file and model inputs through flags or piped JSON/YAML.\nLive mode needs neither input.",
+		Summary:     command.Usage,
+		CompactNote: "File mode requires --file and --model, or piped JSON/YAML. Live mode opens a private local page and captures audio only after you select a source.",
+		InputNote:   "File mode requires file and model inputs through flags or piped JSON/YAML.\nLive mode needs neither input.",
 		Description: "Use --live to open a private local browser page. Select Microphone or Browser tab there.\n" +
 			"Choose the target language, start capture, and stop the session to save translated audio and captions.\n" +
 			"The CLI uses your configured API key. Browser audio starts only after your explicit capture choice.\n" +

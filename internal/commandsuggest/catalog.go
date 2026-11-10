@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -15,25 +16,76 @@ import (
 type Candidate struct {
 	Command     string
 	Description string
+	// Only installed command routes have a path. Examples and shell history carry display text alone.
+	path        string
+	taskPhrases []TaskPhrase
+	help        *CatalogHelp
+	definition  *cli.Command // Only installed routes contribute help and public option names.
+	// Catalog entries keep the command body separate from shell-specific executable quoting.
+	commandText string
+	browseKey   string
+}
+
+// Example keeps the exact shell invocation for selection and its arguments for discovery.
+func Example(invocation, command, description string) Candidate {
+	return Candidate{Command: invocation + " " + command, Description: description, commandText: command}
+}
+
+// TaskPhrase describes a search for an installed command. Keep the default
+// word order when reversing the words could change the requested operation.
+type TaskPhrase struct {
+	Text         string
+	AnyWordOrder bool
+}
+
+// CatalogHelp resolves display-only text on demand, after simpler searches miss.
+type CatalogHelp struct {
+	Command func(*cli.Command, string) (summary, detail string)
+	Flag    func(*cli.Command, cli.Flag) string
 }
 
 // Catalog derives discovery from the current command tree on every invocation.
 // The callbacks reuse help's ordering and authored examples without rendering help.
-func Catalog(root *cli.Command, invocation string, children func(*cli.Command) []*cli.Command, examples func(*cli.Command, string) []Candidate) []Candidate {
+func Catalog(root *cli.Command, invocation string, taskPhrases map[string][]TaskPhrase, help CatalogHelp, children func(*cli.Command) []*cli.Command, examples func(*cli.Command, string) []Candidate) []Candidate {
 	var result []Candidate
-	seen := map[string]bool{}
-	add := func(candidate Candidate) {
-		if !validCommand(candidate.Command) || seen[candidate.Command] {
+	seen := map[string]int{}
+	add := func(candidate Candidate, owner string) {
+		if !validCommand(candidate.Command) {
 			return
 		}
-		seen[candidate.Command] = true
+		if candidate.commandText == "" {
+			candidate.commandText = strings.TrimPrefix(candidate.Command, invocation+" ")
+		}
+		key := candidate.commandText
+		if candidate.path != "" {
+			key = candidate.path
+		} else if strings.HasPrefix(key, "-") {
+			// Keep leading global flags with their documented command. Root flags follow named commands.
+			if owner == "" {
+				owner = "\U0010ffff"
+			}
+			key = owner + " " + key
+		}
+		candidate.browseKey = strings.ToLower(key)
+		if index, ok := seen[candidate.Command]; ok {
+			// An earlier help example can also be the installed command itself.
+			if candidate.path != "" {
+				result[index].browseKey = candidate.browseKey
+				result[index].path = candidate.path
+				result[index].definition = candidate.definition
+				result[index].help = candidate.help
+				result[index].taskPhrases = candidate.taskPhrases
+			}
+			return
+		}
+		seen[candidate.Command] = len(result)
 		candidate.Description = cleanDescription(candidate.Description)
 		result = append(result, candidate)
 	}
 	var walk func(*cli.Command, string)
 	walk = func(command *cli.Command, path string) {
 		for _, candidate := range examples(command, path) {
-			add(candidate)
+			add(candidate, path)
 		}
 		for _, child := range children(command) {
 			if child.Hidden || !safeCatalogName(child.Name) {
@@ -47,7 +99,7 @@ func Catalog(root *cli.Command, invocation string, children func(*cli.Command) [
 			// Retired endpoints remain in help, but discovery should offer their
 			// authored replacement examples instead of unavailable operations.
 			if child.Metadata["help-command-section"] != "Retired commands" {
-				add(Candidate{target, child.Usage})
+				add(Candidate{Command: target, Description: child.Usage, definition: child, help: &help, path: childPath, taskPhrases: taskPhrases[childPath]}, childPath)
 			}
 			walk(child, childPath)
 		}
@@ -56,6 +108,29 @@ func Catalog(root *cli.Command, invocation string, children func(*cli.Command) [
 		walk(root, "")
 	}
 	return result
+}
+
+// browseOrder sorts catalog entries without changing search ties or the order of shell suggestions.
+func browseOrder(candidates []Candidate) []int {
+	indices := make([]int, len(candidates))
+	for i := range indices {
+		indices[i] = i
+	}
+	slices.SortStableFunc(indices, func(i, j int) int {
+		a, b := candidates[i], candidates[j]
+		if order := strings.Compare(a.browseKey, b.browseKey); order != 0 {
+			return order
+		}
+		// Show the installed route before an example displaying the same bare path.
+		if a.path != "" && b.path == "" {
+			return -1
+		}
+		if b.path != "" && a.path == "" {
+			return 1
+		}
+		return 0
+	})
+	return indices
 }
 
 func safeCatalogName(name string) bool {

@@ -30,7 +30,7 @@ func TestMainImageModelsHelpAndOfflineMakeNoRequests(t *testing.T) {
 		http.Error(w, "synthetic unexpected request", http.StatusBadRequest)
 	})
 	for _, args := range [][]string{
-		{"images", "models", "--help"}, {"help", "images", "models"},
+		{"images", "models", "--help"}, {"help", "images", "models"}, {"help", "--all", "images", "models"},
 		{"--format", "json", "images", "models", "--offline"}, {"--format", "json", "images", "models", "--offline", "--all"},
 	} {
 		t.Run(strings.Join(args, "/"), func(t *testing.T) {
@@ -47,9 +47,21 @@ func TestMainImageModelsHelpAndOfflineMakeNoRequests(t *testing.T) {
 				}
 				assertMainImageModelsRows(t, report, args[len(args)-1] == "--all", imagemodels.StatusNotChecked)
 			} else {
-				for _, want := range []string{"openai images models", "--offline", "--all", "exact model names", "Key setup: openai help setup", "--model gpt-image-2.5-flare"} {
-					if !strings.Contains(got.stdout, want) {
+				wants := []string{"openai images models", "--offline", "--all", "visibility", "generation permissions"}
+				if args[0] == "help" && args[1] == "--all" {
+					wants = append(wants, "--model gpt-image-2.5-flare", "GLOBAL FLAGS", "No images are generated.")
+				} else {
+					wants = append(wants, "openai help --all images models", "Use --offline to skip API checks.")
+				}
+				plain := strings.Join(strings.Fields(got.stdout), " ")
+				for _, want := range wants {
+					if !strings.Contains(plain, want) {
 						t.Errorf("help missing %q: %s", want, got.stdout)
+					}
+				}
+				if args[0] != "help" || args[1] != "--all" {
+					if strings.Contains(got.stdout, "Key setup:") {
+						t.Fatal("ordinary model help included a redundant setup link")
 					}
 				}
 				for _, hidden := range []string{"CLI default", "Leaving out --model", "Or use the default"} {

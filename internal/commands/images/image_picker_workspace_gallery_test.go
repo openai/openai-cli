@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/imageoutput"
 	"github.com/stretchr/testify/require"
 )
@@ -49,6 +50,45 @@ func TestImagePickerGalleryCaptionsFollowPixelsWithoutExtraGap(t *testing.T) {
 	require.Equal(t, len(w.displayRows), w.viewportRows, "small galleries must not pad the remaining terminal height")
 }
 
+func TestImagePickerGalleryFocusAndDuplicateFilenames(t *testing.T) {
+	m, w := browserForTest(t, 96, 40)
+	m.focus = "prompt"
+	w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: "/first/bloom.png"}, rows: []string{"first preview"}})
+	draw := func() string {
+		t.Helper()
+		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+		return ansi.Strip(strings.Join(w.painted, "\n"))
+	}
+	require.Contains(t, draw(), "│ bloom.png│\n  │ first preview│")
+	m.focus = "images"
+	require.Contains(t, draw(), "│ bloom.png│", "a single filename has no selection marker")
+	w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: "/second/bloom.png"}, rows: []string{"second preview"}})
+	w.selectImage(1)
+	require.Contains(t, draw(), "› bloom.png (2)│\n  │ second preview│")
+	require.Contains(t, ansi.Strip(w.expandedView(m, false)[0]), "bloom.png (2)")
+	m.focus = "prompt"
+	require.Contains(t, draw(), "│ bloom.png (2)│")
+	require.NotContains(t, strings.Join(w.painted, "\n"), "› bloom")
+}
+
+func TestImagePickerGalleryLongFilenamesKeepDistinctEndings(t *testing.T) {
+	m, w := browserForTest(t, 40, 28)
+	stem := strings.Repeat("花", 32)
+	for _, path := range []string{"/one/" + stem + ".jpeg", "/one/" + stem + "-2.jpeg", "/two/" + stem + "-2.jpeg"} {
+		w.appendImage(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: path}, protocol: "blocks", rows: []string{"pixels"}})
+	}
+	w.selectImage(2)
+	for _, height := range []int{28, 12} {
+		m.height = height
+		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+		text := ansi.Strip(strings.Join(w.painted, "\n"))
+		require.Contains(t, text, "-2.jpeg (2)", "height=%d", height)
+		heading := w.expandedView(m, false)[0]
+		require.Contains(t, ansi.Strip(heading), "-2.jpeg (2)")
+		require.LessOrEqual(t, ansi.StringWidth(heading), m.width)
+	}
+}
+
 func TestImagePickerGalleryPreservesAnchorWhenEarlierRowsChange(t *testing.T) {
 	m, w := browserForTest(t, 96, 28)
 	for range 3 {
@@ -63,7 +103,7 @@ func TestImagePickerGalleryPreservesAnchorWhenEarlierRowsChange(t *testing.T) {
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	require.Equal(t, relative, w.offset-w.galleryStarts[1])
 	require.Equal(t, 1, w.selected)
-	w.rows = append(w.rows, "new diagnostic")
+	w.addDetail("new diagnostic", imageSecondary)
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	require.Equal(t, relative, w.offset-w.galleryStarts[1])
 }
@@ -129,7 +169,7 @@ func TestImagePickerGalleryRetryRestoresImageAfterDiagnostics(t *testing.T) {
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	w.scroll(5)
 	saved := w.images[2].inlineOffset
-	w.rows = []string{"synthetic request failure"}
+	w.addDetail("synthetic request failure", imageSecondary)
 	w.galleryDetails = true
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	require.Zero(t, w.offset)
@@ -164,4 +204,40 @@ func TestImagePickerGalleryPagesByItsTinyViewport(t *testing.T) {
 	require.Equal(t, 1, w.offset, "PageDown must not jump across images outside the visible page")
 	p.updateWorkspace(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	require.Zero(t, w.offset)
+}
+
+// Each wide preview keeps its own scroll position. Neighbors cannot share the pane.
+func TestImageStudioCarouselKeepsEachImageAndItsPosition(t *testing.T) {
+	m, w := browserForTest(t, 120, 30)
+	m.focus = "prompt"
+	p := &imagePickerInline{model: m, workspace: w}
+	for i, rows := range []int{32, 2, 5} {
+		p.updateWorkspace(imagePickerWorkspaceImage{file: imageoutput.SavedImage{Path: fmt.Sprintf("/album/%d.png", i)},
+			rows: strings.Split(strings.Repeat(fmt.Sprintf("pixels-%d\n", i), rows), "\n")})
+	}
+	require.Zero(t, w.selected, "later results must not replace the first image")
+	w.scroll(6)
+	start := w.offset
+	require.Equal(t, 6, start)
+	w.selectImage(1)
+	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+	body := strings.Join(w.painted, "\n")
+	require.Contains(t, body, "1.png")
+	require.Contains(t, body, "pixels-1")
+	require.NotRegexp(t, `pixels-[02]|[02]\.png`, body)
+	w.scroll(99)
+	require.Equal(t, 1, w.selected, "vertical scroll never switches images in the wide pane")
+	w.expanded = true
+	w.selectImage(-1)
+	p.closeExpanded()
+	require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
+	require.Equal(t, start, w.offset)
+	require.Contains(t, strings.Join(w.painted, "\n"), "pixels-0")
+
+	// Opening an older image during generation must survive new arrivals.
+	w.requestFirstImage = len(w.images)
+	w.selectImage(1)
+	p.updateWorkspace(imagePickerWorkspaceImage{rows: []string{"later result"}})
+	require.Equal(t, 1, w.selected)
+	require.NotContains(t, strings.Join(w.painted, "\n"), "later result")
 }

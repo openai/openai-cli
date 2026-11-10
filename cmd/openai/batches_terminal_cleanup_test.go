@@ -154,7 +154,7 @@ fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
 before = termios.tcgetattr(slave)
 filler = None
-if mode == "result_blocked":
+if mode == "result_blocked" or mode.startswith("browser_interrupt_"):
     filler = os.open(os.ttyname(slave), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
     assert os.path.sameopenfile(slave, filler)
     assert not fcntl.fcntl(slave, fcntl.F_GETFL) & os.O_NONBLOCK
@@ -205,6 +205,8 @@ try:
             time.sleep(.01)
         hidden = b"\x1b[?25l" in output
         frame = b"synthetic denial" in output if mode == "error_api_quit" else b"batch_synthetic" in output
+        browser_ready = (mode.startswith("browser_interrupt_") and hidden
+                         and b"\x1b[?2004h" in output)
         if not sent:
             if mode in ["result_quit", "error_api_quit"] and hidden and frame:
                 os.write(master, b"q")
@@ -220,7 +222,7 @@ try:
                 os.kill(pid, signal.SIGINT)
                 phases.append(["signal_sent", int(signal.SIGINT), time.monotonic() - started])
                 sent = True
-            elif (mode == "result_blocked" and hidden) and frame:
+            elif ((mode == "result_blocked" and hidden) or browser_ready) and frame:
                 # The menu has initialized before output becomes blocked.
                 stop_drain = True
                 phases.append(["fill_start", time.monotonic() - started])
@@ -237,6 +239,14 @@ try:
                     time.sleep(.01)
                 phases.append(["fill_end", time.monotonic() - started])
                 assert 0 < filled < 1 << 20, "owned PTY did not become saturated"
+                if mode.startswith("browser_interrupt_"):
+                    # Fill first; Linux rejects writes while output flow is stopped.
+                    termios.tcflow(slave, termios.TCOOFF)
+                    os.write(master, b"\x1b" if mode == "browser_interrupt_quit_drain" else b"\r")
+                    phases.append(["selection_sent", time.monotonic() - started])
+                    time.sleep(.3)
+                    os.write(master, b"\x03")
+                    phases.append(["keyboard_interrupt_sent", time.monotonic() - started])
                 sent = True
         child, candidate = os.waitpid(pid, os.WNOHANG)
         if child:
@@ -326,6 +336,12 @@ finally:
                     os.read(master, 65536)
             except OSError:
                 pass
+    # Keep output paused until after the CLI's exit and restoration checks.
+    if mode.startswith("browser_interrupt_"):
+        try:
+            termios.tcflow(slave, termios.TCOON)
+        except (OSError, termios.error) as error:
+            cleanup_error = cleanup_error or error
     # Always close the owned terminal before deciding whether a signal error was benign.
     for descriptor in [filler, slave, master]:
         if descriptor is not None:
@@ -371,7 +387,7 @@ func TestMainBatchesExplorerTerminalCleanup(t *testing.T) {
 		t.Skip("explorer cleanup requires python3 for POSIX PTY plumbing")
 	}
 	const downloadBytes = "{\"custom_id\":\"synthetic\",\"value\":\"café\"}\r\n"
-	for _, mode := range []string{"result_quit", "result_deadline", "result_interrupt", "result_interrupt_wait", "result_interrupt_ordinary", "result_interrupt_download", "result_terminate_wait", "result_blocked", "error_deadline", "error_interrupt", "error_deadline_transform", "error_api_quit", "human_api_denial"} {
+	for _, mode := range []string{"result_quit", "result_deadline", "result_interrupt", "result_interrupt_wait", "result_interrupt_ordinary", "result_interrupt_download", "result_terminate_wait", "result_blocked", "error_deadline", "error_interrupt", "error_deadline_transform", "error_api_quit", "human_api_denial", "browser_interrupt_quit_drain", "browser_interrupt_select_drain"} {
 		t.Run(mode, func(t *testing.T) {
 			directory := t.TempDir()
 			entered := filepath.Join(directory, "entered")
@@ -379,6 +395,11 @@ func TestMainBatchesExplorerTerminalCleanup(t *testing.T) {
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				request := requests.Add(1)
+				if strings.HasPrefix(mode, "browser_interrupt_") && r.Method == http.MethodGet && r.URL.Path == "/batches" {
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprintf(w, `{"object":"list","data":[%s],"has_more":false}`, batchesWorkflowResponse("completed", batchesWorkflowCounts))
+					return
+				}
 				if mode == "result_interrupt_download" && request == 2 && r.Method == http.MethodGet && r.URL.Path == "/files/file_output/content" {
 					w.Header().Set("Content-Type", "application/jsonl")
 					fmt.Fprint(w, downloadBytes)
@@ -410,6 +431,8 @@ func TestMainBatchesExplorerTerminalCleanup(t *testing.T) {
 			defer server.Close()
 			args := []string{"batches", "retrieve", "batch_synthetic", "--wait"}
 			switch mode {
+			case "browser_interrupt_quit_drain", "browser_interrupt_select_drain":
+				args = []string{"batches", "browse"}
 			case "result_interrupt_wait", "result_terminate_wait":
 				args = []string{"batches", "wait", "batch_synthetic"}
 			case "result_interrupt_ordinary":
@@ -418,6 +441,8 @@ func TestMainBatchesExplorerTerminalCleanup(t *testing.T) {
 				args = []string{"batches", "download", "batch_synthetic", "--output", downloadPath}
 			}
 			switch {
+			case strings.HasPrefix(mode, "browser_interrupt_"):
+				// The guided browser uses readable output.
 			case strings.HasPrefix(mode, "error_"):
 				args = append(args, "--format-error", "explore")
 			case mode == "human_api_denial":
@@ -490,8 +515,12 @@ func TestMainBatchesExplorerTerminalCleanup(t *testing.T) {
 				t.Fatalf("explorer lifecycle failed: %+v requests=%d; want exit %d requests %d", got, requests.Load(), wantCode, wantRequests)
 			}
 			switch {
-			case mode == "result_blocked":
-				if !got.CursorHidden || !got.StopDrain || got.Filled == 0 {
+			case mode == "result_blocked" || strings.HasPrefix(mode, "browser_interrupt_"):
+				cursorReady := got.CursorHidden
+				if strings.HasPrefix(mode, "browser_interrupt_") {
+					cursorReady = got.CursorHidden && strings.Contains(got.Output, "\x1b[?2004h")
+				}
+				if !cursorReady || !got.StopDrain || got.Filled == 0 {
 					t.Fatalf("explorer never reached blocked cleanup: %+v", got)
 				}
 			case strings.HasPrefix(mode, "result_") || mode == "error_api_quit":

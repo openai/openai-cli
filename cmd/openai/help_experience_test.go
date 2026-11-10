@@ -44,7 +44,7 @@ func TestMainHelpExperienceRootMapAndOrdering(t *testing.T) {
 }
 
 func TestMainHelpExperienceUnknownTopicUsesParent(t *testing.T) {
-	const suggestion = "Unknown help topic. Did you mean: openai help admin organization projects?"
+	const suggestion = "Unknown help topic. Run this help command to check the spelling.\n  openai help admin organization projects"
 	for _, args := range [][]string{
 		{"openai", "help", "admin", "organization", "projcts"},
 		{"openai", "help", "--all", "admin", "organization", "projcts"},
@@ -57,7 +57,7 @@ func TestMainHelpExperienceUnknownTopicUsesParent(t *testing.T) {
 		}
 	}
 	got := runMainDispatch(t, "bash", "openai", "admin", "organization", "projcts")
-	if got.code != 3 || got.stdout != "" || !strings.Contains(got.stderr, "Unknown command. Did you mean: openai help admin organization projects?\nTo run it, correct only the command spelling. Keep your original options and arguments.") {
+	if got.code != 3 || got.stdout != "" || !strings.Contains(got.stderr, "Unknown command. Run this help command to check the spelling.\n  openai help admin organization projects\nEdit your original command and run it again with the same options and arguments.") {
 		t.Errorf("direct typo lost its command suggestion: %+v", got)
 	}
 	got = runMainDispatch(t, "bash", "openai", "help", "admin", "organization", "zzzzzzzzzz")
@@ -106,9 +106,9 @@ func TestMainHelpExperienceCompleteMixedGroups(t *testing.T) {
 
 func TestMainHelpExperienceLegacyTypoSuggestions(t *testing.T) {
 	for _, topic := range [][]string{{"audio:transcriptins"}, {"help", "audio:transcriptins"}} {
-		suggestion := "Unknown command. Did you mean: openai help audio:transcriptions?\nTo run it, correct only the command spelling. Keep your original options and arguments."
+		suggestion := "Unknown command. Run this help command to check the spelling.\n  openai help audio:transcriptions\nEdit your original command and run it again with the same options and arguments."
 		if topic[0] == "help" {
-			suggestion = "Unknown help topic. Did you mean: openai help audio:transcriptions?"
+			suggestion = "Unknown help topic. Run this help command to check the spelling.\n  openai help audio:transcriptions"
 		}
 		for _, format := range []string{"text", "json"} {
 			args := append([]string{"openai", "--format-error", format}, topic...)

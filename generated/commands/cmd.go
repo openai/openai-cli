@@ -833,6 +833,18 @@ func init() {
 				},
 			},
 			{
+				Name:     "admin:organization:external-keys",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationExternalKeysCreate,
+					&adminOrganizationExternalKeysRetrieve,
+					&adminOrganizationExternalKeysList,
+					&adminOrganizationExternalKeysDelete,
+					&adminOrganizationExternalKeysValidate,
+				},
+			},
+			{
 				Name:     "responses",
 				Category: "API RESOURCE",
 				Suggest:  true,

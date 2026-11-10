@@ -78,7 +78,7 @@ func commandList(command *cli.Command, width int, renderers ...func(*cli.Command
 			if len(renderers) > 0 && renderers[0] != nil {
 				name = renderers[0](child)
 			}
-			out.WriteString(style.entry(child.Name, shortDescription(child.Usage), name, width, column))
+			out.WriteString(style.entry(child.Name, shortDescription(child.Usage), name, style.note, width, column))
 		}
 	}
 	return out.String()

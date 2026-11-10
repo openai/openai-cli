@@ -673,8 +673,8 @@ func TestMainLimitsTokensPerDayFlagAndStdin(t *testing.T) {
 				}
 			})
 		}
-		helpArgs := append([]string{"openai"}, route...)
-		got := runMainDispatch(t, "bash", append(helpArgs, "--help")...)
+		helpArgs := append([]string{"openai", "help", "--all"}, route...)
+		got := runMainDispatch(t, "bash", helpArgs...)
 		if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "--max-tokens-per-1-day") {
 			t.Fatalf("daily token flag missing from help: %+v", got)
 		}

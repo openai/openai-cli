@@ -46,7 +46,8 @@ func registerLimitsCommands(root *cli.Command) {
 	// Subgroup cloning already created the preserved colon route.
 	dailyTokens := &requestflag.Flag[int64]{
 		Name: "max-tokens-per-1-day", BodyPath: "max_tokens_per_1_day",
-		Usage: "The maximum number of tokens per day for this model.",
+		InputPolicy: requestflag.InputPolicyTyped,
+		Usage:       "The maximum number of tokens per day for this model.",
 	}
 	for _, rates := range routes {
 		if rates == nil {
@@ -70,8 +71,10 @@ func registerLimitsCommands(root *cli.Command) {
 
 func newLimitsCommand(project bool) *cli.Command {
 	example := "admin limits"
+	showExample := "admin limits show --max-items 10"
 	if project {
 		example = "projects limits --project-id proj_example"
+		showExample = "projects limits show --project-id proj_example --max-items 10"
 	}
 	flags := func() []cli.Flag {
 		result := []cli.Flag{&cli.Int64Flag{Name: "max-items", Value: 100, Usage: "Maximum records per list; -1 fetches all records."}}
@@ -88,7 +91,16 @@ func newLimitsCommand(project bool) *cli.Command {
 			"Project workspaces also manage project rate limits. Requires an admin key.\n" +
 			"Soft budgets, usage tiers, and organization rate catalogs require the Platform website.",
 		Flags: flags(), Action: limitsCommandAction(project, false),
-		Commands: []*cli.Command{{Name: "show", Usage: "Print a read-only limits overview.", Metadata: map[string]any{admin.CredentialsRequiredMetadata: true}, Action: limitsCommandAction(project, true)}},
+		Commands: []*cli.Command{{
+			Name: "show", Usage: "Print a read-only limits overview.",
+			Metadata: map[string]any{
+				admin.CredentialsRequiredMetadata: true,
+				"help-content": clihelp.Content{Examples: []clihelp.Example{{
+					Description: "Show up to ten records per list:", Command: showExample,
+				}}},
+			},
+			Action: limitsCommandAction(project, true),
+		}},
 	}
 }
 

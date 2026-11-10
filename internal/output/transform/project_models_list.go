@@ -18,6 +18,25 @@ type ModelListRow struct {
 // Equal IDs retain their input order. Other metadata does not affect selection.
 // Ambiguous identities require full rendering; the renderer escapes controls.
 func ProjectModelsList(ctx context.Context, items []gjson.Result, descending bool) ([]ModelListRow, bool, error) {
+	rows, supported, err := ModelRowsInOrder(ctx, items)
+	if !supported || err != nil {
+		return nil, supported, err
+	}
+
+	sort.SliceStable(rows, func(i, j int) bool {
+		if descending {
+			return rows[i].ID > rows[j].ID
+		}
+		return rows[i].ID < rows[j].ID
+	})
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	return rows, true, nil
+}
+
+// ModelRowsInOrder keeps the order of records already selected for navigation.
+func ModelRowsInOrder(ctx context.Context, items []gjson.Result) ([]ModelListRow, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
@@ -49,15 +68,6 @@ func ProjectModelsList(ctx context.Context, items []gjson.Result, descending boo
 		}
 		rows = append(rows, row)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		if descending {
-			return rows[i].ID > rows[j].ID
-		}
-		return rows[i].ID < rows[j].ID
-	})
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}

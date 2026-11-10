@@ -2,16 +2,20 @@ package images
 
 import (
 	"context"
-	clioutput "github.com/openai/openai-cli/internal/output"
-	cliterminal "github.com/openai/openai-cli/internal/terminal"
+	"errors"
 	"os"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	clioutput "github.com/openai/openai-cli/internal/output"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
-const imagePickerRequestFailureNote = "Request failed. Edit your prompt or settings before trying again."
+const imagePickerRequestFailureNote = "Couldn't create your image."
+
+func (w *imagePickerWorkspace) addDetail(text string, tone imagePickerTone) {
+	w.diagnostics = append(w.diagnostics, imagePickerDiagnostic{details: []imagePickerDetail{{text: text, tone: tone}}})
+}
 
 func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
 	result := p.model.result
@@ -19,8 +23,9 @@ func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
 	p.selection = &result
 	p.model.result = imagePickerResult{}
 	p.model.generating, p.busy = true, true
-	p.model.note = ""
+	p.model.setNote("", imageSecondary)
 	p.workspace.clearRequestDiagnostics()
+	p.workspace.requestFirstImage = len(p.workspace.images)
 	p.workspace.animationFrame = 0
 	p.workspace.fontNotice = false
 	p.workspace.stage, p.workspace.since = clioutput.LoadingWaiting, time.Now()
@@ -40,8 +45,8 @@ func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
 	go func() {
 		err := p.generate(ctx, &result)
 		if err != nil && imagePickerRecoverableRequest(err) && !cliterminal.IsWriterTerminal(os.Stderr) {
-			if displayErr := writeImagePickerRequestMessage(ctx, os.Stderr, p.workspace.root, err, result.draftSaved); displayErr != nil {
-				err = displayErr
+			if displayErr := writeImagePickerRequestMessage(ctx, imagePickerDiagnostics(ctx), err, result.draftSaved); displayErr != nil {
+				err = errors.Join(err, displayErr)
 			}
 		}
 		p.requestErr = err
@@ -63,8 +68,21 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		}
 	}
 	switch msg := msg.(type) {
+	case imagePickerKonsoleWritten:
+		if err := p.workspace.finishKonsoleTransfer(msg.transfer); err != nil {
+			p.err = errors.Join(p.err, imagePickerDisplayFailure(err))
+			p.output.cancel()
+			return true, tea.Quit
+		}
+		if p.err != nil || p.model.result.Canceled {
+			return true, tea.Quit
+		}
+		if p.workspace.context == nil || p.workspace.context.Err() == nil {
+			draw(true)
+		}
+		return true, nil
 	case imagePickerPreviewFailure:
-		p.err = msg.err
+		p.err = errors.Join(p.err, msg.err)
 		p.output.cancel()
 		return true, tea.Quit
 	case imagePickerOpened:
@@ -105,12 +123,18 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		draw(false)
 		return true, nil
 	case imagePickerWorkspaceRows:
-		p.workspace.rows = append(p.workspace.rows, msg.rows...)
+		for _, row := range msg.rows {
+			p.workspace.addDetail(row, imageWarning)
+		}
 		draw(false)
 		return true, nil
 	case imagePickerWorkspaceImage:
 		w := p.workspace
 		follow := len(w.images) == 0 || (p.model.focus != "images" && !w.expanded && w.offset >= max(0, len(w.displayRows)-w.viewportRows))
+		if _, wide := imageStudioLayout(p.model.width, p.model.height); wide {
+			// Open the first result of this request. Leave later results to the arrows.
+			follow = len(w.images) == w.requestFirstImage && p.model.focus != "images" && !w.expanded
+		}
 		w.appendImage(msg)
 		p.model.hasImages = true
 		if follow {
@@ -141,7 +165,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 				w.expandedNativeRows, w.expandedRows = len(msg.rows), nil
 			}
 			w.discardNativeGeometry(msg.index, true, msg.columns, w.expandedNativeRows)
-			if msg.protocol != "" {
+			if msg.protocol != "" && !w.konsole {
 				w.images[msg.index].protocol = msg.protocol
 			}
 			if w.expanded {
@@ -164,19 +188,15 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		p.submitAfter = time.Now().Add(imagePickerResumeQuiet)
 		if msg.err != nil {
 			if !imagePickerRecoverableRequest(msg.err) {
-				p.err = msg.err
+				p.err = errors.Join(p.err, msg.err)
 				return true, tea.Quit
 			}
-			message := imagePickerRequestMessage(p.workspace.root, msg.err, msg.draftSaved)
-
-			for _, line := range strings.Split(message, "\n") {
-				p.workspace.rows = append(p.workspace.rows, imagePickerLine(line))
-			}
+			p.workspace.diagnostics = append(p.workspace.diagnostics, imagePickerRequestDiagnostic(msg.err, msg.draftSaved))
 			p.workspace.offset = 0
 			p.workspace.galleryDetails = true
-			p.model.note = imagePickerRequestFailureNote
+			p.model.setNote(imagePickerRequestFailureNote, imageFailure)
 		} else {
-			p.model.note = "All images saved."
+			p.model.setNote("All images saved.", imageSuccess)
 		}
 		draw(true)
 		return true, nil
@@ -188,26 +208,16 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 			p.requestCancel()
 		}
 	case tea.MouseWheelMsg:
-		if p.workspace.expanded {
-			if msg.Button == tea.MouseWheelUp {
-				p.workspace.scrollExpanded(-3)
-			}
-			if msg.Button == tea.MouseWheelDown {
-				p.workspace.scrollExpanded(3)
-			}
-			draw(false)
-			return true, nil
-		}
-		y := msg.Y - p.workspace.origin
-		if p.workspace.originKnown && y >= p.workspace.bodyStart && y < p.workspace.bodyEnd {
-			if msg.Button == tea.MouseWheelUp {
-				p.workspace.scroll(-3)
-			} else if msg.Button == tea.MouseWheelDown {
-				p.workspace.scroll(3)
-			}
-
+		if p.galleryWheel(msg) {
 			draw(false)
 		}
+		return true, nil
+	case tea.MouseClickMsg:
+		if p.studioClick(msg) {
+			draw(true)
+		}
+		return true, nil
+	case tea.MouseReleaseMsg:
 		return true, nil
 	case tea.KeyPressMsg:
 		if !p.workspace.expanded {
@@ -224,6 +234,10 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 				p.requestCancel()
 			}
 			return false, nil
+		}
+		if (msg.String() == "o" || msg.String() == "O") && (p.workspace.expanded || p.model.focus == "images") {
+			p.openSelectedImage()
+			return true, nil
 		}
 		if p.workspace.expanded {
 			w := p.workspace
@@ -256,6 +270,13 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 			draw(false)
 			return true, nil
 		}
+		if p.busy && (msg.String() == "tab" || msg.String() == "shift+tab") {
+			if _, wide := imageStudioLayout(p.model.width, p.model.height); wide && !p.model.galleryModal() {
+				p.model.studioSwitchPane()
+				draw(true)
+				return true, nil
+			}
+		}
 		if p.busy && len(p.workspace.images) > 0 && (msg.String() == "tab" || msg.String() == "shift+tab") {
 			if p.model.focus == "images" {
 				p.model.focus = "prompt"
@@ -267,11 +288,6 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		if p.model.focus == "images" {
 			switch msg.String() {
-			case "o":
-				if !p.workspace.opening && len(p.workspace.images) > 0 && p.model.note != imagePickerRequestFailureNote {
-					p.model.note = ""
-				}
-				return true, p.openSavedImage()
 			case "enter":
 				now := time.Now()
 				if now.Before(p.workspace.viewAfter) {

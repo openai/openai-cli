@@ -2,11 +2,32 @@ package tokenizer
 
 import (
 	"encoding/hex"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+func TestLicenseNoticeMatchesTokenizerDependency(t *testing.T) {
+	manifest, err := os.ReadFile("../../go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const module = "github.com/tiktoken-go/tokenizer"
+	for _, line := range strings.Split(string(manifest), "\n") {
+		version, ok := strings.CutPrefix(strings.TrimSpace(line), module+" ")
+		if !ok {
+			continue
+		}
+		want := module + " " + version + "\nhttps://" + module + "/blob/" + version + "/LICENSE\n"
+		if !strings.Contains(strings.ReplaceAll(Licenses, "\r\n", "\n"), want) {
+			t.Fatalf("bundled notice must match go.mod:\n%s", want)
+		}
+		return
+	}
+	t.Fatalf("missing dependency %s in go.mod", module)
+}
 
 // IDs and bytes come from OpenAI tiktoken 0.14.0 encode_ordinary.
 // See https://github.com/openai/tiktoken/tree/0.14.0.

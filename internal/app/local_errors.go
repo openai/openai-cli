@@ -49,6 +49,8 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool, o
 	var syntaxError *json.SyntaxError
 	var pathError *os.PathError
 	var inputFailure *requestconfig.InputFileError
+	var structuredInputFailure *requestflag.StructuredInputError
+	var inputPolicyFailure *requestflag.InputPolicyError
 	var stdinFailure *requestflag.StdinValueError
 	var pagerFailure *clioutput.PagerError
 	var imageFailure *images.SavingError
@@ -58,6 +60,7 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool, o
 	var projectAPIKeyUpdateFailure *projectAPIKeyUpdateError
 	var voiceTypeFailure *audio.VoiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
+	var helpPagerFailure *clihelp.PagerError
 	var debugCaptureFailure *debugCaptureOptionError
 	var adminCredentialsFailure *admin.CredentialsError
 	var adminSetupFailure *admin.SetupError
@@ -83,6 +86,10 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool, o
 	switch {
 	case errors.As(failure, &limitsFailure):
 		return limitsFailure.Error()
+	case errors.As(failure, &structuredInputFailure):
+		return structuredInputFailure.Error()
+	case errors.As(failure, &inputPolicyFailure):
+		return inputPolicyFailure.Error()
 	case errors.As(failure, &batchFailure):
 		return batchFailure.Error()
 	case errors.As(failure, &adminSetupFailure):
@@ -104,6 +111,8 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool, o
 		return webhookFailure.Error()
 	case errors.As(failure, &utilityFailure):
 		return utilityFailure.Error()
+	case errors.As(failure, &helpPagerFailure):
+		return helpPagerFailure.Error()
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
 		return "The request timed out. The API may have received it; check its status before repeating it."
 	case responseRecovery != "":
@@ -188,6 +197,11 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool, o
 		return "Could not write command output. Check your terminal, output file, or receiving command."
 	}
 	// The usage buffer is deliberately not a fallback: it repeats raw values.
+	if len(output) != 0 {
+		return parserErrorGuidance(command, "The CLI could not identify why this command failed.", output...) +
+			"\nIf the problem continues, report the command name and CLI version at https://github.com/openai/openai-cli/issues."
+	}
+	// Structured output keeps its existing fallback payload.
 	return "The command could not be completed. Check your arguments with --help."
 }
 
@@ -207,6 +221,12 @@ func knownLocalError(command *cli.Command, message string, output ...io.Writer) 
 		"cannot follow HTTP 308 redirect: streamed multipart uploads are not replayable",
 		"stdin has already been read by another parameter; it can only be read once",
 		"multiple request parameters use stdin; select only one stdin consumer",
+		"--request-file requires one JSON or YAML object",
+		"cannot read --request-file input",
+		"--request-file - and a request parameter both use stdin",
+		"use a regular --request-file when a request parameter reads stdin",
+		"invalid request parameters in --request-file",
+		"to read a field from stdin, use a named --request-file and pass the field explicitly with @-",
 		"cannot read from stdin: stdin is already being used for the request body",
 		"cannot read from stdin: stdin was already consumed by piped YAML/JSON input",
 		"Setup help takes no additional arguments.",
@@ -261,11 +281,33 @@ func knownLocalError(command *cli.Command, message string, output ...io.Writer) 
 		if rest, ok := strings.CutPrefix(tail, " for flag -"); ok {
 			name, reason, found := strings.Cut(rest, ": ")
 			if flag := declaredErrorFlag(command, name); found && flag != "" {
+				if flag == "--request-file" && reason == "can't duplicate this flag" {
+					return parserErrorGuidance(command, "Specify --request-file only once.", output...)
+				}
 				if flag == "--base-url" && (reason == flag+requestconfig.BaseURLHTTPSRequired || reason == flag+requestconfig.BaseURLHostRequired) {
 					return parserErrorGuidance(command, reason+".", output...)
 				}
 				if flag == "--format" || flag == "--format-error" {
 					return "Invalid output format. Choose one of: " + strings.Join(OutputFormats, ", ") + "."
+				}
+				if base, ok := strings.CutSuffix(name, "-structured"); ok && declaredErrorFlag(command, base) != "" {
+					if strings.HasPrefix(reason, "invalid structured value for --"+name+": ") {
+						return parserErrorGuidance(command, "Invalid value for "+flag+". Expected valid JSON or YAML.", output...)
+					}
+					if reason == "cannot combine --"+base+" with --"+name {
+						return parserErrorGuidance(command, "Use either --"+base+" or "+flag+", not both.", output...)
+					}
+					if reason == "set --"+name+" before nested --"+base+" flags" {
+						return parserErrorGuidance(command, "Set "+flag+" before nested --"+base+" flags.", output...)
+					}
+				} else if declaredErrorFlag(command, name+"-structured") != "" && reason == "cannot combine --"+name+" with --"+name+"-structured" {
+					return parserErrorGuidance(command, "Use either "+flag+" or --"+name+"-structured, not both.", output...)
+				}
+				if base, _, ok := strings.Cut(name, "."); ok && declaredErrorFlag(command, base) != "" && reason == "cannot combine --"+name+" with a non-structured --"+base+" value" {
+					return parserErrorGuidance(command, "Use --"+base+"-structured with nested "+flag+".", output...)
+				}
+				if reason == "cannot combine --"+name+" with nested --"+name+" flags" && declaredErrorFlag(command, name+"-structured") != "" {
+					return parserErrorGuidance(command, "Use --"+name+"-structured before nested --"+name+" flags.", output...)
 				}
 				message := "Invalid value for " + flag + "."
 				if expected := parserFlagExpectedType(command, name); expected != "" {
@@ -318,7 +360,7 @@ func knownLocalError(command *cli.Command, message string, output ...io.Writer) 
 			message = "The " + flag + " option is not available for this command."
 		}
 		if suggestion := suggestParserFlag(command, name); suggestion != "" {
-			message += " Did you mean " + suggestion + "?"
+			message += " Try " + suggestion + " instead."
 		}
 		return parserErrorGuidance(command, message, output...)
 	case strings.HasPrefix(message, "No help topic for '"):

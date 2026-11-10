@@ -72,7 +72,7 @@
             if ($command.CommandType -eq [System.Management.Automation.CommandTypes]::Application -and
                 [IO.File]::Exists($command.Path)) {
                 # Direct stderr adds no ErrorRecord and does not change LASTEXITCODE.
-                [Console]::Error.WriteLine('Command not found. Did you mean: __APPNAME__?')
+                [Console]::Error.WriteLine('Command not found. Try __APPNAME__ as the command name.')
                 [Console]::Error.WriteLine('Keep the remaining arguments unchanged.')
             }
             break

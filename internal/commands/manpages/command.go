@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	docs "github.com/urfave/cli-docs/v3"
 	"github.com/urfave/cli/v3"
@@ -70,6 +71,38 @@ func Configure(root *cli.Command, reportReceipt func(*cli.Command, string) error
 			return nil
 		}
 		return reportReceipt(command, "Wrote manpages to "+dir)
+	}
+}
+
+// ConfigureHelp adds local documentation after the inherited flag labels have been installed.
+func ConfigureHelp(root *cli.Command) {
+	command := root.Command("@manpages")
+	if command == nil {
+		return
+	}
+	// A bare @word is PowerShell splatting. Quotes also work in POSIX shells and cmd.exe.
+	command.Usage = "Generate the OpenAI CLI man page."
+	command.UsageText = `openai "@manpages" [-o DIRECTORY] [--text] [--gzip=false]`
+	if command.Metadata == nil {
+		command.Metadata = map[string]any{}
+	}
+	const quiet = "Use --quiet to suppress the completion message."
+	command.Metadata["help-content"] = clihelp.Content{
+		Description: "By default, the CLI writes man/man1/openai.1.gz. " +
+			"Use --text to also write openai.1 or --gzip=false to skip the compressed file.",
+		GlobalOptionsNote: quiet,
+		InheritedFlagHelp: map[string]string{
+			"quiet":        quiet,
+			"format-error": "", "transform-error": "",
+		},
+		Examples: []clihelp.Example{{Description: "Write the man page under docs/man1:", Command: `"@manpages" --output docs`}},
+	}
+	labels, _ := command.Metadata["help-flag-labels"].([]clihelp.FlagLabel)
+	command.Metadata["help-flag-labels"] = append(labels, clihelp.FlagLabel{Owner: command, Names: []string{"output"}, Label: "DIRECTORY"})
+	command.Metadata["help-flag-usages"] = []clihelp.FlagUsage{
+		{Owner: command, Names: []string{"output"}, Usage: "Parent directory for the man1 folder."},
+		{Owner: command, Names: []string{"gzip"}, Usage: "Write the compressed openai.1.gz file."},
+		{Owner: command, Names: []string{"text"}, Usage: "Write the uncompressed openai.1 file."},
 	}
 }
 

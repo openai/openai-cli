@@ -33,6 +33,48 @@ func TestSynopsisShowsRequiredInputsAndStdinKeys(t *testing.T) {
 	}
 }
 
+func TestSynopsisFoldsOnlyLongOptionalFlagLists(t *testing.T) {
+	command := &cli.Command{
+		Name:     "items",
+		Commands: []*cli.Command{{Name: "list"}},
+		Metadata: map[string]any{"help-positional-flags": []string{"model"}, "help-optional-command": true},
+		Flags: []cli.Flag{
+			&requestflag.Flag[string]{Name: "model", PathParam: "model", Required: true},
+			&cli.StringFlag{Name: "first"},
+			&cli.StringSliceFlag{Name: "tag", Required: true},
+			&cli.StringFlag{Name: "second"},
+			&requestflag.Flag[[]string]{Name: "message", BodyPath: "messages", Required: true},
+			&cli.StringFlag{Name: "third"},
+			&cli.StringFlag{Name: "fourth"},
+			&cli.BoolFlag{Name: "hidden", Hidden: true},
+		},
+	}
+	invocation := "'/tmp/CLI build/openai'"
+	synopsis := func(width int) string {
+		text := commandSynopsis(command, invocation+" items", invocation, width)
+		return strings.Join(strings.Fields(text), " ")
+	}
+	small := synopsis(40)
+	for _, want := range []string{"[--first=TEXT]", "[--second=TEXT]", "[--third=TEXT]", "[--fourth=TEXT]"} {
+		if !strings.Contains(small, want) {
+			t.Fatalf("small synopsis lost %q: %s", want, small)
+		}
+	}
+	command.Flags = append(command.Flags, &cli.StringFlag{Name: "fifth"})
+	want := invocation + " items [COMMAND] [MODEL | --model=MODEL] --tag=TEXT... [--message=TEXT]... [FLAGS]"
+	for _, width := range []int{40, 120} {
+		if got := synopsis(width); got != want {
+			t.Fatalf("width %d: got %q, want %q", width, got, want)
+		}
+	}
+	help := commandHelpAtWidth(command, invocation, "items", 120)
+	for _, text := range []string{"flags or piped JSON/YAML", "JSON/YAML keys: model, messages.", "--first=TEXT", "--fifth=TEXT"} {
+		if !strings.Contains(help, text) {
+			t.Errorf("full help lost %q: %s", text, help)
+		}
+	}
+}
+
 func TestSynopsisUsesOnlyVerifiedPositionalAliases(t *testing.T) {
 	model := &requestflag.Flag[string]{Name: "model", PathParam: "model", Required: true}
 	other := &requestflag.Flag[string]{Name: "other", PathParam: "other_id", Required: true}

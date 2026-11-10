@@ -223,6 +223,26 @@ jobs:
 
         exclude_file="$(git rev-parse --git-path info/exclude)"
         printf '/%s\n' "${inputs[@]}" >> "$exclude_file"
+    - name: Stage versioned Linux installer
+      if: ${{ hashFiles('scripts/install-linux-release.sh') != '' }}
+      env:
+        RELEASE_TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+        [[ -f scripts/install-linux-release.sh && ! -L scripts/install-linux-release.sh ]]
+        mkdir -m 0700 .release-installers
+        installer=.release-installers/install-linux-release.sh
+        test "$(grep -Fxc "  tag=''" scripts/install-linux-release.sh)" = 1
+        sed "s/^  tag=''$/  tag='$RELEASE_TAG'/" scripts/install-linux-release.sh > "$installer"
+        printf '/%s\n' "$installer" >> "$(git rev-parse --git-path info/exclude)"
+        printf 'OPENAI_LINUX_RELEASE_INSTALLER=%s\n' "$installer" >> "$GITHUB_ENV"
+        # Older releases have only the version-stamped installer.
+        if grep -Fq 'glob: scripts/openai.sh' .goreleaser.yml; then
+          [[ -f scripts/openai.sh && ! -L scripts/openai.sh && -f scripts/openai.sha256 && ! -L scripts/openai.sha256 ]]
+          (cd scripts && shasum -a 256 openai.sh | cmp - openai.sha256)
+          printf 'OPENAI_LINUX_LAUNCHER=scripts/openai.sh\n' >> "$GITHUB_ENV"
+        fi
     - name: Create release app token for this repo
       id: app-token
       uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -253,6 +273,19 @@ jobs:
         MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
         MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
         MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+    - name: Include the published Linux installers in release attestations
+      if: ${{ env.OPENAI_LINUX_RELEASE_INSTALLER != '' }}
+      env:
+        RELEASE_TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        installers=("$OPENAI_LINUX_RELEASE_INSTALLER")
+        if [[ -n ${OPENAI_LINUX_LAUNCHER:-} ]]; then installers+=("$OPENAI_LINUX_LAUNCHER"); fi
+        for installer in "${installers[@]}"; do
+          name=${installer##*/}
+          install -m 0644 "$installer" "dist/$name"
+          (cd dist && grep -Fxq "$(shasum -a 256 "$name")" "openai_${RELEASE_TAG#v}_checksums.txt")
+        done
     - name: Stage release artifacts for attestation
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:

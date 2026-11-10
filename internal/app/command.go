@@ -16,6 +16,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/tokenize"
 	"github.com/openai/openai-cli/internal/commands/webhooks"
 	requestconfig "github.com/openai/openai-cli/internal/request"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
 
@@ -30,9 +31,11 @@ func ConfigureCommand(root *cli.Command) {
 		return
 	}
 	root.Metadata[configuredCommandMetadata] = true
+	requestflag.ConfigureUnannotatedCommands(root, legacyTextUnionFields)
 	root.Flags = append(root.Flags, debugCaptureFlags()...)
 	configureCertificateCompatibility(root)
 	configureAudioVoices(root)
+	configureVectorStoreSearch(root)
 	requestconfig.ConfigureRootFlags(root)
 	// Batch workflows preserve positional path inputs and need the same help annotations.
 	configureBatchCommands(root)
@@ -52,23 +55,37 @@ func ConfigureCommand(root *cli.Command) {
 	registerAdminSetup(root)
 	admin.ConfigureCredentials(root)
 	admin.ConfigureProjectLifecycle(root)
-	configureListCommands(root)
 	webhooks.Configure(root, webhookCommandOptions())
 	describeAgentsCommands(root)
 	configureAgentsSessionCreation(root)
+	// Configure both generated resources before compatibility routes clone their flags.
+	for _, name := range []string{"responses", "chat:completions"} {
+		if resource := root.Command(name); resource != nil {
+			if create := resource.Command("create"); create != nil {
+				requestconfig.EnableRequestFile(create)
+			}
+		}
+	}
+	// Cloned aliases must share the same flag definitions as their original route.
+	configureRegisteredLists(root)
 	localcommands.ConfigureSubgroups(root)
 	registerLimitsCommands(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
 	filecommands.Configure(root)
+	configureVectorStoreWorkspace(root)
 	tokenize.Register(root)
+	localcommands.RegisterArchiveInstall(root)
 	codex.Register(root)
 	localcommands.RemoveFineTuningCommands(root)
 	localcommands.ConfigurePresentation(root)
 	manpages.Configure(root, func(command *cli.Command, message string) error {
 		return ReportSaveReceipt(command, os.Stderr, message, nil)
 	})
+	// Include list actions added after alias creation. Decorated actions are skipped.
+	configureRegisteredLists(root)
 	configureOutputPolicy(root)
+	requestflag.AddStructuredFlags(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
 	previousBefore := root.Before

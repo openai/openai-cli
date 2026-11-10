@@ -246,7 +246,7 @@ func TestMainShellSuggestionsNative(t *testing.T) {
 					t.Errorf("%s failed: %q; shell stderr=%q", stage, got, stderr.String())
 				}
 			}
-			const advice = "Command not found. Did you mean: openai?\nKeep the remaining arguments unchanged.\n"
+			const advice = "Command not found. Try openai as the command name.\nKeep the remaining arguments unchanged.\n"
 			if shell.name == "fish" {
 				if read("baseline.status") != "127\n" || read("later_baseline.status") != "127\n" ||
 					strings.Count(read("baseline.err"), "PRIOR\n") != 1 ||
@@ -284,7 +284,7 @@ func TestMainShellSuggestionsNative(t *testing.T) {
 					t.Errorf("Fish disable changed native diagnostics: before=%q after=%q", read("baseline.err"), read("disabled.err"))
 				}
 			}
-			if got := read("disabled.status"); got != wantDisabled || read("disabled.out") != wantDisabledOutput || strings.Contains(read("disabled.err"), "Did you mean:") {
+			if got := read("disabled.status"); got != wantDisabled || read("disabled.out") != wantDisabledOutput || strings.Contains(read("disabled.err"), "Keep the remaining arguments unchanged.") {
 				t.Errorf("disable did not restore lookup: status=%q stdout=%q stderr=%q", got, read("disabled.out"), read("disabled.err"))
 			}
 			if got := read("later.status"); got != wantLater || read("later.out") != wantLaterOutput || read("later.err") != wantLaterError {

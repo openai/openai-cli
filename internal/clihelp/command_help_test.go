@@ -13,8 +13,87 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/requestflag"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
+
+func TestBashHelpExampleUsesBashLauncherQuoting(t *testing.T) {
+	name := filepath.FromSlash("preview's build/openai")
+	command := &cli.Command{Name: "view", Metadata: map[string]any{
+		"help-content":         Content{BashExamples: true},
+		"help-executable-path": name,
+	}}
+	native, bash := ShellInvocations(command, "openai", "pwsh")
+	if got := ExampleInvocation(command, bash, native); got != `'preview'\''s build/openai'` {
+		t.Fatalf("Bash example includes incompatible launcher syntax: %q", got)
+	}
+	command.Metadata["help-content"] = Content{}
+	if got := ExampleInvocation(command, bash, native); got != "& "+terminal.PowerShellQuote(name) {
+		t.Fatalf("ordinary example lost the native launcher: %q", got)
+	}
+	delete(command.Metadata, "help-executable-path")
+	command.Metadata["help-control-launcher"] = true
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, got := ShellInvocations(command, "openai", "bash"); got != terminal.ShellQuote(filepath.ToSlash(executable)) {
+		t.Fatalf("Bash example targeted a different executable: %q", got)
+	}
+	if native, bash := ShellInvocations(command, "openai", ""); native != "" || bash != "" {
+		t.Fatalf("provided a launcher for an unknown shell: %q, %q", native, bash)
+	}
+}
+
+func TestEveryActionUsesTheSameOverview(t *testing.T) {
+	const extra = "Expressions may include quoted filter operands."
+	render := func(name string, flags []cli.Flag, args ...string) string {
+		t.Helper()
+		var output bytes.Buffer
+		action := &cli.Command{Name: name, Usage: "Inspect a fixture.", Flags: flags}
+		root := &cli.Command{Name: "openai", Commands: []*cli.Command{action}, Writer: &output}
+		argv, _, err := Configure(root, append([]string{"openai"}, args...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Run(t.Context(), argv); err != nil {
+			t.Fatal(err)
+		}
+		return output.String()
+	}
+	flags := []cli.Flag{&cli.StringFlag{Name: "filter", Aliases: []string{"f"}, Usage: "Filter the results. " + extra}}
+	short := render("inspect", flags, "inspect", "--help")
+	full := render("inspect", flags, "help", "--all", "inspect")
+	for _, want := range []string{"--filter, -f", "Filter the results.", "openai help --all inspect"} {
+		if !strings.Contains(short, want) {
+			t.Errorf("short action help lost %q: %s", want, short)
+		}
+	}
+	if strings.Contains(short, extra) || !strings.Contains(full, extra) {
+		t.Fatal("detailed flag explanation belongs in the full reference")
+	}
+	plain := render("status", nil, "status", "--help")
+	if strings.TrimSpace(plain) != "openai status\n  Inspect a fixture." {
+		t.Fatalf("empty sections or redundant reference on action without options: %q", plain)
+	}
+}
+
+func TestCommonFlagRowsExplainUndocumentedRequestFields(t *testing.T) {
+	command := &cli.Command{Name: "create", Flags: []cli.Flag{
+		&requestflag.Flag[string]{Name: "name", BodyPath: "display_name"},
+		&requestflag.Flag[int64]{Name: "limit", QueryPath: "limit"},
+		&requestflag.Flag[string]{Name: "group", HeaderPath: "X-Group"},
+	}}
+	rows, complete := commonFlagRows(command, "", 79)
+	if !complete {
+		t.Fatal("all three flags fit on the overview")
+	}
+	for _, want := range []string{"Sets the display_name request body field.", "Sets the limit query parameter.", "Sets the X-Group request header."} {
+		if !strings.Contains(rows, want) {
+			t.Errorf("overview omitted declared field binding %q: %s", want, rows)
+		}
+	}
+}
 
 func TestCompleteHelpPreservesCommandAndFlagDefinitions(t *testing.T) {
 	model := &requestflag.Flag[string]{Name: "model", Aliases: []string{"m"}, Required: true, BodyPath: "model", Usage: "Choose the model. Keep this complete constraint."}
@@ -64,7 +143,7 @@ func TestCompleteHelpGroupsAreCompleteAndHideInternalCommands(t *testing.T) {
 		command.Commands = append(command.Commands, &cli.Command{Name: fmt.Sprintf("command-%02d", i), Usage: "A short description. Extra details."})
 	}
 	got := commandHelpAtWidth(command, "./openai", "group", 80)
-	for _, want := range []string{"command-00", "command-09", "command-10", "command-11", "./openai group COMMAND --help"} {
+	for _, want := range []string{"command-00", "command-09", "command-10", "command-11", "./openai group COMMAND"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -143,15 +222,14 @@ func TestCommandNameKeepsLongUsageInDescription(t *testing.T) {
 		Description: "Keep the authored caveat.",
 	}
 	got := commandHelpAtWidth(command, "openai", "responses create", 80)
-	name, rest, found := strings.Cut(got, "\nSYNOPSIS")
+	name, description, found := strings.Cut(got, "\nDESCRIPTION\n")
 	if !found || !strings.Contains(name, "Create a response") || strings.Contains(name, "restriction") {
-		t.Fatalf("NAME is not a short command identity: %s", name)
+		t.Fatalf("missing short introduction or complete description: %s", got)
 	}
-	_, description, found := strings.Cut(rest, "\nDESCRIPTION\n")
-	if !found {
-		t.Fatal("long usage has no DESCRIPTION")
+	if strings.Contains(description, "Create a response.") {
+		t.Fatalf("DESCRIPTION repeats the command identity: %s", description)
 	}
-	for _, want := range []string{"Create a response. Preserve the complete API restriction.", "the guide (https://example.invalid/guide)", "Keep the authored caveat."} {
+	for _, want := range []string{"Preserve the complete API restriction.", "the guide (https://example.invalid/guide)", "Keep the authored caveat."} {
 		if !strings.Contains(description, want) {
 			t.Errorf("DESCRIPTION lost %q: %s", want, description)
 		}
@@ -166,7 +244,7 @@ func TestAuthoredSummaryPreservesUsageAndContentContract(t *testing.T) {
 		}},
 	}
 	got := commandHelpAtWidth(command, "openai", "items create", 100)
-	name, _, _ := strings.Cut(got, "\nSYNOPSIS")
+	name, _, _ := strings.Cut(got, "\nDESCRIPTION")
 	if !strings.Contains(name, "Create an item") || strings.Contains(name, "existing usage") {
 		t.Fatalf("authored summary was not used: %s", name)
 	}
@@ -209,9 +287,7 @@ func TestInputNoteOverridesOnlySynopsisGuidance(t *testing.T) {
 
 func TestInheritedGlobalIndexKeepsEveryNameAndRootReference(t *testing.T) {
 	var out bytes.Buffer
-	leaf := &cli.Command{Name: "run", Flags: []cli.Flag{&cli.StringFlag{Name: "project", Usage: "Local project field."}},
-		Metadata: map[string]any{"help-content": Content{GlobalOptionsNote: "This command supports text output only."}},
-	}
+	leaf := &cli.Command{Name: "run", Flags: []cli.Flag{&cli.StringFlag{Name: "project", Usage: "Local project field."}}}
 	root := &cli.Command{Name: "openai", Writer: &out, Commands: []*cli.Command{leaf}, Flags: []cli.Flag{
 		&cli.StringFlag{Name: "root-option", Aliases: []string{"r"}, Usage: "Complete inherited explanation."},
 		&cli.StringFlag{Name: "project", Usage: "Root project explanation."},
@@ -221,7 +297,7 @@ func TestInheritedGlobalIndexKeepsEveryNameAndRootReference(t *testing.T) {
 	for i := range 12 {
 		root.Flags = append(root.Flags, &cli.BoolFlag{Name: fmt.Sprintf("future-%02d", i), Usage: "Keep future flags visible."})
 	}
-	args, _, err := Configure(root, []string{"/tmp/CLI build/openai", "run", "--help"})
+	args, _, err := Configure(root, []string{"/tmp/CLI build/openai", "help", "--all", "run"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +313,7 @@ func TestInheritedGlobalIndexKeepsEveryNameAndRootReference(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		rootReference = "Run $ & '/tmp/CLI build/openai' --help for details."
 	}
-	for _, want := range []string{"--root-option, -r", "--future-00", "--future-11", rootReference, "This command supports text output only."} {
+	for _, want := range []string{"--root-option, -r", "--future-00", "--future-11", rootReference} {
 		if !strings.Contains(index, want) {
 			t.Errorf("global index lost %q: %s", want, index)
 		}

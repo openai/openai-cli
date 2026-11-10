@@ -26,7 +26,8 @@ func (w workflow) newBatchDownloadCommand() *cli.Command {
 		Description:     "Downloads exact file bytes without overwriting existing files. Use --output - for stdout. Output formats affect receipts and errors, never file bytes.",
 		HideHelpCommand: true, Suggest: true,
 		Flags: []cli.Flag{
-			&requestflag.Flag[string]{Name: "batch-id", PathParam: "batch_id", Required: true},
+			&requestflag.Flag[string]{
+				InputPolicy: requestflag.InputPolicyText, Name: "batch-id", PathParam: "batch_id", Required: true},
 			&cli.StringFlag{Name: "file", Value: "output", Usage: "Select output, error, or input"},
 			&cli.StringFlag{Name: "output", Required: true, TakesFile: true, Usage: "Save to a new file, or use - for exact bytes on stdout"},
 		},
@@ -61,7 +62,12 @@ func (w workflow) handleBatchDownload(ctx context.Context, command *cli.Command)
 		return err
 	}
 	client := openai.NewClient(w.options.DefaultRequestOptions(command)...)
-	batch, err := client.Batches.Get(ctx, command.String("batch-id"), options...)
+	return w.downloadBatchFile(ctx, command, client, options, command.String("batch-id"), selection, path)
+}
+
+// downloadBatchFile preserves exact-byte downloads and the existing no-overwrite publication.
+func (w workflow) downloadBatchFile(ctx context.Context, command *cli.Command, client openai.Client, options []option.RequestOption, batchID, selection, path string) error {
+	batch, err := client.Batches.Get(ctx, batchID, options...)
 	if err != nil {
 		return err
 	}

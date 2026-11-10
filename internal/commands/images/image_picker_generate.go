@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/term"
-	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/commandsuggest"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
@@ -39,11 +39,36 @@ func imagePickerWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 		}
 		// Keep the executable binding through initial input and every request.
 		// Each native writer still finishes before the picker reads input again.
-		ctx, closeOutput := prepareNativeImageOutput(ctx, command)
+		var closeOutput func() error
+		konsole := interactiveImageEligible(true, true, os.Getenv, runtime.GOOS)
+		if konsole {
+			// Bind before any nested writer so group signals leave a helper
+			// available to restore the temporary screen and terminal modes.
+			ctx, closeOutput = terminalimage.PrepareInteractiveImageOutput(ctx, out)
+		} else {
+			ctx, closeOutput = prepareNativeImageOutput(ctx, command)
+		}
+		var reporter *cliterminal.Output
 		defer func() {
 			resultErr = errors.Join(resultErr, closeOutput())
+			if reporter != nil {
+				resultErr = reportInteractiveImageFailure(command, reporter, imagePickerReportFailure(resultErr), PreviewOptions{ShowError: opts.ShowError})
+			}
 		}()
 		if opts.DiagnosticsAllowed(ctx) && !command.Root().Bool("debug") && opts.ErrorFormat(command.Root()) == "text" && command.Root().String("transform-error") == "" {
+			if konsole && opts.ShowError != nil {
+				executable, err := os.Executable()
+				if err != nil {
+					return err
+				}
+				// Bind stderr before input. A blocked display can also block the
+				// final diagnostic when both descriptors share one terminal.
+				reporter, err = cliterminal.NewOutput(cliterminal.DetachedOutputContext(ctx), executable, os.Stderr)
+				if err != nil {
+					return err
+				}
+				ctx = context.WithValue(ctx, imagePickerDiagnosticOutputKey{}, reporter)
+			}
 			workspaceCtx, closeWorkspaceOutput := terminalimage.PrepareNativeImageOutput(ctx, out)
 			defer func() { resultErr = errors.Join(resultErr, closeWorkspaceOutput()) }()
 			workspace := &imagePickerWorkspace{out: out, root: command.Root(), context: workspaceCtx}
@@ -106,17 +131,21 @@ func runImagePickerDrafts(ctx context.Context, command *cli.Command, next cli.Ac
 			}
 			// ErrWriter can be an unflushed usage buffer. Show the failure on
 			// real stderr before returning input ownership to the picker.
-			if displayErr := writeImagePickerRequestMessage(ctx, diagnostics, command.Root(), err, result.draftSaved); displayErr != nil {
+			if displayErr := writeImagePickerRequestMessage(ctx, diagnostics, err, result.draftSaved); displayErr != nil {
 				return errors.Join(err, displayErr)
 			}
+			options.initialTone = imageSecondary
 			options.initialNote = "Your prompt and settings are still here. Press Enter to try again."
 			if imagePickerCredentialFailure(err) {
+				options.initialTone = imageWarning
 				options.initialNote = "Draft not saved. Copy before Ctrl+C."
 				if result.draftSaved {
+					options.initialTone = imageSuccess
 					options.initialNote = "Draft saved."
 				}
 			}
 		} else {
+			options.initialTone = imageSuccess
 			options.initialNote = "All images saved. Edit your prompt or settings to create more."
 		}
 	}
@@ -129,64 +158,84 @@ func imagePickerCredentialFailure(err error) bool {
 
 // Escape all text before adding local heading emphasis. Redirected diagnostics
 // and terminals that opt out of styling retain the same readable plain layout.
-func writeImagePickerRequestMessage(ctx context.Context, out io.Writer, root *cli.Command, failure error, draftSaved bool) error {
-	message := readable.Text(imagePickerRequestMessage(root, failure, draftSaved))
-	if imagePickerCredentialFailure(failure) && cliterminal.IsWriterTerminal(out) && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb" {
-		heading, body, _ := strings.Cut(message, "\n")
-		message = lipgloss.NewStyle().Bold(true).Render(heading) + "\n" + body
+func writeImagePickerRequestMessage(ctx context.Context, out io.Writer, failure error, draftSaved bool) error {
+	diagnostic := imagePickerRequestDiagnostic(failure, draftSaved)
+	heading := readable.Text(diagnostic.heading)
+	if cliterminal.IsWriterTerminal(out) && os.Getenv("NO_COLOR") == "" && os.Getenv("FORCE_COLOR") != "0" && os.Getenv("TERM") != "dumb" {
+		heading = lipgloss.NewStyle().Bold(true).Render(heading)
 	}
-	message = strings.TrimRight(message, "\n") + "\n\n"
+	var body strings.Builder
+	body.WriteString(heading)
+	for _, detail := range diagnostic.details {
+		body.WriteByte('\n')
+		body.WriteString(readable.Text(detail.text))
+	}
+	message := strings.TrimRight(body.String(), "\n") + "\n\n"
 	_, err := io.WriteString(clioutput.Writer{Context: ctx, Sink: out}, message)
 	return err
+}
+
+type imagePickerDetail struct {
+	text string
+	tone imagePickerTone
+}
+
+// Keep the heading and semantic details together until an output boundary.
+// A heading-free diagnostic carries workspace warnings without a request failure.
+type imagePickerDiagnostic struct {
+	heading string
+	details []imagePickerDetail
 }
 
 // The picker needs a next step, not API troubleshooting output. These local
 // messages never include server prose, credentials, request values, or server URLs.
 // Flag-based and structured commands keep the shared error presenter.
-func imagePickerRequestMessage(root *cli.Command, err error, draftSaved bool) string {
+func imagePickerRequestDiagnostic(err error, draftSaved bool) imagePickerDiagnostic {
+	message := func(heading, action string) imagePickerDiagnostic {
+		return imagePickerDiagnostic{heading: heading, details: []imagePickerDetail{{text: action, tone: imageSecondary}}}
+	}
 	var apiError *openai.Error
 	if errors.As(err, &apiError) {
 		if imagePickerCredentialFailure(err) {
-			heading, cause := "Authentication failed", "Your API key was not accepted."
+			heading, action := "Authentication failed", "Check your API key and API settings, then reopen Images in this terminal."
 			if apiError.StatusCode == http.StatusForbidden {
-				heading, cause = "Access denied", "Your key or project lacks permission."
+				heading, action = "Access denied", "Check your project permissions or use a key with access."
 			}
-			draft := "Copy your prompt. Ctrl+C exits."
+			diagnostic := message(heading, action)
+			draft := imagePickerDetail{text: "Draft not saved. Copy your prompt before exiting.", tone: imageWarning}
 			if draftSaved {
-				draft = "Your draft is saved. Ctrl+C exits."
+				draft = imagePickerDetail{text: "Your submitted draft is saved.", tone: imageSecondary}
 			}
-			return fmt.Sprintf("  %s\n  %s\n\n"+
-				"  %s\n"+
-				"  Setup guide: %s help setup\n"+
-				"  Reopen the picker in this shell.", heading, cause, draft, clihelp.DisplayInvocation(root))
+			diagnostic.details = append(diagnostic.details, draft)
+			return diagnostic
 		}
 		switch apiError.StatusCode {
 		case http.StatusBadRequest, http.StatusUnprocessableEntity:
 			switch apiError.Code {
 			case "content_policy_violation":
-				return "This prompt wasn't accepted by the image safety checks. Try a different description."
+				return message("This prompt wasn't accepted by the image safety checks.", "Try a different description.")
 			case "model_not_found":
-				return "This model isn't available for your project. Try another model."
+				return message("This model isn't available for your project.", "Try another model.")
 			}
-			return "Couldn't create your image. Try changing the prompt or settings."
+			return message("Couldn't create your image.", "Try changing the prompt or settings.")
 		case http.StatusNotFound:
-			return "The model or image service wasn't found. Try another model or check your API address."
+			return message("The model or image service wasn't found.", "Try another model or check your API address.")
 		case http.StatusTooManyRequests:
 			switch apiError.Code {
 			case "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded":
-				return "Your project has reached its API usage or billing limit. Check your billing and limits before trying again."
+				return message("Your project has reached its API usage or billing limit.", "Check your billing and limits before trying again.")
 			}
-			return "Too many requests right now. Wait a moment before trying again."
+			return message("Too many requests right now.", "Wait a moment before trying again.")
 		case http.StatusRequestTimeout, http.StatusGatewayTimeout:
-			return "The image request timed out. Check API usage before trying again."
+			return message("The image request timed out.", "Check API usage before trying again.")
 		}
-		return "The image service couldn't finish this request. Check API usage before trying again."
+		return message("The image service couldn't finish this request.", "Check API usage before trying again.")
 	}
 	var timeout net.Error
 	if errors.As(err, &timeout) && timeout.Timeout() {
-		return "The image request timed out. Check API usage before trying again."
+		return message("The image request timed out.", "Check API usage before trying again.")
 	}
-	return "The connection to the image service failed. Check your connection and API usage before trying again."
+	return message("The connection to the image service failed.", "Check your connection and API usage before trying again.")
 }
 
 // Only request failures can reopen a draft. Saving/preview failures may follow

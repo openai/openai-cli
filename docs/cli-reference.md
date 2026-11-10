@@ -1,7 +1,21 @@
 # CLI configuration and input reference
 
 For installation and common tasks, see the [README](../README.md).
-Run `openai --help` for the full set of global options.
+In an interactive zsh with command insertion enabled, type `openai` on a line by itself.
+If the reference exceeds the terminal height, it opens at the top.
+Scroll with the wheel, arrow keys, or Space. Press `q` to show the rest, or Escape to leave early.
+Each line stays in your terminal history.
+
+When the footer says `Start typing your next command`, type to continue at your zsh prompt.
+Press Enter at that prompt to run the command. An initial `q`, `Q`, or Space keeps its pager action.
+To enable command insertion for the current zsh session, run:
+
+```zsh
+source <(openai @completion zsh --suggestions --suggestions-only)
+```
+
+Command chains such as `openai; pwd` print help and continue immediately.
+Explicit help, pipes, redirects, and shells without this integration also use ordinary output.
 
 ## Environment variables
 
@@ -104,9 +118,51 @@ mTLS endpoint, so configure `OPENAI_BASE_URL` or `--base-url` explicitly. HTTP
 and SOCKS proxies remain supported, but HTTPS proxies are rejected to prevent
 presenting the client certificate during the proxy's own TLS handshake.
 
+## Text and structured request values
+
+If a flag has a matching `-structured` flag, its ordinary form sends exactly the text you supply.
+For example, `responses create --input 'Translate: hello'` sends a string.
+This also applies to completion prompts and stop sequences, embedding inputs, and vector store search queries.
+Run `openai help --all responses create` to see which flags support both forms.
+Other flags keep their existing parsers.
+Use that flag to parse JSON or YAML, including explicit nulls:
+
+```sh
+openai responses create --model MODEL --input 'Translate: hello'
+openai responses create --model MODEL --input-structured '[{"role":"user","content":"hello"}]'
+openai responses create --model MODEL --input-structured null
+```
+
+Do not combine a flag with its `-structured` alternative in one command.
+The CLI rejects that combination before reading sources, regardless of argument order.
+Whole-request JSON/YAML preserves its types and existing trust policy in both input modes.
+
+### Script compatibility
+
+**This default change breaks scripts that relied on implicit JSON/YAML conversion for text-capable operands.**
+Migrate those operands to `-structured`, or select legacy parsing for the process.
+Pin a CLI version that supports this contract; older binaries can ignore the setting.
+
+`OPENAI_CLI_INPUT_MODE` accepts `literal` or `legacy`.
+An unset setting selects `literal`.
+The CLI captures the setting before argument parsing; invalid values fail.
+Legacy mode restores the original parser, including parsing ordinary operands before file expansion.
+Explicit `-structured` flags override legacy mode for their operands.
+
+```sh
+OPENAI_CLI_INPUT_MODE=legacy openai responses create --model MODEL --input '[{"role":"user","content":"hello"}]'
+OPENAI_CLI_INPUT_MODE=literal openai responses create --model MODEL --input 'Translate: hello'
+```
+
+Only processes that inherit the setting use it.
+Configure containers, SSH sessions, and environment-clearing launchers separately.
+An explicit `literal` assignment overrides inherited `legacy` for that process.
+
 ## Passing files as arguments
 
-For JSON input values, `@myfile.ext` reads local file contents:
+Ordinary text operands retain `@myfile.ext`, `@-`, and escaped `\@` source syntax.
+File and stdin text remains text in literal mode.
+The CLI resolves each source once.
 
 Binary upload flags use plain paths. For example, use `files upload --file "upload space.txt" --purpose user_data`.
 Here, `--file "@upload space.txt"` names an actual file starting with `@`; it does not expand another file reference.
@@ -116,14 +172,23 @@ See [working with files](files.md).
 openai <command> --arg @abe.jpg
 ```
 
-Files can also be passed inside JSON or YAML blobs:
+Explicit structured flags also accept file and stdin sources:
 
 ```bash
-openai <command> --arg '{image: "@abe.jpg"}'
-# Equivalent:
-openai <command> <<YAML
-arg:
-  image: "@abe.jpg"
+openai responses create --model MODEL --input-structured @input.json
+printf '%s' '[{"role":"user","content":"hello"}]' | openai responses create --model MODEL --input-structured @-
+```
+
+The CLI resolves the source as text before parsing JSON or YAML.
+Strings inside the parsed value remain data, including strings beginning with `@` or `\@`.
+For example, `--input-structured '"@notes.txt"'` sends the string `@notes.txt`.
+
+Trusted whole-request JSON/YAML retains its existing embedded-reference handling:
+
+```bash
+openai responses create <<YAML
+model: MODEL
+input: "@notes.txt"
 YAML
 ```
 
@@ -172,15 +237,15 @@ It adds a plain-text notice below help, at most once every seven days.
 Explicit help, commands, completion, CI, and redirected streams skip the check entirely.
 
 The notice includes an update command when the CLI can verify its installation method.
-Verified Homebrew installations use `brew upgrade --cask openai/tools/openai`.
+Verified Homebrew installations check the official Homebrew cask.
+When that cask has a newer version, the notice gives `brew update && brew upgrade --cask openai/tools/openai`.
 Go commands require a verified binary, an available Go command, and an explicit matching `GOBIN`.
 Custom `GOOS` or `GOARCH` settings select the installation guide instead.
 Go upgrades to major version 2 or later also select the installation guide.
-Unknown installations receive the installation-guide link instead.
+For installations that need the guide, the CLI waits for GitHub to publish a matching archive for the running platform.
 Package-manager and Go installations retain their existing installation ownership.
 
-Checks use public GitHub release metadata without API credentials, at most once daily.
+Other installations check public GitHub release metadata. Both checks run without API credentials, at most once daily.
 Checks respect `HTTPS_PROXY` and `NO_PROXY`, including their lowercase forms.
 Update discovery waits at most 200 milliseconds. Failed checks remain silent.
-Package-manager availability can lag a new GitHub release.
 Set `OPENAI_CLI_NO_UPDATE_CHECK=1` to disable checks and notices.

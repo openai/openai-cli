@@ -67,7 +67,7 @@ See the [create reference](https://developers.openai.com/api/reference/cli/resou
 ## Recover from authentication or permission failures
 
 If event discovery returns HTTP 401, the CLI has not created an endpoint.
-If the error includes `Key setup:`, use that command to open the local setup guide.
+If the error includes a setup command, run it to open the local API key guide.
 That command preserves the executable you used, including a renamed preview.
 Displaying the guide does not send an API request or change your credentials.
 

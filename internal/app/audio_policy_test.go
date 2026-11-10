@@ -20,7 +20,7 @@ func TestSpeechAuthenticationGuidanceConfigurationSources(t *testing.T) {
 		flags         []string
 		want, omit    []string
 	}{
-		{name: "missing", status: 401, want: []string{"No API key is configured", "In your main terminal, run: openai help setup", "Reopen this form"}},
+		{name: "missing", status: 401, want: []string{"No API key is configured", "In your main terminal, run: openai help setup"}, omit: []string{"Reopen this form"}},
 		{name: "environment key", status: 401, code: "invalid_api_key", env: map[string]string{"OPENAI_API_KEY": "synthetic-env"}, want: []string{"Replace the rejected API key", "Reopen this form"}},
 		{name: "explicit key", status: 401, flags: []string{"--api-key", "synthetic-flag"}, want: []string{"Check your API key and selected project", "Reopen this form"}},
 		{name: "empty override", status: 401, flags: []string{"--api-key="}, env: map[string]string{"OPENAI_API_KEY": "synthetic-env"}, want: []string{"override is empty", "Close this form", "Reopen without the empty --api-key option"}, omit: []string{"openai help setup"}},
@@ -75,14 +75,17 @@ func TestSpeechAuthenticationGuidanceConfigurationSources(t *testing.T) {
 }
 
 func TestSpeechAuthenticationGuidancePreservesInvocation(t *testing.T) {
-	for _, invocation := range []string{"'./preview app/openai-current'", "go run ./cmd/openai"} {
+	for _, invocation := range []string{"openai", "'./preview app/openai-current'", "go run ./cmd/openai"} {
 		for _, flags := range [][]string{nil, {"--api-key="}} {
 			t.Run(invocation+"/"+strings.Join(flags, "/"), func(t *testing.T) {
 				cleanAPIAuthGuidanceEnvironment(t)
 				root := apiAuthGuidanceTestCommand(func(_ context.Context, command *cli.Command) error {
 					guidance := speechAuthenticationGuidance(command, &openai.Error{StatusCode: 401})
-					require.Contains(t, guidance.Action, "In your main terminal, run: "+invocation+" help setup")
-					require.NotContains(t, guidance.Action, "run: openai help setup")
+					want := "In your main terminal, run: " + invocation + " help setup"
+					if len(flags) != 0 {
+						want = "Close this form.\n" + want + "\nReopen without the empty --api-key option."
+					}
+					require.Equal(t, want, guidance.Action)
 					return nil
 				})
 				root.Metadata["help-invocation"] = invocation

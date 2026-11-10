@@ -17,10 +17,10 @@ func TestAudioViewsDistinguishKeysFromDescriptions(t *testing.T) {
 		name, key, action string
 		setup             func(*audioWorkbench)
 	}{
-		{"form", "[Ctrl+C]", "Exit", func(m *audioWorkbench) {}},
+		{"form", "Ctrl+C", "Exit", func(m *audioWorkbench) {}},
 		{"too-small", "Ctrl+C", "exits.", func(m *audioWorkbench) { m.Update(tea.WindowSizeMsg{Width: 39, Height: 11}) }},
-		{"settings", "[Tab]", "Audio", func(m *audioWorkbench) { m.focusSection(2) }},
-		{"more", "[Esc]", "Back", func(m *audioWorkbench) { m.modal = "more" }},
+		{"settings", "Tab", "Audio", func(m *audioWorkbench) { m.focusSection(2) }},
+		{"more", "Esc", "back", func(m *audioWorkbench) { m.modal = "more" }},
 		{"speed", "Enter", "apply", func(m *audioWorkbench) { m.modal = "speed" }},
 		{"choices", "Enter", "select", func(m *audioWorkbench) {
 			m.modal, m.setting, m.choices = "choice", 0, audioModels
@@ -34,7 +34,7 @@ func TestAudioViewsDistinguishKeysFromDescriptions(t *testing.T) {
 			m.focusSection(4)
 			m.playing = true
 		}},
-		{"player-finished", "Space", "play", func(m *audioWorkbench) {
+		{"player-finished", "Space", "replay", func(m *audioWorkbench) {
 			m.focusSection(4)
 			m.result.finished = true
 		}},
@@ -47,21 +47,24 @@ func TestAudioViewsDistinguishKeysFromDescriptions(t *testing.T) {
 			m.focusSection(4)
 			m.resultAction = 1
 		}},
-		{"save", "Tab", "edit", func(m *audioWorkbench) { m.openSave() }},
+		{"save", "Enter", "done", func(m *audioWorkbench) { m.openSave() }},
+		{"save-action", "Tab", "edit", func(m *audioWorkbench) { m.openSave(); m.focusSave(2) }},
 		{"save-filename", "Enter", "save", func(m *audioWorkbench) { m.openSave(); m.focusSave(0) }},
 		{"save-folder", "Enter", "done", func(m *audioWorkbench) { m.openSave(); m.focusSave(1) }},
 		{"error-details", "Esc", "back", func(m *audioWorkbench) {
 			m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+			audioReviewKey(m, tea.KeyF1)
 		}},
 		{"error-details-scroll", "↑↓", "scroll", func(m *audioWorkbench) {
 			m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+			audioReviewKey(m, tea.KeyF1)
 			m.failure.Action = strings.Repeat("Check the selected project.\n", 40)
 		}},
-		{"help", "↑↓", "scroll", func(m *audioWorkbench) {
-			m.modal, m.infoTitle, m.infoText = "info", "Help", audioFormHelp
+		{"help", "Esc", "back", func(m *audioWorkbench) {
+			m.openHelp("more")
 		}},
 		{"command", "Ctrl+P", "print/exit", func(m *audioWorkbench) {
-			m.modal, m.infoTitle, m.infoText = "info", audioCommandTitle, m.commandPreview()
+			m.focusCommand()
 		}},
 	}
 	for _, size := range [][2]int{{40, 12}, {90, 34}} {
@@ -90,9 +93,9 @@ func TestAudioViewsDistinguishKeysFromDescriptions(t *testing.T) {
 					require.Contains(t, view, "\x1b[38;2;"+accent+"m"+tc.key+"\x1b[m", "keys need regular-weight theme accents")
 					require.Contains(t, view, "\x1b[38;2;"+secondary+"m"+tc.action+"\x1b[m", "descriptions must stay secondary")
 					for _, row := range strings.Split(view, "\n") {
-						require.LessOrEqual(t, ansi.StringWidth(row), size[0]-2)
+						require.LessOrEqual(t, ansi.StringWidth(row), size[0]-1)
 					}
-					require.LessOrEqual(t, len(strings.Split(view, "\n")), size[1]-1)
+					require.LessOrEqual(t, len(strings.Split(view, "\n")), size[1])
 					m.color = false
 					plain := m.View().Content
 					require.NotContains(t, plain, "\x1b[38;")

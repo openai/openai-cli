@@ -1,4 +1,4 @@
-//go:build !darwin && !linux
+//go:build !darwin && !linux && !windows
 
 package updatenotice
 
@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 )
+
+func enableZshPath(string, string, bool) bool { return false }
 
 func automaticPlatform() bool          { return false }
 func ownedUpdatePath(os.FileInfo) bool { return false }

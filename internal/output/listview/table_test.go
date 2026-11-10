@@ -2,11 +2,26 @@ package listview
 
 import (
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/output/transform"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"strings"
 	"testing"
 )
+
+func TestProjectTableProtectsIDAfterRelabeling(t *testing.T) {
+	id := "proj_" + strings.Repeat("a", 40)
+	items := []gjson.Result{gjson.Parse(`{"object":"organization.project","id":"` + id + `","name":"Demo","status":"active"}`)}
+	projection, err := transform.ProjectListTable(t.Context(), "(resource) admin.organization.projects > (method) list", items)
+	require.NoError(t, err)
+	for _, headers := range [][]string{{"Name", "Status", "Project ID"}, {"ID", "ID", "Project ID"}} {
+		projection.Headers = headers
+		text, fits, err := renderProjection(projection, 80, false, Style{})
+		require.NoError(t, err)
+		require.True(t, fits)
+		require.Contains(t, text, id)
+	}
+}
 
 func TestRenderListTablePage(t *testing.T) {
 	items := []gjson.Result{gjson.Parse(`{"object":"batch","id":"batch_synthetic","status":"completed","created_at":1}`)}

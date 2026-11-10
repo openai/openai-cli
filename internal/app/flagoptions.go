@@ -74,6 +74,9 @@ func flagOptionsWithStdin(
 		Encoding: requestconfig.EncodingHooks{
 			PrepareMultipart: func(body map[string]any) error { return images.PrepareMultipartBody(cmd, body) },
 			ValidateJSON: func(body []byte) error {
+				if err := admin.ValidateExternalKeyCreate(cmd, body); err != nil {
+					return err
+				}
 				if err := webhooks.ValidateRequestEvents(cmd, body); err != nil {
 					return err
 				}
@@ -88,5 +91,17 @@ func flagOptionsWithStdin(
 			return audio.EmbedVoiceBody(cmd, body, stdin)
 		}
 	}
-	return requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
+	if bodyType == ApplicationJSON && isSkillCreate(cmd) {
+		hooks.SelectBodyType = selectSkillZIP
+		hooks.EmbedMultipart = func(body map[string]any, stdin *requestconfig.OnceStdinReader) (map[string]any, error) {
+			return embedSkillZIP(cmd, body, stdin)
+		}
+	}
+	options, err = requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
+	if err == nil && bodyType == EmptyBody && cmd.Metadata[listPagerMetadata] == true {
+		// Scope the automatic size to requests that use the owning command's flags.
+		// The same SDK client can also perform independently bound lookups.
+		options = append(options, option.WithMiddleware(boundListRequest(cmd)))
+	}
+	return options, err
 }

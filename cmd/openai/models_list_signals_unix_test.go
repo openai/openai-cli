@@ -70,8 +70,7 @@ func TestMainModelsListSignals(t *testing.T) {
 		code   int
 	}{
 		{"ctrl-c", 130}, {"q", 0}, {"escape", 0},
-		// Bubble Tea treats SIGTERM as a clean quit. Preserve that contract.
-		{"SIGTERM", 0},
+		{"SIGTERM", 143},
 	} {
 		cases = append(cases, signalCase{
 			name: control.action, stage: "loaded", action: control.action, code: control.code,
@@ -80,7 +79,7 @@ func TestMainModelsListSignals(t *testing.T) {
 	for _, interrupted := range []struct {
 		name string
 		code int
-	}{{"SIGINT", 130}, {"SIGTERM", 0}} {
+	}{{"SIGINT", 130}, {"SIGTERM", 143}} {
 		cases = append(cases, signalCase{
 			name: interrupted.name + " with a large loaded model", stage: "loaded", action: interrupted.name,
 			flags: []string{"--format-error", "json"}, code: interrupted.code, large: true,
@@ -143,7 +142,16 @@ func TestMainModelsListSignals(t *testing.T) {
 			output, err := child.CombinedOutput()
 			require.NoError(t, ctx.Err(), "PTY observer timed out: %s", output)
 			require.NoError(t, err, "PTY observer failed: %s", output)
-			require.EqualValues(t, 1, requests.Load(), "navigation must use the loaded response")
+			var observed struct {
+				Loaded bool `json:"loaded_at_signal"`
+			}
+			require.NoError(t, json.Unmarshal(output, &observed))
+			if tc.stage == "loaded" || observed.Loaded {
+				require.EqualValues(t, 1, requests.Load(), "navigation must use the loaded response")
+			} else {
+				// Loading controls are visible before the request reaches the server.
+				require.LessOrEqual(t, requests.Load(), int32(1), "startup cancellation must not fetch another page")
+			}
 			t.Logf("%s", bytes.TrimSpace(output))
 		})
 	}

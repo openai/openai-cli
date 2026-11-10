@@ -107,7 +107,8 @@ An empty replacement remains an empty string.
 The workspace does not require a hard limit before creating an alert.
 The API still validates account-specific constraints.
 
-Project Rates supports seven named rate fields, including tokens per day.
+The public rate-limit API documents six update fields, including daily batch input tokens.
+The CLI also recognizes ordinary daily tokens when a project returns that field.
 The form sends only changed fields.
 Blank fields remain unchanged.
 Zero has no assumed unlimited meaning.
@@ -119,7 +120,8 @@ The API decides account-specific caps.
 Scriptable commands retain their existing input behavior.
 Rate updates require a complete preflight list; use `--max-items -1` when necessary.
 
-The named tokens-per-day flag extends an existing API field:
+The public API reference leaves support for ordinary daily-token updates unconfirmed.
+For a project that supports these updates, use the tokens-per-day flag.
 
 ```sh
 openai projects rate-limits update-rate-limit \

@@ -167,7 +167,7 @@ class AcceptanceTests(unittest.TestCase):
 
     def test_process_exact_inventory(self):
         self.assertEqual(len(pilot.PROCESS_CASES), 23)
-        self.assertEqual(len(pilot.PROCESS_TESTS), 144)
+        self.assertEqual(len(pilot.PROCESS_TESTS), 148)
         self.assertNotIn("TestMainDispatchProcess", pilot.PROCESS_TESTS)
         pilot.require_test_pass(process_passing_output(), b"", 0, pilot.PROCESS_TESTS, "process")
 

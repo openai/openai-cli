@@ -26,6 +26,38 @@ openai files download file-example > copy.txt
 
 Replace `file-example` with the full ID from your upload response.
 
+## Browse files in the terminal
+
+Run `openai files list` to see the first screen of files in your terminal.
+A 40-line terminal can show 38 one-line file rows, a table heading, and the controls.
+A complete list that fits returns to the shell. Longer lists show the visible range, such as `Files 1–38`.
+The preview waits for input. Press Space to see the next screen of loaded files.
+At the last loaded file, Space requests one API page if more files remain.
+A short page waits for another key, even when more files would fit on screen.
+Press the up or down arrow to scroll one row.
+Press `b` to go back or `q` to quit. The table keeps its column headings in view as you scroll.
+
+Run `openai files list --pager` to enter the full-screen viewer immediately.
+Interactive browsing requests one screen of file rows, leaving room for the table heading and controls.
+Resizing changes the next request. Wrapped records can span multiple lines, and the last page can be shorter.
+A smaller remaining `--max-items` reduces the request size.
+An explicit `--limit` sets the page size. Script and print-only output keep the API's default.
+The footer shows the visible files, such as `1–25` and `26–50`.
+Files supplies no collection total. After an uncapped list finishes, the footer can show `51–60/60`.
+With `--after`, positions start at the first returned file and omit the collection total.
+Press `i` to print the loaded files once in your terminal history.
+Space continues the same list inline. Compatible pages share one table heading.
+
+If the CLI reports a missing API key, run `openai help setup` for instructions.
+Use `openai files list --browse=false` to print the table directly to the terminal.
+
+Use `--limit` to set the number of files requested per API page.
+Use `--max-items` to cap the total number of files listed across pages.
+
+```sh
+openai files list --limit 10 --max-items 25
+```
+
 ## Find commands and complete paths
 
 Use `openai files --help` to see upload, get, and download in workflow order.

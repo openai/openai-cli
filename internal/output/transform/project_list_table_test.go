@@ -9,6 +9,12 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// Keep the expected headers and rows explicit in projection tests.
+func projectedListCells(ctx context.Context, operation string, items []gjson.Result) ([]string, [][]string, bool, error) {
+	table, err := ProjectListTable(ctx, operation, items)
+	return table.Headers, table.Rows, len(table.Headers) != 0, err
+}
+
 func TestProjectListTableCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -18,7 +24,7 @@ func TestProjectListTableCanceledContext(t *testing.T) {
 		"(resource) admin.organization.projects > (method) list",
 		"unsupported",
 	} {
-		headers, rows, supported, err := ProjectListTable(ctx, operation, nil)
+		headers, rows, supported, err := projectedListCells(ctx, operation, nil)
 		require.ErrorIs(t, err, context.Canceled)
 		require.False(t, supported)
 		require.Nil(t, headers)
@@ -56,14 +62,14 @@ func TestProjectListTableKnownResources(t *testing.T) {
 		},
 		{
 			"admin.organization.projects",
-			`{"id":"proj_example","object":"organization.project","name":"Synthetic project","status":"active","created_at":123,"archived_at":null,"external_key_id":null,"residency":"GLOBAL"}`,
-			[]string{"ID", "NAME", "STATUS"},
-			[]string{"proj_example", "Synthetic project", "active"},
+			`{"id":"proj_example","object":"organization.project","name":"Synthetic project","status":"active","created_at":123,"archived_at":null,"external_key_id":null,"psp_decryption_key_id":null,"residency":"GLOBAL"}`,
+			[]string{"NAME", "STATUS", "ID"},
+			[]string{"Synthetic project", "active", "proj_example"},
 		},
 	} {
 		t.Run(test.resource, func(t *testing.T) {
 			item := gjson.Parse(test.input)
-			headers, rows, ok, err := ProjectListTable(t.Context(), "(resource) "+test.resource+" > (method) list", []gjson.Result{item})
+			headers, rows, ok, err := projectedListCells(t.Context(), "(resource) "+test.resource+" > (method) list", []gjson.Result{item})
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Equal(t, test.headers, headers)
@@ -76,16 +82,16 @@ func TestProjectListTableKnownResources(t *testing.T) {
 func TestProjectListTableMissingOptionalFields(t *testing.T) {
 	for _, fields := range []string{"", `,"name":null,"status":null`, `,"name":"","status":""`} {
 		item := gjson.Parse(`{"id":"proj_example","object":"organization.project","created_at":123` + fields + `}`)
-		_, rows, ok, err := ProjectListTable(t.Context(), "(resource) admin.organization.projects > (method) list", []gjson.Result{item})
+		_, rows, ok, err := projectedListCells(t.Context(), "(resource) admin.organization.projects > (method) list", []gjson.Result{item})
 		require.NoError(t, err)
 		require.True(t, ok)
-		require.Equal(t, [][]string{{"proj_example", "-", "-"}}, rows)
+		require.Equal(t, [][]string{{"-", "-", "proj_example"}}, rows)
 	}
 }
 
 func TestProjectListTableEmptyPagesAndRoutes(t *testing.T) {
 	for _, resource := range []string{"files", "batches", "admin.organization.projects"} {
-		headers, rows, ok, err := ProjectListTable(t.Context(), "(resource) "+resource+" > (method) list", nil)
+		headers, rows, ok, err := projectedListCells(t.Context(), "(resource) "+resource+" > (method) list", nil)
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.NotEmpty(t, headers)
@@ -97,7 +103,7 @@ func TestProjectListTableEmptyPagesAndRoutes(t *testing.T) {
 		"(resource) images.models > (method) list", "(resource) batches > (method) cancel",
 		"(resource) models > (method) list",
 	} {
-		headers, rows, ok, err := ProjectListTable(t.Context(), operation, nil)
+		headers, rows, ok, err := projectedListCells(t.Context(), operation, nil)
 		require.NoError(t, err)
 		require.False(t, ok, operation)
 		require.Nil(t, headers)
@@ -108,7 +114,7 @@ func TestProjectListTableEmptyPagesAndRoutes(t *testing.T) {
 func TestProjectListTablePreservesOriginalStrings(t *testing.T) {
 	id := "file_" + strings.Repeat("exact-id", 1000)
 	item := gjson.Parse(`{"id":"` + id + `","object":"file","filename":"日本語 é 👩‍💻\u001b[31m\n\t\r","purpose":"future_purpose","bytes":0,"status":"future_status"}`)
-	_, rows, ok, err := ProjectListTable(t.Context(), "(resource) files > (method) list", []gjson.Result{item})
+	_, rows, ok, err := projectedListCells(t.Context(), "(resource) files > (method) list", []gjson.Result{item})
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []string{id, "日本語 é 👩‍💻\x1b[31m\n\t\r", "future_purpose", "0 B", "future_status"}, rows[0])
@@ -135,7 +141,7 @@ func TestProjectListTableFallsBackForEntirePage(t *testing.T) {
 	} {
 		t.Run(input, func(t *testing.T) {
 			item := gjson.Parse(input)
-			headers, rows, ok, err := ProjectListTable(t.Context(), "(resource) batches > (method) list", []gjson.Result{valid, item, valid})
+			headers, rows, ok, err := projectedListCells(t.Context(), "(resource) batches > (method) list", []gjson.Result{valid, item, valid})
 			require.NoError(t, err)
 			require.False(t, ok)
 			require.Nil(t, headers)
@@ -167,11 +173,14 @@ func TestProjectListTablePreservesErrorsAndMalformedFields(t *testing.T) {
 		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","name":[],"status":"active"}`},
 		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","name":"Synthetic","status":false}`},
 		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","name":"Synthetic","status":"active","warning":"Review project."}`},
+		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","psp_decryption_key_id":"example"}`},
+		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","psp_decryption_key_id":null,"psp_decryption_key_id":"example"}`},
+		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","future_field":null}`},
 		{"admin.organization.projects", `{"id":"proj_example","object":"organization.project","name":"First","name":"Second","status":"active"}`},
 	} {
 		t.Run(test.resource+test.input, func(t *testing.T) {
 			item := gjson.Parse(test.input)
-			headers, rows, ok, err := ProjectListTable(t.Context(), "(resource) "+test.resource+" > (method) list", []gjson.Result{item})
+			headers, rows, ok, err := projectedListCells(t.Context(), "(resource) "+test.resource+" > (method) list", []gjson.Result{item})
 			require.NoError(t, err)
 			require.False(t, ok)
 			require.Nil(t, headers)
@@ -190,7 +199,7 @@ func TestProjectListTableByteSizes(t *testing.T) {
 		t.Run(test.bytes, func(t *testing.T) {
 			input := `{"id":"file_size","object":"file","filename":"size.bin","purpose":"user_data","status":"processed","bytes":` + test.bytes + `}`
 			item := gjson.Parse(input)
-			_, rows, ok, err := ProjectListTable(t.Context(), "(resource) files > (method) list", []gjson.Result{item})
+			_, rows, ok, err := projectedListCells(t.Context(), "(resource) files > (method) list", []gjson.Result{item})
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Equal(t, test.want, rows[0][3])
