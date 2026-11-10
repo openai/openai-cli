@@ -136,11 +136,11 @@ func TestImagePickerReplacingResizedRowsPreservesLaterImages(t *testing.T) {
 	w := &imagePickerWorkspace{}
 	w.appendImage(imagePickerWorkspaceImage{rows: []string{"old one", "old two"}})
 	w.appendImage(imagePickerWorkspaceImage{rows: []string{"other image"}})
-	w.rows = append(w.rows, "retained diagnostic")
+	w.addDetail("retained diagnostic", imageSecondary)
 	w.replaceImageRows(imagePickerExpandedRows{index: 0, rows: []string{"resized"}, columns: 16, protocol: "blocks"})
 	require.Equal(t, 16, w.images[0].columns)
 	require.Equal(t, "other image", w.images[1].rows[0])
-	require.Equal(t, "retained diagnostic", w.rows[len(w.rows)-1])
+	require.Equal(t, "retained diagnostic", w.diagnostics[len(w.diagnostics)-1].details[0].text)
 }
 
 func TestImagePickerResizeCompletionClearsPendingAfterSelectionChanges(t *testing.T) {
