@@ -69,7 +69,7 @@ class ModelDefaultsTest(unittest.TestCase):
     def test_new_advice_alongside_previous_recommendation(self):
         previous = "Migrate to `gpt-voice` using the [Realtime API](guide)."
         reviewed = {check.SPEECH: check.guidance_digest(previous)}
-        changed = previous + "\n\nFor new clients, use `gpt-new` over Realtime."
+        changed = previous + "\n\nFor new speech synthesis, prefer `gpt-realtime-2.2-mini`."
         with self.assertRaisesRegex(ValueError, "Model guidance changed"):
             check.verify_reviewed_guidance(lambda url: changed, reviewed)
         new_example = previous + '\n\n```python\n# use gpt-example in this example\n```'

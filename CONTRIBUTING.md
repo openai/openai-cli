@@ -356,7 +356,7 @@ It tests the actual CLI request against local fixtures and reports each verified
 An unchanged recommendation keeps the same model ID.
 
 If model advice changes, read the linked guide before updating its reviewed digest.
-The digest covers model guidance in prose and excludes fenced examples.
+The digest covers the guide’s prose, including new recommendations beside older ones. It excludes fenced examples and ignores whitespace changes.
 Update the model and its routing if the guide recommends a different choice.
 If the documentation changes format, verify the guidance before updating the parser and its offline fixtures.
 A failed download or ambiguous recommendation blocks verification. Retry a temporary outage after documentation access returns.

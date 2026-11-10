@@ -24,22 +24,17 @@ MODEL_ID = r"[a-z0-9][a-z0-9.-]*"
 
 # Review changes to model advice even if the source retains an older recommendation.
 REVIEWED_GUIDANCE = {
-    SPEECH: "663261dd93d150897cde19c2b0c5c5ceb8b5fd5e9bddde06bd6e0e8944def260",
-    IMAGE: "b082b47700f6dbc23cbaca0c8633da9a2946135db13000cc0213c5ed4b5817dd",
-    TRANSLATION: "6f0a0899681c2104fd630b9d02e56109ad3d847fbf41cd1c0d8121ab55d28162",
-    CAPTIONS: "12691f04050a84b97f366e8741e7825e517a3a0a814fc4fa0130f1f378f58578",
+    SPEECH: "5d7de5ea03eabc2ee2a34272e6128d37b90442c80592df4f13725e76638647e7",
+    IMAGE: "00c36c0421267ee7667b35c2246bb6886f87f493447a768825c05025b42bfff5",
+    TRANSLATION: "28d362b54b8f964cd96b1ab19b34b520f5e8163ed5f95ff04880210f5513da81",
+    CAPTIONS: "ac7e0c6762d96fcb434779e9cfd4c7a702d39657bed7e7677a445984eee7c7dc",
 }
 
 
 def guidance_digest(page):
     prose = re.sub(r"^```[^\n]*\n.*?^```[ \t]*$", "", page, flags=re.MULTILINE | re.DOTALL)
-    advice = r"\b(?:recommend\w*|migrat\w*|start with|use|choose|configure|new integrations|instead|replac\w*|default\w*)\b"
-    named_model = r"\b(?:gpt|tts|whisper|dall-e|chatgpt)[ -]|/docs/models/|\b(?:flare|sunburst)\b"
-    paragraphs = [
-        " ".join(p.split()) for p in re.split(r"\n\s*\n", prose)
-        if re.search(advice, p, re.IGNORECASE) and re.search(named_model, p, re.IGNORECASE)
-    ]
-    return hashlib.sha256("\n".join(paragraphs).encode()).hexdigest()
+    # New recommendations may use unfamiliar wording or an entirely new model family.
+    return hashlib.sha256(" ".join(prose.split()).encode()).hexdigest()
 
 
 def verify_reviewed_guidance(read, reviewed):
