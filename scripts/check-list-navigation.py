@@ -18,7 +18,6 @@ terminal_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(terminal_module)
 ASCIINEMA = 'asciinema'
 FOOTER = 'q: quit'
-LEGACY_HINTS = ('p: print', 'p: all', 'i: inline')
 
 def drain(terminal, duration=0.25):
     deadline = time.monotonic() + duration

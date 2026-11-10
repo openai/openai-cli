@@ -186,11 +186,18 @@ def list_screen(frame):
     return frame.replace(ORIGINAL + '\n', '').strip('\n')
 
 
-def same_rows(left, right):
+def same_rows(left, right, *, known_total=None):
     # asciinema joins padded, soft-wrapped preview lines. The expanded browser
     # draws hard line breaks and changes the Space hint when returning with b.
+    if known_total is not None:
+        # Back retains the collection size learned on the final page.
+        position = rf'(\b(?:Files?|Models?) \d+(?:–\d+)?) of {known_total}(?=\s)'
+        left, matches = re.subn(position, r'\1', left)
+        if matches != 1:
+            return False
+        right = re.sub(position, r'\1', right)
     def normalize(frame):
-        return ' '.join(list_screen(frame).replace('Space: browse', 'Space: next screen').split())
+        return ' '.join(list_screen(frame).replace('i: inline', '').replace('Space: browse', 'Space: next screen').split())
     return normalize(left) == normalize(right)
 
 
@@ -211,21 +218,27 @@ def lazy_back(s, server):
     s.count(1)
     assert ready(s) == first, 'i changed the pager'
     s.send(' ')
+    second = ready(s, 2)
+    assert fixture.identifier(1) not in second and fixture.identifier(3) not in second, second
+    s.count(2)
+    s.send(' ')
     last = ready(s, 3)
-    assert fixture.identifier(2) in last and fixture.identifier(1) not in last, last
+    assert fixture.identifier(2) not in last, last
     s.count(3)
     s.send('b')
-    assert same_rows(ready(s, 1), first)
+    assert same_rows(ready(s, 2), second, known_total=3)
     s.count(3)
     s.send(' ')
     assert ready(s, 3) == last
     s.count(3)
     s.send(' ')
-    ready(s, 3)
+    assert ready(s, 3) == last
     s.count(3)
     assert s.terminal.child.poll() is None, 'final page exited automatically'
     s.send('b')
-    assert same_rows(ready(s, 1), first)
+    assert same_rows(ready(s, 2), second, known_total=3)
+    s.send('b')
+    assert same_rows(ready(s, 1), first, known_total=3)
     s.count(3)
     s.send('q')
     s.finish(0)
@@ -254,18 +267,16 @@ def loaded_chunks(s, server):
     s.count(1)
     s.send('i')
     s.count(1)
-    s.wait_visible(first, absent=last)
-    s.send('q')
-    s.finish(0)
+    s.finish(0, [fixture.identifier(1, row, prefix=prefix) for row in range(1, server.rows + 1)])
 
 
 def narrow_resize(s, server):
     s.wait_visible('page-001-item-001.jsonl')
-    s.wait_visible('q: quit')
+    assert re.search(r'\bq(?:: quit)?\s*$', s.wait_visible('Space: browse'))
     s.terminal.resize(20, 6)
     s.count(1)
     s.terminal.resize(40, 10)
-    s.wait_visible('q: quit')
+    assert re.search(r'\bq(?:: quit)?\s*$', s.wait_visible('Space: browse'))
     s.count(1)
     s.send('q')
     s.finish(0)
@@ -340,17 +351,20 @@ def pipe_checks(binary, baseline, output):
                 env['OPENAI_BASE_URL'] = f'http://127.0.0.1:{server.server_port}/v1'
                 result = subprocess.run([str(binary), 'files', 'list', flag], env=env, stdin=subprocess.DEVNULL,
                                         capture_output=True, timeout=10)
-                assert result.returncode != 0 and requests(server) == [], (result, requests(server))
-                (output / (flag[2:] + '.stderr')).write_bytes(result.stderr)
-                checks.append({'name': 'removed-' + flag[2:], 'result': 'PASS', 'status': result.returncode})
+                if flag == '--pager':
+                    assert result.returncode == 0 and len(requests(server)) == 3, (result, requests(server))
+                    assert b'q: quit' not in result.stdout and b'\x1b[?1049h' not in result.stdout
+                else:
+                    assert result.returncode != 0 and requests(server) == [], (result, requests(server))
+                checks.append({'name': 'pipe-' + flag[2:], 'result': 'PASS', 'status': result.returncode})
         for command in (['files', 'list'], ['batches', 'list'], ['admin', 'organization', 'projects', 'list'], ['models', 'list']):
             result = subprocess.run([str(binary), 'help', '--all', *command], env=env, stdin=subprocess.DEVNULL,
                                     capture_output=True, timeout=10)
-            assert result.returncode == 0 and b'--pager' not in result.stdout and b'--no-pager' not in result.stdout, (command, result)
+            assert result.returncode == 0 and b'--pager' in result.stdout and b'--no-pager' not in result.stdout, (command, result)
             assert b'Space' in result.stdout and b'back' in result.stdout, (command, result.stdout)
             (output / ('help-' + command[0] + '.txt')).write_bytes(result.stdout)
             checks.append({'name': 'help-' + command[0], 'result': 'PASS'})
-    print('PASS pipe output, removed flags, and executable help', flush=True)
+    print('PASS pipe output, list flags, and executable help', flush=True)
     return checks
 
 
@@ -392,8 +406,8 @@ def main():
         ('dumb-terminal', noninteractive, {'extra_env': {'TERM': 'dumb'}}),
         ('files-sigint', lambda s, server: external_signal(s, server, 'SIGINT', 130), {'pid_handshake': True}),
         ('files-sigterm', lambda s, server: external_signal(s, server, 'SIGTERM', 143), {'pid_handshake': True}),
-        ('models-sigint', lambda s, server: external_signal(s, server, 'SIGINT', 130), {'pid_handshake': True, 'fixture_options': {'resource': 'models', 'pages': 1, 'rows': 8}}),
-        ('models-sigterm', lambda s, server: external_signal(s, server, 'SIGTERM', 143), {'pid_handshake': True, 'fixture_options': {'resource': 'models', 'pages': 1, 'rows': 8}}),
+        ('models-sigint', lambda s, server: external_signal(s, server, 'SIGINT', 130), {'pid_handshake': True, 'height': 8, 'fixture_options': {'resource': 'models', 'pages': 1, 'rows': 8}}),
+        ('models-sigterm', lambda s, server: external_signal(s, server, 'SIGTERM', 143), {'pid_handshake': True, 'height': 8, 'fixture_options': {'resource': 'models', 'pages': 1, 'rows': 8}}),
     ]
     available = {name for name, _, _ in cases} | {'pipe-policy'}
     assert set(args.case) <= available, ('unknown cases', set(args.case) - available)

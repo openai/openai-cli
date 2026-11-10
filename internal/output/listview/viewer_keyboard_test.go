@@ -73,8 +73,7 @@ func TestViewerPageKeysPreserveLazyCachedNavigation(t *testing.T) {
 				return page, nil
 			}, func() {}, 80, 8)
 			m.Update(m.Init()())
-			// One forward command can fill its screen across the API boundary.
-			// Until that move needs a row beyond the first response, stay local.
+			// Show the final loaded row before a forward key requests the next page.
 			var next tea.Cmd
 			for steps := 0; next == nil && steps < 24; steps++ {
 				next = viewerPress(m, test.forward)

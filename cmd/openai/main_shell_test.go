@@ -134,8 +134,21 @@ func TestMainNativeShell(t *testing.T) {
 					if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, tc.want) {
 						t.Fatalf("help failed: %+v", got)
 					}
-					if tc.args == "help setup" && runtime.GOOS == "windows" {
-						guide := strings.Join(strings.Fields(got.stdout), " ")
+					if tc.args != "help setup" {
+						return
+					}
+					guide := got.stdout
+					if strings.Contains(guide, "Bash or zsh (") || strings.Contains(guide, "PowerShell (") {
+						t.Errorf("setup lists platforms unrelated to key entry:\n%s", guide)
+					}
+					if strings.Contains(guide, "read --silent --global --export") {
+						t.Errorf("setup includes Fish instructions for %s", shell.name)
+					}
+					if runtime.GOOS == "windows" {
+						if strings.Contains(guide, "read -rs OPENAI_API_KEY") {
+							t.Errorf("setup includes Bash instructions for %s", shell.name)
+						}
+						guide = strings.Join(strings.Fields(guide), " ")
 						start := strings.Index(guide, "run powershell first")
 						read := strings.Index(guide, `Read-Host "API key" -AsSecureString`)
 						if read < 0 || (start >= 0) != (shell.name == "cmd") || start > read {
@@ -144,6 +157,8 @@ func TestMainNativeShell(t *testing.T) {
 						if shell.name == "cmd" {
 							testSetupGuideKeyShell(t, executable)
 						}
+					} else if !strings.Contains(guide, "read -rs OPENAI_API_KEY") || strings.Contains(guide, "Read-Host") {
+						t.Errorf("setup must show only Bash or zsh key entry for %s:\n%s", shell.name, guide)
 					}
 				})
 			}

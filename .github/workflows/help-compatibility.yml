@@ -1226,7 +1226,7 @@ jobs:
                   "TestMainResourceSummaryPreservesPartialPageOnFailure": ["text", "json"],
                   "TestMainResourceSummaryWritesBeforeNextPageArrives": [],
                   "TestMainListNavigationNoninteractive": [f"{resource}/{mode}"
-                      for resource in ["files", "batches", "projects"]
+                      for resource in ["files", "batches", "projects", "skills"]
                       for mode in ["default", "auto", "text", "json", "jsonl", "raw", "extraction", "raw_extraction",
                                    "raw_output", "unlimited", "zero", "one", "page_boundary", "partial_second_page"]],
               }
@@ -1364,7 +1364,7 @@ jobs:
                       for resource in ['files', 'batches', 'admin.organization.projects', 'models']
                       for kind in ['known', 'unfamiliar']
                   ],
-                  'TestListPagerAdvanceAtVisibleRecordBoundary': ['4', '5', '6'],
+                  'TestListPagerAdvanceAtVisibleRecordBoundary': ['24', '25', '26'],
                   'TestRenderListNavigationPageHintPolicy': [
                       'files/table', 'files/table/ordinary', 'files/table/quiet', 'files/table/quiet_verbose',
                       'files/table/machine_errors', 'files/table/inherited_machine_errors', 'files/table/extracted_errors',

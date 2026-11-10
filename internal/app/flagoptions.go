@@ -91,14 +91,28 @@ func flagOptionsWithStdin(
 			return audio.EmbedVoiceBody(cmd, body, stdin)
 		}
 	}
-	if !audio.IsSpeechRequest(cmd) || bodyType != ApplicationJSON {
-		return requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
+	if bodyType == ApplicationJSON && isSkillCreate(cmd) {
+		hooks.SelectBodyType = selectSkillZIP
+		hooks.EmbedMultipart = func(body map[string]any, stdin *requestconfig.OnceStdinReader) (map[string]any, error) {
+			return embedSkillZIP(cmd, body, stdin)
+		}
 	}
 	var speechBody []byte
-	hooks.Encoding.ObserveJSON = append([]func([]byte){func(body []byte) { speechBody = body }}, observeJSON...)
+	speechRequest := bodyType == ApplicationJSON && audio.IsSpeechRequest(cmd)
+	if speechRequest {
+		hooks.Encoding.ObserveJSON = append([]func([]byte){func(body []byte) { speechBody = body }}, observeJSON...)
+	}
 	options, err = requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
 	if err != nil {
 		return nil, err
 	}
-	return audio.SpeechModelOptions(speechBody, options, func() []option.RequestOption { return GetDefaultRequestOptions(cmd) })
+	if speechRequest {
+		return audio.SpeechModelOptions(speechBody, options, func() []option.RequestOption { return GetDefaultRequestOptions(cmd) })
+	}
+	if bodyType == EmptyBody && cmd.Metadata[listPagerMetadata] == true {
+		// Scope the automatic size to requests that use the owning command's flags.
+		// The same SDK client can also perform independently bound lookups.
+		options = append(options, option.WithMiddleware(boundListRequest(cmd)))
+	}
+	return options, nil
 }

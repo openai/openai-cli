@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -327,6 +328,46 @@ func configureLocalHelpContent(root *cli.Command) {
 	}
 }
 
+// Keep the API's bounds and defaults alongside the distinction between request and output limits.
+func describePaginationFlags(command *cli.Command) {
+	for _, flag := range command.Flags {
+		maxItems, ok := flag.(*requestflag.Flag[int64])
+		if ok && maxItems.Name == "max-items" && maxItems.Usage == "The maximum number of items to return (use -1 for unlimited)." {
+			// Generated handlers distinguish omission from an explicit zero.
+			maxItems.DefaultText = "unlimited"
+			maxItems.Usage = "Maximum items to return; omit or use -1 for unlimited, or use 0 for no items."
+		}
+	}
+	if command.Metadata[listPagerMetadata] != true {
+		return
+	}
+	flags := pageFlags(command)
+	var usage, defaultText *string
+	var initial int64
+	switch size := flags.size.(type) {
+	case *requestflag.Flag[int64]:
+		usage, defaultText, initial = &size.Usage, &size.DefaultText, size.Default
+	case *requestflag.Flag[*int64]:
+		usage, defaultText = &size.Usage, &size.DefaultText
+		if size.Default != nil {
+			initial = *size.Default
+		}
+	default:
+		return
+	}
+	pageHelp := "Items per API page (one terminal screen when browsing)."
+	if flags.hasCap {
+		pageHelp = "Items per API page (one terminal screen when browsing, use --max-items to limit the total)."
+	}
+	if !strings.HasPrefix(*usage, pageHelp) {
+		*usage = strings.TrimSpace(pageHelp + " " + *usage)
+		*defaultText = "one terminal screen when browsing, otherwise the API default"
+		if initial > 0 {
+			*defaultText = fmt.Sprintf("one terminal screen when browsing, %d otherwise", initial)
+		}
+	}
+}
+
 func configureHelpGroups(root *cli.Command) {
 	batchCommands := root.Command("batches")
 	if models := root.Command("models"); models != nil {
@@ -367,6 +408,20 @@ func configureHelpGroups(root *cli.Command) {
 			resource = command.Name
 		}
 		switch resource {
+		case "admin:organization:external-storage":
+			if validate := command.Command("validate"); validate != nil {
+				setCompleteHelpContent(validate, clihelp.Content{
+					Summary: "Checks access by writing test files to your cloud storage. Success enables Private Safety Processing with the project's existing retention policy.",
+				})
+			}
+		case "skills", "skills:versions":
+			if create := command.Command("create"); create != nil {
+				for _, flag := range create.Flags {
+					if files, ok := flag.(*requestflag.Flag[[]string]); ok && files.Name == "files" {
+						files.Usage = "For a ZIP upload, pass the .zip path or use - to read the ZIP from stdin."
+					}
+				}
+			}
 		case "responses", "beta:responses":
 			if create := command.Command("create"); create != nil {
 				path := strings.ReplaceAll(resource, ":", " ") + " create"
@@ -444,14 +499,7 @@ func configureHelpGroups(root *cli.Command) {
 			}
 		}
 		command.Metadata["help-flag-labels"] = commandLabels
-		for _, flag := range command.Flags {
-			if limit, ok := flag.(*requestflag.Flag[int64]); ok && limit.Name == "max-items" &&
-				limit.Usage == "The maximum number of items to return (use -1 for unlimited)." {
-				// Generated handlers distinguish omission from an explicit zero.
-				limit.DefaultText = "unlimited"
-				limit.Usage = "Maximum items to return; omit or use -1 for unlimited, or use 0 for no items."
-			}
-		}
+		describePaginationFlags(command)
 		for _, child := range command.Commands {
 			visit(child, image || child == root.Command("images"))
 		}

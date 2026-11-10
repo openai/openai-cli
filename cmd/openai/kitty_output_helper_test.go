@@ -12,6 +12,10 @@ import (
 
 // Match executable dispatch when tests launch private helpers.
 func TestMain(m *testing.M) {
+	if len(os.Args) == 3 && os.Args[1] == "tokenizer" && os.Args[2] == "__output" {
+		main()
+		os.Exit(0)
+	}
 	if handled, err := terminalimage.RunKittyOutputHelper(os.Args); handled {
 		if err != nil {
 			os.Exit(1)

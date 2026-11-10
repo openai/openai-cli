@@ -44,6 +44,8 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	var syntaxError *json.SyntaxError
 	var pathError *os.PathError
 	var inputFailure *requestconfig.InputFileError
+	var structuredInputFailure *requestflag.StructuredInputError
+	var inputPolicyFailure *requestflag.InputPolicyError
 	var stdinFailure *requestflag.StdinValueError
 	var pagerFailure *clioutput.PagerError
 	var imageFailure *images.SavingError
@@ -53,6 +55,7 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	var projectAPIKeyUpdateFailure *projectAPIKeyUpdateError
 	var voiceTypeFailure *audio.VoiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
+	var helpPagerFailure *clihelp.PagerError
 	var debugCaptureFailure *debugCaptureOptionError
 	var adminCredentialsFailure *admin.CredentialsError
 	var adminSetupFailure *admin.SetupError
@@ -67,6 +70,10 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 	var webhookCanceled *webhooks.CreateCanceledError
 	var jsonStorageFailure *readable.JSONStreamStorageError
 	switch {
+	case errors.As(failure, &structuredInputFailure):
+		return structuredInputFailure.Error()
+	case errors.As(failure, &inputPolicyFailure):
+		return inputPolicyFailure.Error()
 	case errors.As(failure, &batchFailure):
 		return batchFailure.Error()
 	case errors.As(failure, &adminSetupFailure):
@@ -88,6 +95,8 @@ func localErrorMessage(root *cli.Command, failure error, output ...io.Writer) st
 		return webhookFailure.Error()
 	case errors.As(failure, &utilityFailure):
 		return utilityFailure.Error()
+	case errors.As(failure, &helpPagerFailure):
+		return helpPagerFailure.Error()
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
 		return "The request timed out. The API may have received it; check its status before repeating it."
 	case errors.As(failure, &modelsListFailure):
@@ -253,6 +262,25 @@ func knownLocalError(command *cli.Command, message string, output ...io.Writer) 
 				}
 				if flag == "--format" || flag == "--format-error" {
 					return "Invalid output format. Choose one of: " + strings.Join(OutputFormats, ", ") + "."
+				}
+				if base, ok := strings.CutSuffix(name, "-structured"); ok && declaredErrorFlag(command, base) != "" {
+					if strings.HasPrefix(reason, "invalid structured value for --"+name+": ") {
+						return parserErrorGuidance(command, "Invalid value for "+flag+". Expected valid JSON or YAML.", output...)
+					}
+					if reason == "cannot combine --"+base+" with --"+name {
+						return parserErrorGuidance(command, "Use either --"+base+" or "+flag+", not both.", output...)
+					}
+					if reason == "set --"+name+" before nested --"+base+" flags" {
+						return parserErrorGuidance(command, "Set "+flag+" before nested --"+base+" flags.", output...)
+					}
+				} else if declaredErrorFlag(command, name+"-structured") != "" && reason == "cannot combine --"+name+" with --"+name+"-structured" {
+					return parserErrorGuidance(command, "Use either "+flag+" or --"+name+"-structured, not both.", output...)
+				}
+				if base, _, ok := strings.Cut(name, "."); ok && declaredErrorFlag(command, base) != "" && reason == "cannot combine --"+name+" with a non-structured --"+base+" value" {
+					return parserErrorGuidance(command, "Use --"+base+"-structured with nested "+flag+".", output...)
+				}
+				if reason == "cannot combine --"+name+" with nested --"+name+" flags" && declaredErrorFlag(command, name+"-structured") != "" {
+					return parserErrorGuidance(command, "Use --"+name+"-structured before nested --"+name+" flags.", output...)
 				}
 				message := "Invalid value for " + flag + "."
 				if expected := parserFlagExpectedType(command, name); expected != "" {

@@ -24,6 +24,9 @@ type PreparationHooks struct {
 	DebugCapture        debugmiddleware.CaptureOptions
 	PreflightMultipart  func(map[string]any) error
 	ValidateCredentials func() error
+	// SelectBodyType resolves file unions after stdin policy has checked file
+	// paths, but before opening them.
+	SelectBodyType func(*cli.Command, map[string]any) (BodyContentType, error)
 	// ValidateResolvedInputs runs after file expansion, while preparation owns opened uploads.
 	ValidateResolvedInputs func(requestflag.RequestContents) error
 	// ResolvedJSONOptions inspects finalized inputs before JSON observers run.
@@ -173,6 +176,14 @@ func FlagOptions(
 		stdinReader = OnceStdinReader{Reader: stdin}
 	}
 
+	bodyMap, bodyIsMap := requestContents.Body.(map[string]any)
+	if bodyIsMap && hooks.SelectBodyType != nil {
+		bodyType, err = hooks.SelectBodyType(cmd, bodyMap)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Embed files passed as "@file.jpg" in the request body, headers, and query:
 	embedStyle := EmbedText
 	if bodyType == ApplicationOctetStream || bodyType == MultipartFormEncoded {
@@ -180,7 +191,6 @@ func FlagOptions(
 	}
 
 	var embedded any
-	bodyMap, bodyIsMap := requestContents.Body.(map[string]any)
 	if bodyType == MultipartFormEncoded && bodyIsMap && hooks.EmbedMultipart != nil {
 		embedded, err = hooks.EmbedMultipart(bodyMap, &stdinReader)
 	} else {
@@ -190,6 +200,10 @@ func FlagOptions(
 		return nil, err
 	}
 	requestContents.Body = embedded
+	// Structured source maps become available only after their source is resolved.
+	if resolvedBody, ok := embedded.(map[string]any); ok {
+		ApplyDataAliases(cmd, resolvedBody)
+	}
 	if bodyType == MultipartFormEncoded {
 		pendingMultipartUploads = embedded
 	}

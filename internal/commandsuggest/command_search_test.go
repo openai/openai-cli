@@ -150,8 +150,19 @@ func TestSearchUsesCatalogRoutesForRecovery(t *testing.T) {
 	require.Equal(t, "'/preview path/cli' models list", Search(candidates, "modles list")[0].Command)
 }
 
+func TestConversionSearchRequiresTheCompleteOrderedTask(t *testing.T) {
+	index := newSearchIndex([]Candidate{
+		{path: "wrap", taskPhrases: []TaskPhrase{{Text: "paper to parcel"}}},
+		{path: "unwrap", taskPhrases: []TaskPhrase{{Text: "parcel to paper"}}},
+	})
+	require.Equal(t, []int{0}, index.search("turn the paper into a parcel"))
+	require.Equal(t, []int{1}, index.search("convert parcel to paper"))
+	require.Empty(t, index.search("convert paper into parcel overnight"))
+	require.Empty(t, index.search("convert into parcel"))
+}
+
 func TestReorderedTaskPhrasesRequireTwoContentWords(t *testing.T) {
-	phrase := TaskPhrase{Text: "make an image", AnyWordOrder: true}
+	phrase := TaskPhrase{Text: "make an image", AnyWordOrder: true}.indexed()
 	require.Equal(t, reorderedTask, phrase.match("make image", []string{"make", "image"}))
 	require.Equal(t, noTaskMatch, phrase.match("an image", []string{"an", "image"}))
 	require.Equal(t, noTaskMatch, phrase.match("image a", []string{"image", "a"}))
