@@ -65,6 +65,8 @@ def screen(raw, width=96, height=28, history=None):
         for char in text:
             if char == '\r':
                 x, pending = 0, False
+            elif char == '\b':
+                x, pending = max(0, x - 1), False
             elif char == '\n':
                 newline()
                 pending = False

@@ -61,6 +61,14 @@ func renderTable(ctx context.Context, items []gjson.Result, width int, diagnosti
 func ConfigureRecordView(opts *listview.Options) {
 	ctx, style := opts.Context, opts.Style
 	fallback := opts.RenderRecordLabels
+	opts.ProjectPrintTable = func(items []gjson.Result) (transformers.ListTableProjection, error) {
+		models, supported, err := transformers.ModelRowsInOrder(ctx, items)
+		if err != nil || !supported {
+			return transformers.ListTableProjection{}, err
+		}
+		rows, err := modelCells(ctx, models)
+		return transformers.ListTableProjection{Headers: []string{"ID", "OWNER"}, Rows: rows, FullValues: true}, err
+	}
 	opts.RenderTable = func(items []gjson.Result, width int) (string, bool, error) {
 		rows, supported, err := transformers.ModelRowsInOrder(ctx, items)
 		if err != nil || !supported {
@@ -83,13 +91,11 @@ func ConfigureRecordView(opts *listview.Options) {
 	}
 }
 
-// modelLayout separates a pinned table from its complete two-field labeled fallback.
-func modelLayout(ctx context.Context, models []transformers.ModelListRow, width int, style listview.Style) (string, bool, error) {
+func modelCells(ctx context.Context, models []transformers.ModelListRow) ([][]string, error) {
 	rows := make([][]string, 0, len(models))
-	idWidth, ownerWidth := len("ID"), len("OWNER")
 	for _, model := range models {
 		if err := ctx.Err(); err != nil {
-			return "", false, err
+			return nil, err
 		}
 		owner := "(unknown)"
 		if model.Owner != nil {
@@ -99,8 +105,20 @@ func modelLayout(ctx context.Context, models []transformers.ModelListRow, width 
 		id := readable.Text(jsonview.SanitizeTerminalString(model.ID))
 		owner = readable.Text(jsonview.SanitizeTerminalString(owner))
 		rows = append(rows, []string{id, owner})
-		idWidth = max(idWidth, ansi.StringWidth(id))
-		ownerWidth = max(ownerWidth, ansi.StringWidth(owner))
+	}
+	return rows, ctx.Err()
+}
+
+// modelLayout separates a pinned table from its complete two-field labeled fallback.
+func modelLayout(ctx context.Context, models []transformers.ModelListRow, width int, style listview.Style) (string, bool, error) {
+	rows, err := modelCells(ctx, models)
+	if err != nil {
+		return "", false, err
+	}
+	idWidth, ownerWidth := len("ID"), len("OWNER")
+	for _, row := range rows {
+		idWidth = max(idWidth, ansi.StringWidth(row[0]))
+		ownerWidth = max(ownerWidth, ansi.StringWidth(row[1]))
 	}
 	var content strings.Builder
 	// The shared table caps non-ID columns at 32 cells. Use labels if it would

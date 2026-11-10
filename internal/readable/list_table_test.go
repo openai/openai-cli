@@ -104,3 +104,42 @@ func TestListTableFullValues(t *testing.T) {
 	require.False(t, fits)
 	require.Empty(t, narrow)
 }
+
+func TestListTableLayoutContinuesAcrossPages(t *testing.T) {
+	headers := []string{"ID", "FILENAME", "STATUS"}
+	var layout ListTableLayout
+	first, ok := layout.Render(headers, [][]string{{"file-a", "短.jsonl", "processed"}}, 92, 0, false)
+	require.True(t, ok)
+	longerID := "file-demo-research-20261007"
+	second, ok := layout.Render(headers, [][]string{{longerID, "東京-rocket🚀.jsonl", "uploaded"}}, 110, 0, false)
+	require.True(t, ok)
+	require.NotContains(t, second, "FILENAME")
+	row := strings.Split(first, "\n")[1]
+	for _, pair := range [][2]string{{"短.jsonl", "東京-rocket🚀.jsonl"}, {"processed", "uploaded"}} {
+		left, _, ok := strings.Cut(row, pair[0])
+		require.True(t, ok)
+		right, _, ok := strings.Cut(second, pair[1])
+		require.True(t, ok)
+		require.Equal(t, ansi.StringWidth(left), ansi.StringWidth(right))
+	}
+	require.Contains(t, second, longerID)
+	_, ok = layout.Render(headers, [][]string{{longerID, "n", "ready"}}, 40, 0, false)
+	require.False(t, ok, "shrinking the terminal cannot silently wrap frozen columns")
+	_, ok = layout.Render(headers, [][]string{{strings.Repeat("x", 100), "n", "ready"}}, 110, 0, false)
+	require.False(t, ok, "never truncate a protected ID")
+	_, ok = layout.Render([]string{"ID", "OTHER", "STATUS"}, [][]string{{"z", "n", "ready"}}, 110, 0, false)
+	require.False(t, ok, "the original header does not describe this schema")
+}
+
+func TestListTableLayoutPreservesFullValues(t *testing.T) {
+	headers := []string{"ID", "OWNER", "KIND"}
+	var layout ListTableLayout
+	_, ok := layout.Render(headers, [][]string{{"a", "A", "x"}}, 80, 0, true)
+	require.True(t, ok)
+	_, ok = layout.Render(headers, [][]string{{"b", strings.Repeat("界", 30), "y"}}, 80, 0, true)
+	require.False(t, ok)
+	longLast := strings.Repeat("x", 40)
+	text, ok := layout.Render(headers, [][]string{{"b", "B", longLast}}, 120, 0, true)
+	require.True(t, ok, "a wider terminal can extend the final column without shifting the others")
+	require.Contains(t, text, longLast)
+}
