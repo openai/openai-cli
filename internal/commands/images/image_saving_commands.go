@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	"github.com/openai/openai-cli/internal/clihelp"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	requestconfig "github.com/openai/openai-cli/internal/request"
@@ -105,7 +106,7 @@ type imagePresentation struct {
 func imageSavingWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc {
 	return func(ctx context.Context, command *cli.Command) (resultErr error) {
 		if command.Name == "create-variation" && usesOpenAIImagesAPI(command) {
-			const edit = "openai " + imageVariationExample
+			edit := clihelp.DisplayInvocation(command.Root()) + " " + imageVariationExample
 			return imageSavingFailure("OpenAI retired the image variations endpoint. Use images edit instead:\n  "+edit+"\nReplace photo.png with your image path.", nil, edit)
 		}
 		inline := command.String("inline")
