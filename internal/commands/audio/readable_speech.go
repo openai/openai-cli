@@ -36,7 +36,7 @@ func ConfigureSpeech(root *cli.Command, presentation func(context.Context, *cli.
 	const form = "Run without command flags in a terminal to open speech controls. " +
 		"The form retains audio, text, and instructions in private local history."
 	const inputs = "For direct output, supply --input, --model, and --voice through flags or piped JSON/YAML. " +
-		"Use gpt-realtime-2.1-mini for WAV or PCM over Realtime."
+		"Use " + realtimeSpeechModel + " for WAV or PCM over Realtime."
 	command.Description += "\n\n" + form + " Use audio history, inspect, play, and export for retained results. " +
 		"Explicit flags and pipes preserve direct output."
 	if command.Metadata == nil {
@@ -47,7 +47,7 @@ func ConfigureSpeech(root *cli.Command, presentation func(context.Context, *cli.
 		case *requestflag.Flag[string]:
 			switch f.Name {
 			case "model":
-				f.Usage = "The composer defaults to gpt-realtime-2.1-mini through the Realtime API. Choose a Speech API ID such as gpt-4o-mini-tts, tts-1, or tts-1-hd to use the Speech endpoint."
+				f.Usage = "The composer defaults to " + realtimeSpeechModel + " through the Realtime API. Choose a Speech API ID such as gpt-4o-mini-tts, tts-1, or tts-1-hd to use the Speech endpoint."
 			case "input":
 				f.Usage = "Text to read aloud. Speech API models accept up to 4096 characters."
 			case "response-format":

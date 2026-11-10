@@ -338,6 +338,25 @@ workflows. Do not create tags, publish binaries or packages, dispatch release
 workflows, change signing keys, or modify repository settings without explicit
 authorization.
 
+### Automatic model defaults
+
+Declare each model the CLI chooses for OpenAI requests in `internal/modeldefaults/defaults.go`.
+Add its endpoint and official recommendation to `scripts/check-model-defaults.py`.
+For nested model fields, verify guidance for that field on the actual endpoint.
+Keep explicit model selections, saved settings, and provider-specific behavior in their existing paths.
+
+Run the same documentation check as release CI from the repository root:
+
+```sh
+python3 scripts/check-model-defaults.py
+```
+
+The check reads current public guidance, model endpoint support, and deprecation notices without an API key.
+It reports each verified model in the CI log. An unchanged recommendation keeps the same model ID.
+If a recommendation changes, update the default and test the affected command.
+If the documentation changes format, verify the guidance before updating the parser and its offline fixtures.
+A failed download or ambiguous recommendation blocks verification. Retry a temporary outage after documentation access returns.
+
 ## Linking a local Go SDK
 
 To develop the CLI against a local checkout of the OpenAI Go SDK, run:
