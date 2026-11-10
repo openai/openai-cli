@@ -41,9 +41,8 @@ type imagePickerWorkspace struct {
 	send                                      func(tea.Msg)
 	styleDark, styleColor                     bool
 	styleProfile                              colorprofile.Profile
-	rows, painted                             []string
-	detailTones                               map[int]imagePickerTone
-	requestFailure                            string
+	painted                                   []string
+	diagnostics                               []imagePickerDiagnostic
 	displayRows                               []string
 	layoutWidth, layoutCount, layoutSelected  int
 	messageRows                               int

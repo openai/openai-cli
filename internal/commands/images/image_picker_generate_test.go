@@ -244,6 +244,63 @@ func TestImagePickerDraftExitDoesNotRequest(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+func imagePickerRequestText(t *testing.T, failure error, saved bool) string {
+	t.Helper()
+	var out bytes.Buffer
+	require.NoError(t, writeImagePickerRequestMessage(t.Context(), &out, failure, saved))
+	return strings.TrimSuffix(out.String(), "\n\n")
+}
+
+func TestImagePickerRequestDiagnosticPreservesClassificationPrecedence(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		failure    error
+		heading    string
+		credential bool
+	}{
+		{
+			name:       "API before transport timeout",
+			failure:    errors.Join(context.DeadlineExceeded, &openai.Error{StatusCode: 401}),
+			heading:    "Authentication failed",
+			credential: true,
+		},
+		{
+			name:    "first API error before later credentials",
+			failure: errors.Join(&openai.Error{StatusCode: 400}, &openai.Error{StatusCode: 401}),
+			heading: "Couldn't create your image.",
+		},
+		{
+			name:    "server error before transport timeout",
+			failure: errors.Join(context.DeadlineExceeded, &openai.Error{StatusCode: 500}),
+			heading: "The image service couldn't finish this request.",
+		},
+		{
+			name:    "status before unrelated API code",
+			failure: &openai.Error{StatusCode: 429, Code: "model_not_found"},
+			heading: "Too many requests right now.",
+		},
+		{
+			name:    "wrapped transport timeout",
+			failure: &url.Error{Op: "Post", URL: "https://synthetic.invalid/private-prompt", Err: context.DeadlineExceeded},
+			heading: "The image request timed out.",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, saved := range []bool{false, true} {
+				message := imagePickerRequestText(t, test.failure, saved)
+				require.True(t, strings.HasPrefix(message, test.heading+"\n"))
+				require.NotContains(t, message, "private-prompt")
+				if test.credential {
+					require.Equal(t, !saved, strings.Contains(message, "Draft not saved."))
+					require.Equal(t, saved, strings.Contains(message, "Your submitted draft is saved."))
+				} else {
+					require.Len(t, strings.Split(message, "\n"), 2, "non-credential failures must not add draft notices")
+				}
+			}
+		})
+	}
+}
+
 func TestImagePickerRequestGuidanceKeepsPrivateDetailsOut(t *testing.T) {
 	const private = "private-key.example/private-prompt\x1b]0;private-title\a"
 	for _, test := range []struct {
@@ -267,7 +324,7 @@ func TestImagePickerRequestGuidanceKeepsPrivateDetailsOut(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			err := fmt.Errorf("private wrapper: %w", &openai.Error{StatusCode: test.status, Code: test.code, Message: private, Param: private})
-			message := imagePickerRequestMessage(err, false)
+			message := imagePickerRequestText(t, err, false)
 			require.Contains(t, message, test.want)
 			for _, hidden := range []string{"private", "\x1b", "\a", "--format-error", "help --all", "HTTP"} {
 				require.NotContains(t, message, hidden)
@@ -282,7 +339,7 @@ func TestImagePickerRequestGuidanceKeepsPrivateDetailsOut(t *testing.T) {
 		{io.ErrUnexpectedEOF, "The connection to the image service failed"},
 	} {
 		err := &url.Error{Op: "Post", URL: private, Err: test.cause}
-		message := imagePickerRequestMessage(err, false)
+		message := imagePickerRequestText(t, err, false)
 		require.Contains(t, message, test.want)
 		require.NotContains(t, message, "private")
 	}
@@ -291,7 +348,7 @@ func TestImagePickerRequestGuidanceKeepsPrivateDetailsOut(t *testing.T) {
 func TestImagePickerCredentialGuidanceKeepsRecoveryCompact(t *testing.T) {
 	for _, status := range []int{401, 403} {
 		for _, saved := range []bool{false, true} {
-			message := imagePickerRequestMessage(fmt.Errorf("private wrapper: %w", &openai.Error{
+			message := imagePickerRequestText(t, fmt.Errorf("private wrapper: %w", &openai.Error{
 				StatusCode: status, Message: "synthetic-private-key", Param: "synthetic-private-prompt",
 			}), saved)
 			require.Len(t, strings.Split(message, "\n"), 3, "one cause, one action, one draft notice")
@@ -322,7 +379,7 @@ func TestImagePickerRequestWriterKeepsPlainOutputSafe(t *testing.T) {
 	var out bytes.Buffer
 	err := writeImagePickerRequestMessage(t.Context(), &out, &openai.Error{StatusCode: 401, Message: "private-server-detail"}, false)
 	require.NoError(t, err)
-	require.Contains(t, out.String(), "Authentication failed")
+	require.Equal(t, "Authentication failed\nCheck your API key and API settings, then reopen Images in this terminal.\nDraft not saved. Copy your prompt before exiting.\n\n", out.String())
 	require.NotContains(t, out.String(), "\x1b")
 	require.NotContains(t, out.String(), "\a")
 	require.NotContains(t, out.String(), "private-server-detail")
