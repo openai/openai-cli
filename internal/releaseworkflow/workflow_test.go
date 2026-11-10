@@ -172,6 +172,75 @@ func TestSDKSourcePreparationIsIsolatedFromPRCode(t *testing.T) {
 	}
 }
 
+func TestReleaseRequiresLiveModelVerification(t *testing.T) {
+	t.Parallel()
+
+	create := readWorkflow(t, "create-releases.yml").Jobs
+	verify := create["model-defaults"]
+	release := create["release"]
+	if release.Needs != "model-defaults" || verify.If != release.If || verify.ContinueOnError ||
+		verify.Environment != "" || !reflect.DeepEqual(verify.Permissions, map[string]string{"contents": "read"}) {
+		t.Fatal("release-please must depend on an unprivileged model check for every release trigger")
+	}
+	checkoutIndex, checkout := requireStep(t, verify, "Checkout")
+	checkIndex, check := requireStep(t, verify, "Verify model defaults")
+	if checkout.Uses != checkoutAction || checkout.With["persist-credentials"] != false || checkoutIndex >= checkIndex {
+		t.Fatal("model verification must use the event source without persisted credentials")
+	}
+
+	publish := readWorkflow(t, "publish-release.yml").Jobs["release-inputs"]
+	tagIndex, _ := requireStep(t, publish, "Ensure release tag is on main")
+	verifyIndex, tagCheck := requireStep(t, publish, "Verify model defaults for the release tag")
+	generateIndex, _ := requireStep(t, publish, "Generate release inputs")
+	if !(tagIndex < verifyIndex && verifyIndex < generateIndex) {
+		t.Fatal("model verification must run against the validated tag before generating release artifacts")
+	}
+	for _, step := range []workflowStep{check, tagCheck} {
+		if step.Run != "python3 -I scripts/check-model-defaults.py" || step.If != "" || step.ContinueOnError || len(step.Env) != 0 {
+			t.Fatalf("%q must run the live checker unconditionally without credentials", step.Name)
+		}
+	}
+}
+
+func TestReleaseCandidateChecksModelDefaultsWhenVersionChanges(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("release candidate CI runs Bash on Ubuntu")
+	}
+	_, step := requireStep(t, readWorkflow(t, "ci.yml").Jobs["lint"], "Verify model defaults for release candidates")
+	if step.ContinueOnError || step.If != "github.event_name == 'pull_request' || github.event_name == 'merge_group'" ||
+		step.Env["BASE_SHA"] != "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}" {
+		t.Fatal("release pull requests and merge groups must compare the candidate with their event's base")
+	}
+
+	dir := t.TempDir()
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GIT_CONFIG_NOSYSTEM=1"}
+	writeReleaseTestFile(t, filepath.Join(dir, "scripts", "check-model-defaults.py"), []byte("raise SystemExit(23)"))
+	setup := exec.Command("bash", "-ec", `git init -q
+git -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m base
+echo '{"." : "1.2.3"}' > .release-please-manifest.json
+git add .release-please-manifest.json
+git -c user.name=Test -c user.email=test@example.invalid commit -q -m release`)
+	setup.Dir, setup.Env = dir, env
+	if output, err := setup.CombinedOutput(); err != nil {
+		t.Fatalf("prepare release fixture: %v: %s", err, output)
+	}
+
+	for _, tc := range []struct {
+		base string
+		exit int
+	}{{"HEAD", 0}, {"HEAD^", 23}, {"missing-base", 23}} {
+		t.Run(tc.base, func(t *testing.T) {
+			run := exec.Command("bash", "-ec", step.Run)
+			run.Dir, run.Env = dir, append(env, "BASE_SHA="+tc.base)
+			output, err := run.CombinedOutput()
+			if run.ProcessState == nil || run.ProcessState.ExitCode() != tc.exit {
+				t.Fatalf("release check for %q: expected exit %d, got %v: %s", tc.base, tc.exit, err, output)
+			}
+		})
+	}
+}
+
 func TestReleaseInputsUseAnIsolatedUnprivilegedJob(t *testing.T) {
 	t.Parallel()
 
