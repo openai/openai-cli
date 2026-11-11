@@ -41,7 +41,7 @@ func imagePickerWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 		// The picker reuses this binding across native frames and their cleanup.
 		var closeOutput func() error
 		konsole := interactiveImageEligible(true, true, os.Getenv, runtime.GOOS)
-		iterm := os.Getenv("TERM_PROGRAM") == "iTerm.app" && savedImageProtocol("auto", true, os.Getenv) == "iterm"
+		iterm := imagePickerUsesITerm()
 		if konsole || iterm {
 			// Bind before any nested writer so group signals leave a helper
 			// available to restore the temporary screen and terminal modes.
@@ -324,6 +324,10 @@ func setTemporaryImagePickerFlag[T string | *string | *int64](flag *requestflag.
 	}
 	*flag = replacement
 	return func() { *flag = original }, nil
+}
+
+func imagePickerUsesITerm() bool {
+	return os.Getenv("TERM_PROGRAM") == "iTerm.app" && savedImageProtocol("auto", true, os.Getenv) == "iterm"
 }
 
 func imagePickerRequested(command *cli.Command) bool {

@@ -7,8 +7,24 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/terminalimage"
 )
+
+// Reserve the panel before saving its origin. At the bottom of the terminal,
+// these line feeds scroll first, while the saved cursor still belongs to the caller.
+func imagePickerITermFrameAnchor(rows int) string {
+	if rows <= 1 {
+		return "\r" + ansi.SaveCursor
+	}
+	return "\r" + strings.Repeat("\n", rows-1) + ansi.CursorUp(rows-1) + ansi.SaveCursor
+}
+
+// iTerm2's DECSC saved both the panel origin and the incoming wrap mode.
+// Restore both before positioning an image or handing input back to the shell.
+func imagePickerITermFrame(content string, width int) string {
+	return ansi.SetModeAutoWrap + terminal.InlineFrame(content, width) + ansi.RestoreCursor
+}
 
 // A region identifies the source rows visible together in one iTerm2 placement.
 type imagePickerRegion struct{ first, rows int }

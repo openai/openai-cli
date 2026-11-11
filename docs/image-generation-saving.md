@@ -22,6 +22,8 @@ An optional [Tab shortcut](image-picker-shortcuts.md) opens the same picker in
 Bash 4.3+, zsh and fish. Other shells use Enter.
 
 After generation, the picker keeps your prompt and settings below the saved result.
+In iTerm2, the mouse wheel and trackpad scroll terminal history, including after Ctrl+C.
+Use the arrow keys in **Images** to browse the gallery.
 Focus **Images** and press Enter to **Expand** the selected image.
 In supported Konsole sessions, Expand uses a temporary screen with native image pixels.
 Resize the terminal while Expand is open to refit the image.

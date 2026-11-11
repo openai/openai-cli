@@ -327,9 +327,10 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		if m.width < 50 || m.viewHeight() < 16 {
 			output.WriteString("\r\n")
 		}
-		w.started = true
+		// iTerm owns the saved cursor only after the first anchor write succeeds.
+		w.started = !w.iterm
 	}
-	if len(w.images) > 0 {
+	if len(w.images) > 0 && !w.iterm {
 		output.WriteString(w.mouse.enable())
 	}
 	output.WriteString(ansi.ResetModeTextCursorEnable)
@@ -338,15 +339,30 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 	if repaint {
 		w.frameRevision++
 		w.origin, w.originKnown = 0, len(lines) == height
-		if len(w.painted) > 0 {
+		if len(w.painted) > 0 || w.iterm && w.started {
 			w.clearGraphics(&output)
 			output.WriteString(ansi.RestoreCursor)
 		}
 		for i, line := range lines {
 			lines[i] = w.nativeWireLine(i, line)
 		}
-		output.WriteString(cliterminal.InlineFrame(strings.Join(lines, "\n"), width))
-		output.WriteString(ansi.SaveCursor)
+		content := strings.Join(lines, "\n")
+		if w.iterm {
+			// Commit the anchor before a cancelable transfer can change wrapping.
+			output.WriteString(imagePickerITermFrameAnchor(len(lines)))
+			anchorCtx, cancel := context.WithTimeout(ctx, time.Second)
+			err := terminalimage.WriteControl(anchorCtx, w.out, output.String())
+			cancel()
+			if err != nil {
+				return err
+			}
+			w.started = true
+			output.Reset()
+			output.WriteString(imagePickerITermFrame(content, width))
+		} else {
+			output.WriteString(cliterminal.InlineFrame(content, width))
+			output.WriteString(ansi.SaveCursor)
+		}
 	} else {
 		for i, line := range lines {
 			if keys[i] == w.painted[i] {
@@ -380,11 +396,9 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		w.kitty = w.kitty || strings.Contains(line, "\x1b_G")
 	}
 	output.WriteString(ansi.RestoreCursor)
-	// A replaced transfer may never emit its final controls. The completion
-	// redraw sends a new cursor query after the native bytes have committed.
 	transferImage := len(parts) > 0 || w.iterm && strings.Contains(output.String(), "\x1b]1337;File=")
-	if !transferImage && !w.originKnown && !w.originQueryPending && w.originQueryRevision != w.frameRevision {
-		// Report the saved panel origin, before returning to the prompt cursor.
+	if !w.iterm && !w.originKnown && !w.originQueryPending && w.originQueryRevision != w.frameRevision {
+		// Only terminals with gallery pointer controls need an absolute origin.
 		w.originQueryPending, w.originQueryRevision = true, w.frameRevision
 		output.WriteString(ansi.RequestCursorPositionReport)
 	}

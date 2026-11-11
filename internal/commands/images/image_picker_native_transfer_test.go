@@ -13,13 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestImagePickerITermReplacementPreservesPendingCursorQuery(t *testing.T) {
+func TestImagePickerITermReplacementDoesNotQueryTheShellCursor(t *testing.T) {
 	m, w := browserForTest(t, 120, 60)
 	m.hasImages, w.iterm = false, true
 	p := &imagePickerInline{model: m, workspace: w, profile: colorprofile.ASCII}
 	require.NoError(t, w.draw(m, p.profile, false, true))
-	require.True(t, w.originQueryPending)
-	original := w.originQueryRevision
+	original := w.frameRevision
 	ctx, cancel := context.WithCancel(t.Context())
 	transfer := &imagePickerNativeTransfer{context: ctx, cancel: cancel, inlineColumn: 55,
 		size: interactiveImageSize{width: m.width, height: m.height}, replace: make(chan struct{}, 1), done: make(chan struct{})}
@@ -31,12 +30,10 @@ func TestImagePickerITermReplacementPreservesPendingCursorQuery(t *testing.T) {
 	close(transfer.done)
 	p.updateWorkspace(imagePickerNativeWritten{transfer})
 	require.Greater(t, w.frameRevision, original)
-	p.updateWorkspace(tea.CursorPositionMsg{Y: 8})
-	require.False(t, w.originKnown)
-	require.True(t, w.originQueryPending)
-	p.updateWorkspace(tea.CursorPositionMsg{Y: 4})
-	require.True(t, w.originKnown)
-	require.Equal(t, 4, w.origin)
+	require.False(t, w.originQueryPending)
+	wire, err := os.ReadFile(w.out.Name())
+	require.NoError(t, err)
+	require.NotContains(t, string(wire), "\x1b[6n")
 }
 
 // A terminal can stop consuming a native frame while waiting for display
