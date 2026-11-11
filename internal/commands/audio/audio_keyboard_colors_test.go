@@ -124,9 +124,12 @@ func TestAudioBusyViewsKeepCancellationDistinctFromProgress(t *testing.T) {
 			}
 		}
 		require.NotEmpty(t, progress)
-		require.Contains(t, progress, "\x1b[38;2;138;168;255mCtrl+C\x1b[m")
+		rows := strings.Split(view, "\n")
+		footer := rows[len(rows)-1]
+		require.NotContains(t, progress, "Ctrl+C")
+		require.Contains(t, footer, "\x1b[38;2;138;168;255mCtrl+C\x1b[m")
 		require.Contains(t, progress, "\x1b[38;2;164;172;194mWorking…")
-		require.Contains(t, progress, "\x1b[38;2;164;172;194mcancels\x1b[m")
+		require.Contains(t, footer, "\x1b[38;2;164;172;194mcancels\x1b[m")
 		withoutMarker := strings.ReplaceAll(progress, "\x1b[1;38;2;138;168;255m› \x1b[m", "")
 		require.NotContains(t, withoutMarker, "\x1b[1;", "only the existing focus marker may be bold")
 	}

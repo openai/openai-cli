@@ -381,8 +381,7 @@ func (m *audioWorkbench) helpView() tea.View {
 	if len(rows) > height {
 		footer = m.shortcutLine([2]string{"↑↓", "scroll"}, [2]string{"Esc", "back"})
 	}
-	lines = append(lines, "", footer)
-	return tea.NewView(m.fitAudio(lines, 1))
+	return m.panelView(lines, nil, []string{footer}, nil)
 }
 
 func (m *audioWorkbench) progressView() string {
@@ -390,5 +389,5 @@ func (m *audioWorkbench) progressView() string {
 	if action == "" {
 		action = "Working"
 	}
-	return m.muted().Render(fmt.Sprintf("%s… %.1fs  ", action, time.Since(m.started).Seconds())) + m.keyHint("Ctrl+C", "cancels")
+	return m.muted().Render(fmt.Sprintf("%s… %.1fs", action, time.Since(m.started).Seconds()))
 }

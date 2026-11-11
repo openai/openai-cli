@@ -270,7 +270,7 @@ func (m *audioWorkbench) View() tea.View {
 		return tea.NewView("")
 	}
 	if !m.usable() {
-		return tea.NewView(m.fitAudio([]string{"Resize to 40 x 12.", m.keyHint("Ctrl+C", "exits.")}))
+		return m.panelView([]string{"Resize to 40 x 12.", m.keyHint("Ctrl+C", "exits.")}, nil, nil, nil)
 	}
 	switch m.modal {
 	case "recovery":
@@ -294,10 +294,10 @@ func (m *audioWorkbench) View() tea.View {
 		}
 		return m.seekView()
 	case "speed":
-		lines := []string{m.strong().Render("  Speed"), "  " + m.editorView(m.speedInput), "  " + m.muted().Render("0.25–4.00×"), "  " + m.hintLine([2]string{"Enter", "apply"}, [2]string{"Esc", "back"})}
-		footer := lines[len(lines)-1]
-		lines = append(lines[:len(lines)-1], m.feedbackLines()...)
-		return m.cursorView(append(lines, footer), 1, audioEditorCursor(m.speedInput, 2, 1))
+		lines := []string{m.strong().Render("  Speed"), "  " + m.editorView(m.speedInput), "  " + m.muted().Render("0.25–4.00×")}
+		lines = append(lines, m.feedbackLines()...)
+		footer := m.formShortcutRows([2]string{"Enter", "apply"}, [2]string{"Esc", "back"})
+		return m.panelView(lines, nil, footer, audioEditorCursor(m.speedInput, 2, 1))
 	}
 	if m.focus == audioFocusCommand && !m.busy {
 		return m.commandView()
@@ -308,9 +308,9 @@ func (m *audioWorkbench) View() tea.View {
 
 	if m.focus == 4 {
 		lines := m.workspaceAudioHeader()
-		footer := m.resultHintRows()
+		details, footer := m.workspaceDetails(), m.workspaceFooter()
 		controls := m.workspacePlayerControls()
-		budget := m.audioHeight() - len(lines) - len(controls) - len(footer)
+		budget := m.audioHeight() - len(lines) - len(controls) - len(details) - len(footer)
 		// Keep the seek rail visible when a save receipt and recovery hint share this screen.
 		if !m.result.hasWaveform() || budget > 2 {
 			lines = append([]string{m.strong().Render("Text to speech")}, lines...)
@@ -328,7 +328,7 @@ func (m *audioWorkbench) View() tea.View {
 		}
 		lines = append(lines, wave...)
 		lines = append(lines, controls...)
-		return tea.NewView(m.fitAudio(append(lines, footer...), len(footer)))
+		return m.panelView(lines, details, footer, nil)
 	}
 	rows, cursor, active := m.formRows(true)
 	actions := m.formActionRows()
@@ -339,14 +339,15 @@ func (m *audioWorkbench) View() tea.View {
 		}
 	}
 	rows = append(rows, actions...)
+	var details []string
 	footer := m.workspaceFooter()
 	if warning := m.retainedGenerationErrorRow(m.audioWidth()); warning != "" {
-		footer = append([]string{warning}, footer...)
+		details = []string{warning}
 	} else if m.result == nil {
 		rows = append(rows, "  "+m.emptyAudioStatus())
 	}
 	// Keep the active field visible even in the smallest usable terminal.
-	room := max(1, m.audioHeight()-len(footer))
+	room := max(1, m.audioHeight()-len(details)-len(footer))
 	if cursor != nil {
 		active = cursor.Y
 	}
@@ -356,7 +357,7 @@ func (m *audioWorkbench) View() tea.View {
 		cursor.Y -= start
 	}
 	rows = rows[start:min(len(rows), start+room)]
-	return m.cursorView(append(rows, footer...), len(footer), cursor)
+	return m.panelView(rows, details, footer, cursor)
 }
 
 // Position the native caret from the rendered rows so disclosures and validation
@@ -549,8 +550,7 @@ func (m *audioWorkbench) fieldValidationRows(field int) []string {
 // Keep related actions in one row, matching Left/Right navigation.
 func (m *audioWorkbench) formActionRows() []string {
 	active := !m.busy && m.focus == 2 && m.setting == 4
-	label := m.primaryText().Render("Generate speech") + "  " + m.keyHint("Ctrl+G", "")
-	generate := m.actionRow(label, active)
+	generate := m.actionRow(m.primaryText().Render("Generate speech"), active)
 	if m.busy && !m.framed() {
 		generate = m.label(m.progressView(), active)
 	}
@@ -690,7 +690,8 @@ func (m *audioWorkbench) resultHintRows() []string {
 			}
 		}
 		if r == nil && !m.busy {
-			return m.formShortcutRows(above, [2]string{"Ctrl+G", "Generate"}, [2]string{"Esc", "back"})
+			keys := m.withFailureShortcut(above, [2]string{"Ctrl+G", "Generate"}, [2]string{"Esc", "back"})
+			return m.formShortcutRows(keys...)
 		}
 		playAction := "play"
 		if r != nil {
@@ -716,13 +717,17 @@ func (m *audioWorkbench) resultHintRows() []string {
 			navigation = append(navigation, [2]string{"G", "time"})
 		}
 		movement := m.hintLine(navigation...)
-		controls := m.hintLine(control, [2]string{"Esc", "back"})
-		if m.busy {
-			lines = append(lines, "  "+m.progressView())
-		} else if ansi.StringWidth(movement)+ansi.StringWidth(controls)+4 <= m.audioWidth()-2 {
+		controlKeys := m.withFailureShortcut(control, [2]string{"Esc", "back"})
+		controls := m.hintLine(controlKeys...)
+		movementWidth, controlsWidth := ansi.StringWidth(movement), ansi.StringWidth(controls)
+		if movementWidth+controlsWidth+4 <= m.audioWidth()-2 {
 			lines = append(lines, "  "+movement+"    "+controls)
+		} else if longest := max(movementWidth, controlsWidth); longest <= m.audioWidth() {
+			// Keep navigation and playback on separate lines when the footer wraps.
+			indent := strings.Repeat(" ", min(2, m.audioWidth()-longest))
+			lines = []string{indent + movement, indent + controls}
 		} else {
-			lines = m.formShortcutRows(append(navigation, control, [2]string{"Esc", "back"})...)
+			lines = m.formShortcutRows(append(navigation, controlKeys...)...)
 		}
 	}
 	return lines
@@ -762,8 +767,7 @@ func (m *audioWorkbench) saveView() tea.View {
 		hint = m.hintLine([2]string{"Tab", "next"}, [2]string{"Enter", "done"}, [2]string{"Esc", "back"})
 	}
 	lines = append(lines, m.feedbackLines()...)
-	lines = append(lines, "  "+hint)
-	return m.cursorView(lines, 1, cursor)
+	return m.panelView(lines, nil, []string{"  " + hint}, cursor)
 }
 
 func audioFileSize(bytes int64) string {
@@ -815,8 +819,8 @@ func (m *audioWorkbench) actionRows(width, active int) []string {
 func (m *audioWorkbench) moreView() tea.View {
 	lines := []string{"  " + m.strong().Render("More actions"), ""}
 	lines = append(lines, m.actionRows(m.audioWidth(), m.moreChoice)...)
-	lines = append(lines, "", m.shortcutLine([2]string{"↑↓", "choose"}, [2]string{"Enter", "open"}, [2]string{"Esc", "back"}))
-	return tea.NewView(m.fitAudio(lines, 1))
+	footer := m.formShortcutRows([2]string{"↑↓", "choose"}, [2]string{"Enter", "open"}, [2]string{"Esc", "back"})
+	return m.panelView(lines, nil, footer, nil)
 }
 
 func (m *audioWorkbench) feedbackLines() []string {
@@ -827,18 +831,6 @@ func (m *audioWorkbench) feedbackLines() []string {
 	if note == "" {
 		return nil
 	}
-	if note == audioActionFailedNote {
-		switch {
-		case m.modal != "":
-			note += " Esc returns."
-		case m.focus == 4 && m.result != nil && m.result.entry.Settings.Preview && m.priorResult != nil:
-			note += " Esc restores your previous result."
-		case m.focus == 4:
-			note += " Esc returns to Text."
-		default:
-			note += " Esc exits with the error."
-		}
-	}
 	lines := strings.Split(ansi.Wrap(readable.Text(note), max(1, m.audioWidth()), ""), "\n")
 	if len(lines) > 2 {
 		lines = []string{lines[0], ansi.Truncate(strings.Join(lines[1:], " "), m.audioWidth(), "…")}
@@ -846,40 +838,54 @@ func (m *audioWorkbench) feedbackLines() []string {
 	return lines
 }
 
-// The footer count is structural; never infer controls from user-authored text.
-func (m *audioWorkbench) fitAudio(lines []string, footerCount ...int) string {
-	var rows []string
-	for _, line := range lines {
-		for _, row := range strings.Split(line, "\n") {
-			if m.usable() {
-				prefix := "  "
-				if m.framed() {
-					prefix = ""
-				}
-				rows = append(rows, prefix+ansi.Truncate(row, m.audioWidth(), "…"))
-			} else {
-				rows = append(rows, ansi.Truncate(row, max(1, m.width-1), "…"))
+// Keep status and selection details inside the panel. Only keyboard shortcuts
+// follow its bottom border. Each group can contain wrapped terminal rows.
+func (m *audioWorkbench) panelView(body, details, shortcuts []string, cursor *tea.Cursor) tea.View {
+	width, height := m.audioWidth(), m.audioHeight()
+	if !m.usable() {
+		width = max(1, m.width-1)
+	}
+	fit := func(lines []string) []string {
+		var rows []string
+		for _, line := range lines {
+			for _, row := range strings.Split(line, "\n") {
+				rows = append(rows, ansi.Truncate(row, width, "…"))
 			}
 		}
+		return rows
 	}
-	height := m.audioHeight()
-	if !m.framed() {
-		return strings.Join(rows[:min(len(rows), height)], "\n")
+	body, details, shortcuts = fit(body), fit(details), fit(shortcuts)
+	shortcuts = shortcuts[:min(len(shortcuts), height)]
+	details = details[:min(len(details), height-len(shortcuts))]
+	bodyLimit := height - len(details) - len(shortcuts)
+	body = body[:min(len(body), bodyLimit)]
+	visibleBody := len(body)
+
+	var rows []string
+	inset := "  "
+	if m.framed() {
+		border := m.borderStyle()
+		rule := strings.Repeat("─", width)
+		edge := border.Render("│")
+		rows = append(rows, border.Render("╭"+rule+"╮"))
+		body = append(body, make([]string, bodyLimit-len(body))...)
+		for _, row := range append(body, details...) {
+			rows = append(rows, edge+row+strings.Repeat(" ", width-ansi.StringWidth(row))+edge)
+		}
+		rows = append(rows, border.Render("╰"+rule+"╯"))
+		inset = " " // Align shortcuts with body text across the border cell.
+	} else {
+		if !m.usable() {
+			inset = ""
+		}
+		for _, row := range append(body, details...) {
+			rows = append(rows, inset+row)
+		}
 	}
-	count := 0
-	if len(footerCount) > 0 {
-		count = min(footerCount[0], len(rows), height)
+	for _, row := range shortcuts {
+		rows = append(rows, inset+row)
 	}
-	body, footer := rows[:len(rows)-count], rows[len(rows)-count:]
-	body = body[:min(len(body), height-count)]
-	rows = make([]string, height)
-	copy(rows, body)
-	copy(rows[height-count:], footer)
-	border := m.borderStyle()
-	width := m.audioWidth()
-	framed := []string{border.Render("╭" + strings.Repeat("─", width) + "╮")}
-	for _, row := range rows {
-		framed = append(framed, border.Render("│")+row+strings.Repeat(" ", max(0, width-ansi.StringWidth(row)))+border.Render("│"))
-	}
-	return strings.Join(append(framed, border.Render("╰"+strings.Repeat("─", width)+"╯")), "\n")
+	view := tea.NewView(strings.Join(rows, "\n"))
+	view.Cursor = m.panelCursor(cursor, visibleBody)
+	return view
 }

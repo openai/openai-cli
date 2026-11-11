@@ -61,9 +61,9 @@ func (m *audioWorkbench) workspaceView() tea.View {
 	rows = append(rows, "")
 	rows = append(rows, m.formActionRows()...)
 	rows = append(rows, "", m.listeningRule(), "")
-	footer := m.workspaceFooter()
+	details, footer := m.workspaceDetails(), m.workspaceFooter()
 	// Most hints use one or two rows. Focus must not resize the player between them.
-	footerRows := max(2, len(footer))
+	footerRows := max(2, len(details)+len(footer))
 	header, controls := m.workspaceAudioHeader(), m.workspacePlayerControls()
 	if m.modal == "seek" {
 		field := m.primaryText().Render(audioSeekLabel) + m.editorView(m.seekInput)
@@ -130,22 +130,30 @@ func (m *audioWorkbench) workspaceView() tea.View {
 		cursor = audioEditorCursor(m.seekInput, len(audioSeekLabel), len(lines))
 	}
 	lines = append(lines, controls...)
-	return m.cursorView(append(lines, footer...), len(footer), cursor)
+	return m.panelView(lines, details, footer, cursor)
 }
 
-func (m *audioWorkbench) workspaceFooter() []string {
-	if m.busy {
-		if m.framed() {
-			return []string{"  " + m.progressView()}
-		}
-		return m.formShortcutRows([2]string{"Ctrl+C", "cancel"})
+func (m *audioWorkbench) workspaceDetails() []string {
+	if m.busy && (m.framed() || m.focus == 4) {
+		return []string{"  " + m.progressView()}
 	}
 	if m.modal == "seek" {
 		hint := "  " + m.muted().Render("Enter seconds or M:SS, for example 2.5 or 1:02.500.")
 		if m.seekError != "" {
 			hint = "  " + m.warningStyle().Render(m.seekError)
 		}
-		return []string{hint, m.shortcutLine([2]string{"Enter", "apply"}, [2]string{"Esc", "cancel"})}
+		return []string{hint}
+	}
+	return nil
+}
+
+func (m *audioWorkbench) workspaceFooter() []string {
+	if m.busy {
+		return m.formShortcutRows([2]string{"Ctrl+C", "cancels"})
+	}
+	if m.modal == "seek" {
+		keys := m.withFailureShortcut([2]string{"Enter", "apply"}, [2]string{"Esc", "cancel"})
+		return m.formShortcutRows(keys...)
 	}
 	if m.focus == 4 {
 		return m.resultHintRows()
@@ -155,7 +163,8 @@ func (m *audioWorkbench) workspaceFooter() []string {
 		below = "waveform"
 	}
 	if m.inlineActions() && m.modal == "more" {
-		return m.formShortcutRows([2]string{"←→", "choose"}, [2]string{"↑", "Settings"}, [2]string{"↓", below}, [2]string{"Enter", "open"}, [2]string{"Esc", "back"})
+		keys := m.withFailureShortcut([2]string{"←→", "choose"}, [2]string{"↑", "Settings"}, [2]string{"↓", below}, [2]string{"Enter", "open"}, [2]string{"Ctrl+G", "Generate"}, [2]string{"Esc", "back"})
+		return m.formShortcutRows(keys...)
 	}
 	nextKey, next := "Tab", "Settings"
 	if m.focus == 0 && m.instructionsSupported() {
@@ -212,7 +221,8 @@ func (m *audioWorkbench) workspaceFooter() []string {
 		shortcuts = append(shortcuts, [2]string{"Enter", action})
 	} else if m.focus == 2 && m.setting < 4 {
 		if m.speedEditing {
-			return m.formShortcutRows([2]string{"Enter", "apply"}, [2]string{"Esc", "cancel"}, [2]string{"←→", "0.25"})
+			keys := m.withFailureShortcut([2]string{"Enter", "apply"}, [2]string{"Esc", "cancel"}, [2]string{"←→", "0.25"})
+			return m.formShortcutRows(keys...)
 		}
 		action := "change"
 		if m.setting == 3 {
@@ -228,8 +238,15 @@ func (m *audioWorkbench) workspaceFooter() []string {
 	if m.focus == 2 && m.settingsExpanded && audioAdvancedSetting(m.setting) {
 		shortcuts = append(shortcuts, [2]string{"Esc", "Settings"})
 	}
-	shortcuts = append(shortcuts, [2]string{"Ctrl+S", "Save"}, [2]string{"Ctrl+C", "Exit"})
-	return m.formShortcutRows(shortcuts...)
+	shortcuts = append(shortcuts, [2]string{"Ctrl+G", "Generate"}, [2]string{"Ctrl+S", "Save"}, [2]string{"Ctrl+C", "Exit"})
+	return m.formShortcutRows(m.withFailureShortcut(shortcuts...)...)
+}
+
+func (m *audioWorkbench) withFailureShortcut(keys ...[2]string) [][2]string {
+	if m.activeFailure() {
+		keys = append(keys, [2]string{"F1", "details"})
+	}
+	return keys
 }
 
 // A changed draft must never appear to describe an older retained recording.
@@ -261,10 +278,8 @@ func (m *audioWorkbench) retainedGenerationErrorRow(width int) string {
 	if !m.retainedGenerationFailure || m.result == nil {
 		return ""
 	}
-	hint := m.keyHint("F1", "details")
-	width -= ansi.StringWidth(hint) + 6
-	summary := ansi.Truncate(readable.Text(m.failure.Summary), width, "…")
-	return "  " + m.failureStyle().Render("! "+summary) + "  " + hint
+	summary := ansi.Truncate(readable.Text(m.failure.Summary), max(1, width-4), "…")
+	return "  " + m.failureStyle().Render("! "+summary)
 }
 
 func (m *audioWorkbench) workspaceAudioHeader() []string {

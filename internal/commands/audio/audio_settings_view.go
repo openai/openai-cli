@@ -51,7 +51,7 @@ func (m *audioWorkbench) choiceView() tea.View {
 	footer := m.formShortcutRows(hints...)
 	count := len(m.choices)
 	if count == 0 {
-		return tea.NewView(m.fitAudio(append(lines, footer...), len(footer)))
+		return m.panelView(lines, nil, footer, nil)
 	}
 	column, detailWidth := 0, 0
 	for _, value := range m.choices {
@@ -87,7 +87,7 @@ func (m *audioWorkbench) choiceView() tea.View {
 		lines = append(lines, m.choiceRow(row, i == choice, m.audioWidth()))
 	}
 	lines = append(lines, notes...)
-	return tea.NewView(m.fitAudio(append(lines, footer...), len(footer)))
+	return m.panelView(lines, nil, footer, nil)
 }
 
 func audioChoiceLabel(setting int, value string) string {

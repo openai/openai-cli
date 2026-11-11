@@ -165,7 +165,7 @@ func TestAudioCompactSeekKeepsRailAfterFailedRetry(t *testing.T) {
 	for i, row := range rows {
 		if audioIsMeasuredRail(row) {
 			require.Positive(t, i)
-			require.Contains(t, rows[i-1], "┃", "the smallest player keeps its measured row beside the rail")
+			require.Contains(t, rows[i-1], "┃", "the smallest player keeps its measured row beside the rail:\n%s", view)
 		}
 	}
 }
