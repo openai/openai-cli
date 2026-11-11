@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.51.6](https://github.com/openai/openai-cli/compare/v1.51.5...v1.51.6) (2026-11-11)
+
+
+### Chores
+
+* **deps:** bump the go-minor-and-patch group across 1 directory with 3 updates ([#738](https://github.com/openai/openai-cli/issues/738)) ([76dad0b](https://github.com/openai/openai-cli/commit/76dad0bc7ccff1ea16f25ec24c2fbc29b71fedfa))
+* **deps:** update openai-go to v3.98.0 ([#736](https://github.com/openai/openai-cli/issues/736)) ([05c8294](https://github.com/openai/openai-cli/commit/05c8294cc7185e3515486b07fb730bea0208ad0c))
+
 ## [1.51.5](https://github.com/openai/openai-cli/compare/v1.51.4...v1.51.5) (2026-11-07)
 
 
