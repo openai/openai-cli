@@ -149,7 +149,7 @@ def capture_csv(terminal, advance, wait_screen, save, evidence):
     advance(b"\r", "Enter: submit", "batch_created_demo")
     wait_screen("3 of 3 succeeded", timeout=40)
     save("02-csv-completed")
-    advance(b"\r", "View rows with answers", "Row 3")
+    advance(b"\r", "View rows with answers", "tickets.csv · 3 rows")
     rows = save("03-csv-rows")
     for label in LABEL_BY_TICKET.values():
         assert label in rows, rows

@@ -72,6 +72,12 @@ For example, a support team can classify tickets from a CSV with `ticket_id` and
 10. When processing ends, open **View rows with answers**.
 11. To save a copy, press `s`. Ctrl+S lets you choose another filename or folder.
 
+The row list opens in compact view. The controls appear below the frame.
+Press Ctrl+G to switch between compact and full view. Both views keep your search and selected row.
+The filename and row count appear above the spreadsheet. Press `/` to filter by row text or answer.
+Use the arrows to select a match. Enter expands its details. Escape returns to the matches.
+Saving exports the entire spreadsheet, including rows outside the filter.
+
 CSV preparation runs locally. The browser uses the API to list existing batches.
 Confirmation uploads one Responses request per row and starts a batch that can incur charges.
 Each request contains the selected text, model, instructions, and a fingerprint derived from the entire row, its position, and headings.
