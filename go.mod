@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.1.0
+	charm.land/bubbletea/v2 v2.1.1
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4
@@ -16,15 +16,15 @@ require (
 	github.com/itchyny/json2yaml v0.1.5
 	github.com/muesli/cancelreader v0.2.2
 	github.com/muesli/reflow v0.3.0
-	github.com/openai/openai-go/v3 v3.96.0
+	github.com/openai/openai-go/v3 v3.98.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/gjson v1.20.0
 	github.com/tidwall/pretty v1.2.2
 	github.com/tiktoken-go/tokenizer v0.10.0
-	github.com/urfave/cli-docs/v3 v3.1.0
+	github.com/urfave/cli-docs/v3 v3.2.0
 	github.com/urfave/cli/v3 v3.14.0
-	github.com/xo/terminfo v1.0.0
+	github.com/xo/terminfo v1.3.0
 	golang.org/x/image v0.47.0
 	golang.org/x/sys v0.49.0
 )
