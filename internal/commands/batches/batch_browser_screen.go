@@ -56,6 +56,7 @@ func newBatchBrowserScreen(kind, title, subtitle string, choices []batchBrowserC
 
 func newBatchBrowserList(page batchBrowsePage, previous bool) *batchBrowserScreen {
 	m := newBatchBrowserScreen("list", "Batches", "", nil)
+	m.input.Placeholder = "ID, status, or endpoint"
 	m.setPage(page, previous)
 	return m
 }
@@ -180,6 +181,13 @@ func newBatchBrowserReturn(title string) *batchBrowserScreen {
 	return newBatchBrowserScreen("return", title, "", nil)
 }
 
+func (m *batchBrowserScreen) selectedValue() string {
+	if m.index < 0 || m.index >= len(m.visible) {
+		return ""
+	}
+	return m.choices[m.visible[m.index]].value
+}
+
 func (m *batchBrowserScreen) filter() {
 	m.visible = m.visible[:0]
 	search := strings.ToLower(m.input.Value())
@@ -246,6 +254,11 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.SetWidth(max(1, msg.Width-20))
 	case tea.KeyPressMsg:
 		switch msg.String() {
+		case "/":
+			if m.kind == "list" && !m.searchFocused && strings.HasPrefix(m.selectedValue(), "batch:") {
+				m.searchFocused = true
+				return m, nil
+			}
 		case "ctrl+n":
 			if m.kind == "list" {
 				m.chosen, m.closed = "create", true
@@ -289,11 +302,12 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.width < 30 || m.height < 7 {
 				return m, nil
 			}
-			if m.kind == "list" && m.searchFocused && (len(m.visible) == 0 || !strings.HasPrefix(m.choices[m.visible[m.index]].value, "batch:")) {
+			selected := m.selectedValue()
+			if m.kind == "list" && m.searchFocused && !strings.HasPrefix(selected, "batch:") {
 				return m, nil
 			}
 			if len(m.visible) > 0 {
-				m.chosen = m.choices[m.visible[m.index]].value
+				m.chosen = selected
 				m.closed = true
 				return m, tea.Quit
 			}
@@ -505,13 +519,15 @@ func (m *batchBrowserScreen) View() tea.View {
 	if !inline {
 		searchWidth = contentWidth
 	}
-	query, x := m.searchView(searchWidth - 8)
+	label := accent.Render("/") + " " + lipgloss.NewStyle().Bold(colors).Render("Find batch") + "  "
+	labelWidth := ansi.StringWidth(label)
+	query, x := m.searchView(searchWidth - labelWidth)
 	if m.input.Value() == "" {
 		query = muted.Render(query)
 	}
-	search := "Search  " + query
+	search := label + query
 	if m.searchFocused {
-		cursor = tea.NewCursor(10+x, 0)
+		cursor = tea.NewCursor(2+labelWidth+x, 0)
 		cursor.Shape = tea.CursorBar
 		cursor.Blink = true
 	}
