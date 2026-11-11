@@ -98,7 +98,7 @@ def main():
                     result['screens'][name] = {'events': len(terminal.events), 'text': screen}
                     return screen
                 if args.query:
-                    terminal.send(args.query.encode())
+                    terminal.send(b'\x1b[200~' + args.query.encode() + b'\x1b[201~')
                     terminal.send(b'\x1b[D')
                     settle(terminal)
                 if args.search_focus:

@@ -269,6 +269,19 @@ func TestBatchBrowserSlashFocusesSearch(t *testing.T) {
 	require.Len(t, m.visible, 1)
 }
 
+func TestBatchBrowserSlashOnPageControlsIsLiteral(t *testing.T) {
+	for _, previous := range []bool{false, true} {
+		page := batchBrowsePage{items: []gjson.Result{
+			gjson.Parse(`{"id":"batch_first","endpoint":"/v1/responses"}`),
+		}, next: "batch_first"}
+		m := newBatchBrowserList(page, previous)
+		m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+		require.Equal(t, "/", m.input.Value())
+		require.True(t, m.searchFocused)
+	}
+}
+
 func TestBatchBrowserSearchFocusNavigation(t *testing.T) {
 	page := batchBrowsePage{items: []gjson.Result{
 		gjson.Parse(`{"id":"batch_one","endpoint":"/v1/responses"}`),

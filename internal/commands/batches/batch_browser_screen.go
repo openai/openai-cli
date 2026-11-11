@@ -181,6 +181,13 @@ func newBatchBrowserReturn(title string) *batchBrowserScreen {
 	return newBatchBrowserScreen("return", title, "", nil)
 }
 
+func (m *batchBrowserScreen) selectedValue() string {
+	if m.index < 0 || m.index >= len(m.visible) {
+		return ""
+	}
+	return m.choices[m.visible[m.index]].value
+}
+
 func (m *batchBrowserScreen) filter() {
 	m.visible = m.visible[:0]
 	search := strings.ToLower(m.input.Value())
@@ -248,7 +255,7 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "/":
-			if m.kind == "list" && !m.searchFocused {
+			if m.kind == "list" && !m.searchFocused && strings.HasPrefix(m.selectedValue(), "batch:") {
 				m.searchFocused = true
 				return m, nil
 			}
@@ -295,11 +302,12 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.width < 30 || m.height < 7 {
 				return m, nil
 			}
-			if m.kind == "list" && m.searchFocused && (len(m.visible) == 0 || !strings.HasPrefix(m.choices[m.visible[m.index]].value, "batch:")) {
+			selected := m.selectedValue()
+			if m.kind == "list" && m.searchFocused && !strings.HasPrefix(selected, "batch:") {
 				return m, nil
 			}
 			if len(m.visible) > 0 {
-				m.chosen = m.choices[m.visible[m.index]].value
+				m.chosen = selected
 				m.closed = true
 				return m, tea.Quit
 			}
