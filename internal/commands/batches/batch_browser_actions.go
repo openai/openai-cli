@@ -27,10 +27,7 @@ func newBatchBrowserActions(id string) *batchBrowserScreen {
 }
 
 func (m *batchBrowserScreen) setOverview(batch gjson.Result) {
-	selected := ""
-	if m.index >= 0 && m.index < len(m.visible) {
-		selected = m.choices[m.visible[m.index]].value
-	}
+	selected := m.selectedValue()
 	m.actionsState.overview = batch
 	m.choices = []batchBrowserChoice{{value: "output", title: "View results"}}
 	joinedCSV := m.actionsState.csvSource != "" && batchBrowserCanExportCSV(batch)
@@ -199,13 +196,6 @@ func (m *batchBrowserScreen) overviewText(separator string, width int, render fu
 	return strings.Join(fields, "  ")
 }
 
-func (m *batchBrowserScreen) selectedAction() string {
-	if len(m.visible) == 0 {
-		return ""
-	}
-	return m.choices[m.visible[m.index]].value
-}
-
 func batchBrowserFileAction(action string) bool {
 	return action == "raw-output" || strings.HasPrefix(action, "save:")
 }
@@ -216,7 +206,7 @@ func (m *batchBrowserScreen) updateActions(message tea.Msg) (tea.Model, tea.Cmd)
 		m.width, m.height = msg.Width, msg.Height
 		m.input.SetWidth(max(1, msg.Width-20))
 	case tea.KeyPressMsg:
-		selected := m.selectedAction()
+		selected := m.selectedValue()
 		saveSelected := selected == "download" || batchBrowserFileAction(selected)
 		switch msg.String() {
 		case "esc":
@@ -267,7 +257,7 @@ func (m *batchBrowserScreen) actionKeys(shortcut func(string, string) string) []
 	if m.pathState != nil {
 		return m.pathKeys(shortcut)
 	}
-	selected := m.selectedAction()
+	selected := m.selectedValue()
 	enter, escape := "open", "back"
 	if selected == "download" {
 		enter = "expand"
