@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.51.6](https://github.com/openai/openai-cli/compare/v1.51.5...v1.51.6) (2026-11-11)
+## [1.52.0](https://github.com/openai/openai-cli/compare/v1.51.5...v1.52.0) (2026-11-11)
 
 
 ### Breaking changes
