@@ -56,6 +56,7 @@ func newBatchBrowserScreen(kind, title, subtitle string, choices []batchBrowserC
 
 func newBatchBrowserList(page batchBrowsePage, previous bool) *batchBrowserScreen {
 	m := newBatchBrowserScreen("list", "Batches", "", nil)
+	m.input.Placeholder = "ID, status, or endpoint"
 	m.setPage(page, previous)
 	return m
 }
@@ -246,6 +247,11 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.SetWidth(max(1, msg.Width-20))
 	case tea.KeyPressMsg:
 		switch msg.String() {
+		case "/":
+			if m.kind == "list" && !m.searchFocused {
+				m.searchFocused = true
+				return m, nil
+			}
 		case "ctrl+n":
 			if m.kind == "list" {
 				m.chosen, m.closed = "create", true
@@ -505,13 +511,15 @@ func (m *batchBrowserScreen) View() tea.View {
 	if !inline {
 		searchWidth = contentWidth
 	}
-	query, x := m.searchView(searchWidth - 8)
+	label := accent.Render("/") + " " + lipgloss.NewStyle().Bold(colors).Render("Find batch") + "  "
+	labelWidth := ansi.StringWidth(label)
+	query, x := m.searchView(searchWidth - labelWidth)
 	if m.input.Value() == "" {
 		query = muted.Render(query)
 	}
-	search := "Search  " + query
+	search := label + query
 	if m.searchFocused {
-		cursor = tea.NewCursor(10+x, 0)
+		cursor = tea.NewCursor(2+labelWidth+x, 0)
 		cursor.Shape = tea.CursorBar
 		cursor.Blink = true
 	}

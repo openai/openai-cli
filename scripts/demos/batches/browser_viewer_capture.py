@@ -87,7 +87,7 @@ def main():
                                             width=args.width, height=args.height,
                                             cwd=home if args.save_path else None,
                                             max_output_bytes=1_000_000, deadline=time.monotonic()+45)
-                terminal.wait('Search  ')
+                terminal.wait('Esc exit')
                 settle(terminal)
                 def save(name):
                     header = {'version': 2, 'width': args.width, 'height': args.height,
@@ -214,7 +214,7 @@ def main():
                         settle(terminal)
                     at = len(terminal.raw)
                     terminal.send(b'\x1b')
-                    terminal.wait('Search  ', after=at)
+                    terminal.wait('Esc exit', after=at)
                     settle(terminal)
                 terminal.send(b'\x1b')
                 terminal.finish(0, expect_alternate_screen=True)

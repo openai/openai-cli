@@ -24,8 +24,8 @@ func TestBatchBrowserLayoutCountsAndDetails(t *testing.T) {
 	require.Contains(t, view, "3 batches")
 	require.NotContains(t, view, "loaded")
 	require.True(t, strings.HasPrefix(view, "╭"))
-	require.Contains(t, view, "│  Search  ")
-	require.Contains(t, view, "Filter this page")
+	require.Contains(t, view, "│  / Find batch  ")
+	require.Contains(t, view, "ID, status, or endpoint")
 	require.Contains(t, view, "Succeeded  Failed")
 	require.Contains(t, view, "50000/50000")
 	require.Contains(t, view, "2/3")
@@ -234,7 +234,7 @@ func TestBatchBrowserSearchCaretAndRefresh(t *testing.T) {
 			offset = 1
 		}
 		require.Equal(t, offset, view.Cursor.Position.Y)
-		require.Equal(t, 11+offset, view.Cursor.Position.X)
+		require.Equal(t, len("  / Find batch  r")+offset, view.Cursor.Position.X)
 		require.Contains(t, ansi.Strip(view.Content), "Ctrl+R refresh")
 	}
 	m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
@@ -242,6 +242,31 @@ func TestBatchBrowserSearchCaretAndRefresh(t *testing.T) {
 	require.Equal(t, "r", m.input.Value())
 	require.Empty(t, m.View().Content)
 	require.Nil(t, m.View().Cursor)
+}
+
+func TestBatchBrowserSlashFocusesSearch(t *testing.T) {
+	page := batchBrowsePage{items: []gjson.Result{
+		gjson.Parse(`{"id":"batch_first","endpoint":"/v1/responses"}`),
+		gjson.Parse(`{"id":"batch_second","endpoint":"/v1/embeddings"}`),
+	}}
+	m := newBatchBrowserList(page, false)
+	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	slash := tea.KeyPressMsg{Code: '/', Text: "/"}
+	m.Update(slash)
+	require.NotNil(t, m.View().Cursor)
+	require.Equal(t, 1, m.index)
+	require.Empty(t, m.input.Value())
+	m.Update(slash)
+	m.Update(tea.PasteMsg{Content: "v1/embeddings"})
+	require.Equal(t, "/v1/embeddings", m.input.Value())
+	require.Len(t, m.visible, 1)
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Equal(t, "batch:batch_second", m.chosen)
+
+	m = newBatchBrowserList(page, false)
+	m.Update(tea.PasteMsg{Content: "/v1/responses"})
+	require.Equal(t, "/v1/responses", m.input.Value())
+	require.Len(t, m.visible, 1)
 }
 
 func TestBatchBrowserSearchFocusNavigation(t *testing.T) {
@@ -315,7 +340,7 @@ func TestBatchBrowserUnmatchedSearchKeepsControlsInBounds(t *testing.T) {
 		m.searchFocused = focused
 		view := ansi.Strip(m.View().Content)
 		require.LessOrEqual(t, len(strings.Split(view, "\n")), 7, "search focus %v: %q", focused, view)
-		for _, text := range []string{"Search  ", "No matches", "Next page", "Ctrl+R refresh", "Esc exit"} {
+		for _, text := range []string{"/ Find batch  ", "No matches", "Next page", "Ctrl+R refresh", "Esc exit"} {
 			require.Contains(t, view, text)
 		}
 	}
@@ -518,9 +543,9 @@ func batchBrowserTestTextStyle(t *testing.T, text, target string) (foreground st
 }
 
 func TestBatchBrowserSemanticColorsAndQuietLabels(t *testing.T) {
-	for _, theme := range []struct{ background, green, amber, red, muted, selected string }{
-		{"0", "141;201;160", "226;188;121", "229;154;154", "164;172;194", "242;244;250"},
-		{"15", "35;107;67", "136;91;20", "178;58;58", "101;112;135", "32;40;59"},
+	for _, theme := range []struct{ background, blue, green, amber, red, muted, selected string }{
+		{"0", "138;168;255", "141;201;160", "226;188;121", "229;154;154", "164;172;194", "242;244;250"},
+		{"15", "49;89;188", "35;107;67", "136;91;20", "178;58;58", "101;112;135", "32;40;59"},
 	} {
 		t.Run(theme.background, func(t *testing.T) {
 			t.Setenv("COLORFGBG", theme.background)
@@ -537,6 +562,14 @@ func TestBatchBrowserSemanticColorsAndQuietLabels(t *testing.T) {
 				for _, width := range []int{80, 40} {
 					list.width = width
 					view = list.View().Content
+					slashColor, _ := batchBrowserTestTextStyle(t, view, "/")
+					require.Equal(t, theme.blue, slashColor)
+					labelColor, labelBold := batchBrowserTestTextStyle(t, view, "Find batch")
+					require.Empty(t, labelColor)
+					require.True(t, labelBold)
+					hintColor, hintBold := batchBrowserTestTextStyle(t, view, "ID,")
+					require.Equal(t, theme.muted, hintColor)
+					require.False(t, hintBold)
 					for _, expected := range []struct{ text, color string }{{"completed", theme.amber}, {"2/3", theme.green}} {
 						fg, _ := batchBrowserTestTextStyle(t, view, expected.text)
 						require.Equal(t, expected.color, fg, "width=%d selected=%v text=%s", width, selected, expected.text)

@@ -26,7 +26,8 @@ Choose a batch to read its results, errors, input requests, or details.
 Expand Save a file to choose output, error, or input files.
 Press Enter to save the suggested filename. Press Ctrl+L to choose another folder.
 The next file from that batch uses the selected folder. You can also type a full path.
-Search applies to the loaded page. Use Next page to reach older batches.
+Press `/` from a batch row to focus **Find batch**. You can also start typing to filter the loaded page.
+In the field, type or paste an endpoint such as `/v1/responses`. Use Next page to reach older batches.
 Press Ctrl+R to reload the first page.
 Escape returns to batch actions or the batch list.
 At the batch list, Escape exits. Ctrl+C exits from any screen.
