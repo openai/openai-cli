@@ -205,11 +205,14 @@ Ctrl+C closes the local page's connection and removes its private launch file.
 
 The live page currently supports microphone and browser-tab audio.
 Typed text and file upload remain separate workflows.
-Existing file translation keeps its input, output, and English translation behavior:
+For English translation of a saved recording, the file translation endpoint currently accepts `whisper-1`.
 
 ```sh
 openai audio translate --file recording.wav --model whisper-1
 ```
+
+OpenAI plans to retire both `whisper-1` and `/v1/audio/translations` on February 26, 2027.
+See the [deprecation notice](https://developers.openai.com/api/docs/deprecations#2026-08-26-transcription-models).
 
 Speech History groups recordings by local date and shows one prompt row per recording. Date headings use pale sky blue in dark terminals and the darker blue accent in light terminals.
 Search History by clip text, voice, format, or local recording date. Search ignores letter case.
