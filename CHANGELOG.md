@@ -3,6 +3,15 @@
 ## [1.51.6](https://github.com/openai/openai-cli/compare/v1.51.5...v1.51.6) (2026-11-11)
 
 
+### Breaking changes
+
+* Standard list commands now browse by default when both input and output are terminals. If more results remain, the command waits for keyboard input. Add `--browse=false` to terminal-attached scripts that must continue automatically. Pipes, redirected output, and runs with a nonempty `CI` still paginate automatically. [#737](https://github.com/openai/openai-cli/pull/737)
+* Flags with a matching `-structured` option now treat ordinary text arguments literally. For example, use `openai responses create --model MODEL --input-structured @messages.json` to send structured input. Scripts that depend on implicit JSON or YAML parsing can set `OPENAI_CLI_INPUT_MODE=legacy`. [#635](https://github.com/openai/openai-cli/pull/635)
+
+### Bug Fixes
+
+* The Images studio keeps your scroll position when you switch panes while inspecting a generated command. [#734](https://github.com/openai/openai-cli/pull/734)
+
 ### Chores
 
 * **deps:** bump the go-minor-and-patch group across 1 directory with 3 updates ([#738](https://github.com/openai/openai-cli/issues/738)) ([76dad0b](https://github.com/openai/openai-cli/commit/76dad0bc7ccff1ea16f25ec24c2fbc29b71fedfa))
