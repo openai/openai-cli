@@ -61,7 +61,7 @@ type terminalTranslationModel struct {
 func newTerminalTranslationModel(ctx context.Context, cancel context.CancelFunc, command *cli.Command, connect func(context.Context, audiolive.Config) (audiolive.Session, error), translateText terminalTextTranslator) *terminalTranslationModel {
 	m := &terminalTranslationModel{
 		ctx: ctx, cancel: cancel, folder: command.String("output-dir"),
-		form: terminalTranslationForm{textModel: "gpt-5-mini", path: command.String("file")}, translateText: translateText,
+		form: terminalTranslationForm{textModel: modeldefaults.TranslationText, path: command.String("file")}, translateText: translateText,
 		options: terminalTranslationOptions{
 			Config: audiolive.Config{Language: command.String("target-language"), NoiseReduction: command.Bool("noise-reduction"), Model: modeldefaults.Translation, TranscriptionModel: modeldefaults.TranslationTranscript},
 			Device: command.String("input-device"), Listen: !command.Bool("no-playback"),

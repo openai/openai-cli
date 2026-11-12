@@ -253,6 +253,25 @@ func TestTerminalTranslationAbortReapsCaptureReceiveAndBlockedPlayback(t *testin
 	require.Equal(t, []byte{1, 2}, terminalTranslationReadFile(t, result.AudioPath))
 }
 
+func TestTerminalTranslationAbortBeforeDrainDoesNotFinishInput(t *testing.T) {
+	session := newTerminalTranslationSessionFixture()
+	options := terminalTranslationFixtureOptions(session)
+	options.Capture = func(context.Context, string, func([]byte) error) error { return nil }
+	var finished atomic.Bool
+	session.finish = func(context.Context) error { finished.Store(true); return nil }
+
+	ctx, cancel := context.WithCancel(terminalTranslationTestContext(t))
+	defer cancel()
+	result := runTerminalTranslation(ctx, nil, options, func(update terminalTranslationUpdate) {
+		if update.State == "stopping" {
+			cancel()
+		}
+	})
+	t.Cleanup(func() { require.NoError(t, result.Close()) })
+	require.ErrorIs(t, result.Err, context.Canceled)
+	require.False(t, finished.Load())
+}
+
 func TestTerminalTranslationStopBoundsBlockedAppendAndPreservesTailFailure(t *testing.T) {
 	for _, blocked := range []bool{false, true} {
 		t.Run(map[bool]string{false: "final callback failure", true: "blocked append"}[blocked], func(t *testing.T) {

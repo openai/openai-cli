@@ -124,17 +124,23 @@ def verify(models, read):
     speech = unique(r"Migrate to `(" + MODEL_ID + r")` using the\s+\[Realtime API\]", read(SPEECH), SPEECH)
     translation = unique(r"Use \[`(" + MODEL_ID + r")`\]\([^)]+\) when your application should translate",
                          read(TRANSLATION), TRANSLATION)
+    deprecations = read(DEPRECATIONS)
+    # Follow the explicit replacement for typed translation's original default.
+    text_translation = unique(
+        r"^\|[^|\n]+\|\s*`gpt-5-mini`(?:\s*\\\|\s*`" + MODEL_ID + r"`)*"
+        r"\s*\|\s*`(" + MODEL_ID + r")`\s*\|$", deprecations, DEPRECATIONS)
     captions = unique(r"configure input transcription with `(" + MODEL_ID + r")`", read(CAPTIONS), CAPTIONS)
     recommendations = {
         "Speech": (speech, SPEECH, ["v1/realtime"]),
         "SavedImage": (image_recommendation(read(IMAGE)), IMAGE, ["v1/images/generations", "v1/images/edits"]),
         "Translation": (translation, TRANSLATION, ["v1/realtime/translations"]),
+        "TranslationText": (text_translation, DEPRECATIONS, ["v1/responses"]),
         "TranslationTranscript": (captions, CAPTIONS, ["v1/realtime/translations"]),
     }
     if models.keys() != recommendations.keys():
         roles = ", ".join(sorted(models.keys() ^ recommendations.keys()))
         raise ValueError(f"Runtime and release guidance disagree about model roles: {roles}")
-    retired = retirements(read(DEPRECATIONS))
+    retired = retirements(deprecations)
     for role, (recommended, guide, endpoints) in recommendations.items():
         model = models[role]
         if model != recommended:

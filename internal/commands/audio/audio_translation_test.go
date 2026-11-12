@@ -169,11 +169,16 @@ func TestTranslationEndpointsDoNotSendAnAdminKey(t *testing.T) {
 
 func TestTypedTranslationRequestAndResults(t *testing.T) {
 	const input = "  @synthetic.txt\nTranslate as written.  "
+	const completed = `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":" traduit "},{"type":"output_text","text":"ici."}]}],"usage":{"input_tokens":0,"output_tokens":3}}`
+	form := newTerminalTranslationModel(t.Context(), nil, &cli.Command{}, nil, nil)
+	require.Equal(t, modeldefaults.TranslationText, form.form.textModel)
 	for _, test := range []struct {
 		name, model, body string
 		wantError         bool
 	}{
-		{"completed", "my-text-model", `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":" traduit "},{"type":"output_text","text":"ici."}]}],"usage":{"input_tokens":0,"output_tokens":3}}`, false},
+		{"selected model", "my-text-model", completed, false},
+		{"default form", form.form.textModel, completed, false},
+		{"default fallback", "", completed, false},
 		{"incomplete", "", `{"status":"incomplete","output":[{"type":"message","content":[{"type":"output_text","text":"private partial text"}]}]}`, true},
 		{"empty", "", `{"status":"completed","output":[]}`, true},
 	} {
@@ -185,7 +190,7 @@ func TestTypedTranslationRequestAndResults(t *testing.T) {
 				}
 				expectedModel := test.model
 				if expectedModel == "" {
-					expectedModel = "gpt-5-mini"
+					expectedModel = modeldefaults.TranslationText
 				}
 				if r.Method != "POST" || r.URL.Path != "/v1/responses" || assertBody["input"] != input || assertBody["model"] != expectedModel ||
 					assertBody["store"] != false || !strings.Contains(fmt.Sprint(assertBody["instructions"]), "French") {

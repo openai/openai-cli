@@ -412,6 +412,10 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 				setError(message, capture.err)
 			}
 			stopCapture()
+			if err := ctx.Err(); err != nil {
+				result.Err = errors.Join(result.Err, err)
+				return result
+			}
 			finishDone = make(chan error, 1)
 			finishing = finishDone
 			go func() { finishDone <- session.FinishInput(work) }()

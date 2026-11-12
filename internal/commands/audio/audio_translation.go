@@ -187,7 +187,7 @@ type translationTextResult struct {
 
 func translateTypedText(ctx context.Context, text, languageName, model string, options []option.RequestOption) (translationTextResult, error) {
 	if model == "" {
-		model = "gpt-5-mini"
+		model = modeldefaults.TranslationText
 	}
 	client := openai.NewClient(options...)
 	result, err := client.Responses.New(ctx, responses.ResponseNewParams{
