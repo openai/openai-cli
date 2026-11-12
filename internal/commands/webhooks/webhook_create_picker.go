@@ -175,6 +175,7 @@ type webhookCreatePicker struct {
 	dark                 bool
 	clearPromptMarks     bool
 	ownedHeight          int
+	fullScreen           bool
 	note                 string
 }
 
@@ -273,6 +274,11 @@ func (m *webhookCreatePicker) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key, ok := message.(tea.KeyPressMsg); ok && (key.String() == "ctrl+c" || key.String() == "esc") {
+		if key.String() == "esc" && m.width >= 36 && m.height >= 10 && m.stage == 2 && !m.reviewFocused && len(m.search.value) > 0 {
+			m.search = webhookCreateInput{}
+			m.current, m.offset, m.note = 0, 0, ""
+			return m, nil
+		}
 		m.canceled, m.confirmed = true, false
 		return m, tea.Quit
 	}
@@ -308,6 +314,10 @@ func (m *webhookCreatePicker) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		key := msg.String()
+		if key == "ctrl+g" {
+			m.fullScreen = !m.fullScreen
+			return m, nil
+		}
 		if m.browser != nil && m.browser.active {
 			return m, m.browser.update(key)
 		}
@@ -395,6 +405,10 @@ func (m *webhookCreatePicker) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.stage == 2 {
+			if key == "/" && m.eventFocus != webhookCreateSearch {
+				m.eventFocus, m.note = webhookCreateSearch, ""
+				return m, nil
+			}
 			if m.eventFocus != webhookCreateChoices {
 				switch key {
 				case "enter", "tab", "down":
@@ -622,6 +636,9 @@ func (m *webhookCreatePicker) View() tea.View {
 	if m.confirmed {
 		return m.frame([]string{"Creating webhook endpoint..."}, width, height)
 	}
+	if m.fullScreen {
+		width, height = max(1, m.width), max(1, m.height)
+	}
 	if m.width < 36 || m.height < 10 {
 		return m.frame([]string{"Resize to 36 x 10.", "Esc or Ctrl+C cancels."}, width, height)
 	}
@@ -663,7 +680,7 @@ func (m *webhookCreatePicker) View() tea.View {
 	var cursor *tea.Cursor
 	var controls []string
 	cursorAt := func(column, row int) {
-		x, y := valueColumn+column, 1+row
+		x, y := column, 1+row
 		if !compact {
 			x += 2
 			y++
@@ -678,7 +695,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			label = fmt.Sprintf("%-6s", label)
 			if focused {
 				value, column := input.viewport(inner-valueColumn, placeholder)
-				cursorAt(column, row)
+				cursorAt(valueColumn+column, row)
 				return strong.Render("› "+label) + separator + value
 			}
 			value := webhookCreateLine(string(input.value))
@@ -692,18 +709,32 @@ func (m *webhookCreatePicker) View() tea.View {
 		body = append(body, field("Name", &m.name, "Webhook", m.stage == 0, 0),
 			field("URL", &m.url, "https://example.com/webhook", m.stage == 1, 1))
 		if !compact {
-			divide("┼")
+			divide("┴")
 		}
 		eventLabel := selected.Render("  Events")
 		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateCategory {
 			eventLabel = strong.Render("› Events")
 		}
-		category := "‹ " + ansi.Truncate(m.categories()[m.category], inner-valueColumn-4, "…") + " ›"
-		body = append(body, eventLabel+separator+category)
-		body = append(body, field("Search", &m.search, "Type an event or group name",
-			m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateSearch, len(body)))
+		categoryPrefix := eventLabel + "  "
+		category := ansi.Truncate(m.categories()[m.category], inner-ansi.StringWidth(categoryPrefix)-4, "…")
+		body = append(body, categoryPrefix+"‹ "+category+" ›")
+		finding := m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateSearch
+		marker := "  "
+		if finding {
+			marker = strong.Render("› ")
+		}
+		prompt := marker + selected.Render("/") + " " + lipgloss.NewStyle().Bold(m.color).Render("Find event") + "  "
+		start := ansi.StringWidth(prompt)
+		query, offset := m.search.viewport(inner-start, "")
+		if finding && len(m.search.value) == 0 {
+			query = quiet.Render(ansi.Truncate("Event or group name", inner-start, "…"))
+		}
+		if finding {
+			cursorAt(start+offset, len(body))
+		}
+		body = append(body, prompt+query)
 		if !compact {
-			divide("┴")
+			divide("─")
 		}
 		matches := m.filteredEvents()
 		bindings := []string{"↑↓ move", "Tab next", "Esc cancel"}
@@ -729,13 +760,16 @@ func (m *webhookCreatePicker) View() tea.View {
 				if inner < 55 {
 					move = "↑↓"
 				}
-				bindings = []string{move, "Space select", "Ctrl+A all", "Enter next", "Esc cancel"}
+				bindings = []string{move, "Space select", "Esc cancel"}
 				if compact && m.note != "" {
 					bindings = []string{"Space select", "Esc cancel"}
 				}
 			}
 		}
-		controls = webhookCreateControls(inner, selected, quiet, bindings...)
+		if m.stage == 2 && !m.reviewFocused && len(m.search.value) > 0 {
+			bindings[len(bindings)-1] = "Esc clear"
+		}
+		controls = m.controls(inner, selected, quiet, bindings...)
 		// Reserve complete controls before sizing the event viewport.
 		overhead, tail := 1, 1+len(controls)
 		if !compact {
@@ -751,9 +785,10 @@ func (m *webhookCreatePicker) View() tea.View {
 		headingRows := map[int]bool{}
 		currentRow := 0
 		lastGroup := ""
+		needle := strings.ToLower(string(m.search.value))
 		for index, event := range matches {
 			_, group := webhookCreateEventGroup(event)
-			if !compact && m.category == 0 && group != lastGroup {
+			if !compact && needle == "" && m.category == 0 && group != lastGroup {
 				headingRows[len(rows)] = true
 				rows = append(rows, lipgloss.NewStyle().Bold(m.color).Render(clip("  "+group)))
 				lastGroup = group
@@ -773,6 +808,22 @@ func (m *webhookCreatePicker) View() tea.View {
 			emphasized := m.selected[event] || index == m.current && m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateChoices
 			if emphasized {
 				checkbox = selected.Render(checkbox)
+			}
+			if m.color && needle != "" {
+				folded := strings.ToLower(name)
+				if at := strings.Index(folded, needle); at >= 0 {
+					// Case folding can change the byte length of an event name.
+					first := utf8.RuneCountInString(folded[:at])
+					last := first + utf8.RuneCountInString(needle)
+					letters := []rune(name)
+					style := lipgloss.NewStyle()
+					if emphasized {
+						style = selected
+					}
+					text := style.Render(string(letters[:first])) + style.Bold(true).Render(string(letters[first:last])) + style.Render(string(letters[last:]))
+					rows = append(rows, checkbox+text)
+					continue
+				}
 			}
 			if marker == "›" {
 				rows = append(rows, checkbox+strong.Render(name))
@@ -806,13 +857,15 @@ func (m *webhookCreatePicker) View() tea.View {
 			}
 			body = append(body, rows[m.offset:end]...)
 		}
+		if m.fullScreen {
+			// All spare height belongs to the event list, above the fixed action row.
+			spare := height - overhead - tail - len(body)
+			body = append(body, make([]string, max(0, spare))...)
+		}
 		if !compact {
 			divide("─")
 		}
-		action := "  [ Continue to confirmation ]"
-		if m.browser != nil && inner < 55 {
-			action = "  [ Continue ]"
-		}
+		action := "  [ Review ]"
 		if m.reviewFocused && !m.existingFocused {
 			action = active("›" + action[1:])
 		} else {
@@ -841,7 +894,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			details = append(details, "  "+webhookCreateLine(event))
 		}
 		wrapped := strings.Split(ansi.Hardwrap(strings.Join(details, "\n"), inner, false), "\n")
-		controls = webhookCreateControls(inner, selected, quiet, "←→ choose", "Enter confirm", "Esc cancel")
+		controls = m.controls(inner, selected, quiet, "←→ choose", "Enter confirm", "Esc cancel")
 		available := max(1, height-5-len(controls))
 		if m.note != "" {
 			available = max(1, available-1)
@@ -877,7 +930,7 @@ func (m *webhookCreatePicker) View() tea.View {
 }
 
 // Keep key/action pairs together instead of clipping controls in narrow terminals.
-func webhookCreateControls(width int, keys, quiet lipgloss.Style, bindings ...string) []string {
+func (m *webhookCreatePicker) controls(width int, keys, quiet lipgloss.Style, bindings ...string) []string {
 	var rows []string
 	line := "  "
 	for _, binding := range bindings {
@@ -895,6 +948,15 @@ func webhookCreateControls(width int, keys, quiet lipgloss.Style, bindings ...st
 			line, gap = "  ", ""
 		}
 		line += gap + part
+	}
+	label := "expand"
+	if m.fullScreen {
+		label = "compact"
+	}
+	toggle := keys.Render("Ctrl+G") + quiet.Render(" "+label)
+	gap := width - ansi.StringWidth(line) - ansi.StringWidth(toggle)
+	if gap >= 2 {
+		line += strings.Repeat(" ", gap) + toggle
 	}
 	return append(rows, line)
 }
@@ -920,6 +982,10 @@ func webhookCreatePanel(rows []string, width, split int, dividers map[int]string
 // contextual controls, so filtering and final frames erase owned rows without putting
 // controls at the bottom of a tall terminal or clearing its scrollback.
 func (m *webhookCreatePicker) frame(lines []string, width, height int) tea.View {
+	if m.fullScreen && !m.canceled && !m.confirmed {
+		// Expand in the primary buffer so switching views preserves shell history.
+		return tea.NewView(strings.Join(lines[:min(len(lines), height)], "\n"))
+	}
 	m.ownedHeight = min(height, max(m.ownedHeight, len(lines)))
 	if len(lines) > m.ownedHeight {
 		lines = lines[:m.ownedHeight]

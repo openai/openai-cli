@@ -273,7 +273,7 @@ func TestMainWebhookWorkflowDoesNotGuideScripts(t *testing.T) {
 	defer server.Close()
 	for _, flags := range [][]string{nil, {"--format", "json"}, {"--quiet"}, {"--name", "only a name"}} {
 		got := runReadableCommand(t, server, append([]string{"webhooks", "create"}, flags...)...)
-		if got.code == 0 || requests.Load() != 0 || strings.Contains(got.stdout+got.stderr, "Loading webhook event types") {
+		if got.code == 0 || requests.Load() != 0 || strings.Contains(got.stdout+got.stderr, "Loading events…") {
 			t.Fatalf("nonterminal create entered guided workflow: %+v, requests=%d", got, requests.Load())
 		}
 	}
