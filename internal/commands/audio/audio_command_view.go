@@ -231,7 +231,7 @@ func (m *audioWorkbench) commandView() tea.View {
 	for _, row := range rows[start:min(len(rows), start+height)] {
 		lines = append(lines, "  "+row)
 	}
-	return tea.NewView(m.fitAudio(append(lines, footer...), len(footer)))
+	return m.panelView(lines, nil, footer, nil)
 }
 
 func (m *audioWorkbench) commandViewportHeight() int {

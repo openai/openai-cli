@@ -98,7 +98,7 @@ func TestAudioNavigationAcrossDelivery(t *testing.T) {
 		m, editor := audioNavigationEditor(t, 0, text)
 		m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 		line, column := editor.Line(), editor.Column()
-		require.Contains(t, ansi.Strip(m.View().Content), "→ Delivery")
+		require.Contains(t, ansi.Strip(m.View().Content), audioEditorFooterText)
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
 		require.Equal(t, 2, m.focus)
 		require.Equal(t, audioSettingDisclosure, m.setting)
@@ -112,24 +112,21 @@ func TestAudioNavigationAcrossDelivery(t *testing.T) {
 	}
 }
 
-func TestAudioStudioScriptShowsWhereArrowsAndTabLead(t *testing.T) {
+func TestAudioStudioNavigatesScriptActionsAndRecording(t *testing.T) {
 	m, editor := audioNavigationEditor(t, 0, "First line\nSecond line")
 	m.Update(tea.WindowSizeMsg{Width: 133, Height: 39})
 	editor.MoveToEnd()
 	key := func(code rune) { audioNavigationKey(t, m, tea.KeyPressMsg{Code: code}) }
 	view := func() string { return ansi.Strip(m.View().Content) }
 	require.Contains(t, view(), "› Script")
-	require.Contains(t, view(), "↑ Actions at top")
 	key(tea.KeyUp)
 	require.Zero(t, m.focus)
 	require.Equal(t, 0, editor.Line(), "Up edits inside a multiline script first")
-	require.Contains(t, view(), "↑ Actions")
 	key(tea.KeyUp)
 	require.Contains(t, view(), "› Generate speech")
 	require.Contains(t, view(), "↓ Script")
 	key(tea.KeyDown)
 	require.Contains(t, view(), "› Script")
-	require.Contains(t, view(), "Shift+Tab Recording")
 	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	require.Equal(t, 4, m.focus)
 	key(tea.KeyTab)
@@ -149,7 +146,6 @@ func TestAudioDeliveryArrowsPreserveEditing(t *testing.T) {
 	require.Equal(t, 1, editor.Line())
 	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
 	require.Equal(t, 1, editor.Column())
-	require.Contains(t, ansi.Strip(m.View().Content), "→ Delivery at text end")
 	editor.CursorEnd()
 	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModAlt})
 	require.Equal(t, 0, m.focus)
@@ -472,7 +468,7 @@ func TestAudioNavigationWideActionsToWaveform(t *testing.T) {
 			require.Equal(t, 4, m.setting)
 			key(tea.KeyDown)
 			require.Zero(t, m.focus, "Down returns from Generate to the script beneath it")
-			require.Contains(t, m.View().Content, "↑ Actions")
+			require.Contains(t, m.View().Content, audioEditorFooterText)
 			key(tea.KeyUp)
 			require.Empty(t, m.modal)
 			require.Equal(t, 2, m.focus)

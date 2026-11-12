@@ -312,11 +312,11 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			if m.focus == audioFocusCommand && m.clipboard.notice == "Copying…" {
 				switch {
 				case msg.err != nil:
-					m.clipboard.notice = "Copy failed. Ctrl+P prints."
+					m.clipboard.notice = "Copy failed."
 				case msg.clipboardConfirmed:
 					m.clipboard.notice = "Command copied."
 				default:
-					m.clipboard.notice = "Copy requested. Ctrl+P prints."
+					m.clipboard.notice = "Copy requested."
 				}
 			}
 			return m, nil

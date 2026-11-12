@@ -247,21 +247,14 @@ func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 			require.Equal(t, focus == 0, strings.HasPrefix(strings.TrimLeft(rows[heading], "│ "), "› "))
 			require.Equal(t, focus == 0 || focus == 1, m.View().Cursor != nil)
 			if focus == 2 {
-				require.NotContains(t, view, "Alt+Enter New line")
-			} else {
-				require.Contains(t, view, "Alt+Enter New line")
-			}
-			next := "Settings"
-			if focus == 0 {
-				next = "Instructions"
-			}
-			if focus == 2 {
-				next = "Audio"
+				next := "Audio"
 				if m.inlineActions() {
 					next = "Actions"
 				}
+				require.Contains(t, view, "Tab "+next)
+			} else {
+				require.Equal(t, audioEditorFooterText, strings.TrimSpace(rows[len(rows)-1]))
 			}
-			require.Contains(t, view, "Tab "+next)
 		}
 	}
 }
@@ -385,6 +378,18 @@ func TestAudioHistoryShowsPromptInsteadOfOpaqueID(t *testing.T) {
 	require.NotContains(t, ansi.Strip(m.View().Content), "[Ctrl+O] Listen")
 }
 
+func requireAudioFrameWidth(t *testing.T, view string, width int) {
+	t.Helper()
+	panel, footer, ok := strings.Cut(view, "╯\n")
+	require.True(t, ok)
+	for _, row := range strings.Split(panel+"╯", "\n") {
+		require.Equal(t, width, ansi.StringWidth(row))
+	}
+	for _, row := range strings.Split(footer, "\n") {
+		require.LessOrEqual(t, ansi.StringWidth(row), width)
+	}
+}
+
 func TestAudioWideActionSelectionKeepsDraftVisible(t *testing.T) {
 	m := audioReviewModel(t)
 	m.Update(tea.WindowSizeMsg{Width: 186, Height: 34})
@@ -400,9 +405,7 @@ func TestAudioWideActionSelectionKeepsDraftVisible(t *testing.T) {
 		require.Contains(t, view, m.input.Value())
 		require.Contains(t, view, "› "+label)
 		require.NotContains(t, view, "More actions…")
-		for _, row := range strings.Split(view, "\n") {
-			require.Equal(t, 185, ansi.StringWidth(row))
-		}
+		requireAudioFrameWidth(t, view, 185)
 	}
 	audioReviewKey(m, tea.KeyDown)
 	require.Equal(t, 4, m.focus)
@@ -454,9 +457,7 @@ func TestAudioWideActionsStayOnOneRowAcrossSelection(t *testing.T) {
 			require.Equal(t, baseline, plain, "moving focus shifted the shelf")
 			require.Contains(t, view, "Play audio")
 			require.Contains(t, view, "Save audio")
-			for _, row := range rows {
-				require.Equal(t, size[0]-1, ansi.StringWidth(row))
-			}
+			requireAudioFrameWidth(t, view, size[0]-1)
 		}
 		m.moreChoice = 0
 		m.note = "Playback complete."
@@ -625,12 +626,18 @@ func TestAudioPanelPinsFooterBelowLongDraft(t *testing.T) {
 			if m.inlineActions() {
 				actions = "View command"
 			}
-			for _, label := range []string{"Generate speech", "History", actions, "Ctrl+C Exit", "Generate speech  Ctrl+G"} {
+			for _, label := range []string{"Generate speech", "History", actions} {
 				require.Contains(t, ansi.Strip(view.Content), label)
 			}
-			require.Contains(t, rows[len(rows)-1], "╰")
-			require.Contains(t, rows[len(rows)-2], "│")
-			require.NotEmpty(t, strings.Trim(rows[len(rows)-2], " │"), "footer must sit above bottom border")
+			footer := strings.Join(m.workspaceFooter(), "\n")
+			border := len(rows) - strings.Count(footer, "\n") - 2
+			require.True(t, strings.HasPrefix(rows[border], "╰"))
+			if focus == 2 {
+				require.Contains(t, strings.Join(rows[border+1:], "\n"), "Ctrl+C Exit")
+			} else {
+				require.Equal(t, audioEditorFooterText, strings.TrimSpace(strings.Join(rows[border+1:], "\n")))
+			}
+			require.NotContains(t, strings.Join(rows[:border], "\n"), "Ctrl+G")
 		}
 		m.quit = true
 		require.Empty(t, m.View().Content)

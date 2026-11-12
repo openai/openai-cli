@@ -17,7 +17,7 @@ func TestAudioViewsDistinguishKeysFromDescriptions(t *testing.T) {
 		name, key, action string
 		setup             func(*audioWorkbench)
 	}{
-		{"form", "Ctrl+C", "Exit", func(m *audioWorkbench) {}},
+		{"form", "Enter", "Generate", func(m *audioWorkbench) {}},
 		{"too-small", "Ctrl+C", "exits.", func(m *audioWorkbench) { m.Update(tea.WindowSizeMsg{Width: 39, Height: 11}) }},
 		{"settings", "Tab", "Audio", func(m *audioWorkbench) { m.focusSection(2) }},
 		{"more", "Esc", "back", func(m *audioWorkbench) { m.modal = "more" }},
@@ -74,8 +74,8 @@ func TestAudioViewsDistinguishKeysFromDescriptions(t *testing.T) {
 				accent, secondary = "138;168;255", "164;172;194"
 			}
 			for _, tc := range cases {
-				if size[0] == 40 && (tc.name == "form" || tc.name == "settings") {
-					continue // Compact forms intentionally omit the shortcut row.
+				if size[0] == 40 && tc.name == "settings" {
+					continue // Compact settings use different navigation hints.
 				}
 				t.Run(fmt.Sprintf("%s/%dx%d/dark_%t", tc.name, size[0], size[1], dark), func(t *testing.T) {
 					m := audioReviewModel(t)
@@ -124,9 +124,12 @@ func TestAudioBusyViewsKeepCancellationDistinctFromProgress(t *testing.T) {
 			}
 		}
 		require.NotEmpty(t, progress)
-		require.Contains(t, progress, "\x1b[38;2;138;168;255mCtrl+C\x1b[m")
+		rows := strings.Split(view, "\n")
+		footer := rows[len(rows)-1]
+		require.NotContains(t, progress, "Ctrl+C")
+		require.Contains(t, footer, "\x1b[38;2;138;168;255mCtrl+C\x1b[m")
 		require.Contains(t, progress, "\x1b[38;2;164;172;194mWorking…")
-		require.Contains(t, progress, "\x1b[38;2;164;172;194mcancels\x1b[m")
+		require.Contains(t, footer, "\x1b[38;2;164;172;194mcancels\x1b[m")
 		withoutMarker := strings.ReplaceAll(progress, "\x1b[1;38;2;138;168;255m› \x1b[m", "")
 		require.NotContains(t, withoutMarker, "\x1b[1;", "only the existing focus marker may be bold")
 	}

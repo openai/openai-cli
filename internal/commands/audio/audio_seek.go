@@ -152,6 +152,6 @@ func (m *audioWorkbench) seekView() tea.View {
 	if m.seekError != "" {
 		lines = append(lines, "  "+m.failureStyle().Render(m.seekError))
 	}
-	lines = append(lines, m.shortcutLine([2]string{"Enter", "apply"}, [2]string{"Esc", "cancel"}))
-	return m.cursorView(lines, 1, audioEditorCursor(m.seekInput, 2, 4))
+	footer := m.formShortcutRows([2]string{"Enter", "apply"}, [2]string{"Esc", "cancel"})
+	return m.panelView(lines, nil, footer, audioEditorCursor(m.seekInput, 2, 4))
 }

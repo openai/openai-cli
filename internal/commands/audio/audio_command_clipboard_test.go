@@ -18,8 +18,8 @@ func TestAudioCopyCommandKeepsInspectorAndCopiesOnlyRunnableBytes(t *testing.T) 
 		err          error
 	}{
 		{"confirmed", "Command copied.", true, nil},
-		{"requested", "Copy requested. Ctrl+P prints.", false, nil},
-		{"failed", "Copy failed. Ctrl+P prints.", false, errors.New("synthetic-private-diagnostic")},
+		{"requested", "Copy requested.", false, nil},
+		{"failed", "Copy failed.", false, errors.New("synthetic-private-diagnostic")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("OPENAI_API_KEY", "sk-fake-test")
