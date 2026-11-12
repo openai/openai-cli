@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/openai/openai-cli/internal/audiolive"
+	"github.com/openai/openai-cli/internal/modeldefaults"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -135,7 +136,7 @@ func TestLiveTranslationSDKRoundTripPreservesConfigurationAudioAndDrain(t *testi
 	observed := make(chan []byte, 3)
 	serverDone := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/realtime/translations" || r.URL.Query().Get("model") != "gpt-realtime-translate" || r.Header.Get("Authorization") != "Bearer synthetic-test-key" {
+		if r.URL.Path != "/v1/realtime/translations" || r.URL.Query().Get("model") != modeldefaults.Translation || r.Header.Get("Authorization") != "Bearer synthetic-test-key" {
 			http.Error(w, "wrong synthetic request", 400)
 			return
 		}
@@ -205,7 +206,7 @@ func TestLiveTranslationSDKRoundTripPreservesConfigurationAudioAndDrain(t *testi
 	require.Equal(t, map[string]any{"language": "fr"}, audioConfig["output"])
 	input := audioConfig["input"].(map[string]any)
 	require.NotContains(t, input, "format")
-	require.Equal(t, map[string]any{"model": "gpt-realtime-whisper"}, input["transcription"])
+	require.Equal(t, map[string]any{"model": modeldefaults.TranslationTranscript}, input["transcription"])
 	require.Equal(t, map[string]any{"type": "near_field"}, input["noise_reduction"])
 	pcm := bytes.Repeat([]byte{0x12, 0x34}, 40000)
 	require.NoError(t, session.Append(ctx, pcm))

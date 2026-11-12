@@ -121,13 +121,14 @@ expect eof
 
 func TestSuggestionNativeExploreStagesWithoutExecution(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh", "fish"} {
-		t.Run(shell, func(t *testing.T) {
-			insert := ""
-			if shell == "bash" {
-				insert = `send -- "\030\011"`
-			}
-			dir := runSuggestionShellPTY(t, shell, "", "", false, `
-send -- "openai explore\r"
+		for _, invocation := range []string{"explore", "explore --full-screen"} {
+			t.Run(shell+"/"+invocation, func(t *testing.T) {
+				insert := ""
+				if shell == "bash" {
+					insert = `send -- "\030\011"`
+				}
+				dir := runSuggestionShellPTY(t, shell, "", "", false, `
+send -- "openai `+invocation+`\r"
 expect -exact "SUGGESTION_TEST> "
 `+insert+`
 send -- "\030\007"
@@ -139,13 +140,17 @@ expect -exact "SUGGESTION_TEST> "
 send -- "exit\r"
 expect eof
 `)
-			buffers, err := os.ReadFile(filepath.Join(dir, "buffers"))
-			require.NoError(t, err)
-			require.Equal(t, "<openai models list>|18\n", string(buffers))
-			calls, err := os.ReadFile(filepath.Join(dir, "calls"))
-			require.NoError(t, err)
-			require.Equal(t, "<models>\n<list>\n", string(calls))
-		})
+				buffers, err := os.ReadFile(filepath.Join(dir, "buffers"))
+				require.NoError(t, err)
+				require.Equal(t, "<openai models list>|18\n", string(buffers))
+				calls, err := os.ReadFile(filepath.Join(dir, "calls"))
+				require.NoError(t, err)
+				require.Equal(t, "<models>\n<list>\n", string(calls))
+				args, err := os.ReadFile(filepath.Join(dir, "explore-args"))
+				require.NoError(t, err)
+				require.Equal(t, invocation+" --shell-integration --shell "+shell+"\n", string(args))
+			})
+		}
 	}
 }
 
@@ -787,6 +792,7 @@ bind \cx\cr openai_suggestion_restore
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "hook"), []byte(script), 0o600))
 	fixture := `#!/bin/sh
 if [ "$1" = explore ]; then
+  printf '%s\n' "$*" >>"$SUGGESTION_TEST_DIR/explore-args"
   if [ -n "$SUGGESTION_TEST_REAL_PICKER" ]; then
     "$SUGGESTION_TEST_REAL_PICKER" "$@"
     picker_status=$?

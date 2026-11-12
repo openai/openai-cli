@@ -113,7 +113,7 @@ func TestAudioGenerationCatalogCompatibility(t *testing.T) {
 	models := []string{"gpt-4o-mini-tts", "gpt-4o-mini-tts-2025-03-20", "gpt-4o-mini-tts-2025-12-15", "tts-1", "tts-1-1106", "tts-1-hd", "tts-1-hd-1106"}
 	voices := []string{"alloy", "ash", "ballad", "cedar", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse"}
 	formats := []string{"mp3", "opus", "aac", "flac", "wav", "pcm"}
-	require.Equal(t, models, audioModels)
+	require.Equal(t, append([]string{"gpt-realtime-2.1-mini"}, models...), audioModels)
 	require.Equal(t, voices, audioVoices)
 	require.Equal(t, formats, audioFormats)
 	for _, model := range models {
@@ -145,6 +145,7 @@ func TestAudioGenerationCatalogCompatibility(t *testing.T) {
 
 func checkAudioGenerationSendsSelectedRequestSettings(t *testing.T, buildRequestOptions func(*cli.Command) ([]option.RequestOption, error)) {
 	base := audioDefaultSettings()
+	base.Model = "gpt-4o-mini-tts" // Exercise every legacy Speech API format and speed.
 	base.Input = "Synthetic selected settings"
 	var selections []audiohistory.Settings
 	for _, model := range []string{"gpt-4o-mini-tts", "gpt-4o-mini-tts-2025-03-20", "gpt-4o-mini-tts-2025-12-15", "tts-1", "tts-1-1106", "tts-1-hd", "tts-1-hd-1106"} {

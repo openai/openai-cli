@@ -182,7 +182,7 @@ func configureImageHelpContent(root *cli.Command) {
 				"Readable output also works in scripts. Failed checks keep partial results and exit nonzero.",
 			Examples: []clihelp.Example{
 				{Description: "Check image model visibility:", Command: "images models"},
-				{Description: "Use an exact model name:", Command: `images generate --prompt "A tiny orange robot" --model gpt-image-2.5-flare`},
+				{Description: "Use an exact model name:", Command: `images generate --prompt "A tiny orange robot" --model gpt-image-2.6-flare`},
 				{Description: "Return JSON for scripts:", Command: "--format json images models"},
 			},
 		},

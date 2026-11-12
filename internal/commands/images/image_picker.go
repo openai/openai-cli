@@ -115,6 +115,7 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	defer cancel()
 	tracked := &imagePickerOutput{File: output, cancel: cancel}
 	inline := &imagePickerInline{model: model, output: tracked, profile: cliterminal.ColorProfile(output, os.Environ(), true), resuming: options.resuming}
+	inline.iterm = imagePickerUsesITerm()
 	inline.workspace, inline.generate, inline.requestContext = options.workspace, options.generate, parent
 	inline.savedSettings = initialSettings
 	inline.mouseShell = mouseShell
@@ -513,16 +514,29 @@ func (m *imagePicker) cycleFocus(backwards bool) {
 	m.focus, _ = forminput.Cycle(sections, m.focus, backwards)
 }
 
+func supportsExtendedQuality(model string) bool {
+	switch model {
+	case openai.ImageModelGPTImage2_6Sunburst, openai.ImageModelGPTImage2_6Flare,
+		openai.ImageModelGPTImage2_5Sunburst, openai.ImageModelGPTImage2_5Flare:
+		return true
+	}
+	return false
+}
+
 func (m *imagePicker) choices(field string) []imagePickerRow {
 	var values []string
 	switch field {
 	case "model":
-		values = []string{openai.ImageModelGPTImage2_5Sunburst, openai.ImageModelGPTImage2_5Flare, openai.ImageModelGPTImage2, openai.ImageModelGPTImage1_5, openai.ImageModelGPTImage1Mini}
+		values = []string{
+			openai.ImageModelGPTImage2_6Sunburst, openai.ImageModelGPTImage2_6Flare,
+			openai.ImageModelGPTImage2_5Sunburst, openai.ImageModelGPTImage2_5Flare,
+			openai.ImageModelGPTImage2, openai.ImageModelGPTImage1_5, openai.ImageModelGPTImage1Mini,
+		}
 	case "size":
 		values = []string{"auto", "1024x1024", "1536x1024", "1024x1536"}
 	case "quality":
 		values = []string{"auto", "low", "medium", "high"}
-		if m.settings.model == openai.ImageModelGPTImage2_5Sunburst || m.settings.model == openai.ImageModelGPTImage2_5Flare {
+		if supportsExtendedQuality(m.settings.model) {
 			values = append(values, "xhigh", "max")
 		}
 	case "background":
@@ -540,7 +554,7 @@ func (m *imagePicker) choices(field string) []imagePickerRow {
 		switch field {
 		case "model":
 			row.label = value
-			if value == openai.ImageModelGPTImage2_5Sunburst {
+			if value == defaultSavedImageModel {
 				row.detail = "CLI default"
 			}
 		case "size":
@@ -592,7 +606,7 @@ func (m *imagePicker) apply(value string) {
 	switch m.field {
 	case "model":
 		s.model = value
-		if (s.quality == "xhigh" || s.quality == "max") && value != openai.ImageModelGPTImage2_5Sunburst && value != openai.ImageModelGPTImage2_5Flare {
+		if (s.quality == "xhigh" || s.quality == "max") && !supportsExtendedQuality(value) {
 			s.quality = "auto"
 			m.setNote("Quality changed to Auto for this model.", imageWarning)
 		}

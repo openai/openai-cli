@@ -38,10 +38,11 @@ func imagePickerWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 			return next(ctx, command)
 		}
 		// Keep the executable binding through initial input and every request.
-		// Each native writer still finishes before the picker reads input again.
+		// The picker reuses this binding across native frames and their cleanup.
 		var closeOutput func() error
 		konsole := interactiveImageEligible(true, true, os.Getenv, runtime.GOOS)
-		if konsole {
+		iterm := imagePickerUsesITerm()
+		if konsole || iterm {
 			// Bind before any nested writer so group signals leave a helper
 			// available to restore the temporary screen and terminal modes.
 			ctx, closeOutput = terminalimage.PrepareInteractiveImageOutput(ctx, out)
@@ -56,7 +57,7 @@ func imagePickerWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 			}
 		}()
 		if opts.DiagnosticsAllowed(ctx) && !command.Root().Bool("debug") && opts.ErrorFormat(command.Root()) == "text" && command.Root().String("transform-error") == "" {
-			if konsole && opts.ShowError != nil {
+			if (konsole || iterm) && opts.ShowError != nil {
 				executable, err := os.Executable()
 				if err != nil {
 					return err
@@ -71,7 +72,7 @@ func imagePickerWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc
 			}
 			workspaceCtx, closeWorkspaceOutput := terminalimage.PrepareNativeImageOutput(ctx, out)
 			defer func() { resultErr = errors.Join(resultErr, closeWorkspaceOutput()) }()
-			workspace := &imagePickerWorkspace{out: out, root: command.Root(), context: workspaceCtx}
+			workspace := &imagePickerWorkspace{out: out, root: command.Root(), context: workspaceCtx, iterm: iterm}
 			defer func() { resultErr = errors.Join(resultErr, workspace.close()) }()
 			result, err := runImagePickerSession(workspaceCtx, os.Stdin, out, imagePickerOptions{workspace: workspace, printCommand: func(text string) error {
 				return commandsuggest.WriteLine(command, out, text)
@@ -323,6 +324,10 @@ func setTemporaryImagePickerFlag[T string | *string | *int64](flag *requestflag.
 	}
 	*flag = replacement
 	return func() { *flag = original }, nil
+}
+
+func imagePickerUsesITerm() bool {
+	return os.Getenv("TERM_PROGRAM") == "iTerm.app" && savedImageProtocol("auto", true, os.Getenv) == "iterm"
 }
 
 func imagePickerRequested(command *cli.Command) bool {

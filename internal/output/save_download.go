@@ -222,6 +222,16 @@ func newDownloadStage(directory string) (*downloadStage, error) {
 	return &downloadStage{root: root, name: name, file: file, info: info}, nil
 }
 
+// NewTemporaryDownload creates a private, seekable staging file for a binary response.
+// The caller must invoke cleanup after the final reader releases the file.
+func NewTemporaryDownload() (*os.File, func() error, error) {
+	stage, err := newDownloadStage(os.TempDir())
+	if err != nil {
+		return nil, nil, err
+	}
+	return stage.file, sync.OnceValue(stage.cleanup), nil
+}
+
 func (s *downloadStage) closeWriter() error {
 	if s.file == nil {
 		return nil

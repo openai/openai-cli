@@ -21,6 +21,7 @@ func TestImagePickerDraftRestoresEditablePromptAndSettings(t *testing.T) {
 			path := pickerStatePath(t)
 			want := pickerStateSettings(t)
 			want.prompt, want.quality, want.count = prompt, "high", "3"
+			want.model = "gpt-image-2.5-flare"
 			require.NoError(t, saveImagePickerState(t.Context(), path, want))
 			stored, found, err := loadImagePickerState(t.Context(), path)
 			require.NoError(t, err)
@@ -29,6 +30,7 @@ func TestImagePickerDraftRestoresEditablePromptAndSettings(t *testing.T) {
 			m, err := newImagePicker(options)
 			require.NoError(t, err)
 			require.Equal(t, want, m.settings)
+			require.Equal(t, want.model, pickerArg(t, m.settings.args(), "--model"))
 			require.Equal(t, prompt, string(m.draft))
 			require.Equal(t, len([]rune(prompt)), m.cursor)
 			require.Equal(t, prompt != "", options.resuming)
