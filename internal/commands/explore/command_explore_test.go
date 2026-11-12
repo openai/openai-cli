@@ -46,6 +46,7 @@ func TestExploreRejectsUnsupportedOutputAndFlagsWithoutOutput(t *testing.T) {
 		{"--format-error", "json", "explore"}, {"--transform-error", "message", "explore"}, {"explore", "--suggestions"}, {"explore", "--shell", "invalid"},
 		{"explore", " "}, {"explore", "--shell-integration", "images"}, {"explore", "--suggestions", "images"}, {"explore", "--shell", "bash", "images"},
 		{"--format", "json", "explore", "images"}, {"--raw-output", "explore", "images"},
+		{"explore", "--full-screen", "images"}, {"explore", "--full-screen", " "},
 	} {
 		var output bytes.Buffer
 		root := &cli.Command{Name: "openai", Writer: &output, ErrWriter: &output, ExitErrHandler: func(context.Context, *cli.Command, error) {}, Flags: []cli.Flag{&cli.StringFlag{Name: "format"}, &cli.StringFlag{Name: "transform"}, &cli.BoolFlag{Name: "raw-output"}, &cli.StringFlag{Name: "format-error"}, &cli.StringFlag{Name: "transform-error"}}}

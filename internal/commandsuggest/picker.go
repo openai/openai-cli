@@ -40,6 +40,7 @@ type commandPicker struct {
 	enableInsertion bool
 	dark, color     bool
 	backgroundKnown bool
+	fullScreen      bool
 }
 
 func newCommandPicker(candidates []Candidate, title string, integration bool) *commandPicker {
@@ -73,6 +74,12 @@ func (m *commandPicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.backgroundKnown = true
 		return m, nil
 	case tea.KeyPressMsg:
+		if msg.Keystroke() == "ctrl+g" {
+			if !msg.IsRepeat {
+				m.fullScreen = !m.fullScreen
+			}
+			return m, nil
+		}
 		if m.confirmSetup {
 			switch msg.String() {
 			case "ctrl+c":
@@ -266,7 +273,10 @@ func (m *commandPicker) setupView() (tea.View, bool) {
 	return tea.NewView(content), true
 }
 
-func (m *commandPicker) View() tea.View {
+func (m *commandPicker) View() (view tea.View) {
+	// Return to the inline buffer before the final blank frame. Its existing
+	// cleanup then clears only the picker, including after a fullscreen exit.
+	defer func() { view.AltScreen = m.fullScreen && !m.done }()
 	if m.done {
 		// The inline renderer shrinks its cursor model before clearing. Keep
 		// the search cursor's row in the final blank frame so clearing starts
@@ -289,6 +299,12 @@ func (m *commandPicker) View() tea.View {
 	if framed {
 		width = min(m.width-8, 88)
 		frameRows = 2
+	}
+	if m.fullScreen {
+		width = m.width - 3
+		if framed {
+			width -= 4
+		}
 	}
 	strong := lipgloss.NewStyle().Bold(true)
 	muted, selected := lipgloss.NewStyle(), strong
@@ -316,7 +332,7 @@ func (m *commandPicker) View() tea.View {
 		footer = []string{combined}
 	}
 	if m.setupPrompt != "" {
-		hint := control.Render("F2") + " " + muted.Render("set up insertion")
+		hint := control.Render("F2") + " " + muted.Render("shell setup")
 		last := len(footer) - 1
 		if combined := footer[last] + muted.Render(" · ") + hint; ansi.StringWidth(combined) <= width {
 			footer[last] = combined
@@ -324,15 +340,29 @@ func (m *commandPicker) View() tea.View {
 			footer = append(footer, hint)
 		}
 	}
+	sizeAction := "expand"
+	if m.fullScreen {
+		sizeAction = "compact"
+	}
+	sizeHint := control.Render("Ctrl+G") + " " + muted.Render(sizeAction)
+	last := len(footer) - 1
+	gap := width - ansi.StringWidth(footer[last]) - ansi.StringWidth(sizeHint)
+	if gap < 2 {
+		footer = append(footer, strings.Repeat(" ", max(0, width-ansi.StringWidth(sizeHint)))+sizeHint)
+	} else {
+		footer[last] += strings.Repeat(" ", gap) + sizeHint
+	}
 	leadingRows, footerGapRows := 0, 1
 	if m.height > 12 {
 		leadingRows = 1
 	}
-	if framed {
+	if framed || m.fullScreen {
 		leadingRows, footerGapRows = 0, 0
 	}
+	if m.height-8-leadingRows-frameRows-footerGapRows-len(footer) < 1 {
+		footerGapRows = 0
+	}
 	rows := min(6, m.height-8-leadingRows-frameRows-footerGapRows-len(footer))
-	start := max(0, m.selected-rows+1)
 	count := fmt.Sprintf("%d commands", len(m.matches))
 	if len(m.query) > 0 {
 		count = fmt.Sprintf("%d matches", len(m.matches))
@@ -354,22 +384,6 @@ func (m *commandPicker) View() tea.View {
 	words := strings.Fields(strings.ToLower(string(m.query)))
 	lines := make([]string, leadingRows)
 	lines = append(lines, header, queryLine, rule)
-	for i := 0; i < rows; i++ {
-		index := start + i
-		line := ""
-		if index < len(m.matches) {
-			candidate := m.candidates[m.matches[index]]
-			label := ansi.Truncate(highlightQuery(candidate.Command, words, index == m.selected), width-2, "…")
-			line = "  " + label
-			if index == m.selected {
-				line = "› " + label
-				line = selected.Render(line + strings.Repeat(" ", width-ansi.StringWidth(line)))
-			}
-		} else if len(m.matches) == 0 && i == 0 {
-			line = muted.Render("  No matching commands")
-		}
-		lines = append(lines, line)
-	}
 	detailWidth := width - 2
 	details := []string{"", "", ""}
 	if len(m.matches) > 0 {
@@ -401,6 +415,26 @@ func (m *commandPicker) View() tea.View {
 	}
 	for len(details) > 1 && details[len(details)-1] == "" {
 		details = details[:len(details)-1]
+	}
+	if m.fullScreen {
+		rows = m.height - leadingRows - frameRows - footerGapRows - len(footer) - 4 - len(details)
+	}
+	start := max(0, m.selected-rows+1)
+	for i := 0; i < rows; i++ {
+		index := start + i
+		line := ""
+		if index < len(m.matches) {
+			candidate := m.candidates[m.matches[index]]
+			label := ansi.Truncate(highlightQuery(candidate.Command, words, index == m.selected), width-2, "…")
+			line = "  " + label
+			if index == m.selected {
+				line = "› " + label
+				line = selected.Render(line + strings.Repeat(" ", width-ansi.StringWidth(line)))
+			}
+		} else if len(m.matches) == 0 && i == 0 {
+			line = muted.Render("  No matching commands")
+		}
+		lines = append(lines, line)
 	}
 	if len(words) > 0 {
 		// A wrapped match can continue into omitted rows. End its emphasis
@@ -445,7 +479,7 @@ func (m *commandPicker) View() tea.View {
 	for i, line := range lines {
 		lines[i] = "  " + line
 	}
-	view := tea.NewView(strings.Join(lines, "\n"))
+	view = tea.NewView(strings.Join(lines, "\n"))
 	view.Cursor = tea.NewCursor(cursorX, cursorY)
 	view.Cursor.Shape = tea.CursorBar
 	return view
@@ -463,7 +497,7 @@ type Selection struct {
 
 // Pick runs the shared local selector. It returns data and never executes it.
 // Input and output belong to the foreground terminal, separate from data pipes.
-func Pick(ctx context.Context, input, output *os.File, candidates []Candidate, title string, integration bool, setupPrompt string) (Selection, error) {
+func Pick(ctx context.Context, input, output *os.File, candidates []Candidate, title string, integration bool, setupPrompt string, fullScreen bool) (Selection, error) {
 	if err := ctx.Err(); err != nil {
 		return Selection{}, err
 	}
@@ -485,6 +519,7 @@ func Pick(ctx context.Context, input, output *os.File, candidates []Candidate, t
 	m := newCommandPicker(candidates, title, integration)
 	m.width, m.height = width, height
 	m.setupPrompt = setupPrompt
+	m.fullScreen = fullScreen
 	m.color = os.Getenv("NO_COLOR") == "" && colorprofile.Detect(output, os.Environ()) >= colorprofile.ANSI256
 	programContext, cancel := context.WithCancel(ctx)
 	defer cancel()

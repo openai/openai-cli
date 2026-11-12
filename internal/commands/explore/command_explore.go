@@ -43,8 +43,9 @@ func Register(root *cli.Command) {
 		Metadata:    map[string]any{localcommands.LocalUtilityMetadata: true, "help-command-section": "Local tools"},
 		Usage:       "Search local CLI commands and examples without running them.",
 		ArgsUsage:   "[SEARCH_TERMS...]",
-		Description: "Pass search terms to print matching commands and examples, ranked by relevance. Search works offline and in pipes.\n\nWithout search terms, browse commands alphabetically. Type to search. Arrow keys choose a command. Enter selects it. Escape cancels.\nWith shell integration, zsh and fish put the selection at your prompt. In Bash 4.3+, press Ctrl+X, then Tab to insert it. If you installed a standalone binary, press F2 when offered to set up insertion.",
+		Description: "Pass search terms to print matching commands and examples, ranked by relevance. Search works offline and in pipes.\n\nWithout search terms, browse commands alphabetically. Type to search. Arrow keys choose a command. Enter selects it. Escape cancels. Press Ctrl+G to expand or compact the panel. Use --full-screen to start expanded.\nWith shell integration, zsh and fish put the selection at your prompt. In Bash 4.3+, press Ctrl+X, then Tab to insert it. If you installed a standalone binary, press F2 when offered to set up insertion.",
 		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "full-screen", Usage: "Start interactive search expanded to fill the terminal."},
 			&cli.BoolFlag{Name: "suggestions", Hidden: true},
 			&cli.BoolFlag{Name: "shell-integration", Hidden: true},
 			&cli.StringFlag{Name: "shell", Hidden: true},
@@ -115,6 +116,9 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 	}
 	integration := command.Bool("shell-integration")
 	query := strings.Join(strings.Fields(strings.Join(command.Args().Slice(), " ")), " ")
+	if command.Bool("full-screen") && command.Args().Len() > 0 {
+		return exploreFailure("Use --full-screen without search terms, then type in the interactive search field.", 2, nil)
+	}
 	if command.Args().Len() > 0 && (query == "" || integration || command.Bool("suggestions") || command.IsSet("shell")) {
 		return exploreFailure("Provide nonempty search terms without shell-integration options.", 2, nil)
 	}
@@ -193,7 +197,7 @@ func commandExplore(ctx context.Context, command *cli.Command) error {
 	if !integration {
 		setup = insertionSetupForPicker(ctx, terminal.ParentShell(ctx))
 	}
-	selected, err := commandsuggest.Pick(ctx, input, os.Stderr, candidates, title, fillsPrompt, setup.prompt)
+	selected, err := commandsuggest.Pick(ctx, input, os.Stderr, candidates, title, fillsPrompt, setup.prompt, command.Bool("full-screen"))
 	if errors.Is(err, commandsuggest.ErrCanceled) || errors.Is(err, tea.ErrInterrupted) || errors.Is(err, context.Canceled) {
 		return exploreFailure("Command selection canceled.", 130, err)
 	}

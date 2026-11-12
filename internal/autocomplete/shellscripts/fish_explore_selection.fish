@@ -1,10 +1,14 @@
-# Only the standalone interactive invocation can edit the next prompt.
-function __openai_is_bare_explore
-    test (count $argv) -eq 1; and test "$argv[1]" = explore; and not status is-command-substitution; and isatty stdin; and isatty stdout; and isatty stderr
+# Only the interactive picker can fill the next prompt.
+function __openai_is_interactive_explore
+    test "$argv[1]" = explore; or return 1
+    if test (count $argv) -ne 1
+        test (count $argv) -eq 2; and test "$argv[2]" = --full-screen; or return 1
+    end
+    not status is-command-substitution; and isatty stdin; and isatty stdout; and isatty stderr
 end
 
 function __openai_fill_explore
-    set -l selected (command "$argv[1]" explore --shell-integration --shell fish)
+    set -l selected (command "$argv[1]" $argv[3..] --shell-integration --shell fish)
     set -l code $status
     test "$code" = 0; or return $code
     test (count $selected) -eq 1; and test -n "$selected"; or return 1
