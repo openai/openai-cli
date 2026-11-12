@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -46,18 +47,19 @@ type retainedUpload struct {
 }
 type workMessage struct {
 	managementResult
-	reset     bool
-	id        uint64
-	kind      string
-	err       error
-	stores    StorePage
-	files     FilePage
-	search    SearchPage
-	store     *openai.VectorStore
-	file      *openai.FileObject
-	attached  *openai.VectorStoreFile
-	entries   []browserEntry
-	directory string
+	reset        bool
+	id           uint64
+	kind         string
+	err          error
+	stores       StorePage
+	files        FilePage
+	search       SearchPage
+	store        *openai.VectorStore
+	file         *openai.FileObject
+	attached     *openai.VectorStoreFile
+	statusChecks int
+	entries      []browserEntry
+	directory    string
 }
 
 // The search field and five store actions precede the match list in tab order.
@@ -71,6 +73,8 @@ type workspace struct {
 	workers                                       workspaceWorkers
 	width, height                                 int
 	color, dark                                   bool
+	decLineDrawing                                bool
+	fullScreen                                    bool
 	exitCode                                      int
 	lastErr                                       error
 	quit                                          bool
@@ -84,6 +88,7 @@ type workspace struct {
 	store                                         *openai.VectorStore
 	storeNext, fileNext                           string
 	files                                         []openai.VectorStoreFile
+	filesLoaded, uploadFromFiles                  bool
 	results                                       []openai.VectorStoreSearchResponse
 	moreResults, searched                         bool
 	pendingFile, pendingName                      string
@@ -91,12 +96,15 @@ type workspace struct {
 	retainedUploads                               map[string]retainedUpload
 	names                                         map[string]string
 	directory                                     string
-	entries                                       []browserEntry
+	directoryEntries, entries                     []browserEntry
+	browserFilter                                 string
+	findingFile                                   bool
 	passage                                       string
 	passageLines                                  []string
 	note                                          string
 	busy, cancelling                              bool
 	stage                                         string
+	statusChecks                                  int
 	seq                                           uint64
 	cancel                                        context.CancelFunc
 	lastMutation                                  time.Time
@@ -189,14 +197,31 @@ func (m *workspace) loadFiles(more bool) tea.Cmd {
 func (m *workspace) enter(page string) tea.Cmd {
 	m.saveInput()
 	m.note = ""
+	if page == "filter" {
+		m.filterReturnFocus, m.filterReturnSelected = m.focus, m.selected
+	}
 	if m.store != nil {
 		m.retainedUploads[m.store.ID] = retainedUpload{m.pendingFile, m.pendingName, m.pendingAttached, m.attachOptions}
 	}
 	m.page, m.focus, m.selected, m.offset = page, 0, 0, 0
-	if page == "stores" && m.listLength() == 0 {
+	if page == "stores" {
+		m.focus = m.firstStoreFocus()
+	}
+	if (page == "files" || page == "batchfiles") && len(m.files) == 0 {
 		m.focus = 1
+		if !m.filesLoaded {
+			m.focus = slices.Index(m.fileActions(), fileRefresh) + 1
+		}
 	}
 	switch page {
+	case "browse":
+		m.findingFile = false
+		if m.browserFilter != "" {
+			m.filterFolder("")
+		}
+	case "filter":
+		m.editor.SetValue(m.storeFilter)
+		m.editor.Placeholder = "Name or ID"
 	case "home":
 		m.editor.SetValue(m.query)
 		m.editor.Placeholder = "Type a question"
@@ -204,11 +229,14 @@ func (m *workspace) enter(page string) tea.Cmd {
 		m.editor.SetValue(m.createName)
 		m.editor.Placeholder = "Name your vector store"
 	case "upload":
+		if m.pendingFile != "" {
+			m.focus = 2 // Continue with the existing upload.
+		}
 		m.editor.SetValue(m.uploadPath)
 		if m.selectedUploadPath != "" {
 			m.editor.SetValue(cleanLine(m.selectedUploadPath))
 		}
-		m.editor.Placeholder = "Paste a file path, or choose Browse files"
+		m.editor.Placeholder = "Paste a file path"
 	default:
 		m.managementInput(page)
 	}
@@ -229,11 +257,14 @@ func (m *workspace) saveInput() {
 }
 
 func (m *workspace) editing() bool {
+	if m.page == "browse" {
+		return m.focus == 0 && m.findingFile
+	}
 	if m.page == "upload" && m.pendingFile != "" {
 		return false
 	}
 	_, form := managementForms[m.page]
-	return m.focus == 0 && (m.page == "home" || m.page == "create" || m.page == "upload" || form)
+	return m.focus == 0 && (m.page == "home" || m.page == "filter" || m.page == "create" || m.page == "upload" || form)
 }
 
 func (m *workspace) syncFocus() tea.Cmd {
@@ -253,7 +284,7 @@ func (m *workspace) focusCount() int {
 	}
 	switch m.page {
 	case "files", "batchfiles":
-		return 4
+		return 1 + len(m.fileActions())
 	case "stores", "upload", "sources":
 		return 5
 	case "home":
@@ -273,7 +304,7 @@ func (m *workspace) listLength() int {
 		return len(menu)
 	}
 	switch m.page {
-	case "stores":
+	case "stores", "filter":
 		return len(m.filteredStores())
 	case "sources":
 		return len(m.sourceFiles)
@@ -287,17 +318,26 @@ func (m *workspace) listLength() int {
 	return 0
 }
 
+const zoomKey = "ctrl+g"
+
 func (m *workspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if m.quit {
 		return m, nil
 	}
+	// Some terminal protocols include printable text alongside a modified key.
+	// Handle zoom before the store finder can consume that text.
+	if key, ok := message.(tea.KeyPressMsg); ok && key.Keystroke() == zoomKey {
+		if !key.IsRepeat {
+			m.fullScreen = !m.fullScreen
+			m.reflow()
+		}
+		return m, nil
+	}
+	finderFocus := m.focusFinderForInput(message)
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.layoutEditor()
-		if m.page == "passage" || m.page == "document" {
-			m.layoutPassage()
-		}
+		m.reflow()
 		return m, nil
 	case tea.BackgroundColorMsg:
 		m.dark = msg.IsDark()
@@ -340,6 +380,11 @@ func (m *workspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.page == "browse" && m.width >= 40 && m.height >= 12 {
+			if cmd, handled := m.browserFilterKey(key); handled {
+				return m, cmd
+			}
+		}
 		if key == "q" && !m.editing() {
 			m.quit = true
 			return m, tea.Quit
@@ -350,15 +395,29 @@ func (m *workspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.width < 40 || m.height < 12 {
 			return m, nil
 		}
+		if m.page == "filter" && (key == "down" || key == "tab" || key == "shift+tab") {
+			return m, m.applyStoreFilter()
+		}
 		switch key {
+		case "/":
+			if m.page == "stores" {
+				return m, m.enter("filter")
+			}
 		case "tab", "shift+tab":
+			if m.page == "files" || m.page == "batchfiles" || m.page == "browse" {
+				return m, m.moveListFocus(key)
+			}
 			delta := 1
 			if key == "shift+tab" {
 				delta = -1
 			}
-			m.focus = (m.focus + delta + m.focusCount()) % m.focusCount()
-			if m.page == "stores" && m.focus == 3 && m.storeNext == "" {
-				m.focus += delta
+			if m.page == "stores" {
+				m.focus = m.nextStoreFocus(delta)
+			} else if m.page == "upload" && m.pendingFile != "" {
+				actions := m.focusCount() - 1
+				m.focus = 1 + (m.focus-1+delta+actions)%actions
+			} else {
+				m.focus = (m.focus + delta + m.focusCount()) % m.focusCount()
 			}
 			return m, m.syncFocus()
 		case "enter":
@@ -408,6 +467,10 @@ func (m *workspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if m.editing() && !m.busy {
 		if paste, ok := message.(tea.PasteMsg); ok {
 			m.lastMutation = time.Time{}
+			if m.page == "upload" {
+				// A copied line ending is not part of the path. Keep literal filename spaces.
+				paste.Content = strings.TrimRight(paste.Content, "\r\n")
+			}
 			paste.Content = strings.ReplaceAll(strings.ReplaceAll(paste.Content, "\r", ""), "\n", " ")
 			message = paste
 		}
@@ -416,12 +479,15 @@ func (m *workspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.editor, cmd = m.editor.Update(message)
 		if m.editor.Value() != previous {
 			m.retryNeedsInput = false
+			if m.page == "browse" {
+				m.filterFolder(m.editor.Value())
+			}
 			if m.page == "upload" {
 				m.selectedUploadPath = ""
 			}
 		}
 		m.saveInput()
-		return m, cmd
+		return m, tea.Batch(finderFocus, cmd)
 	}
 	return m, nil
 }
@@ -434,7 +500,9 @@ func (m *workspace) back() tea.Cmd {
 	case "document":
 		return m.enter(m.documentBack)
 	case "filter":
-		return m.enter("stores")
+		cmd := m.enter("stores")
+		m.focus, m.selected = m.filterReturnFocus, m.filterReturnSelected
+		return cmd
 	case "rename", "expiration", "metadata", "open-batch", "delete-store", "sources":
 		return m.enter("manage")
 	case "attributes", "remove-file":
@@ -452,6 +520,12 @@ func (m *workspace) back() tea.Cmd {
 		return tea.Quit
 	case "browse":
 		return m.enter("upload")
+	case "upload":
+		if m.uploadFromFiles {
+			m.uploadFromFiles = false
+			return m.enter("files")
+		}
+		return m.enter("home")
 	case "home":
 		if m.focus == matchListFocus {
 			m.focus = 0
@@ -470,6 +544,8 @@ func (m *workspace) activate() tea.Cmd {
 		return cmd
 	}
 	switch m.page {
+	case "filter":
+		return m.applyStoreFilter()
 	case "stores":
 		switch m.focus {
 		case 0:
@@ -490,6 +566,8 @@ func (m *workspace) activate() tea.Cmd {
 			if m.storeNext != "" {
 				return m.loadStores(true)
 			}
+		case storeFinderFocus:
+			return m.enter("filter")
 		}
 	case "create":
 		if m.focus == 0 {
@@ -527,11 +605,10 @@ func (m *workspace) activate() tea.Cmd {
 			if !m.mutable() {
 				return nil
 			}
+			m.uploadFromFiles = false
 			return m.enter("upload")
 		case 3:
-			m.files, m.fileNext = nil, ""
-			m.enter("files")
-			return m.loadFiles(false)
+			return m.openFileList("files")
 		case 4:
 			return m.enter("stores")
 		case matchListFocus:
@@ -551,7 +628,7 @@ func (m *workspace) activate() tea.Cmd {
 			return m.syncFocus()
 		case 1:
 			if m.pendingFile != "" {
-				m.note = "Source file " + m.pendingFile + " remains in Files storage."
+				m.note = "Source file " + cleanLine(m.pendingFile) + " remains in Files storage."
 				m.pendingFile, m.pendingName, m.uploadPath = "", "", ""
 				m.selectedUploadPath = ""
 				m.pendingAttached = false
@@ -594,27 +671,7 @@ func (m *workspace) activate() tea.Cmd {
 			return m.back()
 		}
 	case "files", "batchfiles":
-		switch m.focus {
-		case 0:
-			if len(m.files) == 0 {
-				return nil
-			}
-			file := m.files[m.selected]
-			m.fileOrigin = m.page
-			id := m.store.ID
-			return m.start("file-detail", "Reading file details…", func(ctx context.Context) workMessage {
-				result, err := m.service.GetFile(ctx, id, file.ID)
-				return workMessage{attached: result, err: err}
-			})
-		case 1:
-			return m.loadFiles(false)
-		case 2:
-			if m.fileNext != "" {
-				return m.loadFiles(true)
-			}
-		case 3:
-			return m.back()
-		}
+		return m.activateFileList()
 	case "browse":
 		switch m.focus {
 		case 0:
@@ -638,6 +695,22 @@ func (m *workspace) activate() tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// Keep filtering local to the loaded folder. Preserve exact filenames for selection.
+func (m *workspace) filterFolder(query string) {
+	m.browserFilter, m.selected = query, 0
+	query = strings.ToLower(query)
+	includeHidden := strings.HasPrefix(query, ".")
+	m.entries = m.entries[:0]
+	for _, entry := range m.directoryEntries {
+		if strings.HasPrefix(entry.name, ".") && !includeHidden {
+			continue
+		}
+		if query == "" || query == "." || strings.Contains(strings.ToLower(entry.name), query) {
+			m.entries = append(m.entries, entry)
+		}
+	}
 }
 
 func (m *workspace) readDirectory(path string) tea.Cmd {
@@ -689,21 +762,16 @@ func (m *workspace) checkAttachment() tea.Cmd {
 		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
 			return workMessage{}
 		}
-		return workMessage{attached: result, err: err}
+		return workMessage{attached: result, err: err, statusChecks: 1}
 	})
 }
 
-func (m *workspace) poll(delay bool) tea.Cmd {
-	return m.pollFile(m.pendingFile, delay, "index")
-}
+const indexingStage = "Indexing file…"
 
-func (m *workspace) watchFile(file string, delay bool) tea.Cmd {
-	return m.pollFile(file, delay, "watch")
-}
-
-func (m *workspace) pollFile(file string, delay bool, kind string) tea.Cmd {
+func (m *workspace) pollFile(kind, file string, statusChecks int, delay bool) tea.Cmd {
 	id := m.store.ID
-	return m.start(kind, "Indexing file…", func(ctx context.Context) workMessage {
+	m.statusChecks = statusChecks
+	return m.start(kind, indexingStage, func(ctx context.Context) workMessage {
 		if delay {
 			timer := time.NewTimer(time.Second)
 			defer timer.Stop()
@@ -714,7 +782,7 @@ func (m *workspace) pollFile(file string, delay bool, kind string) tea.Cmd {
 			}
 		}
 		result, err := m.service.GetFile(ctx, id, file)
-		return workMessage{attached: result, err: err}
+		return workMessage{attached: result, err: err, statusChecks: statusChecks + 1}
 	})
 }
 
@@ -746,6 +814,11 @@ func (m *workspace) setFile(file *openai.VectorStoreFile) {
 
 func (m *workspace) complete(msg workMessage) tea.Cmd {
 	cancelled := m.cancelling
+	// Keep the indexing receipt if the follow-up list request fails or is stopped.
+	if msg.kind == "files" && m.note != "" && (msg.err != nil || cancelled) {
+		receipt := m.note
+		defer func() { m.note = receipt + "\n" + m.note }()
+	}
 	mutation := msg.kind == "create" || msg.kind == "upload" || msg.kind == "attach" || managementMutation(msg.kind)
 	if mutation {
 		// An unsuccessful response can still mean that the server applied the write.
@@ -772,17 +845,20 @@ func (m *workspace) complete(msg workMessage) tea.Cmd {
 			}
 		} else {
 			m.fail(msg.err)
-			if managementMutation(msg.kind) {
-				m.note += " Check remote state before retrying."
+			if msg.kind == "browse" && len(m.entries) == 0 {
+				m.focus = 1
 			}
-			if msg.kind == "attach" {
-				m.note += " Uploaded file retained. Retry attachment below."
+			if msg.kind == "stores" && !m.storesLoaded && len(m.stores) == 0 {
+				m.focus = 2 // Refresh stores. An unsuccessful list does not mean the project is empty.
+			}
+			if managementMutation(msg.kind) {
+				m.note = "Check remote state before retrying.\n" + m.note
 			}
 		}
 		var uncertain *unconfirmedMutation
 		switch {
 		case msg.kind == "upload" && m.pendingFile != "":
-			m.note = "Upload completed; its file ID is retained. " + m.note
+			m.note = "Your file uploaded. You can use the same file.\n" + m.note
 		case errors.As(msg.err, &uncertain):
 			m.retryNeedsInput = true
 			if msg.kind == "create" {
@@ -815,11 +891,13 @@ func (m *workspace) complete(msg workMessage) tea.Cmd {
 		}
 		m.setFile(msg.attached)
 		if msg.attached.Status == "in_progress" {
-			return m.watchFile(msg.attached.ID, true)
+			return m.pollFile("watch", msg.attached.ID, msg.statusChecks, true)
 		}
 		m.selected = 0
-		m.note = "File " + msg.attached.ID + ": " + string(msg.attached.Status)
-		if msg.attached.Status != "completed" {
+		if msg.attached.Status == "completed" {
+			m.note = "File indexed. Ready to search.\n" + cleanLine(msg.attached.ID)
+		} else {
+			m.note = "File " + cleanLine(msg.attached.ID) + ": " + cleanLine(string(msg.attached.Status))
 			m.lastErr = workspaceFailure("File indexing did not complete. Check the file status before searching.", nil)
 			if msg.attached.Status != "failed" && msg.attached.Status != "cancelled" {
 				m.note = "The API returned an unrecognized file indexing status."
@@ -832,7 +910,7 @@ func (m *workspace) complete(msg workMessage) tea.Cmd {
 			return nil
 		}
 		if cancelled {
-			m.note = "Upload completed. File retained; select Attach uploaded file to continue."
+			m.note = "Your file uploaded. Choose Attach uploaded file to continue."
 			return nil
 		}
 		return m.attach()
@@ -851,19 +929,40 @@ func (m *workspace) complete(msg workMessage) tea.Cmd {
 		m.pendingAttached = true
 		switch msg.attached.Status {
 		case "in_progress":
-			return m.poll(true)
+			return m.pollFile("index", m.pendingFile, msg.statusChecks, true)
 		case "completed":
+			name := cleanLine(m.pendingName)
 			m.pendingFile, m.pendingName = "", ""
 			m.pendingAttached = false
 			m.attachOptions = AttachOptions{}
+			m.uploadPath, m.selectedUploadPath = "", ""
+			m.editor.SetValue("")
+			// The store snapshot predates this attachment. Refresh it before showing a total.
+			m.store.FileCounts = openai.VectorStoreFileCounts{}
+			m.setStore(m.store)
 			m.lastMutation = time.Now()
-			return m.enterWithNote("home", "File indexed. You can search it now.")
+			if m.uploadFromFiles {
+				m.uploadFromFiles = false
+				m.filesLoaded = false // The cached list predates the confirmed attachment.
+				m.enter("files")
+				cmd := m.loadFiles(false)
+				m.note = strings.TrimSpace("File indexed. " + name)
+				return cmd
+			}
+			return m.enterWithNote("home", strings.TrimSpace("File indexed. Ready to search.\n"+name))
 		case "failed", "cancelled":
 			m.lastErr = errors.New("file indexing did not complete")
-			m.note = "Indexing " + string(msg.attached.Status) + ". Check the file and choose another upload."
+			if msg.attached.Status == "cancelled" {
+				m.note = "Indexing stopped. Open Files to check the attachment."
+			} else {
+				m.note = "Your file uploaded, but indexing failed. Open Files for details."
+			}
 			m.pendingFile, m.pendingName = "", ""
 			m.pendingAttached = false
 			m.attachOptions = AttachOptions{}
+			m.uploadPath, m.selectedUploadPath = "", ""
+			m.editor.SetValue("")
+			m.focus = 3 // Back to this store without uploading the same file again.
 		default:
 			m.fail(errors.New("unrecognized file indexing status"))
 		}
@@ -901,6 +1000,9 @@ func (m *workspace) complete(msg workMessage) tea.Cmd {
 	}
 	switch msg.kind {
 	case "stores":
+		if !m.storesLoaded && m.focus == 2 {
+			m.focus = 0 // Open the first store after a successful retry.
+		}
 		m.storesLoaded = true
 		if msg.reset {
 			m.stores = nil
@@ -911,16 +1013,11 @@ func (m *workspace) complete(msg workMessage) tea.Cmd {
 		if m.focus == 3 && m.storeNext == "" {
 			m.focus = 0
 		}
-		if m.listLength() == 0 && m.focus == 0 {
-			m.focus = 1
+		if m.focus == 0 {
+			m.focus = m.firstStoreFocus()
 		}
 	case "files":
-		if msg.reset {
-			m.files = nil
-			m.selected = 0
-		}
-		m.files = append(m.files, msg.files.Files...)
-		m.fileNext = msg.files.Next
+		m.completeFileList(msg)
 	case "search":
 		m.results, m.moreResults, m.searched = msg.search.Results, msg.search.More, true
 		for _, result := range m.results {
@@ -932,7 +1029,13 @@ func (m *workspace) complete(msg workMessage) tea.Cmd {
 		}
 		return m.syncFocus()
 	case "browse":
-		m.entries, m.directory, m.selected = msg.entries, msg.directory, 0
+		m.directoryEntries, m.directory = msg.entries, msg.directory
+		m.findingFile = false
+		m.filterFolder("")
+		if len(m.entries) == 0 {
+			m.focus = 1
+		}
+		return m.syncFocus()
 	}
 	return nil
 }

@@ -119,7 +119,7 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 		return 0, err
 	}
 	model := newTokenizerEditor()
-	model.decLineDrawing = supportsDECLineDrawing()
+	model.decLineDrawing = cliterminal.SupportsDECLineDrawing()
 	// Catch signals before raw mode starts, and release them after restoration.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
