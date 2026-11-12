@@ -24,15 +24,30 @@ func audioWaveformRows(peaks []float64, width, height, selectedBoundary int, den
 	// Native terminal dimensions fit in an unsigned 16-bit coordinate.
 	width = min(width, math.MaxUint16)
 	bars := audioWaveformBars(width)
-	if len(peaks) == 0 || bars == 0 || height < 1 {
+	if bars == 0 {
 		return nil, nil
 	}
 	selectedBoundary = max(0, min(bars, selectedBoundary))
-	span, marker := bars*2+1, selectedBoundary*2
+	marker := selectedBoundary * 2
+	if dense {
+		marker = audioWaveformMarker(width, selectedBoundary)
+	}
+	return measuredAudioWaveformRows(peaks, width, height, marker, dense, 0)
+}
+
+// A minimum scale of one keeps the height independent of the loudest sample.
+// A negative marker leaves the waveform free of a seek indicator.
+func measuredAudioWaveformRows(peaks []float64, width, height, marker int, dense bool, minPeakScale float64) ([]string, []float64) {
+	width = min(width, math.MaxUint16)
+	bars := audioWaveformBars(width)
+	if len(peaks) == 0 || bars == 0 || height < 1 {
+		return nil, nil
+	}
+	span := bars*2 + 1
 	columns := bars
 	maximumHeight := 5
 	if dense {
-		span, marker = width, audioWaveformMarker(width, selectedBoundary)
+		span = width
 		columns = width - 2
 		maximumHeight = audioMaxWaveformHeight
 	}
@@ -41,7 +56,7 @@ func audioWaveformRows(peaks []float64, width, height, selectedBoundary int, den
 		height--
 	}
 	amplitudes := make([]float64, columns)
-	maximum := 0.0
+	maximum := minPeakScale
 	// Divide before multiplying so interval boundaries cannot overflow.
 	boundary := func(index int) int {
 		return len(peaks)/columns*index + int(int64(len(peaks)%columns)*int64(index)/int64(columns))
@@ -109,7 +124,9 @@ func audioWaveformRows(peaks []float64, width, height, selectedBoundary int, den
 			}
 			cells[position] = cell
 		}
-		cells[marker] = '┃'
+		if marker >= 0 && marker < span {
+			cells[marker] = '┃'
+		}
 		rows[row] = string(cells)
 	}
 	return rows, amplitudes

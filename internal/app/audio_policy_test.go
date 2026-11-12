@@ -110,10 +110,13 @@ func TestSpeechAuthenticationGuidancePreservesInvocation(t *testing.T) {
 				root := apiAuthGuidanceTestCommand(func(_ context.Context, command *cli.Command) error {
 					guidance := speechAuthenticationGuidance(command, &openai.Error{StatusCode: 401})
 					want := "In your main terminal, run: " + invocation + " help setup"
+					panelAction := "Press Esc for setup instructions."
 					if len(flags) != 0 {
 						want = "Close this form.\n" + want + "\nReopen without the empty --api-key option."
+						panelAction += "\nReopen without the empty --api-key."
 					}
 					require.Equal(t, want, guidance.Action)
+					require.Equal(t, panelAction, guidance.PanelAction)
 					return nil
 				})
 				root.Metadata["help-invocation"] = invocation

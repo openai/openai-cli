@@ -49,10 +49,11 @@ func TestTerminalTranslationEditsAndSavesTypedInput(t *testing.T) {
 	m.form.editor.SetValue("example-model")
 	key(tea.KeyEnter)
 	require.False(t, m.started)
-	m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	_, wait := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	require.True(t, m.started)
 	m.workers.Wait()
-	m.Update(terminalTranslationTick{})
+	require.NotNil(t, wait)
+	m.Update(wait())
 	require.True(t, m.result.Complete)
 	require.Contains(t, m.View().Content, "Response time")
 	require.Contains(t, m.View().Content, "Output 0 tokens")
@@ -85,14 +86,15 @@ func TestTerminalTranslationCancelsTypedInput(t *testing.T) {
 		return translationTextResult{}, audiolive.Failure("The translator stopped.")
 	}
 	m.focusSetupAction()
-	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, wait := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	select {
 	case <-m.done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("typed request did not cancel")
 	}
-	m.Update(terminalTranslationTick{})
+	require.NotNil(t, wait)
+	m.Update(wait())
 	require.True(t, m.finished)
 	require.NoError(t, m.lastErr)
 	require.False(t, m.hasResult())
@@ -194,7 +196,12 @@ func TestTerminalTranslationReadsEntireTranscriptInPages(t *testing.T) {
 	require.Contains(t, m.View().Content, "Beginning ")
 	var all strings.Builder
 	for m.transcript != nil {
-		all.WriteString(strings.Join(m.transcript.rows, ""))
+		visible := strings.Split(m.View().Content, "\n")
+		require.GreaterOrEqual(t, len(visible), 3+len(m.transcript.rows))
+		for i, row := range m.transcript.rows {
+			require.Equal(t, "  "+row, visible[3+i])
+			all.WriteString(row)
+		}
 		if m.transcript.next == m.transcript.reader.Size() {
 			break
 		}
@@ -206,6 +213,12 @@ func TestTerminalTranslationReadsEntireTranscriptInPages(t *testing.T) {
 	require.Contains(t, strings.Join(m.transcript.rows, ""), "end of transcript")
 	key(tea.KeyPgUp)
 	require.NotContains(t, strings.Join(m.transcript.rows, ""), "end of transcript")
+	start := m.transcript.starts[len(m.transcript.starts)-1]
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 32})
+	m.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
+	require.True(t, m.expanded)
+	require.False(t, m.transcript.original)
+	require.Equal(t, start, m.transcript.starts[len(m.transcript.starts)-1])
 	key(tea.KeyTab)
 	view := m.View().Content
 	require.Contains(t, view, "Original")

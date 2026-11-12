@@ -285,4 +285,5 @@ type SpeechPresentation struct {
 // AuthenticationGuidance supplies a cause and short recovery steps.
 type AuthenticationGuidance struct {
 	Summary, Action string
+	PanelAction     string // Optional shorter action while the terminal form is open.
 }

@@ -305,7 +305,7 @@ func runTerminalText(ctx context.Context, translate terminalTextTranslator, text
 func (m *terminalTranslationModel) metricSummary() string {
 	var parts []string
 	if m.state.HasLatency {
-		label := "Caption latency"
+		label := "First caption gap"
 		if m.form.source == translationText {
 			label = "Response time"
 		}

@@ -7,7 +7,6 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiolive"
-	"github.com/openai/openai-cli/internal/audiomedia"
 	"github.com/openai/openai-cli/internal/readable"
 )
 
@@ -146,10 +145,7 @@ func (m *terminalTranslationModel) resultNotice() string {
 }
 
 func (m *terminalTranslationModel) resultDetails(layout translationLayout, budget int) []string {
-	var seek, feedback []string
-	if m.finished && m.result.AudioBytes > 0 {
-		seek = append(seek, layout.muted.Render("Seek  ")+audioSeekClock(m.seekPosition)+" / "+audioSeekClock(m.result.duration()))
-	}
+	var feedback []string
 	if m.saved {
 		label := "Saved  "
 		path, _ := audioHistorySuffix(audioHistoryCell(m.savedPath), max(1, layout.width-len(label)))
@@ -160,7 +156,12 @@ func (m *terminalTranslationModel) resultDetails(layout translationLayout, budge
 	if notice := m.resultNotice(); notice != "" {
 		feedback = append(feedback, notice)
 	}
-	remaining := max(0, budget-len(seek)-len(feedback))
+	remaining := max(0, budget-len(feedback))
+	var rows []string
+	if heading := m.translationAudioHeading(layout); heading != "" && remaining > 0 {
+		rows = append(rows, heading)
+		remaining--
+	}
 	var metrics []string
 	if summary := m.metricSummary(); summary != "" {
 		metrics = strings.Split(ansi.Wordwrap(summary, layout.width, ""), "\n")
@@ -169,13 +170,7 @@ func (m *terminalTranslationModel) resultDetails(layout translationLayout, budge
 			metrics[i] = layout.muted.Render(line)
 		}
 	}
-	var rows []string
-	if len(metrics) < remaining {
-		if wave := audiomedia.Waveform(m.state.Peaks, layout.width, 1); wave != "" {
-			rows = append(rows, layout.muted.Render(wave))
-		}
-	}
-	rows = append(rows, seek...)
+	rows = append(rows, m.translationWaveformRows(layout, remaining-len(metrics))...)
 	rows = append(rows, metrics...)
 	rows = append(rows, feedback...)
 	return rows[:min(len(rows), budget)]
@@ -183,11 +178,18 @@ func (m *terminalTranslationModel) resultDetails(layout translationLayout, budge
 
 func (m *terminalTranslationModel) resultCaptions(layout translationLayout, budget int, wide bool) []string {
 	original, translation := layout.title.Render("Original"), layout.title.Render("Translation")
+	if m.state.Original != "" {
+		if m.languageGuess == "" {
+			original += layout.muted.Render(" · Language unsure")
+		} else {
+			original += layout.muted.Render(" · Likely ") + layout.accent.Render(m.languageGuess)
+		}
+	}
 	if wide {
 		const gap = "    "
 		leftWidth := (layout.width - len(gap)) / 2
 		rightWidth := layout.width - leftWidth - len(gap)
-		left := append([]string{original}, terminalCaptionRows(m.state.Original, leftWidth, budget-1)...)
+		left := append([]string{ansi.Truncate(original, leftWidth, "…")}, terminalCaptionRows(m.state.Original, leftWidth, budget-1)...)
 		right := append([]string{translation}, terminalCaptionRows(m.state.Translation, rightWidth, budget-1)...)
 		rows := make([]string, max(len(left), len(right)))
 		for i := range rows {

@@ -14,6 +14,14 @@ type translationServiceError struct {
 	Message string `json:"message"`
 }
 
+// Keep the runnable recovery command for the shell after the form closes.
+type translationSetupHelp struct {
+	audiolive.Failure
+	summary, action string
+}
+
+func (e translationSetupHelp) Unwrap() error { return e.Failure }
+
 func translationEventFailure(eventErr translationServiceError, configuring bool) error {
 	switch eventErr.Code {
 	case "invalid_api_key", "permission_denied":

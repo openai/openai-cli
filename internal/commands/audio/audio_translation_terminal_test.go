@@ -11,7 +11,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiolive"
+	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v3"
 )
 
 func TestTerminalTranslationWaitsForVisibleStartAndPreservesStopAtSmallSize(t *testing.T) {
@@ -75,9 +77,11 @@ func TestTerminalTranslationCanRetryFromSetupWithDraft(t *testing.T) {
 	}
 	m.focusSetupAction()
 	enter := tea.KeyPressMsg{Code: tea.KeyEnter}
-	m.Update(enter)
+	_, wait := m.Update(enter)
 	m.workers.Wait()
-	m.Update(terminalTranslationTick{})
+	require.NotNil(t, wait)
+	oldUpdate := wait()
+	m.Update(oldUpdate)
 	require.False(t, m.started)
 	require.Equal(t, 1, calls)
 	require.Equal(t, "Start", m.fields()[m.form.row])
@@ -88,14 +92,58 @@ func TestTerminalTranslationCanRetryFromSetupWithDraft(t *testing.T) {
 	require.NotContains(t, view, "Save to")
 	require.Error(t, m.lastErr)
 
-	m.Update(enter)
+	_, wait = m.Update(enter)
 	m.workers.Wait()
-	m.Update(terminalTranslationTick{})
+	require.NotNil(t, wait)
+	m.Update(oldUpdate)
+	require.False(t, m.finished)
+	m.Update(wait())
 	require.Equal(t, 2, calls)
 	require.NoError(t, m.lastErr)
 	require.True(t, m.result.Complete)
 	require.Contains(t, m.View().Content, "Exemple")
 	require.NoError(t, m.result.Close())
+}
+
+func TestTerminalTranslationKeepsSetupCommandOutsidePanel(t *testing.T) {
+	const action = "In your main terminal, run: '/synthetic long preview path/openai' help setup"
+	policy := TranslationOptions{
+		AuthenticationGuidance: func(*cli.Command, *openai.Error) AuthenticationGuidance {
+			return AuthenticationGuidance{
+				Summary:     "No API key is configured.",
+				Action:      action,
+				PanelAction: "Press Esc for setup instructions.",
+			}
+		},
+	}
+	failure := policy.explainAccess(nil, translationFailure(401, "", nil), false)
+	m := &terminalTranslationModel{width: 40, height: 16, retrySetup: true, note: failure.Error(), lastErr: failure,
+		options: terminalTranslationOptions{Config: audiolive.Config{Language: "en"}}}
+	m.focusSetupAction()
+
+	view := m.View().Content
+	require.Contains(t, view, "No API key is configured.")
+	require.Contains(t, view, "Press Esc for setup instructions.")
+	require.Contains(t, view, "Esc exit")
+	require.NotContains(t, view, "preview path")
+
+	m.form.advanced = true
+	m.openField("Microphone")
+	view = m.View().Content
+	require.Contains(t, view, "No API key is configured.")
+	require.NotContains(t, view, "preview path")
+	require.NotContains(t, view, "Press Esc for setup instructions.")
+	m.Update(tea.PasteMsg{Content: "first\nsecond"})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Contains(t, strings.Join(strings.Fields(m.View().Content), " "), "Enter a single line for this setting.")
+
+	_, back := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.Nil(t, back)
+	require.Nil(t, m.form.editor)
+	_, exit := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.NotNil(t, exit)
+	require.IsType(t, tea.QuitMsg{}, exit())
+	require.EqualError(t, m.lastErr, "No API key is configured.\n"+action)
 }
 
 func TestTerminalTranslationKeepsPartialCaptionsOnFailure(t *testing.T) {
@@ -113,7 +161,7 @@ func TestTerminalTranslationKeepsPartialCaptionsOnFailure(t *testing.T) {
 		result:  terminalTranslationResult{stage: stage, TranslationPath: filepath.Join(stage.directory, "translation.txt"), Err: audiolive.Failure("Connection lost.")},
 		done:    make(chan struct{})}
 	close(m.done)
-	m.Update(terminalTranslationTick{})
+	m.Update(m.waitForTranslationUpdate()())
 	require.True(t, m.finished)
 	require.True(t, m.hasResult())
 	view := m.View().Content

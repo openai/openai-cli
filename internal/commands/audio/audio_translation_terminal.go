@@ -24,7 +24,9 @@ import (
 
 type terminalTranslationTick struct{}
 
-// The UI polls one current snapshot. Slow terminal output cannot block capture
+type terminalTranslationUpdateReady struct{ session <-chan struct{} }
+
+// The UI wakes for one current snapshot. Slow terminal output cannot block capture
 // or accumulate transcript messages. Complete captions stay in owned files.
 type terminalTranslationModel struct {
 	ctx                                        context.Context
@@ -40,14 +42,19 @@ type terminalTranslationModel struct {
 	folder                                     string
 	width, height                              int
 	color, dark                                bool
+	colorProfile                               colorprofile.Profile
+	expanded                                   bool
 	retrySetup                                 bool
 	started, finished, stopping, saving, saved bool
 	state                                      terminalTranslationUpdate
+	languageSample, languageGuess              string
+	languageGuessPending                       bool
 	note, savedPath                            string
 	lastErr                                    error
 	exitCode                                   int
 	stop                                       chan struct{}
 	done, saveDone                             chan struct{}
+	updateReady                                chan struct{}
 	workers                                    sync.WaitGroup
 	mu                                         sync.Mutex
 	latest                                     terminalTranslationUpdate
@@ -81,20 +88,39 @@ func (m *terminalTranslationModel) audioUsesColor() bool      { return m.color }
 func terminalTranslationPoll() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return terminalTranslationTick{} })
 }
+
+func (m *terminalTranslationModel) waitForTranslationUpdate() tea.Cmd {
+	ctx, ready, done := m.ctx, m.updateReady, m.done
+	return func() tea.Msg {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ready:
+		case <-done:
+		}
+		return terminalTranslationUpdateReady{session: done}
+	}
+}
+
 func (m *terminalTranslationModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		if m.transcript != nil {
-			m.transcript.starts = []int64{0}
-			m.readTranscript()
-		}
-		if edit := m.form.editor; edit != nil {
-			m.sizeTranslationEditor(edit)
-		}
+		m.reflowTranslation()
 	case tea.BackgroundColorMsg:
 		m.dark = msg.IsDark()
-	case terminalTranslationTick:
+	case translationLanguageGuessMsg:
+		if m.started && msg.session == m.done {
+			m.languageGuessPending = false
+			if translationLanguageSample(m.state.Original) == m.languageSample {
+				m.languageGuess = msg.language
+			}
+			return m, m.queueTranslationLanguageGuess()
+		}
+	case terminalTranslationUpdateReady:
+		if msg.session != m.done {
+			return m, nil
+		}
 		if m.started && !m.finished {
 			m.mu.Lock()
 			m.state = m.latest
@@ -124,6 +150,12 @@ func (m *terminalTranslationModel) Update(message tea.Msg) (tea.Model, tea.Cmd) 
 			default:
 			}
 		}
+		guess := m.queueTranslationLanguageGuess()
+		if m.started && !m.finished {
+			return m, tea.Batch(m.waitForTranslationUpdate(), guess)
+		}
+		return m, guess
+	case terminalTranslationTick:
 		if m.saving {
 			select {
 			case <-m.saveDone:
@@ -152,7 +184,7 @@ func (m *terminalTranslationModel) Update(message tea.Msg) (tea.Model, tea.Cmd) 
 			default:
 			}
 		}
-		if m.started && !m.finished || m.saving || m.replayDone != nil {
+		if m.saving || m.replayDone != nil {
 			return m, terminalTranslationPoll()
 		}
 	case tea.PasteMsg:
@@ -165,6 +197,11 @@ func (m *terminalTranslationModel) Update(message tea.Msg) (tea.Model, tea.Cmd) 
 			m.exitCode = 130
 			m.cancel()
 			return m, tea.Quit
+		}
+		if key == "ctrl+l" && m.width >= 40 && m.height >= 16 {
+			m.expanded = !m.expanded
+			m.reflowTranslation()
+			return m, nil
 		}
 		if m.form.editor != nil {
 			return m, m.updateField(msg)
@@ -258,6 +295,7 @@ func (m *terminalTranslationModel) resetSession() error {
 	m.result = terminalTranslationResult{}
 	m.seekPosition = 0
 	m.state, m.latest = terminalTranslationUpdate{}, terminalTranslationUpdate{}
+	m.languageSample, m.languageGuess, m.languageGuessPending = "", "", false
 	m.retrySetup = false
 	m.focusSetupAction()
 	return nil
@@ -304,6 +342,8 @@ func (m *terminalTranslationModel) startTranslation() tea.Cmd {
 	m.latest = m.state
 	m.stop = make(chan struct{})
 	m.done = make(chan struct{})
+	ready := make(chan struct{}, 1)
+	m.updateReady = ready
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.cancelRun = cancel
 	m.workers.Add(1)
@@ -313,7 +353,15 @@ func (m *terminalTranslationModel) startTranslation() tea.Cmd {
 		if opts.File != nil {
 			defer opts.File.Close()
 		}
-		update := func(state terminalTranslationUpdate) { m.mu.Lock(); m.latest = state; m.mu.Unlock() }
+		update := func(state terminalTranslationUpdate) {
+			m.mu.Lock()
+			m.latest = state
+			m.mu.Unlock()
+			select {
+			case ready <- struct{}{}:
+			default:
+			}
+		}
 		if m.form.source == translationText {
 			result, state := runTerminalText(ctx, m.translateText, m.form.text, opts.Config.Language, m.form.textModel)
 			m.result = result
@@ -322,7 +370,7 @@ func (m *terminalTranslationModel) startTranslation() tea.Cmd {
 			m.result = runTerminalTranslation(ctx, m.stop, opts, update)
 		}
 	}()
-	return terminalTranslationPoll()
+	return m.waitForTranslationUpdate()
 }
 
 func (m *terminalTranslationModel) stopCapture() {
@@ -386,6 +434,7 @@ func runTerminalTranslationUI(parent context.Context, command *cli.Command, conn
 	m.dark = cliterminal.DarkBackground(os.Getenv("COLORFGBG"))
 	profile := cliterminal.ColorProfile(output, os.Environ(), term.IsTerminal(output.Fd()))
 	m.color = profile >= colorprofile.ANSI
+	m.colorProfile = profile
 	inline := &audioWorkbenchInline{model: m, painter: painter, output: output, profile: profile, cancel: cancel, cursorOutput: cursorOutput}
 	program := tea.NewProgram(inline, tea.WithContext(ctx), tea.WithInput(input), tea.WithOutput(io.Discard), tea.WithoutSignalHandler(), tea.WithoutRenderer(), tea.WithWindowSize(width, height), tea.WithColorProfile(profile))
 	listenerDone := make(chan struct{})
