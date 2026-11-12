@@ -1,0 +1,48 @@
+name: Verify Windows guided admin output
+
+on:
+  push:
+    branches: [codex/windows-753-admin-copy]
+
+permissions: {}
+
+jobs:
+  verify:
+    if: github.event.created && github.run_attempt == '1' && github.repository == 'openai/openai-cli'
+    runs-on: windows-2025
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify the shipping source and test scope
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $shipping = '95f44014c6a12ac656f1f99c9a5ca0cae74b4386'
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') { throw 'Expected Windows x64.' }
+          if ((git rev-parse 'HEAD^') -cne $shipping) { throw 'Unexpected shipping parent.' }
+          $changes = @(git diff --name-status --no-renames $shipping HEAD)
+          $expected = @("A`t.github/workflows/verify-windows-admin-753.yml", "A`tcmd/openai/admin753_windows_test.go")
+          if (($changes -join "`n") -cne ($expected -join "`n")) { throw 'Unexpected change to shipping source.' }
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: .go-version
+          cache: false
+
+      - name: Check one synthetic rejection in the native Windows console
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:RUNNER_TEMP 'admin753-go-events.jsonl'
+          go test -mod=readonly -count=1 -json -timeout 6m ./cmd/openai -run '^TestAdmin753Shipping401$' > $log
+          $result = $LASTEXITCODE
+          $events = @(Get-Content $log | ConvertFrom-Json)
+          $case = @($events | Where-Object { $_.Test -ceq 'TestAdmin753Shipping401' -and $_.Action -ceq 'pass' })
+          if ($result -ne 0 -or $case.Count -ne 1) { throw 'Expected one passing native Windows 401 case.' }
+          Write-Output 'Passed one Windows x64 ConPTY case: exact prompt, U+2026, three 401 lines, redaction, and console restoration.'
