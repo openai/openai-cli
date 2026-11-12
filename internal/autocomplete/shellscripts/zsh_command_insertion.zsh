@@ -242,11 +242,10 @@ if [[ -o interactive && -o zle && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]]; t
     fi
     local file code ____APPNAME___suggestions_started=0
     ____APPNAME___suggestions_clear
-    # Only the bare interactive command hands its selection to the next editor.
-    # Explicit flags and redirected commands retain the executable's own output.
-    if (( $# == 1 && ZSH_SUBSHELL == 0 )) && [[ $1 == explore && -t 0 && -t 1 && -t 2 ]]; then
+    if (( ZSH_SUBSHELL == 0 )) && [[ ${1-} == explore && -t 0 && -t 1 && -t 2 ]] &&
+      { (( $# == 1 )) || { (( $# == 2 )) && [[ $2 == --full-screen ]]; }; }; then
       local selected
-      if selected=$(OPENAI_CLI_COMMANDS_FD= OPENAI_CLI_COMMANDS_SHELL= command '__APPNAME__' explore --shell-integration --shell zsh); then
+      if selected=$(OPENAI_CLI_COMMANDS_FD= OPENAI_CLI_COMMANDS_SHELL= command '__APPNAME__' "$@" --shell-integration --shell zsh); then
         local LC_ALL=C
         [[ -n $selected && $selected != *[[:cntrl:]]* ]] && (( ${#selected} <= 16384 )) || return 1
         typeset -ga ____APPNAME___suggestions=("$selected")

@@ -139,13 +139,15 @@ One-letter and two-letter description searches require whole words, such as `ID`
 Unrelated word fragments and documentation URLs do not produce description matches.
 Discovery omits retired operations. Syntax guides such as `COMMAND --help` are not selectable suggestions.
 Examples remain editable. Replace sample paths and provide required inputs before running a selected command.
+The picker starts compact. Press **Ctrl+G** to expand it or return to the compact view.
+Your query and selection stay in place. Use `openai explore --full-screen` to start expanded.
 Arrow keys choose a command. Enter selects it. Escape cancels.
 
 With zsh or fish command insertion enabled, selection fills the next editable prompt.
 Bash stages the selection; Ctrl+X, then Tab inserts it without opening another picker.
 Without command insertion, the picker prints the selected command and setup guidance.
-The shell integration only intercepts bare `openai explore` in an interactive terminal.
-Explicit flags or redirection use the CLI's normal output behavior.
+The shell integration handles `openai explore` and `openai explore --full-screen` in an interactive terminal.
+Other arguments and redirected commands keep the CLI's normal output behavior.
 
 The picker requires a terminal of at least 40 columns and 12 rows.
 Redirecting standard error can disable the picker.
