@@ -267,7 +267,7 @@ func TestImagePickerPrintShortcutKeepsCommittedChoices(t *testing.T) {
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
 	require.NotNil(t, cmd)
 	require.True(t, m.result.PrintOnly)
-	require.Equal(t, openai.ImageModelGPTImage2_5Sunburst, pickerArg(t, m.result.Args, "--model"))
+	require.Equal(t, openai.ImageModelGPTImage2_6Sunburst, pickerArg(t, m.result.Args, "--model"))
 }
 
 func TestImagePickerEscapeModelMenuToPrompt(t *testing.T) {
@@ -356,7 +356,7 @@ func TestImagePickerFastEscapeEnterLeavesMenuWithoutSubmitting(t *testing.T) {
 		require.Equal(t, "prompt", m.focus)
 		require.Equal(t, "settings", m.page)
 		require.Empty(t, m.result.Args)
-		require.Equal(t, openai.ImageModelGPTImage2_5Sunburst, m.settings.model)
+		require.Equal(t, openai.ImageModelGPTImage2_6Sunburst, m.settings.model)
 	}
 }
 
@@ -369,8 +369,8 @@ func TestImagePickerCtrlGFromDropdown(t *testing.T) {
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	cmd = pickerFinishFolderCommand(m, cmd)
 	require.NotNil(t, cmd)
-	require.Equal(t, openai.ImageModelGPTImage2_5Sunburst, m.settings.model, "unconfirmed highlighted option must not apply")
-	require.Equal(t, openai.ImageModelGPTImage2_5Sunburst, pickerArg(t, m.result.Args, "--model"))
+	require.Equal(t, openai.ImageModelGPTImage2_6Sunburst, m.settings.model, "unconfirmed highlighted option must not apply")
+	require.Equal(t, openai.ImageModelGPTImage2_6Sunburst, pickerArg(t, m.result.Args, "--model"))
 	require.False(t, m.result.PrintOnly)
 }
 

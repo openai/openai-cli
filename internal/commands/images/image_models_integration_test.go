@@ -105,7 +105,7 @@ func TestImageModelsUsesConfiguredMTLSClient(t *testing.T) {
 	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
 		t.Fatal(err)
 	}
-	if requests.Load() != 9 || !report.Complete || len(report.Models) != 9 || stderr.Len() != 0 {
+	if requests.Load() != 11 || !report.Complete || len(report.Models) != 11 || stderr.Len() != 0 {
 		t.Fatalf("mTLS discovery did not complete all model checks: requests=%d; report=%+v; stderr=%q", requests.Load(), report, stderr.String())
 	}
 }

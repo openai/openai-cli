@@ -56,11 +56,11 @@ func TestAudioViewUsesPanelAndAlignedSettings(t *testing.T) {
 	require.True(t, strings.HasPrefix(view, "╭"))
 	require.Contains(t, strings.Split(view, "\n")[1], "Text to speech")
 	require.NotContains(t, view, "Setting        Value")
-	require.Contains(t, view, "Settings  ▸ gpt-4o-mini-tts  WAV  1.00×")
+	require.Contains(t, view, "Settings  ▸ gpt-realtime-2.1-mini  WAV  1.00×")
 	require.NotContains(t, view, "Model             ")
 	m.settingsExpanded = true
 	view = ansi.Strip(m.View().Content)
-	for _, row := range []string{"Model     gpt-4o-mini-tts", "Voice     Coral", "Format    WAV", "Speed     1.00 x"} {
+	for _, row := range []string{"Model     gpt-realtime-2.1-mini", "Voice     Coral", "Format    WAV", "Speed     1.00 x"} {
 		require.Contains(t, view, row)
 	}
 	require.Contains(t, view, "Generate speech")
