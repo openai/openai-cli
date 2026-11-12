@@ -62,7 +62,7 @@ func TestAudioWaveformDetailRespectsWindowBudgetAndEmptyGeometry(t *testing.T) {
 				require.Positive(t, idleRow, "the idle rail must be visible")
 			}
 			require.Contains(t, view, m.input.Value())
-			require.Contains(t, view, "Ctrl+C Exit")
+			require.Contains(t, view, "Esc Exit")
 			require.Equal(t, line, m.input.Line())
 			require.Equal(t, column, m.input.Column())
 			assertAudioWorkspaceBounds(t, view, [2]int{tc.width, tc.height})
@@ -161,7 +161,7 @@ func TestAudioWaveformDetailReservesRecordingIdentityAndLongTiming(t *testing.T)
 		for _, text := range []string{
 			"DRAFT_TAIL", "INSTRUCTION_TAIL", "Draft changed. Showing previous audio.",
 			"Alloy", "MP3", "120.6 KiB", "Recording: Original recording.",
-			"149999999:59.000 / 150000000:00.000", "Saved: …", "retained.mp3", "Ctrl+C Exit",
+			"149999999:59.000 / 150000000:00.000", "Saved: …", "retained.mp3", "Esc Exit",
 		} {
 			require.Contains(t, view, text)
 		}

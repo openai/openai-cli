@@ -112,7 +112,11 @@ func TestAudioWorkspaceKeepsDraftAndRecordingVisibleAcrossFocus(t *testing.T) {
 				} else {
 					require.NotContains(t, view, "› Play audio")
 					require.NotContains(t, view, "Space play")
-					require.Contains(t, view, "Ctrl+S Save")
+					if focus == 2 {
+						require.Contains(t, view, "Ctrl+S Save")
+					} else {
+						require.Contains(t, view, audioEditorFooterText)
+					}
 					require.NotContains(t, view, "Ctrl+O Audio")
 				}
 				assertAudioWorkspaceBounds(t, view, size)

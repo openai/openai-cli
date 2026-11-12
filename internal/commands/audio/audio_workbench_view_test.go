@@ -247,21 +247,14 @@ func TestAudioViewKeepsPanelStableAcrossFocus(t *testing.T) {
 			require.Equal(t, focus == 0, strings.HasPrefix(strings.TrimLeft(rows[heading], "│ "), "› "))
 			require.Equal(t, focus == 0 || focus == 1, m.View().Cursor != nil)
 			if focus == 2 {
-				require.NotContains(t, view, "Alt+Enter New line")
-			} else {
-				require.Contains(t, view, "Alt+Enter New line")
-			}
-			next := "Settings"
-			if focus == 0 {
-				next = "Instructions"
-			}
-			if focus == 2 {
-				next = "Audio"
+				next := "Audio"
 				if m.inlineActions() {
 					next = "Actions"
 				}
+				require.Contains(t, view, "Tab "+next)
+			} else {
+				require.Equal(t, audioEditorFooterText, strings.TrimSpace(rows[len(rows)-1]))
 			}
-			require.Contains(t, view, "Tab "+next)
 		}
 	}
 }
@@ -633,13 +626,17 @@ func TestAudioPanelPinsFooterBelowLongDraft(t *testing.T) {
 			if m.inlineActions() {
 				actions = "View command"
 			}
-			for _, label := range []string{"Generate speech", "History", actions, "Ctrl+C Exit", "Ctrl+G Generate"} {
+			for _, label := range []string{"Generate speech", "History", actions} {
 				require.Contains(t, ansi.Strip(view.Content), label)
 			}
 			footer := strings.Join(m.workspaceFooter(), "\n")
 			border := len(rows) - strings.Count(footer, "\n") - 2
 			require.True(t, strings.HasPrefix(rows[border], "╰"))
-			require.Contains(t, strings.Join(rows[border+1:], "\n"), "Ctrl+C Exit")
+			if focus == 2 {
+				require.Contains(t, strings.Join(rows[border+1:], "\n"), "Ctrl+C Exit")
+			} else {
+				require.Equal(t, audioEditorFooterText, strings.TrimSpace(strings.Join(rows[border+1:], "\n")))
+			}
 			require.NotContains(t, strings.Join(rows[:border], "\n"), "Ctrl+G")
 		}
 		m.quit = true

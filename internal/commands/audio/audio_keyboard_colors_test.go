@@ -17,7 +17,7 @@ func TestAudioViewsDistinguishKeysFromDescriptions(t *testing.T) {
 		name, key, action string
 		setup             func(*audioWorkbench)
 	}{
-		{"form", "Ctrl+C", "Exit", func(m *audioWorkbench) {}},
+		{"form", "Enter", "Generate", func(m *audioWorkbench) {}},
 		{"too-small", "Ctrl+C", "exits.", func(m *audioWorkbench) { m.Update(tea.WindowSizeMsg{Width: 39, Height: 11}) }},
 		{"settings", "Tab", "Audio", func(m *audioWorkbench) { m.focusSection(2) }},
 		{"more", "Esc", "back", func(m *audioWorkbench) { m.modal = "more" }},
@@ -74,8 +74,8 @@ func TestAudioViewsDistinguishKeysFromDescriptions(t *testing.T) {
 				accent, secondary = "138;168;255", "164;172;194"
 			}
 			for _, tc := range cases {
-				if size[0] == 40 && (tc.name == "form" || tc.name == "settings") {
-					continue // Compact forms intentionally omit the shortcut row.
+				if size[0] == 40 && tc.name == "settings" {
+					continue // Compact settings use different navigation hints.
 				}
 				t.Run(fmt.Sprintf("%s/%dx%d/dark_%t", tc.name, size[0], size[1], dark), func(t *testing.T) {
 					m := audioReviewModel(t)

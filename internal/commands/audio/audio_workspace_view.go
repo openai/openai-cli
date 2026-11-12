@@ -158,6 +158,10 @@ func (m *audioWorkbench) workspaceFooter() []string {
 	if m.focus == 4 {
 		return m.resultHintRows()
 	}
+	if m.focus == 0 || m.focus == 1 {
+		keys := m.withFailureShortcut([2]string{"Enter", "Generate"}, [2]string{"Tab", "Next"}, [2]string{"Esc", "Exit"})
+		return m.formShortcutRows(keys...)
+	}
 	below := "Audio"
 	if m.result.hasWaveform() {
 		below = "waveform"
@@ -167,9 +171,7 @@ func (m *audioWorkbench) workspaceFooter() []string {
 		return m.formShortcutRows(keys...)
 	}
 	nextKey, next := "Tab", "Settings"
-	if m.focus == 0 && m.instructionsSupported() {
-		next = "Instructions"
-	} else if m.focus == 2 {
+	if m.focus == 2 {
 		next = "Audio"
 		if m.inlineActions() {
 			next = "Actions"
@@ -179,22 +181,7 @@ func (m *audioWorkbench) workspaceFooter() []string {
 		}
 	}
 	shortcuts := [][2]string{{nextKey, next}}
-	if m.focus == 0 {
-		if m.studioLayout() {
-			shortcuts = append(shortcuts, [2]string{"↑", "Actions at top"})
-		}
-		recording := "Audio"
-		if m.studioLayout() {
-			recording = "Recording"
-		}
-		shortcuts = append(shortcuts, [2]string{"Shift+Tab", recording})
-	}
-	if m.focus == 0 || m.focus == 1 {
-		if m.splitComposer() && m.focus == 0 {
-			shortcuts = append(shortcuts, [2]string{"→", "Delivery at text end"})
-		}
-		shortcuts = append(shortcuts, [2]string{"Alt+Enter", "New line"})
-	} else if m.focus == 2 && m.setting >= 4 && m.setting <= audioSettingMore {
+	if m.focus == 2 && m.setting >= 4 && m.setting <= audioSettingMore {
 		horizontal := m.inlineActions() || len(m.formActionRows()) == 1
 		if horizontal && !m.inlineActions() {
 			shortcuts = append(shortcuts, [2]string{"←→", "choose"})

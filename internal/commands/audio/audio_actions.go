@@ -318,13 +318,14 @@ func (m *audioWorkbench) openHelp(parent string) {
 
 func (m *audioWorkbench) helpRows() []string {
 	shortcut := func(key, action string) string {
-		return "  " + m.keyHint(key, "") + strings.Repeat(" ", 12-ansi.StringWidth(key)) + m.muted().Render(action)
+		return "  " + m.keyHint(key, "") + strings.Repeat(" ", max(1, 12-ansi.StringWidth(key))) + m.muted().Render(action)
 	}
 	rows := []string{
 		"  " + m.strong().Render("Compose"),
 		shortcut("Tab", "Next section"),
-		shortcut("Ctrl+G", "Generate speech"),
+		shortcut("Enter/Ctrl+G", "Generate speech"),
 		shortcut("Alt+Enter", "Insert a new line"),
+		shortcut("Ctrl+C", "Exit Voice Studio"),
 	}
 	if m.studioLayout() {
 		rows = append(rows, shortcut("↑ / ↓", "First script line to Generate and back"), shortcut("Shift+Tab", "Script to Recording"))

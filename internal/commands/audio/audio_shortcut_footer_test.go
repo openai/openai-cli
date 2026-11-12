@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const audioEditorFooterText = "Enter Generate  Tab Next  Esc Exit"
+
 func TestAudioKeyboardShortcutsBelowFrame(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -19,12 +21,12 @@ func TestAudioKeyboardShortcutsBelowFrame(t *testing.T) {
 	}{
 		{
 			name: "studio", width: 137, height: 41,
-			body: []string{"Script", "Voice studio", "Generate speech"}, hints: []string{"Ctrl+G", "Ctrl+S", "Ctrl+C"},
+			body: []string{"Script", "Voice studio", "Generate speech"}, hints: []string{audioEditorFooterText},
 			cursorRow: "Synthetic draft",
 		},
 		{
 			name: "stacked", width: 60, height: 24,
-			body: []string{"Text to speech", "Generate speech"}, hints: []string{"Ctrl+G", "Ctrl+S", "Ctrl+C"},
+			body: []string{"Text to speech", "Generate speech"}, hints: []string{audioEditorFooterText},
 			cursorRow: "Synthetic draft",
 		},
 		{
@@ -116,6 +118,31 @@ func TestAudioKeyboardShortcutsBelowFrame(t *testing.T) {
 	}
 }
 
+func TestAudioEditorFooterShowsOnlyPrimaryActions(t *testing.T) {
+	for _, size := range []tea.WindowSizeMsg{{Width: 40, Height: 12}, {Width: 60, Height: 24}, {Width: 137, Height: 41}} {
+		m := audioReviewModel(t)
+		m.Update(size)
+		for _, focus := range []int{0, 1} {
+			m.focusSection(focus)
+			rows := strings.Split(ansi.Strip(m.View().Content), "\n")
+			require.Equal(t, audioEditorFooterText, strings.TrimSpace(rows[len(rows)-1]), "focus %d, size %v", focus, size)
+			if m.framed() {
+				require.True(t, strings.HasPrefix(rows[len(rows)-2], "╰"), "only one row belongs below the frame")
+			}
+		}
+	}
+
+	m := audioReviewModel(t)
+	result := audioReviewResult("previous-recording", false)
+	m.result, m.retainedGenerationFailure = &result, true
+	m.failure.Summary = "Could not generate new audio."
+	for _, focus := range []int{0, 1} {
+		m.focusSection(focus)
+		rows := strings.Split(ansi.Strip(m.View().Content), "\n")
+		require.Equal(t, audioEditorFooterText+"  F1 details", strings.TrimSpace(rows[len(rows)-1]))
+	}
+}
+
 func TestAudioCompactShortcutsKeepDraftCaretVisible(t *testing.T) {
 	m := audioReviewModel(t)
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
@@ -129,7 +156,6 @@ func TestAudioCompactShortcutsKeepDraftCaretVisible(t *testing.T) {
 		require.Less(t, ansi.StringWidth(row), m.width)
 	}
 	require.NotContains(t, view.Content, "╰")
-	footer := strings.Join(rows[view.Cursor.Y+1:], "\n")
-	require.Contains(t, footer, "Ctrl+G")
-	require.Contains(t, footer, "Ctrl+C")
+	require.Less(t, view.Cursor.Y, len(rows)-1)
+	require.Equal(t, audioEditorFooterText, strings.TrimSpace(rows[len(rows)-1]))
 }
