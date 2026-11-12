@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.53.1](https://github.com/openai/openai-cli/compare/v1.53.0...v1.53.1) (2026-11-12)
+
+
+### Chores
+
+* **deps:** update openai-go to v3.99.0 ([#754](https://github.com/openai/openai-cli/issues/754)) ([905f047](https://github.com/openai/openai-cli/commit/905f047678718846f6a1f308660dcdf5bc682785))
+
 ## [1.53.0](https://github.com/openai/openai-cli/compare/v1.52.0...v1.53.0) (2026-11-12)
 
 
