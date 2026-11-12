@@ -12,12 +12,13 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/modeldefaults"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
 
-const realtimeSpeechModel = "gpt-realtime-2.1-mini"
+const realtimeSpeechModel = modeldefaults.Speech
 
 var audioModels = []string{realtimeSpeechModel, "gpt-4o-mini-tts", "gpt-4o-mini-tts-2025-03-20", "gpt-4o-mini-tts-2025-12-15", "tts-1", "tts-1-1106", "tts-1-hd", "tts-1-hd-1106"}
 var audioVoices = []string{"alloy", "ash", "ballad", "cedar", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse"}

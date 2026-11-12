@@ -18,10 +18,11 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/openai/openai-cli/internal/modeldefaults"
 	"github.com/tidwall/gjson"
 )
 
-const realtimeSpeechModel = "gpt-realtime-2.1-mini"
+const realtimeSpeechModel = modeldefaults.Speech
 const syntheticScript = "@synthetic-untrusted-script 雪"
 
 func serveRealtimeSpeech(t *testing.T, wantAuthorization string, sendAudio func(context.Context, *websocket.Conn)) *httptest.Server {

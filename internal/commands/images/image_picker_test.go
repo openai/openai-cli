@@ -15,6 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/modeldefaults"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
@@ -87,6 +88,7 @@ func TestImagePickerPromptSubmitsExactlyOnce(t *testing.T) {
 	require.False(t, m.result.PrintOnly)
 	require.False(t, m.result.Canceled)
 	require.Equal(t, []string{"images", "generate"}, m.result.Args[:2])
+	require.Equal(t, modeldefaults.SavedImage, pickerArg(t, m.result.Args, "--model"))
 	result := m.result
 	result.Args = append([]string(nil), m.result.Args...)
 	settings := m.settings
