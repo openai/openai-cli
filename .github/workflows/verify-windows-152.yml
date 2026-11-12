@@ -1,0 +1,65 @@
+name: Windows v1.52.0 release checks
+
+on:
+  push:
+    branches: [codex/windows-152-release-checks]
+
+permissions: {}
+
+jobs:
+  verify:
+    if: github.event.created && github.repository == 'openai/openai-cli'
+    runs-on: windows-2025
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Get the reviewed checker
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: /scripts/check_windows_release_152.py
+          sparse-checkout-cone-mode: false
+
+      - name: Verify and exercise the published x64 release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64' -or
+              [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne 'X64') {
+            throw 'Expected a native Windows x64 runner.'
+          }
+          $folder = Join-Path $env:RUNNER_TEMP "CLI release's folder"
+          $null = New-Item -ItemType Directory -Path $folder
+          $zip = Join-Path $folder 'release.zip'
+          $exe = Join-Path $folder 'openai.exe'
+          $url = 'https://github.com/openai/openai-cli/releases/download/v1.52.0/openai_1.52.0_windows_amd64.zip'
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($zipHash -cne '832404b72e002ec73b749f5637ba7a3c0abdad401efb3924d6284dc699fde78c') {
+            throw 'The release ZIP failed its SHA-256 check.'
+          }
+          Write-Output "Verified release ZIP SHA-256 $zipHash"
+          $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            $entry = @($archive.Entries | Where-Object { $_.Name -ceq 'openai.exe' })
+            if ($entry.Count -ne 1) { throw 'Expected one release executable.' }
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry[0], $exe)
+          } finally {
+            $archive.Dispose()
+          }
+          $output = Join-Path $env:RUNNER_TEMP 'windows-release-results'
+          python -I scripts/check_windows_release_152.py $exe $output
+          exit $LASTEXITCODE
+
+      - name: Retain the receipt and the synthetic guide
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-152-checks
+          path: |
+            ${{ runner.temp }}/windows-release-results/receipt.json
+            ${{ runner.temp }}/windows-release-results/cmd-guide.txt
+          if-no-files-found: warn
+          retention-days: 1
