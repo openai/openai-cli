@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -14,13 +13,8 @@ import (
 
 const imagePickerRequestFailureNote = "Couldn't create your image."
 
-// Keep semantic roles alongside the unstyled diagnostics so a theme change can repaint them.
 func (w *imagePickerWorkspace) addDetail(text string, tone imagePickerTone) {
-	if w.detailTones == nil {
-		w.detailTones = make(map[int]imagePickerTone)
-	}
-	w.detailTones[len(w.rows)] = tone
-	w.rows = append(w.rows, text)
+	w.diagnostics = append(w.diagnostics, imagePickerDiagnostic{details: []imagePickerDetail{{text: text, tone: tone}}})
 }
 
 func (p *imagePickerInline) startWorkspaceRequest() tea.Cmd {
@@ -74,8 +68,8 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		}
 	}
 	switch msg := msg.(type) {
-	case imagePickerKonsoleWritten:
-		if err := p.workspace.finishKonsoleTransfer(msg.transfer); err != nil {
+	case imagePickerNativeWritten:
+		if err := p.workspace.finishNativeTransfer(msg.transfer); err != nil {
 			p.err = errors.Join(p.err, imagePickerDisplayFailure(err))
 			p.output.cancel()
 			return true, tea.Quit
@@ -147,7 +141,9 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 			w.selected = len(w.images) - 1
 			w.galleryJump = true
 		}
-		w.stageNativeRows(len(w.images)-1, false, msg.columns, msg.rows)
+		if msg.itermBounds.Empty() {
+			w.stageNativeRows(len(w.images)-1, false, msg.columns, msg.rows)
+		}
 		draw(true)
 		return true, nil
 	case imagePickerExpandedRows:
@@ -158,6 +154,15 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		geometryCurrent := msg.size == w.previewSize && (msg.size.width == 0 || p.model != nil && msg.size.width == p.model.width && msg.size.height == p.model.height)
 		if msg.revision == w.previewRevision && geometryCurrent && msg.index >= 0 && msg.index < len(w.images) && (msg.inline || msg.index == w.selected) {
 			w.previewPending = false
+			if msg.placement.region.rows > 0 {
+				if len(msg.rows) == 1 {
+					w.nativeTransient = map[imagePickerNativeRow]string{msg.placement: msg.rows[0]}
+				} else {
+					w.invalidateITermImage(msg.index)
+				}
+				draw(false)
+				return true, nil
+			}
 			if msg.inline {
 				w.replaceImageRows(msg)
 				w.stageNativeRows(msg.index, false, msg.columns, msg.rows)
@@ -197,19 +202,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 				p.err = errors.Join(p.err, msg.err)
 				return true, tea.Quit
 			}
-			message := imagePickerRequestMessage(msg.err, msg.draftSaved)
-			heading, _, _ := strings.Cut(message, "\n")
-			p.workspace.requestFailure = imagePickerLine(heading)
-			for _, line := range strings.Split(message, "\n") {
-				tone := imageSecondary
-				switch line {
-				case heading:
-					tone = imageFailure
-				case imagePickerUnsavedDraft:
-					tone = imageWarning
-				}
-				p.workspace.addDetail(imagePickerLine(line), tone)
-			}
+			p.workspace.diagnostics = append(p.workspace.diagnostics, imagePickerRequestDiagnostic(msg.err, msg.draftSaved))
 			p.workspace.offset = 0
 			p.workspace.galleryDetails = true
 			p.model.setNote(imagePickerRequestFailureNote, imageFailure)

@@ -388,7 +388,7 @@ def upload_path(terminal, path):
 
 
 def quit_normally(terminal):
-    action(terminal, b"\x1b", "Find store by name or ID")
+    action(terminal, b"\x1b", "Enter open store")
     terminal.send(b"q")
     terminal.finish(0)
 
@@ -450,7 +450,7 @@ def management_scenario(name, terminal, server, harness):
         terminal.wait("Existing synthetic store")
         action(terminal, b"\x1b", "Store details")
         action(terminal, b"\x1b", "Search your files")
-        action(terminal, b"\x1b", "Find store by name or ID")
+        action(terminal, b"\x1b", "Enter open store")
         terminal.send(b"q")
         terminal.finish(1)
         return
@@ -546,7 +546,8 @@ def scenario(name, terminal, server, source, harness):
             terminal.finish(143)
         assert not server.release.is_set(), "fixture response completed before cancellation"
         return
-    terminal.wait("Find store by name or ID")
+    terminal.wait("1 loaded")
+    terminal.wait("Enter open store")
     if name in ("ctrl-c", "sigterm"):
         if name == "ctrl-c":
             terminal.send(b"\x03")
@@ -574,9 +575,15 @@ def scenario(name, terminal, server, source, harness):
         terminal.finish(130)
         return
     if name.startswith("management"):
-        action(terminal, harness.DOWN * 3 + b"\r", "Search stores by name or ID")
-        paste(terminal, "existing")
-        action(terminal, b"\r\r", "Find store by name or ID")
+        action(terminal, b"/", "Esc cancel")
+        action(terminal, b"no-such-store", "No matching stores.")
+        action(terminal, b"\x1b", "Enter open store")
+        action(terminal, b"/", "Esc cancel")
+        mark = len(terminal.raw)
+        paste(terminal, EXISTING_ID)
+        terminal.wait("Existing synthetic", after=mark)
+        action(terminal, b"\r", "Enter open store")
+        assert len(server.records) == 1, "editing or applying a store filter sent an API request"
     action(terminal, b"\r", "Search your files")
     if name.startswith("search"):
         search_scenario(terminal, server, harness)
@@ -586,7 +593,7 @@ def scenario(name, terminal, server, source, harness):
         return
     store_id = EXISTING_ID
     if name == "workflow":
-        action(terminal, b"\x1b", "Find store by name or ID")
+        action(terminal, b"\x1b", "Enter open store")
         action(terminal, harness.DOWN + b"\r", "Store name")
         paste(terminal, NAME)
         action(terminal, b"\r\r\r\r", "Store created.")
@@ -614,7 +621,7 @@ def scenario(name, terminal, server, source, harness):
             assert server.attachments == 0, "failed upload reached attachment"
         harness.wait_submit_guard(terminal)
         terminal.send(b"\r\r\r")
-    terminal.wait("File indexed. You can search it now.")
+    terminal.wait("File indexed. Ready to search.")
     harness.wait_submit_guard(terminal)
     expected_uploads = 2 if name == "upload-failure" else 1
     expected_attachments = 2 if name == "attachment-failure" else 1

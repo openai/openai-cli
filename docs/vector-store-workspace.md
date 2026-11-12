@@ -6,6 +6,9 @@ Open the workspace in a terminal:
 openai vector-stores manage
 ```
 
+Use `openai vector-stores manage --full-screen` to start expanded.
+Press Ctrl+G to switch between compact and expanded views. Both views show shortcuts at the bottom.
+
 `openai vector-stores` displays the available commands and returns to the shell.
 The workspace uses your current API key, project, organization, and endpoint settings.
 
@@ -13,15 +16,15 @@ The workspace uses your current API key, project, organization, and endpoint set
 2. Choose **Upload file**.
 3. Choose **Browse files** or enter a local path.
 4. Select **Upload**.
-5. Wait for indexing to complete.
+5. Wait for **File indexed. Ready to search.** The workspace shows its status checks while you wait.
 6. Enter a question in **Search your files**.
 7. Use Up and Down to preview each matching passage.
 8. Press Enter to read the full passage.
 
 Use Up and Down to select stores and store actions. Enter activates the selected item.
-In a search field, Down selects the action row. Left and Right select an action.
-Up returns to the field. Tab also moves between fields, actions, and results.
-Enter submits the query. Escape returns from a passage to the selected result.
+Questions wrap as you type or paste. Enter submits the full question.
+From the search field, Tab selects **Search**. Up and Down move through the actions.
+Escape returns from a passage to the selected result.
 Escape from the results returns to the search field with your question intact.
 Shift+Tab reopens the last results without another request.
 Other fields select their submission action before sending a request.
@@ -36,7 +39,8 @@ Stopping local work does not delete files or stop remote indexing.
 Created stores have no expiry policy by default.
 
 Choose **Manage store** for details, renaming, expiration, metadata, existing files, batches, and store deletion.
-**Find store by name or ID** filters loaded stores. **Load more stores** includes another page in that search.
+Press `/` in the store list to filter loaded stores by name or ID.
+Enter applies the filter. Escape restores the previous selection. **Load more stores** fetches another page.
 Store details include size, activity, expiration, file counts, and an estimate of this month's storage usage.
 The estimate uses the current size across the active part of the current UTC month.
 It does not calculate billing charges.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -29,6 +30,42 @@ func TestITermWritesBoundedChunks(t *testing.T) {
 	require.Greater(t, writes, 3)
 	require.True(t, bytes.HasPrefix(output.Bytes(), []byte("\x1b]1337;File=")))
 	require.True(t, bytes.HasSuffix(output.Bytes(), []byte("\x07")))
+}
+
+func TestITermRegionContainsContiguousSourcePixels(t *testing.T) {
+	source := image.NewNRGBA(image.Rect(7, 9, 24, 32))
+	for y := 9; y < 32; y++ {
+		for x := 7; x < 24; x++ {
+			source.SetNRGBA(x, y, color.NRGBA{uint8(x), uint8(y), 79, uint8(y * 7)})
+		}
+	}
+	for _, test := range []struct {
+		name        string
+		first, rows int
+	}{
+		{"full", 0, 7}, {"interior", 2, 3}, {"bottom", 5, 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			require.NoError(t, WriteITermRegion(t.Context(), &output, source, 20, 7, test.first, test.rows))
+			header, payload, ok := bytes.Cut(output.Bytes(), []byte(":"))
+			require.True(t, ok)
+			require.Contains(t, string(header), "width=20")
+			require.Contains(t, string(header), fmt.Sprintf("height=%d", test.rows))
+			require.NotContains(t, string(header), "preserveAspectRatio=0")
+			require.Equal(t, 1, bytes.Count(output.Bytes(), []byte("\x1b]1337;File=")))
+			require.True(t, bytes.HasSuffix(payload, []byte{7}))
+			decoded, err := png.Decode(base64.NewDecoder(base64.StdEncoding, bytes.NewReader(payload[:len(payload)-1])))
+			require.NoError(t, err)
+			start, end := 9+23*test.first/7, 9+23*(test.first+test.rows)/7
+			require.Equal(t, image.Rect(0, 0, 17, end-start), decoded.Bounds())
+			for y := 0; y < end-start; y++ {
+				for x := 0; x < 17; x++ {
+					require.Equal(t, source.At(7+x, start+y), decoded.At(x, y))
+				}
+			}
+		})
+	}
 }
 
 func TestITermOutputMatchesOriginalEncoder(t *testing.T) {

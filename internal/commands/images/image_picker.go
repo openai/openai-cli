@@ -115,6 +115,7 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	defer cancel()
 	tracked := &imagePickerOutput{File: output, cancel: cancel}
 	inline := &imagePickerInline{model: model, output: tracked, profile: cliterminal.ColorProfile(output, os.Environ(), true), resuming: options.resuming}
+	inline.iterm = imagePickerUsesITerm()
 	inline.workspace, inline.generate, inline.requestContext = options.workspace, options.generate, parent
 	inline.savedSettings = initialSettings
 	inline.mouseShell = mouseShell

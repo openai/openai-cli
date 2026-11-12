@@ -56,16 +56,16 @@ func TestWorkspaceBatchCursorDoesNotLeakIntoStoreFiles(t *testing.T) {
 	require.Error(t, m.lastErr)
 	assert.Empty(t, m.files, "a failed first store-file load cannot display batch-only rows as the store list")
 	assert.Empty(t, m.fileNext, "a batch cursor must not enter the complete store-file list")
-	modelKey(m, tea.KeyTab)
-	modelKey(m, tea.KeyTab)
-	if more := modelKey(m, tea.KeyEnter); more != nil {
-		modelComplete(t, m, more)
-	}
+	require.NotContains(t, m.fileActions(), fileMore)
+	require.Contains(t, m.View().Content, "› Refresh files")
+	require.NotContains(t, m.View().Content, "0 loaded")
 	require.Equal(t, []string{""}, ordinaryCursors)
-	modelKey(m, tea.KeyLeft) // Refresh this store.
 	modelComplete(t, m, modelKey(m, tea.KeyEnter))
 	require.Equal(t, "file_store_first", m.fileNext)
-	modelKey(m, tea.KeyRight)
+	for range 3 { // Upload, refresh, then load the next page.
+		modelKey(m, tea.KeyTab)
+	}
+	require.Contains(t, m.View().Content, "› Load more files")
 	modelComplete(t, m, modelKey(m, tea.KeyEnter))
 	require.Equal(t, []string{"", "", "file_store_first"}, ordinaryCursors)
 	require.Len(t, m.files, 2)
@@ -252,6 +252,9 @@ func TestWorkspaceNarrowDeleteShowsRiskAndFullID(t *testing.T) {
 	view := m.View().Content
 	assert.Contains(t, view, "Reference lookup is unavailable.")
 	assert.Contains(t, view, "Deletion safety is not established")
-	assert.Contains(t, view, m.store.ID[:34])
-	assert.Contains(t, view, "│ a ")
+	var displayed strings.Builder
+	for _, line := range strings.Split(view, "\n") {
+		displayed.WriteString(strings.TrimSpace(line))
+	}
+	assert.Contains(t, displayed.String(), m.store.ID)
 }
