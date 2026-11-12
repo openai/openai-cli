@@ -15,7 +15,7 @@ spec.loader.exec_module(check)
 class ModelDefaultsTest(unittest.TestCase):
     def setUp(self):
         self.models = {"Speech": "voice", "SavedImage": "image", "Translation": "translate",
-                       "TranslationTranscript": "captions"}
+                       "TranslationText": "text", "TranslationTranscript": "captions"}
         self.pages = {
             check.SPEECH: "Migrate to `voice` using the\n[Realtime API](guide). Older examples use `old`.",
             check.IMAGE: ("### GPT-Image-4.0\n"
@@ -28,10 +28,12 @@ class ModelDefaultsTest(unittest.TestCase):
             check.CAPTION_EVENTS: '```json\n{"type":"session.update","session":{"audio":{"input":'
                                   '{"transcription":{"model":"captions"}}}}}\n```',
             check.DEPRECATIONS: "| Shutdown date | Model / system | Recommended replacement |\n"
-                                "|---|---|---|\n| Yesterday | `old` \\| `older` | `voice` |",
+                                "|---|---|---|\n| Yesterday | `old` \\| `older` | `voice` |\n"
+                                "| Tomorrow | `gpt-5-mini` \\| `gpt-5-mini-2025-08-07` | `text` |",
         }
         for model, routes in [("voice", ["v1/realtime"]), ("image", ["v1/images/generations", "v1/images/edits"]),
-                              ("translate", ["v1/realtime/translations"]), ("captions", [])]:
+                              ("translate", ["v1/realtime/translations"]), ("text", ["v1/responses"]),
+                              ("captions", [])]:
             self.pages[check.DOCS + "models/" + model + ".md"] = "\n".join(
                 [f"Model ID: `{model}`"] + [f"| API | `{route}` | Supported |" for route in routes]
             )
@@ -55,6 +57,45 @@ class ModelDefaultsTest(unittest.TestCase):
         self.pages[check.SPEECH] = "Migrate to `new-voice` using the [Realtime API](guide). Example: `voice`."
         with self.assertRaisesRegex(ValueError, "current guidance recommends new-voice"):
             self.verify()
+
+    def test_missing_text_translation_role(self):
+        del self.models["TranslationText"]
+        with self.assertRaisesRegex(ValueError, "model roles: TranslationText"):
+            self.verify()
+
+    def test_text_translation_follows_replacement_not_original_model(self):
+        self.models["TranslationText"] = "gpt-5-mini"
+        with self.assertRaisesRegex(ValueError, "TranslationText selects gpt-5-mini; current guidance recommends text"):
+            self.verify()
+
+    def test_text_translation_requires_one_recommendation(self):
+        previous = self.pages[check.DEPRECATIONS]
+        for changed in [previous.replace("`gpt-5-mini`", "`gpt-5-mini-preview`"),
+                        previous + "\n| Tomorrow | `gpt-5-mini` | `other` |",
+                        previous.replace("| `text` |", "| `text` or `other` |")]:
+            with self.subTest(page=changed):
+                self.pages[check.DEPRECATIONS] = changed
+                with self.assertRaisesRegex(ValueError, "unambiguous"):
+                    self.verify()
+
+    def test_text_translation_requires_responses_support(self):
+        url = check.DOCS + "models/text.md"
+        for support in ["Not supported", ""]:
+            with self.subTest(support=support):
+                self.pages[url] = "Model ID: `text`\n| API | `v1/chat/completions` | Supported |"
+                if support:
+                    self.pages[url] += f"\n| API | `v1/responses` | {support} |"
+                with self.assertRaises(ValueError):
+                    self.verify()
+
+    def test_text_translation_replacement_must_not_be_retired(self):
+        self.pages[check.DEPRECATIONS] += "\n| Tomorrow | `text` | `new-text` |"
+        with self.assertRaisesRegex(ValueError, "TranslationText selects deprecated text"):
+            self.verify()
+
+    def test_text_translation_ignores_unrelated_retirement_advice(self):
+        self.pages[check.DEPRECATIONS] += "\n| Tomorrow | `unrelated` | `other-text` |"
+        self.verify()
 
     def test_new_image_family_despite_old_section(self):
         self.pages[check.IMAGE] = self.pages[check.IMAGE].replace("(#gpt-image-40)", "(#gpt-image-30)")

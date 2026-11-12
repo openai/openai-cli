@@ -28,7 +28,11 @@ CASES = {
         "TestAudioReviewHistoryRestoresSettingsWithoutGeneration": ("openai speak, saved settings", ()),
         "TestAudioGenerationSendsSelectedRequestSettings": ("openai speak, selected model, POST /v1/audio/speech", ()),
         "TestLiveTranslationSDKRoundTripPreservesConfigurationAudioAndDrain": (
-            "openai audio translate --live, GET /v1/realtime/translations and session.update input transcription", ()
+            "openai audio translate-live, GET /v1/realtime/translations and session.update input transcription", ()
+        ),
+        "TestTypedTranslationRequestAndResults": (
+            "openai audio translate-live, Typed text, POST /v1/responses",
+            ("default_form", "default_fallback", "selected_model"),
         ),
     },
     "internal/commands/images": {

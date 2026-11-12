@@ -64,15 +64,19 @@ func (m *audioWorkbench) listeningRule() string {
 
 func (m *audioWorkbench) selected(text string, width int) string {
 	text = ansi.Strip(ansi.Truncate(text, width, "…"))
+	return audioSelectionStyle(m.color, m.dark).Render(text + strings.Repeat(" ", max(0, width-ansi.StringWidth(text))))
+}
+
+func audioSelectionStyle(color, dark bool) lipgloss.Style {
 	s := lipgloss.NewStyle()
-	if m.color {
+	if color {
 		fill, foreground := "#E9EFFE", "#20283B"
-		if m.dark {
+		if dark {
 			fill, foreground = "#343D58", "#F2F4FA"
 		}
 		s = s.Background(lipgloss.Color(fill)).Foreground(lipgloss.Color(foreground)).Bold(true)
 	}
-	return s.Render(text + strings.Repeat(" ", max(0, width-ansi.StringWidth(text))))
+	return s
 }
 
 func (m *audioWorkbench) accent() lipgloss.Style {
@@ -146,10 +150,14 @@ func (m *audioWorkbench) warningStyle() lipgloss.Style {
 }
 
 func (m *audioWorkbench) failureStyle() lipgloss.Style {
+	return audioFailureStyle(m.color, m.dark)
+}
+
+func audioFailureStyle(enabled, dark bool) lipgloss.Style {
 	style := lipgloss.NewStyle()
-	if m.color {
+	if enabled {
 		color := "#B23A3A"
-		if m.dark {
+		if dark {
 			color = "#E59A9A"
 		}
 		style = style.Foreground(lipgloss.Color(color))
