@@ -153,6 +153,8 @@ type audioWorkbenchInline struct {
 	cancel                            context.CancelFunc
 	started, modesActive, restoreWrap bool
 	appleTerminal                     bool
+	wrapProbeSize                     tea.WindowSizeMsg
+	hardLines                         bool
 	content                           string
 	cursor                            *tea.Cursor
 	cursorOutput                      *audioCursorOutput
@@ -163,8 +165,20 @@ type audioWorkbenchInline struct {
 
 func (p *audioWorkbenchInline) Init() tea.Cmd {
 	p.modesActive = true
-	p.appleTerminal = os.Getenv("TERM_PROGRAM") == "Apple_Terminal"
-	query := ansi.ResetModeTextCursorEnable + ansi.SetModeBracketedPaste + ansi.RequestModeAutoWrap
+	p.appleTerminal = os.Getenv("TERM_PROGRAM") == "Apple_Terminal" && os.Getenv("KITTY_WINDOW_ID") == ""
+	query := ansi.ResetModeTextCursorEnable + ansi.SetModeBracketedPaste
+	if p.appleTerminal {
+		// Start on an owned blank row. Terminal.app can print the final p of DECRQM.
+		query += "\r\n"
+		p.hardLines = true
+		if p.model.width >= 3 && p.model.height >= 2 {
+			p.wrapProbeSize = tea.WindowSizeMsg{Width: p.model.width, Height: p.model.height}
+			// Reserve the next row so the probe cannot scroll past its saved cursor.
+			query += "\r\n" + ansi.CursorUp(1) + cliterminal.WrapProbe(p.model.width)
+		}
+	} else {
+		query += ansi.RequestModeAutoWrap
+	}
 	if p.model.color {
 		query += ansi.RequestBackgroundColor
 	}
@@ -177,8 +191,22 @@ func (p *audioWorkbenchInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case audioWorkbenchSizeError:
 		p.err = errors.New("could not read terminal size")
 		return p, tea.Quit
+	case tea.WindowSizeMsg:
+		if !p.started && msg != p.wrapProbeSize {
+			p.wrapProbeSize = tea.WindowSizeMsg{}
+		}
+	case tea.CursorPositionMsg:
+		if !p.started && p.wrapProbeSize.Width > 0 {
+			w, h, err := term.GetSize(p.output.Fd())
+			if err != nil {
+				p.err = errors.New("could not read terminal size")
+				return p, tea.Quit
+			}
+			p.observeWrap(msg, w, h)
+			p.start()
+		}
 	case tea.ModeReportMsg:
-		if msg.Mode == ansi.ModeAutoWrap {
+		if msg.Mode == ansi.ModeAutoWrap && !p.appleTerminal {
 			if msg.Value == ansi.ModePermanentlyReset {
 				p.err = errors.New("terminal wrapping is unavailable")
 				return p, tea.Quit
@@ -219,12 +247,23 @@ func (p *audioWorkbenchInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (p *audioWorkbenchInline) View() tea.View { return tea.NewView("") }
+
+// A resize or an unrecognized reply leaves the inherited wrap mode untouched.
+func (p *audioWorkbenchInline) observeWrap(pos tea.CursorPositionMsg, width, height int) {
+	if width == p.wrapProbeSize.Width && height == p.wrapProbeSize.Height {
+		enabled, valid := cliterminal.ObservedAutoWrap(width, height, pos.X, pos.Y)
+		p.hardLines, p.restoreWrap = !valid, valid && !enabled
+	}
+}
+
 func (p *audioWorkbenchInline) start() {
 	if p.started || p.err != nil {
 		return
 	}
 	p.started = true
-	p.painter.Control(ansi.SetModeAutoWrap)
+	if !p.hardLines && (!p.appleTerminal || p.restoreWrap) {
+		p.painter.Control(ansi.SetModeAutoWrap)
+	}
 }
 func (p *audioWorkbenchInline) draw() {
 	w, h, err := term.GetSize(p.output.Fd())
@@ -255,11 +294,12 @@ func (p *audioWorkbenchInline) drawFrame(w, h int) {
 	frame := ansi.ResetModeTextCursorEnable
 	if p.anchored {
 		frame += ansi.RestoreCursor
-	} else if p.appleTerminal && content != "" {
-		// Start a new logical line after the shell's marked command.
-		frame += "\r\n"
 	}
-	frame += cliterminal.InlineFrame(content, w) + ansi.SaveCursor
+	render := cliterminal.InlineFrame
+	if p.hardLines {
+		render = cliterminal.HardLineFrame
+	}
+	frame += render(content, w) + ansi.SaveCursor
 	if view.Cursor != nil {
 		if view.Cursor.Y > 0 {
 			frame += ansi.CursorDown(view.Cursor.Y)
