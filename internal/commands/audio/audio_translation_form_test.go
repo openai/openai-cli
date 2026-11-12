@@ -166,7 +166,7 @@ func TestTerminalTranslationCompactResultsIncludeControls(t *testing.T) {
 	for _, line := range strings.Split(view, "\n") {
 		require.LessOrEqual(t, ansi.StringWidth(line), 40)
 	}
-	for _, label := range []string{"Original", "Translation", "[P] Play", "[←→] Seek", "[S] Save", "[N] New", "[Esc] Exit"} {
+	for _, label := range []string{"Original", "Translation", "P play", "←→ seek", "S save", "N new", "Esc exit"} {
 		require.Contains(t, view, label)
 	}
 	m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
@@ -213,5 +213,5 @@ func TestTerminalTranslationReadsEntireTranscriptInPages(t *testing.T) {
 	require.NotContains(t, view, "\u202e")
 	key(tea.KeyEscape)
 	require.Nil(t, m.transcript)
-	require.Contains(t, m.View().Content, "[T] Read")
+	require.Contains(t, m.View().Content, "T read")
 }

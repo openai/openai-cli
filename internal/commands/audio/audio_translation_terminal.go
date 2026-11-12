@@ -10,10 +10,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/audiolive"
 	"github.com/openai/openai-cli/internal/audiomedia"
@@ -92,8 +90,7 @@ func (m *terminalTranslationModel) Update(message tea.Msg) (tea.Model, tea.Cmd) 
 			m.readTranscript()
 		}
 		if edit := m.form.editor; edit != nil {
-			edit.SetWidth(max(1, min(100, m.width-4)))
-			edit.SetHeight(max(1, min(6, m.height-7)))
+			m.sizeTranslationEditor(edit)
 		}
 	case tea.BackgroundColorMsg:
 		m.dark = msg.IsDark()
@@ -340,160 +337,6 @@ func (m *terminalTranslationModel) stopCapture() {
 }
 func (m *terminalTranslationModel) hasResult() bool {
 	return m.result.stage != nil && (m.result.AudioBytes > 0 || m.state.Original != "" || m.state.Translation != "")
-}
-func (m *terminalTranslationModel) styles() (lipgloss.Style, lipgloss.Style, lipgloss.Style) {
-	title, muted, key := lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle()
-	if m.color {
-		title = title.Bold(true)
-		accent, secondary := "#3159BC", "#657087"
-		if m.dark {
-			accent, secondary = "#8AA8FF", "#A4ACC2"
-		}
-		muted = muted.Foreground(lipgloss.Color(secondary))
-		key = key.Foreground(lipgloss.Color(accent)).Bold(true)
-	}
-	return title, muted, key
-}
-func (m *terminalTranslationModel) View() tea.View {
-	title, muted, key := m.styles()
-	width := max(1, min(100, m.width-4))
-	hint := func(k, v string) string { return key.Render("["+k+"]") + " " + muted.Render(v) }
-	if m.width < 40 || m.height < 16 {
-		return tea.NewView(ansi.Truncate("Resize to 40 × 16. Space stops; Ctrl+C exits.", max(1, m.width-1), "…"))
-	}
-	if !m.started {
-		return m.setupView(width)
-	}
-	if m.transcript != nil {
-		return m.transcriptView(width)
-	}
-	status := "Connecting"
-	switch {
-	case m.finished && m.result.Complete:
-		status = "Completed"
-	case m.finished && m.stopping && m.lastErr == nil:
-		status = "Stopped"
-	case m.finished:
-		status = "Interrupted"
-	case m.stopping || m.state.State == "stopping":
-		status = "Finishing"
-	case m.form.source == translationText || (m.form.source == translationFile && m.state.State == "listening"):
-		status = "Translating"
-	case m.state.State == "listening":
-		status = "Listening"
-	}
-	rows := []string{title.Render("Live translation") + "  " + muted.Render(status),
-		muted.Render(m.fieldValue("Source") + " → " + audiolive.LanguageName(m.options.Config.Language))}
-	if m.state.Original == "" && m.state.Translation == "" && m.state.AudioBytes == 0 && (!m.finished || !m.hasResult()) {
-		instruction, controls := "Opening the translation session…", hint("Esc", "Cancel")
-		switch {
-		case m.finished:
-			instruction, controls = "No captions or audio received.", hint("Enter", "Back to setup")+"  "+hint("Esc", "Exit")
-		case status == "Finishing":
-			instruction, controls = "Waiting for final captions…", hint("Ctrl+C", "Exit")
-		case status == "Listening":
-			instruction, controls = "Speak into your microphone.", hint("Space", "Stop")
-		case m.form.source == translationText:
-			instruction = "Translating your text…"
-		case status == "Translating":
-			instruction, controls = "Translating your audio file…", hint("Space", "Stop")
-		}
-		rows = append(rows, "", instruction)
-		if m.note != "" {
-			rows = append(rows, ansi.Wrap(readable.Text(m.note), width, ""))
-		}
-		rows = append(rows, "", controls)
-		return tea.NewView("  " + strings.ReplaceAll(strings.Join(rows, "\n"), "\n", "\n  "))
-	}
-	var footer []string
-	if metrics := m.metricSummary(); metrics != "" {
-		for _, line := range strings.Split(ansi.Wordwrap(metrics, width, ""), "\n") {
-			footer = append(footer, muted.Render(line))
-		}
-	}
-	if wave := audiomedia.Waveform(m.state.Peaks, width, 1); wave != "" {
-		footer = append(footer, muted.Render(wave))
-	}
-	if m.finished && m.result.AudioBytes > 0 {
-		footer = append(footer, "Seek  "+audioSeekClock(m.seekPosition)+" / "+audioSeekClock(m.result.duration()))
-	}
-	if m.saved {
-		footer = append(footer, "Saved  "+audioHistoryCell(m.savedPath))
-	} else if m.saving {
-		footer = append(footer, "Saving…")
-	} else {
-		footer = append(footer, muted.Render("Save to  ")+audioHistoryCell(m.folder))
-	}
-	notice := m.note
-	if notice == "" {
-		notice = m.state.Warning
-	}
-	if notice != "" {
-		footer = append(footer, audioHistoryCell(notice))
-	}
-	controls := [][2]string{{"Space", "Stop"}, {"Ctrl+C", "Exit"}}
-	if m.finished {
-		controls = nil
-		if m.hasResult() {
-			controls = append(controls, [2]string{"T", "Read"})
-		}
-		if m.result.AudioBytes > 0 {
-			if m.replayDone != nil {
-				controls = append(controls, [2]string{"P", "Stop"})
-			} else {
-				controls = append(controls, [2]string{"P", "Play"}, [2]string{"←→", "Seek"})
-			}
-		}
-		if m.hasResult() && !m.saved && !m.saving {
-			controls = append(controls, [2]string{"S", "Save"})
-		}
-		if m.replayDone == nil && !m.saving {
-			controls = append(controls, [2]string{"N", "New"})
-		}
-		controls = append(controls, [2]string{"Esc", "Exit"})
-	}
-	var shortcuts string
-	for _, control := range controls {
-		next := hint(control[0], control[1])
-		if shortcuts != "" && ansi.StringWidth(shortcuts+"  "+next) > width {
-			footer = append(footer, shortcuts)
-			shortcuts = ""
-		}
-		if shortcuts != "" {
-			shortcuts += "  "
-		}
-		shortcuts += next
-	}
-	footer = append(footer, shortcuts)
-	available := m.height - len(rows) - len(footer) - 2 // Two caption labels.
-	spacing := min(2, max(0, available-2))
-	count := max(1, (available-spacing)/2)
-	if spacing > 0 {
-		rows = append(rows, "")
-	}
-	rows = append(rows, muted.Render("Original"))
-	rows = append(rows, terminalCaptionRows(m.state.Original, width, count)...)
-	if spacing > 1 {
-		rows = append(rows, "")
-	}
-	rows = append(rows, muted.Render("Translation"))
-	rows = append(rows, terminalCaptionRows(m.state.Translation, width, count)...)
-	rows = append(rows, footer...)
-	for i := range rows {
-		rows[i] = "  " + ansi.Truncate(rows[i], width, "…")
-	}
-	return tea.NewView(strings.Join(rows, "\n"))
-}
-func terminalCaptionRows(text string, width, count int) []string {
-	if text == "" {
-		return []string{"…"}
-	}
-	text = strings.ReplaceAll(readable.Text(text), "\t", "    ")
-	rows := strings.Split(ansi.Hardwrap(text, width, true), "\n")
-	if len(rows) > count {
-		rows = rows[len(rows)-count:]
-	}
-	return rows
 }
 
 // Reuse the speech workbench's inline painter, wrapping negotiation and cleanup.

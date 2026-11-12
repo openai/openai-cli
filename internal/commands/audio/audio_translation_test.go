@@ -213,34 +213,36 @@ func TestTypedTranslationRequestAndResults(t *testing.T) {
 	}
 }
 
-func TestLiveTranslationPreservesFileRouteAndRejectsMixedModes(t *testing.T) {
+func TestLiveTranslationRejectsInvalidModesBeforeCredentials(t *testing.T) {
 	for _, tc := range []struct {
-		args      []string
-		message   string
-		delegated bool
+		args    []string
+		message string
 	}{
-		{[]string{"--file", "sample.wav", "--model", "whisper-1"}, "", true},
-		{[]string{"--live"}, "interactive terminal", false},
-		{[]string{"--live", "--file", "sample.wav"}, "interactive terminal", false},
-		{[]string{"--live", "--model", "whisper-1"}, "Choose live translation settings", false},
-		{[]string{"--live", "--file", "sample.wav", "--input-device", "0"}, "Choose one audio input", false},
-		{[]string{"--live", "--browser", "--file", "sample.wav"}, "Use --live without --browser to translate a local audio file.", false},
-		{[]string{"--live", "--browser", "--no-playback"}, "requires terminal translation", false},
-		{[]string{"--browser"}, "Use --live --browser", false},
-		{[]string{"--live", "extra"}, "does not accept positional", false},
+		{[]string{"translate-live", "--browser", "--no-playback"}, "requires terminal translation"},
+		{[]string{"translate-live", "--browser", "--file", "sample.wav"}, "requires terminal translation"},
+		{[]string{"translate-live", "--file", "sample.wav", "--input-device", "0"}, "Choose one audio input"},
+		{[]string{"translate-live", "--target-language", "invalid"}, "supported target language"},
+		{[]string{"translate-live", "--output-dir", ""}, "folder for saving"},
+		{[]string{"translate-live", "extra"}, "does not accept positional"},
+		{[]string{"translate", "--live", "--file", "sample.wav"}, "requires terminal translation"},
+		{[]string{"translate", "--browser"}, "Use audio translate-live --browser"},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
-			called := false
-			translate := &cli.Command{Name: "translate", Flags: []cli.Flag{&cli.StringFlag{Name: "file"}, &cli.StringFlag{Name: "model"}}, Action: func(context.Context, *cli.Command) error { called = true; return nil }}
-			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard, Commands: []*cli.Command{{Name: "audio", Commands: []*cli.Command{translate}}}}
-			ConfigureLiveTranslation(root, TranslationOptions{DefaultRequestOptions: func(*cli.Command) []option.RequestOption { t.Fatal("unexpected request preparation"); return nil }, RequestOptions: func(*cli.Command) ([]option.RequestOption, error) { t.Fatal("unexpected API options"); return nil, nil }})
-			err := root.Run(t.Context(), append([]string{"openai", "audio", "translate"}, tc.args...))
-			if tc.message == "" {
-				require.NoError(t, err)
-			} else {
-				require.ErrorContains(t, err, tc.message)
+			translate := &cli.Command{
+				Name:  "translate",
+				Flags: []cli.Flag{&cli.StringFlag{Name: "file"}},
+				Action: func(context.Context, *cli.Command) error {
+					t.Fatal("invalid mode reached the file translation action")
+					return nil
+				},
 			}
-			require.Equal(t, tc.delegated, called)
+			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard, Commands: []*cli.Command{{Name: "audio", Commands: []*cli.Command{translate}}}}
+			ConfigureLiveTranslation(root, TranslationOptions{
+				DefaultRequestOptions: func(*cli.Command) []option.RequestOption { t.Fatal("credentials accessed"); return nil },
+				RequestOptions:        func(*cli.Command) ([]option.RequestOption, error) { t.Fatal("credentials accessed"); return nil, nil },
+			})
+			err := root.Run(t.Context(), append([]string{"openai", "audio"}, tc.args...))
+			require.ErrorContains(t, err, tc.message)
 		})
 	}
 }

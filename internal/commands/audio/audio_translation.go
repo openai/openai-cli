@@ -32,128 +32,150 @@ type TranslationOptions struct {
 	AuthenticationGuidance func(*cli.Command, *openai.Error) AuthenticationGuidance
 }
 
-// ConfigureLiveTranslation adds interactive translation to the existing file route.
-// The original action still owns every invocation without --live.
+// ConfigureLiveTranslation registers the interactive command and preserves the released browser flag.
 func ConfigureLiveTranslation(root *cli.Command, policy TranslationOptions) {
 	group := root.Command("audio")
-	if group == nil {
+	if group == nil || policy.DefaultRequestOptions == nil || policy.RequestOptions == nil {
 		return
 	}
+	group.Commands = append(group.Commands, &cli.Command{
+		Name:            "translate-live",
+		Usage:           "Translate speech or text interactively.",
+		UsageText:       "openai audio translate-live [OPTIONS]",
+		Suggest:         true,
+		HideHelpCommand: true,
+		Metadata: map[string]any{
+			"help-content": clihelp.Content{
+				CompactNote: "Choose microphone, audio file, or typed text. Press Enter to start. Add --browser to share tab audio.",
+				Description: "Choose Microphone, Audio file, or Typed text in your terminal. Select a target language.\n" +
+					"Press Enter to start microphone capture, then Space to stop.\n" +
+					"Audio input uses FFmpeg. Playback uses FFplay. Use --no-playback for captions alone.\n" +
+					"On Windows, provide the DirectShow microphone name with --input-device. Linux uses PulseAudio.\n" +
+					"Use --browser to share audio from a browser tab.",
+				Examples: []clihelp.Example{
+					{Description: "Choose an input in the terminal:", Command: "audio translate-live"},
+					{Description: "Translate a recording into French in the terminal:", Command: "audio translate-live --file recording.wav --target-language fr"},
+					{Description: "Share audio from a browser tab:", Command: "audio translate-live --browser"},
+				},
+			},
+		},
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "browser", Usage: "Open the browser panel for microphone or tab audio"},
+			&cli.StringFlag{Name: "file", TakesFile: true, Usage: "Select a local audio file in the terminal"},
+			&cli.StringFlag{Name: "target-language", Value: "en", Usage: "Initial terminal translation language (e.g. fr, es, ja)"},
+			&cli.StringFlag{Name: "input-device", Usage: "Microphone name or macOS audio device index"},
+			&cli.BoolFlag{Name: "no-playback", Usage: "Show terminal captions with audio playback off"},
+			&cli.BoolFlag{Name: "noise-reduction", Usage: "Enable near-field noise reduction for terminal audio input"},
+			&cli.StringFlag{Name: "output-dir", Value: audioDefaultSaveFolder, TakesFile: true, Usage: "Parent folder for saved terminal translations"},
+		},
+		Action: func(ctx context.Context, command *cli.Command) error {
+			return runInteractiveTranslation(ctx, command, policy, command.Bool("browser"))
+		},
+	})
+
 	command := group.Command("translate")
-	if command == nil || policy.DefaultRequestOptions == nil || policy.RequestOptions == nil {
+	if command == nil {
 		return
 	}
-	command.Usage = "Translate a saved file or translate speech and text in your terminal."
-	command.UsageText = "openai audio translate --file AUDIO --model whisper-1 [OPTIONS]\nopenai audio translate --live [OPTIONS]\nopenai audio translate --live --browser"
+	command.Usage = "Translate a saved file into English."
+	command.UsageText = "openai audio translate --file AUDIO --model whisper-1 [OPTIONS]"
 	if command.Metadata == nil {
 		command.Metadata = map[string]any{}
 	}
 	command.Metadata["help-content"] = clihelp.Content{
-		Summary:     command.Usage,
-		CompactNote: "File mode requires --file and --model, or piped JSON/YAML. Use --live in a terminal or add --browser for tab audio.",
-		InputNote:   "File mode requires file and model inputs through flags or piped JSON/YAML.\nLive mode needs neither input.",
-		Description: "Use --live in an interactive terminal. Choose Microphone, Audio file, or Typed text.\n" +
-			"Choose a target language. Press Enter to start microphone capture, then Space to stop.\n" +
-			"Audio input uses FFmpeg. Playback uses FFplay. Use --no-playback for captions alone.\n" +
-			"On Windows, provide the DirectShow microphone name with --input-device. Linux uses PulseAudio.\n" +
-			"Use --live --browser to share audio from a browser tab.",
+		CompactNote: "Supply --file and --model through flags or piped JSON/YAML. Use audio translate-live for interactive translation.",
+		InputNote:   "File translation requires file and model inputs through flags or piped JSON/YAML.",
+		Description: "Translate a saved recording into English. Use audio translate-live for interactive translation. The --live flag opens the browser panel.",
 		Examples: []clihelp.Example{
 			{Description: "Translate a saved recording into English:", Command: "audio translate --file recording.wav --model whisper-1"},
-			{Description: "Choose an input in the terminal:", Command: "audio translate --live"},
-			{Description: "Translate a recording into French in the terminal:", Command: "audio translate --live --file recording.wav --target-language fr"},
-			{Description: "Share audio from a browser tab:", Command: "audio translate --live --browser"},
 		},
 	}
 	next := command.Action
 	command.Flags = append(command.Flags,
-		&cli.BoolFlag{Name: "live", Usage: "Open interactive translation in your terminal"},
-		&cli.BoolFlag{Name: "browser", Usage: "Open the optional browser panel for --live, including browser-tab capture"},
-		&cli.BoolFlag{Name: "terminal", Hidden: true}, // Accepted by the earlier native preview.
-		&cli.StringFlag{Name: "target-language", Value: "en", Usage: "Initial terminal translation language (e.g. fr, es, ja)"},
-		&cli.StringFlag{Name: "input-device", Usage: "Microphone name or macOS audio device index"},
-		&cli.BoolFlag{Name: "no-playback", Usage: "Show terminal captions with audio playback off"},
-		&cli.BoolFlag{Name: "noise-reduction", Usage: "Enable near-field noise reduction for terminal audio input"},
-		&cli.StringFlag{Name: "output-dir", Value: audioDefaultSaveFolder, TakesFile: true, Usage: "Parent folder for saved terminal translations"},
+		&cli.BoolFlag{Name: "live", Usage: "Open the browser panel for microphone or tab audio"},
+		&cli.BoolFlag{Name: "browser", Hidden: true}, // Accepted by the earlier terminal preview with --live.
 	)
 	command.Action = func(ctx context.Context, command *cli.Command) error {
-		live, browser := command.Bool("live"), command.Bool("browser")
-		if browser && !live {
-			return audioFailure("Use --live --browser to open the browser panel.", nil)
-		}
-		for _, name := range []string{"terminal", "target-language", "input-device", "no-playback", "noise-reduction", "output-dir"} {
-			if command.IsSet(name) && (!live || browser) {
-				return audioFailure("--"+name+" requires terminal translation. Use audio translate --live.", nil)
+		if !command.Bool("live") {
+			if command.Bool("browser") {
+				return audioFailure("Use audio translate-live --browser to open the browser panel.", nil)
 			}
-		}
-		if !live {
 			return next(ctx, command)
-		}
-		if command.Args().Present() {
-			return audioFailure("Live translation does not accept positional arguments. Choose an input in the panel.", nil)
 		}
 		for _, name := range []string{"model", "prompt", "response-format", "temperature"} {
 			if command.IsSet(name) {
-				return audioFailure("Choose live translation settings in the panel. Use --file and --model for file translation into English.", nil)
+				return audioFailure("Use --file and --model for file translation into English. Omit --live.", nil)
 			}
 		}
-		if browser && command.IsSet("file") {
-			return audioFailure("Use --live without --browser to translate a local audio file.", nil)
-		}
-		if command.IsSet("file") && command.IsSet("input-device") {
-			return audioFailure("Choose one audio input with --file or --input-device.", nil)
-		}
-		for _, name := range []string{"format", "format-error", "raw-output", "quiet", "transform", "transform-error"} {
-			if command.Root().IsSet(name) {
-				return audioFailure("Live translation is interactive. Omit output-format overrides, or use file translation for command output.", nil)
+		return runInteractiveTranslation(ctx, command, policy, true)
+	}
+}
+
+func runInteractiveTranslation(ctx context.Context, command *cli.Command, policy TranslationOptions, browser bool) error {
+	if command.Args().Present() {
+		return audioFailure("Live translation does not accept positional arguments. Choose an input in the panel.", nil)
+	}
+	if browser {
+		for _, name := range []string{"file", "target-language", "input-device", "no-playback", "noise-reduction", "output-dir"} {
+			if command.IsSet(name) {
+				return audioFailure("--"+name+" requires terminal translation. Use audio translate-live without --browser.", nil)
 			}
 		}
-		var output *os.File
-		if !browser {
-			if audiolive.LanguageName(command.String("target-language")) == "" {
-				return audioFailure("Choose a supported target language in the terminal, or supply a language code such as fr.", nil)
-			}
-			if err := audioSaveFolderError(command.String("output-dir")); err != nil {
-				return audioFailure(err.Error(), nil)
-			}
-			output, _ = command.Root().Writer.(*os.File)
-			if output == nil || !term.IsTerminal(output.Fd()) || !term.IsTerminal(os.Stdin.Fd()) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
-				return audioFailure("Live translation needs an interactive terminal. Run audio translate --live with terminal input and output.", nil)
-			}
+	}
+	if command.IsSet("file") && command.IsSet("input-device") {
+		return audioFailure("Choose one audio input with --file or --input-device.", nil)
+	}
+	for _, name := range []string{"format", "format-error", "raw-output", "quiet", "transform", "transform-error"} {
+		if command.Root().IsSet(name) {
+			return audioFailure("Live translation is interactive. Omit output-format overrides, or use file translation for command output.", nil)
 		}
-		options, err := policy.RequestOptions(command)
-		if err != nil {
-			return err
+	}
+	var output *os.File
+	if !browser {
+		if audiolive.LanguageName(command.String("target-language")) == "" {
+			return audioFailure("Choose a supported target language in the terminal, or supply a language code such as fr.", nil)
 		}
-		// Both SDK endpoints select bearer credentials. Preserve the explicit header precedence.
-		options = append(policy.DefaultRequestOptions(command), options...)
-		ctx, stopSignals := clioutput.DownloadSignalContext(ctx)
-		defer stopSignals()
-		connect := func(ctx context.Context, config audiolive.Config) (audiolive.Session, error) {
-			session, err := connectAudioTranslation(ctx, config, options)
-			return session, policy.explainAccess(command, err, browser)
+		if err := audioSaveFolderError(command.String("output-dir")); err != nil {
+			return audioFailure(err.Error(), nil)
 		}
-		translate := func(ctx context.Context, text, language, model string) (translationTextResult, error) {
-			result, err := translateTypedText(ctx, text, language, model, options)
-			return result, policy.explainAccess(command, err, browser)
+		output, _ = command.Root().Writer.(*os.File)
+		if output == nil || !term.IsTerminal(output.Fd()) || !term.IsTerminal(os.Stdin.Fd()) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
+			return audioFailure("Live translation needs an interactive terminal. Run audio translate-live with terminal input and output.", nil)
 		}
-		if browser {
-			err = audiolive.Run(ctx, audiolive.Options{
-				Connect: connect, OpenBrowser: cliterminal.OpenBrowser,
-				Writer: command.Root().Writer,
-			})
-		} else {
-			err = runTerminalTranslationUI(ctx, command, connect, translate, os.Stdin, output)
-		}
-		var interrupted *clioutput.DownloadSignalError
-		if errors.As(context.Cause(ctx), &interrupted) {
-			return cli.Exit("", interrupted.SignalExitCode())
-		}
-		var failure audiolive.Failure
-		if errors.As(err, &failure) {
-			return audioFailure(failure.Error(), err)
-		}
+	}
+	options, err := policy.RequestOptions(command)
+	if err != nil {
 		return err
 	}
+	// Both SDK endpoints select bearer credentials. Preserve the explicit header precedence.
+	options = append(policy.DefaultRequestOptions(command), options...)
+	ctx, stopSignals := clioutput.DownloadSignalContext(ctx)
+	defer stopSignals()
+	connect := func(ctx context.Context, config audiolive.Config) (audiolive.Session, error) {
+		session, err := connectAudioTranslation(ctx, config, options)
+		return session, policy.explainAccess(command, err, browser)
+	}
+	if browser {
+		err = audiolive.Run(ctx, audiolive.Options{
+			Connect: connect, OpenBrowser: cliterminal.OpenBrowser,
+			Writer: command.Root().Writer,
+		})
+	} else {
+		translate := func(ctx context.Context, text, language, model string) (translationTextResult, error) {
+			result, err := translateTypedText(ctx, text, language, model, options)
+			return result, policy.explainAccess(command, err, false)
+		}
+		err = runTerminalTranslationUI(ctx, command, connect, translate, os.Stdin, output)
+	}
+	var interrupted *clioutput.DownloadSignalError
+	if errors.As(context.Cause(ctx), &interrupted) {
+		return cli.Exit("", interrupted.SignalExitCode())
+	}
+	var failure audiolive.Failure
+	if errors.As(err, &failure) {
+		return audioFailure(failure.Error(), err)
+	}
+	return err
 }
 
 type apiTranslationSession struct{ session *realtime.TranslationSession }

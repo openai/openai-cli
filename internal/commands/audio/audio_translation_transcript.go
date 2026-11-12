@@ -38,8 +38,8 @@ func (m *terminalTranslationModel) openTranscript(original bool) {
 func (m *terminalTranslationModel) readTranscript() {
 	p := m.transcript
 	start := p.starts[len(p.starts)-1]
-	width := max(1, min(100, m.width-4))
-	rows := max(1, min(100, m.height-6))
+	width, height := m.translationViewport()
+	rows := max(1, min(100, height-5))
 	reader := bufio.NewReader(io.NewSectionReader(p.reader, start, p.reader.Size()-start))
 	p.rows, p.next = nil, start
 	var row strings.Builder
@@ -101,22 +101,17 @@ func (m *terminalTranslationModel) transcriptKey(key string) {
 	}
 }
 
-func (m *terminalTranslationModel) transcriptView(width int) tea.View {
-	title, muted, key := m.styles()
+func (m *terminalTranslationModel) transcriptView(l translationLayout) tea.View {
 	p := m.transcript
 	name := "Translation"
 	if p.original {
 		name = "Original"
 	}
-	header := title.Render(name) + "  " + muted.Render(fmt.Sprintf("Page %d", len(p.starts)))
-	rows := []string{header, ""}
+	header := l.heading(l.title.Render(name), l.muted.Render(fmt.Sprintf("Page %d", len(p.starts))))
+	rows := []string{header, l.divider, ""}
 	if p.reader.Size() == 0 {
-		rows = append(rows, muted.Render("No captions for this track."))
+		rows = append(rows, l.muted.Render("No captions for this track."))
 	}
 	rows = append(rows, p.rows...)
-	rows = append(rows, "", key.Render("↑↓")+" page  "+key.Render("Tab")+" switch track  "+key.Render("Esc")+" back")
-	for i := range rows {
-		rows[i] = "  " + ansi.Truncate(rows[i], width, "…")
-	}
-	return tea.NewView(strings.Join(rows, "\n"))
+	return l.panel(rows, l.footer([2]string{"↑↓", "page"}, [2]string{"Tab", "switch track"}, [2]string{"Esc", "back"}), nil)
 }

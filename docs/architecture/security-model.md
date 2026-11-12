@@ -20,7 +20,7 @@ violations in the inputs/compiler and regenerate.
 
 `openai-cli` is a local Go command-line client for OpenAI APIs. It is
 not a background daemon. Ordinary API commands do not open inbound listeners.
-The explicit `audio translate --live --browser` mode opens the private loopback browser
+The `audio translate-live --browser` and `audio translate --live` commands open the private loopback browser
 companion described below. A user invokes resource commands; the CLI parses flags
 or piped YAML/JSON, may read local files, constructs requests through `openai-go`, and renders API responses to a
 terminal, pager, pipe, or file. The entry point runs the generated command
@@ -70,7 +70,7 @@ flowchart LR
 
 ### Terminal translation
 
-`audio translate --live` uses a native terminal interface. The CLI connects to the configured API after explicit start.
+`audio translate-live` uses a native terminal interface by default. The CLI connects to the configured API after explicit start.
 Microphone capture uses the selected FFmpeg audio backend. File capture sends the selected regular file through FFmpeg's input descriptor.
 The decoder restricts protocols and demuxers. FFplay receives translated samples through a pipe.
 Typed translation sends literal user text through the Responses API with storage disabled.
@@ -79,7 +79,7 @@ Shutdown cancels capture and playback, waits for their helpers, then cleans up o
 
 ### Optional live translation browser companion
 
-Only `audio translate --live --browser` starts the browser companion. It binds
+`audio translate-live --browser` and the existing `audio translate --live` flag start the browser companion. It binds
 `127.0.0.1` on an operating-system-selected port, not a public interface.
 Each launch uses a separate `.localhost` hostname containing 128 random bits.
 The browser origin changes independently of the port and authorization capability.

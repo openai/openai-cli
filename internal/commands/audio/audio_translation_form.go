@@ -10,7 +10,6 @@ import (
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiolive"
 	"github.com/openai/openai-cli/internal/readable"
 )
@@ -147,8 +146,7 @@ func (m *terminalTranslationModel) openField(field string) tea.Cmd {
 	styles.Focused.Placeholder = muted
 	styles.Focused.Selection = accent
 	edit.SetStyles(styles)
-	edit.SetWidth(max(1, min(100, m.width-4)))
-	edit.SetHeight(max(1, min(6, m.height-7)))
+	m.sizeTranslationEditor(&edit)
 	edit.SetValue(readable.Text(*m.editableField(field)))
 	switch field {
 	case "File":
@@ -269,154 +267,6 @@ func (m *terminalTranslationModel) setupKey(key string) tea.Cmd {
 		return m.startTranslation()
 	}
 	return nil
-}
-
-func (m *terminalTranslationModel) setupView(width int) tea.View {
-	title, muted, accent := m.styles()
-	selected := audioSelectionStyle(m.color, m.dark)
-	fields := m.fields()
-	field := fields[m.form.row]
-	rows := []string{title.Render("Live translation")}
-	// Fixed header, footer and action remain legible even at the minimum size.
-	var body, footer []string
-	focusRow := 0
-	var cursor *tea.Cursor
-	keyHint := func(key, action string) string { return accent.Render(key) + " " + muted.Render(action) }
-	switch {
-	case m.form.editor != nil:
-		edit := m.form.editor
-		rows = append(rows, "", title.Render(field))
-		cursor = audioEditorCursor(*edit, 2, len(rows))
-		body = strings.Split(edit.View(), "\n")
-		footer = []string{keyHint("Enter", "apply") + "   " + keyHint("Esc", "cancel")}
-		if field == "Text" {
-			footer = append(footer, keyHint("Alt+Enter", "new line"))
-		}
-	case m.form.languagesOpen:
-		rows = []string{title.Render("Translate into")}
-		for i, code := range translationLanguages {
-			label := "  " + audiolive.LanguageName(code)
-			if code == m.options.Config.Language {
-				label += "  current"
-			}
-			if i == m.form.languageIndex {
-				label = selected.Render("› " + label[2:])
-				focusRow = i
-			}
-			body = append(body, label)
-		}
-		footer = []string{keyHint("↑↓", "move") + "  " + keyHint("Enter", "select") + "  " + keyHint("Esc", "back")}
-	default:
-		if !m.form.advanced && m.note == "" {
-			guides := [...]string{"See a translation as you speak.", "Translate speech from a local file.", "Translate text you type or paste."}
-			rows = append(rows, muted.Render(guides[m.form.source]))
-		}
-		rows = append(rows, "")
-		body = append(body, muted.Render("Translate from"))
-		for i, name := range fields {
-			active := i == m.form.row
-			marker := "  "
-			if active {
-				marker = accent.Render("› ")
-			}
-			var line string
-			switch name {
-			case "Source":
-				var options []string
-				for j, option := range translationSources {
-					if translationSource(j) == m.form.source {
-						option = "[" + option + "]"
-						if active {
-							option = selected.Render(option)
-						} else {
-							option = title.Render(option)
-						}
-					} else {
-						option = muted.Render(option)
-					}
-					options = append(options, option)
-				}
-				gap := "   "
-				if width < 44 {
-					gap = " "
-				}
-				line = strings.Join(options, gap)
-			case "Start":
-				body = append(body, "")
-				line = title.Render(m.setupAction())
-				shortcut := "Ctrl+G"
-				if active {
-					shortcut = "Enter"
-				}
-				line += "   " + accent.Render(shortcut)
-			case "More settings":
-				chevron := "▸"
-				if m.form.advanced {
-					chevron = "▾"
-				}
-				line = muted.Render("More settings  " + chevron)
-			default:
-				label := name
-				switch name {
-				case "Language":
-					label = "Translate into"
-				case "File":
-					label = "Audio file"
-				}
-				line = muted.Render(fmt.Sprintf("%-16s", label)) + m.fieldValue(name)
-			}
-			if active {
-				focusRow = len(body)
-				if name != "Source" {
-					line = selected.Render("› " + ansi.Strip(line))
-					marker = ""
-				}
-			}
-			body = append(body, marker+line)
-		}
-		context := keyHint("Enter", "edit")
-		switch field {
-		case "Source":
-			context = keyHint("←→", "input") + "  " + keyHint("Enter", "choose")
-		case "Start":
-			context = keyHint("←→", "input")
-		case "Language":
-			context = keyHint("Enter", "languages")
-		case "More settings":
-			verb := "expand"
-			if m.form.advanced {
-				verb = "collapse"
-			}
-			context = keyHint("Enter", verb)
-		case "Playback", "Noise reduction":
-			context = keyHint("Enter", "toggle")
-		}
-		move, exit := context+"  "+keyHint("↑↓", "move"), keyHint("Esc", "exit")
-		if ansi.StringWidth(move+"  "+exit) <= width {
-			footer = []string{move + "  " + exit}
-		} else {
-			footer = []string{move, exit}
-		}
-	}
-	if m.note != "" {
-		failure := audioFailureStyle(m.color, m.dark)
-		messages := strings.Split(ansi.Wrap(readable.Text(m.note), width, ""), "\n")
-		for i := range messages {
-			messages[i] = failure.Render(messages[i])
-		}
-		footer = append(messages, footer...)
-	}
-	remaining := max(1, m.height-len(rows)-len(footer)-1)
-	start := max(0, focusRow-remaining+1)
-	rows = append(rows, body[start:min(len(body), start+remaining)]...)
-	rows = append(rows, "")
-	rows = append(rows, footer...)
-	for i := range rows {
-		rows[i] = "  " + ansi.Truncate(rows[i], width, "…")
-	}
-	view := tea.NewView(strings.Join(rows, "\n"))
-	view.Cursor = cursor
-	return view
 }
 
 // A typed translation uses the same private caption files and explicit Save action as an audio session.

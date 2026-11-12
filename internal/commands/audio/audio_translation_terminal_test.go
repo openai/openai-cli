@@ -3,7 +3,6 @@ package audio
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,29 +11,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiolive"
-	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"
-	"github.com/urfave/cli/v3"
 )
 
-func TestTerminalTranslationModeRejectsInvalidInvocationsBeforeCredentials(t *testing.T) {
-	for _, args := range [][]string{
-		{"--browser"}, {"--target-language", "en"}, {"--live", "--browser", "--no-playback"},
-		{"--live", "--terminal", "--target-language", "invalid"},
-		{"--live", "--terminal", "--output-dir", ""},
-		{"--live"}, // redirected output cannot acquire a microphone
-	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			translate := &cli.Command{Name: "translate", Action: func(context.Context, *cli.Command) error { t.Fatal("file action called"); return nil }}
-			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard, Commands: []*cli.Command{{Name: "audio", Commands: []*cli.Command{translate}}}}
-			ConfigureLiveTranslation(root, TranslationOptions{
-				DefaultRequestOptions: func(*cli.Command) []option.RequestOption { t.Fatal("credentials accessed"); return nil },
-				RequestOptions:        func(*cli.Command) ([]option.RequestOption, error) { t.Fatal("credentials accessed"); return nil, nil },
-			})
-			require.Error(t, root.Run(t.Context(), append([]string{"openai", "audio", "translate"}, args...)))
-		})
-	}
-}
 func TestTerminalTranslationWaitsForVisibleStartAndPreservesStopAtSmallSize(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -139,7 +118,7 @@ func TestTerminalTranslationKeepsPartialCaptionsOnFailure(t *testing.T) {
 	require.True(t, m.hasResult())
 	view := m.View().Content
 	require.Contains(t, view, "Received words")
-	require.Contains(t, view, "[S] Save")
+	require.Contains(t, view, "S save")
 	require.NotContains(t, view, "Retry translation")
 	m.Update(tea.KeyPressMsg{Code: 's'})
 	m.workers.Wait()

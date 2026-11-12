@@ -181,7 +181,7 @@ See [transcript output](transcript-output.md) for finite transcription and trans
 ## Translate in the terminal
 
 ```sh
-openai audio translate --live
+openai audio translate-live
 ```
 
 The terminal opens with **Start microphone** selected. Press Enter to start. Speak when the screen shows **Listening**.
@@ -200,8 +200,8 @@ On macOS, allow microphone access for your terminal when the system prompts you.
 On Windows, supply the DirectShow microphone name with `--input-device`. Linux uses PulseAudio.
 
 ```sh
-openai audio translate --live --target-language es
-openai audio translate --live --file recording.wav --target-language fr
+openai audio translate-live --target-language es
+openai audio translate-live --file recording.wav --target-language fr
 ```
 
 After translation, press T to read the full transcript. Press Tab to switch between original and translated text.
@@ -212,10 +212,11 @@ The CLI saves captions and any translated audio in a new private directory.
 ### Share browser-tab audio
 
 ```sh
-openai audio translate --live --browser
+openai audio translate-live --browser
 ```
 
-This explicit mode opens a private local browser page. It keeps your API key in the CLI.
+This mode opens a private local browser page. It keeps your API key in the CLI.
+`openai audio translate --live` also opens the browser panel.
 Choose Microphone or Browser tab, select a target language, then start the session.
 For tab capture, choose a browser tab and enable Share tab audio in the browser dialog.
 The CLI sends audio only. It does not send the shared video track.

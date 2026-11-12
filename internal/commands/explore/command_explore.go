@@ -80,9 +80,10 @@ var taskPhrases = map[string][]commandsuggest.TaskPhrase{
 		{Text: "make an image", AnyWordOrder: true},
 		{Text: "create an image", AnyWordOrder: true},
 	},
-	"tokenizer count": {{Text: "count tokens offline", AnyWordOrder: true}},
-	"speak":           {{Text: "text to speech"}, {Text: "text to audio"}, {Text: "read text aloud"}},
-	"transcribe":      {{Text: "speech to text"}},
+	"tokenizer count":      {{Text: "count tokens offline", AnyWordOrder: true}},
+	"speak":                {{Text: "text to speech"}, {Text: "text to audio"}, {Text: "read text aloud"}},
+	"transcribe":           {{Text: "speech to text"}},
+	"audio translate-live": {{Text: "live translation"}},
 }
 
 func exploreCandidates(root *cli.Command, native, bash, shell string) []commandsuggest.Candidate {
