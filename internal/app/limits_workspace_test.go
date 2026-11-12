@@ -226,7 +226,7 @@ func limitsControllerPrintedCommand(t *testing.T, m *limitsWorkspace) string {
 	t.Helper()
 	m.viewport.GotoBottom()
 	view := ansi.Strip(m.View().Content)
-	for _, visible := range []string{"Ctrl+P: print command and exit", "> Back", "Apply change"} {
+	for _, visible := range []string{"Ctrl+P: print command and exit", "› Back", "Apply change"} {
 		if !strings.Contains(view, visible) {
 			t.Fatalf("review clipped %q at %d columns: %q", visible, m.width, view)
 		}
@@ -926,7 +926,7 @@ func TestLimitsWorkspaceActionVisibleAtMinimumSize(t *testing.T) {
 			}
 			m.viewport.GotoBottom()
 			view := ansi.Strip(m.View().Content)
-			if !strings.Contains(view, "> Back") || !strings.Contains(view, "Apply change") || !strings.Contains(view, "Ctrl+C") {
+			if !strings.Contains(view, "› Back") || !strings.Contains(view, "Apply change") || !strings.Contains(view, "Ctrl+C") {
 				t.Errorf("minimum review hides confirmation: %q", view)
 			}
 		})
@@ -1129,18 +1129,19 @@ func TestLimitsWorkspaceListStatusStaysVisible(t *testing.T) {
 			m.snapshot.CostsTotal, m.snapshot.CostsComplete = "1.23", false
 			for _, section := range []int{1, 2} {
 				m.section = section
-				status, label, tab := "Incomplete.", "Alerts loaded: 1", "> Alerts"
-				if complete {
-					status = "Complete."
-				}
+				label, tab := "1 alert", "[Alerts]"
 				if section == 2 {
-					label, tab = "Rate records loaded: 1", "> Rates"
+					label, tab = "1 rate limit", "[Rates]"
+				}
+				if !complete {
+					label = "Partial list · " + label + " shown"
 				}
 				for _, colored := range []bool{false, true} {
 					for _, dark := range []bool{false, true} {
 						m.color, m.dark = colored, dark
 						view := ansi.Strip(m.View().Content)
-						require.Contains(t, view, status+" "+label)
+						require.Contains(t, view, label)
+						require.Equal(t, !complete, strings.Contains(view, "Partial list"))
 						require.Contains(t, view, tab)
 						require.Contains(t, view, "Reported Costs (incomplete): USD 1.23")
 						require.Contains(t, view, "q quit")
@@ -1252,7 +1253,7 @@ func TestLimitsDraftPreviewNamesDirectCommandDifferences(t *testing.T) {
 func TestLimitsWorkspaceUnknownLimitRequiresExplicitReview(t *testing.T) {
 	m, b := newLimitsController(t, 80, 24)
 	m.snapshot = limitsSnapshot{LimitUnconfirmed: true, Errors: []limitsSourceFailure{{Resource: "spend_limit", Err: &openai.Error{StatusCode: 404}}}}
-	if rows := m.menu(); len(rows) != 1 || rows[0].kind != "limit_set" || !strings.Contains(m.sourceSummary(), "unknown") {
+	if rows := m.menu(); len(rows) != 1 || rows[0].kind != "limit_set" || !strings.Contains(m.sourceSummary(0), "unknown") {
 		t.Fatal("unknown limit lost its explicit create-or-replace path or became confirmed absence")
 	}
 	limitsControllerReview(t, m)
@@ -1903,7 +1904,7 @@ func TestLimitsWorkspaceCostsAndEnforcementStayDistinct(t *testing.T) {
 	m.snapshot.CostsTotal, m.snapshot.CostsComplete = "123.000000000000000001", false
 	m.snapshot.CostsStart, m.snapshot.CostsEnd = 1790812800, 1792368000
 	view := m.View().Content
-	if !strings.Contains(view, "Reported Costs (incomplete): USD 123.000000000000000001") || !strings.Contains(view, "Returned enforcement: inactive") {
+	if !strings.Contains(view, "Reported Costs (incomplete): USD 123.000000000000000001") || !strings.Contains(strings.Join(strings.Fields(view), " "), "Policy inactive") {
 		t.Fatalf("workspace conflated Costs and returned enforcement: %q", view)
 	}
 	help := m.help()
@@ -1912,7 +1913,7 @@ func TestLimitsWorkspaceCostsAndEnforcementStayDistinct(t *testing.T) {
 	}
 	m.snapshot.CostsComplete = true
 	view = m.View().Content
-	if !strings.Contains(view, "Reported Costs: USD 123.000000000000000001") || strings.Contains(view, "(complete)") || strings.Contains(view, "(incomplete)") {
+	if !strings.Contains(view, "Reported USD 123.000000000000000001") || strings.Contains(view, "(complete)") || strings.Contains(view, "(incomplete)") {
 		t.Fatalf("complete pagination must not imply final Costs: %q", view)
 	}
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
@@ -1980,7 +1981,7 @@ func TestLimitsWorkspaceAmbiguousEnforcementStaysUnknown(t *testing.T) {
 	m.snapshot.LimitAbsent = false
 	m.snapshot.Limit = gjson.Parse(`{"object":"organization.spend_limit","threshold_amount":10001,"currency":"USD","interval":"month","enforcement":{"status":"inactive","status":"enforcing"}}`)
 	view := ansi.Strip(m.View().Content)
-	if !strings.Contains(view, "Returned enforcement: ambiguous; inspect original") || strings.Contains(view, "Returned enforcement: inactive") {
+	if !strings.Contains(strings.Join(strings.Fields(view), " "), "Policy Ambiguous · inspect original") || strings.Contains(strings.Join(strings.Fields(view), " "), "Policy inactive") {
 		t.Fatalf("workspace selected one conflicting enforcement value: %q", view)
 	}
 }
@@ -2047,7 +2048,7 @@ func TestLimitsWorkspaceCompactGeometryAndReviewGate(t *testing.T) {
 			require.Equal(t, columns, ansi.StringWidth(lines[1]), "tab markers must reserve the same cells")
 			require.LessOrEqual(t, len(lines), min(size[1], 18))
 			for _, line := range lines {
-				require.LessOrEqual(t, ansi.StringWidth(line), min(size[0], 76))
+				require.LessOrEqual(t, ansi.StringWidth(line), size[0])
 			}
 		}
 		m.begin("limit_set", m.snapshot.Limit)
@@ -2055,7 +2056,7 @@ func TestLimitsWorkspaceCompactGeometryAndReviewGate(t *testing.T) {
 		m.review()
 		require.Equal(t, "review", m.page)
 		require.Contains(t, ansi.Strip(m.View().Content), "Enter: select")
-		require.Equal(t, min(size[0], 76)-2, m.viewport.Width())
+		require.Equal(t, m.contentWidth(), m.viewport.Width())
 		require.LessOrEqual(t, m.viewport.Height(), min(size[1], 18)-5)
 		require.False(t, m.viewport.AtBottom(), "clamped review must not approve unread content")
 		limitsControllerKey(m, tea.KeyTab)
@@ -2087,7 +2088,7 @@ func TestLimitsWorkspaceRefreshRetainsUnavailableRateDraftUntilDiscarded(t *test
 		require.Equal(t, "101", m.draft.inputs[0].Value(), "refresh must not silently discard an edit")
 		require.Contains(t, m.help(), "Requests / minute: 101")
 		require.Equal(t, len(m.draft.inputs), m.focus)
-		require.Contains(t, ansi.Strip(m.View().Content), "> Discard unavailable edits")
+		require.Contains(t, ansi.Strip(m.View().Content), "› Discard unavailable edits")
 		require.LessOrEqual(t, len(strings.Split(m.View().Content, "\n")), 12)
 		_, err := m.draft.validate()
 		require.ErrorContains(t, err, "unavailable")
@@ -2104,11 +2105,147 @@ func TestLimitsWorkspaceRefreshRetainsUnavailableRateDraftUntilDiscarded(t *test
 	}
 }
 
+func TestLimitsWorkspaceTabHintAndNavigation(t *testing.T) {
+	for _, width := range []int{40, 50, 80, 122} {
+		m, backend := newLimitsController(t, width, 16)
+		m.snapshot.ProjectID = "proj_test"
+		m.snapshot.AlertsComplete = true
+		for _, step := range []struct {
+			key tea.KeyPressMsg
+			tab string
+		}{
+			{tea.KeyPressMsg{Code: tea.KeyTab}, "Alerts"},
+			{tea.KeyPressMsg{Code: tea.KeyTab}, "Rates"},
+			{tea.KeyPressMsg{Code: tea.KeyTab}, "Spend"},
+			{tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}, "Rates"},
+			{tea.KeyPressMsg{Code: tea.KeyLeft}, "Alerts"},
+			{tea.KeyPressMsg{Code: tea.KeyRight}, "Rates"},
+		} {
+			m.Update(step.key)
+			view := ansi.Strip(m.View().Content)
+			require.Contains(t, view, "["+step.tab+"]")
+			require.Equal(t, 1, strings.Count(view, "Tab to switch tabs"))
+			require.Contains(t, view, "Up/Down to select")
+			require.NotContains(t, view, "↔")
+			if step.tab == "Alerts" {
+				require.Contains(t, view, "No alerts")
+			}
+		}
+		require.Zero(t, backend.writes.Load())
+	}
+}
+
+func TestLimitsWorkspaceDistinguishesMatchingAlerts(t *testing.T) {
+	m, _ := newLimitsController(t, 122, 24)
+	m.section = 1
+	second := strings.Replace(limitsControllerAlert, "alert_synthetic", "alert_second", 1)
+	m.snapshot.Alerts = []gjson.Result{gjson.Parse(limitsControllerAlert), gjson.Parse(second)}
+	view := ansi.Strip(m.View().Content)
+	require.Contains(t, view, "2 alerts")
+	require.Contains(t, view, "Email · USD 100.00 / month · alert_synthetic")
+	require.Contains(t, view, "Email · USD 100.00 / month · alert_second")
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	view = ansi.Strip(m.View().Content)
+	require.Contains(t, view, "1. Email · USD 100.00")
+	require.Contains(t, view, "2. Email · USD 100.00")
+}
+
+func TestLimitsWorkspaceReportedShare(t *testing.T) {
+	for _, tc := range []struct {
+		name, costs, limit, currency, interval, want string
+		complete, unconfirmed                        bool
+	}{
+		{"month", "37.25", "10000", "USD", "month", "37.25%", true, false},
+		{"zero spend", "0", "10000", "USD", "month", "0%", true, false},
+		{"rounded", "0.01", "3", "USD", "month", "≈33.33%", true, false},
+		{"over cap", "1.000000000000000001", "100", "USD", "month", ">100%", true, false},
+		{"large cap", "92233720368547758.07", "9223372036854775807", "USD", "month", "100%", true, false},
+		{"unconfirmed", "1", "100", "USD", "month", "", true, true},
+		{"incomplete costs", "1", "100", "USD", "month", "", false, false},
+		{"missing costs", "", "100", "USD", "month", "", true, false},
+		{"credit", "-1.25", "100", "USD", "month", "", true, false},
+		{"zero cap", "1", "0", "USD", "month", "", true, false},
+		{"foreign currency", "1", "100", "EUR", "month", "", true, false},
+		{"different interval", "1", "100", "USD", "week", "", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newLimitsController(t, 120, 24)
+			m.snapshot.Limit = gjson.Parse(fmt.Sprintf(`{"threshold_amount":%s,"currency":%q,"interval":%q}`, tc.limit, tc.currency, tc.interval))
+			m.snapshot.CostsTotal, m.snapshot.CostsComplete = tc.costs, tc.complete
+			m.snapshot.LimitAbsent, m.snapshot.LimitUnconfirmed = false, tc.unconfirmed
+			line, ok := m.spendMeter(m.panelStyle())
+			require.Equal(t, tc.want != "", ok)
+			if ok {
+				require.True(t, strings.HasSuffix(line, "  "+tc.want), line)
+			}
+		})
+	}
+}
+
+func TestLimitsWorkspaceTokenizerLayout(t *testing.T) {
+	m, backend := newLimitsController(t, 110, 26)
+	m.snapshot.LimitAbsent = false
+	m.snapshot.Limit = gjson.Parse(limitsTestLimit)
+	m.snapshot.Alerts = []gjson.Result{gjson.Parse(limitsControllerAlert)}
+	m.snapshot.CostsTotal, m.snapshot.CostsComplete = "37.25", true
+	m.note = "Change confirmed. Quit for receipt."
+	for _, width := range []int{110, 80, 50, 40} {
+		m.Update(tea.WindowSizeMsg{Width: width, Height: 20})
+		m.section = 0
+		for _, color := range []bool{false, true} {
+			m.color = color
+			lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+			view := strings.Join(lines, "\n")
+			require.Contains(t, view, "[Spend]")
+			require.Contains(t, view, m.note)
+			require.Contains(t, view, "q quit")
+			require.Equal(t, width >= 50, strings.HasPrefix(lines[0], "╭"))
+			if width >= 50 {
+				_, footer, found := strings.Cut(view, "╯\n")
+				require.True(t, found)
+				require.Contains(t, footer, "Tab to switch tabs")
+				require.Contains(t, footer, "q quit")
+			}
+			for _, line := range lines {
+				require.LessOrEqual(t, ansi.StringWidth(line), width)
+				if strings.Contains(line, "› Set hard spend limit") {
+					require.Equal(t, width >= 96, strings.Contains(line, "[Spend]"))
+				}
+			}
+			require.Contains(t, view, "› Set hard spend limit")
+		}
+	}
+	m.Update(tea.WindowSizeMsg{Width: 96, Height: 16})
+	m.snapshot.Limit = gjson.Parse(strings.Replace(limitsTestLimit, "enforcing", strings.Repeat("x", 61), 1))
+	m.section = 0
+	spendHeight := strings.Count(m.View().Content, "\n")
+	m.section = 1
+	require.Equal(t, spendHeight, strings.Count(m.View().Content, "\n"), "long source data must not move other tabs")
+	m.section = 0
+	m.snapshot.Limit = gjson.Parse(limitsTestLimit)
+
+	m.snapshot.ProjectID = "proj_long_with_an_unambiguous_suffix"
+	require.Contains(t, m.help(), "Scope: Project "+m.snapshot.ProjectID)
+
+	m.Update(tea.WindowSizeMsg{Width: 110, Height: 26})
+	limitsControllerKey(m, tea.KeyRight)
+	view := ansi.Strip(m.View().Content)
+	require.Contains(t, view, "[Alerts]")
+	require.Contains(t, view, "Email · USD 100.00 / month")
+	require.NotContains(t, view, "alert_synthetic")
+	limitsControllerKey(m, tea.KeyDown)
+	require.Contains(t, ansi.Strip(m.View().Content), "alert_synthetic")
+	limitsControllerKey(m, tea.KeyEnter)
+	require.Equal(t, "form", m.page)
+	require.Equal(t, "alert_synthetic", m.draft.change.ID)
+	require.Zero(t, backend.writes.Load())
+}
+
 func TestLimitsWorkspaceShortDetailsFitContent(t *testing.T) {
 	m, _ := newLimitsController(t, 120, 50)
 	m.page = "details"
 	m.setDetails("One line\nTwo lines")
 	require.Equal(t, 2, m.viewport.Height())
 	require.True(t, m.viewport.AtBottom())
-	require.Len(t, strings.Split(ansi.Strip(m.View().Content), "\n"), 5)
+	require.Len(t, strings.Split(ansi.Strip(m.View().Content), "\n"), 7)
 }

@@ -160,7 +160,7 @@ def probe_observer():
         observer.feed(final)
         assert not observer.pending, "complete escape remained pending"
     restored = (b"\x1b[?25l\x1b[?2004h\x1b[>4;2m\x1b[>1u\x1b[?u"
-                b"Website controls and source errors: ?\x1b[?2004l\x1b[>4m\x1b[<1u\x1b[?25h")
+                b"Set hard spend limit\x1b[?2004l\x1b[>4m\x1b[<1u\x1b[?25h")
     assert restored_offset(restored) == len(restored)
     for late in (b"\x1b[>5u", b"\x1b[>4;1m", b"\x1b[>04;1m", b"\x1b[?25;2004h",
                  b"\x1b[?1049;25h", b"\x1b[2;0J", b"\x1b[?25l", b"\x1b[<2u"):
@@ -298,7 +298,7 @@ def replace(terminal, evidence, label, value):
 
 
 def read_review(terminal, evidence, scene, output, name):
-    wait_screen(terminal, ["> Back", "Enter: select"])
+    wait_screen(terminal, ["› Back", "Enter: select"])
     checkpoint(terminal, evidence, output, name + "-top")
     preview_seen = False
     for _ in range(40):
@@ -331,9 +331,9 @@ def review(terminal, evidence, scene, output, name="review"):
         key(terminal, evidence, "Ctrl+P print and exit", b"\x10")
         return
     key(terminal, evidence, "Tab to Apply", b"\t")
-    wait_screen(terminal, ["> Apply change"])
+    wait_screen(terminal, ["› Apply change"])
     if scene == "alert-create":
-        checkpoint(terminal, evidence, output, "review-before-help", ("> Apply change",))
+        checkpoint(terminal, evidence, output, "review-before-help", ("› Apply change",))
         key(terminal, evidence, "Review help", b"\x1bOP")
         wait_screen(terminal, ["Spend manages hard monthly"])
         checkpoint(terminal, evidence, output, "review-help")
@@ -345,12 +345,12 @@ def review(terminal, evidence, scene, output, name="review"):
         wait_screen(terminal, ["Spend manages hard monthly"], ["Resize to at least"])
         checkpoint(terminal, evidence, output, "review-help-resized")
         key(terminal, evidence, "Return to review", b"\x1b")
-        wait_screen(terminal, ["> Back", "Read to the end"], ["> Apply change"])
-        checkpoint(terminal, evidence, output, "review-return", ("> Back", "Read to the end"))
+        wait_screen(terminal, ["› Back", "Read to the end"], ["› Apply change"])
+        checkpoint(terminal, evidence, output, "review-return", ("› Back", "Read to the end"))
         key(terminal, evidence, "Apply blocked until reread", b"\t")
-        wait_screen(terminal, ["> Back", "Read to the end"], ["> Apply change"])
+        wait_screen(terminal, ["› Back", "Read to the end"], ["› Apply change"])
         terminal.resize(*terminal.initial_size)
-        wait_screen(terminal, ["> Back", "Read to the end"], ["> Apply change"])
+        wait_screen(terminal, ["› Back", "Read to the end"], ["› Apply change"])
         checkpoint(terminal, evidence, output, "review-resize-return")
         if mutations(scene):
             raise AssertionError("resizing or returning from help applied the draft")
@@ -364,7 +364,7 @@ def review(terminal, evidence, scene, output, name="review"):
         key(terminal, evidence, "Fresh review after resize", b"\r")
         read_review(terminal, evidence, scene, output, "review-resized")
         key(terminal, evidence, "Select Apply again", b"\t")
-        wait_screen(terminal, ["> Apply change"])
+        wait_screen(terminal, ["› Apply change"])
     checkpoint(terminal, evidence, output, name + "-apply")
     key(terminal, evidence, "Apply" if name == "review" else "Apply refreshed", b"\r")
 
@@ -385,11 +385,11 @@ def run_scene(terminal, scene, evidence, output):
         if mutations(scene):
             raise AssertionError("canceling a load caused a mutation")
         return
-    wait_screen(terminal, ["Set hard spend limit", "Ctrl+C"], ["Loading"])
+    wait_screen(terminal, ["Set hard spend limit", "q quit"], ["Loading"])
     checkpoint(terminal, evidence, output, "overview")
     if scene.startswith("alert-"):
         key(terminal, evidence, "Alerts", b"\x1b[C")
-        wait_screen(terminal, ["Create spend alert"])
+        wait_screen(terminal, ["Create alert"])
         creating = scene in {"alert-create", "alert-print"}
         if not creating:
             key(terminal, evidence, "Select alert", b"\x1b[B")
@@ -424,8 +424,8 @@ def run_scene(terminal, scene, evidence, output):
                 checkpoint(terminal, evidence, output, "validation-help", ("two decimal places.",))
                 key(terminal, evidence, "Repeated help", b"\x1bOP")
                 key(terminal, evidence, "Return to draft", b"\x1b")
-                wait_screen(terminal, ["> Review change", "Demo", "Enter a USD amount"])
-                checkpoint(terminal, evidence, output, "draft-return", ("> Review change", "Demo"))
+                wait_screen(terminal, ["› Review change", "Demo", "Enter a USD amount"])
+                checkpoint(terminal, evidence, output, "draft-return", ("› Review change", "Demo"))
                 for _ in range(4):
                     key(terminal, evidence, "Previous alert field", b"\x1b[Z")
                 wait_screen(terminal, ["Monthly USD", "75.505"])
@@ -433,9 +433,9 @@ def run_scene(terminal, scene, evidence, output):
                 for _ in range(4):
                     key(terminal, evidence, "Next alert field", b"\t")
                 key(terminal, evidence, "Review corrected draft", b"\r")
-                wait_screen(terminal, ["> Back", "Enter: select"])
+                wait_screen(terminal, ["› Back", "Enter: select"])
                 key(terminal, evidence, "Escape from review", b"\x1b")
-                wait_screen(terminal, ["> Review change", "Demo"])
+                wait_screen(terminal, ["› Review change", "Demo"])
                 for _ in range(4):
                     key(terminal, evidence, "Inspect retained alert amount", b"\x1b[Z")
                 wait_screen(terminal, ["Monthly USD", "75.50", "Review change"])

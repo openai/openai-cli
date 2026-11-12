@@ -133,8 +133,8 @@ Do not commit binary media or claim these planned scenes ran before execution.
 The earlier spend-threshold recorder remains the separate before/after comparison.
 
 The workspace uses an inline panel. The project scene verifies prior shell scrollback.
-Selection keeps fixed geometry and font weight.
-The panel uses at most 76 columns and 18 rows.
+Selection uses a fixed-width marker and a bold highlight on color terminals.
+The framed panel uses up to 144 columns and 18 rows.
 The recorder requires inline readiness, cursor restoration, and restored terminal modes.
 Paste disable, keyboard reset, and keyboard-stack restoration must precede printed commands and final diagnostics.
 Historical full-screen recordings do not validate this revision.

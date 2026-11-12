@@ -119,8 +119,9 @@ func runLimitsWorkspace(ctx context.Context, cmd *cli.Command, backend limitsBac
 	}
 	programContext, stop := context.WithCancel(ctx)
 	defer stop()
+	profile := terminal.ColorProfile(opts.Stdout, os.Environ(), term.IsTerminal(file.Fd()))
 	m := &limitsWorkspace{ctx: programContext, cancel: stop, backend: backend, width: width, height: height, page: "home",
-		color: os.Getenv("NO_COLOR") == "", dark: true,
+		color: profile >= colorprofile.ANSI, dark: terminal.DarkBackground(os.Getenv("COLORFGBG")),
 		viewport: viewport.New(viewport.WithWidth(max(1, width)), viewport.WithHeight(max(1, height-5)))}
 	m.viewport.SoftWrap, m.viewport.FillHeight = false, false
 	m.requestArgs, m.omitPreview = clirequest.NextCommandOptions(cmd.Root())
@@ -132,10 +133,7 @@ func runLimitsWorkspace(ctx context.Context, cmd *cli.Command, backend limitsBac
 	}
 	m.output = &limitsWorkspaceOutput{
 		Writer: clioutput.Writer{Context: context.Background(), Sink: opts.Stdout}, File: file, stop: stop}
-	options := []tea.ProgramOption{tea.WithInput(cmd.Root().Reader), tea.WithOutput(m.output), tea.WithContext(programContext), tea.WithWindowSize(width, height)}
-	if !m.color {
-		options = append(options, tea.WithColorProfile(colorprofile.NoTTY))
-	}
+	options := []tea.ProgramOption{tea.WithInput(cmd.Root().Reader), tea.WithOutput(m.output), tea.WithContext(programContext), tea.WithWindowSize(width, height), tea.WithColorProfile(profile)}
 	program := tea.NewProgram(m, options...)
 	_, runErr := program.Run()
 	stop()
@@ -472,9 +470,21 @@ func (m *limitsWorkspace) menu() []limitsMenuItem {
 			}
 		}
 	case 1:
-		rows = append(rows, limitsMenuItem{label: "Create spend alert", kind: "alert_create"})
+		rows = append(rows, limitsMenuItem{label: "Create alert", kind: "alert_create"})
+		labelCounts := make(map[string]int)
 		for _, alert := range m.snapshot.Alerts {
-			rows = append(rows, limitsMenuItem{label: "Edit " + alert.Get("id").String() + "  " + limitsThresholdLabel(alert), kind: "alert_update", value: alert})
+			label := limitsThresholdLabel(alert)
+			if alert.Get("notification_channel.type").Str == "email" && limitsUniqueJSON(alert) == nil {
+				label = "Email · " + label
+			}
+			labelCounts[label]++
+			rows = append(rows, limitsMenuItem{label: label, kind: "alert_update", value: alert})
+		}
+		// Keep otherwise identical alerts distinguishable before the user opens one.
+		for i := 1; i < len(rows); i++ {
+			if labelCounts[rows[i].label] > 1 {
+				rows[i].label = fmt.Sprintf("%d. %s · %s", i, rows[i].label, rows[i].value.Get("id").String())
+			}
 		}
 	case 2:
 		for _, rate := range m.snapshot.Rates {
@@ -567,23 +577,37 @@ func (m *limitsWorkspace) setReview() {
 }
 
 func (m *limitsWorkspace) detailsHeight() int {
-	height := max(1, m.panelHeight()-3)
+	height := max(1, m.panelHeight()-m.panelChrome()-1)
 	if m.page == "review" && m.previewCommand != "" {
-		height = max(1, m.panelHeight()-6)
+		height = max(1, m.panelHeight()-m.panelChrome()-4)
 	} else if m.page == "review" {
-		height = max(1, m.panelHeight()-5)
+		height = max(1, m.panelHeight()-m.panelChrome()-3)
 	}
 	return min(height, max(1, m.detailsLines))
 }
 
-func (m *limitsWorkspace) panelWidth() int  { return min(m.width, 76) }
+func (m *limitsWorkspace) framed() bool { return m.width >= 50 && m.height >= 16 }
+func (m *limitsWorkspace) contentWidth() int {
+	if m.framed() {
+		return min(m.width-5, 140)
+	}
+	return max(1, min(m.width, 76)-2)
+}
+
+// Reserve the title and gap, or the framed title, divider, and both borders.
+func (m *limitsWorkspace) panelChrome() int {
+	if m.framed() {
+		return 4
+	}
+	return 2
+}
 func (m *limitsWorkspace) panelHeight() int { return min(m.height, 18) }
 
 func (m *limitsWorkspace) setDetails(content string) {
 	m.details = content
-	wrapped := ansi.Hardwrap(content, max(1, m.panelWidth()-2), true)
+	wrapped := ansi.Hardwrap(content, m.contentWidth(), true)
 	m.detailsLines = strings.Count(wrapped, "\n") + 1
-	m.viewport.SetWidth(max(1, m.panelWidth()-2))
+	m.viewport.SetWidth(m.contentWidth())
 	m.viewport.SetHeight(m.detailsHeight())
 	m.viewport.SetContent(wrapped)
 	m.viewport.GotoTop()
@@ -607,7 +631,7 @@ func (m *limitsWorkspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailsReturnOffset = 0
 			m.setDetails(m.details)
 		}
-		m.viewport.SetWidth(max(1, m.panelWidth()-2))
+		m.viewport.SetWidth(m.contentWidth())
 		m.viewport.SetHeight(m.detailsHeight())
 		return m, nil
 	case limitsWorkResult:
@@ -628,12 +652,12 @@ func (m *limitsWorkspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.load()
 		}
 		m.snapshot = msg.snapshot
-		m.note = "Website controls and source errors: ?"
+		m.note = ""
 		if m.lastSaved.Exists() {
-			m.note = "Change confirmed. Last result prints when you exit."
+			m.note = "Change confirmed. Quit for receipt."
 		}
 		if msg.err != nil || len(msg.snapshot.Errors) != 0 {
-			m.note = "Some sources failed. Press ? for recovery; r to refresh."
+			m.note = "Some reads failed. ? help · r refresh"
 			if expected := m.removedLimitFailure(); expected != nil && len(msg.snapshot.Errors) == 1 && limitsOnlyErrors(msg.err, expected) {
 				m.note = "Removal confirmed. Current limit not returned."
 			}
@@ -835,8 +859,8 @@ func (m *limitsWorkspace) scope() string {
 	return "Organization"
 }
 
-func (m *limitsWorkspace) sourceSummary() string {
-	switch m.section {
+func (m *limitsWorkspace) sourceSummary(section int) string {
+	switch section {
 	case 0:
 		if m.snapshot.LimitUnconfirmed {
 			if m.removedLimitFailure() != nil {
@@ -855,16 +879,23 @@ func (m *limitsWorkspace) sourceSummary() string {
 		}
 		return "Hard spend limit unavailable. Refresh to retry."
 	case 1:
-		if !m.snapshot.AlertsComplete {
-			return fmt.Sprintf("Incomplete. Alerts loaded: %d", len(m.snapshot.Alerts))
-		}
-		return fmt.Sprintf("Complete. Alerts loaded: %d", len(m.snapshot.Alerts))
+		return limitsListCount("alert", len(m.snapshot.Alerts), m.snapshot.AlertsComplete)
 	default:
-		if !m.snapshot.RatesComplete {
-			return fmt.Sprintf("Incomplete. Rate records loaded: %d", len(m.snapshot.Rates))
-		}
-		return fmt.Sprintf("Complete. Rate records loaded: %d", len(m.snapshot.Rates))
+		return limitsListCount("rate limit", len(m.snapshot.Rates), m.snapshot.RatesComplete)
 	}
+}
+
+func limitsListCount(noun string, count int, complete bool) string {
+	if count != 1 {
+		noun += "s"
+	}
+	if !complete {
+		return fmt.Sprintf("Partial list · %d %s shown", count, noun)
+	}
+	if count == 0 {
+		return "No " + noun
+	}
+	return fmt.Sprintf("%d %s", count, noun)
 }
 
 func (m *limitsWorkspace) limitReadable() bool {
@@ -967,7 +998,10 @@ func (m *limitsWorkspace) help() string {
 	if invocation == "" {
 		invocation = "openai"
 	}
-	text := "Spend manages hard monthly USD limits.\nAlerts notify recipients; they do not enforce caps.\nRates manages seven project rate fields.\n\nEvery change requires a before/after review.\nRead to the end, then Tab to Apply.\nBack remains the default action.\nCtrl+P prints the reviewed command and exits. Printing sends no change.\n\nUse r to refresh. Use i to inspect original fields.\nUse --max-items -1 to load complete lists.\n\n"
+	text := "Press Tab to switch tabs. Shift+Tab goes back. Left and Right also switch tabs.\nUse Up and Down to select an action. Press Enter to open it.\n\nSpend manages hard monthly USD limits.\nAlerts notify recipients; they do not enforce caps.\nRates manages seven project rate fields.\n\nEvery change requires a before/after review.\nRead to the end, then Tab to Apply.\nBack remains the default action.\nCtrl+P prints the reviewed command and exits. Printing sends no change.\n\nUse r to refresh. Use i to inspect original fields.\nUse d on an existing alert to review its deletion.\nUse q to quit the overview or Ctrl+C to interrupt.\nUse --max-items -1 to load complete lists.\n\n"
+	if m.snapshot.ProjectID != "" {
+		text = "Scope: " + limitsSafeLine(m.scope()) + "\n\n" + text
+	}
 	if m.draft.hasUnavailableEdits() {
 		text += "Unavailable rate drafts remain saved until you select Discard unavailable edits.\n"
 		for i, field := range limitsRateInputs {

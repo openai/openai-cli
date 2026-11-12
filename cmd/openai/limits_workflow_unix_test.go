@@ -37,7 +37,7 @@ func (w *limitsBorrowedOutputProbe) Write(data []byte) (int, error) {
 		return 0, errors.New("synthetic-private-borrowed-output")
 	}
 	n, err := os.Stdout.Write(data)
-	if err == nil && n == len(data) && bytes.Contains(data, []byte("Website controls and source errors: ?")) {
+	if err == nil && n == len(data) && bytes.Contains(data, []byte("Set hard spend limit")) {
 		w.ready.Store(true)
 	}
 	return n, err
@@ -122,7 +122,7 @@ func TestMainLimitsWorkflowBorrowedTerminalWriter(t *testing.T) {
 			if got.Code != test.exit || !strings.Contains(got.Stderr, "borrowed-terminal-verified\n") {
 				t.Fatalf("borrowed terminal changed exit or ownership: %+v", got)
 			}
-			ready := strings.Index(got.Stdout, "Website controls and source errors: ?")
+			ready := strings.Index(got.Stdout, "Set hard spend limit")
 			restored := strings.LastIndex(got.Stdout, "\x1b[?25h")
 			if ready < 0 || restored <= ready || strings.Contains(got.Stdout, "\x1b[?1049h") || strings.Contains(got.Stdout, "\x1b[?1049l") ||
 				strings.Contains(got.Stdout+got.Stderr, "panic:") || strings.Contains(got.Stderr, "synthetic-private") {
@@ -187,11 +187,11 @@ try:
             output[key.data].extend(data)
             if len(output[key.data]) > 2 << 20:
                 raise RuntimeError("borrowed terminal capture exceeded its allowance")
-            if not sent and mode in ("quit", "interrupt") and b"Website controls and source errors: ?" in output[0]:
+            if not sent and mode in ("quit", "interrupt") and b"Set hard spend limit" in output[0]:
                 key = b"\x03" if mode == "interrupt" else b"q"
                 os.write(master, key)
                 sent = True
-            elif not sent and mode == "write-failure" and b"Website controls and source errors: ?" in output[0]:
+            elif not sent and mode == "write-failure" and b"Set hard spend limit" in output[0]:
                 os.kill(process.pid, signal.SIGWINCH)
                 sent = True
     code = process.wait(timeout=2)

@@ -32,7 +32,7 @@ SCENE
 cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
 {
   echo 'feature: compact inline limits workspace workflows'
-  echo 'presentation: stable selection geometry; maximum76 columns and18rows; preserved shell scrollback'
+  echo 'presentation: inline panel, up to 144 columns and 18 rows, fixed-width selection marker'
   echo "candidate source commit: $demo_after_sha"
   echo "candidate source state: ${DEMO_SOURCE_STATE:-committed source supplied by caller}"
   echo 'baseline: no before comparison; this records the supplied workspace binary only'

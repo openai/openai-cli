@@ -42,7 +42,7 @@ def validate_child_timeline(evidence, child):
 
 def restored_offset(raw, loading=False):
     """Require readiness and every emitted terminal reset before ordinary output."""
-    ready = raw.find(b"Loading" if loading else b"Website controls and source errors: ?")
+    ready = raw.find(b"Loading" if loading else b"Set hard spend limit")
     assert ready >= 0, "workspace never reached its expected ready state"
     states, seen = {}, set()
     for match in re.finditer(rb"\x1b\[\?([0-9;]+)([hl])", raw):
@@ -325,7 +325,7 @@ def main():
         assert "Command preview (inspection only)" in preview, (scene, "missing inspection preview")
         assert "Command printing needs" not in preview and "Command preview omitted" not in preview
         final_screen = (root / (scene + "-evidence.exit.txt")).read_text()
-        assert "> Apply change" not in final_screen, (scene, "stale confirmation after exit")
+        assert "› Apply change" not in final_screen, (scene, "stale confirmation after exit")
         if scene == "alert-print":
             scene_requests = [entry for entry in requests if entry["scene"] == scene]
             assert scene_requests and all(entry["method"] == "GET" for entry in scene_requests)
@@ -393,9 +393,9 @@ def main():
             assert all(checkpoints[left]["seconds"] < checkpoints[right]["seconds"] for left, right in zip(required, required[1:]))
             for name, messages in (("validation", ("Enter a USD amount", "Review change")),
                                    ("validation-help", ("Draft details", "two decimal places.")),
-                                   ("draft-return", ("> Review change", "Demo")),
+                                   ("draft-return", ("› Review change", "Demo")),
                                    ("review-back", ("Monthly USD", "75.50")),
-                                   ("review-return", ("> Back", "Read to the end"))):
+                                   ("review-return", ("› Back", "Read to the end"))):
                 screen = (root / (scene + "-evidence." + name + ".txt")).read_text()
                 assert all(message in screen for message in messages), (scene, name, "missing draft recovery evidence")
         if scene == "preflight-recover":

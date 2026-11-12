@@ -21,7 +21,7 @@ openai admin limits show --format json --transform spend_alerts
 
 `--max-items` defaults to 100 records per list.
 Use `-1` for all records or `0` to validate the list request without retaining records.
-The interactive workspace puts each list's Complete or Incomplete status before its loaded count.
+The workspace shows the record count. When more records may exist, it labels the count as a partial list.
 Failed reads preserve available data and return a nonzero exit status.
 Cancellation can stop output before the CLI prints those records.
 The `source_errors` field identifies failed sources without exposing response error bodies.
@@ -42,12 +42,19 @@ Values beyond that precision remain available in `costs.buckets`; the summary re
 
 ## Workspace controls
 
+Press Tab to switch tabs. Brackets mark the selected tab, such as `[Spend]`.
+Wide terminals show the scope, Costs period, selected view, and policy beside the amounts and actions.
+The Spend view compares complete reported USD Costs with a confirmed positive monthly USD cap.
+The percentage uses exact amounts and marks rounding with `≈`. Costs can lag behind actual spending.
+Narrow terminals stack the two columns. The selection marker also works without color.
+The Alerts tab lists each threshold. Selecting an alert shows its ID. Press Enter to edit it.
+
 | Control | Action |
 | --- | --- |
 | Left / Right | Select Spend, Alerts, or project Rates |
 | Up / Down | Select a record or scroll a review |
 | Enter | Open the selected action |
-| Tab / Shift+Tab | Move through form fields or confirmation actions |
+| Tab / Shift+Tab | Switch tabs on the overview, or move between form fields and confirmation actions |
 | r | Refresh the overview or a rejected draft |
 | i | Inspect the selected original API record |
 | ? | Show workspace help and API boundaries |
@@ -136,9 +143,9 @@ A mismatched confirmation locks further writes and directs you to inspect curren
 ## Compact terminal interface
 
 The workspace uses an inline panel and preserves shell scrollback.
-The panel uses up to 76 columns and 18 rows.
+The framed panel uses up to 144 columns and 18 rows. Wide terminals show scope and spending details side by side.
 The minimum terminal size remains 40 columns and 12 rows.
-Selection uses a fixed-width marker and keeps the same font weight.
+The selected row has a fixed-width marker. Color terminals also highlight it in bold.
 Forms and details open through explicit actions.
 Short details use only their content height.
 Machine output and redirected output remain read-only.
