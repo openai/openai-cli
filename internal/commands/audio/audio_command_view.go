@@ -100,7 +100,7 @@ func (m *audioWorkbench) commandOptions() (args []string, speed float64, reason 
 	}
 	speed = m.settings.Speed
 	if m.speedEditing {
-		value, valid := audioSpeedValue(m.speedInput.Value())
+		value, valid := m.speedValue(m.speedInput.Value())
 		if !valid {
 			return nil, 0, "Apply a valid Speed to preview the command."
 		}

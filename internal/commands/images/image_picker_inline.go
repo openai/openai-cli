@@ -38,6 +38,7 @@ type imagePickerInline struct {
 	width, height  int
 	err            error
 	resuming       bool
+	iterm          bool
 	submitAfter    time.Time
 	cursor         *tea.Cursor
 	anchored       bool
@@ -61,6 +62,13 @@ type imagePickerWrapTimeout struct{ revision uint64 }
 type imagePickerSizeErrorMsg struct{}
 
 func (p *imagePickerInline) Init() tea.Cmd {
+	if p.iterm {
+		// Native scrolling belongs to iTerm2. Even a startup query can send
+		// a reply to the shell if the user exits before the terminal answers.
+		p.start()
+		p.draw()
+		return nil
+	}
 	p.openModes()
 	query := ansi.RequestModeAutoWrap
 	if os.Getenv("TERM_PROGRAM") == "Apple_Terminal" && os.Getenv("KITTY_WINDOW_ID") == "" {
@@ -175,7 +183,9 @@ func (p *imagePickerInline) start() {
 	}
 	p.openModes()
 	p.started = true
-	_, _ = io.WriteString(p.output, ansi.SetModeAutoWrap)
+	if !p.iterm {
+		_, _ = io.WriteString(p.output, ansi.SetModeAutoWrap)
+	}
 }
 
 func (p *imagePickerInline) openModes() {
@@ -236,8 +246,18 @@ func (p *imagePickerInline) paint(view tea.View, width, height int) {
 		frame.WriteString(ansi.RestoreCursor)
 	}
 	if !same {
-		frame.WriteString(cliterminal.InlineFrame(view.Content, width))
-		frame.WriteString(ansi.SaveCursor)
+		if p.iterm {
+			rows := min(height, strings.Count(view.Content, "\n")+1)
+			frame.WriteString(imagePickerITermFrameAnchor(rows))
+			if _, err := io.WriteString(p.output, frame.String()); err != nil {
+				return
+			}
+			frame.Reset()
+			frame.WriteString(imagePickerITermFrame(view.Content, width))
+		} else {
+			frame.WriteString(cliterminal.InlineFrame(view.Content, width))
+			frame.WriteString(ansi.SaveCursor)
+		}
 		p.anchored = true
 	}
 	if view.Cursor != nil {
@@ -269,7 +289,7 @@ func (p *imagePickerInline) close() {
 	if p.restoreWrap {
 		cleanup += ansi.ResetModeAutoWrap
 	}
-	if p.workspace != nil && p.workspace.konsole {
+	if p.workspace != nil && (p.workspace.konsole || p.workspace.iterm) {
 		parent := p.workspace.context
 		if parent == nil {
 			parent = context.Background()

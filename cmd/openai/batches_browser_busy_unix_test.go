@@ -180,7 +180,7 @@ try:
     def shown(*labels):
         wait(lambda text: all(label in text for label in labels))
 
-    shown('Search', 'Ctrl+N')
+    shown('Find batch', 'Ctrl+N')
     terminal.send(b'\x0e')
     shown('Create batch', 'Input file')
     terminal.send(b'\r')

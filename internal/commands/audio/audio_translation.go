@@ -9,6 +9,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/audiolive"
 	"github.com/openai/openai-cli/internal/clihelp"
+	"github.com/openai/openai-cli/internal/modeldefaults"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
@@ -103,7 +104,7 @@ type apiTranslationSession struct{ session *realtime.TranslationSession }
 func connectAudioTranslation(ctx context.Context, config audiolive.Config, options []option.RequestOption) (audiolive.Session, error) {
 	client := openai.NewClient(options...)
 	var response *http.Response
-	session, err := client.Realtime.ConnectTranslation(ctx, "gpt-realtime-translate", realtime.TranslationConnectionOptions{}, option.WithResponseInto(&response))
+	session, err := client.Realtime.ConnectTranslation(ctx, modeldefaults.Translation, realtime.TranslationConnectionOptions{}, option.WithResponseInto(&response))
 	if err != nil {
 		status := 0
 		if response != nil {
@@ -118,7 +119,7 @@ func connectAudioTranslation(ctx context.Context, config audiolive.Config, optio
 		}
 	}()
 	input := map[string]any{
-		"transcription":   map[string]string{"model": "gpt-realtime-whisper"},
+		"transcription":   map[string]string{"model": modeldefaults.TranslationTranscript},
 		"noise_reduction": nil,
 	}
 	if config.NoiseReduction {

@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/readable"
@@ -302,17 +301,7 @@ func (c *batchBrowserCatalog) metadata(id int64) ([6]int64, error) {
 
 func (c *batchBrowserCatalog) find(ctx context.Context, query string) error {
 	c.ready = false
-	needle := []rune(query)
-	prefix := make([]int, len(needle))
-	for i, length := 1, 0; i < len(needle); i++ {
-		for length > 0 && needle[i] != needle[length] {
-			length = prefix[length-1]
-		}
-		if needle[i] == needle[length] {
-			length++
-		}
-		prefix[i] = length
-	}
+	pattern := newBatchBrowserPattern(query)
 	count := int64(0)
 	for id := int64(1); id <= c.store.recordCount; id++ {
 		if err := ctx.Err(); err != nil {
@@ -332,14 +321,7 @@ func (c *batchBrowserCatalog) find(ctx context.Context, query string) error {
 			if err != nil {
 				return batchRecordStorageError(err)
 			}
-			value = unicode.ToLower(value)
-			for matched > 0 && value != needle[matched] {
-				matched = prefix[matched-1]
-			}
-			if value == needle[matched] {
-				matched++
-			}
-			if matched == len(needle) {
+			if pattern.advance(value, &matched) {
 				var data [8]byte
 				binary.LittleEndian.PutUint64(data[:], uint64(id))
 				if err := c.store.write(c.matches, data[:], count*8); err != nil {

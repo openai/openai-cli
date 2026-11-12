@@ -70,10 +70,10 @@ type imagePickerWorkspace struct {
 	nameCounts                                map[string]int
 	selected                                  int
 	expanded                                  bool
-	konsole, konsoleScreen                    bool
+	iterm, konsole, konsoleScreen             bool
 	konsoleViewport                           interactiveImageSize
-	konsoleTransfer                           *imagePickerKonsoleTransfer
-	konsoleWorkers                            sync.WaitGroup
+	nativeTransfer                            *imagePickerNativeTransfer
+	transferWorkers                           sync.WaitGroup
 	mouse                                     imagePickerMouseModes
 	expandedRows                              []string
 	expandedNativeRows, expandedColumns       int
@@ -95,6 +95,8 @@ type imagePickerWorkspace struct {
 	previewExpanded                           bool
 	previewReload                             bool
 	previewColumns                            int
+	previewRegion                             imagePickerNativeRow
+	itermViewport                             interactiveImageSize
 	previewErrorMu                            sync.Mutex
 	previewError                              error
 	prepareRows                               func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)
@@ -153,7 +155,17 @@ func (w *imagePickerWorkspace) saved(ctx context.Context, files []imageoutput.Sa
 		}
 		columns := imagePickerInlinePreviewColumns(img.Bounds(), size, protocol)
 		var rows []string
-		if columns > 0 {
+		var itermBounds image.Rectangle
+		var nativeRows int
+		if w.iterm && protocol == "iterm" {
+			itermBounds = img.Bounds()
+			if columns > 0 {
+				nativeRows = imagePickerITermRows(itermBounds, columns, size)
+				var payload strings.Builder
+				err = terminalimage.WriteITermRegion(ctx, &payload, img, columns, nativeRows, 0, nativeRows)
+				rows = []string{payload.String()}
+			}
+		} else if columns > 0 {
 			rows, protocol, err = prepare(ctx, w.out, img, protocol, columns)
 		}
 		if err != nil || columns < 1 {
@@ -175,7 +187,7 @@ func (w *imagePickerWorkspace) saved(ctx context.Context, files []imageoutput.Sa
 			}
 		}
 		g, _ := imageStudioLayout(size.width, size.height)
-		entry := imagePickerWorkspaceImage{file: file, protocol: protocol, rows: rows, columns: columns, preparedRows: g.previewRows}
+		entry := imagePickerWorkspaceImage{file: file, protocol: protocol, rows: rows, columns: columns, preparedRows: g.previewRows, itermBounds: itermBounds, nativeRows: nativeRows}
 		if columns < 1 {
 			entry.unavailableSize = &size
 		}
@@ -230,10 +242,14 @@ func (w *imagePickerWorkspace) progress(m *imagePicker) string {
 }
 
 func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile, busy, headerChanged bool) (err error) {
-	if transfer := w.konsoleTransfer; transfer != nil {
-		cw, ch := terminalimage.CellSize(w.out.Fd())
-		size := interactiveImageSize{m.width, m.height, cw, ch}
-		if !w.expanded || w.selected != transfer.index || size != transfer.size {
+	if transfer := w.nativeTransfer; transfer != nil {
+		size := interactiveImageSize{width: m.width, height: m.height}
+		expanded := transfer.expanded
+		if transfer.inlineColumn == 0 {
+			size.cellWidth, size.cellHeight = terminalimage.CellSize(w.out.Fd())
+			expanded = true
+		}
+		if w.expanded != expanded || w.selected != transfer.index || size != transfer.size || transfer.inlineColumn != 0 && w.itermScrollOffset() != transfer.scrollOffset {
 			select {
 			case transfer.replace <- struct{}{}:
 			default:
@@ -279,6 +295,9 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		w.studio = nil
 	}
 	w.width, w.height = width, height
+	if w.iterm {
+		w.fitITermImages(m)
+	}
 	w.nativeFrame = make(map[int]imagePickerNativeRow)
 	w.nativeReady = make(map[int]bool)
 	w.nativeChrome = make(map[int]imagePickerStudioNativeChrome)
@@ -297,6 +316,9 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		column = g.previewX + 1
 	}
 	repaint := resized || len(lines) != len(w.painted) || column != w.nativeColumn || len(w.painted) == 0
+	if w.iterm {
+		w.groupITermRegions(lines, column, repaint)
+	}
 	keys, placements := w.nativePaintKeys(lines, repaint)
 	var output strings.Builder
 	if !w.started {
@@ -305,9 +327,10 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		if m.width < 50 || m.viewHeight() < 16 {
 			output.WriteString("\r\n")
 		}
-		w.started = true
+		// iTerm owns the saved cursor only after the first anchor write succeeds.
+		w.started = !w.iterm
 	}
-	if len(w.images) > 0 {
+	if len(w.images) > 0 && !w.iterm {
 		output.WriteString(w.mouse.enable())
 	}
 	output.WriteString(ansi.ResetModeTextCursorEnable)
@@ -316,15 +339,30 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 	if repaint {
 		w.frameRevision++
 		w.origin, w.originKnown = 0, len(lines) == height
-		if len(w.painted) > 0 {
+		if len(w.painted) > 0 || w.iterm && w.started {
 			w.clearGraphics(&output)
 			output.WriteString(ansi.RestoreCursor)
 		}
 		for i, line := range lines {
 			lines[i] = w.nativeWireLine(i, line)
 		}
-		output.WriteString(cliterminal.InlineFrame(strings.Join(lines, "\n"), width))
-		output.WriteString(ansi.SaveCursor)
+		content := strings.Join(lines, "\n")
+		if w.iterm {
+			// Commit the anchor before a cancelable transfer can change wrapping.
+			output.WriteString(imagePickerITermFrameAnchor(len(lines)))
+			anchorCtx, cancel := context.WithTimeout(ctx, time.Second)
+			err := terminalimage.WriteControl(anchorCtx, w.out, output.String())
+			cancel()
+			if err != nil {
+				return err
+			}
+			w.started = true
+			output.Reset()
+			output.WriteString(imagePickerITermFrame(content, width))
+		} else {
+			output.WriteString(cliterminal.InlineFrame(content, width))
+			output.WriteString(ansi.SaveCursor)
+		}
 	} else {
 		for i, line := range lines {
 			if keys[i] == w.painted[i] {
@@ -347,12 +385,20 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 			output.WriteString("\r\x1b[0K" + lines[i])
 		}
 	}
+	var parts []string
+	if w.iterm {
+		parts = w.itermPlacementParts(output.String(), len(lines), column, repaint)
+		if len(parts) > 0 {
+			output.Reset()
+		}
+	}
 	for _, line := range lines {
 		w.kitty = w.kitty || strings.Contains(line, "\x1b_G")
 	}
 	output.WriteString(ansi.RestoreCursor)
-	if !w.originKnown && !w.originQueryPending && w.originQueryRevision != w.frameRevision {
-		// Report the saved panel origin, before returning to the prompt cursor.
+	transferImage := len(parts) > 0 || w.iterm && strings.Contains(output.String(), "\x1b]1337;File=")
+	if !w.iterm && !w.originKnown && !w.originQueryPending && w.originQueryRevision != w.frameRevision {
+		// Only terminals with gallery pointer controls need an absolute origin.
 		w.originQueryPending, w.originQueryRevision = true, w.frameRevision
 		output.WriteString(ansi.RequestCursorPositionReport)
 	}
@@ -363,6 +409,9 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		}
 		output.WriteString(ansi.CursorHorizontalAbsolute(cursor.X + 1))
 		output.WriteString(ansi.SetCursorStyle(5) + ansi.SetModeTextCursorEnable)
+	}
+	if transferImage {
+		return w.startNativeTransfer(ctx, append(parts, output.String()), keys, placements, column)
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
@@ -406,7 +455,7 @@ func imagePickerDeleteGraphics(column int) string {
 
 func (w *imagePickerWorkspace) close() error {
 	mouseErr := w.stopMouse()
-	w.konsoleWorkers.Wait()
+	w.transferWorkers.Wait()
 	if w.openCancel != nil {
 		w.openCancel()
 	}

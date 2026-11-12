@@ -12,22 +12,28 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/modeldefaults"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
 
-var audioModels = []string{"gpt-4o-mini-tts", "gpt-4o-mini-tts-2025-03-20", "gpt-4o-mini-tts-2025-12-15", "tts-1", "tts-1-1106", "tts-1-hd", "tts-1-hd-1106"}
+const realtimeSpeechModel = modeldefaults.Speech
+
+var audioModels = []string{realtimeSpeechModel, "gpt-4o-mini-tts", "gpt-4o-mini-tts-2025-03-20", "gpt-4o-mini-tts-2025-12-15", "tts-1", "tts-1-1106", "tts-1-hd", "tts-1-hd-1106"}
 var audioVoices = []string{"alloy", "ash", "ballad", "cedar", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse"}
 var audioFormats = []string{"mp3", "opus", "aac", "flac", "wav", "pcm"}
 
 const audioAuditionText = "Hello. This is a preview of this voice."
 
 func audioDefaultSettings() audiohistory.Settings {
-	return audiohistory.Settings{Model: "gpt-4o-mini-tts", Voice: "coral", Format: "wav", Speed: 1}
+	return audiohistory.Settings{Model: realtimeSpeechModel, Voice: "coral", Format: "wav", Speed: 1}
 }
 
 func audioSupportsVoice(model, voice string) bool {
+	if model == realtimeSpeechModel {
+		return slices.Contains([]string{"alloy", "ash", "ballad", "cedar", "coral", "echo", "marin", "sage", "shimmer", "verse"}, voice)
+	}
 	return !strings.HasPrefix(model, "tts-1") || !slices.Contains([]string{"ballad", "cedar", "marin", "verse"}, voice)
 }
 
@@ -39,6 +45,13 @@ func audioModelVoices(model string) []string {
 		}
 	}
 	return voices
+}
+
+func audioModelFormats(model string) []string {
+	if model == realtimeSpeechModel {
+		return []string{"wav", "pcm"}
+	}
+	return audioFormats
 }
 
 func audioWorkbenchRequested(command *cli.Command) bool {
@@ -160,6 +173,17 @@ func validateAudioFields(s audiohistory.Settings) (int, error) {
 			field = 3
 		}
 		return field, classifiedAudioFailure(audioInvalidSettingsFailure, "Choose a supported format and speed from 0.25 to 4.", nil)
+	}
+	if s.Model == realtimeSpeechModel {
+		if !slices.Contains(audioModelFormats(s.Model), s.Format) {
+			return 2, audioFailure("Choose WAV or PCM for Realtime speech.", nil)
+		}
+		if s.Speed > 1.5 {
+			return 3, audioFailure("Choose a speed from 0.25 to 1.5 for Realtime speech.", nil)
+		}
+		if !audioSupportsVoice(s.Model, s.Voice) {
+			return 1, audioFailure("Choose a supported Realtime voice.", nil)
+		}
 	}
 	if strings.HasPrefix(s.Model, "tts-1") {
 		if s.Instructions != "" {

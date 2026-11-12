@@ -172,6 +172,149 @@ func TestSDKSourcePreparationIsIsolatedFromPRCode(t *testing.T) {
 	}
 }
 
+func TestReleaseRequiresLiveModelVerification(t *testing.T) {
+	t.Parallel()
+
+	create := readWorkflow(t, "create-releases.yml").Jobs
+	verify := create["model-defaults"]
+	release := create["release"]
+	if release.Needs != "model-defaults" || verify.If != release.If || verify.ContinueOnError ||
+		verify.Environment != "" || !reflect.DeepEqual(verify.Permissions, map[string]string{"contents": "read"}) {
+		t.Fatal("release-please must depend on an unprivileged model check for every release trigger")
+	}
+	checkoutIndex, checkout := requireStep(t, verify, "Checkout")
+	checkIndex, check := requireStep(t, verify, "Verify model defaults")
+	goIndex, goSetup := requireStep(t, verify, "Set up Go")
+	if goSetup.Uses != setupGoAction || goSetup.With["go-version-file"] != ".go-version" || goSetup.With["cache"] != false {
+		t.Fatal("model verification must use the release toolchain without shared caches")
+	}
+	if checkout.Uses != checkoutAction || checkout.With["persist-credentials"] != false || !(checkoutIndex < goIndex && goIndex < checkIndex) {
+		t.Fatal("model verification must use the event source without persisted credentials")
+	}
+
+	publish := readWorkflow(t, "publish-release.yml").Jobs["release-inputs"]
+	tagIndex, _ := requireStep(t, publish, "Ensure release tag is on main")
+	verifyIndex, tagCheck := requireStep(t, publish, "Verify model defaults for the release tag")
+	generateIndex, _ := requireStep(t, publish, "Generate release inputs")
+	historyIndex, history := requireStep(t, publish, "Identify a published historical release")
+	if !(tagIndex < historyIndex && historyIndex < verifyIndex && verifyIndex < generateIndex) ||
+		history.ID != "historical-release" || history.If != "" || history.ContinueOnError ||
+		history.Env["TAG_SHA"] != "${{ steps.trusted-tag.outputs.sha }}" || history.Env["TAG"] != "${{ inputs.tag }}" {
+		t.Fatal("model verification must use the validated tag before generating release artifacts")
+	}
+	if check.If != "" || tagCheck.If != "steps.historical-release.outputs.repair != 'true'" {
+		t.Fatal("only validated historical artifact repairs may skip the live tag check")
+	}
+	for _, step := range []workflowStep{check, tagCheck} {
+		if step.Run != "python3 -I scripts/check-model-defaults.py" || step.ContinueOnError || len(step.Env) != 0 {
+			t.Fatalf("%q must run the live checker without credentials", step.Name)
+		}
+	}
+}
+
+func TestOnlyHistoricalReleasesCanRepairWithoutModelVerification(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("historical tag validation runs Bash on Ubuntu")
+	}
+	_, step := requireStep(t, readWorkflow(t, "publish-release.yml").Jobs["release-inputs"], "Identify a published historical release")
+	dir := t.TempDir()
+	const cutoff = "e0ba427a67fa11123032835cfe191a500109f635"
+	const first = "7d2ebbdcb1ab7e05957d09986e8b5e4d707a9675"
+	const original = `{"id":1,"tag_name":"v1.51.5","target_commitish":"` + cutoff + `","published_at":"2026-11-07T19:56:35Z","draft":false,"prerelease":false}`
+	const initial = `{"id":318075758,"tag_name":"v1.0.0","target_commitish":"main","published_at":"2026-05-05T21:38:29Z","draft":false,"prerelease":false}`
+	fixtures := map[string]string{
+		"git": `#!/bin/bash
+case "$*" in
+  "merge-base --is-ancestor $TAG_SHA e0ba427a67fa11123032835cfe191a500109f635") test "$TAG_SHA" != new-source ;;
+  "show $TAG_SHA:.release-please-manifest.json") printf '{"." : "%s"}' "$VERSION" ;;
+  *) exit 22 ;;
+esac`,
+		"gh": `#!/bin/bash
+[[ "$*" == "api repos/test/cli/releases/tags/$TAG" && "$GH_TOKEN" == synthetic && -n "$RELEASE" ]] || exit 23
+printf '%s' "$RELEASE"`,
+	}
+	for name, shell := range fixtures {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(shell), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name, tag, sha, version, release string
+		ok, repair                       bool
+	}{
+		{"cutoff", "v1.51.5", cutoff, "1.51.5", original, true, true},
+		{"initial", "v1.0.0", first, "1.0.0", initial, true, true},
+		{"new commit needs live check", "v9.0.0", "new-source", "9.0.0", "", true, false},
+		{"release lookup failed", "v1.51.5", cutoff, "1.51.5", "", false, false},
+		{"later publication", "v1.51.5", cutoff, "1.51.5", strings.Replace(original, "19:56:35", "19:56:36", 1), false, false},
+		{"invalid date", "v1.51.5", cutoff, "1.51.5", strings.Replace(original, "2026-11-07T19:56:35Z", "unknown", 1), false, false},
+		{"invalid calendar date", "v1.51.5", cutoff, "1.51.5", strings.Replace(original, "2026-11-07", "2026-02-31", 1), false, false},
+		{"multiple records", "v1.51.5", cutoff, "1.51.5", original + "\n" + original, false, false},
+		{"wrong tag", "v1.51.5", cutoff, "1.51.5", initial, false, false},
+		{"new tag on old commit", "v2.0.0", cutoff, "1.51.5", original, false, false},
+		{"moved tag", "v1.51.5", "other-sha", "1.51.5", original, false, false},
+		{"draft", "v1.51.5", cutoff, "1.51.5", strings.Replace(original, `"draft":false`, `"draft":true`, 1), false, false},
+		{"initial release ID changed", "v1.0.0", first, "1.0.0", strings.Replace(initial, "318075758", "111", 1), false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outputFile := filepath.Join(t.TempDir(), "outputs")
+			run := exec.Command("bash", "-ec", step.Run)
+			run.Dir = dir
+			run.Env = []string{"PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"HOME=" + dir, "GH_TOKEN=synthetic", "GITHUB_REPOSITORY=test/cli", "GITHUB_OUTPUT=" + outputFile,
+				"TAG=" + tc.tag, "TAG_SHA=" + tc.sha, "VERSION=" + tc.version, "RELEASE=" + tc.release}
+			output, err := run.CombinedOutput()
+			data, readErr := os.ReadFile(outputFile)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				t.Fatal(readErr)
+			}
+			if (err == nil) != tc.ok || (string(data) == "repair=true\n") != tc.repair {
+				t.Fatalf("historical release qualification: err=%v, outputs=%q, log=%s", err, data, output)
+			}
+		})
+	}
+}
+
+func TestReleaseCandidateChecksModelDefaultsWhenVersionChanges(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("release candidate CI runs Bash on Ubuntu")
+	}
+	_, step := requireStep(t, readWorkflow(t, "ci.yml").Jobs["lint"], "Verify model defaults for release candidates")
+	if step.ContinueOnError || step.If != "github.event_name == 'pull_request' || github.event_name == 'merge_group'" ||
+		step.Env["BASE_SHA"] != "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}" {
+		t.Fatal("release pull requests and merge groups must compare the candidate with their event's base")
+	}
+
+	dir := t.TempDir()
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GIT_CONFIG_NOSYSTEM=1"}
+	writeReleaseTestFile(t, filepath.Join(dir, "scripts", "check-model-defaults.py"), []byte("raise SystemExit(23)"))
+	setup := exec.Command("bash", "-ec", `git init -q
+git -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m base
+echo '{"." : "1.2.3"}' > .release-please-manifest.json
+git add .release-please-manifest.json
+git -c user.name=Test -c user.email=test@example.invalid commit -q -m release`)
+	setup.Dir, setup.Env = dir, env
+	if output, err := setup.CombinedOutput(); err != nil {
+		t.Fatalf("prepare release fixture: %v: %s", err, output)
+	}
+
+	for _, tc := range []struct {
+		base string
+		exit int
+	}{{"HEAD", 0}, {"HEAD^", 23}, {"missing-base", 23}} {
+		t.Run(tc.base, func(t *testing.T) {
+			run := exec.Command("bash", "-ec", step.Run)
+			run.Dir, run.Env = dir, append(env, "BASE_SHA="+tc.base)
+			output, err := run.CombinedOutput()
+			if run.ProcessState == nil || run.ProcessState.ExitCode() != tc.exit {
+				t.Fatalf("release check for %q: expected exit %d, got %v: %s", tc.base, tc.exit, err, output)
+			}
+		})
+	}
+}
+
 func TestReleaseInputsUseAnIsolatedUnprivilegedJob(t *testing.T) {
 	t.Parallel()
 

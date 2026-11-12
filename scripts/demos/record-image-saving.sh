@@ -91,7 +91,7 @@ import base64, hashlib, json, pathlib, re, shutil, sys
 output, runtime = map(pathlib.Path, sys.argv[1:])
 requests = [json.loads(line) for line in (output / 'requests.jsonl').read_text().splitlines()]
 prompt_only = {'prompt': 'A tiny orange robot'}
-preset = dict(prompt_only, model='gpt-image-2.5-sunburst', n=1, size='auto', quality='auto',
+preset = dict(prompt_only, model='gpt-image-2.6-sunburst', n=1, size='auto', quality='auto',
               output_format='png', background='auto', moderation='auto', partial_images=0, stream=False)
 assert requests == [prompt_only, preset, prompt_only], 'unexpected requests or defaults'
 assert list((runtime / 'b').rglob('*')) == [], 'before scene unexpectedly saved files'

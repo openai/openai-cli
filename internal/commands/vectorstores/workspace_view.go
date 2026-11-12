@@ -9,9 +9,50 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/readable"
+	"github.com/openai/openai-cli/internal/terminal"
 )
 
-func (m *workspace) bodyWidth() int { return max(1, min(100, m.width-6)) }
+func (m *workspace) framed() bool     { return m.width >= 50 && m.height >= 16 }
+func (m *workspace) wideLayout() bool { return m.width >= 96 && m.height >= 16 }
+func (m *workspace) bodyWidth() int {
+	if m.fullScreen {
+		if m.framed() {
+			return max(1, m.width-5)
+		}
+		return max(1, m.width-3)
+	}
+	if m.wideLayout() {
+		return min(140, m.width-5)
+	}
+	return max(1, min(100, m.width-6))
+}
+
+func (m *workspace) paneWidths() (int, int) {
+	available := m.bodyWidth() - 3
+	left := available * 45 / 100
+	return left, available - left
+}
+
+func (m *workspace) appendPanes(lines, left, right []string, footer string) []string {
+	leftWidth, rightWidth := m.paneWidths()
+	seam := " " + terminal.PaneDivider(leftWidth+4, m.border(), m.decLineDrawing) + " "
+	height := max(len(left), len(right))
+	if m.fullScreen {
+		height = max(height, m.listBudget(lines, footer, 0))
+	}
+	for i := range height {
+		var first, second string
+		if i < len(left) {
+			first = ansi.Truncate(left[i], leftWidth, "…")
+		}
+		if i < len(right) {
+			second = ansi.Truncate(right[i], rightWidth, "…")
+		}
+		lines = append(lines, first+strings.Repeat(" ", max(0, leftWidth-ansi.StringWidth(first)))+seam+second)
+	}
+	return lines
+}
+
 func cleanLine(s string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(readable.Text(s), "\n", `\n`), "\t", `\t`)
 }
@@ -32,35 +73,22 @@ func (m *workspace) heading(text string) string {
 	return lipgloss.NewStyle().Bold(m.color).Render(text)
 }
 
-func (m *workspace) divider() string {
-	width := m.bodyWidth()
+func (m *workspace) border() lipgloss.Style {
+	s := lipgloss.NewStyle()
 	if !m.color {
-		return strings.Repeat("─", width)
+		return s
 	}
-	// Blend the existing border and secondary-text colors symmetrically.
-	// Nine bands keep the fade quiet and avoid a style escape for every cell.
-	edge, center := [3]int{186, 196, 216}, [3]int{101, 112, 135}
 	if m.dark {
-		edge, center = [3]int{81, 86, 107}, [3]int{164, 172, 194}
+		return s.Foreground(lipgloss.Color("#51566B"))
 	}
-	var result strings.Builder
-	for first := 0; first < width; {
-		level := func(i int) int { return (16*min(i, width-1-i) + width/2) / max(1, width-1) }
-		band, end := level(first), first+1
-		for end < width && level(end) == band {
-			end++
-		}
-		var rgb [3]int
-		for i := range rgb {
-			rgb[i] = edge[i] + (center[i]-edge[i])*band/8
-		}
-		color := fmt.Sprintf("#%02x%02x%02x", rgb[0], rgb[1], rgb[2])
-		result.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(strings.Repeat("─", end-first)))
-		first = end
-	}
-	return result.String()
+	return s.Foreground(lipgloss.Color("#BAC4D8"))
 }
-
+func (m *workspace) divider() string {
+	if m.dark {
+		return terminal.SectionDivider(m.bodyWidth(), m.color, "#343D58", "#51566B", "#A4ACC2")
+	}
+	return terminal.SectionDivider(m.bodyWidth(), m.color, "#E9EFFE", "#BAC4D8", "#657087")
+}
 func (m *workspace) selection() lipgloss.Style {
 	s := lipgloss.NewStyle()
 	if !m.color {
@@ -116,13 +144,17 @@ func (m *workspace) muted() lipgloss.Style {
 }
 
 func (m *workspace) row(text string, selected bool) string {
-	text = ansi.Truncate(text, max(1, m.bodyWidth()-2), "…")
+	return m.rowWidth(text, selected, m.bodyWidth())
+}
+
+func (m *workspace) rowWidth(text string, selected bool, width int) string {
+	text = ansi.Truncate(text, max(1, width-2), "…")
 	if !selected {
 		return "  " + text
 	}
 	selectedStyle := m.selection()
 	return m.focusMarker() + selectedStyle.Bold(m.color).Render(text) +
-		selectedStyle.Render(strings.Repeat(" ", max(0, m.bodyWidth()-2-ansi.StringWidth(text))))
+		selectedStyle.Render(strings.Repeat(" ", max(0, width-2-ansi.StringWidth(text))))
 }
 
 func (m *workspace) actions(labels []string, first int) string {
@@ -139,17 +171,11 @@ func (m *workspace) actions(labels []string, first int) string {
 		return result
 	}
 	selected := max(0, min(len(items)-1, m.focus-first))
-	return items[selected] + "  " + m.muted().Render("· Tab for more")
+	return items[selected] + "  " + m.muted().Render(fmt.Sprintf("%d/%d", selected+1, len(items)))
 }
 
 func (m *workspace) editorLines(label string) []string {
-	editor := m.editor
-	styles := textarea.Styles{}
-	styles.Focused.Placeholder, styles.Blurred.Placeholder = m.muted(), m.muted()
-	editor.SetStyles(styles)
-	// The textarea filters terminal controls, but permits directional marks.
-	// Escape them in its rendered output so editing and submission keep the original value.
-	field := readable.EscapeDirectionalControls(editor.View())
+	field := m.editorField()
 	caption := "  " + label
 	if m.editing() {
 		caption = m.accent().Render("› " + label)
@@ -161,27 +187,60 @@ func (m *workspace) editorLines(label string) []string {
 	return []string{caption, "  " + field}
 }
 
+func (m *workspace) editorField() string {
+	editor := m.editor
+	styles := textarea.Styles{}
+	styles.Focused.Placeholder, styles.Blurred.Placeholder = m.muted(), m.muted()
+	editor.SetStyles(styles)
+	// Escape directional marks in the view while preserving the original input.
+	return readable.EscapeDirectionalControls(editor.View())
+}
+
+func (m *workspace) reflow() {
+	m.layoutEditor()
+	if m.page == "passage" || m.page == "document" {
+		m.layoutPassage()
+	}
+}
+
 func (m *workspace) layoutEditor() {
 	label := managementForms[m.page]
 	switch m.page {
-	case "home":
-		label = "Search your files"
 	case "create":
 		label = "Store name"
 	case "upload":
 		label = "Local file path"
 	}
-	width := m.bodyWidth() - ansi.StringWidth(label) - 4
+	available := m.bodyWidth()
+	width := available - ansi.StringWidth(label) - 4
 	if width < 12 {
-		width = max(1, m.bodyWidth()-2)
+		width = max(1, available-2)
 	}
+	if m.page == "home" || m.page == "upload" {
+		if m.wideLayout() {
+			available, _ = m.paneWidths()
+		}
+		width = max(1, available-2) // The query has its own row after the focus marker.
+	} else if m.page == "filter" || m.page == "browse" {
+		if m.wideLayout() {
+			available, _ = m.paneWidths()
+		}
+		label = storeFinderLabel
+		if m.page == "browse" {
+			label = "Find"
+		}
+		width = max(1, available-len(label)-4)
+	}
+	m.editor.DynamicHeight = m.page == "home"
 	m.editor.SetWidth(width)
-	m.editor.SetHeight(1)
+	if !m.editor.DynamicHeight {
+		m.editor.SetHeight(1)
+	}
 	// Reflow the real editor so its cursor and viewport use the rendered width.
 	m.editor, _ = m.editor.Update(struct{}{})
 }
 
-func (m *workspace) listRows(items []string, selected, count int, active bool) []string {
+func (m *workspace) listRows(items []string, selected, count int, active bool, width int) []string {
 	if len(items) == 0 {
 		return []string{m.muted().Render("  No items yet.")}
 	}
@@ -192,7 +251,7 @@ func (m *workspace) listRows(items []string, selected, count int, active bool) [
 	first := max(0, min(selected-count+1, len(items)-count))
 	rows := make([]string, 0, count+1)
 	for i := first; i < min(len(items), first+count); i++ {
-		rows = append(rows, m.row(items[i], active && selected == i))
+		rows = append(rows, m.rowWidth(items[i], active && selected == i, width))
 	}
 	if len(items) > count && count > 1 {
 		rows = append(rows, m.muted().Render(fmt.Sprintf("  %d–%d of %d", first+1, min(len(items), first+count), len(items))))
@@ -208,101 +267,81 @@ func (m *workspace) View() tea.View {
 		if m.width >= 24 && m.height >= 6 {
 			return tea.NewView(m.fit([]string{"Resize to 40 × 12."}, "Ctrl+C exits"))
 		}
+		if m.fullScreen {
+			width := max(0, m.width-1)
+			hint := ansi.Truncate("Ctrl+G compact", width, "")
+			if m.height <= 1 {
+				return tea.NewView(hint)
+			}
+			return tea.NewView(ansi.Truncate("Resize to 40 × 12.", width, "") + strings.Repeat("\n", m.height-1) + hint)
+		}
 		return tea.NewView("Resize to 40 × 12.\nCtrl+C exits.")
 	}
-	lines := []string{m.header()}
+	lines := []string{m.header(), m.divider()}
 	footer := "↑↓ choose · Tab actions · Enter open · Esc back"
 	if m.focus > 0 && m.page != "stores" {
-		footer = "←→ action · Enter select · ↑↓ return · Esc back"
+		footer = "Tab next · Enter select · ↑↓ return · Esc back"
 	}
 	if m.page == "home" {
 		footer = m.searchFooter()
-	} else if m.page == "upload" {
-		if m.focus == 0 {
-			footer = "↓ actions · Enter continue · Esc back"
-		}
-	} else if m.page == "stores" {
-		footer = "↑↓ choose · Enter select · Esc exit"
+	} else if m.page == "stores" || m.page == "filter" {
+		footer = m.storeFooter()
 	}
 	if m.busy {
-		lines = append(lines, m.divider(), m.accent().Render(m.stage))
+		if m.stage == indexingStage {
+			file := m.pendingName
+			if file == "" {
+				file = m.pendingFile
+			}
+			if m.page == "file" && m.file != nil {
+				file = m.file.ID
+			}
+			checks := "Waiting for first status check…"
+			if m.statusChecks > 0 {
+				checks = fmt.Sprintf("Status checks  %d", m.statusChecks)
+			}
+			lines = append(lines,
+				m.muted().Render("File  ")+cleanLine(file),
+				m.statusStyle("completed").Render("✓ Uploaded   ✓ Attached"),
+				m.accent().Render(m.stage),
+				m.muted().Render(checks),
+				m.muted().Render("Searchable after indexing."),
+			)
+			return tea.NewView(m.fit(lines, "Esc stop waiting · Ctrl+C exit"))
+		}
+		lines = append(lines, m.accent().Render(m.stage))
 		if m.page == "home" && m.stage == "Searching files…" {
 			lines = append(lines, m.searchQueryLine())
 		} else if m.store != nil {
 			lines = append(lines, m.muted().Render("Store  ")+cleanLine(m.store.Name))
 		}
-		if m.page == "file" && m.stage == "Indexing file…" && m.file != nil {
-			lines = append(lines, m.muted().Render("File  ")+cleanLine(m.file.ID))
-		} else if m.pendingFile != "" {
+		if m.page == "upload" && m.pendingName != "" {
+			lines = append(lines, m.muted().Render("File  ")+cleanLine(m.pendingName))
+		} else if m.page == "upload" && m.pendingFile != "" {
 			lines = append(lines, m.muted().Render("Uploaded file  ")+cleanLine(m.pendingFile))
-		}
-		if m.stage == "Indexing file…" {
-			lines = append(lines, m.muted().Render("The file will become searchable when indexing completes."))
 		}
 		return tea.NewView(m.fit(lines, "Esc stops local work · Ctrl+C exits"))
 	}
 	switch m.page {
-	case "stores":
-		columns, items := m.storeTable()
-		choices := m.storeChoices()
-		trailing := 1 + len(choices)
-		if m.storeFilter != "" {
-			trailing++
-		}
-		lines = append(lines, m.divider(), m.tableHeader(columns))
-		lines = append(lines, m.tableRows(columns, items, m.selected, m.listBudget(lines, footer, trailing), m.focus == 0)...)
-		lines = append(lines, m.divider())
-		labels := []string{"", "Create store", "Refresh stores", "Load more stores", "Find store by name or ID"}
-		for _, focus := range choices {
-			lines = append(lines, m.row(labels[focus], m.focus == focus))
-		}
-		if m.storeFilter != "" {
-			lines = append(lines, m.muted().Render("Filter: "+cleanLine(m.storeFilter)+" · loaded stores only"))
-		}
+	case "stores", "filter":
+		lines = m.storeLines(lines, footer)
 	case "create":
 		lines = append(lines, m.editorLines("Store name")...)
 		lines = append(lines, m.divider())
 		lines = append(lines, m.actions([]string{"Create store", "Cancel"}, 1))
 		lines = append(lines, m.muted().Render("Uses your current API project. No expiry is set."))
-		footer = "↓ actions · Enter continue · Esc cancel"
+		footer = "Tab actions · Enter continue · Esc cancel"
 		if m.focus > 0 {
-			footer = "←→ action · Enter select · ↑ name · Esc cancel"
+			footer = "Tab next · Enter select · ↑ name · Esc cancel"
 		}
 	case "home":
 		lines = m.searchLines(lines, footer)
 	case "upload":
-		lines = append(lines, m.editorLines("Local file path")...)
-		lines = append(lines, m.divider())
-		action, browse := "Upload", "Browse files"
-		if m.pendingFile != "" {
-			action, browse = "Attach uploaded file", "Choose another file"
-		}
-		if m.pendingAttached {
-			action = "Resume indexing"
-		}
-		lines = append(lines, m.actions([]string{browse, action, "Back", "Options"}, 1))
-		if m.pendingFile != "" {
-			lines = append(lines, m.muted().Render("Uploaded file  ")+cleanLine(m.pendingFile))
-		}
-		lines = append(lines, m.muted().Render("Uploads only when you select Upload."))
+		lines, footer = m.uploadLines(lines)
 	case "files", "batchfiles":
-		lines = append(lines, m.actions([]string{"Refresh", "Load more", "Back"}, 1), m.divider())
-		columns, items := m.fileTable()
-		lines = append(lines, m.tableHeader(columns))
-		lines = append(lines, m.tableRows(columns, items, m.selected, m.listBudget(lines, footer, 2), m.focus == 0)...)
-		lines = append(lines, m.divider())
-		lines = append(lines, m.muted().Render("Enter opens file actions."))
+		lines, footer = m.fileListLines(lines)
 	case "browse":
-		lines = append(lines, m.muted().Render(cleanLine(m.directory)), m.actions([]string{"Parent folder", "Back"}, 1), m.divider())
-		items := make([]string, 0, len(m.entries))
-		for _, entry := range m.entries {
-			name := cleanLine(entry.name)
-			if entry.directory {
-				name += "/"
-			}
-			items = append(items, name)
-		}
-		lines = append(lines, m.listRows(items, m.selected, m.listBudget(lines, footer, 0), m.focus == 0)...)
+		lines, footer = m.browserLines(lines)
 	case "passage":
 		result := m.results[m.resultSelected]
 		name := result.Filename
@@ -310,14 +349,13 @@ func (m *workspace) View() tea.View {
 			name = result.FileID
 		}
 		lines = append(lines, m.heading(cleanLine(name)), m.muted().Render(fmt.Sprintf("Relevance score: %.3f", result.Score)))
-		lines = append(lines, m.divider())
 		wrapped := m.passageLines
 		count := m.passageRows()
 		offset := min(m.offset, max(0, len(wrapped)-count))
 		lines = append(lines, wrapped[offset:min(len(wrapped), offset+count)]...)
 		footer = searchPassageFooter
 	case "document":
-		lines = append(lines, m.heading(cleanLine(m.documentTitle)), m.divider())
+		lines = append(lines, m.heading(cleanLine(m.documentTitle)))
 		count := m.passageRows()
 		offset := min(m.offset, max(0, len(m.passageLines)-count))
 		lines = append(lines, m.passageLines[offset:min(len(m.passageLines), offset+count)]...)
@@ -338,23 +376,34 @@ func (m *workspace) View() tea.View {
 			}
 			note[i] = style.Render(note[i])
 		}
-		lines = append(append(append([]string{}, lines[0]), note...), lines[1:]...)
+		lines = append(append(append([]string{}, lines[:2]...), note...), lines[2:]...)
 	}
 	return tea.NewView(m.fit(lines, footer))
 }
 
 func (m *workspace) feedbackLines() []string {
-	if m.note == "" {
+	message, _ := m.storeFeedback()
+	if message == "" {
 		return nil
 	}
-	note := strings.Split(ansi.Hardwrap(cleanLine(m.note), m.bodyWidth(), true), "\n")
-	if m.height < 16 {
-		return []string{ansi.Truncate(cleanLine(m.note), m.bodyWidth(), "…")}
+	width := m.bodyWidth()
+	limit := 2
+	if strings.Contains(message, "\n") {
+		// The formatter puts recovery before diagnostics. Leave room for both on small screens.
+		limit = min(6, max(2, m.height-13))
+	} else if m.height < 16 {
+		return []string{ansi.Truncate(cleanLine(message), width, "…")}
 	}
-	if len(note) > 2 {
-		note = append(note[:1], ansi.Truncate(strings.Join(note[1:], " "), m.bodyWidth(), "…"))
+	var rows []string
+	for _, line := range strings.Split(message, "\n") {
+		if line != "" {
+			rows = append(rows, strings.Split(ansi.Wrap(cleanLine(line), width, ""), "\n")...)
+		}
+		if len(rows) >= limit {
+			return rows[:limit]
+		}
 	}
-	return note
+	return rows
 }
 
 func (m *workspace) passageRows() int {
@@ -379,20 +428,29 @@ func (m *workspace) fit(lines []string, footer string) string {
 	if len(lines) > limit {
 		lines = lines[:limit]
 	}
-	border := m.muted()
-	accent := m.accent()
-	frame := []string{" " + accent.Render("┌──") + border.Render(strings.Repeat("─", width)+"┐")}
-	side := border.Render("│")
-	left := accent.Render("│")
-	for _, line := range lines {
-		line = ansi.Truncate(line, width, "…")
-		frame = append(frame, " "+left+" "+line+strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))+" "+side)
-		left = side
+	if m.fullScreen && len(lines) < limit {
+		lines = append(lines, make([]string, limit-len(lines))...)
+	}
+	var frame []string
+	const indent = "  "
+	if m.framed() {
+		border := m.border()
+		rule := strings.Repeat("─", width+2)
+		side := border.Render("│")
+		frame = append(frame, border.Render("╭"+rule+"╮"))
+		for _, line := range lines {
+			line = ansi.Truncate(line, width, "…")
+			frame = append(frame, side+" "+line+strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))+" "+side)
+		}
+		frame = append(frame, border.Render("╰"+rule+"╯"))
+	} else {
+		for _, line := range lines {
+			frame = append(frame, indent+ansi.Truncate(line, width, "…"))
+		}
 	}
 	for _, line := range m.footerLines(footer) {
-		frame = append(frame, " "+side+" "+line+strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))+" "+side)
+		frame = append(frame, indent+line)
 	}
-	frame = append(frame, " "+border.Render("└"+strings.Repeat("─", width+2)+"┘"))
 	return strings.Join(frame, "\n")
 }
 
@@ -402,7 +460,14 @@ const (
 )
 
 func (m *workspace) contentRows(footer string) int {
-	return max(1, m.height-3-len(m.footerLines(footer)))
+	rows := m.height - len(m.footerLines(footer))
+	if !m.fullScreen {
+		rows-- // Leave room for the shell in the inline view.
+	}
+	if m.framed() {
+		rows -= 2
+	}
+	return max(1, rows)
 }
 
 func (m *workspace) listBudget(lines []string, footer string, trailing int) int {
@@ -412,25 +477,51 @@ func (m *workspace) listBudget(lines []string, footer string, trailing int) int 
 func (m *workspace) footerLines(footer string) []string {
 	var lines []string
 	line := ""
+	width := m.bodyWidth()
+	if !m.framed() {
+		width = min(width+3, m.width-3) // The footer needs only its indent and the terminal's final column.
+	}
+	footer = strings.TrimSuffix(footer, " · q quit")
+	if !strings.Contains(footer, "Ctrl+C") && !strings.Contains(footer, "Esc exit") {
+		footer += " · Ctrl+C exit"
+	}
+	separator := m.muted().Render(" · ")
+	keyStyle := m.accent()
+	if m.page == "home" || m.page == "stores" || m.page == "filter" {
+		keyStyle = keyStyle.Bold(m.color)
+	}
 	for _, hint := range strings.Split(footer, " · ") {
 		key, description, _ := strings.Cut(hint, " ")
-		item := m.accent().Render(key) + m.muted().Render(" "+description)
-		if line != "" && ansi.StringWidth(line)+2+ansi.StringWidth(item) > m.bodyWidth() {
+		item := keyStyle.Render(key) + m.muted().Render(" "+description)
+		if line != "" && ansi.StringWidth(line)+3+ansi.StringWidth(item) > width {
 			lines = append(lines, line)
 			line = ""
 		}
 		if line != "" {
-			line += "  "
+			line += separator
 		}
 		line += item
+	}
+	if m.fullScreen || m.width >= 40 && m.height >= 12 {
+		label := " expand"
+		if m.fullScreen {
+			label = " compact"
+		}
+		hint := keyStyle.Render("Ctrl+G") + m.muted().Render(label)
+		gap := width - ansi.StringWidth(line) - ansi.StringWidth(hint)
+		if gap < 1 {
+			lines = append(lines, line)
+			return append(lines, strings.Repeat(" ", max(0, width-ansi.StringWidth(hint)))+hint)
+		}
+		line += strings.Repeat(" ", gap) + hint
 	}
 	return append(lines, line)
 }
 
 func (m *workspace) header() string {
-	active := m.accent().Bold(m.color)
+	active := lipgloss.NewStyle().Bold(m.color)
 	title := active.Render("Vector stores")
-	if m.store != nil && m.page != "stores" && m.page != "create" {
+	if m.store != nil && m.page != "stores" && m.page != "filter" && m.page != "create" {
 		name := m.store.Name
 		if name == "" {
 			name = m.store.ID
@@ -439,13 +530,26 @@ func (m *workspace) header() string {
 	}
 	count := ""
 	switch m.page {
-	case "stores":
-		count = fmt.Sprintf("%d loaded", len(m.stores))
-		if m.storeFilter != "" {
-			count = fmt.Sprintf("%d matches", len(m.filteredStores()))
+	case "stores", "filter":
+		if !m.storesLoaded && len(m.stores) == 0 {
+			break
+		}
+		if m.storeFinderQuery() == "" {
+			count = fmt.Sprintf("%d loaded", len(m.stores))
+		} else {
+			matches := len(m.filteredStores())
+			count = fmt.Sprintf("%d matches", matches)
+			if matches == 1 {
+				count = "1 match"
+			}
+			if m.storeNext != "" {
+				count += fmt.Sprintf(" · %d loaded", len(m.stores))
+			}
 		}
 	case "files", "batchfiles":
-		count = fmt.Sprintf("%d loaded", len(m.files))
+		if m.filesLoaded || len(m.files) > 0 {
+			count = fmt.Sprintf("%d loaded", len(m.files))
+		}
 	case "sources":
 		selected := 0
 		for _, active := range m.selectedSources {

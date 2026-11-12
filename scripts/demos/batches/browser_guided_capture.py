@@ -149,7 +149,7 @@ def capture_csv(terminal, advance, wait_screen, save, evidence):
     advance(b"\r", "Enter: submit", "batch_created_demo")
     wait_screen("3 of 3 succeeded", timeout=40)
     save("02-csv-completed")
-    advance(b"\r", "View rows with answers", "Row 3")
+    advance(b"\r", "View rows with answers", "tickets.csv · 3 rows")
     rows = save("03-csv-rows")
     for label in LABEL_BY_TICKET.values():
         assert label in rows, rows
@@ -157,7 +157,7 @@ def capture_csv(terminal, advance, wait_screen, save, evidence):
     advance(b"s", "Save labeled CSV", "Saved tickets-results.csv")
     save("03-csv-saved")
     advance(b"\x1b", "Return to actions", "View rows with answers")
-    advance(b"\x1b", "Return to batches", "Search")
+    advance(b"\x1b", "Return to batches", "Esc exit")
     directory = finish_session(terminal, evidence, "tickets-results.csv")
     with TICKETS.open(newline="", encoding="utf-8") as source:
         tickets = list(csv.DictReader(source))
@@ -287,7 +287,7 @@ def main():
             assert filename in "".join(line.strip(" │") for line in receipt.splitlines())
             advance(b"\x1b", "Esc: return to batch", "Save a file")
             advance(b"\x1b", "Esc: collapse Save a file", "Save a file")
-            advance(b"\x1b", "Esc: return to batches", "Search")
+            advance(b"\x1b", "Esc: return to batches", "Esc exit")
             save("14-returned")
             directory = finish_session(terminal, evidence, filename)
             assert (directory / filename).read_bytes() == OUTPUT_BYTES

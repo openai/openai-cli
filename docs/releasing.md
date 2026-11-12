@@ -49,6 +49,14 @@ before switching to the requested release tag. This allows existing release tags
 that predate the installer to be republished; the workflow checkout, not the
 historical tag, determines the reviewed GoReleaser version and artifact generator.
 
+## Historical artifact repairs
+
+New releases must pass model verification before publication. Existing releases through v1.51.5 can repair their original artifacts.
+The workflow verifies the release tag, version, commit, and publication date against GitHub's release record.
+It also verifies that the commit belongs to the history of v1.51.5.
+Version 1.0.0 recorded `main` as its release target. The check uses its original release ID and commit.
+These repairs retain the existing signing, provenance, and trusted toolchain checks.
+
 ## Update GoReleaser
 
 1. Choose and review the upstream release, then set its version without the `v`

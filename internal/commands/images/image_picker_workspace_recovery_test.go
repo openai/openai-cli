@@ -43,7 +43,7 @@ func TestImagePickerWorkspaceResizeDoesNotReplayOversizedNativeRows(t *testing.T
 		output, err = os.ReadFile(out.Name())
 		require.NoError(t, err)
 		require.NotContains(t, string(output[written:]), row, "expanded fallback must also respect the smaller viewport")
-		cached, ok := w.nativePayload(imagePickerNativeRow{0, 0, 64, 1, false})
+		cached, ok := w.nativePayload(imagePickerNativeRow{image: 0, row: 0, columns: 64, count: 1, expanded: false})
 		require.True(t, ok)
 		require.Equal(t, row, cached, "resizing may retain the original bounded cache entry")
 	}

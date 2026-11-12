@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-cli/internal/modeldefaults"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,6 +64,58 @@ func imageUploadArgs(operation, source string) []string {
 	return args
 }
 
+func TestMainRetiredImageVariationStopsBeforeUpload(t *testing.T) {
+	var requests atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer proxy.Close()
+	source, _ := imageUploadSource(t)
+	for _, tc := range []struct {
+		name, base string
+		flags      []string
+	}{
+		{name: "default"},
+		{name: "regional environment", base: "https://au.api.openai.com/v1"},
+		{name: "flag overrides provider", base: proxy.URL, flags: []string{"--base-url", "https://mtls.api.openai.com/v1/"}},
+		{name: "machine error", base: "https://api.openai.com:443/v1/?source=fixture", flags: []string{"--format-error", "json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := adminCredentialsProxyEnv(proxy.URL, []string{"OPENAI_BASE_URL=" + tc.base, "OPENAI_API_KEY=synthetic-variation-key"})
+			args := append([]string{"openai"}, tc.flags...)
+			got := runMainDispatchWithEnv(t, "bash", env, append(args, imageUploadArgs("create-variation", source)...)...)
+			require.Equal(t, 1, got.code)
+			require.Empty(t, got.stdout)
+			require.Contains(t, got.stderr, "OpenAI retired the image variations endpoint")
+			require.Contains(t, got.stderr, "openai images edit --image")
+			require.NotContains(t, got.stderr, source)
+			if tc.name == "machine error" {
+				require.True(t, json.Valid([]byte(got.stderr)), got.stderr)
+			}
+		})
+	}
+	t.Run("explicit executable path", func(t *testing.T) {
+		program := filepath.Join(t.TempDir(), "CLI preview", "openai")
+		env := adminCredentialsProxyEnv(proxy.URL, []string{"OPENAI_BASE_URL=https://api.openai.com/v1"})
+		args := append([]string{program}, imageUploadArgs("create-variation", source)...)
+		got := runMainDispatchWithEnv(t, "bash", env, args...)
+		require.Equal(t, 1, got.code)
+		help := runMainDispatchWithEnv(t, "bash", env, append(args, "--help")...)
+		require.Zero(t, help.code)
+		for _, line := range strings.Split(got.stderr, "\n") {
+			if strings.Contains(line, " images edit --image") {
+				require.Contains(t, line, program)
+				invocation, _, _ := strings.Cut(line, " images edit --image")
+				require.Contains(t, help.stdout, strings.TrimSpace(invocation)+" images edit --image")
+				return
+			}
+		}
+		t.Fatal("variation guidance omitted the edit command")
+	})
+	require.Zero(t, requests.Load(), "retired variations must never reach the proxy or custom provider")
+}
+
 func TestMainImageUploadSavingDefaultsAndSources(t *testing.T) {
 	for _, operation := range []string{"edit", "create-variation"} {
 		t.Run(operation, func(t *testing.T) {
@@ -87,7 +140,7 @@ func TestMainImageUploadSavingDefaultsAndSources(t *testing.T) {
 				require.Equal(t, "/images/edits", captured.path)
 				require.Equal(t, [][]byte{payload, payload}, captured.files["image[]"])
 				require.Equal(t, [][]byte{payload}, captured.files["mask"])
-				require.Equal(t, map[string][]string{"prompt": {"Make the sky purple"}, "model": {"gpt-image-2.5-sunburst"}, "n": {"1"}, "size": {"auto"}, "quality": {"auto"}, "background": {"auto"}, "output_format": {"png"}, "partial_images": {"0"}, "stream": {"false"}}, captured.values)
+				require.Equal(t, map[string][]string{"prompt": {"Make the sky purple"}, "model": {modeldefaults.SavedImage}, "n": {"1"}, "size": {"auto"}, "quality": {"auto"}, "background": {"auto"}, "output_format": {"png"}, "partial_images": {"0"}, "stream": {"false"}}, captured.values)
 			} else {
 				require.Equal(t, "/images/variations", captured.path)
 				require.Equal(t, [][]byte{payload}, captured.files["image"])
