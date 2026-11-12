@@ -19,7 +19,7 @@ type Options struct {
 type workspaceCommand struct {
 	options  Options
 	terminal func(*cli.Command) (*os.File, *os.File, bool)
-	run      func(context.Context, Service, func(error) string, *os.File, *os.File) error
+	run      func(context.Context, Service, func(error) string, *os.File, *os.File, bool) error
 }
 
 // Configure adds the interactive workspace without replacing generated operations.
@@ -38,6 +38,9 @@ func (w workspaceCommand) configure(root *cli.Command) {
 			"Choose a store, create a store, upload a file, or search its contents. " +
 			"Existing vector-store commands remain available for scripts and structured output.",
 		HideHelpCommand: true,
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "full-screen", Usage: "Start with the workspace expanded inside the terminal"},
+		},
 		Action: func(ctx context.Context, command *cli.Command) error {
 			if command.Args().Present() {
 				return workspaceFailure("The vector store workspace takes no positional arguments.", nil)
@@ -65,7 +68,7 @@ func (w workspaceCommand) launch(ctx context.Context, command *cli.Command, inpu
 	if err != nil {
 		return err
 	}
-	return w.run(ctx, service, w.options.ErrorMessage, input, output)
+	return w.run(ctx, service, w.options.ErrorMessage, input, output, command.Bool("full-screen"))
 }
 
 func workspaceTerminal(command *cli.Command) (*os.File, *os.File, bool) {

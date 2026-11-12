@@ -91,7 +91,7 @@ func estimatedStorageHours(store *openai.VectorStore, now time.Time) float64 {
 func (m *workspace) managementLines() ([]string, string) {
 	if menu := m.managementMenu(); menu != nil {
 		footer := "↑↓ choose · Enter open · Esc back · Ctrl+C exit"
-		lines := []string{m.divider()}
+		var lines []string
 		if m.page == "manage" && m.store != nil {
 			lines = append(lines, m.muted().Render(cleanLine(m.store.ID))+"  "+m.status(string(m.store.Status)))
 		}
@@ -105,15 +105,13 @@ func (m *workspace) managementLines() ([]string, string) {
 		if m.page == "batch" && m.batch != nil {
 			lines = append(lines, m.muted().Render(cleanLine(m.batch.ID))+"  "+m.status(string(m.batch.Status)))
 		}
-		lines = append(lines, m.listRows(menu, m.selected, m.listBudget(lines, footer, 1), true)...)
+		lines = append(lines, m.listRows(menu, m.selected, m.listBudget(lines, footer, 2), true, m.bodyWidth())...)
 		return lines, footer
 	}
 	if label, form := managementForms[m.page]; form {
 		lines := m.editorLines(label)
 		action := "Save"
 		switch m.page {
-		case "filter":
-			action = "Search loaded stores"
 		case "open-batch":
 			action = "Open batch"
 		case "delete-store":
@@ -147,24 +145,23 @@ func (m *workspace) managementLines() ([]string, string) {
 				lines = append(lines, m.muted().Render("Source files stay in storage."))
 			}
 		}
-		footer := "↓ actions · Enter continue · Esc back"
+		footer := "Tab actions · Enter continue · Esc back"
 		if m.focus > 0 {
-			footer = "←→ action · Enter select · ↑ edit · Esc back"
-		}
-		if targetID != "" && m.bodyWidth() < 40 {
-			footer = "Tab focus · Enter select · Esc back"
+			footer = "Tab next · Enter select · ↑ edit · Esc back"
 		}
 		return lines, footer
 	}
 	if m.page == "sources" {
 		footer := "↑↓ choose · Enter toggle file · Tab actions · Esc back"
 		if m.focus > 0 {
-			footer = "←→ action · Enter select · ↓ files · Esc back"
+			footer = "Tab next · Enter select · ↓ files · Esc back"
+		} else if len(m.sourceFiles) == 0 {
+			footer = "Tab actions · Esc back"
 		}
 		lines := []string{m.actions([]string{"Attach selected", "Load more", "Options", "Back"}, 1), m.divider()}
 		columns, items := m.sourceTable()
 		lines = append(lines, m.tableHeader(columns))
-		lines = append(lines, m.tableRows(columns, items, m.selected, m.listBudget(lines, footer, 1), m.focus == 0)...)
+		lines = append(lines, m.tableRows(columns, items, m.selected, m.listBudget(lines, footer, 2), m.focus == 0)...)
 		return lines, footer
 	}
 	return nil, ""
