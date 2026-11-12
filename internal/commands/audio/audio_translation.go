@@ -382,7 +382,11 @@ func (policy TranslationOptions) explainAccess(command *cli.Command, err error, 
 			help.Summary = "The API could not verify your credentials."
 		}
 	}
-	return audiolive.Failure(help.Summary + "\n" + help.Action)
+	failure := audiolive.Failure(help.Summary + "\n" + help.Action)
+	if help.PanelAction != "" {
+		return translationSetupHelp{Failure: failure, summary: help.Summary, action: help.PanelAction}
+	}
+	return failure
 }
 
 func translationFailure(status int, code string, err error) error {

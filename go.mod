@@ -15,6 +15,7 @@ require (
 	github.com/dlclark/regexp2 v1.12.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/itchyny/json2yaml v0.1.5
+	github.com/markusmobius/go-py3langid v0.4.0
 	github.com/muesli/cancelreader v0.2.2
 	github.com/muesli/reflow v0.3.0
 	github.com/openai/openai-go/v3 v3.99.0
@@ -28,6 +29,7 @@ require (
 	github.com/xo/terminfo v1.3.0
 	golang.org/x/image v0.47.0
 	golang.org/x/sys v0.49.0
+	golang.org/x/text v0.43.0
 )
 
 require (
@@ -46,5 +48,4 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
 )

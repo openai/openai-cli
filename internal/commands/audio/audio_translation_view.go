@@ -11,7 +11,7 @@ import (
 
 type translationLayout struct {
 	width, height        int
-	framed               bool
+	framed, expanded     bool
 	title, muted, accent lipgloss.Style
 	frame                lipgloss.Style
 	divider              string
@@ -22,16 +22,29 @@ func (m *terminalTranslationModel) translationFramed() bool {
 }
 
 func (m *terminalTranslationModel) translationViewport() (width, height int) {
+	width, height = max(1, m.width-4), m.height
 	if m.translationFramed() {
-		return min(100, m.width-7), m.height - 2
+		width, height = m.width-7, m.height-2
 	}
-	return min(100, max(1, m.width-4)), m.height
+	if m.expanded {
+		return min(144, width), height
+	}
+	return min(72, width), min(18, height)
+}
+
+func (m *terminalTranslationModel) reflowTranslation() {
+	if m.transcript != nil {
+		m.readTranscript()
+	}
+	if edit := m.form.editor; edit != nil {
+		m.sizeTranslationEditor(edit)
+	}
 }
 
 func (m *terminalTranslationModel) translationLayout() translationLayout {
 	width, height := m.translationViewport()
 	layout := translationLayout{
-		width: width, height: height, framed: m.translationFramed(),
+		width: width, height: height, framed: m.translationFramed(), expanded: m.expanded,
 		frame: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1),
 	}
 	layout.title, layout.muted, layout.accent = m.styles()
@@ -83,10 +96,19 @@ func (l translationLayout) footer(pairs ...[2]string) []string {
 		}
 		line += item
 	}
+	action := "expand"
+	if l.expanded {
+		action = "compact"
+	}
+	toggle := l.accent.Render("Ctrl+L") + " " + l.muted.Render(action)
 	if line != "" {
+		gap := l.width - ansi.StringWidth(line) - ansi.StringWidth(toggle)
+		if gap >= 3 {
+			return append(rows, line+strings.Repeat(" ", gap)+toggle)
+		}
 		rows = append(rows, line)
 	}
-	return rows
+	return append(rows, toggle)
 }
 
 func (l translationLayout) panel(rows, footer []string, cursor *tea.Cursor) tea.View {

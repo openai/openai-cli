@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,22 @@ type ownedPCMReader struct {
 }
 
 func (r *ownedPCMReader) Close() error { r.closed++; return nil }
+
+func TestPlayPCMFromSeeksInMonoFrames(t *testing.T) {
+	h, directory := testHelpers(t, "play")
+	data := syntheticPCM(480 * 2)
+	source := io.NewSectionReader(bytes.NewReader(data), 0, int64(len(data)))
+	if err := playPCMFrom(t.Context(), source, 48000, 1, 5*time.Millisecond, h); err != nil {
+		t.Fatal(err)
+	}
+	record := readHelperRecord(t, directory, "ffplay")
+	assertInputBoundary(t, record.Args, "s16le")
+	rate := slices.Index(record.Args, "-sample_rate")
+	recorded, err := hex.DecodeString(record.Input)
+	if err != nil || rate < 0 || record.Args[rate+1] != "48000" || !bytes.Equal(recorded, data[240*2:]) {
+		t.Fatal("mono replay changed the sample rate or seek position")
+	}
+}
 
 func TestPlayPCMFromSeeksInStereoFrames(t *testing.T) {
 	h, directory := testHelpers(t, "play")
@@ -54,16 +71,25 @@ func TestPlayPCMPreservesStreamMetadataAndBytes(t *testing.T) {
 			t.Fatalf("source closed %d times", source.closed)
 		}
 		record := readHelperRecord(t, directory, "ffplay")
-		assertInputBoundary(t, record.Args, "wav")
-		data, err := hex.DecodeString(record.Input)
-		if err != nil || len(data) != 44+len(body) || string(data[:4]) != "RIFF" || string(data[8:16]) != "WAVEfmt " {
-			t.Fatalf("stream container: %v", err)
-		}
-		if binary.LittleEndian.Uint32(data[24:]) != 48000 || int(binary.LittleEndian.Uint16(data[22:])) != channels || !bytes.Equal(data[44:], body) {
-			t.Fatal("stream metadata or samples changed")
-		}
 		if record.CredentialPresent || record.ReportPresent {
 			t.Fatal("credentials or FFREPORT reached player")
+		}
+		data, err := hex.DecodeString(record.Input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if channels == 1 {
+			assertInputBoundary(t, record.Args, "s16le")
+			rate := slices.Index(record.Args, "-sample_rate")
+			if rate < 0 || record.Args[rate+1] != "48000" || !slices.Contains(record.Args, "-nofind_stream_info") || !bytes.Equal(data, body) {
+				t.Fatal("mono playback metadata, startup options, or samples changed")
+			}
+		} else {
+			assertInputBoundary(t, record.Args, "wav")
+			if len(data) != 44+len(body) || string(data[:4]) != "RIFF" || string(data[8:16]) != "WAVEfmt " ||
+				binary.LittleEndian.Uint32(data[24:]) != 48000 || int(binary.LittleEndian.Uint16(data[22:])) != channels || !bytes.Equal(data[44:], body) {
+				t.Fatal("multichannel playback header or samples changed")
+			}
 		}
 	}
 }

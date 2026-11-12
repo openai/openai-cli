@@ -380,6 +380,42 @@ func TestTerminalTranslationRejectsInvalidAudioWithoutCorruptingEarlierAudio(t *
 	}
 }
 
+func TestTerminalTranslationPlaybackDrainsAnAudioBurst(t *testing.T) {
+	session := newTerminalTranslationSessionFixture()
+	options := terminalTranslationFixtureOptions(session)
+	options.Listen = true
+	stop := make(chan struct{})
+	var played []byte
+	options.Play = func(ctx context.Context, reader io.ReadCloser, _, _ int) error {
+		// Hold the consumer until the session has retained the entire burst.
+		select {
+		case <-stop:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		var err error
+		played, err = io.ReadAll(reader)
+		return err
+	}
+	pcm := bytes.Repeat([]byte{12, 34, 56, 78}, 292800)
+	session.emit(terminalTranslationFixtureAudio(pcm))
+	session.emit(audiolive.Event{Type: "session.output_transcript.delta", Delta: "Translated speech."})
+
+	var once sync.Once
+	result := runTerminalTranslation(terminalTranslationTestContext(t), stop, options, func(update terminalTranslationUpdate) {
+		if update.Translation != "" {
+			once.Do(func() { close(stop) })
+		}
+	})
+	t.Cleanup(func() { _ = result.Close() })
+	require.NoError(t, result.Err)
+	require.True(t, result.Complete)
+	require.Empty(t, result.Warning)
+	require.Equal(t, pcm, played)
+	require.Equal(t, pcm, terminalTranslationReadFile(t, result.AudioPath))
+	require.Equal(t, "Translated speech.", string(terminalTranslationReadFile(t, result.TranslationPath)))
+}
+
 func TestTerminalTranslationBoundedPlaybackRetainsLargeAudioAndCaptions(t *testing.T) {
 	s := newTerminalTranslationSessionFixture()
 	options := terminalTranslationFixtureOptions(s)
@@ -405,7 +441,7 @@ func TestTerminalTranslationBoundedPlaybackRetainsLargeAudioAndCaptions(t *testi
 	t.Cleanup(func() { _ = result.Close() })
 	require.NoError(t, result.Err)
 	require.True(t, result.Complete)
-	require.Contains(t, result.Warning, "could not keep up")
+	require.Contains(t, result.Warning, "did not finish before the stop timeout")
 	require.Equal(t, pcm, terminalTranslationReadFile(t, result.AudioPath))
 	require.Equal(t, caption, string(terminalTranslationReadFile(t, result.OriginalPath)))
 	require.Equal(t, caption, string(terminalTranslationReadFile(t, result.TranslationPath)))
@@ -526,22 +562,33 @@ func TestTerminalTranslationRecordingReaderRejectsChangedOriginal(t *testing.T) 
 	require.ErrorContains(t, err, "changed")
 }
 
-func TestTerminalTranslationPlaybackQueueDrainsOrUnblocks(t *testing.T) {
-	queue := newTerminalTranslationPCMQueue()
-	require.True(t, queue.offer([]byte{1, 2, 3, 4}))
-	queue.finish()
-	data, err := io.ReadAll(queue)
+func TestTerminalTranslationPlaybackReaderDrainsOrUnblocks(t *testing.T) {
+	stage, err := newTerminalTranslationStage()
 	require.NoError(t, err)
-	require.Equal(t, []byte{1, 2, 3, 4}, data)
-	require.False(t, queue.offer([]byte{5}))
-	queue = newTerminalTranslationPCMQueue()
+	t.Cleanup(func() { _ = stage.close() })
+	file := stage.files[0]
+	_, err = file.Write([]byte{1, 2, 3, 4})
+	require.NoError(t, err)
+
+	reader := newTerminalTranslationPCMReader(file)
+	reader.publish(2)
+	reader.finish()
+	data, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.Equal(t, []byte{1, 2}, data)
+	require.True(t, reader.drained())
+	require.NoError(t, reader.Close())
+
+	reader = newTerminalTranslationPCMReader(file)
 	done := make(chan error, 1)
-	go func() { _, err := queue.Read(make([]byte, 1)); done <- err }()
-	require.NoError(t, queue.Close())
+	go func() { _, err := reader.Read(make([]byte, 1)); done <- err }()
+	require.NoError(t, reader.Close())
 	select {
 	case err := <-done:
 		require.ErrorIs(t, err, io.EOF)
 	case <-terminalTranslationTestContext(t).Done():
 		t.Fatal("Close did not unblock Read")
 	}
+	require.False(t, reader.drained())
+	require.Equal(t, []byte{1, 2, 3, 4}, terminalTranslationReadFile(t, filepath.Join(stage.directory, stage.names[0])))
 }

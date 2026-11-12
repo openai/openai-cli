@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,7 +48,16 @@ func playPCM(ctx context.Context, source io.ReadCloser, rate, channels int, h he
 	defer cancel()
 	stopClose := context.AfterFunc(work, closeSource)
 	defer stopClose()
-	args, _ := playerArguments("wav", false)
+	var args []string
+	if channels == 1 {
+		// Raw PCM already supplies the format and sample rate. The demuxer
+		// defaults to mono, so FFplay can start without analyzing the stream.
+		args = append(playerInputArguments("s16le", false),
+			"-sample_rate", strconv.Itoa(rate), "-nofind_stream_info", "-i", "pipe:0")
+		header = nil
+	} else {
+		args, _ = playerArguments("wav", false)
+	}
 	command, err := helperCommand(work, h, "ffplay", args)
 	if err != nil {
 		return err

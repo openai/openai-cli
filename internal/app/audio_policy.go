@@ -130,6 +130,7 @@ func speechAuthenticationGuidance(command *cli.Command, apierr *openai.Error) au
 		guidance.Action = "Close this form."
 		if !custom && os.Getenv("OPENAI_API_KEY") == "" {
 			guidance.Action += "\n" + setupStep
+			guidance.PanelAction = "Press Esc for setup instructions.\nReopen without the empty --api-key."
 		}
 		guidance.Action += "\nReopen without the empty --api-key option."
 	case custom:
@@ -143,6 +144,7 @@ func speechAuthenticationGuidance(command *cli.Command, apierr *openai.Error) au
 	case !apiAuthenticationKeyPresent(root, "api-key", "OPENAI_API_KEY"):
 		guidance.Summary = "No API key is configured."
 		guidance.Action = setupStep
+		guidance.PanelAction = "Press Esc for setup instructions."
 	case apierr.Code == "invalid_api_key":
 		guidance.Action = "Replace the rejected API key.\nReopen this form."
 	default:

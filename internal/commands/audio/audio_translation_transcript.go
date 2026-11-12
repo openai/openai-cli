@@ -38,8 +38,8 @@ func (m *terminalTranslationModel) openTranscript(original bool) {
 func (m *terminalTranslationModel) readTranscript() {
 	p := m.transcript
 	start := p.starts[len(p.starts)-1]
-	width, height := m.translationViewport()
-	rows := max(1, min(100, height-5))
+	layout := m.translationLayout()
+	rows := max(1, min(100, layout.height-3-len(layout.transcriptFooter())))
 	reader := bufio.NewReader(io.NewSectionReader(p.reader, start, p.reader.Size()-start))
 	p.rows, p.next = nil, start
 	var row strings.Builder
@@ -63,7 +63,7 @@ func (m *terminalTranslationModel) readTranscript() {
 			}
 			w := ansi.StringWidth(safe)
 			// Bound each display fragment, even for unbroken runs of zero-width characters.
-			if (cells+w > width || row.Len() >= 32*1024) && row.Len() > 0 {
+			if (cells+w > layout.width || row.Len() >= 32*1024) && row.Len() > 0 {
 				p.rows = append(p.rows, row.String())
 				row.Reset()
 				cells = 0
@@ -113,5 +113,9 @@ func (m *terminalTranslationModel) transcriptView(l translationLayout) tea.View 
 		rows = append(rows, l.muted.Render("No captions for this track."))
 	}
 	rows = append(rows, p.rows...)
-	return l.panel(rows, l.footer([2]string{"↑↓", "page"}, [2]string{"Tab", "switch track"}, [2]string{"Esc", "back"}), nil)
+	return l.panel(rows, l.transcriptFooter(), nil)
+}
+
+func (l translationLayout) transcriptFooter() []string {
+	return l.footer([2]string{"↑↓", "page"}, [2]string{"Tab", "switch track"}, [2]string{"Esc", "back"})
 }

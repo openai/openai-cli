@@ -187,7 +187,7 @@ type terminalTranslationCaptured struct {
 
 // runTerminalTranslation starts only when called. Stop flushes capture and drains
 // the session; ctx cancellation aborts it. Injected helpers must honor cancellation
-// and join their children before returning. notify runs serially, at most ten times
+// and join their children before returning. notify runs serially, at most twenty times
 // per second except state transitions, and must return promptly without blocking.
 func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options terminalTranslationOptions, notify func(terminalTranslationUpdate)) (result terminalTranslationResult) {
 	if ctx.Err() != nil {
@@ -313,13 +313,14 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 	}()
 	var finishing <-chan error
 	var finishDone chan error
-	var playback *terminalTranslationPCMQueue
+	var playback *terminalTranslationPCMReader
 	var playing <-chan error
 	var playDone chan error
 	var cancelPlayback context.CancelFunc
 	var deadline <-chan time.Time
 	var timer *time.Timer
 	stopping, closed, captureJoined := false, false, false
+	dirty := false
 	setError := func(message string, err error) {
 		result.Err = errors.Join(result.Err, terminalTranslationFailure(message, err))
 	}
@@ -337,6 +338,7 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 	disablePlayback := func(message string) {
 		if update.Warning == "" {
 			update.Warning = message
+			dirty = true
 		}
 		if playback != nil {
 			_ = playback.Close()
@@ -381,7 +383,7 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 
 	update.State = "listening"
 	publish()
-	tick := time.NewTicker(100 * time.Millisecond)
+	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		select {
@@ -431,6 +433,7 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 				return result
 			}
 			event := item.event
+			dirty = true
 			if event.Tokens > 0 {
 				update.Tokens = event.Tokens
 			}
@@ -483,7 +486,7 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 				}
 				update.SampleRate, update.Channels = rate, channels
 				if options.Listen && playback == nil && update.Warning == "" {
-					playback = newTerminalTranslationPCMQueue()
+					playback = newTerminalTranslationPCMReader(stage.files[0])
 					playCtx, stopPlayback := context.WithCancel(work)
 					cancelPlayback = stopPlayback
 					playDone = make(chan error, 1)
@@ -494,9 +497,7 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 						playDone <- err
 					}()
 				}
-				writer := terminalTranslationAudioWriter{file: stage.files[0], update: &update, wave: &wave, playback: playback, overrun: func() {
-					disablePlayback("Live playback could not keep up and stopped. Recording continues; play the saved audio after stopping.")
-				}}
+				writer := terminalTranslationAudioWriter{file: stage.files[0], update: &update, wave: &wave, playback: playback}
 				if err := terminalTranslationCopy(work, &writer, base64.NewDecoder(base64.StdEncoding, strings.NewReader(event.Delta))); err != nil {
 					setError("Could not save translated audio. Received files remain available.", err)
 					return result
@@ -509,7 +510,10 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 				disablePlayback("Live playback stopped. Recording continues; play the saved audio after stopping.")
 			}
 		case <-tick.C:
-			publish()
+			if dirty {
+				publish()
+				dirty = false
+			}
 		}
 		if closed && captureJoined && finishing == nil {
 			if playing == nil {
@@ -578,17 +582,16 @@ type terminalTranslationAudioWriter struct {
 	file     *os.File
 	update   *terminalTranslationUpdate
 	wave     *audiomedia.PCM16Envelope
-	playback *terminalTranslationPCMQueue
-	overrun  func()
+	playback *terminalTranslationPCMReader
 }
 
 func (w *terminalTranslationAudioWriter) Write(data []byte) (int, error) {
 	n, err := w.file.Write(data)
 	w.update.AudioBytes += int64(n)
-	w.wave.Add(data[:n], w.update.Channels)
-	if n > 0 && w.playback != nil && !w.playback.offer(data[:n]) {
-		w.overrun()
+	if n > 0 && w.playback != nil {
+		w.playback.publish(w.update.AudioBytes)
 	}
+	w.wave.Add(data[:n], w.update.Channels)
 	return n, err
 }
 
@@ -606,78 +609,4 @@ func terminalTranslationTail(previous, delta string) string {
 		tail = tail[1:]
 	}
 	return "…" + strings.Clone(tail)
-}
-
-// The live playback queue is optional and bounded independently of saved audio.
-// finish drains it to EOF. Close discards it and unblocks every pending Read.
-type terminalTranslationPCMQueue struct {
-	mu            sync.Mutex
-	ready         *sync.Cond
-	buffer        []byte
-	start, length int
-	ended, closed bool
-	readEOF       bool
-}
-
-func newTerminalTranslationPCMQueue() *terminalTranslationPCMQueue {
-	q := &terminalTranslationPCMQueue{buffer: make([]byte, 256*1024)}
-	q.ready = sync.NewCond(&q.mu)
-	return q
-}
-
-func (q *terminalTranslationPCMQueue) offer(data []byte) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.closed || q.ended || len(data) > len(q.buffer)-q.length {
-		return false
-	}
-	end := (q.start + q.length) % len(q.buffer)
-	n := copy(q.buffer[end:], data)
-	copy(q.buffer, data[n:])
-	q.length += len(data)
-	q.ready.Signal()
-	return true
-}
-
-func (q *terminalTranslationPCMQueue) Read(data []byte) (int, error) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if len(data) == 0 {
-		return 0, nil
-	}
-	for q.length == 0 && !q.closed && !q.ended {
-		q.ready.Wait()
-	}
-	if q.closed {
-		return 0, io.EOF
-	}
-	if q.length == 0 {
-		q.readEOF = true
-		return 0, io.EOF
-	}
-	n := min(len(data), q.length, len(q.buffer)-q.start)
-	copy(data, q.buffer[q.start:q.start+n])
-	q.start, q.length = (q.start+n)%len(q.buffer), q.length-n
-	return n, nil
-}
-
-func (q *terminalTranslationPCMQueue) finish() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.ended = true
-	q.ready.Broadcast()
-}
-
-func (q *terminalTranslationPCMQueue) drained() bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return q.readEOF
-}
-
-func (q *terminalTranslationPCMQueue) Close() error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.closed, q.length = true, 0
-	q.ready.Broadcast()
-	return nil
 }
