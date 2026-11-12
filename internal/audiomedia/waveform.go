@@ -1,9 +1,34 @@
 package audiomedia
 
 import (
+	"context"
 	"math"
 	"strings"
 )
+
+// PCM16Envelope measures interleaved PCM16 from a single stream.
+// It retains the same bounded peak bins as saved-file analysis.
+type PCM16Envelope struct{ samples *pcmAnalyzer }
+
+func (e *PCM16Envelope) Add(data []byte, channels int) {
+	if e.samples == nil {
+		if channels < 1 || channels > math.MaxUint16/2 {
+			return
+		}
+		format := rawPCMFormat()
+		format.channels, format.align = uint16(channels), uint16(channels*2)
+		e.samples = newPCMAnalyzer(context.Background(), format)
+	}
+	// Integer PCM has no invalid sample values. Write retains partial frames.
+	e.samples.Write(data)
+}
+
+func (e *PCM16Envelope) Peaks() []float64 {
+	if e.samples == nil {
+		return nil
+	}
+	return e.samples.peaks.finish()
+}
 
 // Waveform draws uncolored amplitudes on a fixed 0..1 scale. Multiple rows use
 // symmetric Braille columns; a single row uses an eight-level block sparkline.

@@ -74,6 +74,34 @@ func TestSpeechAuthenticationGuidanceConfigurationSources(t *testing.T) {
 	}
 }
 
+func TestTranslationUnspecifiedRejectionChecksLocalCredential(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		flags []string
+		want  string
+	}{
+		{"missing key", nil, "No API key is configured."},
+		{"empty override", []string{"--api-key="}, "The API key override is empty."},
+		{"configured key", []string{"--api-key", "synthetic"}, ""},
+		{"authorization header", []string{"--header", "Authorization: Bearer synthetic"}, ""},
+		{"custom endpoint", []string{"--base-url", "https://synthetic.invalid/v1"}, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cleanAPIAuthGuidanceEnvironment(t)
+			root := apiAuthGuidanceTestCommand(func(_ context.Context, command *cli.Command) error {
+				guidance := translationAuthenticationGuidance(command, &openai.Error{})
+				require.Equal(t, test.want, guidance.Summary)
+				if test.want == "" {
+					require.Empty(t, guidance.Action)
+				}
+				return nil
+			})
+			args := append([]string{"openai"}, test.flags...)
+			require.NoError(t, root.Run(t.Context(), append(args, "models", "list")))
+		})
+	}
+}
+
 func TestSpeechAuthenticationGuidancePreservesInvocation(t *testing.T) {
 	for _, invocation := range []string{"openai", "'./preview app/openai-current'", "go run ./cmd/openai"} {
 		for _, flags := range [][]string{nil, {"--api-key="}} {

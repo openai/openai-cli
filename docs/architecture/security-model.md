@@ -20,7 +20,7 @@ violations in the inputs/compiler and regenerate.
 
 `openai-cli` is a local Go command-line client for OpenAI APIs. It is
 not a background daemon. Ordinary API commands do not open inbound listeners.
-The explicit `audio translate --live` mode opens the private loopback browser
+The explicit `audio translate --live --browser` mode opens the private loopback browser
 companion described below. A user invokes resource commands; the CLI parses flags
 or piped YAML/JSON, may read local files, constructs requests through `openai-go`, and renders API responses to a
 terminal, pager, pipe, or file. The entry point runs the generated command
@@ -68,9 +68,18 @@ flowchart LR
 | CodeQL analysis and publication | Candidate analysis; trusted result publication | `.github/workflows/codeql.yml` analyzes the candidate with autobuild and stages SARIF. `codeql-upload.yml` runs separately on `workflow_run` using trusted main tooling. | Analysis has `permissions: {}` and consumes prepared same-run source artifacts. Only the trusted publisher has `security-events: write` and `statuses: write`; neither job receives release/signing credentials. | Candidate runner writes untrusted report artifacts; trusted publisher submits them to GitHub code scanning. | Publisher executes no candidate code, reads fixed ZIP members as data, verifies the source run/attempt and current GitHub SHA/ref, and fixes the tool/language categories. This confines publication authority; it does not attest candidate report correctness. | [.github/workflows/codeql.yml](../../.github/workflows/codeql.yml), [.github/workflows/codeql-upload.yml](../../.github/workflows/codeql-upload.yml), [.github/scripts/codeql_upload.py](../../.github/scripts/codeql_upload.py) |
 | Release | Official artifacts and publishing credentials | A job without protected write/signing credentials generates fixed release inputs from a validated tag; a protected publisher verifies them before obtaining publishing credentials. | Fixed artifact paths, protected `publish` environment, scoped app tokens, signing/notarization secrets. | Release jobs, GitHub releases, Homebrew, artifact attestation. | Tag-on-main and SHA binding, fixed artifact verification, verified GoReleaser, protected environment, and isolated attestation permissions. | [docs/releasing.md:3-29](../releasing.md#L3-L29), [.github/workflows/publish-release.yml:17-90](../../.github/workflows/publish-release.yml#L17-L90), [.github/workflows/publish-release.yml:92-152](../../.github/workflows/publish-release.yml#L92-L152), [.github/workflows/publish-release.yml:247-273](../../.github/workflows/publish-release.yml#L247-L273) |
 
+### Terminal translation
+
+`audio translate --live` uses a native terminal interface. The CLI connects to the configured API after explicit start.
+Microphone capture uses the selected FFmpeg audio backend. File capture sends the selected regular file through FFmpeg's input descriptor.
+The decoder restricts protocols and demuxers. FFplay receives translated samples through a pipe.
+Typed translation sends literal user text through the Responses API with storage disabled.
+The CLI stages recordings in private files. Explicit Save creates a separate directory for the export.
+Shutdown cancels capture and playback, waits for their helpers, then cleans up owned temporary files.
+
 ### Optional live translation browser companion
 
-Only `audio translate --live` starts the browser companion. It binds
+Only `audio translate --live --browser` starts the browser companion. It binds
 `127.0.0.1` on an operating-system-selected port, not a public interface.
 Each launch uses a separate `.localhost` hostname containing 128 random bits.
 The browser origin changes independently of the port and authorization capability.

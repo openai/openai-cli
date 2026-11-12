@@ -143,10 +143,19 @@ func printAudioCommand(ctx context.Context, output cliterminal.FrameOutput, comm
 type audioWorkbenchWrapTimeout struct{}
 type audioWorkbenchSizeError struct{}
 
+type audioInlineModel interface {
+	tea.Model
+	audioGeometry() (int, int)
+	audioUsesColor() bool
+}
+
+func (m *audioWorkbench) audioGeometry() (int, int) { return m.width, m.height }
+func (m *audioWorkbench) audioUsesColor() bool      { return m.color }
+
 // Reuse the existing inline frame and asynchronous terminal writer. This owns
 // only bracketed paste, cursor visibility, and wrapping; keyboard modes stay put.
 type audioWorkbenchInline struct {
-	model                             *audioWorkbench
+	model                             audioInlineModel
 	painter                           cliterminal.FramePainter
 	output                            *os.File
 	profile                           colorprofile.Profile
@@ -171,15 +180,15 @@ func (p *audioWorkbenchInline) Init() tea.Cmd {
 		// Start on an owned blank row. Terminal.app can print the final p of DECRQM.
 		query += "\r\n"
 		p.hardLines = true
-		if p.model.width >= 3 && p.model.height >= 2 {
-			p.wrapProbeSize = tea.WindowSizeMsg{Width: p.model.width, Height: p.model.height}
+		if width, height := p.model.audioGeometry(); width >= 3 && height >= 2 {
+			p.wrapProbeSize = tea.WindowSizeMsg{Width: width, Height: height}
 			// Reserve the next row so the probe cannot scroll past its saved cursor.
-			query += "\r\n" + ansi.CursorUp(1) + cliterminal.WrapProbe(p.model.width)
+			query += "\r\n" + ansi.CursorUp(1) + cliterminal.WrapProbe(width)
 		}
 	} else {
 		query += ansi.RequestModeAutoWrap
 	}
-	if p.model.color {
+	if p.model.audioUsesColor() {
 		query += ansi.RequestBackgroundColor
 	}
 	p.painter.Control(query)
@@ -228,7 +237,7 @@ func (p *audioWorkbenchInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			p.err = errors.New("could not read terminal size")
 			return p, tea.Quit
 		}
-		if w != p.model.width || h != p.model.height {
+		if modelWidth, modelHeight := p.model.audioGeometry(); w != modelWidth || h != modelHeight {
 			p.model.Update(tea.WindowSizeMsg{Width: w, Height: h})
 		}
 		if p.appleTerminal {
@@ -278,7 +287,7 @@ func (p *audioWorkbenchInline) draw() {
 func (p *audioWorkbenchInline) drawFrame(w, h int) {
 	// Non-key events can arrive before the size listener. Render the model at
 	// the same observed dimensions used for the terminal frame boundaries.
-	if w != p.model.width || h != p.model.height {
+	if modelWidth, modelHeight := p.model.audioGeometry(); w != modelWidth || h != modelHeight {
 		p.model.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	}
 	view := p.model.View()

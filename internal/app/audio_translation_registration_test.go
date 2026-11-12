@@ -36,7 +36,7 @@ func TestAudioTranslationGeneratedRegistration(t *testing.T) {
 	executable, err := os.Executable()
 	require.NoError(t, err)
 	for _, name := range []string{
-		"live alone", "live preserves pipe", "live with file", "live with model",
+		"live alone", "live preserves pipe", "live with file", "live with model", "explicit browser",
 		"missing both", "missing file", "missing model",
 		"file flags", "file JSON", "file YAML", "JSON missing file", "YAML missing model",
 	} {
@@ -86,8 +86,9 @@ func testAudioTranslationGeneratedCase(t *testing.T, name string) {
 	cases := map[string]testCase{
 		"live alone":          {args: []string{"--live"}, live: true},
 		"live preserves pipe": {args: []string{"--live"}, input: liveInput, live: true},
-		"live with file":      {args: []string{"--live", "--file", path}, live: true, mixed: true},
+		"live with file":      {args: []string{"--live", "--file", path}, live: true},
 		"live with model":     {args: []string{"--live", "--model", "whisper-1"}, live: true, mixed: true},
+		"explicit browser":    {args: []string{"--live", "--browser"}, input: liveInput, live: true},
 		"missing both":        {missing: `Required flags "file, model" not set`},
 		"missing file":        {args: []string{"--model", "whisper-1"}, missing: `Required flag "file" not set`},
 		"missing model":       {args: []string{"--file", path}, missing: `Required flag "model" not set`},
@@ -145,7 +146,7 @@ func testAudioTranslationGeneratedCase(t *testing.T, name string) {
 	app.ConfigureCommand(root)
 	var stdout, stderr bytes.Buffer
 	root.Writer, root.ErrWriter = &stdout, &stderr
-	if tc.live {
+	if name == "explicit browser" {
 		before := root.Before
 		root.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
 			ctx, err := before(ctx, command)
@@ -162,11 +163,13 @@ func testAudioTranslationGeneratedCase(t *testing.T, name string) {
 	args := []string{"openai", "--base-url", server.URL + "/v1/", "--api-key", "synthetic-translation-key", "audio", "translate"}
 	err = root.Run(ctx, append(args, tc.args...))
 	if tc.mixed {
-		require.ErrorContains(t, err, "Use --live by itself")
-	} else if tc.live {
+		require.ErrorContains(t, err, "Choose live translation settings")
+	} else if name == "explicit browser" {
 		var failure audiolive.Failure
 		require.ErrorAs(t, err, &failure)
 		require.Equal(t, audiolive.Failure("Live translation could not start: browser or API configuration is missing."), failure)
+	} else if tc.live {
+		require.ErrorContains(t, err, "interactive terminal")
 	} else if tc.missing != "" {
 		require.ErrorContains(t, err, tc.missing)
 	} else {

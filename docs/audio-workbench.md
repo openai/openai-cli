@@ -178,10 +178,41 @@ The [speech API reference](https://developers.openai.com/api/reference/resources
 The [text-to-speech guide](https://developers.openai.com/api/docs/guides/text-to-speech) documents formats and model-specific voices.
 See [transcript output](transcript-output.md) for finite transcription and translation presentation.
 
-## Live microphone and browser-tab translation
+## Translate in the terminal
 
 ```sh
 openai audio translate --live
+```
+
+The terminal opens with **Start microphone** selected. Press Enter to start. Speak when the screen shows **Listening**.
+Press Space to stop and receive final captions.
+
+Use Left or Right to choose **Audio file** or **Typed text**. Press Enter to enter a file path or text.
+Press Enter to apply the input. Press Enter again on the translation action to submit it.
+Choose **Translate into** to change the target language. Open **More settings** for models, playback, and the save folder.
+Typed text uses the Responses API.
+
+If the request fails before it produces output, the form shows the cause and selects **Retry translation**.
+Press Enter to retry with the same input. If the session received captions or audio, you can still save them.
+
+Audio input requires FFmpeg. Audio playback requires FFplay. Use `--no-playback` for captions without speaker output.
+On macOS, allow microphone access for your terminal when the system prompts you.
+On Windows, supply the DirectShow microphone name with `--input-device`. Linux uses PulseAudio.
+
+```sh
+openai audio translate --live --target-language es
+openai audio translate --live --file recording.wav --target-language fr
+```
+
+After translation, press T to read the full transcript. Press Tab to switch between original and translated text.
+Press P to replay translated audio. Use Left or Right before replay to select a start time.
+Press S to save the result. Set `--output-dir` to choose its parent folder.
+The CLI saves captions and any translated audio in a new private directory.
+
+### Share browser-tab audio
+
+```sh
+openai audio translate --live --browser
 ```
 
 This explicit mode opens a private local browser page. It keeps your API key in the CLI.
@@ -205,8 +236,6 @@ A failed replacement attempt preserves the previous recording until new translat
 Clear removes the current browser recording. Browser recordings do not enter speech History.
 Ctrl+C closes the local page's connection and removes its private launch file.
 
-The live page currently supports microphone and browser-tab audio.
-Typed text and file upload remain separate workflows.
 For English translation of a saved recording, the file translation endpoint currently accepts `whisper-1`.
 
 ```sh
