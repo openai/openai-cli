@@ -244,6 +244,11 @@ def main():
     print("Model: synthetic-demo-model. Enter on Review starts the demo batch.\n", flush=True)
     process = None
     stop_signal = None
+    resize_pending = False
+
+    def request_resize(_signum, _frame):
+        nonlocal resize_pending
+        resize_pending = True
 
     def request_stop(signum, _frame):
         nonlocal stop_signal
@@ -253,6 +258,8 @@ def main():
 
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
+    if hasattr(signal, "SIGWINCH"):
+        signal.signal(signal.SIGWINCH, request_resize)
     log_descriptor = os.open(directory / "request-log.jsonl", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(log_descriptor, "w", encoding="utf-8") as log:
         fixture = BrowserFixture(log)
@@ -264,6 +271,9 @@ def main():
                 process = subprocess.Popen([str(binary), "batches", "browse"], cwd=examples,
                                            env=environment, start_new_session=(os.name == "posix"))
                 while stop_signal is None:
+                    if resize_pending:
+                        resize_pending = False
+                        process.send_signal(signal.SIGWINCH)
                     try:
                         process.wait(timeout=0.2)
                         break

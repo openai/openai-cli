@@ -8,13 +8,119 @@ func (m *workspace) enterWithNote(page, note string) tea.Cmd {
 	return cmd
 }
 
-// Store rows and store actions form one vertical keyboard path.
+const storeFinderFocus = 4
+
+func (m *workspace) nextStoreFocus(delta int) int {
+	count := m.focusCount()
+	next := (m.focus + delta + count) % count
+	if next == 3 && m.storeNext == "" {
+		next += delta
+	}
+	if next == 0 && m.listLength() == 0 {
+		next = (count + delta) % count
+	}
+	return next
+}
+
+// Keep the picker navigable until the user types into the highlighted finder.
+func (m *workspace) focusFinderForInput(message tea.Msg) tea.Cmd {
+	if m.page != "stores" || m.focus != storeFinderFocus || m.busy || m.width < 40 || m.height < 12 {
+		return nil
+	}
+	switch input := message.(type) {
+	case tea.KeyPressMsg:
+		if input.Text != "" && input.Text != "/" || input.Code == tea.KeyBackspace || input.Code == tea.KeyDelete {
+			return m.enter("filter")
+		}
+	case tea.PasteMsg:
+		if input.Content != "" {
+			return m.enter("filter")
+		}
+	}
+	return nil
+}
+
+func (m *workspace) applyStoreFilter() tea.Cmd {
+	m.storeFilter = m.editor.Value()
+	cmd := m.enter("stores")
+	if len(m.stores) == 0 {
+		m.focus = storeFinderFocus
+	}
+	return cmd
+}
+
+func (m *workspace) firstStoreFocus() int {
+	if len(m.filteredStores()) > 0 {
+		return 0
+	}
+	if m.storeFilter != "" {
+		return storeFinderFocus
+	}
+	return 1 // Create store.
+}
+
+// The available actions follow the finder and store rows.
 func (m *workspace) storeChoices() []int {
 	choices := []int{1, 2}
 	if m.storeNext != "" {
 		choices = append(choices, 3)
 	}
-	return append(choices, 4)
+	return choices
+}
+
+func (m *workspace) browserFilterKey(key string) (tea.Cmd, bool) {
+	switch key {
+	case "/":
+		if !m.editing() {
+			m.focus, m.findingFile = 0, true
+			m.editor.SetValue(m.browserFilter)
+			m.editor.Placeholder = "Name (. includes hidden)"
+			return m.syncFocus(), true
+		}
+	case "esc":
+		if m.findingFile || m.browserFilter != "" {
+			m.findingFile, m.focus = false, 0
+			m.filterFolder("")
+			if len(m.entries) == 0 {
+				m.focus = 1
+			}
+			return m.syncFocus(), true
+		}
+	case "tab", "shift+tab", "up", "down", "pgup", "pgdown":
+		if m.findingFile {
+			m.findingFile = false
+			m.syncFocus()
+		}
+	}
+	return nil, false
+}
+
+func (m *workspace) moveListFocus(key string) tea.Cmd {
+	items, actions := m.listLength(), m.focusCount()-1
+	delta := 1
+	if key == "up" || key == "shift+tab" || key == "left" {
+		delta = -1
+	}
+	if key == "up" || key == "down" {
+		index := m.selected
+		if m.focus > 0 {
+			index = items + m.focus - 1
+		}
+		index = max(0, min(index+delta, items+actions-1))
+		if index < items {
+			m.selected, m.focus = index, 0
+		} else {
+			m.focus = index - items + 1
+		}
+	} else {
+		first := 0 // Tab skips the rest of the files to reach Actions.
+		if items == 0 || key == "left" || key == "right" {
+			first = 1
+		}
+		count := actions + 1 - first
+		m.focus = first + (m.focus-first+delta+count)%count
+	}
+	return m.syncFocus()
 }
 
 func (m *workspace) navigate(key string) (tea.Cmd, bool) {
@@ -23,18 +129,28 @@ func (m *workspace) navigate(key string) (tea.Cmd, bool) {
 		delta = -1
 	}
 	vertical := key == "up" || key == "down"
+	if m.page == "files" || m.page == "batchfiles" || m.page == "browse" {
+		if vertical || m.focus != 0 {
+			return m.moveListFocus(key), true
+		}
+		return nil, false
+	}
 	if m.page == "stores" && vertical {
 		count, choices := m.listLength(), m.storeChoices()
 		index := m.selected
-		if m.focus != 0 {
+		if m.focus == storeFinderFocus {
+			index = -1
+		} else if m.focus != 0 {
 			for i, focus := range choices {
 				if focus == m.focus {
 					index = count + i
 				}
 			}
 		}
-		index = max(0, min(count+len(choices)-1, index+delta))
-		if index < count {
+		index = max(-1, min(count+len(choices)-1, index+delta))
+		if index == -1 {
+			m.focus = storeFinderFocus
+		} else if index < count {
 			m.focus, m.selected = 0, index
 		} else {
 			m.focus = choices[index-count]
@@ -59,23 +175,26 @@ func (m *workspace) navigate(key string) (tea.Cmd, bool) {
 		return m.syncFocus(), true
 	}
 	if m.page == "home" {
-		switch {
-		case m.focus == 0:
-			m.focus = 1
-		case m.focus <= 5:
-			m.focus = 0
-			if delta > 0 && len(m.results) > 0 {
-				m.focus = matchListFocus
-			}
-		case delta < 0 && m.resultSelected == 0:
-			m.focus = 0
-		default:
-			return nil, false
+		if m.focus <= lastAction {
+			m.focus = max(0, min(m.focusCount()-1, m.focus+delta))
+			return m.syncFocus(), true
 		}
+		if delta < 0 && m.resultSelected == 0 {
+			m.focus = 0
+			return m.syncFocus(), true
+		}
+		return nil, false
+	}
+	if m.page == "upload" {
+		first := 0
+		if m.pendingFile != "" {
+			first = 1 // The uploaded file is read-only.
+		}
+		m.focus = max(first, min(lastAction, m.focus+delta))
 		return m.syncFocus(), true
 	}
 	_, form := managementForms[m.page]
-	if m.page == "create" || m.page == "upload" || form {
+	if m.page == "create" || form {
 		if m.focus == 0 {
 			m.focus = 1
 		} else {

@@ -28,7 +28,7 @@ type batchBrowserScreen struct {
 	visible                               []int
 	index, width, height                  int
 	closed                                bool
-	searchFocused                         bool
+	searchFocused, querySelected          bool
 	actionsState                          *batchBrowserActionsState
 	pathState                             *batchBrowserPathState
 	document                              *batchBrowserDocument
@@ -56,6 +56,7 @@ func newBatchBrowserScreen(kind, title, subtitle string, choices []batchBrowserC
 
 func newBatchBrowserList(page batchBrowsePage, previous bool) *batchBrowserScreen {
 	m := newBatchBrowserScreen("list", "Batches", "", nil)
+	m.input.Placeholder = "ID, status, or endpoint"
 	m.setPage(page, previous)
 	return m
 }
@@ -180,6 +181,13 @@ func newBatchBrowserReturn(title string) *batchBrowserScreen {
 	return newBatchBrowserScreen("return", title, "", nil)
 }
 
+func (m *batchBrowserScreen) selectedValue() string {
+	if m.index < 0 || m.index >= len(m.visible) {
+		return ""
+	}
+	return m.choices[m.visible[m.index]].value
+}
+
 func (m *batchBrowserScreen) filter() {
 	m.visible = m.visible[:0]
 	search := strings.ToLower(m.input.Value())
@@ -200,8 +208,12 @@ func (m *batchBrowserScreen) Init() tea.Cmd {
 		return m.startProgress()
 	}
 	if m.kind == "requests" {
-		if m.requestState.loaded && !m.requestState.loading {
-			if m.requestState.expanded {
+		if s := m.requestState; s.loaded && !s.loading {
+			// Row detail can change the shared CSV view size while the list is inactive.
+			if s.csv != nil && int64(len(s.page.Rows)) != min(s.page.Total, int64(m.requestRows())) {
+				return m.loadRequests(m.requestFirst(), false)
+			}
+			if s.expanded {
 				return m.loadRequestPreview()
 			}
 			return nil
@@ -228,6 +240,15 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if command, handled := m.updateProgress(message); handled {
 		return m, command
 	}
+	if key, ok := message.(tea.KeyPressMsg); ok && key.String() == "ctrl+g" {
+		if csv := m.csvRows(); csv != nil {
+			csv.fullScreen = !csv.fullScreen
+			if m.requestState != nil {
+				return m, m.loadRequests(m.requestFirst(), false)
+			}
+			return m, m.loadDocument("anchor", 0)
+		}
+	}
 	if m.kind == "requests" {
 		return m.updateRequests(message)
 	}
@@ -246,6 +267,11 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.SetWidth(max(1, msg.Width-20))
 	case tea.KeyPressMsg:
 		switch msg.String() {
+		case "/":
+			if m.kind == "list" && !m.searchFocused && strings.HasPrefix(m.selectedValue(), "batch:") {
+				m.searchFocused = true
+				return m, nil
+			}
 		case "ctrl+n":
 			if m.kind == "list" {
 				m.chosen, m.closed = "create", true
@@ -289,11 +315,12 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.width < 30 || m.height < 7 {
 				return m, nil
 			}
-			if m.kind == "list" && m.searchFocused && (len(m.visible) == 0 || !strings.HasPrefix(m.choices[m.visible[m.index]].value, "batch:")) {
+			selected := m.selectedValue()
+			if m.kind == "list" && m.searchFocused && !strings.HasPrefix(selected, "batch:") {
 				return m, nil
 			}
 			if len(m.visible) > 0 {
-				m.chosen = m.choices[m.visible[m.index]].value
+				m.chosen = selected
 				m.closed = true
 				return m, tea.Quit
 			}
@@ -316,20 +343,93 @@ func (m *batchBrowserScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *batchBrowserScreen) csvRows() *batchBrowserCSVRows {
+	if m.requestState != nil {
+		return m.requestState.csv
+	}
+	if m.documentState != nil {
+		return m.documentState.csv
+	}
+	return nil
+}
+
+// The frame fits both inline CSV results and full-screen menus.
+func (m *batchBrowserScreen) hasFrame() bool {
+	return m.kind != "return" && m.width >= 50 && m.height >= 12
+}
+
+func (m *batchBrowserScreen) contentSize() (width, height int) {
+	width, height = max(1, m.width), max(1, m.height)
+	if csv := m.csvRows(); csv != nil {
+		if !csv.fullScreen {
+			height-- // Tea clears the last inline line when it returns to the shell.
+		}
+		height -= len(m.csvFooter(func(key, label string) string { return key + " " + label }, " · "))
+	}
+	if m.hasFrame() {
+		width, height = width-2, height-2
+	}
+	return width, max(1, height)
+}
+
+func (m *batchBrowserScreen) csvFooter(shortcut func(string, string) string, separator string) []string {
+	full := m.csvRows().fullScreen
+	if m.width < 30 || m.height < 7 {
+		return nil
+	}
+	var keys []string
+	if m.requestState != nil {
+		keys = m.requestKeys(shortcut)
+	} else {
+		keys = []string{shortcut("↑↓", "scroll"), shortcut("s", "save CSV"), shortcut("Esc", "rows")}
+	}
+	width := m.width - 2
+	lines := batchBrowserShortcuts(keys, width, separator)[1:]
+	if !full && (m.width < 40 || m.height < 9) {
+		return lines
+	}
+	label := "expand"
+	if full {
+		label = "compact"
+	}
+	toggle := shortcut("Ctrl+G", label)
+	last := len(lines) - 1
+	gap := width - ansi.StringWidth(lines[last]) - ansi.StringWidth(toggle)
+	if gap < 2 {
+		return append(lines, strings.Repeat(" ", max(0, width-ansi.StringWidth(toggle)))+toggle)
+	}
+	lines[last] += strings.Repeat(" ", gap) + toggle
+	return lines
+}
+
+func batchBrowserShortcuts(keys []string, width int, separator string) []string {
+	lines := []string{"", "  "}
+	for _, key := range keys {
+		i := len(lines) - 1
+		if lines[i] == "  " {
+			lines[i] += key
+			continue
+		}
+		if ansi.StringWidth(lines[i])+ansi.StringWidth(separator)+ansi.StringWidth(key) > width {
+			lines = append(lines, "  "+key)
+			continue
+		}
+		lines[i] += separator + key
+	}
+	return lines
+}
+
 func (m *batchBrowserScreen) View() tea.View {
 	view := tea.NewView("")
 	// Retain menu screen ownership through the final frame. Printed results
 	// and their return prompt belong to the original terminal scrollback.
-	view.AltScreen = m.kind != "return"
+	csv := m.csvRows()
+	view.AltScreen = m.kind != "return" && (csv == nil || csv.fullScreen)
 	if m.closed {
 		return view
 	}
-	width, height := max(1, m.width), max(1, m.height)
-	framed := view.AltScreen && width >= 50 && height >= 12
-	if framed {
-		width -= 2
-		height -= 2
-	}
+	width, height := m.contentSize()
+	framed := m.hasFrame()
 	line := func(text string) string { return ansi.Truncate(batchInputLabel(text), width, "…") }
 	muted, accent, divider := lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle()
 	focus, secondary, edge := "#3159BC", "#657087", "#BAC4D8"
@@ -364,7 +464,13 @@ func (m *batchBrowserScreen) View() tea.View {
 		return base
 	}
 	summaryValue := func(text, tone string) string { return semantic(muted, tone).Render(text) }
+	shortcut := func(key, action string) string {
+		return accent.Render(key) + " " + muted.Render(action)
+	}
 	finish := func(lines []string, cursor *tea.Cursor) tea.View {
+		if csv != nil && csv.fullScreen && len(lines) < height {
+			lines = append(lines, make([]string, height-len(lines))...)
+		}
 		if framed {
 			border := lipgloss.RoundedBorder()
 			panel := []string{divider.Render(border.TopLeft + strings.Repeat(border.Top, width) + border.TopRight)}
@@ -379,6 +485,12 @@ func (m *batchBrowserScreen) View() tea.View {
 				cursor.Position.Y++
 			}
 		}
+		if csv != nil {
+			lines = append(lines, m.csvFooter(shortcut, muted.Render(" · "))...)
+			if !csv.fullScreen && m.height > 1 {
+				lines = append(lines, "")
+			}
+		}
 		view.Content = strings.Join(lines, "\n")
 		view.Cursor = cursor
 		return view
@@ -386,9 +498,6 @@ func (m *batchBrowserScreen) View() tea.View {
 	escape := "back"
 	if m.kind == "list" {
 		escape = "exit"
-	}
-	shortcut := func(key, action string) string {
-		return accent.Render(key) + " " + muted.Render(action)
 	}
 	keys := []string{shortcut("↑↓", "move"), shortcut("Enter", "open"), shortcut("Esc", escape)}
 	if m.actionsState != nil {
@@ -404,10 +513,6 @@ func (m *batchBrowserScreen) View() tea.View {
 	}
 	if m.kind == "document" {
 		keys = []string{shortcut("↑↓", "scroll"), shortcut("PgUp/PgDn", "page"), shortcut("p", "print"), shortcut("Esc", "back")}
-		if m.documentState.csvResults {
-			keys[2] = shortcut("s", "save CSV")
-			keys = append(keys[:3], shortcut("Ctrl+S", "save as"), keys[3])
-		}
 		if m.documentRawAvailable {
 			label := "Raw JSON"
 			if m.documentRaw {
@@ -423,20 +528,10 @@ func (m *batchBrowserScreen) View() tea.View {
 		view.KeyboardEnhancements.ReportEventTypes = m.flow.submit
 		keys = m.flowKeys(shortcut)
 	}
-	footer := []string{"  "}
-	for _, key := range keys {
-		last := len(footer) - 1
-		gap := ""
-		if footer[last] != "  " {
-			gap = "  "
-		}
-		if ansi.StringWidth(footer[last]+gap+key) > width {
-			footer = append(footer, "  "+key)
-		} else {
-			footer[last] += gap + key
-		}
+	var footer []string
+	if csv == nil {
+		footer = batchBrowserShortcuts(keys, width, "  ")
 	}
-	footer = append([]string{""}, footer...)
 	if m.kind == "return" {
 		var lines []string
 		if m.title != "" {
@@ -505,13 +600,15 @@ func (m *batchBrowserScreen) View() tea.View {
 	if !inline {
 		searchWidth = contentWidth
 	}
-	query, x := m.searchView(searchWidth - 8)
+	label := accent.Render("/") + " " + lipgloss.NewStyle().Bold(colors).Render("Find batch") + "  "
+	labelWidth := ansi.StringWidth(label)
+	query, x := m.searchView(searchWidth - labelWidth)
 	if m.input.Value() == "" {
 		query = muted.Render(query)
 	}
-	search := "Search  " + query
+	search := label + query
 	if m.searchFocused {
-		cursor = tea.NewCursor(10+x, 0)
+		cursor = tea.NewCursor(2+labelWidth+x, 0)
 		cursor.Shape = tea.CursorBar
 		cursor.Blink = true
 	}
@@ -639,6 +736,61 @@ func (m *batchBrowserScreen) View() tea.View {
 	}
 	lines = append(lines, footer...)
 	return finish(lines, cursor)
+}
+
+func (m *batchBrowserScreen) csvFinderField(width int, muted, accent lipgloss.Style, colors bool) (string, int) {
+	label := accent.Render("/") + " " + lipgloss.NewStyle().Bold(colors).Render("Find row") + "  "
+	offset := ansi.StringWidth(label)
+	available := max(1, width-offset)
+	selected := m.querySelected && m.input.Value() != ""
+	if selected && !colors {
+		available = max(1, available-2)
+	}
+	value, x := m.searchView(available)
+	switch {
+	case selected && colors:
+		value = lipgloss.NewStyle().Reverse(true).Render(value)
+	case selected:
+		value = "[" + value + "]"
+		x++
+	case m.input.Value() == "" && !m.searchFocused:
+		return strings.TrimRight(label, " "), offset
+	case m.input.Value() == "":
+		value = muted.Render(value)
+	}
+	return label + value, offset + x
+}
+
+// Typing replaces a selected query. A horizontal arrow collapses the selection.
+func (m *batchBrowserScreen) updateSearchField(message tea.Msg) tea.Cmd {
+	if m.querySelected {
+		switch msg := message.(type) {
+		case tea.PasteMsg:
+			m.querySelected = false
+			if msg.Content != "" {
+				m.input.SetValue("")
+			}
+		case tea.KeyPressMsg:
+			m.querySelected = false
+			switch msg.String() {
+			case "left":
+				m.input.CursorStart()
+				return nil
+			case "right":
+				m.input.CursorEnd()
+				return nil
+			case "backspace", "delete":
+				m.input.SetValue("")
+			default:
+				if msg.Text != "" {
+					m.input.SetValue("")
+				}
+			}
+		}
+	}
+	var command tea.Cmd
+	m.input, command = m.input.Update(message)
+	return command
 }
 
 // Search uses terminal-cell positions, including escaped text and complete graphemes.

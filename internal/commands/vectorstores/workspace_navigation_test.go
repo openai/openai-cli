@@ -163,10 +163,10 @@ func TestWorkspaceFeedbackAndFooterStayLocal(t *testing.T) {
 	assert.Contains(t, m.View().Content, "Source files remain")
 	lines := strings.Split(ansi.Strip(m.View().Content), "\n")
 	for i, line := range lines {
-		if strings.Contains(line, "└") {
-			require.Positive(t, i)
-			assert.Contains(t, lines[i-1], "↑↓ choose", "footer sits immediately inside the bottom border")
-			assert.Equal(t, len(lines)-1, i)
+		if strings.Contains(line, "╰") {
+			require.Less(t, i+1, len(lines))
+			assert.Contains(t, lines[i+1], "↑↓ move", "footer sits immediately below the bottom border")
+			assert.Contains(t, lines[len(lines)-1], "Esc exit")
 			return
 		}
 	}

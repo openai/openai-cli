@@ -96,7 +96,8 @@ func TestImagePickerWorkspaceWrappedTextRetainsEveryBoundaryByte(t *testing.T) {
 		m := pickerForTest(t)
 		m.width, m.height, m.workspace = width, 40, true
 		original := strings.Repeat("0123456789", 28)
-		w := &imagePickerWorkspace{out: out, rows: []string{original}}
+		w := &imagePickerWorkspace{out: out}
+		w.addDetail(original, imageSecondary)
 		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
 		var reconstructed strings.Builder
 		for _, row := range w.painted[w.bodyStart:w.bodyEnd] {
@@ -134,7 +135,7 @@ func TestImagePickerWorkspaceSeparatesImageContent(t *testing.T) {
 	}
 	w := &imagePickerWorkspace{}
 	w.appendImage(imagePickerWorkspaceImage{rows: []string{"pixels"}})
-	require.Empty(t, w.rows, "captions must not enter request diagnostics")
+	require.Empty(t, w.diagnostics, "captions must not enter request diagnostics")
 	require.Equal(t, []string{"pixels"}, w.images[0].rows)
 }
 

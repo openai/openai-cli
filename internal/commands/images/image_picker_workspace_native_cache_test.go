@@ -28,7 +28,14 @@ func requireNativeCacheBound(t *testing.T, w *imagePickerWorkspace) {
 	for _, payload := range w.nativeCache {
 		cacheBytes += len(payload.text)
 	}
-	for _, rows := range [][]string{w.rows, w.displayRows, w.expandedRows, w.painted} {
+	var diagnostics []string
+	for _, diagnostic := range w.diagnostics {
+		diagnostics = append(diagnostics, diagnostic.heading)
+		for _, detail := range diagnostic.details {
+			diagnostics = append(diagnostics, detail.text)
+		}
+	}
+	for _, rows := range [][]string{diagnostics, w.displayRows, w.expandedRows, w.painted} {
 		for _, text := range rows {
 			require.NotContains(t, text, "\x1b_G", "layout and paint state must contain no payload copies")
 			require.NotContains(t, text, "\x1b]1337;", "layout and paint state must contain no payload copies")

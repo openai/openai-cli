@@ -17,6 +17,8 @@ import (
 
 type managementState struct {
 	storeFilter              string
+	filterReturnFocus        int
+	filterReturnSelected     int
 	file                     *openai.VectorStoreFile
 	batch                    *openai.VectorStoreFileBatch
 	fileOrigin, documentBack string
@@ -52,20 +54,34 @@ func (m *workspace) managementMenu() []string {
 }
 
 var managementForms = map[string]string{
-	"filter": "Search stores by name or ID", "rename": "Store name", "expiration": "Days since last activity, or never",
+	"rename": "Store name", "expiration": "Days since last activity, or never",
 	"metadata": "Metadata (JSON object of strings)", "attributes": "Attributes (JSON object)",
 	"delete-store": "Confirm store ID", "remove-file": "Confirm file ID",
 	"open-batch": "Batch ID", "cancel-batch": "Confirm batch ID", "attach-options": "Attachment options (JSON object)",
 }
 
+func (m *workspace) storeFinderQuery() string {
+	if m.page == "filter" {
+		return m.editor.Value()
+	}
+	return m.storeFilter
+}
+
+func storeDisplayName(name string) string {
+	if name == "" {
+		return "Untitled store"
+	}
+	return name
+}
+
 func (m *workspace) filteredStores() []openai.VectorStore {
-	query := strings.ToLower(m.storeFilter)
+	query := strings.ToLower(m.storeFinderQuery())
 	if query == "" {
 		return m.stores
 	}
 	var result []openai.VectorStore
 	for _, store := range m.stores {
-		if strings.Contains(strings.ToLower(store.Name), query) || strings.Contains(strings.ToLower(store.ID), query) {
+		if strings.Contains(strings.ToLower(storeDisplayName(store.Name)), query) || strings.Contains(strings.ToLower(store.ID), query) {
 			result = append(result, store)
 		}
 	}
@@ -75,8 +91,6 @@ func (m *workspace) filteredStores() []openai.VectorStore {
 func (m *workspace) managementInput(page string) {
 	value := ""
 	switch page {
-	case "filter":
-		value = m.storeFilter
 	case "rename":
 		value = m.store.Name
 	case "expiration":
@@ -101,7 +115,7 @@ func (m *workspace) managementInput(page string) {
 		}
 		m.editor.SetValue(value)
 		m.editor.Placeholder = map[string]string{
-			"filter": "Store name or ID", "rename": "Name your vector store", "expiration": "Days, or never",
+			"rename": "Name your vector store", "expiration": "Days, or never",
 			"metadata": "{}", "attributes": "{}", "attach-options": "{}",
 			"delete-store": "vs_…", "remove-file": "file-…", "open-batch": "vsfb_…", "cancel-batch": "vsfb_…",
 		}[page]
@@ -218,9 +232,6 @@ func (m *workspace) activateManagement() (tea.Cmd, bool) {
 			return workMessage{store: store, err: err}
 		}), true
 	}
-	if m.page == "stores" && m.focus == 4 {
-		return m.enter("filter"), true
-	}
 	if menu := m.managementMenu(); menu != nil {
 		return m.activateManagementMenu(menu[m.selected]), true
 	}
@@ -324,7 +335,7 @@ func (m *workspace) activateManagementMenu(action string) tea.Cmd {
 			return workMessage{managementResult: managementResult{content: content}, err: err}
 		})
 	case "Watch progress":
-		return m.watchFile(m.file.ID, false)
+		return m.pollFile("watch", m.file.ID, 0, false)
 	case "Edit attributes", "Remove attachment":
 		if !m.mutable() {
 			return nil
@@ -339,9 +350,7 @@ func (m *workspace) activateManagementMenu(action string) tea.Cmd {
 			{"Created", displayTimestamp(m.batch.CreatedAt)}, {"File counts", compactJSON(m.batch.FileCounts)},
 		}, "batch")
 	case "Batch files":
-		m.files, m.fileNext = nil, ""
-		m.enter("batchfiles")
-		return m.loadFiles(false)
+		return m.openFileList("batchfiles")
 	case "Refresh status":
 		return m.getBatch(m.batch.ID)
 	case "Cancel processing":
@@ -372,10 +381,6 @@ func (m *workspace) getBatch(id string) tea.Cmd {
 
 func (m *workspace) submitManagement() tea.Cmd {
 	page, value := m.page, m.editor.Value()
-	if page == "filter" {
-		m.storeFilter = value
-		return m.enter("stores")
-	}
 	if page == "attach-options" {
 		opts, err := parseAttachOptions(value)
 		if err != nil {
@@ -503,7 +508,7 @@ func (m *workspace) completeManagement(msg workMessage) (tea.Cmd, bool) {
 		}
 		m.batch = msg.batch
 		m.selectedSources = map[string]bool{}
-		return m.enterWithNote("batch", "Batch status: "+string(msg.batch.Status)), true
+		return m.enterWithNote("batch", "Batch status: "+cleanLine(string(msg.batch.Status))), true
 	case "manage-store":
 		m.setStore(msg.store)
 		return m.enter("manage"), true

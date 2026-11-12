@@ -87,7 +87,7 @@ def main():
                                             width=args.width, height=args.height,
                                             cwd=home if args.save_path else None,
                                             max_output_bytes=1_000_000, deadline=time.monotonic()+45)
-                terminal.wait('Search  ')
+                terminal.wait('Esc exit')
                 settle(terminal)
                 def save(name):
                     header = {'version': 2, 'width': args.width, 'height': args.height,
@@ -98,7 +98,7 @@ def main():
                     result['screens'][name] = {'events': len(terminal.events), 'text': screen}
                     return screen
                 if args.query:
-                    terminal.send(args.query.encode())
+                    terminal.send(b'\x1b[200~' + args.query.encode() + b'\x1b[201~')
                     terminal.send(b'\x1b[D')
                     settle(terminal)
                 if args.search_focus:
@@ -214,7 +214,7 @@ def main():
                         settle(terminal)
                     at = len(terminal.raw)
                     terminal.send(b'\x1b')
-                    terminal.wait('Search  ', after=at)
+                    terminal.wait('Esc exit', after=at)
                     settle(terminal)
                 terminal.send(b'\x1b')
                 terminal.finish(0, expect_alternate_screen=True)

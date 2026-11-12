@@ -26,7 +26,8 @@ Choose a batch to read its results, errors, input requests, or details.
 Expand Save a file to choose output, error, or input files.
 Press Enter to save the suggested filename. Press Ctrl+L to choose another folder.
 The next file from that batch uses the selected folder. You can also type a full path.
-Search applies to the loaded page. Use Next page to reach older batches.
+Press `/` from a batch row to focus **Find batch**. You can also start typing to filter the loaded page.
+In the field, type or paste an endpoint such as `/v1/responses`. Use Next page to reach older batches.
 Press Ctrl+R to reload the first page.
 Escape returns to batch actions or the batch list.
 At the batch list, Escape exits. Ctrl+C exits from any screen.
@@ -70,6 +71,12 @@ For example, a support team can classify tickets from a CSV with `ticket_id` and
 9. Press Enter to submit the batch.
 10. When processing ends, open **View rows with answers**.
 11. To save a copy, press `s`. Ctrl+S lets you choose another filename or folder.
+
+The row list opens in compact view. The controls appear below the frame.
+Press Ctrl+G to switch between compact and full view. Both views keep your search and selected row.
+The filename and row count appear above the spreadsheet. Press `/` to filter by row text or answer.
+Use the arrows to select a match. Enter expands its details. Escape returns to the matches.
+Saving exports the entire spreadsheet, including rows outside the filter.
 
 CSV preparation runs locally. The browser uses the API to list existing batches.
 Confirmation uploads one Responses request per row and starts a batch that can incur charges.
