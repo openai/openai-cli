@@ -6,8 +6,14 @@ Open the workspace in a terminal:
 openai vector-stores manage
 ```
 
-Use `openai vector-stores manage --full-screen` to start expanded.
 Press Ctrl+G to switch between compact and expanded views. Both views show shortcuts at the bottom.
+Use `openai vector-stores manage --full-screen` to start expanded, even when your terminal handles Ctrl+G itself.
+
+In VS Code on Linux, Ctrl+G can open the terminal's recent-directory picker. Press Esc to dismiss it.
+To switch views with Ctrl+G, add `"-workbench.action.terminal.goToRecentDirectory"` to the
+`terminal.integrated.commandsToSkipShell` array in your VS Code `settings.json`.
+This also forwards Ctrl+G to other programs in the focused terminal.
+[VS Code terminal keyboard shortcuts](https://code.visualstudio.com/docs/terminal/advanced#_keyboard-shortcuts-and-the-shell)
 
 `openai vector-stores` displays the available commands and returns to the shell.
 The workspace uses your current API key, project, organization, and endpoint settings.
