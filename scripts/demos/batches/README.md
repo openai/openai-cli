@@ -100,8 +100,9 @@ This trial does not establish live API or native terminal compatibility.
 
 Search filters the loaded page. Ctrl+R reloads the first page and preserves the search text.
 Arrow keys select a batch. Enter opens it. Escape returns or exits.
-Up from the first batch enters Search. Down returns to the matching batches.
-Typing or pasting also starts Search. Search shows a caret; the batch list shows the selected row.
+Press `/` from a batch row to focus **Find batch**. Up from the first batch also focuses the field.
+Type or paste `/v1/responses` in the field to match an endpoint.
+Typing or pasting from a row also filters the list. Down returns to the matching batches.
 Browser menus use the full terminal, with a rounded panel and keyboard controls at the bottom.
 Small terminals omit the panel to preserve space for navigation.
 The batch overview shows status and request counts. Ctrl+R refreshes that batch without opening another screen.

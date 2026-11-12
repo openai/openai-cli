@@ -78,7 +78,7 @@ def main():
             print("$ openai batches browse\r", flush=True)
             terminal = RelayTerminal("openai", ["batches", "browse"], environment, width=104, height=42,
                                      max_output_bytes=1_000_000, deadline=time.monotonic()+45)
-            terminal.wait("Search  ")
+            terminal.wait("Esc exit")
             pause(terminal)
             terminal.send(b"\x1b[B")
             pause(terminal, 0.4)
@@ -158,7 +158,7 @@ def main():
             terminal.wait("View results", after=offset)
             offset = len(terminal.raw)
             terminal.send(b"\x1b")
-            terminal.wait("Search  ", after=offset)
+            terminal.wait("Esc exit", after=offset)
             pause(terminal, 0.4)
             terminal.send(b"\x1b")
             terminal.finish(0, expect_alternate_screen=True)

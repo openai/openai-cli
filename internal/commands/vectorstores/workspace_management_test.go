@@ -200,9 +200,15 @@ func TestIndexingFileMenuAllowsRemovalFromStoreAndBatch(t *testing.T) {
 
 			modelKey(m, tea.KeyDown)
 			require.Contains(t, m.View().Content, "› Watch progress")
-			nextPoll := modelComplete(t, m, modelKey(m, tea.KeyEnter))
+			m.pendingFile = "file_unrelated"
+			firstPoll := modelKey(m, tea.KeyEnter)
+			require.Contains(t, m.View().Content, "Waiting for first status check")
+			require.NotContains(t, m.View().Content, m.pendingFile)
+			nextPoll := modelComplete(t, m, firstPoll)
 			require.NotNil(t, nextPoll, "explicit watch continues while indexing")
+			require.Contains(t, m.View().Content, "Status checks  1")
 			modelKey(m, tea.KeyEscape)
+			require.NotContains(t, m.View().Content, m.pendingFile)
 			modelComplete(t, m, nextPoll)
 			require.False(t, m.busy)
 			require.Equal(t, "file", m.page)
@@ -351,11 +357,13 @@ func TestManagementFilteringExpiryAndCancellation(t *testing.T) {
 	m := managementModel(t, func(w http.ResponseWriter, r *http.Request) { requests++; serviceJSON(w, 500, `{}`) })
 	m.stores = append(m.stores, openai.VectorStore{ID: "vs_other", Name: "other"})
 	m.storeNext = "vs_more"
-	require.Nil(t, managementForm(t, m, "filter", "OTHER"))
+	m.enter("filter")
+	m.editor.SetValue("OTHER")
+	require.Nil(t, modelKey(m, tea.KeyEnter))
 	assert.Equal(t, "stores", m.page)
 	require.Len(t, m.filteredStores(), 1)
 	assert.Equal(t, "vs_other", m.filteredStores()[0].ID)
-	assert.Contains(t, m.View().Content, "loaded stores only")
+	assert.Contains(t, m.View().Content, "1 match · 2 loaded")
 	m.store.Status = "expired"
 	for _, page := range []string{"rename", "expiration", "metadata", "attributes", "cancel-batch"} {
 		m.file = &openai.VectorStoreFile{ID: "file_demo"}

@@ -49,13 +49,23 @@ func openUpload(ctx context.Context, path string) (request.FileUpload, error) {
 	// Never reopen the path after checking the owned descriptor.
 	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return request.FileUpload{}, workspaceFailure("Could not read the selected file. Check its path and permissions.", err)
+		message := "Could not open this file. Check its path and permissions."
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			message = "File not found.\nCheck the path or browse for the file."
+		case errors.Is(err, os.ErrPermission):
+			message = "You don't have permission to read this file.\nChoose a file you can open."
+		}
+		return request.FileUpload{}, workspaceFailure(message, err)
 	}
 	info, err := file.Stat()
 	if err != nil {
 		return request.FileUpload{}, errors.Join(workspaceFailure("Could not read the selected file. Check its path and permissions.", err), file.Close())
 	}
 	if !info.Mode().IsRegular() {
+		if info.IsDir() {
+			return request.FileUpload{}, errors.Join(workspaceFailure("You selected a folder.\nChoose a file inside it.", nil), file.Close())
+		}
 		return request.FileUpload{}, errors.Join(workspaceFailure("Choose a regular file to upload.", nil), file.Close())
 	}
 	if err := ctx.Err(); err != nil {
