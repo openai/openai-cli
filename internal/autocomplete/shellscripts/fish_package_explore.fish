@@ -35,8 +35,8 @@ if status is-interactive
             command -sq openai; and command /usr/bin/test (command -s openai) -ef /usr/bin/openai 2>/dev/null; or return
             builtin source /usr/share/openai-cli/explore-selection.fish; or return
             function openai
-                if __openai_is_bare_explore $argv; and __openai_package_explore_allowed; and command /usr/bin/test (command -s openai) -ef /usr/bin/openai 2>/dev/null
-                    __openai_fill_explore /usr/bin/openai
+                if __openai_is_interactive_explore $argv; and __openai_package_explore_allowed; and command /usr/bin/test (command -s openai) -ef /usr/bin/openai 2>/dev/null
+                    __openai_fill_explore /usr/bin/openai once $argv
                     return $status
                 end
                 command openai $argv

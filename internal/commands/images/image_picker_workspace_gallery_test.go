@@ -103,7 +103,7 @@ func TestImagePickerGalleryPreservesAnchorWhenEarlierRowsChange(t *testing.T) {
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	require.Equal(t, relative, w.offset-w.galleryStarts[1])
 	require.Equal(t, 1, w.selected)
-	w.rows = append(w.rows, "new diagnostic")
+	w.addDetail("new diagnostic", imageSecondary)
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	require.Equal(t, relative, w.offset-w.galleryStarts[1])
 }
@@ -169,7 +169,7 @@ func TestImagePickerGalleryRetryRestoresImageAfterDiagnostics(t *testing.T) {
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	w.scroll(5)
 	saved := w.images[2].inlineOffset
-	w.rows = []string{"synthetic request failure"}
+	w.addDetail("synthetic request failure", imageSecondary)
 	w.galleryDetails = true
 	require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
 	require.Zero(t, w.offset)

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -45,6 +46,7 @@ func TestBatchResultsFileSelectionAndRequestOptions(t *testing.T) {
 			defer server.Close()
 			var out bytes.Buffer
 			root := batchRecordsTestCommand(t, server.URL, &out)
+			require.NoError(t, requestflag.ConfigureInputMode(root, "literal"))
 			err := root.Run(t.Context(), []string{"openai", "--project", "project_records", "--header", "X-Record-Test: test-value", "batches", "results", "batch_example", "--file", selected})
 			require.NoError(t, err)
 			require.Equal(t, []string{"/batches/batch_example", "/files/file_" + selected + "/content"}, paths)

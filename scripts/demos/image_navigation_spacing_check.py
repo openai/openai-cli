@@ -193,7 +193,7 @@ def capture(args):
                     assert path.stat().st_mode & 0o777 == 0o600, "draft is not private"
                     state = json.loads(path.read_text())
                     assert state == dict(version=2, prompt="A tiny orange robot",
-                                         model="gpt-image-2.5-sunburst", size="1024x1024",
+                                         model="gpt-image-2.6-sunburst", size="1024x1024",
                                          quality="auto", background="auto", format="jpeg",
                                          count="1", output_dir=""), "draft contains unexpected fields or unconfirmed choices"
                 report = {

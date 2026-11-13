@@ -3,10 +3,21 @@ package audiomedia
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+func TestPCM16EnvelopeKeepsSplitStereoFrames(t *testing.T) {
+	var envelope PCM16Envelope
+	for _, sampleByte := range []byte{0, 0, 0, 128, 0, 64, 0, 0, 0} {
+		envelope.Add([]byte{sampleByte}, 2)
+	}
+	if got := envelope.Peaks(); !slices.Equal(got, []float64{1, 0.5}) {
+		t.Fatalf("unexpected peaks from split frames: %v", got)
+	}
+}
 
 func TestWaveformPreservesFractionalAmplitudeShape(t *testing.T) {
 	peaks := []float64{.08, .18, .36, .72, .95, .55, .25, .10}

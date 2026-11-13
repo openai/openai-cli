@@ -330,7 +330,7 @@ func TestBatchBrowserCSVExportAfterReopening(t *testing.T) {
 	visits, picks, lists := 0, 0, 0
 	err := (workflow{options: testOptions()}).browseBatchRecords(t.Context(), &cli.Command{}, client, nil, batch, "output", actions, func(_ context.Context, m *batchBrowserScreen) error {
 		switch {
-		case m.kind == "requests":
+		case m.kind == "requests" && m.requestState.csv == nil:
 			lists++
 			require.Equal(t, 1, lists, "source corrections stay in the picker")
 			require.True(t, m.requestState.offerCSV)
@@ -350,6 +350,7 @@ func TestBatchBrowserCSVExportAfterReopening(t *testing.T) {
 			m.chosen = "value"
 		case m.title == "Reading CSV results":
 		case m.title == "Rows with answers":
+			require.NotNil(t, m.requestState.csv)
 			visits++
 			if visits == 1 {
 				m.chosen = "save"

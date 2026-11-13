@@ -8,9 +8,11 @@ import (
 	"net/url"
 	"os"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	"github.com/openai/openai-cli/internal/commandsuggest"
 	requestconfig "github.com/openai/openai-cli/internal/request"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-cli/internal/updatenotice"
 	"github.com/urfave/cli/v3"
@@ -42,6 +44,10 @@ func Run(ctx context.Context, argv []string, app *cli.Command) int {
 		return 0
 	}
 	ConfigureCommand(app)
+	inputModeError := requestflag.ConfigureInputMode(app, os.Getenv(requestflag.InputModeEnv))
+	if inputModeError != nil {
+		app.Before = func(ctx context.Context, _ *cli.Command) (context.Context, error) { return ctx, inputModeError }
+	}
 	finishSuggestions := commandsuggest.Configure(app)
 	defer finishSuggestions()
 	app.Flags = append(app.Flags, requestconfig.NewRequestHeaderFlag())
@@ -57,7 +63,9 @@ func Run(ctx context.Context, argv []string, app *cli.Command) int {
 	if err == nil {
 		SetupImagePickerShellOnFirstRun(ctx, argv, app)
 		err = RunWithOutputPolicy(ctx, app, func(ctx context.Context) error {
-			return runWithRequestConfiguration(ctx, app, args, completing)
+			return clihelp.RunWithPager(ctx, app, argv, func() error {
+				return runWithRequestConfiguration(ctx, app, args, completing)
+			})
 		})
 	}
 	if err != nil {

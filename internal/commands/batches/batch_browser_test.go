@@ -96,7 +96,7 @@ func TestBatchBrowserSearchNavigationAndSafety(t *testing.T) {
 	m.input.SetValue("")
 	m.filter()
 	require.NotContains(t, m.View().Content, "\x1b[31m")
-	require.Contains(t, m.View().Content, "Search  ")
+	require.Contains(t, m.View().Content, "Find batch")
 	m.Update(tea.WindowSizeMsg{Width: 29, Height: 7})
 	m.chosen = ""
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})

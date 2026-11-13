@@ -7,9 +7,11 @@ import (
 
 	"github.com/openai/openai-cli/generated/commands"
 	"github.com/openai/openai-cli/internal/app"
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/commands/explore"
 	"github.com/openai/openai-cli/internal/commandsuggest"
 	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v3"
 )
 
 func TestExploreBrowsesInstalledCommandsAlphabetically(t *testing.T) {
@@ -58,6 +60,102 @@ func TestEveryTaskPhraseFindsItsInstalledCommandFirst(t *testing.T) {
 					require.Equal(t, "openai "+path, strings.TrimSuffix(matches[0].Command, " --help"),
 						"first result for %q", phrase.Text)
 				})
+			}
+		})
+	}
+}
+
+func TestExploreDiscoversEveryVisibleRoute(t *testing.T) {
+	root := commands.Command
+	app.ConfigureCommand(root)
+	_, _, err := app.ConfigureHelp(root, []string{"openai", "explore"})
+	require.NoError(t, err)
+	catalog := explore.CandidatesForTest(root, "openai", "openai", "zsh")
+	phrases := map[string]string{"create": "make a new", "list": "enumerate", "retrieve": "look up", "update": "modify", "delete": "remove"}
+	var routes, operations int
+	first := func(query, want string) {
+		t.Helper()
+		matches := commandsuggest.Search(catalog, query)
+		require.NotEmpty(t, matches, "search for %q", query)
+		require.Equal(t, want, matches[0].Command, "first result for %q", query)
+	}
+	var walk func(*cli.Command, string)
+	walk = func(parent *cli.Command, path string) {
+		for _, child := range parent.VisibleCommands() {
+			name := strings.TrimSpace(path + " " + child.Name)
+			if child.Metadata["help-command-section"] != "Retired commands" {
+				want := "openai " + name
+				if len(child.VisibleCommands()) > 0 {
+					want += " --help"
+				}
+				first(name, want)
+				routes++
+				phrase := phrases[child.Name]
+				if path != "" && phrase != "" {
+					first(phrase+" "+strings.ReplaceAll(path, "-", " "), want)
+					operations++
+				}
+			}
+			walk(child, name)
+		}
+	}
+	walk(root, "")
+	require.Positive(t, operations)
+	t.Logf("checked %d visible routes and %d resource operations", routes, operations)
+}
+
+func BenchmarkExploreSearchInstalledCatalog(b *testing.B) {
+	root := commands.Command
+	app.ConfigureCommand(root)
+	_, _, err := app.ConfigureHelp(root, []string{"openai", "explore"})
+	require.NoError(b, err)
+	candidates := explore.CandidatesForTest(root, "openai", "openai", "zsh")
+	for _, query := range []string{"models list", "speech composer", "upload mime type", "list files in a vector store", "file expiration policy", "unknown nonsense"} {
+		b.Run(query, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				commandsuggest.Search(candidates, query)
+			}
+		})
+	}
+}
+
+func TestExploreSearchesResolvedHelp(t *testing.T) {
+	local := &cli.StringFlag{Name: "mode", Usage: "supersededflag", Value: "configuredvalue"}
+	sibling := &cli.Command{Name: "sibling", Flags: []cli.Flag{&cli.StringFlag{Name: "mode"}}}
+	command := &cli.Command{Name: "widgets", Usage: "Inspect widgets.", Description: "supersededcommand",
+		Flags: []cli.Flag{local, &cli.StringFlag{Name: "hidden", Usage: "hiddenflagdetail", Hidden: true}},
+		Metadata: map[string]any{"help-content": clihelp.Content{
+			Summary: "Documented overview", Description: "documentedreference", CompactNote: "compactguidance",
+			Examples: []clihelp.Example{{Command: "widgets exampleoperand"}},
+		}},
+	}
+	command.Metadata["help-flag-usages"] = []clihelp.FlagUsage{
+		{Owner: sibling, Names: []string{"mode"}, Usage: "wrongowner", Brief: "wrongsynopsis"},
+		{Owner: command, Names: []string{"mode"}, Usage: "documentedoption", Brief: "documentedbrief"},
+		{Owner: command, Names: []string{"mode"}, Usage: "lowerpriority", Brief: "lowerbrief"},
+	}
+	fallback := &cli.Command{Name: "fallback", Description: "originalreference", Flags: []cli.Flag{&cli.StringFlag{Name: "setting", Usage: "originalflag"}}}
+	catalog := explore.CandidatesForTest(&cli.Command{Commands: []*cli.Command{command, fallback}}, "openai", "openai", "zsh")
+	for _, tc := range []struct {
+		path  string
+		words []string
+	}{
+		{"widgets", []string{"documentedreference", "compactguidance", "documentedoption", "documentedbrief", "overview"}},
+		{"fallback", []string{"originalreference", "originalflag"}},
+	} {
+		for _, word := range tc.words {
+			t.Run(word, func(t *testing.T) {
+				matches := commandsuggest.Search(catalog, tc.path+" "+word)
+				require.NotEmpty(t, matches)
+				require.Equal(t, "openai "+tc.path, matches[0].Command)
+			})
+		}
+	}
+	for _, word := range []string{"supersededflag", "supersededcommand", "wrongowner", "wrongsynopsis", "lowerpriority", "lowerbrief", "configuredvalue", "hiddenflagdetail", "exampleoperand"} {
+		t.Run(word, func(t *testing.T) {
+			for _, candidate := range commandsuggest.Search(catalog, "widgets "+word) {
+				require.NotEqual(t, "openai widgets", candidate.Command)
 			}
 		})
 	}

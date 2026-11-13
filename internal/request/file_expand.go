@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/openai/openai-cli/internal/requestflag"
 )
 
 // FileEmbedStyle selects text substitution or streaming upload expansion.
@@ -50,12 +52,46 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *OnceStdi
 	if len(sources) != 0 {
 		source = sources[0]
 	}
+	return embedInputValue(v, embedStyle, stdin, goos, source, false)
+}
+
+func embedInputValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *OnceStdinReader, goos string, source FileInputSource, structured bool) (reflect.Value, error) {
+	if !v.IsValid() {
+		return reflect.Zero(reflect.TypeFor[any]()), nil
+	}
 	// Unwrap interface values to get the concrete type
 	if v.Kind() == reflect.Interface {
 		if v.IsNil() {
 			return v, nil
 		}
 		v = v.Elem()
+	}
+	if v.Type() == reflect.TypeFor[requestflag.InputValue]() {
+		input := v.Interface().(requestflag.InputValue)
+		if option := input.Option(); option != "" {
+			source.Option = option
+		}
+		value, err := input.Resolve(func(raw string) (string, error) {
+			// Structured sources must resolve as text even in multipart requests.
+			text, err := embedInputValue(reflect.ValueOf(raw), EmbedText, stdin, goos, source, false)
+			if err != nil {
+				return "", err
+			}
+			return text.String(), nil
+		}, func(value any, expandSources bool) (any, error) {
+			resolved, err := embedInputValue(reflect.ValueOf(value), embedStyle, stdin, goos, source, !expandSources)
+			if err != nil {
+				return nil, err
+			}
+			return resolved.Interface(), nil
+		})
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		if value == nil {
+			return reflect.Zero(reflect.TypeFor[any]()), nil
+		}
+		return reflect.ValueOf(value), nil
 	}
 	// Nullable string flags use pointers. Expand their values just like ordinary
 	// strings, retaining nil as JSON null and leaving other pointer types alone.
@@ -75,7 +111,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *OnceStdi
 		for iter.Next() {
 			key := iter.Key()
 			val := iter.Value()
-			newVal, err := embedFilesValue(val, embedStyle, stdin, goos, source.child(key.String()))
+			newVal, err := embedInputValue(val, embedStyle, stdin, goos, source.child(key.String()), structured)
 			if err != nil {
 				return reflect.Value{}, errors.Join(err, CloseFileUploads(result.Interface()))
 			}
@@ -90,7 +126,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *OnceStdi
 		// Use `[]any` to allow for types to change when embedding files
 		result := reflect.MakeSlice(reflect.TypeOf([]any{}), v.Len(), v.Len())
 		for i := 0; i < v.Len(); i++ {
-			newVal, err := embedFilesValue(v.Index(i), embedStyle, stdin, goos, source)
+			newVal, err := embedInputValue(v.Index(i), embedStyle, stdin, goos, source, structured)
 			if err != nil {
 				return reflect.Value{}, errors.Join(err, CloseFileUploads(result.Slice(0, i).Interface()))
 			}
@@ -101,6 +137,9 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *OnceStdi
 	case reflect.String:
 		if v.Type() == reflect.TypeOf(UntrustedStdinValue("")) {
 			return reflect.ValueOf(v.String()), nil
+		}
+		if structured {
+			return v, nil
 		}
 
 		// FilePathValue is always treated as a file path without needing the "@" prefix.

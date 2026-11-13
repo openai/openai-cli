@@ -15,7 +15,7 @@ func TestMainExploreHelpShowsLocalOptions(t *testing.T) {
 	if got.code != 0 || got.stderr != "" {
 		t.Fatalf("Explore help failed: %+v", got)
 	}
-	for _, want := range []string{"--format", "--format-error", "openai help --all explore"} {
+	for _, want := range []string{"--full-screen", "Ctrl+G", "--format", "--format-error", "openai help --all explore"} {
 		if !strings.Contains(got.stdout, want) {
 			t.Errorf("Explore help omitted %q", want)
 		}
@@ -127,6 +127,27 @@ func TestMainExploreRanksCommandsForCommonTasks(t *testing.T) {
 		{"download file", "files download"},
 		{"list my files", "files list"},
 		{"how do I count tokens offline", "tokenizer count"},
+		{"show me all vector stores", "vector-stores list"},
+		{"look up a batch by id", "batches retrieve"},
+		{"remove a vector store", "vector-stores delete"},
+		{"list files in a vector store", "vector-stores files list"},
+		{"show service accounts in a project", "projects service-accounts list"},
+		{"start a new conversation", "conversations create"},
+		{"file expiration policy", "files upload"},
+		{"images models quota", "images models"},
+		{"files upload until deleted", "files upload"},
+		{"speech composer", "speak"},
+		{"turn text into speech", "speak"},
+		{"convert speech into text", "transcribe"},
+		{"open the speech editor", "speak"},
+		{"speech compo", "speak"},
+		{"speach composer", "speak"},
+		{"voice editor", "speak"},
+		{"image studio", "images generate"},
+		{"image quality settings", "images generate"},
+		{"upload mime type", "uploads create"},
+		{"embedding dimensions", "embeddings create"},
+		{"transcribe timestamps", "transcribe"},
 		{"text-to-speech", "speak"},
 		{"speech-to-text", "transcribe"},
 		{"count tokens offline", "tokenizer count"},

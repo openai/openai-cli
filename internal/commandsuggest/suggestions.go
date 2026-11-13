@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -50,7 +51,7 @@ func Configure(root *cli.Command) func() {
 	if err != nil || fd < 3 || fd > 1024 {
 		return func() {}
 	}
-	sink := privateSink(fd)
+	sink := terminal.OpenPrivateOutput(fd, "command-suggestions")
 	if sink == nil {
 		return func() {}
 	}

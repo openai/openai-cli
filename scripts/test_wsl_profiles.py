@@ -226,14 +226,14 @@ class LocalInventoryTests(unittest.TestCase):
         suites, digest = self.load(raw=self.raw)
         self.assertEqual(set(suites), {"imageprefs", "custom", "autocomplete", "process", "clihelp"})
         expected = {"imageprefs": (9, 21, 30), "custom": (12, 17, 29),
-                    "autocomplete": (5, 54, 59), "process": (29, 118, 147), "clihelp": (5, 1, 6)}
+                    "autocomplete": (5, 54, 59), "process": (29, 120, 149), "clihelp": (5, 1, 6)}
         total = [0, 0, 0]
         for package, counts in expected.items():
             cases = suites[package]
             observed = (len(cases), sum(map(len, cases.values())), len(pilot.test_names(cases)))
             self.assertEqual(observed, counts)
             total = [left + right for left, right in zip(total, observed)]
-        self.assertEqual(total, [60, 211, 271])
+        self.assertEqual(total, [60, 213, 273])
         self.assertEqual(digest, hashlib.sha256(self.raw).hexdigest())
         self.assertEqual(suites["process"][WELCOME], ["<loopback>", "not%url"])
         self.assertEqual(len(suites["process"]["TestMainCommandSubgroupsBareInvocation"]), 10)
@@ -578,7 +578,7 @@ class ProfileAdmissionTests(unittest.TestCase):
                 "-test.timeout=150s" if seconds == 170 else "-test.timeout=45s", "-test.v"])
         groups = [phase_named(plan, label).cases for label in ("local-process-independent", "local-process")]
         self.assertEqual([len(group) for group in groups], [23, 6])
-        self.assertEqual([len(pilot.test_names(group)) for group in groups], [130, 17])
+        self.assertEqual([len(pilot.test_names(group)) for group in groups], [132, 17])
         self.assertFalse(set(groups[0]) & set(groups[1]))
         self.assertEqual({root: list(children) for root, children in {**groups[0], **groups[1]}.items()}, suites["process"])
         self.assertEqual(set(groups[0]), pilot.INDEPENDENT_PROCESS_ROOTS)
@@ -590,7 +590,7 @@ class ProfileAdmissionTests(unittest.TestCase):
         self.assertEqual([len(pilot.test_names(group)) for group in custom], [26, 3])
         self.assertFalse(set(custom[0]) & set(custom[1]))
         self.assertEqual({root: list(children) for root, children in {**custom[0], **custom[1]}.items()}, suites["custom"])
-        self.assertEqual(sum(len(item["tests"]) for item in result["profile_results"].values()), 271)
+        self.assertEqual(sum(len(item["tests"]) for item in result["profile_results"].values()), 273)
         self.assertTrue(result["positive_installation_tests_executed"])
         self.assertEqual(result["positive_installation_tests_not_selected"], [])
         self.assertEqual(commands.deadline, 470)
@@ -612,7 +612,7 @@ class ProfileAdmissionTests(unittest.TestCase):
                           "local-process-independent", "local-autocomplete"])
         self.assertEqual(set(result["profile_results"]),
                          {"imageprefs", "clihelp", "custom-independent", "process-independent"})
-        self.assertEqual(len(result["profile_results"]["process-independent"]["tests"]), 130)
+        self.assertEqual(len(result["profile_results"]["process-independent"]["tests"]), 132)
         self.assertEqual(len(result["profile_results"]["custom-independent"]["tests"]), 26)
         self.assertEqual(len(result["profile_results"]["clihelp"]["tests"]), 6)
         self.assertNotIn("positive_installation_tests_executed", result)
@@ -663,7 +663,7 @@ class ProfileAdmissionTests(unittest.TestCase):
         executed = set().union(*(set(entry["tests"]) for entry in result["profile_results"].values()))
         omitted = set(result["positive_installation_tests_not_selected"])
         inventory = set().union(*(pilot.test_names(cases) for cases in suites.values()))
-        self.assertEqual(len(executed), 227)
+        self.assertEqual(len(executed), 229)
         self.assertEqual(len(omitted), 44)
         self.assertFalse(executed & omitted)
         self.assertEqual(executed | omitted,

@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.53.1](https://github.com/openai/openai-cli/compare/v1.53.0...v1.53.1) (2026-11-12)
+
+
+### Chores
+
+* **deps:** update openai-go to v3.99.0 ([#754](https://github.com/openai/openai-cli/issues/754)) ([905f047](https://github.com/openai/openai-cli/commit/905f047678718846f6a1f308660dcdf5bc682785))
+
+## [1.53.0](https://github.com/openai/openai-cli/compare/v1.52.0...v1.53.0) (2026-11-12)
+
+
+### Features
+
+* **api:** describe reasoning input transformations on responses ([#749](https://github.com/openai/openai-cli/issues/749)) ([54c4a56](https://github.com/openai/openai-cli/commit/54c4a56a0ddcf4a6e9314a213deaf18c16fb25ed))
+
+## [1.52.0](https://github.com/openai/openai-cli/compare/v1.51.5...v1.52.0) (2026-11-11)
+
+
+### Breaking changes
+
+* Standard list commands now browse by default when both input and output are terminals. If more results remain, the command waits for keyboard input. Add `--browse=false` to terminal-attached scripts that must continue automatically. Pipes, redirected output, and runs with a nonempty `CI` still paginate automatically. [#737](https://github.com/openai/openai-cli/pull/737)
+* Flags with a matching `-structured` option now treat ordinary text arguments literally. For example, use `openai responses create --model MODEL --input-structured @messages.json` to send structured input. Scripts that depend on implicit JSON or YAML parsing can set `OPENAI_CLI_INPUT_MODE=legacy`. [#635](https://github.com/openai/openai-cli/pull/635)
+
+### Bug Fixes
+
+* The Images studio keeps your scroll position when you switch panes while inspecting a generated command. [#734](https://github.com/openai/openai-cli/pull/734)
+
+### Chores
+
+* **deps:** bump the go-minor-and-patch group across 1 directory with 3 updates ([#738](https://github.com/openai/openai-cli/issues/738)) ([76dad0b](https://github.com/openai/openai-cli/commit/76dad0bc7ccff1ea16f25ec24c2fbc29b71fedfa))
+* **deps:** update openai-go to v3.98.0 ([#736](https://github.com/openai/openai-cli/issues/736)) ([05c8294](https://github.com/openai/openai-cli/commit/05c8294cc7185e3515486b07fb730bea0208ad0c))
+
+## [1.51.5](https://github.com/openai/openai-cli/compare/v1.51.4...v1.51.5) (2026-11-07)
+
+
+### Documentation
+
+* consolidate AGENTS.md guidance ([#731](https://github.com/openai/openai-cli/issues/731)) ([f51f83a](https://github.com/openai/openai-cli/commit/f51f83acc6f30549c51cecc2a833b14657c64809))
+
 ## [1.51.4](https://github.com/openai/openai-cli/compare/v1.51.3...v1.51.4) (2026-11-06)
 
 

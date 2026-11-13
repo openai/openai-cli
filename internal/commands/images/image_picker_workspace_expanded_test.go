@@ -105,7 +105,8 @@ func TestImagePickerWorkspaceMouseUsesReportedPanelOrigin(t *testing.T) {
 	t.Cleanup(func() { out.Close() })
 	m := pickerForTest(t)
 	m.width, m.height, m.workspace = 96, 60, true
-	w := &imagePickerWorkspace{out: out, rows: []string{"one image row"}}
+	w := &imagePickerWorkspace{out: out}
+	w.addDetail("one image row", imageSecondary)
 	p := &imagePickerInline{model: m, workspace: w, profile: colorprofile.ASCII}
 	require.NoError(t, w.draw(m, p.profile, false, true))
 	require.False(t, w.originKnown)
@@ -114,7 +115,10 @@ func TestImagePickerWorkspaceMouseUsesReportedPanelOrigin(t *testing.T) {
 	require.True(t, w.originKnown)
 	require.Equal(t, 10, w.origin)
 	// This absolute row is inside the form, although it resembles a relative image row.
-	w.rows = make([]string, 80)
+	w.diagnostics = nil
+	for range 80 {
+		w.addDetail("", imageSecondary)
+	}
 	w.displayRows = make([]string, 80)
 	w.offset = 12
 	p.updateWorkspace(tea.MouseWheelMsg{Y: w.top + 1, Button: tea.MouseWheelUp})
