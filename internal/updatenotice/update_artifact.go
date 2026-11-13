@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -316,11 +317,23 @@ func (d *releaseDelivery) checkVerifierCapabilities(ctx context.Context, directo
 	// GitHub CLI parses flags before displaying help. Use the real flags so
 	// setup works when a new GitHub CLI release changes its help text.
 	args := append([]string{"attestation", "verify"}, releaseAttestationFlags(filepath.Join(directory, updateBundleName))...)
-	args = append(args, "--help")
-	command := d.verifierCommand(ctx, directory, args...)
-	var output limitedVerification
-	command.Stdout = &output
-	if err := command.Run(); err != nil || output.exceeded {
+	probe := func(args []string) error {
+		command := d.verifierCommand(ctx, directory, args...)
+		var output limitedVerification
+		command.Stdout = &output
+		err := command.Run()
+		if output.exceeded {
+			return errUpdate
+		}
+		return err
+	}
+	if err := probe(append(args, "--help")); err != nil {
+		return errUpdate
+	}
+	// An inert shim can exit successfully without parsing any flags.
+	rejected := probe(append(args, "--openai-cli-unsupported-verifier-option", "--help"))
+	var exit *exec.ExitError
+	if ctx.Err() != nil || !errors.As(rejected, &exit) || exit.ExitCode() <= 0 {
 		return errUpdate
 	}
 	return nil

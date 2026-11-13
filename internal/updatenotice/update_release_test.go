@@ -332,6 +332,7 @@ func TestAutomaticUpdateVerifierCapabilities(t *testing.T) {
 		{"older help", "printf '%s\\n' '--deny-self-hosted-runners'", true},
 		{"new help", "printf '%s\\n' '--deny-self-hosted-runners[=true|false]'", true},
 		{"unsupported flag", "printf '%s\\n' 'unknown flag: --deny-self-hosted-runners' >&2; exit 1", false},
+		{"inert verifier", "", false},
 		{"oversized", "/usr/bin/head -c 1100000 /dev/zero", false},
 		{"canceled", "exit 0", false},
 	} {
@@ -351,6 +352,9 @@ test "$4" = '` + filepath.Join(cache.directory, updateBundleName) + `'
 test "$5 $6 $7 $8 $9 ${10}" = '--hostname github.com --repo openai/openai-cli --cert-identity ` + workflowIdentity + `'
 test "${11} ${12} ${13} ${14} ${15} ${16}" = '--source-ref refs/heads/main --deny-self-hosted-runners --format json --help'
 ` + tc.response + "\n"
+			if tc.name == "inert verifier" {
+				script = "#!/bin/sh\nexit 0\n"
+			}
 			verifier := filepath.Join(t.TempDir(), "gh")
 			if err := os.WriteFile(verifier, []byte(script), 0700); err != nil {
 				t.Fatal(err)
