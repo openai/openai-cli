@@ -131,7 +131,7 @@ func TestMainSpeakRealtime(t *testing.T) {
 			}
 			server := serveRealtimeSpeech(t, wantAuthorization, func(ctx context.Context, conn *websocket.Conn) {
 				writeSpeechEvent(t, ctx, conn, `{"type":"response.output_audio_transcript.delta","response_id":"resp_synthetic","delta":"Read this line."}`)
-				for _, chunk := range [][]byte{pcm[:2], pcm[2:]} {
+				for _, chunk := range [][]byte{pcm[:1], nil, pcm[1:]} {
 					writeSpeechEvent(t, ctx, conn, `{"type":"response.output_audio.delta","response_id":"resp_synthetic","delta":"`+base64.StdEncoding.EncodeToString(chunk)+`"}`)
 				}
 				writeSpeechEvent(t, ctx, conn, `{"type":"response.output_audio.done","response_id":"resp_synthetic"}`)
@@ -202,6 +202,36 @@ func TestMainSpeakRealtime(t *testing.T) {
 			wave, err := os.ReadFile(out)
 			if err != nil || len(wave) < 44 || string(wave[:4]) != "RIFF" || string(wave[8:12]) != "WAVE" || binary.LittleEndian.Uint32(wave[24:28]) != 24000 || !bytes.HasSuffix(wave, pcm) {
 				t.Fatalf("unexpected WAV: %x, err=%v", wave, err)
+			}
+		})
+	}
+}
+
+func TestMainSpeakRealtimeRejectsNonStringAudio(t *testing.T) {
+	for _, tc := range []struct{ name, delta string }{
+		{"null", "null"},
+		{"byte array", "[18,52]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := serveRealtimeSpeech(t, "Bearer synthetic-speech-key", func(ctx context.Context, conn *websocket.Conn) {
+				writeSpeechEvent(t, ctx, conn, `{"type":"response.output_audio.delta","response_id":"resp_synthetic","delta":"BIA="}`)
+				writeSpeechEvent(t, ctx, conn, `{"type":"response.output_audio.delta","response_id":"resp_synthetic","delta":`+tc.delta+`}`)
+				// The client may close immediately after it rejects the malformed delta.
+				_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.done","response":{"id":"resp_synthetic","status":"completed"}}`))
+			})
+			out := filepath.Join(t.TempDir(), "speech.pcm")
+			original := []byte{0x12, 0x34}
+			if err := os.WriteFile(out, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+			env := []string{"OPENAI_API_KEY=synthetic-speech-key"}
+			got := runMainDispatchWithEnv(t, "bash", env, speechTestArgs(server, out, "pcm")...)
+			if got.code != 1 || got.stdout != "" || !strings.Contains(got.stderr, "The Realtime API returned invalid audio.") {
+				t.Errorf("unexpected malformed audio result: %+v", got)
+			}
+			saved, err := os.ReadFile(out)
+			if err != nil || !bytes.Equal(saved, original) {
+				t.Fatalf("existing recording changed: %x, err=%v", saved, err)
 			}
 		})
 	}
