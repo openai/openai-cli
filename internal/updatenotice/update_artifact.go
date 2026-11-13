@@ -202,16 +202,16 @@ func (d *releaseDelivery) authenticate(ctx context.Context, cache *noticeCache, 
 	if err := bundle.Close(); err != nil {
 		return err
 	}
-	command := d.verifierCommand(ctx, cache.directory, "attestation", "verify", filepath.Join(cache.directory, "archive"),
-		"--bundle", filepath.Join(cache.directory, updateBundleName), "--hostname", "github.com", "--repo", "openai/openai-cli",
-		"--cert-identity", workflowIdentity, "--source-ref", "refs/heads/main", "--deny-self-hosted-runners", "--format", "json")
+	args := []string{"attestation", "verify", filepath.Join(cache.directory, "archive")}
+	args = append(args, releaseAttestationFlags(filepath.Join(cache.directory, updateBundleName))...)
+	command := d.verifierCommand(ctx, cache.directory, args...)
 	var output limitedVerification
 	command.Stdout = &output
 	if err := command.Run(); err != nil {
 		return errUpdate
 	}
 	var verified []verifiedAttestation
-	if output.exceeded || json.Unmarshal(output.Bytes(), &verified) != nil {
+	if output.exceeded || json.Unmarshal(output.data.Bytes(), &verified) != nil {
 		return errUpdate
 	}
 	// Rehash the exact descriptor after the verifier accessed its pathname.
@@ -225,6 +225,14 @@ func (d *releaseDelivery) authenticate(ctx context.Context, cache *noticeCache, 
 		return errUpdate
 	}
 	return d.completedPublication(ctx, verified, selected)
+}
+
+func releaseAttestationFlags(bundle string) []string {
+	return []string{
+		"--bundle", bundle, "--hostname", "github.com", "--repo", "openai/openai-cli",
+		"--cert-identity", workflowIdentity, "--source-ref", "refs/heads/main",
+		"--deny-self-hosted-runners", "--format", "json",
+	}
 }
 
 func (d *releaseDelivery) verifierCommand(ctx context.Context, directory string, args ...string) *exec.Cmd {
@@ -255,7 +263,7 @@ func archiveVerifierStatus() string {
 	if probeHomebrewVerifier(ctx, d, directory) {
 		return "ready"
 	}
-	if d.verifier != "" && d.checkVerifierHelp(ctx, directory) == nil {
+	if d.verifier != "" && d.checkVerifierCapabilities(ctx, directory) == nil {
 		return "ready"
 	}
 	// A capability probe must never download or install a verifier.
@@ -263,7 +271,7 @@ func archiveVerifierStatus() string {
 		name, pin := privateVerifierAsset()
 		if path, err := existingPrivateVerifier(ctx, root, name, pin); err == nil {
 			d.verifier = path
-			if d.checkVerifierHelp(ctx, directory) == nil {
+			if d.checkVerifierCapabilities(ctx, directory) == nil {
 				return "ready"
 			}
 		}
@@ -286,7 +294,7 @@ func (d *releaseDelivery) checkVerifier(ctx context.Context, cache *noticeCache)
 		return nil
 	}
 	if !d.privateVerifierEnabled {
-		return d.checkVerifierHelp(ctx, cache.directory)
+		return d.checkVerifierCapabilities(ctx, cache.directory)
 	}
 	root, err := openVerifierStore(false)
 	if err != nil {
@@ -296,7 +304,7 @@ func (d *releaseDelivery) checkVerifier(ctx context.Context, cache *noticeCache)
 	return d.selectVerifier(ctx, cache.directory, root, false)
 }
 
-func (d *releaseDelivery) checkVerifierHelp(ctx context.Context, directory string) error {
+func (d *releaseDelivery) checkVerifierCapabilities(ctx context.Context, directory string) error {
 	timeout := 2 * time.Second
 	if d.verifierCleanup != nil {
 		// macOS can inspect a newly cloned or copied executable on first launch.
@@ -305,35 +313,31 @@ func (d *releaseDelivery) checkVerifierHelp(ctx context.Context, directory strin
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	command := d.verifierCommand(ctx, directory, "attestation", "verify", "--help")
+	// GitHub CLI parses flags before displaying help. Use the real flags so
+	// setup works when a new GitHub CLI release changes its help text.
+	args := append([]string{"attestation", "verify"}, releaseAttestationFlags(filepath.Join(directory, updateBundleName))...)
+	args = append(args, "--help")
+	command := d.verifierCommand(ctx, directory, args...)
 	var output limitedVerification
 	command.Stdout = &output
 	if err := command.Run(); err != nil || output.exceeded {
 		return errUpdate
 	}
-	flags := make(map[string]bool)
-	for _, field := range strings.Fields(output.String()) {
-		flags[field] = true
-	}
-	for _, flag := range []string{"--bundle", "--hostname", "--repo", "--cert-identity", "--source-ref", "--deny-self-hosted-runners", "--format"} {
-		if !flags[flag] {
-			return errUpdate
-		}
-	}
 	return nil
 }
 
 type limitedVerification struct {
-	bytes.Buffer
+	// Keep the buffer private so io.Copy cannot call its ReadFrom directly.
+	data     bytes.Buffer
 	exceeded bool
 }
 
 func (b *limitedVerification) Write(data []byte) (int, error) {
-	if b.Len()+len(data) > 1<<20 {
+	if b.data.Len()+len(data) > 1<<20 {
 		b.exceeded = true
 		return 0, errUpdate
 	}
-	return b.Buffer.Write(data)
+	return b.data.Write(data)
 }
 
 func updateEnvironment() []string {

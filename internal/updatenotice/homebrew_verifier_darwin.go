@@ -64,7 +64,7 @@ func enrollHomebrewVerifier(ctx context.Context, prefix string) string {
 	if err != nil {
 		return "unsafe"
 	}
-	if err := delivery.checkVerifierHelp(ctx, cache.directory); err != nil {
+	if err := delivery.checkVerifierCapabilities(ctx, cache.directory); err != nil {
 		return "unavailable"
 	}
 	state.HomebrewPrefix = prefix
@@ -96,7 +96,7 @@ func selectEnrolledHomebrewVerifier(ctx context.Context, d *releaseDelivery, cac
 func useHomebrewVerifier(ctx context.Context, d *releaseDelivery, prefix, work string) bool {
 	previous := d.verifier
 	if d.openHomebrewVerifier(ctx, prefix, work) == nil {
-		if d.checkVerifierHelp(ctx, work) == nil {
+		if d.checkVerifierCapabilities(ctx, work) == nil {
 			return true
 		}
 		d.closeVerifier()
