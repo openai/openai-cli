@@ -188,6 +188,10 @@ func receiveRealtimeSpeech(ctx context.Context, conn *realtime.RealtimeConnectio
 				return 0, audioFailure("The Realtime API returned unrelated speech audio.", nil)
 			}
 			responseID = event.ResponseID
+			// The wire format requires a base64 string. Decoding into []byte also accepts arrays and null.
+			if len(event.Delta) == 0 || event.Delta[0] != '"' {
+				return 0, audioFailure("The Realtime API returned invalid audio.", nil)
+			}
 			var samples []byte
 			if err := json.Unmarshal(event.Delta, &samples); err != nil {
 				return 0, audioFailure("The Realtime API returned invalid audio.", nil)
