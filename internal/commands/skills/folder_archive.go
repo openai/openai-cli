@@ -31,16 +31,8 @@ func folderError(message string, cause error) error {
 // transfers to the shared uploader, including on cancellation and transport errors.
 func ArchiveFolder(ctx context.Context, path string, selected os.FileInfo) (request.FileUpload, error) {
 	var none request.FileUpload
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return none, folderError("Cannot resolve the folder.", err)
-	}
-	name := filepath.Base(abs)
-	if filepath.Dir(abs) == abs || !safeName(name) || hasDrivePrefix(name) {
-		return none, folderError("Select a named skill folder.", nil)
-	}
-	// Clean trailing separators for Lstat; Stat alone would follow a folder link.
-	named, err := os.Lstat(abs)
+	lookup := folderLookupPath(path)
+	named, err := os.Lstat(lookup)
 	if err != nil {
 		return none, changed(err)
 	}
@@ -49,6 +41,21 @@ func ArchiveFolder(ctx context.Context, path string, selected os.FileInfo) (requ
 	}
 	if !named.IsDir() || !os.SameFile(named, selected) {
 		return none, changed(nil)
+	}
+	namePath, err := folderNamePath(lookup)
+	if err != nil {
+		return none, folderError("Cannot resolve the folder.", err)
+	}
+	if namePath != lookup {
+		// Verify that the path used for the archive name identifies the selected folder.
+		resolved, err := os.Stat(namePath)
+		if err != nil || !os.SameFile(resolved, selected) {
+			return none, changed(err)
+		}
+	}
+	name := filepath.Base(namePath)
+	if name == "." || name == ".." || name == string(os.PathSeparator) || !safeName(name) || hasDrivePrefix(name) {
+		return none, folderError("Select a named skill folder.", nil)
 	}
 	// The final directory component prevents a replacement FIFO from blocking OpenRoot.
 	root, err := os.OpenRoot(path + string(os.PathSeparator) + ".")
@@ -63,7 +70,7 @@ func ArchiveFolder(ctx context.Context, path string, selected os.FileInfo) (requ
 	if err := pack(ctx, root, selected, name, tmp); err != nil {
 		return none, errors.Join(err, tmp.Close())
 	}
-	named, err = os.Lstat(abs)
+	named, err = os.Lstat(lookup)
 	if err != nil || !os.SameFile(selected, named) {
 		return none, errors.Join(changed(err), tmp.Close())
 	}
@@ -74,6 +81,47 @@ func ArchiveFolder(ctx context.Context, path string, selected os.FileInfo) (requ
 	upload.FileName = name + ".zip"
 	upload.MediaType = "application/zip"
 	return upload, nil
+}
+
+// A trailing separator or "." makes Lstat follow a directory symlink. Strip
+// only these suffixes so the kernel can resolve ".." after symlink ancestors.
+func folderLookupPath(path string) string {
+	root := len(filepath.VolumeName(path))
+	if root < len(path) && os.IsPathSeparator(path[root]) {
+		root++
+	}
+	for {
+		for len(path) > root && os.IsPathSeparator(path[len(path)-1]) {
+			path = path[:len(path)-1]
+		}
+		dir, base := filepath.Split(path)
+		if base != "." || len(dir) <= root {
+			return path
+		}
+		path = dir
+	}
+}
+
+// Use the selected directory's name when the path does not end in a name.
+func folderNamePath(path string) (string, error) {
+	switch filepath.Base(path) {
+	case ".":
+		return filepath.Abs(path)
+	case "..":
+		if runtime.GOOS == "windows" {
+			return filepath.Abs(path)
+		}
+		if !filepath.IsAbs(path) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			path = cwd + string(os.PathSeparator) + path
+		}
+		return filepath.EvalSymlinks(path)
+	default:
+		return path, nil
+	}
 }
 
 // A drive-qualified top-level ZIP name can extract as an absolute Windows path.

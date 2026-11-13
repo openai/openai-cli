@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -33,15 +35,30 @@ func TestMainSkillFolderUpload(t *testing.T) {
 	}
 	require.NoError(t, os.Chmod(filepath.Join(dir, "run helper.sh"), 0755))
 
-	for _, tc := range []struct {
+	type uploadCase struct {
 		name, cwd, route, response string
 		args                       []string
-	}{
+	}
+	cases := []uploadCase{
 		{"create from current folder", dir, "/skills", `{"id":"skill_demo","default_version":"1"}`,
 			[]string{"skills", "create", "--files", "."}},
 		{"publish another version", parent, "/skills/skill_demo/versions", `{"id":"sv_demo","version":"2"}`,
 			[]string{"skills", "versions", "create", "skill_demo", "--files", folder + string(filepath.Separator), "--default=false"}},
-	} {
+	}
+	if runtime.GOOS != "windows" {
+		// POSIX follows the link before evaluating "..". Construct these
+		// paths literally because filepath.Join would clean the fixture.
+		cwd := t.TempDir()
+		requireSkillTestSymlink(t, filepath.Join(dir, "outputs"), filepath.Join(cwd, "anchor"))
+		requireSkillTestSymlink(t, dir, filepath.Join(cwd, "sibling"))
+		cases = append(cases,
+			uploadCase{"create through symlink ancestor and parent", cwd, "/skills", `{"id":"skill_demo","default_version":"1"}`,
+				[]string{"skills", "create", "--files", "sibling/../" + folder}},
+			uploadCase{"version through symlink and terminal parent", cwd, "/skills/skill_demo/versions", `{"id":"sv_demo","version":"2"}`,
+				[]string{"skills", "versions", "create", "skill_demo", "--files", "anchor/..", "--default=false"}},
+		)
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(tc.cwd)
 			server, requests := globalFlagsServer(t, tc.response)
@@ -113,6 +130,11 @@ func TestMainSkillFolderInputErrors(t *testing.T) {
 	}
 	t.Run("empty", func(t *testing.T) { check(t, nil, nil, "--files", "empty") })
 	t.Run("missing", func(t *testing.T) { check(t, nil, nil, "--files", "absent") })
+	t.Run("symlink folder with trailing dot", func(t *testing.T) {
+		requireSkillTestSymlink(t, "empty", "linked")
+		diagnostic := check(t, nil, nil, "--files", "linked/./")
+		require.Contains(t, diagnostic, "instead of a symbolic link")
+	})
 	t.Run("untrusted input", func(t *testing.T) {
 		diagnostic := check(t, shellFileInput(t, []byte(`{"files":["empty"]}`)), []string{"OPENAI_UNTRUSTED_STDIN=true"})
 		require.Contains(t, diagnostic, "provide --files explicitly")
@@ -126,11 +148,7 @@ func TestMainSkillFolderInputErrors(t *testing.T) {
 		if runtime.GOOS != "windows" {
 			member += `"quoted`
 		}
-		err := os.Symlink(target, filepath.Join("empty", filepath.FromSlash(member)))
-		if runtime.GOOS == "windows" && os.IsPermission(err) {
-			t.Skip("symlink creation requires Windows privileges")
-		}
-		require.NoError(t, err)
+		requireSkillTestSymlink(t, target, filepath.Join("empty", filepath.FromSlash(member)))
 		diagnostic := check(t, nil, nil, "--files", filepath.Join(local, "empty"))
 		var result struct{ Message string }
 		require.NoError(t, json.Unmarshal([]byte(diagnostic), &result))
@@ -138,6 +156,16 @@ func TestMainSkillFolderInputErrors(t *testing.T) {
 		require.NotContains(t, result.Message, local)
 		require.NotContains(t, result.Message, "private-target")
 	})
+}
+
+func requireSkillTestSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	err := os.Symlink(target, link)
+	const privilegeNotHeld = syscall.Errno(1314) // ERROR_PRIVILEGE_NOT_HELD
+	if runtime.GOOS == "windows" && (os.IsPermission(err) || errors.Is(err, privilegeNotHeld)) {
+		t.Skip("symlink creation requires Windows privileges")
+	}
+	require.NoError(t, err)
 }
 
 func TestMainSkillFolderHelp(t *testing.T) {
