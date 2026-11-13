@@ -441,14 +441,15 @@ func (m *limitsWorkspace) reconcileDraft() {
 	m.draft.change, m.refreshRequired, m.formError = change, false, "Baseline refreshed. Review the before and after values."
 	if change.Kind == "rate_update" {
 		for i, field := range limitsRateInputs {
-			if m.draft.inputs[i].Value() == "" || m.draft.inputs[i].Value() == m.draft.initial[i] {
-				value := ""
-				if current.Get(field.key).Type == gjson.Number {
-					value = current.Get(field.key).Raw
-				}
-				m.draft.inputs[i].SetValue(value)
-				m.draft.initial[i] = value
+			value := current.Get(field.key)
+			baseline := ""
+			if value.Type == gjson.Number {
+				baseline = value.Raw
 			}
+			if m.draft.inputs[i].Value() == "" || m.draft.inputs[i].Value() == m.draft.initial[i] {
+				m.draft.inputs[i].SetValue(baseline)
+			}
+			m.draft.initial[i] = baseline
 		}
 		if m.draft.hasUnavailableEdits() {
 			m.formError = "Some edited rates are unavailable. Inspect F1, then discard those edits to continue."

@@ -2071,6 +2071,26 @@ func TestLimitsWorkspaceCompactGeometryAndReviewGate(t *testing.T) {
 	}
 }
 
+func TestLimitsWorkspaceRefreshAllowsReturningRateToOriginalValue(t *testing.T) {
+	m, backend := newLimitsController(t, 80, 24)
+	m.begin("rate_update", gjson.Parse(limitsControllerRate))
+	m.draft.inputs[0].SetValue("101")
+	m.draft.inputs[1].SetValue("201")
+
+	current := gjson.Parse(strings.Replace(limitsControllerRate, `"max_requests_per_1_minute":100`, `"max_requests_per_1_minute":300`, 1))
+	backend.snapshot.Rates = []gjson.Result{current}
+	m.refreshRequired = true
+	m.Update(limitsControllerRun(t, limitsControllerKey(m, 'r')))
+	require.False(t, m.refreshRequired)
+	require.Equal(t, "101", m.draft.inputs[0].Value())
+
+	m.draft.inputs[0].SetValue("100")
+	m.review()
+	require.Equal(t, "review", m.page)
+	require.Equal(t, current.Raw, m.change.Before.Raw)
+	require.Equal(t, map[string]int64{"max_requests_per_1_minute": 100, "max_tokens_per_1_minute": 201}, m.change.RateValues)
+}
+
 func TestLimitsWorkspaceRefreshRetainsUnavailableRateDraftUntilDiscarded(t *testing.T) {
 	for _, current := range []string{
 		`{"object":"project.rate_limit","id":"rl_synthetic","model":"synthetic-model","max_tokens_per_1_minute":300}`,
