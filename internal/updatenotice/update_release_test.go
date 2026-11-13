@@ -348,7 +348,7 @@ set -eu
 test -z "${OPENAI_API_KEY-}${GH_TOKEN-}${GH_DEBUG-}"
 test "$#" = 16
 test "$1 $2 $3" = 'attestation verify --bundle'
-test "$4" = '` + filepath.Join(cache.directory, updateBundleName) + `'
+test "$4" = "${GH_CONFIG_DIR%/gh-config}/bundle.jsonl"
 test "$5 $6 $7 $8 $9 ${10}" = '--hostname github.com --repo openai/openai-cli --cert-identity ` + workflowIdentity + `'
 test "${11} ${12} ${13} ${14} ${15} ${16}" = '--source-ref refs/heads/main --deny-self-hosted-runners --format json --help'
 ` + tc.response + "\n"
@@ -375,6 +375,9 @@ test "${11} ${12} ${13} ${14} ${15} ${16}" = '--source-ref refs/heads/main --den
 
 func TestArchiveVerifierStatus(t *testing.T) {
 	bin := t.TempDir()
+	if err := os.Chmod(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", bin)
 	t.Setenv("GH_TOKEN", "synthetic-token")
 	t.Setenv("OPENAI_API_KEY", "synthetic-key")
