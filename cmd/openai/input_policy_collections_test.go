@@ -8,7 +8,11 @@ import (
 )
 
 func TestMainInputPolicyNestedWholeArray(t *testing.T) {
-	server, requests := inputPolicyServer(t)
+	server, requests := globalFlagsServer(t, `{
+		"id":"alert_synthetic","object":"organization.spend_alert",
+		"threshold_amount":100,"currency":"USD","interval":"month",
+		"notification_channel":{"type":"email","recipients":["synthetic@example.test","second@example.test"]}
+	}`)
 	for _, mode := range []string{"literal", "legacy"} {
 		for _, route := range [][]string{
 			{"admin", "organization", "spend-alerts", "create"},

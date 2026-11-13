@@ -305,7 +305,7 @@ func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
 		return list.collectResponse(res, opts)
 	}
 	if err := showJSON(res, opts, transformers.Select); err != nil {
-		return err
+		return spendMutationPresentationFailure(err, opts)
 	}
 	return showBatchNextCommand(res, opts)
 }
@@ -313,6 +313,13 @@ func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
 func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
 	stopModelsListLoading(opts)
+	if err := opts.Context.Err(); err != nil {
+		return err
+	}
+	// Validate before projections or extraction can conceal an invalid response.
+	if err := validateSpendMutationResponse(res, opts); err != nil {
+		return errors.Join(err, opts.Context.Err())
+	}
 	if err := opts.Context.Err(); err != nil {
 		return err
 	}
@@ -396,7 +403,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	opts.Transform = ""
 	formatted, err := formatJSON(res, opts)
 	if err != nil {
-		return err
+		return spendMutationResponseFailure(err, opts)
 	}
 	_, err = (clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}).Write(formatted)
 	return err

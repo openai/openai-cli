@@ -70,6 +70,7 @@ func ConfigureCommand(root *cli.Command) {
 	// Cloned aliases must share the same flag definitions as their original route.
 	configureRegisteredLists(root)
 	localcommands.ConfigureSubgroups(root)
+	registerLimitsCommands(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
 	filecommands.Configure(root)

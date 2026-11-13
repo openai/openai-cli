@@ -112,11 +112,22 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 	isAPI := errors.As(failure, &apierr)
 	var streamerr *ssestream.StreamError
 	isStream := !errors.Is(failure, context.Canceled) && errors.As(failure, &streamerr)
+	var limitsFailure *limitsWorkflowFailure
+	if errors.As(failure, &limitsFailure) {
+		// Aggregate source failures retain their causes, but expose only the
+		// workflow's safe outcome. Individual API payloads are not the result.
+		isAPI, isStream = false, false
+	}
 	if format == "text" && root.String("transform-error") == "" {
 		presenter := clihelp.NewSuggestedText(out, root)
 		message := ""
 		var batchFailure *batchcommands.WorkflowError
-		if errors.As(failure, &batchFailure) {
+		if limitsFailure != nil {
+			message = limitsFailure.Error()
+			if limitsFailure.humanDetail != "" {
+				message += "\n" + limitsFailure.humanDetail
+			}
+		} else if errors.As(failure, &batchFailure) {
 			message = batchcommands.WorkflowErrorMessage(failure)
 			var storage *readable.JSONStreamStorageError
 			if errors.As(failure, &storage) && !strings.Contains(message, storage.Error()) {
@@ -151,7 +162,7 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 		} else if isStream {
 			message = readableStreamErrorText
 		} else {
-			message = localErrorMessage(root, failure, presenter)
+			message = readableLocalErrorMessage(root, failure, presenter)
 		}
 		return presenter.WriteText(message)
 	}
@@ -212,6 +223,9 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 		}
 	case http.StatusNotFound:
 		message = "The requested resource is unavailable.\nCheck the resource or model ID and your key's access to it."
+		if guidance := readableSpendNotFoundMessage(root, failure); guidance != "" {
+			message = guidance
+		}
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		var contextual *commandError
 		var command *cli.Command
@@ -220,9 +234,15 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 		}
 		message = readableAPIArgumentMessage(apierr, command, output...)
 	case http.StatusTooManyRequests:
-		message = "The API is limiting requests.\nWait before trying again."
-		if quotaLimitError(apierr.Code, apierr.Type) {
+		switch {
+		case apierr.Code == "organization_spend_limit_exceeded":
+			message = readableOrganizationSpendLimitMessage(root)
+		case apierr.Code == "organization_usage_limit_exceeded":
+			message = "Organization usage limit reached.\nCheck your organization's billing and usage limits."
+		case quotaLimitError(apierr.Code, apierr.Type):
 			message = "API usage or billing limit reached.\nCheck your project's billing and limits."
+		default:
+			message = "The API is limiting requests.\nWait before trying again."
 		}
 	case http.StatusConflict:
 		message = "The resource changed or is not ready.\nCheck its current status."
