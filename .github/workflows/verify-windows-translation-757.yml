@@ -1,0 +1,117 @@
+name: Verify Windows live translation
+
+on:
+  push:
+    branches: [codex/windows-757-synthetic-identity]
+
+permissions: {}
+
+jobs:
+  verify:
+    if: github.repository == 'openai/openai-cli' && github.event.created && github.run_attempt == '1'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      SHIPPING: b1668fd6ac76fb2844dee98533a2930b2d25bb86
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Check the runner, shipping parent, and changed files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64') { throw 'Expected Windows x64.' }
+          if ((git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Unexpected candidate.' }
+          if ((git rev-parse 'HEAD^') -cne $env:SHIPPING) { throw 'Unexpected shipping parent.' }
+          $changes = @(git diff --name-status --no-renames $env:SHIPPING HEAD)
+          $expected = @(
+            "A`t.github/workflows/verify-windows-translation-757.yml",
+            "A`tcmd/openai/translation757_routes_windows_test.go",
+            "A`tcmd/openai/translation757_windows_test.go"
+          )
+          if (($changes -join "`n") -cne ($expected -join "`n")) { throw 'Unexpected changes.' }
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: .go-version
+          cache: false
+
+      - name: Build and identify the exact shipping executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($pair in @('GOOS=windows', 'GOHOSTOS=windows', 'GOARCH=amd64', 'GOHOSTARCH=amd64')) {
+            $key, $value = $pair.Split('=')
+            if ((go env $key) -cne $value) { throw "Unexpected $key." }
+          }
+          $exe = Join-Path $env:RUNNER_TEMP 'openai757.exe'
+          # Go 1.26 locates Git metadata through a .git directory.
+          if (-not (Test-Path -LiteralPath .git -PathType Container)) { throw 'Expected a standalone Git checkout.' }
+          git checkout --detach $env:SHIPPING
+          if ($LASTEXITCODE -ne 0) { throw 'Could not check out the shipping revision.' }
+          try {
+            if ((git rev-parse HEAD) -cne $env:SHIPPING) { throw 'Shipping source revision differs.' }
+            $changes = @(git status --porcelain)
+            if ($LASTEXITCODE -ne 0 -or $changes.Count -ne 0) { throw 'Shipping checkout is not clean.' }
+            go build -trimpath -buildvcs=true -mod=readonly -o $exe ./cmd/openai
+            if ($LASTEXITCODE -ne 0) { throw 'Could not build the shipping executable.' }
+          } finally {
+            git checkout --detach $env:GITHUB_SHA
+            if ($LASTEXITCODE -ne 0 -or (git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Could not restore the test candidate.' }
+          }
+          $metadata = (go version -m $exe) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read executable metadata.' }
+          if ($metadata -cnotmatch '(?m)^\s*build\s+vcs\.revision=([0-9a-f]{40})\r?$') { throw 'Executable revision missing.' }
+          if ($Matches[1] -cne $env:SHIPPING) { throw "Unexpected executable revision: $($Matches[1])." }
+          if ($metadata -cnotmatch '(?m)^\s*build\s+vcs\.modified=(true|false)\r?$') { throw 'Executable modification flag missing.' }
+          if ($Matches[1] -cne 'false') { throw 'Executable records a modified source tree.' }
+          $digest = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+          Write-Host "Windows x64 shipping revision=$env:SHIPPING sha256=$digest"
+
+      - name: Run the offline Windows translation checks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:OPENAI_757_SHIPPING_EXE = Join-Path $env:RUNNER_TEMP 'openai757.exe'
+          $log = Join-Path $env:RUNNER_TEMP 'translation-757.jsonl'
+          go test -mod=readonly -count=1 -json -timeout 6m ./cmd/openai -run '^TestWindows757(ShippingTranslation|PreservedRoutes)$' > $log
+          $exit = $LASTEXITCODE
+          $events = @(Get-Content -LiteralPath $log | ConvertFrom-Json)
+          $test = 'TestWindows757ShippingTranslation'
+          $pkg = 'github.com/openai/openai-cli/cmd/openai'
+          $routes = 'TestWindows757PreservedRoutes'
+          $expected = @(
+            $test, $routes,
+            "$routes/FiniteAudioFlags", "$routes/FiniteAudioJSON", "$routes/FiniteTopLevelFlags",
+            "$routes/FiniteGeneratedColonFlags", "$routes/FiniteGeneratedSpacedFlags", "$routes/RedirectedLiveInput"
+          )
+          $passes = @($events | Where-Object { $_.Action -ceq 'pass' -and $_.Package -ceq $pkg -and $_.Test })
+          $missing = @($expected | Where-Object { @($passes.Test -ceq $_).Count -ne 1 })
+          # The isolated console worker reports nested cases through the controller's output.
+          $observed = @(
+            foreach ($entry in $events) {
+              if ($entry.Action -ceq 'output' -and $entry.Package -ceq $pkg -and $entry.Test -ceq $test -and
+                  $entry.Output -cmatch '^\s*translation757_windows_test\.go:\d+: PASS757 ([a-z0-9]+)\s*$') { $Matches[1] }
+            }
+          )
+          $cases = @('microphone', 'file', 'typed', 'opening', 'retry401', 'retry403', 'exit401', 'cancel')
+          $absent = @($cases | Where-Object { @($observed -ceq $_).Count -ne 1 })
+          $skips = @($events | Where-Object { $_.Action -ceq 'skip' })
+          if ($exit -ne 0 -or $missing.Count -ne 0 -or $absent.Count -ne 0 -or $skips.Count -ne 0) {
+            foreach ($entry in $events) {
+              if ($entry.Action -in @('pass', 'fail', 'skip') -and $entry.Test -cmatch '^TestWindows757\w+(?:/[a-zA-Z0-9_-]+)*$') {
+                Write-Host "$($entry.Action) $($entry.Test)"
+              }
+              if ($entry.Action -ceq 'output' -and $entry.Output -cmatch '^\s*(translation757_(?:routes_)?windows_test\.go:\d+):') {
+                Write-Host "Driver assertion at $($Matches[1])"
+              }
+            }
+            throw "Native Windows translation did not pass. Exit=$exit Missing=$($missing -join ',') Console=$($absent -join ',')"
+          }
+          foreach ($case in $observed) { Write-Host "Passed private console case: $case" }
+          $events | Where-Object { $_.Action -ceq 'pass' -and $_.Test } | Select-Object Test,Elapsed
