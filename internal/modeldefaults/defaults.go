@@ -7,5 +7,5 @@ const (
 	SavedImage            = "gpt-image-2.6-sunburst"
 	Translation           = "gpt-realtime-translate"
 	TranslationTranscript = "gpt-realtime-whisper"
-	TranslationText       = "gpt-5.6-terra"
+	TranslationText       = "gpt-6.1-terra"
 )
