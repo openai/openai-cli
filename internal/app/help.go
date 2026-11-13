@@ -418,7 +418,7 @@ func configureHelpGroups(root *cli.Command) {
 			if create := command.Command("create"); create != nil {
 				for _, flag := range create.Flags {
 					if files, ok := flag.(*requestflag.Flag[[]string]); ok && files.Name == "files" {
-						files.Usage = "For a ZIP upload, pass the .zip path or use - to read the ZIP from stdin."
+						files.Usage = "Pass a folder (including hidden files), a ZIP path, or - for ZIP bytes from stdin. Remove symbolic links and special files before uploading a folder."
 					}
 				}
 			}
