@@ -130,7 +130,7 @@ func (w *imagePickerWorkspace) drawKonsoleFrame(ctx context.Context, lines []str
 		native = native || strings.HasPrefix(lines[row], "\x1b]1337;")
 	}
 	if native {
-		return w.startKonsoleTransfer(ctx, parts, keys, placements)
+		return w.startNativeTransfer(ctx, parts, keys, placements, 0)
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()

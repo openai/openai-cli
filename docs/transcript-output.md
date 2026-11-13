@@ -56,7 +56,7 @@ openai audio translate --file meeting.wav --model whisper-1 --response-format ve
 openai --format json audio transcribe --file meeting.wav --model gpt-4o-transcribe-diarize --response-format diarized_json --chunking-strategy auto
 
 # Extraction retains the aggregate transcript.
-openai --transform text --raw-output audio transcribe --file meeting.wav --model whisper-1
+openai --transform text --raw-output audio transcribe --file meeting.wav --model gpt-transcribe --response-format json
 
 # Raw output retains subtitle bytes, including CRLF line endings.
 openai --format raw audio transcribe --file meeting.wav --model whisper-1 --response-format srt > captions.srt
@@ -69,6 +69,6 @@ These transcript formatting rules do not change model defaults, request inputs, 
 The [speech-to-text guide](https://developers.openai.com/api/docs/guides/speech-to-text#speaker-diarization) documents these API options.
 Diarization requires chunking for inputs longer than 30 seconds; `auto` selects server chunking.
 The diarization model does not support `timestamp_granularities`.
-As of October 9, 2026, these examples use the documented specialized models.
-The [deprecation notice](https://developers.openai.com/api/docs/deprecations#2026-08-26-transcription-models) schedules both models for removal on February 26, 2027.
+OpenAI plans to retire `whisper-1` and `gpt-4o-transcribe-diarize` on February 26, 2027.
+See the [deprecation notice](https://developers.openai.com/api/docs/deprecations#2026-08-26-transcription-models).
 Synthetic CLI checks verify presentation and request construction, not live model access.

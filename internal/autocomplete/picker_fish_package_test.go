@@ -225,16 +225,18 @@ func TestFishPackageExploreInsertsAtFirstPrompt(t *testing.T) {
 send -- "openai examples\r"
 expect -exact "DISPLAYED_COMMAND_END\r\n"
 expect -exact "INSTALL_TEST> "
-send -- "openai explore\r"
+foreach invocation {"openai explore" "openai explore --full-screen"} {
+send -- "$invocation\r"
 expect -exact "BARE_SELECTED\r\n"
 expect -exact "INSTALL_TEST> "
 send -- "\030\007"
 expect -re {CAPTURED_BUFFER\r?\n}
 send -- "\005\025"
+}
 `)
 	buffers, err := os.ReadFile(filepath.Join(fixture.home, "buffers"))
 	require.NoError(t, err)
-	require.Equal(t, "<openai models list>|18\n", string(buffers))
+	require.Equal(t, strings.Repeat("<openai models list>|18\n", 2), string(buffers))
 	for _, unexpected := range []string{"executed", "generation-calls", "captured-help"} {
 		_, err := os.Stat(filepath.Join(fixture.home, unexpected))
 		require.ErrorIs(t, err, os.ErrNotExist)

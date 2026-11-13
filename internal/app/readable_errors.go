@@ -138,7 +138,7 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 				// before the outer command adds presentation context.
 				included := readableAPIErrorMessage(root, batchFailure.Unwrap(), apierr)
 				if !strings.Contains(message, included) {
-					message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, presenter)
+					message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, shellError, presenter)
 				}
 			}
 			// Workflow outcomes must not hide safe, known transport guidance.
@@ -158,7 +158,7 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 				}
 			}
 		} else if isAPI && !errors.Is(failure, context.Canceled) {
-			message = readableAPIErrorMessageTo(root, failure, apierr, presenter)
+			message = readableAPIErrorMessageTo(root, failure, apierr, shellError, presenter)
 		} else if isStream {
 			message = readableStreamErrorText
 		} else {
@@ -199,16 +199,23 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 const readableStreamErrorMessage = "The response stream failed. Output may be incomplete.\nFor API error details, add --format-error json."
 const readableStreamErrorText = "The response stream failed.\nOutput may be incomplete.\nAPI error details: --format-error json."
 
+type apiErrorSurface int
+
+const (
+	shellError apiErrorSurface = iota
+	workspaceError
+)
+
 func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Error) string {
-	return readableAPIErrorMessageTo(root, failure, apierr)
+	return readableAPIErrorMessageTo(root, failure, apierr, shellError)
 }
 
-func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.Error, output ...io.Writer) string {
+func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.Error, surface apiErrorSurface, output ...io.Writer) string {
 	requestID := clioutput.APIRequestID(apierr)
 	var message string
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
-		message = readableAPIAuthenticationMessage(root, failure, apierr, output...)
+		message = readableAPIAuthenticationMessage(root, failure, apierr, surface, output...)
 	case http.StatusForbidden:
 		message = "The API denied access to this resource.\nCheck your key's permissions and its project access."
 		if permission := readableAPIAccessPermissionMessage(root, failure, apierr); permission != "" {
@@ -283,7 +290,7 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 	}
 	// Credential recovery already supplies the next step. Avoid burying it
 	// among unrelated format options; explicit machine output remains available.
-	if apierr.StatusCode == http.StatusUnauthorized || apierr.StatusCode == http.StatusForbidden {
+	if surface == workspaceError || apierr.StatusCode == http.StatusUnauthorized || apierr.StatusCode == http.StatusForbidden {
 		return message
 	}
 	return message + "\nAPI error details: --format-error json."

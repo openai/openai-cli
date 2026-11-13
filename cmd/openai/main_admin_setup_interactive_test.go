@@ -242,7 +242,7 @@ func TestMainAdminInteractiveUnsupportedPlatform(t *testing.T) {
 			if got.code != code || got.stdout != "" || message != want {
 				t.Fatalf("unsupported setup = %+v, want %q and exit %d", got, want, code)
 			}
-			for _, forbidden := range []string{"never-display", "Admin API key (hidden):", "Verifying admin access", "\x1b"} {
+			for _, forbidden := range []string{"never-display", "Admin API key (hidden):", "Checking admin access", "\x1b"} {
 				if strings.Contains(got.stdout+got.stderr, forbidden) {
 					t.Error("unsupported setup exposed input or started terminal interaction")
 				}

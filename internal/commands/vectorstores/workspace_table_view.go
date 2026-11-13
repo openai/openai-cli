@@ -29,20 +29,21 @@ func (m *workspace) storeTable() ([]workspaceColumn, [][]string) {
 		columns = []workspaceColumn{{label: "Store"}, {label: "Status", width: 11, status: true}, {label: "Files", width: 5, right: true}}
 		columns = append(columns, workspaceColumn{label: "ID", width: 35})
 	}
-	m.sizeTable(columns)
+	sizeTable(columns, m.bodyWidth())
 	var rows [][]string
 	for _, store := range m.filteredStores() {
-		name := store.Name
-		if name == "" {
-			name = "Untitled store"
-		}
+		name := storeDisplayName(store.Name)
 		status := string(store.Status)
 		if status == "" {
 			status = "unknown"
 		}
 		row := []string{name, store.ID}
 		if wide {
-			row = []string{name, status, fmt.Sprint(store.FileCounts.Total), store.ID}
+			count := "—"
+			if store.FileCounts.JSON.Total.Valid() || store.FileCounts.Total != 0 {
+				count = fmt.Sprint(store.FileCounts.Total)
+			}
+			row = []string{name, status, count, store.ID}
 		}
 		rows = append(rows, row)
 	}
@@ -60,7 +61,7 @@ func (m *workspace) fileTable() ([]workspaceColumn, [][]string) {
 	if showID {
 		columns = append(columns, workspaceColumn{label: "ID", width: 29})
 	}
-	m.sizeTable(columns)
+	sizeTable(columns, m.bodyWidth())
 	var rows [][]string
 	for _, file := range m.files {
 		name := m.names[file.ID]
@@ -79,9 +80,9 @@ func (m *workspace) fileTable() ([]workspaceColumn, [][]string) {
 	return columns, rows
 }
 
-func (m *workspace) resultTable() ([]workspaceColumn, [][]string) {
+func (m *workspace) resultTable(width int) ([]workspaceColumn, [][]string) {
 	columns := []workspaceColumn{{label: "File"}, {label: "Score", width: 7, right: true}}
-	m.sizeTable(columns)
+	sizeTable(columns, width)
 	rows := make([][]string, 0, len(m.results))
 	for _, result := range m.results {
 		name := result.Filename
@@ -99,7 +100,7 @@ func (m *workspace) sourceTable() ([]workspaceColumn, [][]string) {
 		idWidth = (m.bodyWidth() - 2 - len(workspaceColumnGap)) / 2
 	}
 	columns := []workspaceColumn{{label: "File"}, {label: "ID", width: idWidth}}
-	m.sizeTable(columns)
+	sizeTable(columns, m.bodyWidth())
 	rows := make([][]string, 0, len(m.sourceFiles))
 	for _, file := range m.sourceFiles {
 		mark := "[ ] "
@@ -115,8 +116,8 @@ func (m *workspace) sourceTable() ([]workspaceColumn, [][]string) {
 	return columns, rows
 }
 
-func (m *workspace) sizeTable(columns []workspaceColumn) {
-	width := m.bodyWidth() - 2 - len(workspaceColumnGap)*(len(columns)-1)
+func sizeTable(columns []workspaceColumn, width int) {
+	width -= 2 + len(workspaceColumnGap)*(len(columns)-1)
 	for _, column := range columns[1:] {
 		width -= column.width
 	}

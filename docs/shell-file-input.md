@@ -6,12 +6,17 @@ Use `@-` for one text field or `--file -` for a binary upload.
 ```sh
 printf 'hello\n' | openai responses create --model MODEL --input @-
 cat notes.txt | openai files create --file - --purpose user_data
-cat speech.wav | openai audio transcriptions create --model whisper-1 --file -
 ```
 
 The first command sends `hello\n` as the input field.
 In literal mode, JSON-looking text also stays text when an ordinary text field explicitly selects stdin.
 The CLI does not expand references found inside that text.
+
+For transcription, pass a named audio file. The CLI uses its extension to identify the audio format.
+
+```sh
+openai audio transcriptions create --model gpt-transcribe --file speech.wav
+```
 
 Only one effective parameter can consume stdin.
 Two consumers fail before the CLI reads stdin or sends a request.

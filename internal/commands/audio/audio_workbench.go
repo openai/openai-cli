@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
+
 	"os"
 	"slices"
-	"strconv"
+
 	"strings"
 	"sync"
 	"time"
@@ -312,11 +312,11 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			if m.focus == audioFocusCommand && m.clipboard.notice == "Copying…" {
 				switch {
 				case msg.err != nil:
-					m.clipboard.notice = "Copy failed. Ctrl+P prints."
+					m.clipboard.notice = "Copy failed."
 				case msg.clipboardConfirmed:
 					m.clipboard.notice = "Command copied."
 				default:
-					m.clipboard.notice = "Copy requested. Ctrl+P prints."
+					m.clipboard.notice = "Copy requested."
 				}
 			}
 			return m, nil
@@ -643,7 +643,7 @@ func (m *audioWorkbench) activateSetting() tea.Cmd {
 	case 1:
 		m.choices = audioModelVoices(m.settings.Model)
 	case 2:
-		m.choices = audioFormats
+		m.choices = audioModelFormats(m.settings.Model)
 	case 3:
 		return m.beginInlineSpeed()
 	case 4:
@@ -684,9 +684,9 @@ func (m *audioWorkbench) updateModal(message tea.KeyPressMsg, key string) tea.Cm
 			m.speedInput, cmd = m.speedInput.Update(message)
 			return cmd
 		}
-		speed, err := strconv.ParseFloat(strings.TrimSpace(m.speedInput.Value()), 64)
-		if err != nil || math.IsNaN(speed) || math.IsInf(speed, 0) || speed < .25 || speed > 4 {
-			m.note = "Speed must be a number from 0.25 to 4."
+		speed, valid := m.speedValue(m.speedInput.Value())
+		if !valid {
+			m.note = m.speedRangeError()
 			return nil
 		}
 		m.settings.Speed = speed

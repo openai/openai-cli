@@ -121,7 +121,7 @@ def main():
         terminal.send(b"\r")
         wait_screen(terminal, "› Events")
         paste(terminal, "response")
-        wait_screen(terminal, "› Search")
+        wait_screen(terminal, "› / Find event")
         terminal.send(b"\x1b[B")  # Down moves from Search to the event choices.
         wait_screen(terminal, "› [ ] response.completed")
         terminal.send(b"\x01")  # Ctrl+A selects all matching response events.

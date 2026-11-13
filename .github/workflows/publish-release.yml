@@ -70,6 +70,35 @@ jobs:
         git checkout --detach "$tag_sha"
         test "$(git rev-parse HEAD)" = "$tag_sha"
         echo "sha=$tag_sha" >> "$GITHUB_OUTPUT"
+    - name: Identify a published historical release
+      id: historical-release
+      env:
+        TAG: ${{ inputs.tag }}
+        TAG_SHA: ${{ steps.trusted-tag.outputs.sha }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        # v1.51.5 was the last public release before model verification.
+        cutoff_sha=e0ba427a67fa11123032835cfe191a500109f635
+        if ! git merge-base --is-ancestor "$TAG_SHA" "$cutoff_sha"; then
+          exit 0
+        fi
+        version=$(git show "$TAG_SHA:.release-please-manifest.json" | jq -er '.["."]')
+        [[ "$TAG" == "v$version" && "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+        gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" | jq -se \
+          --arg tag "$TAG" --arg sha "$TAG_SHA" '
+            select(length == 1) | .[0] |
+            .tag_name == $tag and .draft == false and .prerelease == false and
+            (.published_at | fromdateiso8601 | todateiso8601) == .published_at and
+            .published_at <= "2026-11-07T19:56:35Z" and
+            (.target_commitish == $sha or
+              ($tag == "v1.0.0" and $sha == "7d2ebbdcb1ab7e05957d09986e8b5e4d707a9675" and
+               .id == 318075758 and .target_commitish == "main"))
+          ' > /dev/null
+        echo "repair=true" >> "$GITHUB_OUTPUT"
+    - name: Verify model defaults for the release tag
+      if: steps.historical-release.outputs.repair != 'true'
+      run: python3 -I scripts/check-model-defaults.py
     - name: Generate release inputs
       run: |
         mkdir -p completions

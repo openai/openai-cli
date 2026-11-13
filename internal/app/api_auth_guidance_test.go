@@ -89,7 +89,7 @@ func TestAPIAuthGuidanceConfigurationSources(t *testing.T) {
 			root := apiAuthGuidanceTestCommand(func(_ context.Context, command *cli.Command) error {
 				called = true
 				apierr := &openai.Error{StatusCode: http.StatusUnauthorized, Code: test.code, Message: "synthetic-private-body\x1b[31m", Param: "synthetic-private-param"}
-				message := readableAPIAuthenticationMessage(command.Root(), withCommandError(command, apierr), apierr)
+				message := readableAPIAuthenticationMessage(command.Root(), withCommandError(command, apierr), apierr, shellError)
 				for _, want := range test.want {
 					require.Contains(t, message, want)
 				}
@@ -110,7 +110,7 @@ func TestAPIAuthGuidanceKnownIPRestrictionAndCustomTargets(t *testing.T) {
 		t.Setenv("OPENAI_BASE_URL", base)
 		root := apiAuthGuidanceTestCommand(func(_ context.Context, command *cli.Command) error {
 			apierr := &openai.Error{StatusCode: http.StatusUnauthorized, Code: "ip_not_authorized"}
-			message := readableAPIAuthenticationMessage(command.Root(), withCommandError(command, apierr), apierr)
+			message := readableAPIAuthenticationMessage(command.Root(), withCommandError(command, apierr), apierr, shellError)
 			require.Contains(t, message, "check your outbound IP in the allowlist")
 			require.NotContains(t, message, apiAuthenticationKeyURL)
 			require.NotContains(t, message, "synthetic-private")
@@ -173,7 +173,7 @@ func TestAPIAuthGuidanceMatchesSDKAuthorizationPrecedence(t *testing.T) {
 				}
 				var apierr *openai.Error
 				require.ErrorAs(t, err, &apierr)
-				message := readableAPIAuthenticationMessage(command.Root(), withCommandError(command, err), apierr)
+				message := readableAPIAuthenticationMessage(command.Root(), withCommandError(command, err), apierr, shellError)
 				require.Contains(t, message, test.source)
 				require.NotContains(t, message, "synthetic-private-body")
 				return nil

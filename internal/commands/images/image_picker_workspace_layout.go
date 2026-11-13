@@ -218,7 +218,7 @@ func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 			appendRow("Select this image to fit the preview. Press O to open it.")
 		case entry.nativeRows > 0:
 			for row := range entry.nativeRows {
-				w.nativeDisplay[len(w.displayRows)] = imagePickerNativeRow{i, row, entry.columns, entry.nativeRows, false}
+				w.nativeDisplay[len(w.displayRows)] = imagePickerNativeRow{image: i, row: row, columns: entry.columns, count: entry.nativeRows, expanded: false}
 				w.displayRows = append(w.displayRows, "")
 			}
 		default:

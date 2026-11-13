@@ -125,7 +125,17 @@ func handleAdminSetup(ctx context.Context, command *cli.Command, policy Options)
 	}
 	ctx, stop := adminSetupSignalContext(ctx)
 	defer stop()
-	if _, err := fmt.Fprintf(os.Stderr, "Admin key verification\n\nNeed a key? Open:\n  https://platform.openai.com/settings/organization/admin-keys\nSelect your organization.\nCreate an admin key.\nCopy the key into the hidden prompt below.\nOnly organization owners can create admin keys.\nIf you are not an owner, ask an owner to run the operation without sharing their key.\n\nDestination: %s\nThe key stays in this process. Ctrl+C cancels.\n\n", destination); err != nil {
+	if _, err := fmt.Fprintf(os.Stderr, `Check admin access
+
+Paste your admin API key. It stays hidden on screen.
+Press Enter to check the key with %s.
+
+Need a key? Organization owners can create one here.
+  https://platform.openai.com/settings/organization/admin-keys
+
+Press Ctrl+C to cancel.
+
+`, destination); err != nil {
 		return &SetupError{message: "Could not display admin setup. No verification request was sent."}
 	}
 	key, err := readAdminSetupKey(ctx, os.Stdin, os.Stderr)
@@ -143,7 +153,7 @@ func handleAdminSetup(ctx context.Context, command *cli.Command, policy Options)
 		return &SetupError{message: "No key was entered. Run setup admin again to retry."}
 	}
 	if policy.DiagnosticsAllowed(command) {
-		if _, err := fmt.Fprintln(os.Stderr, "Verifying admin access..."); err != nil {
+		if _, err := fmt.Fprint(os.Stderr, "Checking admin access…\n\n"); err != nil {
 			return &SetupError{message: "Could not display admin setup. No verification request was sent."}
 		}
 	}
@@ -153,7 +163,7 @@ func handleAdminSetup(ctx context.Context, command *cli.Command, policy Options)
 		}
 		return err
 	}
-	if _, err := fmt.Fprintln(root.Writer, "Admin access verified. The project-list request succeeded.\nNo key was saved. Later commands still need authentication."); err != nil {
+	if _, err := fmt.Fprintln(root.Writer, "Admin access verified.\nThe CLI discarded the key after the check.\nSet OPENAI_ADMIN_KEY before running other admin commands."); err != nil {
 		return &SetupError{message: "Verification succeeded, but the CLI could not display the result. No key was saved."}
 	}
 	return nil
@@ -227,7 +237,7 @@ func verifyAdminSetup(ctx context.Context, options []option.RequestOption, key [
 	if errors.As(err, &apiError) {
 		switch {
 		case apiError.StatusCode == http.StatusUnauthorized:
-			return &SetupError{message: "The server rejected the admin key (401). Create an admin key for your organization, then retry."}
+			return &SetupError{message: "The server rejected your admin API key (401).\nCheck that you copied an admin API key for the right organization.\nRun openai setup admin to try again."}
 		case apiError.StatusCode == http.StatusForbidden:
 			return &SetupError{message: "The server denied admin access (403). Ask an organization owner to check your access."}
 		case apiError.StatusCode >= 300 && apiError.StatusCode < 400:

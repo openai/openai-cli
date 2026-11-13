@@ -140,6 +140,7 @@ def failure_case(ctx):
         }[width]
         failed_terminal = ctx.new_terminal(str(ctx.args.binary), ["audio", "speak"], env, width=width, height=height)
         ctx.wait(failed_terminal, "Text to speech")
+        ctx.select_speech_fixture_model(failed_terminal)
         failed_terminal.send(b"\t")
         ctx.wait(failed_terminal, ("╭ Instructions ", "› Instructions"))
         visible_failure((ctx.fixture.DEFAULT_INSTRUCTIONS,), target=failed_terminal)
@@ -183,7 +184,7 @@ def failure_case(ctx):
         assert protocol_summary in diagnostic, "Error exit omitted its HTTP status after terminal restoration"
         assert "Request ID: " + ctx.fixture.FAILURE_REQUEST_ID in diagnostic
         assert "Authentication failed for the custom API address." in diagnostic
-        assert "Next: set the credential required by this API endpoint." in diagnostic
+        assert "Set the credential required by this API endpoint." in diagnostic
         assert "Key setup:" in diagnostic and "help setup" in diagnostic
         ctx.mark(failed_terminal, "failure-error-exit-summary", result)
         observer = failed_terminal.navigation_observer
@@ -535,7 +536,7 @@ def print_command_case(ctx):
     assert not history.exists(), "Print case requires fresh isolated History"
     text = "A" * 60
     body = {"input": text, "instructions": ctx.fixture.DEFAULT_INSTRUCTIONS,
-            "model": "gpt-4o-mini-tts", "response_format": "wav", "speed": 1, "voice": "coral"}
+            "model": "gpt-realtime-2.1-mini", "response_format": "wav", "speed": 1, "voice": "coral"}
     command_rows = ("OPENAI_UNTRUSTED_STDIN=true \\", "  openai audio speak \\",
                     "    --output speech.wav <<'JSON'",
                     json.dumps(body, sort_keys=True, indent=2), "JSON")

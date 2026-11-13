@@ -149,6 +149,7 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 		"explore/--suggestions":                            "Shell-owned recent-command input; search and native shell tests cover valid use. Parser errors must not echo rejected values.",
 		"explore/--shell-integration":                      "Shell-owned selection protocol; search and native shell tests cover valid use. Parser errors must not echo rejected values.",
 		"explore/--shell":                                  "Shell-owned selection encoding; search and native shell tests cover valid use. Parser errors retain only the declared option name.",
+		"audio translate/--browser":                        "Hidden preview alias for browser translation. Parser errors retain the option name and omit rejected values.",
 		"help/--all":                                       "Full-reference flag. Help routing tests cover explicit true and false values.",
 		"admin certificates create/--content":              "Hidden compatibility field; explicit-use errors retain its declared name, but suggestions omit it.",
 		"admin organization certificates create/--content": "Hidden compatibility field; explicit-use errors retain its declared name, but suggestions omit it.",

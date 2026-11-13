@@ -3,12 +3,151 @@ package audiomedia
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// ValidatePlayback checks helper discovery without opening an output device.
+func ValidatePlayback() error {
+	if _, err := systemHelpers().find("ffplay"); err != nil {
+		return ErrPlayerUnavailable
+	}
+	return nil
+}
+
+// PlayPCM plays a live signed little-endian PCM16 stream with explicit metadata.
+// It owns source.Close on every exit. Close must unblock a pending Read; an
+// io.PipeReader satisfies this contract. No input queue or recording is retained.
+func PlayPCM(ctx context.Context, source io.ReadCloser, rate, channels int) error {
+	return playPCM(ctx, source, rate, channels, systemHelpers())
+}
+
+func playPCM(ctx context.Context, source io.ReadCloser, rate, channels int, h helpers) error {
+	if source == nil {
+		return ErrInvalidAudio
+	}
+	var closeOnce sync.Once
+	var closeErr error
+	closeSource := func() { closeOnce.Do(func() { closeErr = source.Close() }) }
+	defer closeSource()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	header, err := streamPCMHeader(rate, channels)
+	if err != nil {
+		return err
+	}
+	work, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stopClose := context.AfterFunc(work, closeSource)
+	defer stopClose()
+	var args []string
+	if channels == 1 {
+		// Raw PCM already supplies the format and sample rate. The demuxer
+		// defaults to mono, so FFplay can start without analyzing the stream.
+		args = append(playerInputArguments("s16le", false),
+			"-sample_rate", strconv.Itoa(rate), "-nofind_stream_info", "-i", "pipe:0")
+		header = nil
+	} else {
+		args, _ = playerArguments("wav", false)
+	}
+	command, err := helperCommand(work, h, "ffplay", args)
+	if err != nil {
+		return err
+	}
+	read, write, err := os.Pipe()
+	if err != nil {
+		return ErrPlaybackFailed
+	}
+	defer read.Close()
+	defer write.Close()
+	diagnostics := &helperDiagnostics{}
+	command.Stdin, command.Stdout, command.Stderr = read, io.Discard, diagnostics
+	if err := command.Start(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return ErrPlaybackFailed
+	}
+	read.Close()
+	pcm := &pcmStreamReader{source: source, alignment: channels * 2}
+	copied := make(chan error, 1)
+	go func() {
+		_, err := io.CopyBuffer(write, io.MultiReader(bytes.NewReader(header), pcm), make([]byte, 32*1024))
+		if err != nil {
+			cancel()
+		}
+		write.Close()
+		copied <- err
+	}()
+	runErr := command.Wait()
+	stopHelperProcess(command)
+	complete := pcm.complete.Load()
+	// A player may exit before its source produces bytes. Close the source and
+	// pipe before joining the copier, including a successful premature exit.
+	cancel()
+	write.Close()
+	closeSource()
+	copyErr := <-copied
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if errors.Is(copyErr, ErrInvalidAudio) {
+		return ErrInvalidAudio
+	}
+	if runErr != nil || copyErr != nil || closeErr != nil || diagnostics.present || !complete {
+		return ErrPlaybackFailed
+	}
+	return nil
+}
+
+// An open-ended WAV header carries channel metadata across FFplay versions.
+// Raw PCM channel flags differ between old and current FFmpeg releases.
+func streamPCMHeader(rate, channels int) ([]byte, error) {
+	if rate <= 0 || channels <= 0 || channels > 65535/2 || uint64(rate) > uint64(^uint32(0))/uint64(channels*2) {
+		return nil, ErrInvalidAudio
+	}
+	header := make([]byte, 44)
+	copy(header, "RIFF")
+	binary.LittleEndian.PutUint32(header[4:], ^uint32(0))
+	copy(header[8:], "WAVEfmt ")
+	binary.LittleEndian.PutUint32(header[16:], 16)
+	binary.LittleEndian.PutUint16(header[20:], 1)
+	binary.LittleEndian.PutUint16(header[22:], uint16(channels))
+	binary.LittleEndian.PutUint32(header[24:], uint32(rate))
+	binary.LittleEndian.PutUint32(header[28:], uint32(rate)*uint32(channels)*2)
+	binary.LittleEndian.PutUint16(header[32:], uint16(channels*2))
+	binary.LittleEndian.PutUint16(header[34:], 16)
+	copy(header[36:], "data")
+	binary.LittleEndian.PutUint32(header[40:], ^uint32(0))
+	return header, nil
+}
+
+type pcmStreamReader struct {
+	source               io.Reader
+	alignment, remainder int
+	complete             atomic.Bool
+}
+
+func (r *pcmStreamReader) Read(data []byte) (int, error) {
+	n, err := r.source.Read(data)
+	r.remainder = (r.remainder + n) % r.alignment
+	if err == io.EOF {
+		if r.remainder != 0 {
+			err = ErrInvalidAudio
+		} else {
+			r.complete.Store(true)
+		}
+	}
+	return n, err
+}
 
 // Play starts local audio only when called explicitly. Native PCM/WAV offsets
 // skip complete sample frames. Compressed offsets use output-side decoder seek.
@@ -111,4 +250,28 @@ func offsetFrames(offset time.Duration, rate uint32, frames int64) int64 {
 		return frames
 	}
 	return whole + fraction
+}
+
+// PlayPCMFrom replays retained PCM16 starting at a complete sample frame.
+// The caller owns the immutable recording and its underlying descriptor.
+func PlayPCMFrom(ctx context.Context, source *io.SectionReader, rate, channels int, offset time.Duration) error {
+	return playPCMFrom(ctx, source, rate, channels, offset, systemHelpers())
+}
+
+func playPCMFrom(ctx context.Context, source *io.SectionReader, rate, channels int, offset time.Duration, h helpers) error {
+	if source == nil || offset < 0 {
+		return ErrInvalidAudio
+	}
+	if _, err := streamPCMHeader(rate, channels); err != nil {
+		return err
+	}
+	align := int64(channels) * 2
+	if source.Size()%align != 0 {
+		return ErrInvalidAudio
+	}
+	start := offsetFrames(offset, uint32(rate), source.Size()/align) * align
+	if start == source.Size() {
+		return ctx.Err()
+	}
+	return playPCM(ctx, io.NopCloser(io.NewSectionReader(source, start, source.Size()-start)), rate, channels, h)
 }

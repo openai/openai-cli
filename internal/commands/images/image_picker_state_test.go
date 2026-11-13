@@ -81,7 +81,7 @@ func TestImagePickerStateIgnoresLegacyPrompt(t *testing.T) {
 		t.Run(fmt.Sprintf("legacy prompt=%t", prompt), func(t *testing.T) {
 			path := pickerStatePath(t)
 			want := pickerStateSettings(t)
-			want.quality = "high"
+			want.model, want.quality = "gpt-image-2.5-flare", "max"
 			require.NoError(t, saveImagePickerState(t.Context(), path, want))
 			data, err := os.ReadFile(path)
 			require.NoError(t, err)

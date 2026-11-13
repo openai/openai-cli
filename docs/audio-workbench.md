@@ -27,7 +27,7 @@ Down from the bottom row of the stacked form moves to Audio. It focuses the wave
 When Generate speech, History, and More actions share a row, Left and Right move between them.
 From a setting, Home selects Voice and End moves to the final action.
 Enter opens a choice or starts generation from an editor.
-Enter on Speed accepts an exact number from 0.25 to 4. Left and Right adjust speed by 0.25.
+Enter on Speed accepts a number from 0.25 to 1.5 for Realtime speech, or up to 4 for Speech API models. Left and Right adjust speed by 0.25.
 Alt+Enter adds a newline. Ctrl+G generates from any ordinary form section.
 Ctrl+S opens Save for the current recording. Before generation, it shows “Generate speech first.”
 Ctrl+O focuses Audio without starting playback.
@@ -118,7 +118,12 @@ The CLI does not install either tool.
 Missing tools do not delete retained audio or prevent exporting its original bytes.
 Replay starts a completed recording from the beginning.
 
-The model picker distinguishes five documented Speech model IDs from two legacy Playground IDs.
+New forms use `gpt-realtime-2.1-mini`, the Coral voice, and WAV output.
+The CLI sends a text script and delivery instructions through the Realtime API when you generate speech.
+You can choose WAV or raw signed 16-bit, 24 kHz mono PCM.
+OpenAI recommends this model for the speech migration. [Text-to-speech guide](https://developers.openai.com/api/docs/guides/text-to-speech)
+
+The model picker also includes five documented Speech API model IDs and two legacy Playground IDs.
 The Speech API names `gpt-4o-mini-tts`, its March and December 2025 snapshots, `tts-1`, and `tts-1-hd`.
 OpenAI lists January 6, 2027 as their shutdown date. [Speech API reference](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create)
 The CLI also accepts `tts-1-1106` and `tts-1-hd-1106` for compatibility. The current model catalog does not list those IDs.
@@ -127,13 +132,10 @@ The form rejects unsupported voices for the `tts-1` family before generation.
 It keeps unsupported Instructions in the draft and omits them from requests.
 Direct flags retain their existing API behavior, including custom voices and future model IDs.
 
-OpenAI recommends `gpt-realtime-2.1-mini` through the Realtime API for new integrations.
-This form uses the Speech endpoint. [Deprecation schedule](https://developers.openai.com/api/docs/deprecations#2026-10-01-text-to-speech-models)
-
 Explicit flags, piped input, and explicit output modes retain the existing direct command path:
 
 ```sh
-openai audio speak --model gpt-4o-mini-tts --voice coral --input 'Hello.' --instructions 'Speak warmly.' --response-format wav --speed 1 --output hello.wav
+openai audio speak --model gpt-realtime-2.1-mini --voice coral --input 'Hello.' --instructions 'Speak warmly.' --response-format wav --speed 1 --output hello.wav
 
 # Preserve exact binary stdout for a shell pipeline.
 openai audio speak --model gpt-4o-mini-tts --voice coral --input 'Hello.' --response-format mp3 --output - > hello.mp3
@@ -176,13 +178,45 @@ The [speech API reference](https://developers.openai.com/api/reference/resources
 The [text-to-speech guide](https://developers.openai.com/api/docs/guides/text-to-speech) documents formats and model-specific voices.
 See [transcript output](transcript-output.md) for finite transcription and translation presentation.
 
-## Live microphone and browser-tab translation
+## Translate in the terminal
 
 ```sh
-openai audio translate --live
+openai audio translate-live
 ```
 
-This explicit mode opens a private local browser page. It keeps your API key in the CLI.
+The terminal opens with **Start microphone** selected. Press Enter to start. Speak when the screen shows **Listening**.
+Press Space to stop and receive final captions.
+
+Use Left or Right to choose **Audio file** or **Typed text**. Press Enter to enter a file path or text.
+Press Enter to apply the input. Press Enter again on the translation action to submit it.
+Choose **Translate into** to change the target language. Open **More settings** for models, playback, and the save folder.
+Typed text uses the Responses API.
+
+If the request fails before it produces output, the form shows the cause and selects **Retry translation**.
+Press Enter to retry with the same input. If the session received captions or audio, you can still save them.
+
+Audio input requires FFmpeg. Audio playback requires FFplay. Use `--no-playback` for captions without speaker output.
+On macOS, allow microphone access for your terminal when the system prompts you.
+On Windows, supply the DirectShow microphone name with `--input-device`. Linux uses PulseAudio.
+
+```sh
+openai audio translate-live --target-language es
+openai audio translate-live --file recording.wav --target-language fr
+```
+
+After translation, press T to read the full transcript. Press Tab to switch between original and translated text.
+Press P to replay translated audio. Use Left or Right before replay to select a start time.
+Press S to save the result. Set `--output-dir` to choose its parent folder.
+The CLI saves captions and any translated audio in a new private directory.
+
+### Share browser-tab audio
+
+```sh
+openai audio translate-live --browser
+```
+
+This mode opens a private local browser page. It keeps your API key in the CLI.
+`openai audio translate --live` also opens the browser panel.
 Choose Microphone or Browser tab, select a target language, then start the session.
 For tab capture, choose a browser tab and enable Share tab audio in the browser dialog.
 The CLI sends audio only. It does not send the shared video track.
@@ -203,13 +237,14 @@ A failed replacement attempt preserves the previous recording until new translat
 Clear removes the current browser recording. Browser recordings do not enter speech History.
 Ctrl+C closes the local page's connection and removes its private launch file.
 
-The live page currently supports microphone and browser-tab audio.
-Typed text and file upload remain separate workflows.
-Existing file translation keeps its input, output, and English translation behavior:
+For English translation of a saved recording, the file translation endpoint currently accepts `whisper-1`.
 
 ```sh
 openai audio translate --file recording.wav --model whisper-1
 ```
+
+OpenAI plans to retire both `whisper-1` and `/v1/audio/translations` on February 26, 2027.
+See the [deprecation notice](https://developers.openai.com/api/docs/deprecations#2026-08-26-transcription-models).
 
 Speech History groups recordings by local date and shows one prompt row per recording. Date headings use pale sky blue in dark terminals and the darker blue accent in light terminals.
 Search History by clip text, voice, format, or local recording date. Search ignores letter case.

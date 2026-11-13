@@ -44,7 +44,8 @@ func registerAudioCommands(root *cli.Command) {
 		ReportReceipt: ReportSaveReceipt,
 	})
 	audio.ConfigureLiveTranslation(root, audio.TranslationOptions{
-		DefaultRequestOptions: GetDefaultRequestOptions,
+		DefaultRequestOptions:  GetDefaultRequestOptions,
+		AuthenticationGuidance: translationAuthenticationGuidance,
 		RequestOptions: func(command *cli.Command) ([]option.RequestOption, error) {
 			// Live sessions do not consume the file-translation body or stdin.
 			// Keep root headers, query options, credential checks, and transport policy.
@@ -81,6 +82,19 @@ func speechPresentation(opts ShowJSONOpts) audio.SpeechPresentation {
 }
 
 // Reuse the request policy's value-free guidance for the interactive error panel.
+func translationAuthenticationGuidance(command *cli.Command, apierr *openai.Error) audio.AuthenticationGuidance {
+	if apierr == nil || apierr.StatusCode != 0 || command == nil {
+		return speechAuthenticationGuidance(command, apierr)
+	}
+	// The WebSocket rejected creation without identifying a cause. Only report a verifiable local issue.
+	root := command.Root()
+	_, override := apiAuthenticationCredentialSource(root, "api-key", "OPENAI_API_KEY", "API key")
+	if override || apiAuthenticationCustomBase(root) || apiAuthenticationKeyPresent(root, "api-key", "OPENAI_API_KEY") {
+		return audio.AuthenticationGuidance{}
+	}
+	return speechAuthenticationGuidance(command, &openai.Error{StatusCode: http.StatusUnauthorized})
+}
+
 func speechAuthenticationGuidance(command *cli.Command, apierr *openai.Error) audio.AuthenticationGuidance {
 	if command == nil || apierr == nil || apierr.StatusCode != http.StatusUnauthorized && apierr.StatusCode != http.StatusForbidden {
 		return audio.AuthenticationGuidance{}
@@ -116,6 +130,7 @@ func speechAuthenticationGuidance(command *cli.Command, apierr *openai.Error) au
 		guidance.Action = "Close this form."
 		if !custom && os.Getenv("OPENAI_API_KEY") == "" {
 			guidance.Action += "\n" + setupStep
+			guidance.PanelAction = "Press Esc for setup instructions.\nReopen without the empty --api-key."
 		}
 		guidance.Action += "\nReopen without the empty --api-key option."
 	case custom:
@@ -129,6 +144,7 @@ func speechAuthenticationGuidance(command *cli.Command, apierr *openai.Error) au
 	case !apiAuthenticationKeyPresent(root, "api-key", "OPENAI_API_KEY"):
 		guidance.Summary = "No API key is configured."
 		guidance.Action = setupStep
+		guidance.PanelAction = "Press Esc for setup instructions."
 	case apierr.Code == "invalid_api_key":
 		guidance.Action = "Replace the rejected API key.\nReopen this form."
 	default:

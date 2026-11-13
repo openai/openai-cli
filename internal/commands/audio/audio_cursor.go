@@ -3,7 +3,6 @@ package audio
 import (
 	"bytes"
 	"context"
-	"strings"
 	"sync/atomic"
 
 	"charm.land/bubbles/v2/textarea"
@@ -25,31 +24,21 @@ func audioEditorCursor(editor textarea.Model, x, y int) *tea.Cursor {
 }
 
 // Translate body coordinates only after the final row budget is known.
-func (m *audioWorkbench) cursorView(lines []string, footerCount int, cursor *tea.Cursor) tea.View {
-	view := tea.NewView(m.fitAudio(lines, footerCount))
+func (m *audioWorkbench) panelCursor(cursor *tea.Cursor, bodyHeight int) *tea.Cursor {
 	if cursor == nil || m.busy || m.quit || !m.usable() {
-		return view
-	}
-	rows := 0
-	for _, line := range lines {
-		rows += strings.Count(line, "\n") + 1
-	}
-	bodyHeight := min(rows, m.audioHeight())
-	if m.framed() {
-		footerCount = min(footerCount, rows, m.audioHeight())
-		bodyHeight = min(rows-footerCount, m.audioHeight()-footerCount)
+		return nil
 	}
 	if cursor.X < 0 || cursor.X >= m.audioWidth() || cursor.Y < 0 || cursor.Y >= bodyHeight {
-		return view
+		return nil
 	}
+	position := *cursor
 	if m.framed() {
-		cursor.X++
-		cursor.Y++
+		position.X++
+		position.Y++
 	} else {
-		cursor.X += 2
+		position.X += 2
 	}
-	view.Cursor = cursor
-	return view
+	return &position
 }
 
 // A queued first frame can be discarded during cancellation. Restore its saved

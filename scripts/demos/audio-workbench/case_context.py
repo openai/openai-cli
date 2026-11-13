@@ -396,6 +396,21 @@ class CaseContext:
         self.terminal = self.new_terminal(str(self.args.binary), ["audio", "speak"], self.env, width=width, height=height)
         self.result["initial_size"] = [width, height]
         self.wait(self.terminal, "Text to speech")
+        if self.name in ("workflow", "compact") or self.failure or self.busy:
+            self.select_speech_fixture_model(self.terminal)
+
+    def select_speech_fixture_model(self, terminal):
+        # These scenarios exercise the finite Speech API and its HTTP fixture.
+        # Start both baseline and candidate sessions with the same explicit model.
+        terminal.send(b"\t\t" + self.picker.DOWN + b"\r")
+        model = self.wait(terminal, "› Model")
+        if "gpt-realtime-" in model:
+            terminal.send(b"\x1b[C")
+            self.wait(terminal, "gpt-4o-mini-tts")
+        else:
+            assert "gpt-4o-mini-tts" in model, "Unexpected model for the Speech API fixture"
+        terminal.send(self.picker.UP + b"\r" + self.picker.HOME + b"\x1b[Z\x1b[Z")
+        self.wait(terminal, "› Text to speech")
 
     def finish_form(self):
         terminal, result, server, case = self.terminal, self.result, self.server, self.name

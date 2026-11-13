@@ -96,7 +96,7 @@ func TestAudioActionsEmptyPlayerRespectsGuards(t *testing.T) {
 			}
 			if guard == "invalid-speed" {
 				require.True(t, m.speedEditing)
-				require.Equal(t, audioSpeedError, m.speedError)
+				require.Equal(t, m.speedRangeError(), m.speedError)
 				require.Equal(t, 1.0, m.settings.Speed)
 			}
 		})
@@ -355,7 +355,13 @@ func TestAudioHelpFitsWideScreensAndScrollsOnShortScreens(t *testing.T) {
 		m.openHelp("more")
 		view := ansi.Strip(m.View().Content)
 		require.Contains(t, view, "Compose")
-		require.Contains(t, view, "Insert a new line")
+		require.Regexp(t, `Enter/Ctrl\+G +Generate speech`, view)
+		require.Regexp(t, `Ctrl\+C +Exit Voice Studio`, view)
+		require.Regexp(t, `Alt\+Enter +Insert a new line`, view)
+		if size.Width == 133 {
+			require.Regexp(t, `Shift\+Tab +Script to Recording`, view)
+			require.Regexp(t, `Ctrl\+S +Open Save audio`, view)
+		}
 		require.Contains(t, view, "Esc back")
 		if size.Height == 12 {
 			require.Contains(t, view, "↑↓ scroll")

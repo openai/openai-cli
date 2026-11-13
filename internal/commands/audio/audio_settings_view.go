@@ -51,7 +51,7 @@ func (m *audioWorkbench) choiceView() tea.View {
 	footer := m.formShortcutRows(hints...)
 	count := len(m.choices)
 	if count == 0 {
-		return tea.NewView(m.fitAudio(append(lines, footer...), len(footer)))
+		return m.panelView(lines, nil, footer, nil)
 	}
 	column, detailWidth := 0, 0
 	for _, value := range m.choices {
@@ -87,7 +87,7 @@ func (m *audioWorkbench) choiceView() tea.View {
 		lines = append(lines, m.choiceRow(row, i == choice, m.audioWidth()))
 	}
 	lines = append(lines, notes...)
-	return tea.NewView(m.fitAudio(append(lines, footer...), len(footer)))
+	return m.panelView(lines, nil, footer, nil)
 }
 
 func audioChoiceLabel(setting int, value string) string {
@@ -102,6 +102,8 @@ func audioChoiceLabel(setting int, value string) string {
 func audioChoiceDescription(setting int, value string) (detail string, retires bool) {
 	if setting == 0 {
 		switch value {
+		case realtimeSpeechModel:
+			return "Realtime speech, WAV or PCM", false
 		case "gpt-4o-mini-tts":
 			return "Supports voice instructions", true
 		case "gpt-4o-mini-tts-2025-03-20", "gpt-4o-mini-tts-2025-12-15":
