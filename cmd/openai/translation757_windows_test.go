@@ -434,24 +434,22 @@ func run757(t *testing.T, exe, scenario string) {
 	}
 	if scenario != "typed" {
 		for _, name := range []string{"ffmpeg.exe", "ffplay.exe"} {
-			// Both directories normally use the runner's temp volume. A copy handles split volumes.
+			// A hard link shares the running worker image and can block Windows cleanup.
 			dst := filepath.Join(folder, name)
-			if err := os.Link(witness, dst); err != nil {
-				src, err := os.Open(witness)
-				if err != nil {
-					t.Fatal(err)
-				}
-				out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0700)
-				if err != nil {
-					src.Close()
-					t.Fatal(err)
-				}
-				_, err = io.Copy(out, src)
-				closeErr := out.Close()
+			src, err := os.Open(witness)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0700)
+			if err != nil {
 				src.Close()
-				if err != nil || closeErr != nil {
-					t.Fatal("helper copy failed")
-				}
+				t.Fatal(err)
+			}
+			_, err = io.Copy(out, src)
+			closeErr := out.Close()
+			src.Close()
+			if err != nil || closeErr != nil {
+				t.Fatal("helper copy failed")
 			}
 		}
 	}

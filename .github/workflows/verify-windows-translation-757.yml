@@ -3,12 +3,16 @@ name: Diagnose Windows translation console checks
 on:
   push:
     branches: [codex/windows-757-console-diagnostics]
+    paths:
+      - .github/workflows/verify-windows-translation-757.yml
+      - cmd/openai/translation757_windows_test.go
+      - scripts/check-windows-translation-console.ps1
 
 permissions: {}
 
 jobs:
   verify:
-    if: github.repository == 'openai/openai-cli' && github.event.created && github.run_attempt == '1'
+    if: github.repository == 'openai/openai-cli' && (github.run_attempt == '1' || github.run_attempt == '2')
     runs-on: windows-2025
     timeout-minutes: 20
     permissions:
@@ -18,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Check the runner, shipping parent, and changed files
@@ -27,7 +31,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if ($env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64') { throw 'Expected Windows x64.' }
           if ((git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Unexpected candidate.' }
-          if ((git rev-parse 'HEAD^') -cne $env:SHIPPING) { throw 'Unexpected shipping parent.' }
+          git merge-base --is-ancestor $env:SHIPPING HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate does not descend from shipping.' }
           $changes = @(git diff --name-status --no-renames $env:SHIPPING HEAD)
           $expected = @(
             "A`t.github/workflows/verify-windows-translation-757.yml",
