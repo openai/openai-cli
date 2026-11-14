@@ -22,22 +22,33 @@
 
 ## Installation
 
-Choose your operating system. Each setup installs all CLI commands and turns on automatic updates for normal interactive use.
-
-[macOS](#macos) · [Linux](#linux) · [Windows](#windows) · [When updates run](docs/automatic-updates.md#eligible-invocations)
+These commands install the CLI and enable automatic updates during normal interactive use.
+After setup, run `openai` to see the available commands.
 
 <a id="installing-with-homebrew"></a>
 
 ### macOS
 
-Using Homebrew and zsh, paste both lines together in Terminal. Use the same command for an older Homebrew installation.
+With Homebrew installed, paste both lines into a zsh terminal.
 
 ```zsh
-brew update && brew install --cask openai/tools/openai &&
+brew update --auto-update && brew install --cask openai/tools/openai &&
 source "$(brew --prefix)/bin/openai-enable-updates.zsh"
 ```
 
-[Other shells and Homebrew troubleshooting](docs/installation.md#installing-with-homebrew) · [Install without Homebrew](docs/installation.md#installing-a-prebuilt-binary)
+<details>
+<summary>Need Homebrew first?</summary>
+
+Run Homebrew’s installer in Terminal.
+
+```sh
+(installer=$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh) &&
+  /bin/bash -c "$installer")
+```
+
+Follow its printed instructions to add `brew` to your PATH. Then paste the two lines above.
+
+</details>
 
 <a id="installing-a-prebuilt-binary"></a>
 
@@ -51,7 +62,7 @@ echo '3b94b2ac8e73bd16f3803ceea1ba5c08b1c80a3c9b27f75c5b8a9d4d76ff7e00  openai.s
   sha256sum -c - && source ./openai.sh
 ```
 
-Enter your password if sudo asks. [Install over SSH](docs/installation.md#install-over-ssh) · [Other Linux distributions](docs/installation.md#installing-a-prebuilt-binary)
+Enter your password if sudo asks.
 
 ### Windows
 
@@ -59,7 +70,7 @@ Enter your password if sudo asks. [Install over SSH](docs/installation.md#instal
 2. Select **Copy raw file**.
 3. Paste it into PowerShell without administrator privileges.
 
-The installer downloads the matching ZIP and makes `openai` available in this terminal. [Install with File Explorer](docs/installation.md#windows)
+The installer downloads the matching ZIP and makes `openai` available in this terminal.
 
 ## Explore commands
 
