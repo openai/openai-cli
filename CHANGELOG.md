@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.54.0](https://github.com/openai/openai-cli/compare/v1.53.1...v1.54.0) (2026-11-14)
+
+
+### Features
+
+* add compact Limits workspaces ([#405](https://github.com/openai/openai-cli/issues/405)) ([c35604d](https://github.com/openai/openai-cli/commit/c35604d7b28d9574b017c918b369d756688be76d))
+
 ## [1.53.1](https://github.com/openai/openai-cli/compare/v1.53.0...v1.53.1) (2026-11-12)
 
 
