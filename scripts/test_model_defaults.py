@@ -68,6 +68,34 @@ class ModelDefaultsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "TranslationText selects gpt-5-mini; current guidance recommends text"):
             self.verify()
 
+    def test_current_retirement_table(self):
+        self.pages[check.DEPRECATIONS] = (
+            "| Shutdown date | Affected model | Status | Recommended replacement | Notice date |\n"
+            "|---|---|---|---|---|\n"
+            "| Tomorrow | `gpt-5-mini`, `gpt-5-mini-2025-08-07` | Deprecated | `text` | Today |"
+        )
+        self.verify()
+
+    def test_retirement_columns_can_move(self):
+        self.pages[check.DEPRECATIONS] = (
+            "| Shutdown date | Listed replacement | Affected model or feature | Notice date |\n"
+            "|---|---|---|---|\n"
+            "| Tomorrow | `text` | `gpt-5-mini` | Today |\n"
+            "| Tomorrow | `other` | `image` | Today |"
+        )
+        with self.assertRaisesRegex(ValueError, "SavedImage selects deprecated image"):
+            self.verify()
+
+    def test_retirement_row_with_empty_shutdown_date(self):
+        self.pages[check.DEPRECATIONS] = (
+            "|Shutdown date|Affected model|Status|Recommended replacement|Notice date|\n"
+            "|---|---|---|---|---|\n"
+            "|Tomorrow|`gpt-5-mini`|Deprecated|`text`|Today|\n"
+            "||`voice`|Deprecated|`new`|Today| "
+        )
+        with self.assertRaisesRegex(ValueError, "Speech selects deprecated voice"):
+            self.verify()
+
     def test_text_translation_requires_one_recommendation(self):
         previous = self.pages[check.DEPRECATIONS]
         for changed in [previous.replace("`gpt-5-mini`", "`gpt-5-mini-preview`"),
@@ -141,6 +169,10 @@ class ModelDefaultsTest(unittest.TestCase):
         self.pages[check.CAPTION_EVENTS] = self.pages[check.CAPTION_EVENTS].replace("captions", "wrong")
         with self.assertRaisesRegex(ValueError, "input transcription"):
             self.verify()
+
+    def test_unrelated_caption_json_example(self):
+        self.pages[check.CAPTION_EVENTS] += "\n```json\n[]\n```"
+        self.verify()
 
     def test_invalid_inventory_and_changed_guide(self):
         with self.assertRaisesRegex(ValueError, "Invalid model declaration"):

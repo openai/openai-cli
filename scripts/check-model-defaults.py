@@ -25,7 +25,7 @@ MODEL_ID = r"[a-z0-9][a-z0-9.-]*"
 # Review changes to model advice even if the source retains an older recommendation.
 REVIEWED_GUIDANCE = {
     SPEECH: "5d7de5ea03eabc2ee2a34272e6128d37b90442c80592df4f13725e76638647e7",
-    IMAGE: "00c36c0421267ee7667b35c2246bb6886f87f493447a768825c05025b42bfff5",
+    IMAGE: "4d576b25d751c788027c5d9eb943caa4a8c8adb599fc3009fe19fce6048ab47a",
     TRANSLATION: "28d362b54b8f964cd96b1ab19b34b520f5e8163ed5f95ff04880210f5513da81",
     CAPTIONS: "ac7e0c6762d96fcb434779e9cfd4c7a702d39657bed7e7677a445984eee7c7dc",
 }
@@ -88,23 +88,50 @@ def image_recommendation(guide):
     raise ValueError(f"Missing recommended image model section in {IMAGE}")
 
 
-def retirements(page):
-    # Only the affected model column denotes a retirement. Replacements can be current.
-    deprecated = set()
-    active_table = False
+def retirement_rows(page):
+    affected_headers = {"model / system", "affected model", "affected model or feature", "affected feature or endpoint"}
+    replacement_headers = {"recommended replacement", "listed replacement"}
+    columns = None
     for line in page.splitlines():
         if not line.startswith("|"):
-            active_table = False
+            columns = None
             continue
-        cells = [cell.strip() for cell in re.split(r"(?<!\\)\|", line.strip("|"))]
-        if cells[0].lower() == "shutdown date":
-            active_table = True
-        elif active_table and len(cells) > 1 and not cells[0].startswith("-"):
-            deprecated.update(re.findall(r"(?<![\w.-])(" + MODEL_ID + r")(?![\w.-])", cells[1]))
-            deprecated.update(re.findall(r"\b(v1/[\w/-]+)", cells[1]))
+        row = line.rstrip().removeprefix("|").removesuffix("|")
+        cells = [cell.strip() for cell in re.split(r"(?<!\\)\|", row)]
+        headers = [cell.lower() for cell in cells]
+        if "shutdown date" in headers:
+            affected = [i for i, header in enumerate(headers) if header in affected_headers]
+            replacement = [i for i, header in enumerate(headers) if header in replacement_headers]
+            if len(affected) != 1 or len(replacement) != 1:
+                raise ValueError(f"Unrecognized retirement table columns in {DEPRECATIONS}")
+            columns = affected[0], replacement[0]
+        elif columns is not None and not all(re.fullmatch(r":?-+:?", cell) for cell in cells):
+            affected, replacement = columns
+            if max(columns) >= len(cells):
+                raise ValueError(f"Incomplete retirement table row in {DEPRECATIONS}")
+            yield cells[affected], cells[replacement]
+
+
+def retirements(rows):
+    # Only the affected model column denotes a retirement. Replacements can be current.
+    deprecated = set()
+    for affected, _ in rows:
+        deprecated.update(re.findall(r"(?<![\w.-])(" + MODEL_ID + r")(?![\w.-])", affected))
+        deprecated.update(re.findall(r"\b(v1/[\w/-]+)", affected))
     if not deprecated:
         raise ValueError(f"Missing model retirement data in {DEPRECATIONS}")
     return deprecated
+
+
+def recommended_replacement(rows, original):
+    replacements = set()
+    for affected, replacement in rows:
+        if original in re.findall(r"`(" + MODEL_ID + r")`", affected):
+            match = re.fullmatch(r"`(" + MODEL_ID + r")`", replacement)
+            replacements.add(match[1] if match else None)
+    if len(replacements) != 1 or None in replacements:
+        raise ValueError(f"Expected one unambiguous replacement for {original} in {DEPRECATIONS}")
+    return replacements.pop()
 
 
 def check_caption_field(page, model):
@@ -112,7 +139,7 @@ def check_caption_field(page, model):
     documented = set()
     for block in re.findall(r"```json\s*\n(.*?)\n```", page, re.DOTALL):
         event = json.loads(block)
-        if event.get("type") == "session.update":
+        if isinstance(event, dict) and event.get("type") == "session.update":
             audio_input = event["session"].get("audio", {}).get("input", {})
             if audio_input.get("transcription"):
                 documented.add(audio_input["transcription"]["model"])
@@ -124,11 +151,9 @@ def verify(models, read):
     speech = unique(r"Migrate to `(" + MODEL_ID + r")` using the\s+\[Realtime API\]", read(SPEECH), SPEECH)
     translation = unique(r"Use \[`(" + MODEL_ID + r")`\]\([^)]+\) when your application should translate",
                          read(TRANSLATION), TRANSLATION)
-    deprecations = read(DEPRECATIONS)
+    deprecations = list(retirement_rows(read(DEPRECATIONS)))
     # Follow the explicit replacement for typed translation's original default.
-    text_translation = unique(
-        r"^\|[^|\n]+\|\s*`gpt-5-mini`(?:\s*\\\|\s*`" + MODEL_ID + r"`)*"
-        r"\s*\|\s*`(" + MODEL_ID + r")`\s*\|$", deprecations, DEPRECATIONS)
+    text_translation = recommended_replacement(deprecations, "gpt-5-mini")
     captions = unique(r"configure input transcription with `(" + MODEL_ID + r")`", read(CAPTIONS), CAPTIONS)
     recommendations = {
         "Speech": (speech, SPEECH, ["v1/realtime"]),
