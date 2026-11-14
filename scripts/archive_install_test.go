@@ -459,9 +459,13 @@ case $1 in
     --caskroom) echo "$prefix/Caskroom/openai" ;;
     --prefix) echo "$prefix" ;;
     update)
-        [ "$#" -eq 1 ] || exit 71
+        [ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && [ "$2" = --auto-update ]; } || exit 71
         echo update >> "$HOME/brew.log"
         [ "${BREW_FAIL:-}" != update ] || exit 39
+        if [ "${BREW_FAIL:-}" = unrelated-tap ] && [ "${2-}" != --auto-update ]; then
+            echo 'Error: Fetching an unrelated tap failed!' >&2
+            exit 39
+        fi
         if [ "${BREW_FAIL:-}" = old-tap ]; then version=1.0.0; else version=1.2.3; fi
         echo "$version" > "$prefix/tap-version" ;;
     install)
@@ -779,12 +783,14 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 	for _, tc := range []struct {
 		name, failure, calls string
 		exitCode             int
+		missingGH            bool
 	}{
-		{"fresh without GitHub CLI", "", "update\ncask\ngh\n", 0},
-		{"old cask and earlier Go binary", "", "update\ncask\n", 0},
-		{"failed update", "update", "update\n", 39},
-		{"failed install", "install", "update\ncask\n", 40},
-		{"tap still offers a cask without setup", "old-tap", "update\ncask\n", -1}, // zsh chooses the missing-file status.
+		{"fresh without GitHub CLI", "", "update\ncask\ngh\n", 0, true},
+		{"broken unrelated tap", "unrelated-tap", "update\ncask\ngh\n", 0, true},
+		{"old cask and earlier Go binary", "", "update\ncask\n", 0, false},
+		{"failed update", "update", "update\n", 39, false},
+		{"failed install", "install", "update\ncask\n", 40, false},
+		{"tap still offers a cask without setup", "old-tap", "update\ncask\n", -1, false}, // zsh chooses the missing-file status.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := privateInstallDirectory(t)
@@ -796,7 +802,7 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 			if err := os.WriteFile(filepath.Join(bin, "brew"), []byte(brewScript), 0755); err != nil {
 				t.Fatal(err)
 			}
-			if tc.name != "fresh without GitHub CLI" {
+			if !tc.missingGH {
 				if err := os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\necho ready\n"), 0755); err != nil {
 					t.Fatal(err)
 				}
@@ -842,7 +848,7 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 			if calls, readErr := os.ReadFile(filepath.Join(home, "brew.log")); readErr != nil || string(calls) != tc.calls {
 				t.Fatalf("brew calls %q: %v; install output: %s", calls, readErr, out)
 			}
-			if tc.failure != "" {
+			if tc.exitCode != 0 {
 				exit, ok := err.(*exec.ExitError)
 				if !ok || (tc.exitCode > 0 && exit.ExitCode() != tc.exitCode) {
 					t.Fatalf("failed %s: %v: %s", tc.failure, err, out)
