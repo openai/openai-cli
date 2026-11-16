@@ -47,9 +47,9 @@ function ____APPNAME___fish_autocomplete
                 if test $exit_code -eq 12
                     printf '%s-\tRead the request from the command before |\n' "$assignment"
                 end
-                # Fish 3 also completes the suffix after = or : in a path.
+                # Fish can also complete the suffix after = or : in a path.
                 # Escape literal separators without changing expansion syntax.
-                if test $legacy_tokens -ne 0; and string match -qr '[=:]' -- "$value"; and not string match -qr '[$~*?{}()%]' -- "$value"
+                if string match -qr '[=:]' -- "$value"; and not string match -qr '[$~*?{}()%]' -- "$value"
                     set -l literal_value (commandline -I "$value" -o)
                     if test $status -eq 0; and test (count $literal_value) -eq 1
                         set value (string escape -n -- "$literal_value[1]")

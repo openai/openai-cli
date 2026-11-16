@@ -50,6 +50,8 @@ complete -C "$OPENAI_CLI_COMPLETION_LINE"
 		{"openai --missing=assets/lo", nil},
 		{"openai -- --file=assets/lo", nil},
 		{"openai --file='assets/a='", []string{"--file=assets/a=b.png"}},
+		{`openai --file="assets/a="`, []string{"--file=assets/a=b.png"}},
+		{"openai --file='assets/colon:'", []string{"--file=assets/colon:name.png"}},
 		{"openai --file='assets/a=", []string{"--file=assets/a=b.png"}},
 		{"openai --file=\"assets/a=", []string{"--file=assets/a=b.png"}},
 		{`openai --file=assets/a\=`, []string{"--file=assets/a=b.png"}},
