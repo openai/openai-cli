@@ -1,13 +1,18 @@
 #!/usr/bin/env fish
 
 function ____APPNAME___fish_autocomplete
-    set -l tokens (commandline -xpc)
+    # Fish 3 lacks expanded tokens; retain its literal tokenization fallback.
+    set -l tokens (commandline -xpc 2>/dev/null)
+    set -l legacy_tokens $status
+    if test $legacy_tokens -ne 0
+        set tokens (commandline -opc)
+    end
     set -l current (commandline -ct)
 
     set -l cmd $tokens[1]
     set -l args $tokens[2..-1]
 
-    set -l completions (env COMPLETION_STYLE=fish OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_PRESERVE_WORDS=1 $cmd __complete -- $args $current 2>/dev/null)
+    set -l completions (env COMPLETION_STYLE=fish OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_STDIN_PATH=1 OPENAI_CLI_COMPLETION_PRESERVE_WORDS=1 $cmd __complete -- $args "$current" 2>/dev/null)
     set -l exit_code $status
 
     # Check for custom file completion patterns
@@ -16,7 +21,7 @@ function ____APPNAME___fish_autocomplete
     set -l file_part "$current"
     set -l force_file_completion 0
 
-    if test $exit_code -ne 10; and string match -gqr '^(?<before>.*)@(?<protocol>file://|data://)?(?<file_part>.*)$' -- $current
+    if test $exit_code -ne 10; and test $exit_code -ne 12; and string match -gqr '^(?<before>.*)@(?<protocol>file://|data://)?(?<file_part>.*)$' -- $current
         if string match -qr '^[\'"]' -- $before
             # Ensures we don't insert an extra quote when the user is building an argument in quotes
             set before (string sub -s 2 -- $before)
@@ -32,12 +37,25 @@ function ____APPNAME___fish_autocomplete
         end
     else
         switch $exit_code
-            case 10
+            case 10 12
                 # The backend returns a prefix only for an assigned file flag.
                 set -l assignment "$completions"
                 set -l value "$current"
                 if test -n "$assignment"
                     set value (string sub -s (math (string length -- "$assignment") + 1) -- "$current")
+                end
+                if test $exit_code -eq 12
+                    printf '%s-\tRead the request from the command before |\n' "$assignment"
+                end
+                # Fish 3 also completes the suffix after = or : in a path.
+                # Escape literal separators without changing expansion syntax.
+                if test $legacy_tokens -ne 0; and string match -qr '[=:]' -- "$value"; and not string match -qr '[$~*?{}()%]' -- "$value"
+                    set -l literal_value (commandline -I "$value" -o)
+                    if test $status -eq 0; and test (count $literal_value) -eq 1
+                        set value (string escape -n -- "$literal_value[1]")
+                        set value (string replace -a '=' '\x3d' -- "$value")
+                        set value (string replace -a ':' '\x3a' -- "$value")
+                    end
                 end
                 # Fish treats leading --name= specially, even for file values.
                 set -l literal_prefix ""
@@ -48,6 +66,9 @@ function ____APPNAME___fish_autocomplete
                 for path in (__fish_complete_path "$value")
                     if test -n "$literal_prefix"
                         set path (string sub -s 3 -- "$path")
+                    end
+                    if test $exit_code -eq 12; and string match -qr '^-(\t|$)' -- "$path"
+                        continue
                     end
                     printf '%s%s\n' "$assignment" "$path"
                 end

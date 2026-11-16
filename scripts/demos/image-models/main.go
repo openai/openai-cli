@@ -97,7 +97,7 @@ func serveModel(w http.ResponseWriter, r *http.Request, requests *log.Logger) {
 
 func knownModel(id string) bool {
 	switch id {
-	case "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini",
+	case "gpt-image-2.6-sunburst", "gpt-image-2.6-flare", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini",
 		"chatgpt-image-latest", "dall-e-3", "dall-e-2", "gpt-image-2.5-sunburst-2026-09-08", "gpt-image-2.5-flare-2026-09-08", "gpt-image-2-2026-04-21":
 		return true
 	}

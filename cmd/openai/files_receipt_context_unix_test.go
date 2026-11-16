@@ -143,7 +143,7 @@ func TestMainFilesReceiptFollowupPreservesSourceAndContext(t *testing.T) {
 			if name == "inspection fails" {
 				require.NotZero(t, inspection.code)
 				require.Contains(t, inspection.stderr, "HTTP 404:")
-				require.Contains(t, inspection.stderr, "Check the resource or model ID.")
+				require.Contains(t, inspection.stderr, "Check the resource or model ID and your key's access to it.")
 				require.Empty(t, inspection.stdout)
 			} else {
 				require.Zero(t, inspection.code, "%+v", inspection)

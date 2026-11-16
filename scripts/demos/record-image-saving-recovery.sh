@@ -79,7 +79,7 @@ demo_stop_api
 import base64, hashlib, json, pathlib, shutil, sys
 output, runtime = map(pathlib.Path, sys.argv[1:])
 requests = [json.loads(line) for line in (output / 'requests.jsonl').read_text().splitlines()]
-preset = dict(prompt='A tiny orange robot', model='gpt-image-2.5-sunburst', n=1, size='auto',
+preset = dict(prompt='A tiny orange robot', model='gpt-image-2.6-sunburst', n=1, size='auto',
               quality='auto', output_format='png', background='auto', moderation='auto', partial_images=0, stream=False)
 assert requests == [dict(preset, stream=True), dict(preset, n=2), dict(preset, n=2)], 'unexpected request bodies/count'
 texts = {scene: (output / f'{scene}.txt').read_text() for scene in ['before', 'after', 'before-recovery', 'after-recovery']}

@@ -8,9 +8,44 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestMainManpagesHelpIsReadOnly(t *testing.T) {
+	work := t.TempDir()
+	t.Chdir(work)
+	destination := filepath.Join(work, "manuals")
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"@manpages", "--output", destination, "--help"}, []string{`openai "@manpages" [-o DIRECTORY]`, `$ openai "@manpages" --output docs`, `openai help --all "@manpages"`, "--gzip, -z", "--text"}},
+		{[]string{"help", "@manpages"}, []string{"Generate the OpenAI CLI man page.", `openai help --all "@manpages"`}},
+		{[]string{"help", "--all", "@manpages"}, []string{"--output=DIRECTORY, -o=DIRECTORY", `Default: "man"`, "--gzip, -z", "--text"}},
+		{[]string{"@manpages", "-h", "-o"}, []string{"--output=DIRECTORY, -o=DIRECTORY", `Default: "man"`}},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=invalid-for-requests"}, append([]string{"openai"}, tc.args...)...)
+			if got.code != 0 || got.stderr != "" {
+				t.Fatalf("help failed: %+v", got)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(got.stdout, want) {
+					t.Errorf("missing %q in %s", want, got.stdout)
+				}
+			}
+			if !slices.Contains(tc.args, "--all") && strings.Contains(got.stdout, "--api-key") {
+				t.Fatal("local help included unrelated API options")
+			}
+			entries, err := os.ReadDir(work)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("help wrote files: entries=%v err=%v", entries, err)
+			}
+		})
+	}
+}
 
 func TestMainDispatchOutputManpagesDeepSubgroups(t *testing.T) {
 	dir := t.TempDir()
@@ -62,7 +97,7 @@ func TestMainDispatchOutputManpagesDeepSubgroups(t *testing.T) {
 			t.Errorf("missing full-path heading for %s", path)
 		}
 	}
-	for _, hidden := range []string{"@manpages", "__complete", "__preview", "__output", "admin:organization", "\n.SH admin organization", "\n.SH audio transcriptions"} {
+	for _, hidden := range []string{"@manpages", "__complete", "__preview", "__output", "\n.SH fine-tuning", "admin:organization", "\n.SH admin organization", "\n.SH audio transcriptions"} {
 		if strings.Contains(string(text), hidden) {
 			t.Errorf("hidden command %s leaked into manpage", hidden)
 		}
@@ -78,6 +113,8 @@ func TestMainDispatchOutputManpageReceiptPolicy(t *testing.T) {
 	}{
 		{name: "default gzip and directory", gzip: true, receipt: true, defaultDirectory: true},
 		{name: "text only", local: []string{"--text", "--gzip=false"}, text: true, receipt: true},
+		{name: "gzip alias", local: []string{"-z"}, gzip: true, receipt: true},
+		{name: "disabled gzip alias", local: []string{"--text", "-z=false"}, text: true, receipt: true},
 		{name: "both formats", local: []string{"--text"}, text: true, gzip: true, receipt: true},
 		{name: "neither format", local: []string{"--text=false", "--gzip=false"}},
 		{name: "quiet verbose", root: []string{"--quiet", "--verbose"}, local: []string{"--text"}, text: true, gzip: true},

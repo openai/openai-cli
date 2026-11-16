@@ -1,6 +1,6 @@
 //go:build windows
 
-// Package windowsfile creates exclusive Windows files with private permissions.
+// Package windowsfile handles private creation and non-following Windows file opens.
 package windowsfile
 
 import (
@@ -23,6 +23,15 @@ var (
 // The protected DACL grants full access to the current user, SYSTEM, and Administrators.
 // Set it at creation: later changes cannot revoke access through existing handles.
 func CreatePrivate(root *os.Root, name string) (*os.File, error) {
+	return createPrivate(root, name, 0, 0)
+}
+
+// CreateTemporary creates a private file that Windows removes when its last handle closes.
+func CreateTemporary(root *os.Root, name string) (*os.File, error) {
+	return createPrivate(root, name, windows.DELETE, windows.FILE_DELETE_ON_CLOSE)
+}
+
+func createPrivate(root *os.Root, name string, extraAccess, extraOptions uint32) (*os.File, error) {
 	if !filepath.IsLocal(name) || filepath.Base(name) != name {
 		return nil, ErrInvalidName
 	}
@@ -49,9 +58,9 @@ func CreatePrivate(root *os.Root, name string) (*os.File, error) {
 	}
 	attributes.Length = uint32(unsafe.Sizeof(attributes))
 	var handle windows.Handle
-	err = windows.NtCreateFile(&handle, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE, &attributes, &windows.IO_STATUS_BLOCK{}, nil,
+	err = windows.NtCreateFile(&handle, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE|extraAccess, &attributes, &windows.IO_STATUS_BLOCK{}, nil,
 		windows.FILE_ATTRIBUTE_NORMAL, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_CREATE,
-		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
+		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT|extraOptions, 0, 0)
 	if err != nil {
 		if status, ok := err.(windows.NTStatus); ok {
 			err = status.Errno()
@@ -59,4 +68,47 @@ func CreatePrivate(root *os.Root, name string) (*os.File, error) {
 		return nil, &os.PathError{Op: "open", Path: name, Err: err}
 	}
 	return os.NewFile(uintptr(handle), name), nil
+}
+
+var freeUnicodeString = windows.NewLazySystemDLL("ntdll.dll").NewProc("RtlFreeUnicodeString")
+
+// CreatePrivateDirectory creates path with a protected, inheritable private DACL.
+// It preserves parent traversal without requiring permission to list the parent.
+func CreatePrivateDirectory(path string) (*os.File, error) {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return nil, ErrOwner
+	}
+	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;" + user.User.Sid.String() + ")(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+	if err != nil {
+		return nil, ErrPermissions
+	}
+	dosName, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := freeUnicodeString.Find(); err != nil {
+		return nil, err
+	}
+	// Let Windows resolve DOS, relative, UNC, and extended paths itself.
+	var objectName windows.NTUnicodeString
+	if err := windows.RtlDosPathNameToNtPathName(dosName, &objectName, nil, nil); err != nil {
+		return nil, err
+	}
+	defer freeUnicodeString.Call(uintptr(unsafe.Pointer(&objectName)))
+	attributes := windows.OBJECT_ATTRIBUTES{
+		ObjectName: &objectName, Attributes: windows.OBJ_CASE_INSENSITIVE, SecurityDescriptor: descriptor,
+	}
+	attributes.Length = uint32(unsafe.Sizeof(attributes))
+	var handle windows.Handle
+	err = windows.NtCreateFile(&handle, windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|windows.SYNCHRONIZE, &attributes, &windows.IO_STATUS_BLOCK{}, nil,
+		windows.FILE_ATTRIBUTE_DIRECTORY, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_CREATE,
+		windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
+	if err != nil {
+		if status, ok := err.(windows.NTStatus); ok {
+			err = status.Errno()
+		}
+		return nil, &os.PathError{Op: "mkdir", Path: path, Err: err}
+	}
+	return os.NewFile(uintptr(handle), path), nil
 }

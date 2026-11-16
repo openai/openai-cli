@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/readable"
+	"github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
 
@@ -51,6 +53,32 @@ var (
 )
 
 func OutputCompletionScript(ctx context.Context, cmd *cli.Command) error {
+	if cmd.IsSet("suggestions-adapter") {
+		if cmd.Args().Len() != 0 || cmd.IsSet("picker") || cmd.IsSet("suggestions") ||
+			cmd.IsSet("suggestions-double-tab") || cmd.IsSet("suggestions-click") || cmd.IsSet("suggestions-only") {
+			return cli.Exit("--suggestions-adapter cannot be combined with a shell argument or completion options", 1)
+		}
+		adapter, err := renderSuggestionAdapter(cmd.String("suggestions-adapter"))
+		if err != nil {
+			return cli.Exit(err, 1)
+		}
+		if _, err := io.WriteString(cmd.Writer, adapter); err != nil {
+			return cli.Exit(err, 1)
+		}
+		return nil
+	}
+	if cmd.Bool("suggestions-only") && (!cmd.Bool("suggestions") || cmd.Bool("picker")) {
+		return cli.Exit("--suggestions-only requires --suggestions and cannot include --picker", 1)
+	}
+	if cmd.Bool("suggestions-double-tab") && !cmd.Bool("suggestions") {
+		return cli.Exit("--suggestions-double-tab requires --suggestions", 1)
+	}
+	if cmd.Bool("suggestions-click") && !cmd.Bool("suggestions") {
+		return cli.Exit("--suggestions-click requires --suggestions", 1)
+	}
+	if cmd.Bool("suggestions-click") && (cmd.Args().Len() != 1 || cmd.Args().First() != "zsh") {
+		return cli.Exit("click insertion currently supports zsh with a local Kitty adapter", 1)
+	}
 	shells := make([]CompletionStyle, 0, len(shellCompletions))
 	for k := range shellCompletions {
 		shells = append(shells, k)
@@ -66,9 +94,13 @@ func OutputCompletionScript(ctx context.Context, cmd *cli.Command) error {
 		return cli.Exit(fmt.Sprintf("unknown shell %s, available shells are %+v", s, shells), 1)
 	}
 
-	completionScript, err := renderCompletion(cmd, cmd.Root().Name)
-	if err != nil {
-		return cli.Exit(err, 1)
+	var completionScript string
+	var err error
+	if !cmd.Bool("suggestions-only") {
+		completionScript, err = renderCompletion(cmd, cmd.Root().Name)
+		if err != nil {
+			return cli.Exit(err, 1)
+		}
 	}
 	if cmd.Bool("picker") {
 		picker, err := renderPickerCompletion(s, cmd.Root().Name)
@@ -76,6 +108,24 @@ func OutputCompletionScript(ctx context.Context, cmd *cli.Command) error {
 			return cli.Exit(err, 1)
 		}
 		completionScript += "\n" + picker
+	}
+	if cmd.Bool("suggestions") {
+		suggestions, err := renderSuggestionCompletion(s, cmd.Root().Name, cmd.Bool("suggestions-double-tab"))
+		if err != nil {
+			return cli.Exit(err, 1)
+		}
+		completionScript += "\n" + suggestions
+	}
+	if cmd.Bool("suggestions-click") {
+		clicks, err := renderSuggestionClickCompletion(cmd.Root().Name)
+		if err != nil {
+			return cli.Exit(err, 1)
+		}
+		completionScript += "\n" + clicks
+	}
+	if cmd.Bool("suggestions") {
+		// Persistent loaders accept only complete, compatible generation.
+		completionScript += "\n# openai-cli-suggestions-complete v1\n"
 	}
 
 	_, err = cmd.Writer.Write([]byte(completionScript))
@@ -98,9 +148,10 @@ func NewShellCompletion(name string, usage string) ShellCompletion {
 type ShellCompletionBehavior int
 
 const (
-	ShellCompletionBehaviorDefault    ShellCompletionBehavior = iota
-	ShellCompletionBehaviorFile                               = 10
-	ShellCompletionBehaviorNoComplete                         = 11
+	ShellCompletionBehaviorDefault     ShellCompletionBehavior = iota
+	ShellCompletionBehaviorFile                                = 10
+	ShellCompletionBehaviorNoComplete                          = 11
+	ShellCompletionBehaviorFileOrStdin                         = 12
 )
 
 type CompletionResult struct {
@@ -113,6 +164,7 @@ type CompletionResult struct {
 	requiresFileValueSupport bool
 	// Older Bash/Zsh adapters cannot safely insert every quoted static value.
 	requiresStaticValueSupport bool
+	offersStdinPath            bool
 }
 
 func isFlag(arg string) bool {
@@ -335,8 +387,10 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 				continue
 			}
 			child := findChild(cmd, arg)
-			if helpTopics && cmd == root && arg == "setup" {
-				child = findChild(help, arg)
+			if helpTopics && cmd == root {
+				if guide := findChild(help, arg); guide != nil {
+					child = guide
+				}
 			}
 			if helpTopics && arg == "help" {
 				child = nil
@@ -481,7 +535,7 @@ func flagValueCompletion(root, selected *cli.Command, flag cli.Flag, prefix, ass
 		return CompletionResult{Behavior: ShellCompletionBehaviorFile, requiresFileValueSupport: true}
 	}
 	if file, ok := flag.(*cli.StringFlag); ok && file.TakesFile {
-		return CompletionResult{Behavior: ShellCompletionBehaviorFile}
+		return CompletionResult{Behavior: ShellCompletionBehaviorFile, offersStdinPath: file == request.RequestFileFlag(selected)}
 	}
 	return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 }
@@ -569,6 +623,12 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 				result = CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 				break
 			}
+		}
+	}
+	if result.offersStdinPath && os.Getenv("OPENAI_CLI_COMPLETION_STDIN_PATH") == "1" {
+		value := strings.TrimPrefix(args[len(args)-1], result.FileValuePrefix)
+		if value == "" || value == "-" {
+			result.Behavior = ShellCompletionBehaviorFileOrStdin
 		}
 	}
 	if result.FileValuePrefix != "" {

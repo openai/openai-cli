@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 )
@@ -21,7 +22,7 @@ const maxImageSequence int64 = 1<<63 - 1
 func NormalizeName(name string) (string, error) {
 	extension := filepath.Ext(name)
 	switch strings.ToLower(extension) {
-	case ".png", ".jpeg", ".jpg", ".webp":
+	case ".png", ".jpeg", ".jpg", ".webp", ".gif", ".svg":
 		name = strings.TrimSuffix(name, extension)
 	}
 	if err := ValidateName(name); err != nil {
@@ -74,7 +75,8 @@ func CheckName(ctx context.Context, directory, normalizedName string) error {
 	// already proves the name fits; never modify it or add a second suffix.
 	path := filepath.Join(directory, normalizedName+"-"+strconv.FormatInt(maxImageSequence, 10)+".jpeg")
 	probe, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if errors.Is(err, os.ErrExist) {
+	// Windows reports EISDIR when the existing probe is a directory.
+	if errors.Is(err, os.ErrExist) || errors.Is(err, syscall.EISDIR) {
 		return ctx.Err()
 	}
 	if err != nil {

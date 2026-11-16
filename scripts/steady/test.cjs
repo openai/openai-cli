@@ -36,6 +36,10 @@ function health(port) {
   });
 }
 
+function jsonGet(media) {
+  return { get: { responses: { 200: { description: 'OK', content: { 'application/json': media } } } } };
+}
+
 async function main() {
   const publication = spawnSync(process.execPath, [path.join(__dirname, 'publication.test.cjs')], { stdio: 'inherit' });
   assert.equal(publication.status, 0, 'Concurrent publication must succeed');
@@ -55,11 +59,11 @@ async function main() {
 
   const configured = spawnSync('bash', [
     '-c',
-    'STEADY_ROOT="$1"; source "$STEADY_ROOT/scripts/steady/settings"; printf "%s\\n%s\\n" "$STEADY_SOURCE" "$DENO_DIRECTORY"',
+    'STEADY_ROOT="$1"; source "$STEADY_ROOT/scripts/steady/settings"; printf "%s\\n%s\\n%s\\n" "$STEADY_SOURCE" "$DENO_DIRECTORY" "$DENO_DIR"',
     'steady-settings', fixture,
   ], { encoding: 'utf-8' });
   assert.equal(configured.status, 0, configured.stderr);
-  const [source, runtime] = configured.stdout.trim().split(/\r?\n/);
+  const [source, runtime, deps] = configured.stdout.trim().split(/\r?\n/);
   const gitConfig = path.join(source, '.git/config');
   const originalConfig = fs.readFileSync(gitConfig);
   const marker = path.join(temporary, 'hook-ran');
@@ -93,12 +97,30 @@ async function main() {
 
   assert.notEqual(run(['missing spec.yaml']).status, 0);
   const spec = 'spec with spaces.json';
-  fs.writeFileSync(path.join(temporary, spec), JSON.stringify({
+  const paths = { '/hello': jsonGet({ example: { hello: 'world' } }) };
+  const cursors = [
+    ['next_page', { anyOf: [{ type: 'string' }, { type: 'null' }], example: 'old-token' }],
+    ['next', { type: ['string', 'null'], examples: ['old-token'] }],
+    ['next', { type: 'string', nullable: true }],
+  ];
+  for (const [index, [field, cursor]] of cursors.entries()) {
+    const properties = {
+      data: { type: 'array', items: { type: 'string', example: 'row' } },
+      has_more: { type: 'boolean', example: true }, last_id: { type: 'string', example: 'last' },
+      [field]: cursor,
+    };
+    paths['/page' + index] = jsonGet({ schema: { type: 'object', properties, required: Object.keys(properties) } });
+  }
+  const input = path.join(temporary, 'input.json');
+  fs.writeFileSync(input, JSON.stringify({
     openapi: '3.0.3', info: { title: 'Synthetic test', version: '1' },
-    paths: { '/hello': { get: { responses: { 200: {
-      description: 'OK', content: { 'application/json': { example: { hello: 'world' } } },
-    } } } } },
+    paths,
   }));
+  const generated = spawnSync(binary, ['run', '--cached-only', '--frozen', '--config',
+    path.join(source, 'deno.json'), '--allow-read=' + input, path.join(__dirname, 'list-fixtures.mjs'), input],
+  { env: { ...process.env, DENO_DIR: deps }, encoding: 'utf8' });
+  assert.equal(generated.status, 0, generated.stderr);
+  fs.writeFileSync(path.join(temporary, spec), generated.stdout);
   const listener = net.createServer();
   await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
   const port = listener.address().port;
@@ -116,6 +138,12 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   assert.ok(ready, output);
+  for (const [index, [field]] of cursors.entries()) {
+    const response = spawnSync('curl', ['--noproxy', '*', '--fail', '--silent',
+      'http://127.0.0.1:' + port + '/page' + index], { encoding: 'utf8' });
+    assert.equal(response.status, 0, response.stderr);
+    assert.deepEqual(JSON.parse(response.stdout), { data: ['row'], has_more: false, last_id: 'last', [field]: null });
+  }
   const exited = new Promise((resolve) => child.once('exit', resolve));
   child.kill('SIGTERM');
   await Promise.race([exited, new Promise((_, reject) => {

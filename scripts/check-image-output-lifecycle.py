@@ -13,7 +13,6 @@ import json
 import os
 import pathlib
 import random
-import re
 import signal
 import struct
 import subprocess
@@ -161,9 +160,9 @@ def run_case(binary, output, name, png):
             terminal.wait('\x1b_G')
             if name == 'normal':
                 terminal.finish(0, expect_picker=False)
-                frames = re.findall(rb'\x1b_G([^;]*);(.*?)\x1b\\', terminal.raw, re.S)
-                assert len(frames) == terminal.raw.count(b'\x1b_G') == 1, 'incomplete image output'
-                compatibility.check_fixture_png(base64.b64decode(frames[0][1], validate=True))
+                images = compatibility.kitty_images(terminal.raw)
+                assert len(images) == 1, 'expected one complete image'
+                compatibility.check_fixture_png(images[0])
                 result['exact_pixel_previews'] = 1
             else:
                 # A blocked job retains its data and cancellation pipes. Observe

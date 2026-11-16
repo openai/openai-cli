@@ -9,7 +9,7 @@ import tempfile
 
 # Permit isolated Python (-I) without relying on the caller's import path.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from terminal_test import run_terminal_test
+from terminal_test import kitty_images, run_terminal_test
 
 if len(sys.argv) != 4:
     raise SystemExit('usage: check-image-progress.py CUSTOM_TEST MAIN_TEST OUTPUT_DIR')
@@ -83,7 +83,7 @@ for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS')
         if binary == 'main' and name == 'persisted-off':
             assert '\x1b_G' not in section and '\x1b]1337;' not in section and '▀' not in section
         if binary == 'main' and name == 'explicit-on':
-            assert section.count('\x1b_G') == 3, (name, 'expected two previews and the final image')
+            assert len(kitty_images(section.encode())) == 3, (name, 'expected two previews and the final image')
         if binary == 'main' and name in ('quiet', 'quiet-malformed'):
             before_save, saved = section.split('Saved image:', 1)
             assert '\x1b_G' not in before_save and '\x1b_G' in saved, (name, 'quiet must keep only the final preview')

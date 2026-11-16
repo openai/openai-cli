@@ -8,15 +8,15 @@ import io
 from pathlib import Path
 import signal
 import subprocess
-import unittest
-import unittest.mock as mock
+import tempfile
+from unittest import TestCase, main, mock
 
 spec = importlib.util.spec_from_file_location("completion_native_driver", Path(__file__).with_name("native_check.py"))
 driver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(driver)
 
 
-class NativeCleanupTests(unittest.TestCase):
+class NativeCleanupTests(TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
@@ -118,6 +118,25 @@ class NativeCleanupTests(unittest.TestCase):
         self.assertEqual(self.events[-1], ("reap", self.pid))
         self.assert_closed()
 
+    def test_interrupted_kill_retries_before_reaping(self):
+        control = SystemExit(130)
+        attempts = []
+
+        def interrupted_kill(group, number):
+            if number == signal.SIGKILL:
+                attempts.append(number)
+                if len(attempts) == 1:
+                    raise control
+            self.signal_group(group, number)
+
+        self.kill.side_effect = interrupted_kill
+        with self.assertRaises(SystemExit) as caught:
+            self.session.close()
+        self.assertIs(caught.exception, control)
+        self.assertEqual(attempts, [signal.SIGKILL, signal.SIGKILL])
+        self.assertEqual(self.events[-2:], [("signal", self.pid, signal.SIGKILL), ("reap", self.pid)])
+        self.assert_closed()
+
     def test_pump_failure_preserves_capture_error_and_cleanup(self):
         self.read.side_effect = OSError("synthetic transcript read failure")
         try:
@@ -143,12 +162,11 @@ class NativeCleanupTests(unittest.TestCase):
         cleanup_error = OSError("synthetic descriptor cleanup failure")
         self.close_fd.side_effect = cleanup_error
         stderr = io.StringIO()
-        with mock.patch.object(driver.sys, "stderr", stderr):
+        with mock.patch.object(driver.sys, "stderr", stderr), self.assertRaises(type(control)) as caught:
             try:
                 raise control
-            except BaseException:
-                with self.assertRaises(type(control)) as caught:
-                    self.session.close()
+            finally:
+                self.session.close()
         self.assertIs(caught.exception, control)
         self.assertIn(cleanup_error, control.cleanup_errors)
         self.assertIn("synthetic descriptor cleanup failure", stderr.getvalue())
@@ -196,16 +214,48 @@ class NativeCleanupTests(unittest.TestCase):
         stderr = mock.Mock()
         denied = OSError("synthetic diagnostic failure")
         stderr.write.side_effect = denied
-        with mock.patch.object(driver.sys, "stderr", stderr):
+        with mock.patch.object(driver.sys, "stderr", stderr), self.assertRaises(SystemExit) as caught:
             try:
                 raise control
-            except BaseException:
-                with self.assertRaises(SystemExit) as caught:
-                    self.session.close()
+            finally:
+                self.session.close()
         self.assertIs(caught.exception, control)
         self.assertEqual(control.code, 143)
         self.assertIn(denied, control.cleanup_errors)
         self.assert_closed()
+
+    def test_cancellation_during_foreground_lookup_still_reaps_shell(self):
+        control = SystemExit(129)
+        self.foreground.side_effect = control
+        with self.assertRaises(SystemExit) as caught:
+            self.session.close()
+        self.assertIs(caught.exception, control)
+        self.assertEqual(self.kill.call_args_list, [
+            mock.call(self.pid, signal.SIGTERM), mock.call(self.pid, signal.SIGKILL),
+        ])
+        self.assertEqual(self.events[-1], ("reap", self.pid))
+        self.assert_closed()
+
+    def test_cancellation_during_descriptor_close_still_closes_transcript(self):
+        control = KeyboardInterrupt()
+        self.close_fd.side_effect = control
+        with self.assertRaises(KeyboardInterrupt) as caught:
+            self.session.close()
+        self.assertIs(caught.exception, control)
+        self.assert_closed()
+
+    def test_failed_fork_closes_transcript_and_preserves_cancellation(self):
+        control = SystemExit(143)
+        transcript = mock.Mock()
+        failure = OSError("synthetic transcript close failure")
+        transcript.open.return_value.close.side_effect = failure
+        with mock.patch.object(driver.pty, "fork", side_effect=control), mock.patch.object(driver.sys, "stderr", io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                driver.ShellSession("bash", "synthetic-shell", {}, ".", transcript)
+        self.assertIs(caught.exception, control)
+        self.assertIn(failure, control.cleanup_errors)
+        transcript.open.return_value.close.assert_called_once()
+        self.kill.assert_not_called()
 
     def test_adapter_success_does_not_signal_reaped_child(self):
         process = mock.Mock(pid=self.pid, returncode=None)
@@ -320,5 +370,25 @@ class NativeCleanupTests(unittest.TestCase):
         self.kill.assert_called_once_with(self.pid, signal.SIGKILL)
 
 
+class NativeReportTests(TestCase):
+    def test_report_error_preserves_signal_exit(self):
+        control = SystemExit(143)
+
+        def cancel_capture(_binary, _shell, _executable, output):
+            (output / "report.json").mkdir()
+            raise control
+
+        with tempfile.TemporaryDirectory() as directory:
+            argv = ["native_check.py", driver.sys.executable, directory]
+            with mock.patch.object(driver.sys, "argv", argv), mock.patch.object(driver.signal, "signal"), \
+                    mock.patch.object(driver, "check_shell", side_effect=cancel_capture), \
+                    mock.patch.object(driver.sys, "stderr", io.StringIO()) as stderr:
+                with self.assertRaises(SystemExit) as caught:
+                    driver.main()
+        self.assertIs(caught.exception, control)
+        self.assertIsInstance(control.cleanup_errors[0], IsADirectoryError)
+        self.assertIn("IsADirectoryError", stderr.getvalue())
+
+
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    main(verbosity=2)

@@ -194,6 +194,7 @@ $matches = @($expansion.CompletionMatches | Where-Object { $_.CompletionText -ne
 		backend, want []string
 	}{
 		{"separate file", "openai --file assets/lo| --format json", []string{"--file", "assets/lo"}, []string{"openai", "--file", filepath.FromSlash("assets/logo.png"), "--format", "json"}},
+		{"piped request", "openai responses create --request-file -|", []string{"responses", "create", "--request-file", "-"}, []string{"openai", "responses", "create", "--request-file", "-"}},
 		{"assigned file", "openai --file=assets/lo| --format json", []string{"--file=assets/lo"}, []string{"openai", "--file=" + filepath.FromSlash("assets/logo.png"), "--format", "json"}},
 		{"quoted midword file", `openai --file 'assets/lo|go.png' --format json`, []string{"--file", "assets/logo.png"}, []string{"openai", "--file", filepath.FromSlash("assets/logo.png"), "--format", "json"}},
 		{"nonfile value", "openai --format assets/lo| --file unused.wav", []string{"--format", "assets/lo"}, nil},

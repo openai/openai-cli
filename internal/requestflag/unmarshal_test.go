@@ -8,6 +8,28 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+func TestUnmarshalRequestObject(t *testing.T) {
+	for _, input := range []string{
+		"a: 1\n---\n", "---\n---\na: 1", "model: \"\xff\"", "null", "[]",
+	} {
+		_, err := UnmarshalRequestObject([]byte(input))
+		require.EqualError(t, err, "--request-file requires one JSON or YAML object")
+	}
+	for _, tc := range []struct {
+		data string
+		want map[string]any
+	}{
+		{"\ufeff{\"top_p\":1e-05}", map[string]any{"top_p": 1e-05}},
+		{"---\ninput: |\n  ---\n", map[string]any{"input": "---\n"}},
+		{"model: &name example\ninput: *name\n", map[string]any{"model": "example", "input": "example"}},
+		{"{}", map[string]any{}},
+	} {
+		got, err := UnmarshalRequestObject([]byte(tc.data))
+		require.NoError(t, err)
+		require.Equal(t, tc.want, got)
+	}
+}
+
 func TestUnmarshalYAMLOrJSONExponentNumbers(t *testing.T) {
 	t.Parallel()
 

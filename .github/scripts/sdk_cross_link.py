@@ -224,7 +224,7 @@ def main():
     expected_event = "pull_request_target" if args.mode == "produce" else "pull_request"
     if os.environ["GITHUB_EVENT_NAME"] != expected_event:
         raise RuntimeError("Unexpected workflow event")
-    event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+    event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
     context = identity(event)
     if args.mode == "produce":
         api = GitHub(os.environ.get("GH_TOKEN"))

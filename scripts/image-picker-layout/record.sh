@@ -66,7 +66,7 @@ SCENE
     "$demo_source/prompt_frame.py" \
     "$demo_source/build_two_column.py" "$demo_source/two-column.patch" \
     "$demo_root/scripts/image_picker_harness.py" \
-    "$demo_root/pkg/custom/image_picker.go" "$demo_root/pkg/custom/image_picker_view.go"
+    "$demo_root/internal/commands/images/image_picker.go" "$demo_root/internal/commands/images/image_picker_view.go"
 } > "$demo_output/metadata.txt"
 
 demo_render_options=(--renderer resvg --text-font-family Menlo --font-size 20 --line-height 1.2 \

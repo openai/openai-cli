@@ -17,6 +17,7 @@ type InnerFlag[
 		string | float64 | int64 | bool |
 		*string | *float64 | *int64 | *bool | *DateTimeValue | *DateValue | *TimeValue,
 ] struct {
+	InputPolicy InputPolicy   // schema policy for one flag operand
 	Name        string        // name of the flag
 	DefaultText string        // default text of the flag for usage purposes
 	Usage       string        // usage string for help output
@@ -32,6 +33,9 @@ type InnerFlag[
 	// map[string]any before SetInnerField runs. The hint is ignored for typed outer
 	// flags whose zero value already carries a dispatchable reflect.Kind.
 	OuterIsArrayOfObjects bool
+	legacyInput           bool
+	structured            bool
+	literal               bool
 }
 
 // GetDataAliases returns the aliases recognized when parsing inner field keys from piped or flag YAML.
@@ -74,27 +78,73 @@ func (f *InnerFlag[T]) PostParse() error {
 }
 
 func (f *InnerFlag[T]) Set(name string, rawVal string) error {
-	if parsedValue, err := parseCLIArg[T](rawVal); err != nil {
+	if f.structured {
+		return fmt.Errorf("cannot combine --%s with --%s-structured", f.Name, f.Name)
+	}
+	var parsedValue T
+	var err error
+	if !f.legacyInput && f.InputPolicy.preservesText() {
+		parsedValue, err = literalArgument[T](rawVal)
+	} else {
+		parsedValue, err = parseCLIArg[T](rawVal)
+	}
+	if err != nil {
 		return err
 	} else {
-		if f.Validator != nil {
-			if err := f.Validator(parsedValue); err != nil {
-				return err
-			}
+		err = f.setParsedValue(parsedValue)
+		if err != nil {
+			return err
 		}
-
-		if seeder, ok := f.OuterFlag.(InnerFieldSeeder); ok {
-			seeder.SeedInnerCollection(f.OuterIsArrayOfObjects)
-		}
-
-		if settableInnerField, ok := f.OuterFlag.(SettableInnerField); ok {
-			settableInnerField.SetInnerField(f.InnerField, parsedValue)
-		} else {
-			return fmt.Errorf("Cannot set inner field on %v", f.OuterFlag)
-		}
+		f.literal = true
 		return nil
 	}
 }
+
+func (f *InnerFlag[T]) setParsedValue(parsedValue T) error {
+	if f.Validator != nil {
+		if err := f.Validator(parsedValue); err != nil {
+			return err
+		}
+	}
+	if _, protected := f.OuterFlag.Get().(InputValue); protected {
+		return f.setInnerValue(InputValue{value: parsedValue, option: f.Name, expandSources: true})
+	}
+	return f.setInnerValue(parsedValue)
+}
+
+func (f *InnerFlag[T]) setInnerValue(parsedValue any) error {
+	if f.OuterFlag.IsSet() {
+		if input, ok := f.OuterFlag.Get().(InputValue); ok && len(input.pending) != 0 {
+			return structuredInputError(f.Name, "cannot combine nested flags with a structured parent source")
+		}
+		v := reflect.ValueOf(unwrappedInput(f.OuterFlag.Get()))
+		if v.IsValid() && v.Kind() != reflect.Map && v.Kind() != reflect.Slice {
+			return fmt.Errorf("cannot combine --%s with a non-structured --%s value", f.Name, f.OuterFlag.Names()[0])
+		}
+	}
+	if seeder, ok := f.OuterFlag.(InnerFieldSeeder); ok {
+		seeder.SeedInnerCollection(f.OuterIsArrayOfObjects)
+	}
+	if settableInnerField, ok := f.OuterFlag.(SettableInnerField); ok {
+		settableInnerField.SetInnerField(f.InnerField, parsedValue)
+		return nil
+	}
+	return fmt.Errorf("Cannot set inner field on %v", f.OuterFlag)
+}
+
+func (f *InnerFlag[T]) setUntypedStdin(value any) (bool, error) {
+	if !acceptsParsedInput[T](f.InputPolicy) {
+		return false, nil
+	}
+	converted, err := inputAsType(value, reflect.TypeFor[T]())
+	if err != nil {
+		return true, err
+	}
+	parsed := inputTyped[T](converted)
+	return true, f.setParsedValue(parsed)
+}
+
+func (f *InnerFlag[T]) isUntyped() bool { return reflect.TypeFor[T]().Kind() == reflect.Interface }
 
 func (f *InnerFlag[T]) Get() any {
 	var zeroValue T

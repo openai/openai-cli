@@ -91,24 +91,26 @@ func TestImagePreferenceConcurrentWritesAndCancellation(t *testing.T) {
 func TestImagePreferenceRejectsUnsafePaths(t *testing.T) {
 	dir := t.TempDir()
 	require.Error(t, Save(t.Context(), dir, true))
-	if runtime.GOOS == "windows" {
-		t.Skip("native Windows symlinks require additional privileges")
-	}
 	path := filepath.Join(dir, "image-preferences.json")
 	target := filepath.Join(t.TempDir(), "target.json")
 	require.NoError(t, Save(t.Context(), target, false))
-	require.NoError(t, os.Symlink(target, path))
+	imagePreferenceSymlink(t, target, path)
 	_, err := Load(t.Context(), path)
 	require.Error(t, err)
 	require.Error(t, Save(t.Context(), path, true))
+	link, err := os.Lstat(path)
+	require.NoError(t, err)
+	require.NotZero(t, link.Mode()&os.ModeSymlink)
 	mode, err := Load(t.Context(), target)
 	require.NoError(t, err)
 	require.Equal(t, "off", mode)
 	parent := filepath.Join(t.TempDir(), "linked-config")
-	require.NoError(t, os.Symlink(dir, parent))
+	imagePreferenceSymlink(t, dir, parent)
 	require.Error(t, Save(t.Context(), filepath.Join(parent, "new.json"), true))
 	_, err = Load(t.Context(), filepath.Join(parent, "missing.json"))
 	require.Error(t, err)
+	_, err = os.Stat(filepath.Join(dir, "new.json"))
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestImagePreferencePermissionFailuresKeepFile(t *testing.T) {

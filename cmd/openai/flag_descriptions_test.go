@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,9 +12,9 @@ import (
 func TestMainGlobalFlagErrorTransformExample(t *testing.T) {
 	help := runMainDispatch(t, "bash", "openai", "help")
 	require.Zero(t, help.code, help.stderr)
-	_, description, found := strings.Cut(help.stdout, "\n   --transform-error ")
+	_, description, found := strings.Cut(help.stdout, "\n    --transform-error=")
 	require.True(t, found)
-	description, _, _ = strings.Cut(description, "\n   --")
+	description, _, _ = strings.Cut(description, "\n    --")
 	_, example, found := strings.Cut(description, "such as '")
 	require.True(t, found, "missing error extraction example")
 	path, _, found := strings.Cut(example, "'")
@@ -38,12 +39,16 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 	}
 	for _, path := range [][]string{nil, {"models", "list"}, {"images"}, {"images", "generate"}} {
 		t.Run(strings.Join(append([]string{"root"}, path...), "/"), func(t *testing.T) {
-			args := append([]string{"openai", "help"}, path...)
+			args := []string{"openai", "help"}
+			if len(path) > 0 {
+				args = append(args, "--all")
+			}
+			args = append(args, path...)
 			got := runMainDispatchWithEnv(t, "bash", nil, args...)
 			require.Zero(t, got.code, got.stderr)
 			require.Empty(t, got.stderr)
 			if len(path) > 0 {
-				_, index, found := strings.Cut(got.stdout, "GLOBAL OPTIONS:\n")
+				_, index, found := strings.Cut(got.stdout, "GLOBAL FLAGS\n")
 				require.True(t, found)
 				for _, group := range groups {
 					for _, flag := range group.flags {
@@ -54,7 +59,7 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 						require.Contains(t, index, flag)
 					}
 				}
-				require.Contains(t, index, "Global option details: openai --help")
+				require.Contains(t, index, "Run $ openai --help for details.")
 				// Execute the reference before checking the full global descriptions.
 				got = runMainDispatch(t, "bash", "openai", "--help")
 				require.Zero(t, got.code, got.stderr)
@@ -62,25 +67,25 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 			}
 			remaining := got.stdout
 			for i, group := range groups {
-				_, after, found := strings.Cut(remaining, "\n   "+group.title+"\n")
+				_, after, found := strings.Cut(remaining, "\n  "+group.title+"\n")
 				require.True(t, found, "missing or reordered group %s", group.title)
 				nextTitle := "Other options"
 				if i+1 < len(groups) {
 					nextTitle = groups[i+1].title
 				}
-				section, _, _ := strings.Cut(after, "\n   "+nextTitle+"\n")
+				section, _, _ := strings.Cut(after, "\n  "+nextTitle+"\n")
 				for _, flag := range group.flags {
 					// These root-local request flags become inherited in the separate globals task.
 					if len(path) > 0 && (flag == "--api-key" || flag == "--admin-api-key" || flag == "--webhook-secret" || flag == "--organization" || flag == "--project") {
 						continue
 					}
-					require.Contains(t, section, "\n   "+flag, "%s must appear in %s", flag, group.title)
+					require.Contains(t, "\n"+section, "\n    "+flag, "%s must appear in %s", flag, group.title)
 				}
 				remaining = after
 			}
 			text := strings.Join(strings.Fields(got.stdout), " ")
 			for _, flag := range []string{"--mtls-client-cert-file", "--mtls-client-key-file"} {
-				require.Contains(t, got.stdout, "\n   "+flag+" PATH\n")
+				require.Contains(t, got.stdout, "\n    "+flag+"=PATH\n")
 			}
 			for _, format := range []string{"auto", "text", "json", "jsonl", "yaml", "explore", "pretty", "raw"} {
 				require.Contains(t, got.stdout, "\n      - "+format+":", "format choices must stay on separate lines")
@@ -146,7 +151,7 @@ func TestMainGlobalFlagHelpHidesConfiguredValues(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		for _, route := range [][]string{
 			{"--help"}, {"images", "generate", "--help"}, {"models", "list", "--help"},
-			{"help"}, {"help", "images", "generate"}, {"help", "models", "list"},
+			{"help"}, {"help", "images", "generate"}, {"help", "--all", "images", "generate"}, {"help", "models", "list"},
 		} {
 			name := "environment/"
 			if explicit {
@@ -167,8 +172,12 @@ func TestMainGlobalFlagHelpHidesConfiguredValues(t *testing.T) {
 				if len(route) == 1 {
 					require.Contains(t, got.stdout, "https://api.openai.com/v1")
 					require.Contains(t, got.stdout, "OPENAI_BASE_URL")
+				} else if slices.Contains(route, "images") && !slices.Contains(route, "--all") {
+					require.Contains(t, got.stdout, "openai help --all images generate")
+				} else if slices.Contains(route, "--all") {
+					require.Contains(t, got.stdout, "Run $ openai --help for details.")
 				} else {
-					require.Contains(t, got.stdout, "Global option details: openai --help")
+					require.Contains(t, got.stdout, "openai help --all models list")
 				}
 			})
 		}
@@ -182,12 +191,14 @@ func TestMainGlobalFlagDescriptionsPreserveRequestProject(t *testing.T) {
 			got := runMainDispatchWithEnv(t, "bash", nil, args...)
 			require.Zero(t, got.code, got.stderr)
 			require.Empty(t, got.stderr)
-			_, after, found := strings.Cut(got.stdout, "\n   --project ")
-			require.True(t, found, "invite help must retain its request project flag")
-			local, _, _ := strings.Cut(after, "\n   --")
-			text := strings.Join(strings.Fields(local), " ")
-			require.Contains(t, text, "An array of projects to which membership is granted")
-			require.NotContains(t, text, "OpenAI-Project request header")
+			require.Contains(t, strings.Join(strings.Fields(got.stdout), " "), "--project An array of projects to which membership is granted")
+			args = append(append([]string{"openai"}, path...), "-h", "--project")
+			flag := runMainDispatchWithEnv(t, "bash", nil, args...)
+			require.Zero(t, flag.code, flag.stderr)
+			require.Empty(t, flag.stderr)
+			require.Contains(t, flag.stdout, "--project=VALUE")
+			require.Contains(t, strings.Join(strings.Fields(flag.stdout), " "), "An array of projects to which membership is granted")
+			require.NotContains(t, flag.stdout, "OpenAI-Project request header")
 		})
 	}
 }

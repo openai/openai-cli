@@ -1,0 +1,171 @@
+package output
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"unicode/utf8"
+
+	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/jsonview"
+	"github.com/tidwall/pretty"
+)
+
+// FiniteJSONListError contains a fixed diagnostic for malformed list items.
+// It never includes response data or parser error details.
+type FiniteJSONListError struct{}
+
+func (*FiniteJSONListError) Error() string {
+	return "The API returned an invalid JSON list item. Output may be incomplete. Check the response source before repeating the command."
+}
+
+// FiniteJSONListOptions carries an already selected finite-list presentation.
+// Callers supply Context and Transform, check initial source/cancellation errors,
+// and apply feature selection before invoking WriteFiniteJSONList. Terminal
+// describes the final destination, including wrapped terminal writers.
+type FiniteJSONListOptions struct {
+	IteratorOptions
+	Stdout   io.Writer
+	Terminal bool
+	Title    string
+}
+
+// WriteFiniteJSONList frames a finite source as one JSON array without collecting
+// the complete result. The caller retains ownership of the source.
+func WriteFiniteJSONList[T any](source jsonview.Iterator[T], opts FiniteJSONListOptions) error {
+	iter := NewIterator(&finiteJSONSource[T]{source: source}, opts.IteratorOptions)
+	list := &finiteJSONList{iter: iter, opts: opts}
+	if file, ok := opts.Stdout.(*os.File); ok && file == os.Stdout {
+		if opts.Terminal {
+			width, height, err := term.GetSize(file.Fd())
+			if err != nil {
+				width, height = 100, 40
+			}
+			return list.showTerminal(width, height)
+		}
+		// Preserve lone consumer EPIPE success without hiding joined failures.
+		return StreamToStdout(func(out *os.File) error { return list.write(out) })
+	}
+	return list.write(opts.Stdout)
+}
+
+// Validate RawJSON before the shared iterator's permissive parser can discard a
+// malformed suffix. Ordinary Go values still use the shared iterator's JSON encoder.
+type finiteJSONSource[T any] struct {
+	source jsonview.Iterator[T]
+	err    error
+}
+
+func (it *finiteJSONSource[T]) Next() bool {
+	if it.err != nil || !it.source.Next() {
+		return false
+	}
+	if raw, ok := any(it.source.Current()).(hasRawJSON); ok {
+		value := raw.RawJSON()
+		if !utf8.ValidString(value) || !json.Valid([]byte(value)) {
+			it.err = &FiniteJSONListError{}
+			return false
+		}
+	}
+	return true
+}
+func (it *finiteJSONSource[T]) Current() T { return it.source.Current() }
+func (it *finiteJSONSource[T]) Err() error { return errors.Join(it.err, it.source.Err()) }
+
+// The same framing state continues across a terminal's bounded prefix and pager.
+// Pipes and files never collect that prefix.
+type finiteJSONList struct {
+	iter          jsonview.Iterator[JSON]
+	opts          FiniteJSONListOptions
+	started, done bool
+}
+
+func (list *finiteJSONList) next() ([]byte, error) {
+	if list.done {
+		return nil, nil
+	}
+	if !list.iter.Next() {
+		if err := list.err(nil); err != nil {
+			return nil, err
+		}
+		list.done = true
+		if !list.started {
+			return []byte("[]\n"), nil
+		}
+		return []byte("\n]\n"), nil
+	}
+	var item bytes.Buffer
+	item.WriteString("  ")
+	value := list.iter.Current().Raw
+	// encoding/json accepts invalid UTF-8 within strings. A JSON document must
+	// retain valid UTF-8 bytes for consumers that decode its complete output.
+	if !utf8.ValidString(value) {
+		return nil, list.err(&FiniteJSONListError{})
+	}
+	// Indent validates transformed values and retains numeric spelling. Only the
+	// current item is formatted; its separator is not emitted before validation.
+	if err := json.Indent(&item, []byte(value), "  ", "  "); err != nil {
+		return nil, list.err(&FiniteJSONListError{})
+	}
+	data := item.Bytes()
+	if UseColors(list.opts.Terminal) {
+		data = pretty.Color(data, pretty.TerminalStyle)
+	}
+	separator := "[\n"
+	if list.started {
+		separator = ",\n"
+	}
+	list.started = true
+	return append([]byte(separator), data...), nil
+}
+
+// A cancellation arriving during a failed write must survive EPIPE suppression.
+func (list *finiteJSONList) err(err error) error {
+	// The iterator's error may already contain cancellation.
+	for _, cause := range []error{list.iter.Err(), list.opts.Context.Err()} {
+		if cause != nil && !errors.Is(err, cause) {
+			err = errors.Join(err, cause)
+		}
+	}
+	return err
+}
+
+func (list *finiteJSONList) write(out io.Writer) error {
+	for {
+		data, err := list.next()
+		if err != nil || data == nil {
+			return list.err(err)
+		}
+		if _, err := (Writer{Context: list.opts.Context, Sink: out}).Write(data); err != nil {
+			return list.err(err)
+		}
+	}
+}
+
+func (list *finiteJSONList) showTerminal(width, height int) error {
+	var prefix bytes.Buffer
+	lines := 0
+	for lines < max(1, height-3) {
+		data, err := list.next()
+		if data != nil {
+			prefix.Write(data)
+			lines += CountTerminalLines(data, width)
+		}
+		if err != nil || data == nil || list.done {
+			return StreamToStdout(func(out *os.File) error {
+				_, writeErr := (Writer{Context: list.opts.Context, Sink: out}).Write(prefix.Bytes())
+				return list.err(errors.Join(err, writeErr))
+			})
+		}
+	}
+	// Keep existing long-output paging. The prefix holds at most one screen plus
+	// the item crossing that screen, independent of the total list length.
+	return Stream(list.opts.Title, func(out *os.File) error {
+		if _, err := (Writer{Context: list.opts.Context, Sink: out}).Write(prefix.Bytes()); err != nil {
+			return list.err(err)
+		}
+		return list.write(out)
+	})
+}

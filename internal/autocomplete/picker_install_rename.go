@@ -1,9 +1,14 @@
 package autocomplete
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 )
+
+// ErrPickerAtomicRenameUnsupported identifies an unavailable atomic no-replace
+// operation. It does not describe other operations on the same filesystem.
+var ErrPickerAtomicRenameUnsupported = errors.New("atomic no-replace rename is not supported")
 
 // renamePickerFileNoReplace moves an entry without overwriting another entry.
 // Open both parents through Root before calling the native operation with only

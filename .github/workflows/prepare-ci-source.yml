@@ -30,6 +30,8 @@ jobs:
         with:
           path: candidate
           persist-credentials: false
+          # Retain both merge-parent trees for unprivileged shadow diff reporting.
+          fetch-depth: 2
           # An event SHA can describe a previous incarnation of the PR merge.
           # Opted-in PRs fetch the merge ref; other callers keep checkout's default.
           ref: ${{ inputs.current-pr-merge && (github.event_name == 'pull_request' && github.ref || github.sha) || '' }}
@@ -119,7 +121,7 @@ jobs:
 
       - name: Stage fixed inputs for this workflow run
         id: upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-inputs-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

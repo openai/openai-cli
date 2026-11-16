@@ -113,7 +113,7 @@ func TestApplyStdinDataToFlagsWithProvenancePreservesExplicitEmptyCollections(t 
 	t.Parallel()
 
 	mapOuter := &Flag[map[string]any]{Name: "nested", BodyPath: "nested"}
-	arrayOuter := &Flag[any]{Name: "nested", BodyPath: "nested"}
+	arrayOuter := &Flag[any]{Name: "nested", BodyPath: "nested", InputPolicy: InputPolicyTextStructured}
 	tests := []struct {
 		name     string
 		outer    cli.Flag
@@ -142,7 +142,11 @@ func TestApplyStdinDataToFlagsWithProvenancePreservesExplicitEmptyCollections(t 
 			t.Parallel()
 
 			require.NoError(t, test.outer.PreParse())
-			require.NoError(t, test.outer.Set("nested", test.rawValue))
+			if f, ok := test.outer.(*Flag[any]); ok {
+				require.NoError(t, (&structuredFlag{Flag: &Flag[string]{Name: "nested-structured"}, target: f}).Set("nested-structured", test.rawValue))
+			} else {
+				require.NoError(t, test.outer.Set("nested", test.rawValue))
+			}
 			command := &cli.Command{Flags: []cli.Flag{test.outer, test.inner}}
 			observed := false
 
@@ -153,7 +157,7 @@ func TestApplyStdinDataToFlagsWithProvenancePreservesExplicitEmptyCollections(t 
 			})
 
 			require.NoError(t, err)
-			require.Equal(t, test.expected, test.outer.Get())
+			require.Equal(t, test.expected, unwrappedInput(test.outer.Get()))
 			require.False(t, observed)
 		})
 	}

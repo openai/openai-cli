@@ -1,5 +1,10 @@
 # Models list demo
 
+This recipe records the earlier Models viewer contract.
+Use the [current pager recipes](../list-pager/README.md) for current candidate evidence.
+Historical claims below apply only to their recorded source and binary identities.
+The current pager ignores `p` and does not print successful results on exit.
+
 This recipe compares an ID-only list with exact ID and OWNER columns.
 Both binaries run `openai models list` against the same 48 synthetic records.
 The fixture contains short IDs, three owners, and descending response order.

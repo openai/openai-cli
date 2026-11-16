@@ -95,10 +95,20 @@ func uniqueFontCell(count, extent, minimum, maximum int) int {
 // placements assume cells twice as tall as wide, regardless of the font;
 // the bitmap itself still preserves proportions within those allocated cells.
 func FontPreviewColumns(bounds image.Rectangle, columns, rows int) int {
+	return fontPreviewColumns(bounds, columns, rows, maxFontPreviewColumns)
+}
+
+// FontRowColumns fits prepared rows within the existing gallery frame limits.
+// Direct image output keeps the narrower FontPreviewColumns default.
+func FontRowColumns(bounds image.Rectangle, columns, rows int) int {
+	return fontPreviewColumns(bounds, columns, rows, maxFontRowColumns)
+}
+
+func fontPreviewColumns(bounds image.Rectangle, columns, rows, maximum int) int {
 	if bounds.Empty() || columns < 1 || rows < 3 {
 		return 0
 	}
-	columns = min(columns, maxFontPreviewColumns)
+	columns = min(columns, maximum)
 	if rows-2 >= imagefont.MaxFrameRows {
 		return columns
 	}

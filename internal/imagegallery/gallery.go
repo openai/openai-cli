@@ -24,8 +24,9 @@ import (
 )
 
 var (
-	ErrBusy = errors.New("image gallery is already in use; finish the other image command first")
-	ErrFull = errors.New("image gallery is full; open a new Terminal tab to start a new image gallery")
+	ErrOtherTTY = errors.New("image gallery belongs to another Terminal tab")
+	ErrBusy     = errors.New("image gallery is already in use; finish the other image command first")
+	ErrFull     = errors.New("image gallery is full. Open a new Terminal tab with your normal text font to start another gallery")
 )
 
 // State is a copy of the currently committed gallery metadata.
@@ -177,10 +178,20 @@ func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*R
 // Replaying an existing placement consumes no capacity and remains permitted.
 // The limit is checked under the gallery lock before writing any new artifacts.
 func (g *Gallery) PrepareWithLimit(ctx context.Context, img image.Image, columns, glyphLimit int) (*Revision, error) {
+	return g.prepareWithLimit(ctx, img, columns, glyphLimit, imagefont.MaxGlyphs)
+}
+
+// PreparePreservingWithLimit uses the preserved font's measured Plane-15 capacity.
+// Version 2 retains the same logical offsets; only FontForTypography emits them.
+func (g *Gallery) PreparePreservingWithLimit(ctx context.Context, img image.Image, columns, glyphLimit int) (*Revision, error) {
+	return g.prepareWithLimit(ctx, img, columns, glyphLimit, imagefont.MaxPreservedGlyphs)
+}
+
+func (g *Gallery) prepareWithLimit(ctx context.Context, img image.Image, columns, glyphLimit, maximum int) (*Revision, error) {
 	if err := g.check(ctx); err != nil {
 		return nil, err
 	}
-	if glyphLimit < 0 || glyphLimit > imagefont.MaxGlyphs {
+	if glyphLimit < 0 || glyphLimit > maximum {
 		return nil, errors.New("invalid image gallery glyph limit")
 	}
 	if g.state.ID == "" {
@@ -211,12 +222,15 @@ func (g *Gallery) PrepareWithLimit(ctx context.Context, img image.Image, columns
 	}
 	rows := min(imagefont.MaxFrameRows, max(1, int(math.Ceil(float64(columns)*float64(normalized.Bounds().Dy())/(2*float64(normalized.Bounds().Dx()))))))
 	used := g.State().UsedGlyphs
-	if columns*rows > glyphLimit-used {
+	if len(g.state.Images) >= imagefont.MaxGlyphs || columns*rows > glyphLimit-used {
 		return nil, ErrFull
 	}
 	added := entry{Hash: hash, Columns: columns, Rows: rows, Start: imagefont.FirstCodepoint + rune(used)}
 	next := g.state
 	next.Revision++
+	if used+columns*rows > imagefont.MaxGlyphs {
+		next.Version = 2
+	}
 	next.Images = append(append([]entry(nil), g.state.Images...), added)
 	revision, err := g.prepareRevision(ctx, next, &added)
 	if err != nil {
@@ -351,7 +365,7 @@ func (g *Gallery) validate() error {
 // already removed some artifacts. Opening a gallery also checks those files.
 func (g *Gallery) validateMetadata() error {
 	s := g.state
-	if s.Version != 1 || !isHex(s.ID, 32) || s.Revision < 0 || !isFontName(s.Font) || s.PostScript == "" || s.Family == "" || len(s.Images) > imagefont.MaxGlyphs || s.CompletedAttempt != "" && !isHex(s.CompletedAttempt, 32) {
+	if (s.Version != 1 && s.Version != 2) || !isHex(s.ID, 32) || s.Revision < 0 || !isFontName(s.Font) || s.PostScript == "" || s.Family == "" || len(s.Images) > imagefont.MaxGlyphs || s.CompletedAttempt != "" && !isHex(s.CompletedAttempt, 32) {
 		return errors.New("invalid image gallery metadata")
 	}
 	// Stored identities are generated from these exact safe components.
@@ -360,6 +374,11 @@ func (g *Gallery) validateMetadata() error {
 		return errors.New("invalid image gallery font identity")
 	}
 	next := imagefont.FirstCodepoint
+	capacity := imagefont.MaxGlyphs
+	if s.Version == 2 {
+		capacity = imagefont.MaxPreservedGlyphs
+	}
+	last := imagefont.FirstCodepoint + rune(capacity) - 1
 	type placement struct {
 		hash    string
 		columns int
@@ -368,7 +387,7 @@ func (g *Gallery) validateMetadata() error {
 	for _, item := range s.Images {
 		count := item.Columns * item.Rows
 		key := placement{item.Hash, item.Columns}
-		if !isHex(item.Hash, 64) || seen[key] || item.Columns < 1 || item.Columns > 64 || item.Rows < 1 || item.Rows > imagefont.MaxFrameRows || item.Start != next || count > int(imagefont.LastCodepoint-next)+1 {
+		if !isHex(item.Hash, 64) || seen[key] || item.Columns < 1 || item.Columns > 64 || item.Rows < 1 || item.Rows > imagefont.MaxFrameRows || item.Start != next || count > int(last-next)+1 {
 			return errors.New("invalid image gallery character allocation")
 		}
 		seen[key] = true

@@ -52,6 +52,47 @@ func TestHelpDefaultDoesNotDependOnParsing(t *testing.T) {
 	}
 }
 
+func TestHelpDistinguishesUnsetAndExplicitArrayDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		flag cli.DocGenerationFlag
+		want string
+	}{
+		{"unset strings", &Flag[[]string]{}, ""},
+		{"unset objects", &Flag[[]map[string]any]{}, ""},
+		{"empty objects", &Flag[[]map[string]any]{Default: []map[string]any{}}, "[]\n"},
+		{"populated strings", &Flag[[]string]{Default: []string{"segment"}}, "[segment]"},
+		{"authored text", &Flag[[]string]{DefaultText: "automatic"}, "automatic"},
+		{"constant", &Flag[[]string]{Const: true}, "[]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.flag.GetDefaultText(); got != tc.want {
+				t.Errorf("default text = %q, want %q", got, tc.want)
+			}
+			if got := tc.flag.IsDefaultVisible(); got != (tc.want != "") {
+				t.Errorf("default visible = %t for %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHelpDoesNotAdvertiseAnOmittedInterfaceAsNull(t *testing.T) {
+	for _, tc := range []struct {
+		flag *Flag[any]
+		want string
+	}{
+		{&Flag[any]{}, ""},
+		{&Flag[any]{Const: true}, "null"},
+		{&Flag[any]{DefaultText: "automatic"}, "automatic"},
+		{&Flag[any]{Default: false}, "false"},
+		{&Flag[any]{Default: []any{}}, "[]"},
+	} {
+		if got := strings.TrimSpace(tc.flag.GetDefaultText()); got != tc.want || tc.flag.IsDefaultVisible() != (tc.want != "") {
+			t.Errorf("interface default = %q (visible %t), want %q", got, tc.flag.IsDefaultVisible(), tc.want)
+		}
+	}
+}
+
 func TestHelpPreservesNullableRequestSemantics(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string

@@ -355,22 +355,30 @@ func TestMainDispatchOutputWindowsTerminalChild(t *testing.T) {
 }
 
 func readOutputConsole(console *os.File) (string, error) {
-	var info windows.ConsoleScreenBufferInfo
-	if err := windows.GetConsoleScreenBufferInfo(windows.Handle(console.Fd()), &info); err != nil {
+	cells, _, err := readOutputConsoleCells(console)
+	if err != nil {
 		return "", err
 	}
+	return string(utf16.Decode(cells)), nil
+}
+
+func readOutputConsoleCells(console *os.File) ([]uint16, int, error) {
+	var info windows.ConsoleScreenBufferInfo
+	if err := windows.GetConsoleScreenBufferInfo(windows.Handle(console.Fd()), &info); err != nil {
+		return nil, 0, err
+	}
 	length := int(info.Size.X) * (max(int(info.CursorPosition.Y), int(info.Window.Bottom)) + 1)
-	if length < 1 {
-		return "", errors.New("empty console geometry")
+	if info.Size.X < 1 || length < 1 {
+		return nil, 0, errors.New("empty console geometry")
 	}
 	buffer := make([]uint16, length)
 	var read uint32
 	function := windows.NewLazySystemDLL("kernel32.dll").NewProc("ReadConsoleOutputCharacterW")
 	ok, _, err := function.Call(console.Fd(), uintptr(unsafe.Pointer(&buffer[0])), uintptr(length), 0, uintptr(unsafe.Pointer(&read)))
 	if ok == 0 {
-		return "", err
+		return nil, 0, err
 	}
-	return string(utf16.Decode(buffer[:read])), nil
+	return buffer[:read], int(info.Size.X), nil
 }
 
 func writeOutputConsoleKey(input *os.File, value uint16) error {

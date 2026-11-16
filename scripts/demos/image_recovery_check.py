@@ -186,7 +186,7 @@ def run_case(binary, output, case, baseline=False, mirror=False):
                 if case != "pipe-input":
                     args += ["--prompt", PROMPT]
                 if case == "flags":
-                    args += ["--model", "gpt-image-2.5-sunburst", "--size", "1024x1024", "--quality", "low", "--count", "1"]
+                    args += ["--model", "gpt-image-2.6-sunburst", "--size", "1024x1024", "--quality", "low", "--count", "1"]
                 if case in ("flags", "json"):
                     process = Process(binary, env, args[1:])
                     process.wait_for(lambda: process.status is not None)
@@ -207,7 +207,7 @@ def run_case(binary, output, case, baseline=False, mirror=False):
                 if case == "flags":
                     request = fixture.requests[0]
                     assert (request["model"], request["size"], request["quality"], request["n"]) == (
-                        "gpt-image-2.5-sunburst", "1024x1024", "low", 1)
+                        "gpt-image-2.6-sunburst", "1024x1024", "low", 1)
             else:
                 process = Process(binary, env, mirror=mirror)
                 process.ready()

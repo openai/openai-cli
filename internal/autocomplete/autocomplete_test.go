@@ -447,7 +447,7 @@ func TestFishCompletionScriptDiscardsDiagnostics(t *testing.T) {
 		return
 	}
 
-	assert.Contains(t, completionScript, "$current 2>/dev/null)")
+	assert.Contains(t, completionScript, `"$current" 2>/dev/null)`)
 	assert.NotContains(t, completionScript, "/tmp/fish-debug.log")
 	assert.Contains(t, completionScript, "complete -c openai -f -a '(__openai_fish_autocomplete)'")
 }

@@ -62,7 +62,11 @@ def main():
                 result = subprocess.run([str(binary), '@completion', shell, action,
                                          '--profile', str(profile)], capture_output=True,
                                         env=env, timeout=10)
-                assert result.returncode == 0 and not result.stderr, (result.returncode, result.stderr)
+                message = ('Tab setup saved for future terminals. Existing custom bindings are preserved.\n'
+                           if action == '--install-picker' else
+                           'Tab shortcut setup removed. Open a new terminal to finish.\n')
+                assert result.returncode == 0 and not result.stdout and result.stderr == message.encode(), (
+                    result.returncode, result.stdout, result.stderr)
                 return result.stdout
 
             setup('--install-picker')

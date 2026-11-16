@@ -1,5 +1,10 @@
 # Release tooling maintenance
 
+GoReleaser embeds the exact release version and commit for [automatic updates](automatic-updates.md).
+Ordinary builds and Go installations do not receive those metadata values.
+Automatic activation requires the published archive's existing provenance and a successful publishing workflow run attempt.
+Missing or incomplete attestations keep the installed binary unchanged. No additional signing key or release channel is introduced.
+
 CI and release publishing install GoReleaser with `scripts/install-goreleaser`.
 The installer downloads only the version in `.goreleaser-version`, requires a
 matching, repository-reviewed SHA-256 digest in `.goreleaser-checksums`, and
@@ -15,14 +20,12 @@ The Homebrew cask installs the binary, ordinary completions, and manual without
 running picker setup hooks. Homebrew users receive the existing first-run setup;
 see [shell setup](image-picker-shell-setup.md) for eligibility and explicit setup.
 
-Linux packages install one fish startup file at
-`/usr/share/fish/vendor_conf.d/openai-picker.fish`. It activates at the first
-prompt after user configuration, respects opt-out and custom bindings, and only
-runs when `/usr/bin/openai` is the selected executable, including after PATH
-changes. Ordinary completion remains under the user's existing shell setup.
-The package manager owns and removes the file; installation does not edit user
-profiles. Bash and zsh retain their existing first-run setup. See
-[shell shortcuts](image-picker-shell-setup.md).
+Linux packages install separate image picker and Explore scripts in `/usr/share/fish/vendor_conf.d/`.
+Fish loads them at the first interactive prompt after user configuration.
+Separate filenames let personal image picker settings coexist with Explore.
+Both check the selected executable and respect per-user opt-outs.
+The package manager owns these files and the Explore selection function in `/usr/share/openai-cli/`.
+See [image picker shortcuts](image-picker-shell-setup.md) and [command insertion](command-insertion.md).
 
 `go run ./scripts/render-linux-picker` generates the fish asset at build time.
 Release inputs include it only when the checked-out tag's package configuration
@@ -45,6 +48,14 @@ The publish workflow installs GoReleaser from its trusted workflow checkout
 before switching to the requested release tag. This allows existing release tags
 that predate the installer to be republished; the workflow checkout, not the
 historical tag, determines the reviewed GoReleaser version and artifact generator.
+
+## Historical artifact repairs
+
+New releases must pass model verification before publication. Existing releases through v1.51.5 can repair their original artifacts.
+The workflow verifies the release tag, version, commit, and publication date against GitHub's release record.
+It also verifies that the commit belongs to the history of v1.51.5.
+Version 1.0.0 recorded `main` as its release target. The check uses its original release ID and commit.
+These repairs retain the existing signing, provenance, and trusted toolchain checks.
 
 ## Update GoReleaser
 

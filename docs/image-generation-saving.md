@@ -4,9 +4,9 @@
 openai images generate --prompt "A tiny orange robot"
 openai images generate --prompt "A tiny orange robot" --name robot --count 2
 openai images generate --prompt "A tiny orange robot" --output-dir "~/Downloads"
-openai images generate --prompt "A tiny orange robot" --model gpt-image-2.5-flare
+openai images generate --prompt "A tiny orange robot" --model gpt-image-2.6-flare
 openai images generate --prompt "A tiny orange robot" --output-format webp
-openai --format json images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst
+openai --format json images generate --prompt "A tiny orange robot" --model gpt-image-2.6-sunburst
 ```
 
 Run `openai images generate` without flags in a terminal to choose a prompt,
@@ -22,6 +22,17 @@ An optional [Tab shortcut](image-picker-shortcuts.md) opens the same picker in
 Bash 4.3+, zsh and fish. Other shells use Enter.
 
 After generation, the picker keeps your prompt and settings below the saved result.
+In iTerm2, the mouse wheel and trackpad scroll terminal history, including after Ctrl+C.
+Use the arrow keys in **Images** to browse the gallery.
+Focus **Images** and press Enter to **Expand** the selected image.
+In supported Konsole sessions, Expand uses a temporary screen with native image pixels.
+Resize the terminal while Expand is open to refit the image.
+Press Esc to return to the picker with your draft, settings, and selection intact.
+New results stay available without replacing the image you are viewing.
+Disabled previews remain disabled. **Open file** retains its existing behavior.
+The expanded image does not remain in terminal history after you close Expand.
+Expand does not require a patched Konsole build or `OPENAI_KONSOLE_IMAGES=1`.
+
 Reopening restores your latest draft, including the prompt, image settings, and
 chosen save folder. Drafts save before deliberate requests and when you exit
 after editing. Clearing the prompt also clears the saved description.
@@ -38,7 +49,7 @@ Explicit image flags, output formats, piped input and redirected output retain
 the direct command behavior described below.
 
 Generation uses API credits and requires access to the chosen model. The CLI's
-default for saving is the exact ID `gpt-image-2.5-sunburst`. This is a preset,
+default for saving is the exact ID `gpt-image-2.6-sunburst`. This is a preset,
 not a guarantee of access or quota. When neither `model` nor `response_format`
 is supplied, it requests one PNG, automatic size, quality, background and
 moderation, no partial images, and no streaming. Flags and merged JSON/YAML
@@ -74,7 +85,8 @@ without claiming that an image was saved.
 
 ## Editing and variations
 
-The `images create-variation` endpoint is retired and no longer available.
+OpenAI retired the `images create-variation` endpoint. The CLI shows an edit command before uploading an image.
+Custom providers that implement variations still receive the original request.
 To create a variation, use `images edit` with a GPT Image model and a prompt:
 
 ```sh
@@ -217,6 +229,56 @@ saved originals. See [VS Code image support](https://code.visualstudio.com/docs/
 VS Code requires ConPTY v2 or later for these images on Windows. Windows and
 remote sessions require separate rendering checks; an opt-in or successful write
 is not proof of visible rendering there.
+
+Konsole supports an interactive viewer for saved images without the upstream
+resize fix:
+
+```sh
+openai images preview --interactive "photo.png"
+```
+
+The viewer uses a separate screen and redraws after resizing. Press `q` or
+Escape to close it and restore the previous screen. The viewed image does not
+remain in terminal history. The original file stays unchanged.
+
+This mode requires terminal input and output, Konsole 22.04 or newer, and a
+macOS or Linux CLI host. Run outside CI and multiplexers. Konsole must supply
+its own `KONSOLE_VERSION`, with `TERM_PROGRAM` unset. Do not combine
+`--interactive` with `--inline`. This mode does not require
+`OPENAI_KONSOLE_IMAGES`. Native validation covers unpatched Konsole 23.08.5 on
+Linux/X11; other versions and desktop configurations need separate checks.
+
+Static Konsole previews require an explicit opt-in. Use a build containing the resize and
+scrolling fix from [Konsole merge request !1339](https://invent.kde.org/utilities/konsole/-/merge_requests/1339).
+Unpatched builds can crop earlier previews after resizing or lose previews
+during scrolling. No released minimum version for this fix is established.
+Inside that patched Konsole, opt in for a command:
+
+```sh
+env OPENAI_KONSOLE_IMAGES=1 openai images preview "photo.png" # Bash, zsh or fish
+```
+
+`OPENAI_KONSOLE_IMAGES` must be exactly `1`. This asserts that the current Konsole
+contains the fix; the CLI cannot verify the patch from the terminal version.
+Konsole must supply its own `KONSOLE_VERSION`, with `TERM_PROGRAM` unset.
+The CLI accepts six-digit versions starting at `220400` for protocol support.
+That check does not establish resize compatibility. Existing Kitty, Ghostty,
+and explicit `TERM_PROGRAM` identities retain their own selection rules.
+Use the assertion only in the patched Konsole, rather than exporting it globally.
+
+The opt-in applies to local preview, generation, and progress previews.
+Native Konsole previews require the CLI to run on macOS or Linux.
+Other CLI platforms retain the existing fallback, including when the opt-in is set.
+Without the opt-in, `auto` and `on` retain the existing color-block fallback when available.
+`--inline off`, redirected output, CI, and multiplexer restrictions still apply.
+The CLI reuses the iTerm PNG protocol with its usual 64-column maximum and
+viewport sizing. Saved originals remain unchanged. Patched Konsole fits existing
+previews after resizing, including after the CLI exits.
+The CLI does not read terminal replies or change Konsole settings.
+Native validation covers Linux/X11; Wayland, remote sessions, and other desktop
+platforms require separate rendering checks.
+Track the remaining upstream work in [issue #448](https://github.com/openai/openai-cli/issues/448).
+
 Other color terminals show a labeled color-block approximation. `NO_COLOR` or
 `CLICOLOR=0` disables that approximation, while native image graphics remain
 available. Basic terminals keep the saved path without a preview.
@@ -254,9 +316,9 @@ An observer releases the final response only after both partial previews arrive.
 Build and run them without API credentials:
 
 ```sh
-go test -c -o /tmp/image-progress-custom.test ./pkg/custom
+go test -c -o /tmp/image-progress-images.test ./internal/commands/images
 go test -c -o /tmp/image-progress-main.test ./cmd/openai
-python3 scripts/check-image-progress.py /tmp/image-progress-custom.test /tmp/image-progress-main.test /tmp/image-progress-evidence
+python3 scripts/check-image-progress.py /tmp/image-progress-images.test /tmp/image-progress-main.test /tmp/image-progress-evidence
 ```
 
 `scripts/demos/record-image-progress.sh` records a before/after comparison using
@@ -270,14 +332,16 @@ outside the repository. Set `DEMO_API_BINARY` to a binary built from
 ```sh
 openai images preview "path/to/image.png"
 openai images preview --inline on "path/to/image.png"
+openai images preview --interactive "path/to/image.png" # Live Konsole viewer
 openai images inline off
 openai images inline on
 openai images generate --prompt "A tiny orange robot" --inline auto
 ```
 
 `images preview` displays an existing PNG, JPEG or WebP using the same renderer.
-It needs no API key, makes no request, does not read stdin, and leaves the
-original untouched. It works even when automatic previews are off. Explicit
+It needs no API key, makes no request, and leaves the original untouched.
+Static previews do not read stdin. The interactive Konsole viewer reads keyboard input.
+It works even when automatic previews are off. Explicit
 preview defaults to `auto`; `--inline on` also permits Apple Terminal image-font
 activation. Unsupported formats, output redirection, and images that cannot fit
 the terminal return an error. `--format-error` and `--transform-error` still

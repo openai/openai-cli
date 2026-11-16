@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/dlclark/regexp2"
+	tokenizerdata "github.com/openai/openai-cli/generated/tokenizer"
 	bpe "github.com/pkoukk/tiktoken-go"
 	"github.com/tiktoken-go/tokenizer/codec"
 )
@@ -62,6 +63,16 @@ func loadEncoding(name string) (*textEncoding, error) {
 	return nil, errors.New(unsupportedEncodingMessage)
 }
 
+// Prepare initializes the cached vocabulary and BPE engine for an encoding.
+// Encode initializes them on demand when Prepare has not run.
+func Prepare(encoding string) error {
+	enc, err := loadEncoding(encoding)
+	if err != nil {
+		return err
+	}
+	return enc.prepareBPE()
+}
+
 func (c *encodingCache) load(name string) (*textEncoding, error) {
 	c.once.Do(func() { c.value, c.err = initializeEncoding(name) })
 	return c.value, c.err
@@ -73,11 +84,11 @@ func initializeEncoding(name string) (*textEncoding, error) {
 		return nil, errors.New(unsupportedEncodingMessage)
 	}
 	source, maximum := definition.source(), definition.maximum
+	// Individual tokens can contain only part of a UTF-8 character. Keep their original bytes.
+	source.SetErrorMode(codec.ErrorModeNone)
 
 	ranks := make(map[string]int, maximum+1)
 	fragments := make([]string, maximum+1)
-	// Decode builds a mutable reverse map internally. Extract serially through
-	// its public API, then discard the source codec before publishing our data.
 	for id := 0; id <= maximum; id++ {
 		piece, err := source.Decode([]uint{uint(id)})
 		if id == definition.gap {
@@ -118,10 +129,10 @@ func initializeEncoding(name string) (*textEncoding, error) {
 	return &textEncoding{split: split, ranks: ranks, fragments: fragments}, nil
 }
 
-func (e *textEncoding) encodePiece(piece string) ([]int, error) {
+func (e *textEncoding) prepareBPE() error {
 	e.bpeOnce.Do(func() {
-		// The outer matcher already chose one complete reference pre-tokenizer
-		// piece. The maintained library performs BPE without splitting it again.
+		// The outer matcher passes complete pre-tokenizer pieces. The BPE engine
+		// merges each piece without splitting it again.
 		core, err := bpe.NewCoreBPE(e.ranks, map[string]int{}, `(?s:\A.+\z)`)
 		if err != nil {
 			e.bpeErr = err
@@ -129,8 +140,12 @@ func (e *textEncoding) encodePiece(piece string) ([]int, error) {
 		}
 		e.bpe = bpe.NewTiktoken(core, nil, nil)
 	})
-	if e.bpeErr != nil {
-		return nil, e.bpeErr
+	return e.bpeErr
+}
+
+func (e *textEncoding) encodePiece(piece string) ([]int, error) {
+	if err := e.prepareBPE(); err != nil {
+		return nil, err
 	}
 	// Ordinary encoding never activates special markers, loaders, or downloads.
 	return e.bpe.EncodeOrdinary(piece), nil
@@ -140,10 +155,10 @@ func encodingPattern(name string) (string, error) {
 	// Unicode16 simple-casefold closures for the reference's contraction letters.
 	// Explicit classes avoid regexp2's compiler-dependent Unicode case folding.
 	contraction := `'(?:[sSſ]|[tT]|[rR][eE]|[vV][eE]|[mM]|[lL][lL]|[dD])`
-	letters, numbers := "["+unicode16Letters+"]", "["+unicode16Numbers+"]"
-	space, notSpace := "["+unicode16Whitespace+"]", "[^"+unicode16Whitespace+"]"
-	other := "[^" + unicode16Whitespace + unicode16Letters + unicode16Numbers + "]"
-	prefix := `[^\r\n` + unicode16Letters + unicode16Numbers + `]`
+	letters, numbers := "["+tokenizerdata.Unicode16Letters+"]", "["+tokenizerdata.Unicode16Numbers+"]"
+	space, notSpace := "["+tokenizerdata.Unicode16Whitespace+"]", "[^"+tokenizerdata.Unicode16Whitespace+"]"
+	other := "[^" + tokenizerdata.Unicode16Whitespace + tokenizerdata.Unicode16Letters + tokenizerdata.Unicode16Numbers + "]"
+	prefix := `[^\r\n` + tokenizerdata.Unicode16Letters + tokenizerdata.Unicode16Numbers + `]`
 	suffix := space + `*[\r\n]+|` + space + `+(?!` + notSpace + `)|` + space + `+`
 	switch name {
 	case "r50k_base", "p50k_base":
@@ -153,7 +168,7 @@ func encodingPattern(name string) (string, error) {
 	case "cl100k_base":
 		return contraction + `|` + prefix + `?` + letters + `+|` + numbers + `{1,3}| ?` + other + `+[\r\n]*|` + suffix, nil
 	case "o200k_base":
-		upper, lower := "["+unicode16Upper+"]", "["+unicode16Lower+"]"
+		upper, lower := "["+tokenizerdata.Unicode16Upper+"]", "["+tokenizerdata.Unicode16Lower+"]"
 		return prefix + `?` + upper + `*` + lower + `+(?:` + contraction + `)?|` +
 			prefix + `?` + upper + `+` + lower + `*(?:` + contraction + `)?|` +
 			numbers + `{1,3}| ?` + other + `+[\r\n/]*|` + suffix, nil

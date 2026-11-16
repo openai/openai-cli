@@ -1,13 +1,16 @@
---- a/pkg/custom/image_picker_view.go
-+++ b/pkg/custom/image_picker_view.go
-@@ -165,7 +165,20 @@
+--- a/internal/commands/images/image_picker_view.go
++++ b/internal/commands/images/image_picker_view.go
+@@ -162,10 +162,20 @@
 -	for i := start; i < end; i++ {
 -		row := rows[i]
 -		text := row.label
 -		if row.id == "choice" {
--			field := m.field
--			if row.value == m.value(field) {
--				text += "  ✓"
+-			text = ansi.Truncate(text, choiceWidth, "…")
+-			text += strings.Repeat(" ", choiceWidth-ansi.StringWidth(text)) + "  "
+-			if row.value == m.value(m.field) {
+-				text += "✓"
+-			} else {
+-				text += " "
 +	if m.page == "settings" && m.width >= 76 && available >= len(rows)+1 {
 +		columnWidth := (width - 2) / 2
 +		for i := 0; i < len(rows); i += 2 {
@@ -28,7 +31,7 @@
 +					label, value = selected.Render(label), selected.Render(value)
 +				}
 +				labels, values = append(labels, label), append(values, value)
-@@ -173,2 +186,17 @@
+@@ -173,2 +183,20 @@
 -			if row.detail != "" {
 -				text += "  " + row.detail
 +			lines = append(lines, strings.Join(labels, "  "))
@@ -39,9 +42,12 @@
 +			row := rows[i]
 +			text := row.label
 +			if row.id == "choice" {
-+				field := m.field
-+				if row.value == m.value(field) {
-+					text += "  ✓"
++				text = ansi.Truncate(text, choiceWidth, "…")
++				text += strings.Repeat(" ", choiceWidth-ansi.StringWidth(text)) + "  "
++				if row.value == m.value(m.field) {
++					text += "✓"
++				} else {
++					text += " "
 +				}
 +				if row.detail != "" {
 +					text += "  " + row.detail

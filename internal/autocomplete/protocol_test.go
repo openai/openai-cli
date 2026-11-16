@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,6 +38,7 @@ func TestShellCompletionProtocolHelper(t *testing.T) {
 		},
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 	}
+	request.EnableRequestFile(root.Command("responses").Command("create"))
 	err := root.Run(context.Background(), os.Args[slices.Index(os.Args, "--")+1:])
 	if exit, ok := err.(cli.ExitCoder); ok {
 		os.Exit(exit.ExitCode())
@@ -175,6 +177,7 @@ func TestZshCompletionRespectsCursor(t *testing.T) {
 		{"mid-line file value", []string{"--file", "candidate-", "models", "list"}, 3, 0, "files\n"},
 		{"end-of-line file value", []string{"--file", "candidate-"}, 3, 0, "files\n"},
 		{"request file value", []string{"--image", "candidate-"}, 3, 0, "files\n"},
+		{"piped request or filename", []string{"responses", "create", "--request-file", ""}, 5, 0, "-:Read the request from the command before |\nfiles\n"},
 		{"assigned file value", []string{"--file=assets/a=b"}, 2, 0, "prefix:--file=\nfiles\n"},
 		{"assigned image value", []string{"--image="}, 2, 0, "prefix:--image=\nfiles\n"},
 		{"separated flag-like file", []string{"--file", "--file=assets/lo"}, 3, 0, "files\n"},

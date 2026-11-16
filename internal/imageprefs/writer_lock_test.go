@@ -147,11 +147,12 @@ func TestImagePreferenceWaitingWriterCancellationAndReplacement(t *testing.T) {
 }
 
 func TestImagePreferenceRejectsUnsafeWriterLocks(t *testing.T) {
-	for _, kind := range []string{"directory", "symlink", "dangling-symlink", "public"} {
+	kinds := []string{"directory", "symlink", "dangling-symlink"}
+	if runtime.GOOS != "windows" {
+		kinds = append(kinds, "public") // Unix mode bits do not define Windows access.
+	}
+	for _, kind := range kinds {
 		t.Run(kind, func(t *testing.T) {
-			if runtime.GOOS == "windows" && kind != "directory" {
-				t.Skip("native Windows symlink privileges and ACLs differ")
-			}
 			path := filepath.Join(t.TempDir(), "image-preferences.json")
 			lock := filepath.Join(filepath.Dir(path), ".image-preferences.json.lock")
 			target := filepath.Join(t.TempDir(), "target")
@@ -160,16 +161,21 @@ func TestImagePreferenceRejectsUnsafeWriterLocks(t *testing.T) {
 				require.NoError(t, os.Mkdir(lock, 0700))
 			case "symlink":
 				require.NoError(t, os.WriteFile(target, []byte("kept"), 0600))
-				require.NoError(t, os.Symlink(target, lock))
+				imagePreferenceSymlink(t, target, lock)
 			case "dangling-symlink":
-				require.NoError(t, os.Symlink(target, lock))
+				imagePreferenceSymlink(t, target, lock)
 			case "public":
 				require.NoError(t, os.WriteFile(lock, nil, 0600))
 				require.NoError(t, os.Chmod(lock, 0666))
 			}
+			identity, err := os.Lstat(lock)
+			require.NoError(t, err)
 			require.Error(t, Save(t.Context(), path, true))
-			_, err := os.Stat(path)
+			_, err = os.Stat(path)
 			require.ErrorIs(t, err, os.ErrNotExist)
+			current, err := os.Lstat(lock)
+			require.NoError(t, err)
+			require.True(t, os.SameFile(identity, current), "unsafe lock entries must remain untouched")
 			if kind == "symlink" {
 				data, err := os.ReadFile(target)
 				require.NoError(t, err)

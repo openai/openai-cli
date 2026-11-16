@@ -12,12 +12,13 @@ func TestMainUnknownCommandSuggestions(t *testing.T) {
 		args   []string
 		stderr string
 	}{
-		{[]string{"fine-tuning:alpha:graders", "rn"}, "Unknown help topic. Did you mean 'openai fine-tuning:alpha:graders run'?\n"},
-		{[]string{"fine-tuning:alpha:graders", "rnu"}, "Unknown help topic. Did you mean 'openai fine-tuning:alpha:graders run'?\n"},
-		{[]string{"responses", "creat"}, "Unknown help topic. Did you mean 'openai responses create'?\n"},
-		{[]string{"RESPONSES"}, "Unknown help topic. Did you mean 'openai responses'?\n"},
-		{[]string{"totallybogus"}, "Unknown help topic. Run openai help to see commands.\n"},
-		{[]string{"responses", "zzzzz"}, "Unknown help topic. Run openai help responses to see commands.\n"},
+		{[]string{"model", "list"}, "Unknown command. Run this help command to check the spelling.\n  openai help models list\nEdit your original command and run it again with the same options and arguments.\n"},
+		{[]string{"files", "gt"}, "Unknown command. Run this help command to check the spelling.\n  openai help files get\nEdit your original command and run it again with the same options and arguments.\n"},
+		{[]string{"files", "gte"}, "Unknown command. Run this help command to check the spelling.\n  openai help files get\nEdit your original command and run it again with the same options and arguments.\n"},
+		{[]string{"responses", "creat"}, "Unknown command. Run this help command to check the spelling.\n  openai help responses create\nEdit your original command and run it again with the same options and arguments.\n"},
+		{[]string{"RESPONSES"}, "Unknown command. Run this help command to check the spelling.\n  openai help responses\nEdit your original command and run it again with the same options and arguments.\n"},
+		{[]string{"totallybogus"}, "Unknown command. Run openai help to see commands.\n"},
+		{[]string{"responses", "zzzzz"}, "Unknown command. Run openai help responses to see commands.\n"},
 	} {
 		for _, flags := range [][]string{nil, {"--format-error", "json"}, {"--format", "json"}} {
 			t.Run(strings.Join(append(append([]string{}, tc.args...), flags...), "/"), func(t *testing.T) {

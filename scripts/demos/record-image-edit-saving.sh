@@ -95,7 +95,7 @@ import base64, hashlib, json, pathlib, shutil, sys
 output, runtime = map(pathlib.Path, sys.argv[1:])
 requests = [json.loads(line) for line in (output / 'requests.jsonl').read_text().splitlines()]
 prompt = {'prompt': ['Make the sky purple']}
-preset = dict(prompt, model=['gpt-image-2.5-sunburst'], n=['1'], size=['auto'], quality=['auto'],
+preset = dict(prompt, model=['gpt-image-2.6-sunburst'], n=['1'], size=['auto'], quality=['auto'],
               background=['auto'], output_format=['png'], partial_images=['0'], stream=['false'])
 assert [r['values'] for r in requests] == [prompt, preset, {}, {'model':['dall-e-2'], 'response_format':['b64_json']}, prompt]
 assert [r['path'] for r in requests] == ['/v1/images/edits'] * 2 + ['/v1/images/variations'] * 2 + ['/v1/images/edits']

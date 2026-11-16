@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
 
@@ -15,6 +16,9 @@ type FlagLabel struct {
 }
 
 func commandFlagValueLabel(command *cli.Command, flag cli.Flag) string {
+	if flag == request.RequestFileFlag(command) {
+		return "PATH|-"
+	}
 	labels, _ := command.Metadata["help-flag-labels"].([]FlagLabel)
 	for _, label := range labels {
 		if label.Owner == nil || !slices.Contains(label.Owner.Flags, flag) {

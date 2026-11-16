@@ -13,15 +13,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/openai/openai-cli/internal/modeldefaults"
 )
 
 func imageGenerationPNG(t *testing.T) []byte {
@@ -105,7 +105,7 @@ func TestMainImageGenerationDefaultsAndRequestOverrides(t *testing.T) {
 	if err := os.WriteFile(promptFile, []byte("synthetic red fox"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	defaults := map[string]any{"prompt": "synthetic red fox", "model": "gpt-image-2.5-sunburst", "n": float64(1), "size": "auto", "quality": "auto", "background": "auto", "moderation": "auto", "output_format": "png", "partial_images": float64(0), "stream": false}
+	defaults := map[string]any{"prompt": "synthetic red fox", "model": modeldefaults.SavedImage, "n": float64(1), "size": "auto", "quality": "auto", "background": "auto", "moderation": "auto", "output_format": "png", "partial_images": float64(0), "stream": false}
 	for _, tc := range []struct {
 		name, stdin string
 		args        []string
@@ -115,7 +115,7 @@ func TestMainImageGenerationDefaultsAndRequestOverrides(t *testing.T) {
 		{"explicit model retains API defaults", "", []string{"--prompt", "synthetic red fox", "--model", "gpt-image-2.5-flare-2026-09-08"}, map[string]any{"prompt": "synthetic red fox", "model": "gpt-image-2.5-flare-2026-09-08"}},
 		{"dall-e base64", "", []string{"--prompt", "synthetic red fox", "--model", "dall-e-3"}, map[string]any{"prompt": "synthetic red fox", "model": "dall-e-3", "response_format": "b64_json"}},
 		{"explicit b64 format retains API model", "", []string{"--prompt", "synthetic red fox", "--response-format", "b64_json"}, map[string]any{"prompt": "synthetic red fox", "response_format": "b64_json"}},
-		{"count and settings", "", []string{"--prompt", "synthetic red fox", "--count", "2", "--quality", "low", "--size", "1536x1024", "--background", "transparent", "--moderation", "low", "--output-format", "webp", "--output-compression", "37"}, map[string]any{"prompt": "synthetic red fox", "model": "gpt-image-2.5-sunburst", "n": float64(2), "size": "1536x1024", "quality": "low", "background": "transparent", "moderation": "low", "output_format": "webp", "output_compression": float64(37), "partial_images": float64(0), "stream": false}},
+		{"count and settings", "", []string{"--prompt", "synthetic red fox", "--count", "2", "--quality", "low", "--size", "1536x1024", "--background", "transparent", "--moderation", "low", "--output-format", "webp", "--output-compression", "37"}, map[string]any{"prompt": "synthetic red fox", "model": modeldefaults.SavedImage, "n": float64(2), "size": "1536x1024", "quality": "low", "background": "transparent", "moderation": "low", "output_format": "webp", "output_compression": float64(37), "partial_images": float64(0), "stream": false}},
 		{"piped JSON with nulls and flag override", `{"prompt":"stdin prompt","model":null,"quality":null,"n":null,"size":null,"output_format":null,"background":null,"moderation":null,"partial_images":null,"stream":null,"metadata":{"custom":true}}`, []string{"--prompt", "synthetic red fox"}, map[string]any{"prompt": "synthetic red fox", "model": nil, "quality": nil, "n": nil, "size": nil, "output_format": nil, "background": nil, "moderation": nil, "partial_images": nil, "stream": nil, "metadata": map[string]any{"custom": true}}},
 		{"piped YAML model", "prompt: synthetic red fox\nmodel: dall-e-2\nn: 2\nquality: standard\n", nil, map[string]any{"prompt": "synthetic red fox", "model": "dall-e-2", "n": float64(2), "quality": "standard", "response_format": "b64_json"}},
 		{"prompt file merged with stdin", `{"prompt":"stdin prompt","model":"gpt-image-2","quality":"high"}`, []string{"--prompt", "@" + promptFile, "--quality", "low"}, map[string]any{"prompt": "synthetic red fox", "model": "gpt-image-2", "quality": "low"}},
@@ -355,6 +355,72 @@ func TestMainImageGenerationFilenamesAndDirectoryValidation(t *testing.T) {
 	})
 }
 
+func TestMainImageGenerationKeepsReservedProbeDirectory(t *testing.T) {
+	payload := imageGenerationPNG(t)
+	directory := t.TempDir()
+	stem := "reserved-probe"
+	reserved := filepath.Join(directory, stem+"-9223372036854775807.jpeg")
+	if err := os.Mkdir(reserved, 0700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(reserved, "keep.txt")
+	const contents = "keep reserved directory contents"
+	if err := os.WriteFile(marker, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Lstat(reserved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	const prompt = "synthetic reserved probe"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != http.MethodPost || r.URL.Path != "/images/generations" {
+			t.Errorf("unexpected image request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["prompt"] != prompt {
+			t.Errorf("unexpected image request body: %v, %v", body, err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, imageGenerationResponse(payload)); err != nil {
+			t.Errorf("write synthetic image: %v", err)
+		}
+	}))
+	defer server.Close()
+	got := runImageGeneration(t, server, t.TempDir(), "", "images", "generate",
+		"--prompt", prompt, "--name", stem, "--output-dir", directory)
+	if got.code != 0 || got.stderr != "" || requests.Load() != 1 {
+		t.Fatalf("reserved directory blocked image generation: result=%+v requests=%d", got, requests.Load())
+	}
+	saved := filepath.Join(directory, stem+".png")
+	data, err := os.ReadFile(saved)
+	if err != nil || !bytes.Equal(data, payload) || !strings.Contains(got.stdout, strconv.Quote(saved)) {
+		t.Fatalf("saved image or receipt changed: bytes=%d error=%v stdout=%q", len(data), err, got.stdout)
+	}
+	after, err := os.Lstat(reserved)
+	if err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() {
+		t.Fatalf("reserved directory changed: %v", err)
+	}
+	data, err = os.ReadFile(marker)
+	if err != nil || string(data) != contents {
+		t.Fatalf("reserved directory contents changed: %q, %v", data, err)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("unexpected output files: %v, %v", entries, err)
+	}
+	entries, err = os.ReadDir(reserved)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "keep.txt" {
+		t.Fatalf("reserved directory gained files: %v, %v", entries, err)
+	}
+}
+
 func TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest(t *testing.T) {
 	stem := strings.Repeat("x", 250)
 	encoded := base64.StdEncoding.EncodeToString(imageGenerationPNG(t))
@@ -545,9 +611,6 @@ func TestMainImageGenerationIncompleteStreamsDoNotReportSuccess(t *testing.T) {
 }
 
 func TestMainImageGenerationClosedStdoutKeepsSavedImage(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("closed stdout pipe behavior requires native Windows coverage")
-	}
 	payload := imageGenerationPNG(t)
 	binary, err := os.Executable()
 	if err != nil {
@@ -559,7 +622,14 @@ func TestMainImageGenerationClosedStdoutKeepsSavedImage(t *testing.T) {
 	}{{false, "text"}, {true, "text"}, {false, "json"}, {true, "json"}} {
 		partialFailure := tc.partialFailure
 		t.Run(fmt.Sprintf("partial-failure=%v/format=%s", partialFailure, tc.format), func(t *testing.T) {
+			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Method != http.MethodPost || r.URL.Path != "/images/generations" || r.Header.Get("Authorization") != "Bearer sk-fake-image-saving-test" {
+					t.Errorf("unexpected image request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
 				w.Header().Set("Content-Type", "application/json")
 				if partialFailure {
 					fmt.Fprintf(w, `{"data":[{"b64_json":%q},{"b64_json":"invalid-private-base64"}]}`, base64.StdEncoding.EncodeToString(payload))
@@ -572,27 +642,45 @@ func TestMainImageGenerationClosedStdoutKeepsSavedImage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			reader.Close()
 			defer writer.Close()
+			if err := reader.Close(); err != nil {
+				t.Fatal(err)
+			}
 			dir := t.TempDir()
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
-			child := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--", "openai", "images", "generate", "--prompt", "synthetic image", "--output-dir", dir, "--format-error", tc.format)
-			child.Env = append(imageGenerationEnv(server, t.TempDir()), "OPENAI_CLI_MAIN_DISPATCH_PROCESS=1")
+			child, verifyFixture := newImageReceiptProcess(t, ctx, binary, imageGenerationEnv(server, t.TempDir()),
+				"openai", "images", "generate", "--prompt", "synthetic image", "--output-dir", dir, "--format-error", tc.format)
 			var stderr bytes.Buffer
 			child.Stdout, child.Stderr = writer, &stderr
-			if err := child.Run(); err == nil || stderr.Len() == 0 {
-				t.Fatalf("closed output lost save/reporting failure: %v; stderr=%q", err, stderr.String())
+			runErr := child.Run()
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyFixture(runErr); err != nil {
+				t.Fatalf("invalid receipt fixture: %v; stderr=%q", err, stderr.String())
+			}
+			if runErr == nil || stderr.Len() == 0 {
+				t.Fatalf("closed output lost save/reporting failure: %v; stderr=%q", runErr, stderr.String())
 			}
 			if ctx.Err() != nil || strings.Contains(stderr.String(), "invalid-private-base64") || strings.Contains(stderr.String(), base64.StdEncoding.EncodeToString(payload)) {
 				t.Fatalf("closed output stalled or exposed image data: %q", stderr.String())
 			}
 			diagnostic := stderr.String()
+			if requests.Load() != 1 {
+				t.Fatalf("image request count = %d, want 1", requests.Load())
+			}
+			if tc.format == "json" && !json.Valid(stderr.Bytes()) {
+				t.Fatalf("closed output corrupted JSON error: %q", diagnostic)
+			}
 			if !strings.Contains(diagnostic, "Check the output folder before generating again") || strings.Contains(diagnostic, "listed files") {
 				t.Fatalf("missing or misleading saved-file recovery advice: %q", diagnostic)
 			}
 			if partialFailure && (!strings.Contains(diagnostic, "could not save the entire response") || !strings.Contains(diagnostic, "print all saved paths")) {
 				t.Fatalf("one batch/output failure hid the other: %q", diagnostic)
+			}
+			if !partialFailure && !strings.Contains(diagnostic, "paths could not be printed") {
+				t.Fatalf("missing receipt-write failure: %q", diagnostic)
 			}
 			paths := imageGenerationFiles(t, dir)
 			if len(paths) != 1 {

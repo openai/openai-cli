@@ -64,7 +64,7 @@ func TestFlagReferenceLabelsRequireDeclaredOwnership(t *testing.T) {
 	for _, tc := range []struct {
 		flag    cli.Flag
 		heading string
-	}{{rootKey, "--api-key KEY"}, {localKey, "--api-key TEXT"}} {
+	}{{rootKey, "--api-key=KEY"}, {localKey, "--api-key=TEXT"}} {
 		got := fullFlagGroups(command, []cli.Flag{tc.flag}, 80)
 		if !strings.Contains(got, tc.heading) {
 			t.Fatalf("owner-aware label missing %q: %s", tc.heading, got)

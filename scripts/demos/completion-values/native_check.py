@@ -281,13 +281,34 @@ def backend_markers(data):
     return values
 
 
-def terminate_group(group, number):
-    if group > 0 and group != os.getpgrp():
+def terminate_group(owner, group, number, failures):
+    # An interruption can arrive before killpg. Retry KILL once before reaping the owner.
+    for _ in range(2 if number == signal.SIGKILL else 1):
         try:
-            os.killpg(group, number)
-        except ProcessLookupError:
-            # The process group can exit before cleanup sends its signal.
-            pass
+            if group <= 0 or group == os.getpgrp():
+                return
+            if group != owner and (os.getsid(group) != owner or os.getpgid(group) != group):
+                raise RuntimeError("foreground process-group ownership is uncertain")
+            try:
+                os.killpg(group, number)
+            except ProcessLookupError:
+                # The process group can exit before cleanup sends its signal.
+                pass
+            return
+        except (InterruptedError, KeyboardInterrupt, SystemExit) as interruption:
+            failures.append(interruption)
+        except Exception as error:
+            failures.append(error)
+            return
+
+
+@contextmanager
+def collect_cleanup_error(errors):
+    # Release the remaining resources before propagating the first cancellation.
+    try:
+        yield
+    except (Exception, KeyboardInterrupt, SystemExit) as error:
+        errors.append(error)
 
 
 def raise_cleanup_errors(errors):
@@ -300,12 +321,10 @@ def raise_cleanup_errors(errors):
             message = "Completion cleanup: " + "; ".join(f"{type(error).__name__}: {error}" for error in secondary)
             if hasattr(control, "add_note"):
                 control.add_note(message)
-            try:
+            with collect_cleanup_error(secondary):
                 # SystemExit does not display exception notes automatically.
                 sys.stderr.write(message + "\n")
                 sys.stderr.flush()
-            except BaseException as diagnostic_error:
-                secondary.append(diagnostic_error)
             control.cleanup_errors = tuple(secondary)
         raise control
     if len(errors) == 1:
@@ -320,30 +339,27 @@ def generate_adapter(binary, shell, environment, destination):
                                stderr=subprocess.PIPE, start_new_session=True)
     try:
         stdout, stderr = process.communicate(timeout=TIMEOUT)
-    except BaseException as error:
+    except (Exception, KeyboardInterrupt, SystemExit) as error:
         failures = []
         # communicate can reap the child before reporting another failure.
         if process.returncode is None:
-            try:
-                terminate_group(process.pid, signal.SIGKILL)
-            except BaseException as cleanup_error:
-                failures.append(cleanup_error)
+            terminate_group(process.pid, process.pid, signal.SIGKILL, failures)
         deadline = time.monotonic() + TIMEOUT
         while True:
             try:
                 process.communicate(timeout=max(0, deadline - time.monotonic()))
-                break
-            except BaseException as cleanup_error:
-                failures.append(cleanup_error)
-                interrupted = not isinstance(cleanup_error, Exception) or isinstance(cleanup_error, InterruptedError)
-                if interrupted and process.returncode is None and time.monotonic() < deadline:
+            except (InterruptedError, KeyboardInterrupt, SystemExit) as interruption:
+                failures.append(interruption)
+                if process.returncode is None and time.monotonic() < deadline:
                     continue
-                for stream in (process.stdout, process.stderr):
-                    try:
-                        stream.close()
-                    except BaseException as close_error:
-                        failures.append(close_error)
+            except Exception as cleanup_error:
+                failures.append(cleanup_error)
+            else:
                 break
+            for stream in (process.stdout, process.stderr):
+                with collect_cleanup_error(failures):
+                    stream.close()
+            break
         if failures:
             raise_cleanup_errors([error, *failures])
         raise
@@ -364,7 +380,15 @@ class ShellSession:
         arguments = [str(executable), "--noprofile", "--norc", "-i"]
         if shell == "zsh":
             arguments = [str(executable), "-f", "-i"]
-        self.pid, self.terminal = pty.fork()
+        try:
+            self.pid, self.terminal = pty.fork()
+        except (Exception, KeyboardInterrupt, SystemExit) as error:
+            failures = []
+            with collect_cleanup_error(failures):
+                self.transcript.close()
+            if failures:
+                raise_cleanup_errors([error, *failures])
+            raise
         if self.pid == 0:
             try:
                 os.chdir(directory)
@@ -374,7 +398,7 @@ class ShellSession:
                 os._exit(127)
         try:
             fcntl.ioctl(self.terminal, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
-        except BaseException:
+        except (Exception, KeyboardInterrupt, SystemExit):
             self.close()
             raise
 
@@ -439,37 +463,24 @@ class ShellSession:
 
         def signal_groups(number):
             for group in groups:
-                try:
-                    if group != self.pid:
-                        # Only the direct child's PID remains reserved for us.
-                        # Recheck distinct groups; these checks are not atomic.
-                        if os.getsid(group) != self.pid or os.getpgid(group) != group:
-                            raise RuntimeError("foreground process-group ownership is uncertain")
-                    terminate_group(group, number)
-                except BaseException as error:
-                    failures.append(error)
+                terminate_group(self.pid, group, number, failures)
 
         try:
             # A previously reaped child cannot anchor further group signals.
             if self.status is None:
-                try:
+                with collect_cleanup_error(failures):
                     foreground = os.tcgetpgrp(self.terminal)
                     if foreground != self.pid:
                         if foreground <= 0:
                             raise RuntimeError("foreground process-group ownership is uncertain")
                         groups.insert(0, foreground)
-                except BaseException as error:
-                    failures.append(error)
-                try:
+                with collect_cleanup_error(failures):
                     signal_groups(signal.SIGTERM)
                     deadline = time.monotonic() + 2
                     while not self.eof and time.monotonic() < deadline:
                         self.pump()
-                except BaseException as error:
-                    failures.append(error)
-                finally:
-                    # Kill surviving descendants before releasing the PID anchor.
-                    signal_groups(signal.SIGKILL)
+                # Kill surviving descendants before releasing the PID anchor.
+                signal_groups(signal.SIGKILL)
                 deadline = time.monotonic() + 2
                 while self.status is None and time.monotonic() < deadline:
                     try:
@@ -478,22 +489,18 @@ class ShellSession:
                             self.status = os.waitstatus_to_exitcode(status)
                         else:
                             time.sleep(0.01)
-                    except BaseException as error:
+                    except (InterruptedError, KeyboardInterrupt, SystemExit) as interruption:
+                        failures.append(interruption)
+                    except OSError as error:
                         failures.append(error)
-                        if not isinstance(error, Exception) or isinstance(error, InterruptedError):
-                            continue
                         break
                 if self.status is None:
                     failures.append(RuntimeError("shell did not exit within the cleanup deadline"))
         finally:
-            try:
+            with collect_cleanup_error(failures):
                 os.close(self.terminal)
-            except BaseException as error:
-                failures.append(error)
-            try:
+            with collect_cleanup_error(failures):
                 self.transcript.close()
-            except BaseException as error:
-                failures.append(error)
         if failures:
             errors = ([prior_error] if prior_error is not None else []) + failures
             raise_cleanup_errors(errors)
@@ -725,7 +732,12 @@ def main():
         for shell, executable in (("bash", args.bash), ("zsh", args.zsh)):
             report["shells"].append(check_shell(args.binary, shell, executable, args.output))
     finally:
-        (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        prior_error = sys.exc_info()[1]
+        failures = []
+        with collect_cleanup_error(failures):
+            (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        if failures:
+            raise_cleanup_errors(([prior_error] if prior_error is not None else []) + failures)
     cases = [case for shell in report["shells"] for case in shell["cases"]]
     failed = (any(shell.get("error") for shell in report["shells"])
               or any(case["status"] not in {"pass", "not-run"} for case in cases))

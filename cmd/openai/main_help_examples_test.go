@@ -28,8 +28,17 @@ func TestMainHelpCompleteImageExamples(t *testing.T) {
 			if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, tc.example) {
 				t.Fatalf("incomplete short help: %+v", help)
 			}
-			if tc.operation != "generate" && !strings.Contains(help.stdout, "your image's path") {
-				t.Fatalf("source path placeholder is unexplained: %s", help.stdout)
+			if tc.helpTopic == "edit" && (!strings.Contains(help.stdout, "--image=PATH") || !strings.Contains(help.stdout, "preserve your source image")) {
+				t.Fatalf("edit help must identify the input path and preserve the source: %s", help.stdout)
+			}
+			if tc.helpTopic == "create-variation" {
+				if !strings.Contains(help.stdout, "retired and no longer available") {
+					t.Fatalf("the replacement example must explain why it uses images edit: %s", help.stdout)
+				}
+				full := runMainDispatch(t, "bash", "openai", "help", "--all", "images", tc.helpTopic)
+				if full.code != 0 || full.stderr != "" || !strings.Contains(full.stdout, "your image's path") {
+					t.Fatalf("the full replacement example must explain its source path: %+v", full)
+				}
 			}
 			source := filepath.Join(t.TempDir(), "photo.png")
 			file, err := os.Create(source)
@@ -85,11 +94,11 @@ func TestMainHelpCompleteImageExamples(t *testing.T) {
 func TestMainHelpImagePagesAreComplete(t *testing.T) {
 	for _, operation := range []string{"generate", "edit", "create-variation", "preview"} {
 		t.Run(operation, func(t *testing.T) {
-			got := runMainDispatch(t, "bash", "openai", "images", operation, "--help")
+			got := runMainDispatch(t, "bash", "openai", "help", "--all", "images", operation)
 			if got.code != 0 || got.stderr != "" {
-				t.Fatalf("short help failed: %+v", got)
+				t.Fatalf("full help failed: %+v", got)
 			}
-			for _, heading := range []string{"SYNOPSIS:", "EXAMPLES:", "OPTIONS:", "GLOBAL OPTIONS:"} {
+			for _, heading := range []string{"SYNOPSIS", "EXAMPLES", "FLAGS", "GLOBAL FLAGS"} {
 				if !strings.Contains(got.stdout, heading) {
 					t.Errorf("complete page lacks %q", heading)
 				}
@@ -108,8 +117,8 @@ func TestMainHelpImagePagesAreComplete(t *testing.T) {
 			if operation == "create-variation" {
 				exampleOperation = "edit"
 			}
-			_, examples, _ := strings.Cut(got.stdout, "EXAMPLES:\n")
-			examples, _, _ = strings.Cut(examples, "\nOPTIONS:")
+			_, examples, _ := strings.Cut(got.stdout, "EXAMPLES\n")
+			examples, _, _ = strings.Cut(examples, "\nFLAGS")
 			if strings.Count(examples, "openai images "+exampleOperation+" ") != 1 {
 				t.Errorf("expected one complete example: %s", got.stdout)
 			}
@@ -159,14 +168,22 @@ func TestMainVariationHelpRetirementGuidance(t *testing.T) {
 }
 
 func TestMainHelpImagePicker(t *testing.T) {
-	for _, args := range [][]string{{"openai", "images", "generate", "--help"}, {"openai", "help", "--all", "images", "generate"}} {
-		got := runMainDispatch(t, "bash", args...)
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"openai", "images", "generate", "--help"}, []string{"Run without flags to open the image picker.", "--format json without --name or --output-dir"}},
+		{[]string{"openai", "help", "--all", "images", "generate"}, []string{"Run without flags to choose settings", "the picker reopens with your settings", "Ctrl+C exits."}},
+	} {
+		got := runMainDispatch(t, "bash", tc.args...)
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("picker help failed: %+v", got)
 		}
 		text := strings.Join(strings.Fields(got.stdout), " ")
-		if !strings.Contains(text, "Run without flags to choose settings") || !strings.Contains(text, "Ctrl+C exits.") {
-			t.Fatalf("missing picker guidance: %s", text)
+		for _, want := range tc.want {
+			if !strings.Contains(text, want) {
+				t.Errorf("missing picker guidance %q: %s", want, text)
+			}
 		}
 		if strings.Contains(got.stdout, "\x1b") {
 			t.Fatalf("help should stay plain: %q", got.stdout)

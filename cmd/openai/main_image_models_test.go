@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -31,7 +30,7 @@ func TestMainImageModelsHelpAndOfflineMakeNoRequests(t *testing.T) {
 		http.Error(w, "synthetic unexpected request", http.StatusBadRequest)
 	})
 	for _, args := range [][]string{
-		{"images", "models", "--help"}, {"help", "images", "models"},
+		{"images", "models", "--help"}, {"help", "images", "models"}, {"help", "--all", "images", "models"},
 		{"--format", "json", "images", "models", "--offline"}, {"--format", "json", "images", "models", "--offline", "--all"},
 	} {
 		t.Run(strings.Join(args, "/"), func(t *testing.T) {
@@ -48,9 +47,21 @@ func TestMainImageModelsHelpAndOfflineMakeNoRequests(t *testing.T) {
 				}
 				assertMainImageModelsRows(t, report, args[len(args)-1] == "--all", imagemodels.StatusNotChecked)
 			} else {
-				for _, want := range []string{"openai images models", "--offline", "--all", "exact model names", "Key setup: openai help setup", "--model gpt-image-2.5-flare"} {
-					if !strings.Contains(got.stdout, want) {
+				wants := []string{"openai images models", "--offline", "--all", "visibility", "generation permissions"}
+				if args[0] == "help" && args[1] == "--all" {
+					wants = append(wants, "--model gpt-image-2.6-flare", "GLOBAL FLAGS", "No images are generated.")
+				} else {
+					wants = append(wants, "openai help --all images models", "Use --offline to skip API checks.")
+				}
+				plain := strings.Join(strings.Fields(got.stdout), " ")
+				for _, want := range wants {
+					if !strings.Contains(plain, want) {
 						t.Errorf("help missing %q: %s", want, got.stdout)
+					}
+				}
+				if args[0] != "help" || args[1] != "--all" {
+					if strings.Contains(got.stdout, "Key setup:") {
+						t.Fatal("ordinary model help included a redundant setup link")
 					}
 				}
 				for _, hidden := range []string{"CLI default", "Leaving out --model", "Or use the default"} {
@@ -137,7 +148,7 @@ func TestMainImageModelsPreservesMachineFormatsAndExtraction(t *testing.T) {
 		{"explicit auto extraction", []string{"--format", "auto", "--transform", "source"}, "\"offline\"\n"},
 		{"raw string", []string{"--transform", "source", "--raw-output"}, "offline\n"},
 		{"text extraction", []string{"--format", "text", "--transform", "source"}, "offline\n"},
-		{"exact model extraction", []string{"--transform", "models.0.id", "--raw-output"}, "gpt-image-2.5-sunburst\n"},
+		{"exact model extraction", []string{"--transform", "models.0.id", "--raw-output"}, "gpt-image-2.6-sunburst\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"openai"}, tc.args...)
@@ -166,7 +177,7 @@ func TestMainImageModelsExploreFallbackWarning(t *testing.T) {
 			if format == "explore" {
 				wantWarning = "Warning: Output format 'explore' not supported for non-terminal output; falling back to 'json'\n"
 			} else if format == "auto" {
-				wantWarning = "Choose a model:\n  openai images generate --prompt \"A tiny orange robot\" --model gpt-image-2.5-sunburst\n"
+				wantWarning = "Choose a model:\n  openai images generate --prompt \"A tiny orange robot\" --model gpt-image-2.6-sunburst\n"
 			}
 			if got.stderr != wantWarning {
 				t.Errorf("stderr = %q; want %q", got.stderr, wantWarning)
@@ -189,7 +200,7 @@ func TestMainImageModelsExploreFallbackWarning(t *testing.T) {
 
 func TestMainImageModelsKeepsPartialResultsOnTimeoutResponse(t *testing.T) {
 	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/gpt-image-2.5-flare") {
+		if strings.HasSuffix(r.URL.Path, "/gpt-image-2.6-flare") {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("x-should-retry", "true")
 			w.WriteHeader(http.StatusGatewayTimeout)
@@ -248,7 +259,7 @@ func TestMainImageModelsRejectsMalformedMetadata(t *testing.T) {
 func TestMainImageModelsRequestDeadlineCancelsHTTP(t *testing.T) {
 	canceled := make(chan struct{}, 1)
 	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/gpt-image-2.5-flare") {
+		if strings.HasSuffix(r.URL.Path, "/gpt-image-2.6-flare") {
 			<-r.Context().Done()
 			canceled <- struct{}{}
 			return
@@ -267,14 +278,11 @@ func TestMainImageModelsRequestDeadlineCancelsHTTP(t *testing.T) {
 }
 
 func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("os.Process.Signal does not send os.Interrupt on Windows")
-	}
 	ready := make(chan struct{})
 	initialRequests := make(chan struct{}, 2)
 	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/models/gpt-image-2.5-sunburst":
+		case "/models/gpt-image-2.6-sunburst":
 			// Let both other workers reach the server before completing this
 			// response. An allocated lookup may not have sent its request yet.
 			for range 2 {
@@ -286,9 +294,9 @@ func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
 			}
 			mainImageModelResponse(w, r.URL.Path, "null")
 			return
-		case "/models/gpt-image-2.5-flare", "/models/gpt-image-2":
+		case "/models/gpt-image-2.6-flare", "/models/gpt-image-2.5-sunburst":
 			initialRequests <- struct{}{}
-		case "/models/gpt-image-1.5":
+		case "/models/gpt-image-2.5-flare":
 			// The fourth lookup proves the first response was fully processed:
 			// the two other workers are still blocked on their initial requests.
 			close(ready)
@@ -301,9 +309,7 @@ func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	child := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--",
-		"openai", "--format", "json", "images", "models")
-	child.Env = []string{"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "OPENAI_API_KEY=synthetic-models-key", "OPENAI_BASE_URL=" + server.URL, "FORCE_COLOR=0"}
+	child, interrupt := imageModelsInterruptCommand(t, ctx, binary, server.URL)
 	var stdout, stderr bytes.Buffer
 	child.Stdout, child.Stderr = &stdout, &stderr
 	if err := child.Start(); err != nil {
@@ -326,7 +332,7 @@ func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("discovery did not start its fourth lookup")
 	}
-	if err := child.Process.Signal(os.Interrupt); err != nil {
+	if err := interrupt(); err != nil {
 		t.Fatal(err)
 	}
 	err = <-done
@@ -339,10 +345,10 @@ func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
 		t.Fatalf("interrupt exit = %v; stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 	}
 	report := decodeMainImageModels(t, stdout.String())
-	if report.Complete || report.Source != "live" || len(report.Models) != 9 {
+	if report.Complete || report.Source != "live" || len(report.Models) != 11 {
 		t.Fatalf("interrupt lost report rows or claimed completion: %+v", report)
 	}
-	if first := report.Models[0]; first.ID != "gpt-image-2.5-sunburst" || first.Status != imagemodels.StatusVisible || first.Failure != "" {
+	if first := report.Models[0]; first.ID != "gpt-image-2.6-sunburst" || first.Status != imagemodels.StatusVisible || first.Failure != "" {
 		t.Errorf("completed model check lost after interrupt: %+v", first)
 	}
 	for _, row := range report.Models[1:] {
@@ -378,11 +384,11 @@ func TestMainImageModelsPipeIsReadableAndAllRevealsUnavailable(t *testing.T) {
 				args = append(args, "--all")
 			}
 			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=synthetic-models-key"}, args...)
-			if got.code != 0 || !strings.Contains(got.stderr, `openai images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst`) {
+			if got.code != 0 || !strings.Contains(got.stderr, `openai images generate --prompt "A tiny orange robot" --model gpt-image-2.6-sunburst`) {
 				t.Fatalf("readable piped discovery failed: %+v", got)
 			}
 			for _, want := range []string{
-				"MODEL", "STATUS", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "Visible",
+				"MODEL", "STATUS", "gpt-image-2.6-sunburst", "gpt-image-2.6-flare", "Visible",
 				"generation permissions can differ",
 			} {
 				if !strings.Contains(got.stdout, want) {
@@ -437,7 +443,7 @@ func TestMainImageModelsAuthenticationAndRateLimitStopChecks(t *testing.T) {
 				t.Fatalf("failure guidance failed: %+v", got)
 			}
 			report := decodeMainImageModels(t, got.stdout)
-			if report.Source != "live" || report.Complete || len(report.Models) != 9 {
+			if report.Source != "live" || report.Complete || len(report.Models) != 11 {
 				t.Fatalf("failed checks lost rows or claimed completion: %+v", report)
 			}
 			for _, row := range report.Models {
@@ -484,7 +490,7 @@ func TestMainImageModelsFailureGuidanceFormats(t *testing.T) {
 	} {
 		t.Run(string(tc.failure), func(t *testing.T) {
 			server, _ := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
-				if strings.HasSuffix(r.URL.Path, "/gpt-image-2.5-sunburst") {
+				if strings.HasSuffix(r.URL.Path, "/gpt-image-2.6-sunburst") {
 					mainImageModelResponse(w, r.URL.Path, "null")
 					return
 				}
@@ -516,7 +522,7 @@ func TestMainImageModelsFailureGuidanceFormats(t *testing.T) {
 					}
 					if len(format.flags) > 0 {
 						report := decodeMainImageModels(t, got.stdout)
-						if report.Complete || report.Source != "live" || len(report.Models) != 9 {
+						if report.Complete || report.Source != "live" || len(report.Models) != 11 {
 							t.Fatalf("failure lost partial report: %+v", report)
 						}
 						for i, row := range report.Models {
@@ -528,7 +534,7 @@ func TestMainImageModelsFailureGuidanceFormats(t *testing.T) {
 								t.Errorf("lost failure category: %+v", row)
 							}
 						}
-					} else if !strings.Contains(got.stdout, "Could not check") || !strings.Contains(got.stdout, "gpt-image-2.5-sunburst") || json.Valid([]byte(got.stdout)) {
+					} else if !strings.Contains(got.stdout, "Could not check") || !strings.Contains(got.stdout, "gpt-image-2.6-sunburst") || json.Valid([]byte(got.stdout)) {
 						t.Errorf("default failure lost readable partial results: %q", got.stdout)
 					}
 					message := got.stderr
@@ -611,8 +617,8 @@ func TestMainImageModelsPreservesExistingModelListing(t *testing.T) {
 	if got.code != 0 || got.stderr != "" {
 		t.Fatalf("existing model listing changed: %+v", got)
 	}
-	var model map[string]any
-	if err := json.Unmarshal([]byte(got.stdout), &model); err != nil || model["id"] != "synthetic-text-model" || model["object"] != "model" || model["owned_by"] != "system" || model["created"] != float64(1) {
+	var models []map[string]any
+	if err := json.Unmarshal([]byte(got.stdout), &models); err != nil || len(models) != 1 || models[0]["id"] != "synthetic-text-model" || models[0]["object"] != "model" || models[0]["owned_by"] != "system" || models[0]["created"] != float64(1) {
 		t.Fatalf("existing model-list API fields changed: %q, %v", got.stdout, err)
 	}
 	if routes := requests(); len(routes) != 1 || routes["GET /models"] != 1 {
@@ -646,7 +652,7 @@ func decodeMainImageModels(t *testing.T, text string) mainImageModelsReport {
 }
 
 func mainImageModelIDs(snapshots bool) []string {
-	ids := []string{"gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini", "chatgpt-image-latest", "dall-e-3", "dall-e-2"}
+	ids := []string{"gpt-image-2.6-sunburst", "gpt-image-2.6-flare", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini", "chatgpt-image-latest", "dall-e-3", "dall-e-2"}
 	if snapshots {
 		ids = append(ids, "gpt-image-2.5-sunburst-2026-09-08", "gpt-image-2.5-flare-2026-09-08", "gpt-image-2-2026-04-21")
 	}
@@ -661,7 +667,7 @@ func assertMainImageModelsRows(t *testing.T, report mainImageModelsReport, snaps
 	}
 	for i, id := range ids {
 		row := report.Models[i]
-		if row.ID != id || row.Snapshot != (i >= 9) || row.Status != status || row.Failure != "" {
+		if row.ID != id || row.Snapshot != (i >= 11) || row.Status != status || row.Failure != "" {
 			t.Errorf("exact model name, status, snapshot, or order changed: %+v", row)
 		}
 	}
@@ -686,11 +692,11 @@ func assertMainImageModelsPartialTimeout(t *testing.T, got mainDispatchResult) {
 		t.Fatalf("partial discovery exit=%d; want 1: %+v", got.code, got)
 	}
 	report := decodeMainImageModels(t, got.stdout)
-	if report.Complete || report.Source != "live" || len(report.Models) != 9 {
+	if report.Complete || report.Source != "live" || len(report.Models) != 11 {
 		t.Fatalf("partial discovery lost rows or claims completion: %+v", report)
 	}
 	for _, row := range report.Models {
-		if row.ID == "gpt-image-2.5-flare" {
+		if row.ID == "gpt-image-2.6-flare" {
 			if row.Status != imagemodels.StatusUnknown || row.Failure != imagemodels.FailureTimeout {
 				t.Errorf("timeout misclassified: %+v", row)
 			}

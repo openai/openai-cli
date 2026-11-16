@@ -96,6 +96,7 @@ class SplitProcess(Process):
 def fixture(case):
     api = Fixture()
     api.gates, api.events, api.errors = [], [], []
+    api.failed_requests = set()
     original = api.server.RequestHandlerClass
 
     class Handler(original):
@@ -109,9 +110,9 @@ def fixture(case):
             if not gate.wait(8):
                 api.errors.append('response gate timed out')
                 return
-            failed = index == 1 and case in ('error', 'retry', 'direct')
+            failed = index in api.failed_requests or (index == 1 and case in ('error', 'retry', 'direct'))
             body = {'error': {'message': 'Synthetic request failure', 'type': 'invalid_request_error'}} if failed else {
-                'created': 1704067200, 'data': [{'b64_json': PNG}],
+                'created': 1704067200, 'data': [{'b64_json': PNG} for _ in range(8 if case == 'history' else 1)],
             }
             data = json.dumps(body).encode()
             try:

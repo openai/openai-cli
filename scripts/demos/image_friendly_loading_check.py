@@ -55,7 +55,7 @@ def loading_check(process, start, before, width, prompt=PROMPT, picker=True):
         assert b"Generating image '" not in pending, "direct request content entered loading diagnostics"
         assert prompt.encode() not in pending, "direct prompt entered loading diagnostics"
     if not before and picker and width >= 40:
-        assert re.search(rb"Generating image '(?:\\.|[^'\r\n])*'", pending), "prompt quotation is missing or broken"
+        assert re.search(rb"Generating image '(?:\\.|[^'\\\r\n])*'", pending), "prompt quotation is missing or broken"
         if prompt == PROMPT and width >= 80:
             assert ("'" + prompt + "'").encode() in pending, "short prompt was not retained in the loading line"
         if len(prompt) > width:

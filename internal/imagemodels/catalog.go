@@ -15,6 +15,8 @@ type Entry struct {
 // returned so callers cannot accidentally change subsequent checks.
 func Catalog(includeSnapshots bool) []Entry {
 	entries := []Entry{
+		{ID: openai.ImageModelGPTImage2_6Sunburst},
+		{ID: openai.ImageModelGPTImage2_6Flare},
 		{ID: openai.ImageModelGPTImage2_5Sunburst},
 		{ID: openai.ImageModelGPTImage2_5Flare},
 		{ID: openai.ImageModelGPTImage2},
