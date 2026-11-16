@@ -22,7 +22,7 @@ func TestFishFileCompletionPreservesAssignments(t *testing.T) {
 	require.NoError(t, err)
 	dir := t.TempDir()
 	for _, name := range []string{
-		"assets/literal%=match.png", "assets/dollar$=match.png", "assets/tilde~=match.png",
+		"assets/literal%=match.png", "assets/dollar$=match.png", "assets/literal$variable=match.png", "assets/tilde~=match.png",
 		"assets/brace{q}=match.png", "assets/glob*?=match.png", "assets/(sample)=match.png",
 		"assets/logo.png", "assets/long name.png", "assets/a=b.png", "assets/l[bracket].png", "--file=logo.png",
 		"assets/equals space=.png", "assets/colon:name.png", `assets/back\slash=.png`, "-",
@@ -69,6 +69,15 @@ complete -C "$OPENAI_CLI_COMPLETION_LINE"
 		{"openai --file=assets/colon:", []string{"--file=assets/colon:name.png"}},
 		{`openai --file=assets/back\\slash=`, []string{`--file=assets/back\slash=.png`}},
 		{`openai --file=$OPENAI_CLI_COMPLETION_ASSETS/lo`, []string{"--file=$OPENAI_CLI_COMPLETION_ASSETS/logo.png", "--file=$OPENAI_CLI_COMPLETION_ASSETS/long name.png"}},
+		{`openai --format @'assets/literal%='`, []string{"@assets/literal%=match.png"}},
+		{`openai --format @file://'assets/a='`, []string{"@file://assets/a=b.png"}},
+		{`openai --format @data://"$OPENAI_CLI_COMPLETION_ASSETS/colon:"`, []string{"@data://$OPENAI_CLI_COMPLETION_ASSETS/colon:name.png"}},
+		{`openai --format @file://"$(printf assets)/colon:"`, nil},
+		{`openai --format '@assets/literal$variable='`, []string{"@assets/literal$variable=match.png"}},
+		{`openai --format '@file://assets/literal$variable='`, []string{"@file://assets/literal$variable=match.png"}},
+		{`openai --format "@data://$OPENAI_CLI_COMPLETION_ASSETS/colon:"`, []string{"@data://$OPENAI_CLI_COMPLETION_ASSETS/colon:name.png"}},
+		{`openai --format 'attached @file://assets/literal$variable='`, []string{"attached @file://assets/literal$variable=match.png"}},
+		{`openai --format @data://assets/lo`, []string{"@data://assets/logo.png", "@data://assets/long name.png"}},
 		{"openai --format '(touch unsafe)' --file=assets/lo", []string{"--file=assets/logo.png", "--file=assets/long name.png"}},
 		{"openai --format (touch unsafe) --file=assets/lo", []string{"--file=assets/logo.png", "--file=assets/long name.png"}},
 	} {

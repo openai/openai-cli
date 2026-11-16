@@ -2,7 +2,11 @@
 
 # Keep expansion syntax, but hide literal filename separators from Fish's
 # secondary completion of assignment and colon suffixes.
-function ____APPNAME___fish_path_operand
+function ____APPNAME___fish_complete_path
+    if not string match -qr '[=:()]' -- "$argv[1]"
+        __fish_complete_path "$argv[1]"
+        return
+    end
     set -l result ''
     set -l quote ''
     set -l backslash ''
@@ -46,7 +50,7 @@ function ____APPNAME___fish_path_operand
             set result "$result$c"
         end
     end
-    printf '%s' "$result$backslash"
+    __fish_complete_path "$result$backslash"
 end
 
 function ____APPNAME___fish_autocomplete
@@ -71,18 +75,24 @@ function ____APPNAME___fish_autocomplete
     set -l force_file_completion 0
 
     if test $exit_code -ne 10; and test $exit_code -ne 12; and string match -gqr '^(?<before>.*)@(?<protocol>file://|data://)?(?<file_part>.*)$' -- $current
-        if string match -qr '^[\'"]' -- $before
-            # Ensures we don't insert an extra quote when the user is building an argument in quotes
-            set before (string sub -s 2 -- $before)
-        end
-
         set prefix "$before@$protocol"
+        if string match -qr '[\'"]' -- "$before"
+            # A quote can start before the @. Ask the tokenizer which closing
+            # quote lets a following word begin. Carry that quote into the path.
+            for quote in "'" '"'
+                if test "$(commandline --input "$before@$quote x" -ct)" = x
+                    set file_part "$quote$file_part"
+                    break
+                end
+            end
+            set prefix (string unescape -- "$prefix" | string collect)
+        end
         set force_file_completion 1
     end
 
     if test $force_file_completion -eq 1
-        for path in (__fish_complete_path "$file_part")
-            echo $prefix$path
+        for path in (____APPNAME___fish_complete_path "$file_part")
+            printf '%s%s\n' "$prefix" "$path"
         end
     else
         switch $exit_code
@@ -96,18 +106,13 @@ function ____APPNAME___fish_autocomplete
                 if test $exit_code -eq 12
                     printf '%s-\tRead the request from the command before |\n' "$assignment"
                 end
-                if string match -qr '[=:()]' -- "$value"
-                    set -l operand (____APPNAME___fish_path_operand "$value" | string collect --no-trim-newlines)
-                    test (count $operand) -eq 1; or return 0
-                    set value "$operand"
-                end
                 # Fish treats leading --name= specially, even for file values.
                 set -l literal_prefix ""
                 if string match -qr '^-' -- "$value"
                     set value "./$value"
                     set literal_prefix "./"
                 end
-                for path in (__fish_complete_path "$value")
+                for path in (____APPNAME___fish_complete_path "$value")
                     if test -n "$literal_prefix"
                         set path (string sub -s 3 -- "$path")
                     end
