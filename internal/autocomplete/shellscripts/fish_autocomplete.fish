@@ -1,5 +1,54 @@
 #!/usr/bin/env fish
 
+# Keep expansion syntax, but hide literal filename separators from Fish's
+# secondary completion of assignment and colon suffixes.
+function ____APPNAME___fish_path_operand
+    set -l result ''
+    set -l quote ''
+    set -l backslash ''
+    set -l dollar 0
+    for c in (string split '' -- "$argv[1]")
+        if test -n "$backslash"
+            set backslash ''
+            if not contains -- "$c" '=' ':'
+                set result "$result\\$c"
+                set dollar 0
+                continue
+            end
+            # Inside quotes, the backslash before a separator is literal.
+            if test -n "$quote"
+                set result "$result\\\\"
+            end
+        else if test "$c" = '\\'
+            set backslash '\\'
+            set dollar 0
+            continue
+        else if test "$c" = '('; and begin; test -z "$quote"; or test $dollar -eq 1; end
+            # Path completion must not execute a command substitution.
+            return 1
+        end
+        set dollar 0
+        if contains -- "$c" '=' ':'
+            set -l encoded '\x3d'
+            if test "$c" = ':'
+                set encoded '\x3a'
+            end
+            # Hex escapes work outside quotes. Resume the original quote afterward.
+            set result "$result$quote$encoded$quote"
+        else
+            if test "$c" = "$quote"
+                set quote ''
+            else if test -z "$quote"; and contains -- "$c" "'" '"'
+                set quote "$c"
+            else if test "$quote" = '"'; and test "$c" = '$'
+                set dollar 1
+            end
+            set result "$result$c"
+        end
+    end
+    printf '%s' "$result$backslash"
+end
+
 function ____APPNAME___fish_autocomplete
     # Fish 3 lacks expanded tokens; retain its literal tokenization fallback.
     set -l tokens (commandline -xpc 2>/dev/null)
@@ -47,15 +96,10 @@ function ____APPNAME___fish_autocomplete
                 if test $exit_code -eq 12
                     printf '%s-\tRead the request from the command before |\n' "$assignment"
                 end
-                # Fish can also complete the suffix after = or : in a path.
-                # Escape literal separators without changing expansion syntax.
-                if string match -qr '[=:]' -- "$value"; and not string match -qr '[$~*?{}()%]' -- "$value"
-                    set -l literal_value (commandline -I "$value" -o)
-                    if test $status -eq 0; and test (count $literal_value) -eq 1
-                        set value (string escape -n -- "$literal_value[1]")
-                        set value (string replace -a '=' '\x3d' -- "$value")
-                        set value (string replace -a ':' '\x3a' -- "$value")
-                    end
+                if string match -qr '[=:()]' -- "$value"
+                    set -l operand (____APPNAME___fish_path_operand "$value" | string collect --no-trim-newlines)
+                    test (count $operand) -eq 1; or return 0
+                    set value "$operand"
                 end
                 # Fish treats leading --name= specially, even for file values.
                 set -l literal_prefix ""
