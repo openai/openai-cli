@@ -28,7 +28,7 @@ require (
 	github.com/urfave/cli/v3 v3.14.0
 	github.com/xo/terminfo v1.3.0
 	golang.org/x/image v0.47.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 	golang.org/x/text v0.43.0
 )
 
