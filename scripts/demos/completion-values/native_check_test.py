@@ -158,15 +158,18 @@ class NativeCleanupTests(TestCase):
         self.assertTrue(self.transcript.closed)
         self.kill.assert_not_called()
 
+    def close_during_cancellation(self, control):
+        try:
+            raise control
+        finally:
+            self.session.close()
+
     def check_close_cancellation(self, control):
         cleanup_error = OSError("synthetic descriptor cleanup failure")
         self.close_fd.side_effect = cleanup_error
         stderr = io.StringIO()
         with mock.patch.object(driver.sys, "stderr", stderr), self.assertRaises(type(control)) as caught:
-            try:
-                raise control
-            finally:
-                self.session.close()
+            self.close_during_cancellation(control)
         self.assertIs(caught.exception, control)
         self.assertIn(cleanup_error, control.cleanup_errors)
         self.assertIn("synthetic descriptor cleanup failure", stderr.getvalue())
@@ -215,10 +218,7 @@ class NativeCleanupTests(TestCase):
         denied = OSError("synthetic diagnostic failure")
         stderr.write.side_effect = denied
         with mock.patch.object(driver.sys, "stderr", stderr), self.assertRaises(SystemExit) as caught:
-            try:
-                raise control
-            finally:
-                self.session.close()
+            self.close_during_cancellation(control)
         self.assertIs(caught.exception, control)
         self.assertEqual(control.code, 143)
         self.assertIn(denied, control.cleanup_errors)
