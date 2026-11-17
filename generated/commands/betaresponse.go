@@ -30,6 +30,11 @@ var betaResponsesCreate = requestflag.WithInnerFlags(cli.Command{
 			Default:  requestflag.Ptr[bool](false),
 			BodyPath: "background",
 		},
+		&requestflag.Flag[map[string]any]{
+			Name:     "background-options",
+			Usage:    "Options for background execution on HTTP requests. The `2h` and `8h`\ncompletion windows require `background: true`, Standard processing,\nand `stream: false` or omitted.\n",
+			BodyPath: "background_options",
+		},
 		&requestflag.Flag[any]{
 			Name:     "context-management",
 			Usage:    "Context management configuration for this request.\n",
@@ -209,6 +214,18 @@ var betaResponsesCreate = requestflag.WithInnerFlags(cli.Command{
 			Name:       "access-programs.cyber",
 			Usage:      "The Cyber access program to use for this request. Supported values are `standard`, `daybreak_blue`, and `daybreak_red`. If omitted, the API resolves the program from the model's Cyber tier and your organization and project access, subject to model-specific eligibility restrictions. By default, models without a Cyber tier use Standard. Blue-tier models use Daybreak Blue when authorized; otherwise they fall back to Standard unless the model requires Daybreak access. Red-tier models use Daybreak Red and require authorization. Requests that require unavailable Daybreak access return 403. An implicit Standard fallback is represented by null in the response's access_programs field, rather than an explicit Standard selection.",
 			InnerField: "cyber",
+		},
+	},
+	"background-options": {
+		&requestflag.InnerFlag[string]{
+			Name:       "background-options.completion-window",
+			Usage:      "The completion window for background execution. Defaults to `soonest`; `2h` and `8h` select discounted background execution.",
+			InnerField: "completion_window",
+		},
+		&requestflag.InnerFlag[string]{
+			Name:       "background-options.continuation-id",
+			Usage:      "A customer-provided opaque identifier used to prioritize related background requests. It does not add prior history to the input.",
+			InnerField: "continuation_id",
 		},
 	},
 	"context-management": {
