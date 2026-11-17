@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.54.1](https://github.com/openai/openai-cli/compare/v1.54.0...v1.54.1) (2026-11-16)
+
+
+### Chores
+
+* **deps:** bump golang.org/x/sys from 0.49.0 to 0.50.0 in the golang-x group across 1 directory ([#763](https://github.com/openai/openai-cli/issues/763)) ([58549ed](https://github.com/openai/openai-cli/commit/58549edd80add49082a295d266ad8d0582b84b1a))
+* **deps:** bump the codeql group across 1 directory with 2 updates ([#765](https://github.com/openai/openai-cli/issues/765)) ([eb2108a](https://github.com/openai/openai-cli/commit/eb2108a72fcb97494ad33a0532b2359138f5b9e5))
+
 ## [1.54.0](https://github.com/openai/openai-cli/compare/v1.53.1...v1.54.0) (2026-11-14)
 
 

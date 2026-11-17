@@ -25,7 +25,7 @@ MODEL_ID = r"[a-z0-9][a-z0-9.-]*"
 # Review changes to model advice even if the source retains an older recommendation.
 REVIEWED_GUIDANCE = {
     SPEECH: "5d7de5ea03eabc2ee2a34272e6128d37b90442c80592df4f13725e76638647e7",
-    IMAGE: "4d576b25d751c788027c5d9eb943caa4a8c8adb599fc3009fe19fce6048ab47a",
+    IMAGE: "b60477ab890001f895a01364f63ed8b1ea9bd9f1ec50f6d1f897ec5cb528f642",
     TRANSLATION: "28d362b54b8f964cd96b1ab19b34b520f5e8163ed5f95ff04880210f5513da81",
     CAPTIONS: "ac7e0c6762d96fcb434779e9cfd4c7a702d39657bed7e7677a445984eee7c7dc",
 }

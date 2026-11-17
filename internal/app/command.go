@@ -86,6 +86,7 @@ func ConfigureCommand(root *cli.Command) {
 	// Include list actions added after alias creation. Decorated actions are skipped.
 	configureRegisteredLists(root)
 	configureOutputPolicy(root)
+	configureCompletionValues(root)
 	requestflag.AddStructuredFlags(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
