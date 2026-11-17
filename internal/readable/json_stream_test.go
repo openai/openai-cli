@@ -128,7 +128,8 @@ func TestJSONStreamKeyStorageFailureRetainsCause(t *testing.T) {
 func TestDecodeJSONStringBytesPreservesInvalidUTF8Identity(t *testing.T) {
 	for _, test := range []struct{ input, expected string }{
 		{`"a\u0061\u2028\ud800\udc00"`, "aa\u2028\U00010000"},
-		{`"\ud800a\udc00\u2028"`, "\ufffda\ufffd"},
+		{`"\ud800a\udc00\u2028"`, "\ufffda\ufffd\u2028"},
+		{`"\uD800\uD83D\uDE00"`, "\ufffd😀"},
 		{"\"x\xff\xed\xa0\x80\"", "x\xff\xed\xa0\x80"},
 		{`"\u0000\"\\\n"`, "\x00\"\\\n"},
 	} {

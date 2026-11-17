@@ -21,8 +21,8 @@ require (
 	github.com/openai/openai-go/v3 v3.99.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/stretchr/testify v1.12.1
-	github.com/tidwall/gjson v1.20.2
-	github.com/tidwall/pretty v1.3.0
+	github.com/tidwall/gjson v1.20.1
+	github.com/tidwall/pretty v1.2.2
 	github.com/tiktoken-go/tokenizer v0.10.0
 	github.com/urfave/cli-docs/v3 v3.2.0
 	github.com/urfave/cli/v3 v3.14.0

@@ -146,6 +146,9 @@ func (r *jsonTextReader) stringRune() (rune, bool, error) {
 			return 0, false, err
 		}
 		if utf16.IsSurrogate(value) {
+			if value >= 0xdc00 {
+				return utf8.RuneError, false, nil
+			}
 			// A lone surrogate can end the record. Only wait for four more
 			// digits when the next bytes actually start a Unicode escape.
 			for i, want := range []byte(`\u`) {
@@ -157,8 +160,16 @@ func (r *jsonTextReader) stringRune() (rune, bool, error) {
 					return utf8.RuneError, false, nil
 				}
 			}
-			// Preserve gjson's existing treatment of adjacent surrogate escapes.
-			// It consumes the next Unicode escape even for an invalid pair.
+			// A low surrogate starts with DC through DF, ignoring hex case.
+			// Leave any other escape for the next call.
+			prefix, err := r.in.Peek(4)
+			if err != nil {
+				return 0, false, err
+			}
+			if (prefix[2] != 'D' && prefix[2] != 'd') ||
+				!strings.ContainsRune("CDEFcdef", rune(prefix[3])) {
+				return utf8.RuneError, false, nil
+			}
 			for range 2 {
 				if _, err := r.byte(); err != nil {
 					return 0, false, err
