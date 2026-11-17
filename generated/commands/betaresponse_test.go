@@ -19,6 +19,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--max-items", "10",
 			"--access-programs", "{cyber: standard}",
 			"--background=true",
+			"--background-options", "{completion_window: soonest, continuation_id: continuation_id}",
 			"--context-management", "[{type: type, compact_threshold: 1000}]",
 			"--conversation", "string",
 			"--include", "[file_search_call.results]",
@@ -67,6 +68,8 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--max-items", "10",
 			"--access-programs.cyber", "standard",
 			"--background=true",
+			"--background-options.completion-window", "soonest",
+			"--background-options.continuation-id", "continuation_id",
 			"--context-management.type", "type",
 			"--context-management.compact-threshold", "1000",
 			"--conversation", "string",
@@ -121,6 +124,9 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"access_programs:\n" +
 			"  cyber: standard\n" +
 			"background: true\n" +
+			"background_options:\n" +
+			"  completion_window: soonest\n" +
+			"  continuation_id: continuation_id\n" +
 			"context_management:\n" +
 			"  - type: type\n" +
 			"    compact_threshold: 1000\n" +
