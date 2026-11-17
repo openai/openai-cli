@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.55.0](https://github.com/openai/openai-cli/compare/v1.54.1...v1.55.0) (2026-11-17)
+
+
+### Features
+
+* **api:** add 2-hour and 8-hour Responses background windows ([6f71347](https://github.com/openai/openai-cli/commit/6f71347fae484ed5647b8d19065e331219d293f2))
+* **api:** add the GPT-6.2 Astra Law Responses model identifier ([6f71347](https://github.com/openai/openai-cli/commit/6f71347fae484ed5647b8d19065e331219d293f2))
+* **api:** add the GPT-6.2 Astra model identifier ([6f71347](https://github.com/openai/openai-cli/commit/6f71347fae484ed5647b8d19065e331219d293f2))
+* **api:** add the GPT-6.2 Sol model identifier ([6f71347](https://github.com/openai/openai-cli/commit/6f71347fae484ed5647b8d19065e331219d293f2))
+* suggest static flag values in shell completion ([#411](https://github.com/openai/openai-cli/issues/411)) ([2a2c60a](https://github.com/openai/openai-cli/commit/2a2c60a5644c30194da5a25ef3be078078d6646c))
+
+
+### Bug Fixes
+
+* update Unicode decoding and terminal capabilities ([#767](https://github.com/openai/openai-cli/issues/767)) ([e78b06d](https://github.com/openai/openai-cli/commit/e78b06dbbb14d8d429ae4ae72df0790beb8477b7))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.101.0 ([#769](https://github.com/openai/openai-cli/issues/769)) ([b45b3dd](https://github.com/openai/openai-cli/commit/b45b3ddfdf9ae52aca50e109417ce97677a2ddea))
+
 ## [1.54.1](https://github.com/openai/openai-cli/compare/v1.54.0...v1.54.1) (2026-11-16)
 
 
