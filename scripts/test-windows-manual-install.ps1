@@ -98,9 +98,14 @@ if ($Phase -ne 'Host') {
 public static extern bool AllocConsole();
 '@
                 $null = [Native.ManualInstallConsole]::AllocConsole()
+                $env:OPENAI_ARCHIVE_TEST_CONSOLE = '1'
+                $env:OPENAI_ARCHIVE_TEST_MODE = 'bare'
                 1..3 | ForEach-Object {
-                    & $env:COMSPEC /d /c 'openai <CONIN$ >CONOUT$ 2>&1'
-                    if ($LASTEXITCODE -ne 0) { throw 'The command failed in its native console.' }
+                    # The owner opens both consoles read/write. GetConsoleMode also needs read access on stdout and stderr.
+                    $run = & "$PSScriptRoot\console.test.exe" '-test.run=^TestMainWindowsArchiveConsoleOwner$' '-test.v' '--' $exe
+                    if ($LASTEXITCODE -ne 0 -or !($run -cmatch '^--- PASS: TestMainWindowsArchiveConsoleOwner ')) {
+                        throw "The native console check failed: $($run -join ' ')"
+                    }
                 }
                 $notice = @(Get-ChildItem -Path "$local\openai-cli\update-notice-*-windows-*\state.json")
                 if ($notice.Count -ne 1 -or (Get-Content $notice[0].FullName -Raw | ConvertFrom-Json).checked -le 0) {
@@ -147,6 +152,12 @@ try {
     icacls $root /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' "*${sid}:(OI)(CI)RX" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Could not protect the fixture directory.' }
     Copy-Item -LiteralPath $PSCommandPath -Destination "$root\manual.ps1"
+    $console = Join-Path $env:RUNNER_TEMP "manual-install-console-$env:GITHUB_SHA.test.exe"
+    if (!(Test-Path -LiteralPath $console)) {
+        go test -c -o $console ./cmd/openai
+        if ($LASTEXITCODE -ne 0) { throw 'Could not compile the Windows console verification helper.' }
+    }
+    Copy-Item -LiteralPath $console -Destination "$root\console.test.exe"
     if ($Method -eq 'Go') {
         if ($readme -notmatch '(?m)^```sh\r?\ngo install (github\.com/openai/openai-cli/cmd/openai@latest)\r?\n```\r?$') {
             throw 'Expected the documented Go installation command.'

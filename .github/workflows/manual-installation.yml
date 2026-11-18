@@ -33,14 +33,13 @@ jobs:
       - name: Restore candidate checkout
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
-      - name: Install two public ZIP releases
-        shell: pwsh
-        run: ./scripts/test-windows-manual-install.ps1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: matrix.os == 'windows-latest'
         with:
           go-version-file: .go-version
           cache: false
+      - name: Install two public ZIP releases
+        shell: pwsh
+        run: ./scripts/test-windows-manual-install.ps1
       - name: Install with the README Go command
         if: matrix.os == 'windows-latest'
         shell: pwsh
