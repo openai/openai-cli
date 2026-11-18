@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -494,7 +495,7 @@ esac
 			t.Fatal(err)
 		}
 		t.Run("README installation", func(t *testing.T) {
-			testHomebrewReadmeInstall(t, zsh, source, brewScript)
+			testHomebrewShellSetup(t, zsh, source, brewScript)
 		})
 		t.Run("login profile", func(t *testing.T) {
 			testZshLoginSelection(t, zsh, bin)
@@ -761,21 +762,86 @@ func testZshLoginSelection(t *testing.T, zsh, bin string) {
 	}
 }
 
-func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
+func TestHomebrewReadmeInstall(t *testing.T) {
 	readme, err := os.ReadFile("../README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, start, ok := strings.Cut(string(readme), "\n```zsh\n")
+	_, section, ok := strings.Cut(string(readme), "\n### Installing with Homebrew\n")
+	section, _, _ = strings.Cut(section, "\n### ")
+	_, start, opened := strings.Cut(section, "\n```sh\n")
 	block, _, closed := strings.Cut(start, "\n```")
-	if !ok || !closed {
-		t.Fatal("missing zsh installation block")
+	if !ok || !opened || !closed {
+		t.Fatal("missing Homebrew installation command")
 	}
+
+	for _, tc := range []struct {
+		name     string
+		exitCode int
+	}{
+		{"fresh install without GitHub CLI", 0},
+		{"failed cask install", 40},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := privateInstallDirectory(t)
+			bin := filepath.Join(home, "brew prefix", "bin")
+			if err := os.MkdirAll(bin, 0755); err != nil {
+				t.Fatal(err)
+			}
+			// Model only Homebrew's named cask. The CLI, Go and GitHub CLI start absent.
+			const brew = `#!/bin/sh
+printf '%s\n' "$*" >> "$HOME/brew.log"
+[ "$#" -eq 2 ] && [ "$1" = install ] && [ "$2" = openai/tools/openai ] || exit 71
+[ "$BREW_RC" = 0 ] || exit "$BREW_RC"
+/bin/cp "$HOME/release" "${0%/*}/openai"
+`
+			if err := os.WriteFile(filepath.Join(bin, "brew"), []byte(brew), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, "release"), []byte(archiveBinary), 0700); err != nil {
+				t.Fatal(err)
+			}
+			shell, err := exec.LookPath("sh")
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := func(text string) ([]byte, error) {
+				cmd := exec.Command(shell, "-c", text)
+				cmd.Env = []string{"HOME=" + home, "PATH=" + bin, "BREW_RC=" + strconv.Itoa(tc.exitCode)}
+				return cmd.CombinedOutput()
+			}
+			out, err := run(block)
+			if tc.exitCode == 0 {
+				if err != nil {
+					t.Fatalf("README install: %s, %v", out, err)
+				}
+				if out, err := run("openai --version"); err != nil || string(out) != "openai version 1.2.3\n" {
+					t.Fatalf("fresh shell: %s, %v", out, err)
+				}
+			} else if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != tc.exitCode {
+				t.Fatalf("README install: output %q, err %v; want exit %d", out, err, tc.exitCode)
+			}
+			if calls, err := os.ReadFile(filepath.Join(home, "brew.log")); err != nil || string(calls) != "install openai/tools/openai\n" {
+				t.Fatalf("unexpected brew calls: %q, %v", calls, err)
+			}
+			for _, name := range []string{".openai", ".zshrc", ".bashrc"} {
+				if _, err := os.Lstat(filepath.Join(home, name)); !os.IsNotExist(err) {
+					t.Fatalf("unexpected installer side effect at %s: %v", name, err)
+				}
+			}
+		})
+	}
+}
+
+// Exercise the combined cask and shell-helper command used by older releases.
+func testHomebrewShellSetup(t *testing.T, zsh, release, brewScript string) {
+	const block = `brew update --auto-update && brew install --cask openai/tools/openai &&
+source "$(brew --prefix)/bin/openai-enable-updates.zsh"`
 	guide, err := os.ReadFile("../docs/installation.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, start, ok = strings.Cut(string(guide), "\n```zsh\n")
+	_, start, ok := strings.Cut(string(guide), "\n```zsh\n")
 	recovery, _, closed := strings.Cut(start, "\n```")
 	if !ok || !closed {
 		t.Fatal("missing zsh recovery block")
@@ -810,7 +876,7 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 			available := release
 			if tc.failure == "old-tap" {
 				available = privateInstallDirectory(t)
-				const oldCaskCLI = "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = --help ] || exit 2\necho 'Usage from cask 1.0.0: openai [command]'\n"
+				const oldCaskCLI = "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = --version ] || exit 2\necho 'openai version 1.0.0'\n"
 				if err := os.WriteFile(filepath.Join(available, "openai"), []byte(oldCaskCLI), 0755); err != nil {
 					t.Fatal(err)
 				}
@@ -861,8 +927,8 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 					if !strings.Contains(string(out), missingHelper) {
 						t.Fatalf("missing setup helper path in shell error: %s", out)
 					}
-					if output, err := run(preflight + recovery); err != nil || !strings.Contains(string(output), "Usage from cask 1.0.0: openai [command]") {
-						t.Fatalf("README recovery with earlier Go binary: %v: %s", err, output)
+					if output, err := run(preflight + recovery); err != nil || !strings.Contains(string(output), "openai version 1.0.0") {
+						t.Fatalf("cask recovery with earlier Go binary: %v: %s", err, output)
 					}
 				}
 				return

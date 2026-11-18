@@ -1,0 +1,47 @@
+name: Manual installation
+on:
+  pull_request:
+    paths:
+      - README.md
+      - docs/installation.md
+      - scripts/test-windows-manual-install.ps1
+      - .github/workflows/manual-installation.yml
+permissions: {}
+
+jobs:
+  source:
+    uses: ./.github/workflows/prepare-ci-source.yml
+    permissions:
+      contents: read
+      actions: read
+
+  windows:
+    name: Windows manual install (${{ matrix.os }})
+    needs: source
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - name: Install two public ZIP releases
+        shell: pwsh
+        run: ./scripts/test-windows-manual-install.ps1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: matrix.os == 'windows-latest'
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Install with the README Go command
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: ./scripts/test-windows-manual-install.ps1 -Method Go

@@ -8,7 +8,6 @@ The managed release executable can update itself on macOS, Linux, and Windows. G
 
 ### Set up automatic updates with Homebrew on macOS
 
-The [macOS installation block](../README.md#installation) installs the CLI and enables automatic updates in one paste.
 If you already have a Homebrew cask containing the helper, you can run the helper directly in zsh.
 
 ```zsh
@@ -34,7 +33,7 @@ You can keep using the Homebrew CLI while waiting for the tap.
 ### From an installed Debian or RPM package
 
 Older packages, including v1.48.1, provide the CLI through `/usr/bin/openai`. Run `/usr/bin/openai --help` to use it.
-If your package lacks the setup helper, use the [Linux install command](../README.md#linux) to upgrade and enable automatic updates.
+If your package lacks the setup helper, install a newer package from [GitHub Releases](https://github.com/openai/openai-cli/releases).
 For a package that includes the helper, run this command in interactive Bash or zsh.
 
 ```sh
@@ -48,9 +47,43 @@ If you install a newer system package, rerun setup to select that version immedi
 If your private copy already upgraded further, setup keeps the newer version.
 To return to the system copy, remove the added PATH line from your shell profiles and start a fresh shell.
 
+#### Install over SSH
+
+In an interactive Bash or zsh terminal on Debian, Ubuntu, or Fedora, paste this block.
+
+```sh
+(
+  installer=$(mktemp /tmp/openai-install.XXXXXXXX) || exit
+  trap 'rm -f -- "$installer"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  printf 'Downloading the OpenAI CLI installer...\n' >&2
+  curl -qfsSL --retry 3 --retry-max-time 60 --max-time 60 --proto '=https' --proto-redir '=https' \
+    -o "$installer" https://raw.githubusercontent.com/openai/openai-cli/334f332fc6a5f8298b20548d4fbbbb30c940cdc5/scripts/install-linux-release.sh || exit
+  printf '%s  %s\n' b0c05af08bd5e168366063bde36147d880f90fba337ce57fff928aa5f3633ce5 "$installer" | sha256sum --check --quiet || exit
+  /bin/bash -p "$installer"
+) && source /usr/share/openai-cli/enable-updates.sh
+```
+
 ### Set up automatic updates on Windows
 
-Use the [Windows installation block](installation.md#windows) from the extracted official ZIP.
+Open PowerShell in the extracted official ZIP.
+
+```powershell
+& {
+    Write-Host 'Installing OpenAI CLI for your account...'
+    $installed = & .\openai.exe install --user
+    if ($LASTEXITCODE -ne 0 -or !$installed) { throw 'OpenAI CLI setup could not finish. See the installer message above.' }
+    $bin = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin'
+    if (![string]::Equals(($env:Path -split ';', 2)[0], $bin, [StringComparison]::OrdinalIgnoreCase)) { $env:Path = "$bin;$env:Path" }
+    $selected = Microsoft.PowerShell.Core\Get-Command openai
+    if ($selected.CommandType -ne 'Application' -or ![string]::Equals($selected.Path, (Join-Path $bin 'openai.exe'), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'A shell command overrides openai. Use & (Join-Path $env:LOCALAPPDATA ''OpenAI\CLI\bin\openai.exe'').'
+    }
+    openai --version
+}
+```
 Setup selects the managed executable in your current PowerShell and registers its directory in your user PATH.
 Setup uses a compatible GitHub CLI when available. Otherwise, it installs a verified private copy for the updater.
 Future eligible commands use the managed executable at `%LOCALAPPDATA%\OpenAI\CLI\bin\openai.exe`.

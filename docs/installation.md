@@ -1,182 +1,83 @@
 # Installation and upgrades
 
+## Installing a prebuilt binary
+
+Open **Assets** on the [release you want to install](https://github.com/openai/openai-cli/releases).
+Choose the archive for your operating system and processor. GitHub also offers source archives for building the CLI yourself.
+Each release includes a checksums file. Compare your download’s SHA-256 against its entry before extracting it.
+
+On macOS or Linux, extract the archive and put `openai` in a directory on your `PATH`.
+Use `$HOME/.local/bin` for a manual installation. Add that directory to your shell’s `PATH` if needed.
+On Windows, extract `openai.exe` and follow the [Windows instructions](#windows).
+Use `openai --version` to confirm your installation. To upgrade manually, repeat these steps with the release you choose.
+
 ## Installing with Homebrew
 
-For automatic updates in zsh, paste the [macOS installation block](../README.md#macos).
-Setup also lets Explore insert a command at your zsh prompt for editing.
-If you prefer to manage updates through Homebrew, install the cask directly.
-
 ```sh
-brew install --cask openai/tools/openai && brew list --cask --versions openai
+brew install openai/tools/openai
 ```
 
-To upgrade, paste this command. It refreshes the tap and prints the installed cask version.
-
-```sh
-brew update && brew upgrade --cask openai/tools/openai && brew list --cask --versions openai
-```
-
-Homebrew shows download progress. One cask contains all CLI commands.
-
-**Terminal says “no such file” for the update helper.**
-An older Homebrew package can lack the helper. Run the Homebrew copy directly until the newer package arrives.
+To upgrade the Homebrew copy, run `brew upgrade --cask openai/tools/openai`.
+Homebrew can publish after GitHub. Use `brew list --cask --versions openai` to check the installed cask.
+If your terminal reports a different version, run the Homebrew executable directly.
 
 ```zsh
-"$(brew --prefix)/bin/openai" --help
+"$(brew --prefix)/bin/openai" --version
 ```
 
-Then repeat the [macOS installation block](../README.md#macos).
-
-**Homebrew says the cask is current, but GitHub has a newer release.**
-Homebrew can publish after GitHub. Reinstalling the same cask gives you the same version.
-Wait for Homebrew or choose a [release archive](#installing-a-prebuilt-binary) that already has downloads.
-
-**`openai --version` shows an older version than Homebrew printed.**
-Your shell can select another executable, alias, or function. Use the repair below.
-
-<details>
-<summary>Check the installed cask and select it in Bash or zsh</summary>
-
-Paste this block into your current shell. It checks Homebrew’s receipt and runs that exact executable.
-
-```sh
-cask_dir=$(brew --caskroom openai/tools/openai) &&
-receipt="$cask_dir/.metadata/INSTALL_RECEIPT.json" &&
-[ "$(/usr/bin/plutil -extract source.tap raw "$receipt")" = openai/tools ] &&
-version=$(/usr/bin/plutil -extract source.version raw "$receipt") &&
-cask_cli="$cask_dir/$version/openai" &&
-"$cask_cli" --version && {
-  brew_prefix=$(brew --prefix) &&
-  if [ "$brew_prefix/bin/openai" -ef "$cask_cli" ]; then export PATH="$brew_prefix/bin:$PATH"; fi &&
-  if ! [ "$(command -v openai)" -ef "$cask_cli" ]; then
-    printf 'The cask is installed. Your shell selects another command. Run %q directly.\n' "$cask_cli" >&2
-    false
-  fi
-}
-```
-
-Run `type -a openai` to see competing commands. If a new shell selects another copy, put Homebrew’s binary directory first in your profile.
-
-</details>
+Run `type -a openai` to identify other executables, aliases, or functions. To select Homebrew, put its bin directory first on your PATH.
 
 ## Linux
 
-Use the [Linux install command](../README.md#linux) with Bash or zsh on Debian, Ubuntu, or Fedora.
-It installs the latest stable package and sets up automatic updates. Enter your system password if sudo prompts.
+Choose the release archive for your processor, or use a package for your distribution:
 
-The installer verifies the package checksum before installation. It waits up to 30 minutes for missing release files.
-Press Ctrl-C to cancel. The helper selects your automatically updated copy in this shell and future shells.
-In packages with prompt insertion support, Explore fills the editable zsh prompt. Bash 4.3+ uses Ctrl+X, then Tab.
-The package manager owns `/usr/bin/openai`.
+| Distribution | Package | Install the downloaded file |
+| --- | --- | --- |
+| Debian or Ubuntu | `.deb` | `sudo apt install ./PACKAGE.deb` |
+| Fedora or RHEL | `.rpm` | `sudo dnf install ./PACKAGE.rpm` |
+| Alpine | `.apk` | Use your system’s APK trust and installation policy |
+| Arch Linux | `.pkg.tar.zst` | `sudo pacman -U ./PACKAGE.pkg.tar.zst` |
 
-For an offline installation, verify your chosen package against its official release checksum first.
-Give apt or dnf that exact path, such as `sudo apt install ./chosen-file.deb` or `sudo dnf install ./chosen-file.rpm`.
-Older packages, including v1.48.1, support `/usr/bin/openai --help` and `/usr/bin/openai --version`.
-To enable automatic updates with a supported package, run `source /usr/share/openai-cli/enable-updates.sh`.
-Other systems can use the [Linux tarball](#installing-a-prebuilt-binary).
+Replace `PACKAGE` with the downloaded filename. If your distribution cannot verify the package, use the verified tarball.
+Use the same package manager to upgrade. Debian and RPM packages install the CLI at `/usr/bin/openai`.
 
 ### Install over SSH
 
-In an interactive Bash or zsh terminal on Debian, Ubuntu, or Fedora, paste this block.
-
-```sh
-(
-  installer=$(mktemp /tmp/openai-install.XXXXXXXX) || exit
-  trap 'rm -f -- "$installer"' EXIT
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-  printf 'Downloading the OpenAI CLI installer...\n' >&2
-  curl -qfsSL --retry 3 --retry-max-time 60 --max-time 60 --proto '=https' --proto-redir '=https' \
-    -o "$installer" https://raw.githubusercontent.com/openai/openai-cli/334f332fc6a5f8298b20548d4fbbbb30c940cdc5/scripts/install-linux-release.sh || exit
-  printf '%s  %s\n' b0c05af08bd5e168366063bde36147d880f90fba337ce57fff928aa5f3633ce5 "$installer" | sha256sum --check --quiet || exit
-  /bin/bash -p "$installer"
-) && source /usr/share/openai-cli/enable-updates.sh
-```
+The same binary and package instructions work in an SSH session. You can download the release locally and transfer it.
+Verify the checksum on the destination machine before installation.
 
 ## Windows
 
-Download the Windows ZIP from **Assets** in the latest stable release with downloads. [Release downloads](https://github.com/openai/openai-cli/releases)
-Choose `windows_amd64.zip` for a 64-bit Intel or AMD PC, `windows_arm64.zip` for ARM64, or `windows_386.zip` for 32-bit Windows.
-
-In File Explorer, select **Extract All**. Open the extracted folder.
-If it contains **Install.cmd**, double-click **Install.cmd**.
-Setup enables automatic updates for your account. If the system PATH selects another copy, the installer keeps its recovery instruction visible.
-
-For an older ZIP without **Install.cmd**, open PowerShell in the extracted folder and run `.\openai.exe --help`.
-
-<details>
-<summary>Use an existing PowerShell window</summary>
-
-For a ZIP with **Install.cmd**, this block also selects the managed CLI in your existing PowerShell.
+Choose the ZIP ending in `_windows_amd64.zip` for 64-bit Intel or AMD.
+Choose `_windows_arm64.zip` for Arm64 or `_windows_386.zip` for 32-bit Windows.
+Select **Extract All** in File Explorer. In the extracted folder, verify the CLI with PowerShell:
 
 ```powershell
-& {
-    Write-Host 'Installing OpenAI CLI for your account...'
-    $installed = & .\openai.exe install --user
-    if ($LASTEXITCODE -ne 0 -or !$installed) { throw 'OpenAI CLI setup could not finish. See the installer message above.' }
-    $bin = Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin'
-    if (![string]::Equals(($env:Path -split ';', 2)[0], $bin, [StringComparison]::OrdinalIgnoreCase)) { $env:Path = "$bin;$env:Path" }
-    $selected = Microsoft.PowerShell.Core\Get-Command openai
-    if ($selected.CommandType -ne 'Application' -or ![string]::Equals($selected.Path, (Join-Path $bin 'openai.exe'), [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'A shell command overrides openai. Use & (Join-Path $env:LOCALAPPDATA ''OpenAI\CLI\bin\openai.exe'').'
-    }
-    openai --version
-}
+.\openai.exe --version
 ```
 
-Setup installs every CLI command for your Windows account. It configures the update verifier and registers the CLI for new terminals.
-Eligible interactive commands install future authenticated releases. [Automatic updates](automatic-updates.md#eligible-invocations)
-
-If you prefer a portable copy, use `.\openai.exe` directly from the extracted directory.
-
-</details>
-
-<details>
-<summary>Download the matching ZIP automatically</summary>
-
-The setup recipe requires a published Windows ZIP that contains **Install.cmd**.
-Open the [PowerShell setup recipe](../scripts/install-windows-release.ps1). Select **Copy raw file**.
-Paste it into an ordinary PowerShell window. Setup downloads the correct Windows ZIP and checks its publisher before installation.
-It selects the managed CLI in this PowerShell and adds the CLI to your user PATH.
-If a machine-wide installation takes precedence, setup selects your copy now and shows how to select it in new terminals.
-If your organization restricts scripts, use its approved installation method.
-
-</details>
-
-## Installing a prebuilt binary
-
-Open **Assets** for the newest stable release with downloads for your computer. [GitHub Releases](https://github.com/openai/openai-cli/releases)
-
-Choose the macOS ZIP, Linux tarball, or Windows ZIP. GitHub’s source code archives require a separate build.
-On a Mac, the filename ends in `macos_arm64.zip` for Apple silicon or `macos_amd64.zip` for Intel.
-Extract the archive into a dedicated directory.
-On macOS and Linux, source the bundled installer to set up updates and Explore in Bash or zsh.
-
-```sh
-source ./openai-enable-updates.sh
-```
-
-For a portable installation, keep the extracted directory.
-From inside it, paste this block into Bash or zsh.
-
-```sh
-archive_bin=$(pwd -P) &&
-"$archive_bin/openai" --version &&
-export PATH="$archive_bin:$PATH" &&
-command -v openai
-```
-
-The last command shows which executable, alias, or function your shell selects. If an alias or function wins, use the verified executable directly.
-On Windows, use `.\openai.exe --version` for a portable copy. For automatic installation and updates, use the [Windows setup](#windows).
-
-**Want automatic updates?** Follow the [archive setup for your shell](automatic-updates.md#from-an-extracted-archive).
-On a Mac with Homebrew and zsh, the [recommended installation](../README.md#installation) handles setup in one paste.
+Put the executable in `%LOCALAPPDATA%\Programs\OpenAI CLI`. Add that folder to your user `Path`.
+Open a new PowerShell window.
+Run `Get-Command openai -All | Select-Object CommandType, Name, Definition` to see the selected command and any alternatives.
+Close running CLI processes before replacing the executable with a newer version.
 
 ## Installing with Go
 
-With [Go 1.26 or later](https://go.dev/doc/install), paste this block into Bash or zsh.
-It installs the latest CLI and puts Go’s binary directory ahead of older copies.
+Install [Go 1.26 or later](https://go.dev/doc/install) and run:
+
+```sh
+go install github.com/openai/openai-cli/cmd/openai@latest
+```
+
+Run `go env GOBIN GOPATH` to find the destination. Go uses `GOBIN` when set, otherwise the first `GOPATH` entry’s `bin` directory.
+Add that directory to your PATH. Choose a Go directory separate from your other CLI installations.
+Repeat the command to upgrade, or replace `latest` with a specific release tag.
+
+<details>
+<summary>Install for this computer with custom Go or PATH settings</summary>
+
+In Bash or zsh, this block uses your host OS and architecture and checks the destination before installing.
+It places the selected Go directory first on your PATH for this shell.
 
 ```sh
 go_bin=$(go env GOBIN) && go_path=$(go env GOPATH) &&
@@ -194,10 +95,6 @@ else
 fi
 ```
 
-This command targets the computer running Go, including when you configured Go for cross-compilation.
-Go can finish silently. Add `-v` after `install` to show each package as it compiles.
-If the last command shows an alias or function, use the verified Go executable directly.
-For new shells, add the same PATH setup to your shell profile.
+If another command still wins, run the executable by its full path. For future shells, add your selected directory to PATH.
 
-On Windows, run `go install github.com/openai/openai-cli/cmd/openai@latest`.
-Add the Go binary directory to your user `Path`. Use `where.exe openai` to find installed copies.
+</details>
