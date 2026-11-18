@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.55.1](https://github.com/openai/openai-cli/compare/v1.55.0...v1.55.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **api:** refresh the CLI's bundled API reference ([#773](https://github.com/openai/openai-cli/issues/773)) ([d8187ae](https://github.com/openai/openai-cli/commit/d8187aef9993ed3062858e18cfaf3b7e0bdfe692))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.103.0 ([#772](https://github.com/openai/openai-cli/issues/772)) ([57e1664](https://github.com/openai/openai-cli/commit/57e1664af379fa4cea4937aed4872de6ac4ff261))
+
 ## [1.55.0](https://github.com/openai/openai-cli/compare/v1.54.1...v1.55.0) (2026-11-17)
 
 
