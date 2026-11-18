@@ -45,9 +45,8 @@ Add it to your shell’s `PATH` if needed.
 Open PowerShell in that folder and run `.\openai.exe --version`.
 Add the folder to your user `Path`. Open a new PowerShell window.
 
-**Linux packages.** Releases also include `.deb`, `.rpm`, `.apk`, and `.pkg.tar.zst` files.
-Install the matching file with your distribution’s package manager.
-If your package manager rejects the signature, use the verified tarball.
+**Linux packages.** Install the matching `.deb`, `.rpm`, or `.pkg.tar.zst` file with your distribution’s package manager.
+On Alpine, use the verified tarball unless your system trusts the release `.apk`.
 
 <a id="macos"></a>
 

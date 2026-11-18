@@ -35,10 +35,11 @@ Choose the release archive for your processor, or use a package for your distrib
 | --- | --- | --- |
 | Debian or Ubuntu | `.deb` | `sudo apt install ./PACKAGE.deb` |
 | Fedora or RHEL | `.rpm` | `sudo dnf install ./PACKAGE.rpm` |
-| Alpine | `.apk` | Use your system’s APK trust and installation policy |
+| Alpine | `.tar.gz` | Extract the verified tarball. Use the release `.apk` only if your system trusts its signature. |
 | Arch Linux | `.pkg.tar.zst` | `sudo pacman -U ./PACKAGE.pkg.tar.zst` |
 
-Replace `PACKAGE` with the downloaded filename. If your distribution cannot verify the package, use the verified tarball.
+Replace the sample filename in each command with your downloaded filename.
+If your distribution cannot verify the package, use the verified tarball.
 Use the same package manager to upgrade. Debian and RPM packages install the CLI at `/usr/bin/openai`.
 
 ### Install over SSH
