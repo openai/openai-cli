@@ -566,16 +566,22 @@ exit 130
 set timeout 8
 match_max 100000
 proc fail {message} { puts stderr $message; exit 1 }
-spawn -noecho $env(PICKER_TEST_SHELL) ` + arguments + `
-expect_before {
+spawn -noecho $env(PICKER_TEST_SHELL) ` + arguments + "\n"
+	if shell != "fish" {
+		driver += `expect_before {
   -exact "\033\1330c" {send -- "\033\133?1;2c"; exp_continue}
   -exact "\033\1336n" {send -- "\033\1331;1R"; exp_continue}
 }
-expect_after timeout { fail "shell probe timed out" }
+`
+	}
+	driver += `expect_after timeout { fail "shell probe timed out" }
 send -- "source \"\$PICKER_TEST_STARTUP\"\r"
 expect -exact "\r\nPICKER_SHELL_READY\r\n"
 expect -exact "PICKER_TEST> "
 ` + interaction
+	if shell == "fish" {
+		driver = terminalQueryExpect(driver)
+	}
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "driver.exp"), []byte(driver), 0o600))
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
