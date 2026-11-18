@@ -494,7 +494,7 @@ esac
 			t.Fatal(err)
 		}
 		t.Run("README installation", func(t *testing.T) {
-			testHomebrewReadmeInstall(t, zsh, source, brewScript)
+			testHomebrewShellSetup(t, zsh, source, brewScript)
 		})
 		t.Run("login profile", func(t *testing.T) {
 			testZshLoginSelection(t, zsh, bin)
@@ -761,21 +761,15 @@ func testZshLoginSelection(t *testing.T, zsh, bin string) {
 	}
 }
 
-func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
-	readme, err := os.ReadFile("../README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, start, ok := strings.Cut(string(readme), "\n```zsh\n")
-	block, _, closed := strings.Cut(start, "\n```")
-	if !ok || !closed {
-		t.Fatal("missing zsh installation block")
-	}
+// Exercise the combined cask and shell-helper command used by older releases.
+func testHomebrewShellSetup(t *testing.T, zsh, release, brewScript string) {
+	const block = `brew update --auto-update && brew install --cask openai/tools/openai &&
+source "$(brew --prefix)/bin/openai-enable-updates.zsh"`
 	guide, err := os.ReadFile("../docs/installation.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, start, ok = strings.Cut(string(guide), "\n```zsh\n")
+	_, start, ok := strings.Cut(string(guide), "\n```zsh\n")
 	recovery, _, closed := strings.Cut(start, "\n```")
 	if !ok || !closed {
 		t.Fatal("missing zsh recovery block")
@@ -810,7 +804,7 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 			available := release
 			if tc.failure == "old-tap" {
 				available = privateInstallDirectory(t)
-				const oldCaskCLI = "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = --help ] || exit 2\necho 'Usage from cask 1.0.0: openai [command]'\n"
+				const oldCaskCLI = "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = --version ] || exit 2\necho 'openai version 1.0.0'\n"
 				if err := os.WriteFile(filepath.Join(available, "openai"), []byte(oldCaskCLI), 0755); err != nil {
 					t.Fatal(err)
 				}
@@ -861,8 +855,8 @@ func testHomebrewReadmeInstall(t *testing.T, zsh, release, brewScript string) {
 					if !strings.Contains(string(out), missingHelper) {
 						t.Fatalf("missing setup helper path in shell error: %s", out)
 					}
-					if output, err := run(preflight + recovery); err != nil || !strings.Contains(string(output), "Usage from cask 1.0.0: openai [command]") {
-						t.Fatalf("README recovery with earlier Go binary: %v: %s", err, output)
+					if output, err := run(preflight + recovery); err != nil || !strings.Contains(string(output), "openai version 1.0.0") {
+						t.Fatalf("cask recovery with earlier Go binary: %v: %s", err, output)
 					}
 				}
 				return

@@ -126,7 +126,7 @@ func TestMainWindowsArchiveMachinePathConflict(t *testing.T) {
 
 func documentedWindowsArchivePaste(t *testing.T, archive string) string {
 	t.Helper()
-	guide, err := os.ReadFile(filepath.Join(filepath.Dir(archive), "installation.md"))
+	guide, err := os.ReadFile(filepath.Join(filepath.Dir(archive), "automatic-updates.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

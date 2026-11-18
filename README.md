@@ -22,55 +22,59 @@
 
 ## Installation
 
-These commands install the CLI and enable automatic updates during normal interactive use.
-After setup, run `openai` to see the available commands.
+### Installing a prebuilt binary
 
-<a id="installing-with-homebrew"></a>
+<a id="linux"></a>
+<a id="windows"></a>
 
-### macOS
+Open **Assets** for the [release you want](https://github.com/openai/openai-cli/releases).
+Choose a release with a download for your system and processor.
 
-With Homebrew installed, paste both lines into a zsh terminal.
+| System | Release filename pattern |
+| --- | --- |
+| macOS | `*_macos_arm64.zip` for Apple silicon or `*_macos_amd64.zip` for Intel |
+| Linux | `*_linux_*.tar.gz` for your processor |
+| Windows | `*_windows_amd64.zip` for 64-bit Intel or AMD, `*_windows_arm64.zip` for Arm64, or `*_windows_386.zip` for 32-bit Windows |
 
-```zsh
-brew update --auto-update && brew install --cask openai/tools/openai &&
-source "$(brew --prefix)/bin/openai-enable-updates.zsh"
-```
+Calculate the download’s SHA-256 with `shasum -a 256 FILE` (macOS), `sha256sum FILE` (Linux), or `Get-FileHash -LiteralPath FILE` (PowerShell).
+Replace `FILE` with the downloaded file’s path.
+Search [build attestations](https://github.com/openai/openai-cli/attestations) for the full filename. Open the `publish-release.yml` result from `refs/heads/main`.
+Match the filename and SHA-256 under **Subjects** before installing.
 
-<details>
-<summary>Need Homebrew first?</summary>
+**macOS and Linux.** Extract the archive. Put `openai` in `$HOME/.local/bin`. Create that directory if needed.
+Add it to your shell’s `PATH` if needed.
 
-Run Homebrew’s installer in Terminal.
+**Windows.** Choose **Extract All**. Put `openai.exe` in `%LOCALAPPDATA%\Programs\OpenAI CLI`.
+Open PowerShell in that folder and run `.\openai.exe --version`.
+Add the folder to your user `Path`. Open a new PowerShell window.
 
-```sh
-(installer=$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh) &&
-  /bin/bash -c "$installer")
-```
+**Linux packages.** Install the matching `.deb`, `.rpm`, or `.pkg.tar.zst` file with your distribution’s package manager.
+On Alpine, use the verified tarball unless your system trusts the release `.apk`.
 
-Follow its printed instructions to add `brew` to your PATH. Then paste the two lines above.
+<a id="macos"></a>
 
-</details>
-
-<a id="installing-a-prebuilt-binary"></a>
-
-### Linux
-
-On Debian, Ubuntu, or Fedora, [download `openai.sh`](https://github.com/openai/openai-cli/releases/download/v1.51.3/openai.sh).
-Open Bash or zsh in the download folder. Paste both lines together.
+### Installing with Homebrew
 
 ```sh
-echo '3b94b2ac8e73bd16f3803ceea1ba5c08b1c80a3c9b27f75c5b8a9d4d76ff7e00  openai.sh' |
-  sha256sum -c - && source ./openai.sh
+brew install openai/tools/openai
 ```
 
-Enter your password if sudo asks.
+### Installing with Go
 
-### Windows
+With Go 1.26 or later, run:
 
-1. Open the [Windows installer](scripts/install-windows-release.ps1).
-2. Select **Copy raw file**.
-3. Paste it into PowerShell without administrator privileges.
+```sh
+go install github.com/openai/openai-cli/cmd/openai@latest
+```
 
-The installer downloads the matching ZIP and makes `openai` available in this terminal.
+Add `GOBIN` to your `PATH`, or use the first `GOPATH` entry’s `bin` directory when `GOBIN` is empty.
+Run `go env GOBIN GOPATH` to see your settings.
+
+### Checking and upgrading
+
+Run `openai --version` to check your installation.
+For an archive, replace the executable with the release you choose. For a Linux package, install the newer package.
+For Homebrew, run `brew upgrade --cask openai/tools/openai`. For Go, repeat the install command or replace `latest` with a release tag.
 
 ## Explore commands
 
@@ -281,8 +285,6 @@ For manual installation, copy the entire `skills/openai-cli` folder into the app
 Start a new agent session in the target project. For example, ask “Upload requests.jsonl to OpenAI for a future batch.”
 
 ## Development
-
-<a id="installing-with-go"></a>
 
 To install from source, follow the [Go installation instructions](docs/installation.md#installing-with-go).
 

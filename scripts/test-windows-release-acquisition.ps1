@@ -53,7 +53,7 @@ try {
         foreach ($key in $prior.Keys) { [Environment]::SetEnvironmentVariable($key,$prior[$key]) }
     }
     # Exercise the exact extracted-ZIP paste in a separate PowerShell process.
-    $guide = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../docs/installation.md'))
+    $guide = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../docs/automatic-updates.md'))
     $blocks = @([regex]::Matches($guide,'(?ms)^```powershell\r?\n(.*?)^```') | Where-Object { $_.Groups[1].Value.Contains('.\openai.exe install --user') })
     if ($blocks.Count -ne 1) { throw 'The documented extracted ZIP paste is ambiguous.' }
     $fakeDir = [IO.Directory]::CreateDirectory((Join-Path $work 'exit-fixture')).FullName

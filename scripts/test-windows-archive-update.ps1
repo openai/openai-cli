@@ -99,7 +99,7 @@ try {
         $extracted = Join-Path $root 'extracted'
         [IO.Compression.ZipFile]::ExtractToDirectory($candidateZip,$extracted)
         Microsoft.PowerShell.Management\Set-Content -LiteralPath (Join-Path $extracted 'openai.exe') -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value "[ZoneTransfer]`r`nZoneId=3`r`n" -ErrorAction Stop
-        Copy-Item -LiteralPath 'docs/installation.md' -Destination "$extracted/installation.md"
+        Copy-Item -LiteralPath 'docs/automatic-updates.md' -Destination "$extracted/automatic-updates.md"
         Microsoft.PowerShell.Management\Set-Content -LiteralPath $candidateZip -Stream Zone.Identifier -Encoding ASCII -NoNewline -Value "[ZoneTransfer]`r`nZoneId=3`r`n" -ErrorAction Stop
         Set-Content -LiteralPath "$root/fixture-zip.txt" -Value ([IO.Path]::GetFileName($candidateZip))
         Set-Content -LiteralPath "$root/fixture-tag.txt" -Value "v$version"
@@ -185,8 +185,8 @@ if (Test-Path -LiteralPath "$PSScriptRoot/machine-conflict.txt") {
 & "$PSScriptRoot/archive.test.exe" '-test.run=^TestMainWindowsArchiveOrdinarySetup$' '-test.v' *> "$PSScriptRoot/results/test.log"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $fixtureTag = (Get-Content -LiteralPath "$PSScriptRoot/fixture-tag.txt" -Raw).Trim()
-$guide = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'extracted/installation.md'))
-$section = [regex]::Match($guide, '(?ms)^## Windows\r?\n(.*?)(?=^## |\z)').Groups[1].Value
+$guide = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'extracted/automatic-updates.md'))
+$section = [regex]::Match($guide, '(?ms)^### Set up automatic updates on Windows\r?\n(.*?)(?=^#{1,3} |\z)').Groups[1].Value
 $blocks = [regex]::Matches($section, '(?ms)^```powershell\r?\n(.*?)^```\r?$')
 if ($blocks.Count -ne 1) {throw 'Cannot identify the documented extracted-ZIP paste.'}
 $text = [IO.Path]::GetTempFileName()
