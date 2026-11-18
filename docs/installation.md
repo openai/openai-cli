@@ -4,7 +4,11 @@
 
 Open **Assets** on the [release you want to install](https://github.com/openai/openai-cli/releases).
 Choose the archive for your operating system and processor. GitHub also offers source archives for building the CLI yourself.
-Each release includes a checksums file. Compare your download’s SHA-256 against its entry before extracting it.
+Calculate your download’s SHA-256 with `shasum -a 256 FILE` on macOS or `sha256sum FILE` on Linux.
+In PowerShell, run `Get-FileHash -Algorithm SHA256 -LiteralPath FILE`. Replace `FILE` with the path to your download.
+Search [build attestations](https://github.com/openai/openai-cli/attestations) for the full filename.
+Open the result from `.github/workflows/publish-release.yml` on `refs/heads/main`.
+Under **Subjects**, match the exact filename and SHA-256 before extracting or installing the file.
 
 On macOS or Linux, extract the archive and put `openai` in a directory on your `PATH`.
 Use `$HOME/.local/bin` for a manual installation. Add that directory to your shell’s `PATH` if needed.

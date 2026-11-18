@@ -36,7 +36,10 @@ Choose a release with a download for your system and processor.
 | Linux | `*_linux_*.tar.gz` for your processor |
 | Windows | `*_windows_amd64.zip` for 64-bit Intel or AMD, `*_windows_arm64.zip` for Arm64, or `*_windows_386.zip` for 32-bit Windows |
 
-Compare the file’s SHA-256 with its entry in the release checksums file.
+Calculate the download’s SHA-256 with `shasum -a 256 FILE` (macOS), `sha256sum FILE` (Linux), or `Get-FileHash -LiteralPath FILE` (PowerShell).
+Replace `FILE` with the downloaded file’s path.
+Search [build attestations](https://github.com/openai/openai-cli/attestations) for the full filename. Open the `publish-release.yml` result from `refs/heads/main`.
+Match the filename and SHA-256 under **Subjects** before installing.
 
 **macOS and Linux.** Extract the archive. Put `openai` in `$HOME/.local/bin`. Create that directory if needed.
 Add it to your shell’s `PATH` if needed.

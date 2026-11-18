@@ -135,7 +135,9 @@ foreach ($instruction in 'Choose **Extract All**', ('`%LOCALAPPDATA%\' + $folder
 $arch = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) {
     X64 {'amd64'} Arm64 {'arm64'} default { throw 'Unsupported Windows architecture.' }
 }
-# Digests come from the official, published release assets. Verify before executing.
+# The publish-release.yml subjects pin these ZIPs independently of the downloaded checksums.
+# https://github.com/openai/openai-cli/attestations/67427596 (1.54.0)
+# https://github.com/openai/openai-cli/attestations/68811349 (1.55.0)
 $digests = @{
     '1.54.0-amd64' = 'e5a64c7b222f6b9b51effa2cc012e000911ad3241ec6a3c87a70b56a0d875bcb'
     '1.54.0-arm64' = 'f7ddab9667324c115068acee88f2b2ac0423b6a05601ff1d2bf8a409aa570df0'
