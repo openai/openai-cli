@@ -507,9 +507,11 @@ func TestGoReleaserPreservesArtifactsWithoutApplicationHooks(t *testing.T) {
 		t.Fatal("Homebrew cask publishing configuration was removed")
 	}
 	cask := config.HomebrewCasks[0]
-	if !slices.Equal(cask.Binaries, []string{"openai", "openai-enable-updates.zsh"}) ||
-		!strings.Contains(cask.Caveats, `source "$(brew --prefix)/bin/openai-enable-updates.zsh"`) {
-		t.Errorf("Homebrew setup command or instructions missing: %v %s", cask.Binaries, cask.Caveats)
+	if want := []string{"openai", "openai-enable-updates.zsh"}; !slices.Equal(cask.Binaries, want) {
+		t.Errorf("Homebrew cask binaries = %v, want %v", cask.Binaries, want)
+	}
+	if want := "brew upgrade --cask openai/tools/openai"; !strings.Contains(cask.Caveats, want) {
+		t.Errorf("Homebrew cask caveats = %q, want upgrade command %q", cask.Caveats, want)
 	}
 	if len(cask.Hooks.Pre) != 0 || len(cask.Hooks.Post) != 0 {
 		t.Fatal("Homebrew cask must leave picker setup to the existing first-run path")
