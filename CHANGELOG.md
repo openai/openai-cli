@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.55.2](https://github.com/openai/openai-cli/compare/v1.55.1...v1.55.2) (2026-11-19)
+
+
+### Chores
+
+* **api:** document Live WebRTC standby fields ([#779](https://github.com/openai/openai-cli/issues/779)) ([d84146e](https://github.com/openai/openai-cli/commit/d84146e82fd3740661e2c8c358dd30ce0a70866f))
+* **api:** list gpt-live-1.1 in the API reference ([#777](https://github.com/openai/openai-cli/issues/777)) ([7fea233](https://github.com/openai/openai-cli/commit/7fea2336333ac39a0f1d3a26832ff7e429c3bb84))
+
 ## [1.55.1](https://github.com/openai/openai-cli/compare/v1.55.0...v1.55.1) (2026-11-18)
 
 
