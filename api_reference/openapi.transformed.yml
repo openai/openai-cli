@@ -9077,7 +9077,7 @@ paths:
               curl https://api.openai.com/v1/live/sessions \
                 -H "Authorization: Bearer $OPENAI_API_KEY" \
                 -H "Content-Type: application/json" \
-                -d '{"session":{"model":"gpt-live-1","instructions":"Be concise. Ask for clarification when needed."},"transport":{"type":"webrtc","sdp":"<SDP offer>"}}'
+                -d '{"session":{"model":"gpt-live-1.1","instructions":"Be concise. Ask for clarification when needed."},"transport":{"type":"webrtc","sdp":"<SDP offer>"}}'
           response: '{"session":{"id":"live_123"},"transport":{"type":"webrtc","sdp":"<SDP answer>"}}'
   /live/sessions/{session_id}/accept:
     post:
@@ -52512,13 +52512,14 @@ components:
       description: Model ID used to generate the response, like `gpt-6-astra`. OpenAI offers a wide range of models with different capabilities, performance characteristics, and price points. Refer to the [model guide](https://developers.openai.com/api/docs/models) to browse and compare available models.
     ModelIdsLive:
       description: The Live model. Required in the session configuration for every transport; do not pass it as a URL query parameter.
-      example: gpt-live-1
+      example: gpt-live-1.1
       anyOf:
       - type: string
         minLength: 1
       - type: string
         enum:
         - gpt-live-1
+        - gpt-live-1.1
     ModelIdsResponses:
       example: gpt-6-astra
       anyOf:
@@ -92465,7 +92466,7 @@ components:
         type: session.start
         event_id: evt_start_001
         session:
-          model: gpt-live-1
+          model: gpt-live-1.1
           instructions: Help the caller plan a restaurant reservation. Confirm details before booking.
           audio:
             format:
@@ -92501,7 +92502,7 @@ components:
           type: session.start
           event_id: evt_start_001
           session:
-            model: gpt-live-1
+            model: gpt-live-1.1
             instructions: Help the caller plan a restaurant reservation. Confirm details before booking.
             audio:
               format:
@@ -93022,7 +93023,7 @@ components:
         client_event_id: evt_start_001
         session:
           id: live_abc123
-          model: gpt-live-1
+          model: gpt-live-1.1
           status: active
           expires_at: 1788555600
           instructions: Help the caller plan a restaurant reservation. Confirm details before booking.
@@ -93063,7 +93064,7 @@ components:
           client_event_id: evt_start_001
           session:
             id: live_abc123
-            model: gpt-live-1
+            model: gpt-live-1.1
             status: active
             expires_at: 1788555600
             instructions: Help the caller plan a restaurant reservation. Confirm details before booking.
@@ -93084,7 +93085,7 @@ components:
         client_event_id: evt_update_001
         session:
           id: live_def456
-          model: gpt-live-1
+          model: gpt-live-1.1
           status: active
           expires_at: 1788555600
           instructions: Help the caller plan a restaurant reservation. Confirm details before booking.
@@ -93130,7 +93131,7 @@ components:
           client_event_id: evt_update_001
           session:
             id: live_def456
-            model: gpt-live-1
+            model: gpt-live-1.1
             status: active
             expires_at: 1788555600
             instructions: Help the caller plan a restaurant reservation. Confirm details before booking.

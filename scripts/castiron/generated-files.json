@@ -619,7 +619,7 @@
     },
     "generated/commands/session_test.go": {
       "mode": "100644",
-      "sha256": "f8ef68768131b17778303d7d7fa559b99059a6b7562fd10fc0ebf3f063da95e4"
+      "sha256": "b0b79e78c4cb513225d9694e3856ac5f80fe4b1c50924eeb022bd2443b894340"
     },
     "generated/commands/skill.go": {
       "mode": "100644",
