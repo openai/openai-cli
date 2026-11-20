@@ -82,6 +82,10 @@ func (l translationLayout) heading(left, right string) string {
 }
 
 func (l translationLayout) footer(pairs ...[2]string) []string {
+	return l.shortcutLines(true, pairs...)
+}
+
+func (l translationLayout) shortcutLines(showLayout bool, pairs ...[2]string) []string {
 	var rows []string
 	separator := l.muted.Render(" · ")
 	var line string
@@ -95,6 +99,9 @@ func (l translationLayout) footer(pairs ...[2]string) []string {
 			line += separator
 		}
 		line += item
+	}
+	if !showLayout {
+		return append(rows, line)
 	}
 	action := "expand"
 	if l.expanded {

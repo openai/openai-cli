@@ -44,6 +44,7 @@ type terminalTranslationModel struct {
 	color, dark                                bool
 	colorProfile                               colorprofile.Profile
 	expanded                                   bool
+	showResultShortcuts                        bool
 	retrySetup                                 bool
 	started, finished, stopping, saving, saved bool
 	state                                      terminalTranslationUpdate
@@ -213,6 +214,16 @@ func (m *terminalTranslationModel) Update(message tea.Msg) (tea.Model, tea.Cmd) 
 			m.transcriptKey(key)
 			return m, nil
 		}
+		if m.finished && m.hasResult() && m.width >= 40 && m.height >= 16 {
+			if key == "?" {
+				m.showResultShortcuts = !m.showResultShortcuts
+				return m, nil
+			}
+			if key == "esc" && m.showResultShortcuts {
+				m.showResultShortcuts = false
+				return m, nil
+			}
+		}
 		if key == "esc" || key == "q" {
 			if m.started && !m.finished {
 				m.stopCapture()
@@ -297,6 +308,7 @@ func (m *terminalTranslationModel) resetSession() error {
 	m.state, m.latest = terminalTranslationUpdate{}, terminalTranslationUpdate{}
 	m.languageSample, m.languageGuess, m.languageGuessPending = "", "", false
 	m.retrySetup = false
+	m.showResultShortcuts = false
 	m.focusSetupAction()
 	return nil
 }

@@ -30,7 +30,7 @@ func (m *terminalTranslationModel) resultView(layout translationLayout) tea.View
 		return m.resultPlaceholder(layout, rows, status)
 	}
 
-	footer := layout.footer(m.resultShortcuts()...)
+	footer := m.resultFooter(layout, status)
 	wide := layout.width >= 74
 	// Keep two caption rows per track before allocating space for audio details.
 	minCaptionRows := 6
@@ -79,55 +79,73 @@ func (m *terminalTranslationModel) resultColor(light, dark string) lipgloss.Styl
 
 func (m *terminalTranslationModel) resultPlaceholder(layout translationLayout, rows []string, status string) tea.View {
 	instruction := "Opening the translation session…"
-	controls := [][2]string{{"Esc", "cancel"}}
 	switch {
 	case m.finished:
 		instruction = "No captions or audio received."
-		controls = [][2]string{{"Enter", "back to setup"}, {"Esc", "exit"}}
 	case status == "Finishing":
 		instruction = "Waiting for final captions…"
-		controls = [][2]string{{"Ctrl+C", "exit"}}
 	case status == "Listening":
 		instruction = "Speak into your microphone."
-		controls = [][2]string{{"Space", "stop"}}
 	case m.form.source == translationText:
 		instruction = "Translating your text…"
 	case status == "Translating":
 		instruction = "Translating your audio file…"
-		controls = [][2]string{{"Space", "stop"}}
 	}
 	rows = append(rows, "", instruction)
 	if notice := m.resultNotice(); notice != "" {
 		rows = append(rows, notice)
 	}
-	return layout.panel(rows, layout.footer(controls...), nil)
+	return layout.panel(rows, m.resultFooter(layout, status), nil)
 }
 
-func (m *terminalTranslationModel) resultShortcuts() [][2]string {
+func (m *terminalTranslationModel) resultFooter(layout translationLayout, status string) []string {
 	if !m.finished {
-		return [][2]string{{"Space", "stop"}, {"Ctrl+C", "exit"}}
+		switch {
+		case status == "Finishing":
+			if !m.stopping && m.options.Listen && m.state.AudioBytes > 0 && m.state.Warning == "" {
+				return layout.shortcutLines(false, [2]string{"Space", "stop playback"})
+			}
+			return layout.shortcutLines(false, [2]string{"Ctrl+C", "exit"})
+		case m.state.State == "listening":
+			return layout.shortcutLines(false, [2]string{"Space", "stop"})
+		default:
+			return layout.shortcutLines(false, [2]string{"Esc", "cancel"})
+		}
+	}
+	if !m.hasResult() {
+		return layout.footer([2]string{"Enter", "back to setup"}, [2]string{"Esc", "exit"})
 	}
 	var controls [][2]string
-	if m.hasResult() {
+	if m.result.AudioBytes == 0 || m.showResultShortcuts {
 		controls = append(controls, [2]string{"T", "read"})
 	}
 	if m.result.AudioBytes > 0 {
 		if m.replayDone != nil {
 			controls = append(controls, [2]string{"P", "stop"})
 		} else {
-			controls = append(controls, [2]string{"P", "play"}, [2]string{"←→", "seek"})
+			controls = append(controls, [2]string{"P", "play"})
+			if m.showResultShortcuts {
+				controls = append(controls, [2]string{"←→", "seek"})
+			}
 		}
 	}
-	if m.hasResult() && !m.saved && !m.saving {
+	if !m.saved && !m.saving {
 		controls = append(controls, [2]string{"S", "save"})
 	}
-	if m.replayDone == nil && !m.saving {
+	if m.replayDone == nil && !m.saving && (m.saved || m.showResultShortcuts) {
 		controls = append(controls, [2]string{"N", "new"})
 	}
-	if m.saving {
-		return append(controls, [2]string{"Ctrl+C", "exit"})
+	if m.showResultShortcuts {
+		if m.saving {
+			controls = append(controls, [2]string{"Ctrl+C", "exit"})
+		}
+		return layout.footer(append(controls, [2]string{"Esc", "back"})...)
 	}
-	return append(controls, [2]string{"Esc", "exit"})
+	controls = append(controls, [2]string{"?", "more"})
+	if m.saving {
+		return layout.shortcutLines(false, append(controls, [2]string{"Ctrl+C", "exit"})...)
+	}
+	return layout.shortcutLines(false, append(controls, [2]string{"Esc", "exit"})...)
 }
 
 func (m *terminalTranslationModel) resultNotice() string {

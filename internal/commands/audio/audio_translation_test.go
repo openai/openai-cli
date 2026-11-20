@@ -230,7 +230,7 @@ func TestLiveTranslationRejectsInvalidModesBeforeCredentials(t *testing.T) {
 		{[]string{"translate-live", "--output-dir", ""}, "folder for saving"},
 		{[]string{"translate-live", "extra"}, "does not accept positional"},
 		{[]string{"translate", "--live", "--file", "sample.wav"}, "requires terminal translation"},
-		{[]string{"translate", "--browser"}, "Use audio translate-live --browser"},
+		{[]string{"translate", "--browser"}, "Use audio translate --live"},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			translate := &cli.Command{

@@ -168,14 +168,29 @@ func TestTerminalTranslationCompactResultsIncludeControls(t *testing.T) {
 	for _, line := range strings.Split(view, "\n") {
 		require.LessOrEqual(t, ansi.StringWidth(line), 40)
 	}
-	for _, label := range []string{"Original", "Translation", "P play", "←→ seek", "S save", "N new", "Esc exit"} {
+	for _, label := range []string{"Original", "Translation", "P play", "S save", "? more", "Esc exit"} {
 		require.Contains(t, view, label)
+	}
+	for _, label := range []string{"T read", "←→ seek", "N new", "Ctrl+L"} {
+		require.NotContains(t, view, label)
 	}
 	m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	require.Equal(t, 500*time.Millisecond, m.seekPosition)
+	m.Update(tea.KeyPressMsg{Code: '?'})
+	expanded := m.View().Content
+	require.LessOrEqual(t, len(strings.Split(expanded, "\n")), m.height)
+	for _, label := range []string{"Original", "Translation", "T read", "←→ seek", "N new", "Ctrl+L expand", "Esc back"} {
+		require.Contains(t, expanded, label)
+	}
+	_, back := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.Nil(t, back)
+	require.Contains(t, m.View().Content, "? more")
 	m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	require.Zero(t, m.seekPosition)
+	_, exit := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.NotNil(t, exit)
+	require.IsType(t, tea.QuitMsg{}, exit())
 }
 
 func TestTerminalTranslationReadsEntireTranscriptInPages(t *testing.T) {

@@ -96,6 +96,32 @@ func TestTerminalTranslationHighlightsSourceAcrossFocusAndLayoutChanges(t *testi
 	require.False(t, m.expanded)
 }
 
+func TestTerminalTranslationShowsOneSessionShortcut(t *testing.T) {
+	for _, tc := range []struct {
+		name, state, shortcut string
+		source                translationSource
+		bytes                 int64
+		stopping              bool
+	}{
+		{name: "connecting", state: "connecting", shortcut: "Esc cancel"},
+		{name: "listening", state: "listening", shortcut: "Space stop"},
+		{name: "playing file", state: "listening", source: translationFile, bytes: 2, shortcut: "Space stop"},
+		{name: "typed text", source: translationText, shortcut: "Esc cancel"},
+		{name: "natural completion", state: "stopping", bytes: 2, shortcut: "Space stop playback"},
+		{name: "manual stop", stopping: true, state: "stopping", bytes: 2, shortcut: "Ctrl+C exit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &terminalTranslationModel{width: 40, height: 16, started: true, stopping: tc.stopping,
+				state:   terminalTranslationUpdate{State: tc.state, AudioBytes: tc.bytes},
+				form:    terminalTranslationForm{source: tc.source},
+				options: terminalTranslationOptions{Listen: true, Config: audiolive.Config{Language: "en"}},
+			}
+			rows := strings.Split(m.View().Content, "\n")
+			require.Equal(t, tc.shortcut, strings.TrimSpace(rows[len(rows)-1]))
+		})
+	}
+}
+
 func TestTerminalTranslationEditorCaretFollowsFrameOnResize(t *testing.T) {
 	m := &terminalTranslationModel{width: 59, height: 16, form: terminalTranslationForm{source: translationText}}
 	m.focusSetupAction()
