@@ -185,8 +185,9 @@ type terminalTranslationCaptured struct {
 	err, appendErr error
 }
 
-// runTerminalTranslation starts only when called. Stop flushes capture and drains
-// the session; ctx cancellation aborts it. Injected helpers must honor cancellation
+// runTerminalTranslation starts only when called. Stop silences playback and
+// flushes capture. The session still receives final output for replay and saving.
+// Context cancellation aborts it. Injected helpers must honor cancellation
 // and join their children before returning. notify runs serially, at most twenty times
 // per second except state transitions, and must return promptly without blocking.
 func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options terminalTranslationOptions, notify func(terminalTranslationUpdate)) (result terminalTranslationResult) {
@@ -320,6 +321,7 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 	var deadline <-chan time.Time
 	var timer *time.Timer
 	stopping, closed, captureJoined := false, false, false
+	listen := options.Listen
 	dirty := false
 	setError := func(message string, err error) {
 		result.Err = errors.Join(result.Err, terminalTranslationFailure(message, err))
@@ -328,22 +330,26 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 		if stopping {
 			return
 		}
-		stopping, stop = true, nil
+		stopping = true
 		timer = time.NewTimer(options.DrainTimeout)
 		deadline = timer.C
 		update.State = "stopping"
 		cancelCapture()
 		publish()
 	}
+	stopPlayback := func() {
+		listen = false
+		if playback != nil {
+			cancelPlayback()
+			_ = playback.Close()
+		}
+	}
 	disablePlayback := func(message string) {
 		if update.Warning == "" {
 			update.Warning = message
 			dirty = true
 		}
-		if playback != nil {
-			_ = playback.Close()
-			cancelPlayback()
-		}
+		stopPlayback()
 	}
 	// One exit owns every worker. No caller can save or remove unfinished files.
 	defer func() {
@@ -361,8 +367,7 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 			<-finishDone
 		}
 		if playing != nil {
-			_ = playback.Close()
-			cancelPlayback()
+			stopPlayback()
 			<-playDone
 		}
 		if err := original.writeTo(ctx, stage.files[1]); err != nil {
@@ -391,10 +396,14 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 			result.Err = errors.Join(result.Err, ctx.Err())
 			return result
 		case <-stop:
+			stop = nil
+			stopPlayback()
 			stopCapture()
 		case <-deadline:
 			if closed && captureJoined && finishing == nil {
-				disablePlayback("Live playback did not finish before the stop timeout. Play the saved audio after stopping.")
+				if listen {
+					disablePlayback("Live playback did not finish before the stop timeout. Play the saved audio after stopping.")
+				}
 				return result
 			}
 			setError("Translation did not finish before the stop timeout. Received audio and captions remain available.", context.DeadlineExceeded)
@@ -485,7 +494,7 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 					continue
 				}
 				update.SampleRate, update.Channels = rate, channels
-				if options.Listen && playback == nil && update.Warning == "" {
+				if listen && playback == nil {
 					playback = newTerminalTranslationPCMReader(stage.files[0])
 					playCtx, stopPlayback := context.WithCancel(work)
 					cancelPlayback = stopPlayback
@@ -506,7 +515,7 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 			update.Latency, update.HasLatency = firstInput.delayUntil(firstOutput)
 		case err := <-playing:
 			playing = nil
-			if !playback.drained() || err != nil {
+			if listen && (!playback.drained() || err != nil) {
 				disablePlayback("Live playback stopped. Recording continues; play the saved audio after stopping.")
 			}
 		case <-tick.C:
@@ -516,7 +525,7 @@ func runTerminalTranslation(ctx context.Context, stop <-chan struct{}, options t
 			}
 		}
 		if closed && captureJoined && finishing == nil {
-			if playing == nil {
+			if playing == nil || !listen {
 				return result
 			}
 			playback.finish()

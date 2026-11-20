@@ -33,6 +33,7 @@ func TestMainDebugLiveAudioPreservesWebSocket(t *testing.T) {
 		flags []string
 	}{
 		{"ordinary", nil},
+		{"deprecated-browser", nil},
 		{"debug", []string{"--debug", "--header", "Authorization: Bearer sk-fake-debug-capture"}},
 		{"capture", []string{"--debug", "--debug-body", "--debug-sse", "--debug-event-timing", "--debug-max-bytes", "64", "--debug-max-events", "1"}},
 	} {
@@ -59,7 +60,11 @@ func TestMainDebugLiveAudioPreservesWebSocket(t *testing.T) {
 					"FORCE_COLOR=0",
 				}
 				stdout := &debugTimingCapture{changed: make(chan struct{}, 1)}
-				args := append(append([]string(nil), mode.flags...), "audio", "translate", "--live", "--browser")
+				command := []string{"audio", "translate", "--live", "--browser"}
+				if mode.name == "deprecated-browser" {
+					command = []string{"audio", "translate-live", "--browser"}
+				}
+				args := append(append([]string(nil), mode.flags...), command...)
 				child, stderr, done, ctx := startAudioLocalProcess(t, env, stdout, args...)
 				stdout.waitFor(t, ctx, "Ctrl+C to close.\n")
 				lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
@@ -154,9 +159,10 @@ func TestMainDebugLiveAudioPreservesWebSocket(t *testing.T) {
 				require.ErrorIs(t, err, os.ErrNotExist, "private launch file survived CLI exit")
 				require.Equal(t, "Live translation opened in your browser.\nIf the page does not load, open this private launch page in Chrome or Edge:\n"+launch+"\nCtrl+C to close.\n", stdout.String())
 				log := stderr.String()
-				if mode.name == "ordinary" {
+				switch mode.name {
+				case "ordinary", "deprecated-browser":
 					require.Empty(t, log)
-				} else {
+				default:
 					assertDebugTimingStage(t, log, 1, "response headers received", "101 Switching Protocols")
 				}
 				assertDebugCapturePrivate(t, log, "synthetic-private-input", "synthetic-private-output", "AQIDBA==", base64.StdEncoding.EncodeToString(pcm[:12]))

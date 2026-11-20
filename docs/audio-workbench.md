@@ -185,7 +185,7 @@ openai audio translate-live
 ```
 
 The terminal opens with **Start microphone** selected. Press Enter to start. Speak when the screen shows **Listening**.
-Press Space to stop and receive final captions.
+Press Space to stop capture and live playback. The CLI collects the final captions and audio for replay or saving.
 
 Use Left or Right to choose **Audio file** or **Typed text**. Press Enter to enter a file path or text.
 Press Enter to apply the input. Press Enter again on the translation action to submit it.
@@ -204,7 +204,8 @@ openai audio translate-live --target-language es
 openai audio translate-live --file recording.wav --target-language fr
 ```
 
-After translation, press T to read the full transcript. Press Tab to switch between original and translated text.
+After translation, press `?` for more shortcuts. Press T to read the full transcript.
+Press Tab to switch between original and translated text.
 Press P to replay translated audio. Use Left or Right before replay to select a start time.
 Press S to save the result. Set `--output-dir` to choose its parent folder.
 The CLI saves captions and any translated audio in a new private directory.
@@ -212,11 +213,11 @@ The CLI saves captions and any translated audio in a new private directory.
 ### Share browser-tab audio
 
 ```sh
-openai audio translate-live --browser
+openai audio translate --live
 ```
 
 This mode opens a private local browser page. It keeps your API key in the CLI.
-`openai audio translate --live` also opens the browser panel.
+The deprecated `openai audio translate-live --browser` command still opens the panel.
 Choose Microphone or Browser tab, select a target language, then start the session.
 For tab capture, choose a browser tab and enable Share tab audio in the browser dialog.
 The CLI sends audio only. It does not send the shared video track.

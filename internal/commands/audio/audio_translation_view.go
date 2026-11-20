@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
@@ -55,7 +56,14 @@ func (m *terminalTranslationModel) translationLayout() translationLayout {
 	if m.color {
 		layout.frame = layout.frame.BorderForeground(lipgloss.Color(edge))
 	}
-	layout.divider = cliterminal.SectionDivider(width, m.color, fill, edge, secondary)
+	if m.colorProfile == colorprofile.ANSI256 {
+		// Avoid shifts in hue when the terminal maps the divider to indexed colors.
+		fill, edge, secondary = "#EEEEEE", "#C6C6C6", "#767676"
+		if m.dark {
+			fill, edge, secondary = "#3A3A3A", "#585858", "#A8A8A8"
+		}
+	}
+	layout.divider = cliterminal.SectionDivider(width, m.color && m.colorProfile >= colorprofile.ANSI256, fill, edge, secondary)
 	return layout
 }
 
@@ -82,6 +90,10 @@ func (l translationLayout) heading(left, right string) string {
 }
 
 func (l translationLayout) footer(pairs ...[2]string) []string {
+	return l.shortcutLines(true, pairs...)
+}
+
+func (l translationLayout) shortcutLines(showLayout bool, pairs ...[2]string) []string {
 	var rows []string
 	separator := l.muted.Render(" · ")
 	var line string
@@ -95,6 +107,9 @@ func (l translationLayout) footer(pairs ...[2]string) []string {
 			line += separator
 		}
 		line += item
+	}
+	if !showLayout {
+		return append(rows, line)
 	}
 	action := "expand"
 	if l.expanded {

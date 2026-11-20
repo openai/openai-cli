@@ -132,14 +132,9 @@ func TestTerminalTranslationStopFlushesCaptureBeforeFinishAndDrains(t *testing.T
 		return ctx.Err()
 	}
 	options.Device, options.Listen = "synthetic microphone", true
-	var played []byte
-	options.Play = func(_ context.Context, reader io.ReadCloser, rate, channels int) error {
-		if rate != 48000 || channels != 2 {
-			return errors.New("wrong playback metadata")
-		}
-		var err error
-		played, err = io.ReadAll(reader)
-		return err
+	options.Play = func(context.Context, io.ReadCloser, int, int) error {
+		t.Error("final audio started a new player after Stop")
+		return nil
 	}
 	s.finish = func(context.Context) error {
 		select {
@@ -163,8 +158,8 @@ func TestTerminalTranslationStopFlushesCaptureBeforeFinishAndDrains(t *testing.T
 	require.NoError(t, result.Err)
 	require.True(t, result.Complete)
 	require.Equal(t, [][]byte{{1, 2}, {3, 4}}, sent)
-	require.Equal(t, []byte{0, 1, 2, 3}, played)
-	require.Equal(t, played, terminalTranslationReadFile(t, result.AudioPath))
+	require.Empty(t, result.Warning)
+	require.Equal(t, []byte{0, 1, 2, 3}, terminalTranslationReadFile(t, result.AudioPath))
 	require.Equal(t, "Hola.", string(terminalTranslationReadFile(t, result.OriginalPath)))
 	require.Equal(t, "Hello.", string(terminalTranslationReadFile(t, result.TranslationPath)))
 	require.Equal(t, int64(4), result.AudioBytes)
@@ -384,12 +379,20 @@ func TestTerminalTranslationPlaybackDrainsAnAudioBurst(t *testing.T) {
 	session := newTerminalTranslationSessionFixture()
 	options := terminalTranslationFixtureOptions(session)
 	options.Listen = true
-	stop := make(chan struct{})
+	endOfInput := make(chan struct{})
+	options.Capture = func(ctx context.Context, _ string, _ func([]byte) error) error {
+		select {
+		case <-endOfInput:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	var played []byte
 	options.Play = func(ctx context.Context, reader io.ReadCloser, _, _ int) error {
 		// Hold the consumer until the session has retained the entire burst.
 		select {
-		case <-stop:
+		case <-endOfInput:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -402,9 +405,9 @@ func TestTerminalTranslationPlaybackDrainsAnAudioBurst(t *testing.T) {
 	session.emit(audiolive.Event{Type: "session.output_transcript.delta", Delta: "Translated speech."})
 
 	var once sync.Once
-	result := runTerminalTranslation(terminalTranslationTestContext(t), stop, options, func(update terminalTranslationUpdate) {
+	result := runTerminalTranslation(terminalTranslationTestContext(t), nil, options, func(update terminalTranslationUpdate) {
 		if update.Translation != "" {
-			once.Do(func() { close(stop) })
+			once.Do(func() { close(endOfInput) })
 		}
 	})
 	t.Cleanup(func() { _ = result.Close() })
@@ -441,7 +444,7 @@ func TestTerminalTranslationBoundedPlaybackRetainsLargeAudioAndCaptions(t *testi
 	t.Cleanup(func() { _ = result.Close() })
 	require.NoError(t, result.Err)
 	require.True(t, result.Complete)
-	require.Contains(t, result.Warning, "did not finish before the stop timeout")
+	require.Empty(t, result.Warning)
 	require.Equal(t, pcm, terminalTranslationReadFile(t, result.AudioPath))
 	require.Equal(t, caption, string(terminalTranslationReadFile(t, result.OriginalPath)))
 	require.Equal(t, caption, string(terminalTranslationReadFile(t, result.TranslationPath)))
@@ -449,6 +452,30 @@ func TestTerminalTranslationBoundedPlaybackRetainsLargeAudioAndCaptions(t *testi
 	require.LessOrEqual(t, len(last.Translation), 4099)
 	require.True(t, utf8.ValidString(last.Translation))
 	require.True(t, strings.HasPrefix(last.Translation, "…"))
+}
+
+func TestTerminalTranslationStopInterruptsPlaybackAfterInputEnds(t *testing.T) {
+	session := newTerminalTranslationSessionFixture()
+	options := terminalTranslationFixtureOptions(session)
+	options.Listen = true
+	options.Capture = func(context.Context, string, func([]byte) error) error { return nil }
+	stop := make(chan struct{})
+	options.Play = func(ctx context.Context, reader io.ReadCloser, _, _ int) error {
+		// The player has consumed the recording but still has audio queued at the device.
+		if _, err := io.Copy(io.Discard, reader); err != nil {
+			return err
+		}
+		close(stop)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	session.emit(terminalTranslationFixtureAudio([]byte{1, 2}))
+	result := runTerminalTranslation(terminalTranslationTestContext(t), stop, options, nil)
+	t.Cleanup(func() { _ = result.Close() })
+	require.NoError(t, result.Err)
+	require.True(t, result.Complete)
+	require.Empty(t, result.Warning)
+	require.Equal(t, []byte{1, 2}, terminalTranslationReadFile(t, result.AudioPath))
 }
 
 func TestTerminalTranslationPlaybackFailureDoesNotDiscardRecording(t *testing.T) {

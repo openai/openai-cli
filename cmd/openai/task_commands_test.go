@@ -22,7 +22,7 @@ func taskRouteArgs(route string, flags ...string) []string {
 func TestMainTaskRouteHelpStaysLocal(t *testing.T) {
 	env := []string{"OPENAI_BASE_URL=invalid-task-help-url", "OPENAI_CUSTOM_HEADERS=invalid-task-help-headers"}
 	for _, tc := range []struct{ route, flag string }{
-		{"audio transcribe", "--file"}, {"audio translate", "--file"}, {"audio speak", "--voice"},
+		{"audio transcribe", "--file"}, {"audio translate", "--file"}, {"audio translate-live", "--file"}, {"audio speak", "--voice"},
 		{"transcribe", "--file"}, {"translate", "--file"}, {"speak", "--voice"},
 		{"files upload", "--purpose"}, {"admin projects list", "--limit"}, {"admin audit-logs list", "--limit"},
 		{"projects users roles list", "--user-id"},
@@ -41,6 +41,9 @@ func TestMainTaskRouteHelpStaysLocal(t *testing.T) {
 				require.Empty(t, got.stderr)
 				require.Contains(t, got.stdout, "openai "+tc.route)
 				require.Contains(t, got.stdout, tc.flag)
+				if tc.route == "audio translate-live" {
+					require.NotContains(t, got.stdout, "--browser")
+				}
 			}
 		})
 	}
@@ -63,7 +66,7 @@ func TestMainTaskRouteCompletionProtocols(t *testing.T) {
 				{"", "proj", []string{"projects"}},
 				{"transcribe", "--fi", []string{"--file"}},
 				{"translate", "--fi", []string{"--file"}},
-				{"audio translate-live", "--br", []string{"--browser"}},
+				{"audio translate-live", "--fi", []string{"--file"}},
 				{"speak", "--voi", []string{"--voice", "--voice-structured"}},
 				{"files upload", "--fi", []string{"--file"}},
 				{"audio:transcriptions create", "--fi", []string{"--file"}},
@@ -97,6 +100,8 @@ func TestMainTaskRouteCompletionProtocols(t *testing.T) {
 			}
 			got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, "transcribe", "--model", "synthetic-")...)
 			require.Equal(t, mainDispatchResult{code: 11}, got, "model values must not request file completion")
+			got = runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, "audio", "translate-live", "--br")...)
+			require.Equal(t, mainDispatchResult{}, got, "deprecated browser flag stays out of completion")
 		})
 	}
 }

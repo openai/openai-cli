@@ -36,7 +36,8 @@ func TestAudioTranslationGeneratedRegistration(t *testing.T) {
 	executable, err := os.Executable()
 	require.NoError(t, err)
 	for _, name := range []string{
-		"live alone", "live preserves pipe", "live with file", "live with model", "explicit browser", "legacy browser", "legacy browser alias",
+		"live alone", "live preserves pipe", "live with file", "live with model", "explicit browser", "browser disabled",
+		"legacy browser", "legacy browser alias",
 		"legacy mixed flags", "file with live disabled",
 		"missing both", "missing file", "missing model",
 		"file flags", "file JSON", "file YAML", "JSON missing file", "YAML missing model",
@@ -92,6 +93,7 @@ func testAudioTranslationGeneratedCase(t *testing.T, name string) {
 		"live with file":          {command: "translate-live", args: []string{"--file", path}, live: true},
 		"live with model":         {command: "translate-live", args: []string{"--model", "whisper-1"}, live: true, mixed: "not defined: -model"},
 		"explicit browser":        {command: "translate-live", args: []string{"--browser"}, input: liveInput, live: true, browser: true},
+		"browser disabled":        {command: "translate-live", args: []string{"--browser=false"}, input: liveInput, live: true},
 		"legacy browser":          {args: []string{"--live"}, input: liveInput, live: true, browser: true},
 		"legacy browser alias":    {args: []string{"--live", "--browser"}, live: true, browser: true},
 		"legacy mixed flags":      {args: []string{"--live", "--model", "whisper-1"}, live: true, mixed: "Omit --live"},

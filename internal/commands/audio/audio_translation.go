@@ -46,21 +46,19 @@ func ConfigureLiveTranslation(root *cli.Command, policy TranslationOptions) {
 		HideHelpCommand: true,
 		Metadata: map[string]any{
 			"help-content": clihelp.Content{
-				CompactNote: "Choose microphone, audio file, or typed text. Press Enter to start. Add --browser to share tab audio.",
+				CompactNote: "Choose microphone, audio file, or typed text. Press Enter to start.",
 				Description: "Choose Microphone, Audio file, or Typed text in your terminal. Select a target language.\n" +
 					"Press Enter to start microphone capture, then Space to stop.\n" +
 					"Audio input uses FFmpeg. Playback uses FFplay. Use --no-playback for captions alone.\n" +
-					"On Windows, provide the DirectShow microphone name with --input-device. Linux uses PulseAudio.\n" +
-					"Use --browser to share audio from a browser tab.",
+					"On Windows, provide the DirectShow microphone name with --input-device. Linux uses PulseAudio.",
 				Examples: []clihelp.Example{
 					{Description: "Choose an input in the terminal:", Command: "audio translate-live"},
 					{Description: "Translate a recording into French in the terminal:", Command: "audio translate-live --file recording.wav --target-language fr"},
-					{Description: "Share audio from a browser tab:", Command: "audio translate-live --browser"},
 				},
 			},
 		},
 		Flags: []cli.Flag{
-			&cli.BoolFlag{Name: "browser", Usage: "Open the browser panel for microphone or tab audio"},
+			&cli.BoolFlag{Name: "browser", Hidden: true}, // Deprecated. Use audio translate --live.
 			&cli.StringFlag{Name: "file", TakesFile: true, Usage: "Select a local audio file in the terminal"},
 			&cli.StringFlag{Name: "target-language", Value: "en", Usage: "Initial terminal translation language (e.g. fr, es, ja)"},
 			&cli.StringFlag{Name: "input-device", Usage: "Microphone name or macOS audio device index"},
@@ -98,7 +96,7 @@ func ConfigureLiveTranslation(root *cli.Command, policy TranslationOptions) {
 	command.Action = func(ctx context.Context, command *cli.Command) error {
 		if !command.Bool("live") {
 			if command.Bool("browser") {
-				return audioFailure("Use audio translate-live --browser to open the browser panel.", nil)
+				return audioFailure("Use audio translate --live to open the browser panel.", nil)
 			}
 			return next(ctx, command)
 		}
