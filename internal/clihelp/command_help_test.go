@@ -171,13 +171,17 @@ func TestRootHelpIntroducesSetupModelsAndSearch(t *testing.T) {
 			root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "explore"}}}
 			got := commandHelpAtWidth(root, invocation, "", width)
 			_, start, found := strings.Cut(got, "\nSTART HERE\n")
-			if !found || strings.Index(start, "  "+invocation+" explore images") < 0 ||
-				!strings.Contains(strings.Join(strings.Fields(start), " "), "Find image commands and examples offline.") {
+			if !found || !strings.Contains(strings.Join(strings.Fields(start), " "), "Search by keyword. Try another word.") {
 				t.Errorf("invocation=%q width=%d: local search is missing from the introduction:\n%s", invocation, width, got)
 			}
 			setup, models := strings.Index(start, "  "+invocation+" help setup"), strings.Index(start, "  "+invocation+" models list")
-			if setup < 0 || models <= setup || strings.Index(start, "  "+invocation+" explore images") <= models {
-				t.Errorf("existing start commands changed:\n%s", got)
+			search := strings.Index(start, "  "+invocation+" explore browse")
+			if setup < 0 || search <= setup || models <= search {
+				t.Errorf("expected setup, keyword search, then models:\n%s", got)
+			}
+			_, notes, found := strings.Cut(got, "\nNOTES\n")
+			if !found || !strings.Contains(strings.Join(strings.Fields(notes), " "), "Interactive search: "+invocation+" explore") {
+				t.Errorf("invocation=%q width=%d: interactive search is missing from the notes:\n%s", invocation, width, got)
 			}
 		}
 	}
