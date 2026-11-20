@@ -2,6 +2,7 @@
 """Exercise the shipping vector store CLI inside a private Windows ConPTY."""
 
 import argparse
+from contextlib import contextmanager
 import ctypes as c
 from ctypes import wintypes as w
 import hashlib
@@ -38,6 +39,10 @@ PONG = "F15_NATIVE_INPUT_RESTORED"
 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016
 EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 WAIT_TIMEOUT = 258
+GENERIC_READ_WRITE = 0xC0000000
+FILE_SHARE_READ_WRITE = 0x00000003
+OPEN_EXISTING = 3
+INVALID_HANDLE_VALUE = c.c_void_p(-1).value
 
 
 class Coord(c.Structure):
@@ -77,8 +82,11 @@ def kernel():
         "DeleteProcThreadAttributeList": (None, void),
         "CreateProcessW": (w.BOOL, w.LPCWSTR, w.LPWSTR, void, void, w.BOOL,
                            w.DWORD, void, w.LPCWSTR, c.POINTER(Startup), c.POINTER(Process)),
-        "GetStdHandle": (w.HANDLE, w.DWORD),
+        "CreateFileW": (w.HANDLE, w.LPCWSTR, w.DWORD, w.DWORD, void, w.DWORD, w.DWORD, w.HANDLE),
         "GetConsoleMode": (w.BOOL, w.HANDLE, c.POINTER(w.DWORD)),
+        "GetConsoleProcessList": (w.DWORD, c.POINTER(w.DWORD), w.DWORD),
+        "ReadConsoleW": (w.BOOL, w.HANDLE, void, w.DWORD, c.POINTER(w.DWORD), void),
+        "WriteConsoleW": (w.BOOL, w.HANDLE, w.LPCWSTR, w.DWORD, c.POINTER(w.DWORD), void),
         "WaitForSingleObject": (w.DWORD, w.HANDLE, w.DWORD),
         "GetExitCodeProcess": (w.BOOL, w.HANDLE, c.POINTER(w.DWORD)),
         "TerminateProcess": (w.BOOL, w.HANDLE, w.UINT),
@@ -100,19 +108,73 @@ def receipt_path(directory):
     return directory / "console.json"
 
 
-def modes(api):
+@contextmanager
+def console_stream(api, device, mode):
+    # Runner standard handles can refer to redirected pipes even under ConPTY.
+    # These devices refer to the witness's attached console.
+    import msvcrt
+
+    handle = api.CreateFileW(device, GENERIC_READ_WRITE, FILE_SHARE_READ_WRITE,
+                             None, OPEN_EXISTING, 0, None)
+    if not handle or handle == INVALID_HANDLE_VALUE:
+        raise c.WinError(c.get_last_error(), f"opening attached {device}")
+    try:
+        access = os.O_RDONLY if mode == "rb" else os.O_WRONLY
+        descriptor = msvcrt.open_osfhandle(handle, os.O_BINARY | access)
+    except OSError:
+        require(api.CloseHandle(handle))
+        raise
+    try:
+        stream = os.fdopen(descriptor, mode, buffering=0)
+    except OSError:
+        os.close(descriptor)
+        raise
+    with stream:
+        yield stream, handle
+
+
+def modes(api, input_handle, output_handle):
     result = []
-    for stream in (-10, -11, -12):
+    for handle in (input_handle, output_handle):
         flags = w.DWORD()
-        require(api.GetConsoleMode(api.GetStdHandle(stream), c.byref(flags)))
+        require(api.GetConsoleMode(handle, c.byref(flags)))
         result.append(flags.value)
     return result
+
+
+def require_shared_console(api, child):
+    deadline = time.monotonic() + 3
+    processes = (w.DWORD * 16)()
+    while True:
+        count = api.GetConsoleProcessList(processes, len(processes))
+        require(count)
+        assert count <= len(processes), "private console process count exceeds the bound"
+        pids = processes[:count]
+        assert os.getpid() in pids, "witness is missing from the attached console"
+        if child.pid in pids:
+            return
+        assert child.poll() is None, "CLI exited before joining the witness console"
+        assert time.monotonic() < deadline, "CLI did not join the witness console"
+        time.sleep(.025)
+
+
+def write_console_line(api, handle, line):
+    count = w.DWORD()
+    line += "\r\n"
+    require(api.WriteConsoleW(handle, line, len(line), c.byref(count), None))
+    assert count.value == len(line), "console status line was truncated"
+
+
+def read_console_line(api, handle):
+    buffer = c.create_unicode_buffer(128)
+    count = w.DWORD()
+    require(api.ReadConsoleW(handle, buffer, len(buffer), c.byref(count), None))
+    return buffer[:count.value].rstrip("\r\n")
 
 
 def witness(binary, endpoint, directory):
     """Run inside ConPTY and observe the console before and after the CLI."""
     api = kernel()
-    before = modes(api)
     inherited = ("SystemRoot", "WINDIR", "PATH", "COMSPEC", "PATHEXT")
     env = {name: os.environ[name] for name in inherited if name in os.environ}
     env.update({
@@ -125,16 +187,28 @@ def witness(binary, endpoint, directory):
     })
     command = [str(binary), "--project", "proj_synthetic", "--organization", "org_synthetic",
                "--header", "X-Workspace-Fixture: synthetic", "vector-stores", "manage"]
-    completed = subprocess.run(command, cwd=directory, env=env, timeout=90, check=False)
-    after = modes(api)
-    receipt = {"exit": completed.returncode, "before": before, "after": after, "input": False}
-    receipt_path(directory).write_text(json.dumps(receipt), encoding="utf-8")
-    assert after == before, "console input/output modes changed"
-    print(AFTER, flush=True)
-    assert input() == PING, "the same console failed to read a new line"
-    receipt["input"] = True
-    receipt_path(directory).write_text(json.dumps(receipt), encoding="utf-8")
-    print(PONG, flush=True)
+    with console_stream(api, "CONIN$", "rb") as (console_input, input_handle):
+        with console_stream(api, "CONOUT$", "wb") as (console_output, output_handle):
+            before = modes(api, input_handle, output_handle)
+            child = subprocess.Popen(command, cwd=directory, env=env, stdin=console_input,
+                                     stdout=console_output, stderr=console_output)
+            try:
+                require_shared_console(api, child)
+                exit_code = child.wait(timeout=90)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
+            after = modes(api, input_handle, output_handle)
+            receipt = {"exit": exit_code, "before": before, "after": after,
+                       "shared_console": True, "input": False}
+            receipt_path(directory).write_text(json.dumps(receipt), encoding="utf-8")
+            assert after == before, "console input/output modes changed"
+            write_console_line(api, output_handle, AFTER)
+            assert read_console_line(api, input_handle) == PING, "the same console failed to read a new line"
+            receipt["input"] = True
+            receipt_path(directory).write_text(json.dumps(receipt), encoding="utf-8")
+            write_console_line(api, output_handle, PONG)
 
 
 class Terminal:
@@ -244,6 +318,9 @@ class Terminal:
     def read(self, duration=.05):
         time.sleep(duration)
         assert self.reader_error is None, self.reader_error
+        error_path = self.directory / "console-error.txt"
+        if error_path.is_file():
+            raise RuntimeError(error_path.read_text(encoding="utf-8"))
         queries = rb"\x1b\[(?:6n|0?c|\?(?:7|1049)\$p)"
         replies = {b"\x1b[6n": b"\x1b[1;1R", b"\x1b[c": b"\x1b[?1;2c",
                    b"\x1b[0c": b"\x1b[?1;2c", b"\x1b[?7$p": b"\x1b[?7;1$y",
@@ -277,7 +354,7 @@ class Terminal:
         self.receipt = json.loads(receipt_path(self.directory).read_text(encoding="utf-8"))
         assert self.receipt["exit"] == expected, self.receipt
         assert self.receipt["before"] == self.receipt["after"], self.receipt
-        assert self.receipt["input"], self.receipt
+        assert self.receipt["shared_console"] and self.receipt["input"], self.receipt
 
 
 def assert_screen_transition(terminal, mark, *, expanded):
@@ -382,7 +459,14 @@ ORIGINAL_QUERY = check.QUERY
 def main():
     if sys.argv[1:2] == ["--witness"]:
         binary, endpoint, directory = sys.argv[2:]
-        witness(Path(binary), endpoint, Path(directory))
+        directory = Path(directory)
+        try:
+            witness(Path(binary), endpoint, directory)
+        except (AssertionError, OSError, subprocess.TimeoutExpired) as error:
+            pending = directory / "console-error.pending"
+            pending.write_text(f"{type(error).__name__}: {error}", encoding="utf-8")
+            pending.replace(directory / "console-error.txt")
+            raise
         return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True, type=Path)
