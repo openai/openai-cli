@@ -324,6 +324,7 @@ func (m *audioWorkbench) helpRows() []string {
 		"  " + m.strong().Render("Compose"),
 		shortcut("Tab", "Next section"),
 		shortcut("Enter/Ctrl+G", "Generate speech"),
+		shortcut("Esc", "Stop generation"),
 		shortcut("Alt+Enter", "Insert a new line"),
 		shortcut("Ctrl+C", "Exit Voice Studio"),
 	}
@@ -386,6 +387,9 @@ func (m *audioWorkbench) helpView() tea.View {
 }
 
 func (m *audioWorkbench) progressView() string {
+	if m.stoppingGeneration {
+		return m.muted().Render("Stopping generation…")
+	}
 	action := map[string]string{"Working: generate": "Creating speech", "Working: history": "Opening History", "Working: open": "Opening audio", "Working: export": "Saving audio"}[m.note]
 	if action == "" {
 		action = "Working"

@@ -69,11 +69,15 @@ Preview voice explicitly generates and plays a short sample using the selected s
 An identical retained sample can play again without another API request.
 With the audition result focused, Esc restores a previous result if one exists, then returns to Text.
 Normal generation also requires an explicit action.
+Press Esc during generation to stop it and return to the script. The draft and previous recording remain available.
 
 The form retains completed audio, request inputs, and settings in private local History.
 It stores History under the operating system's user cache directory, within `openai/audio`.
 History can contain sensitive text.
 Clear form resets the draft and current result. It preserves History and exported files.
+In History, Ctrl+P toggles autoplay when you open a recording. Autoplay starts off and the CLI remembers your choice.
+Press Ctrl+D in History to open the Clear History confirmation. Press Y to clear cached recordings and voice previews.
+Clear History keeps the current draft and exported files.
 
 The form shows local validation beside the field that needs attention.
 If generation fails with a previous recording available, the player keeps that recording and shows the cause.

@@ -30,7 +30,9 @@ func TestAudioComposerKeepsItsRowsThroughGeneration(t *testing.T) {
 			require.True(t, m.busy)
 			require.Equal(t, start, compose())
 			require.Equal(t, actions, m.formActionRows())
-			require.Contains(t, strings.Join(m.workspaceFooter(), "\n"), "Ctrl+C cancels")
+			footer := strings.Join(m.workspaceFooter(), "\n")
+			require.Contains(t, footer, "Esc Stop generation")
+			require.Contains(t, footer, "Ctrl+C Exit")
 
 			r := audioReviewResult("composer-stability", false)
 			r.entry.Settings = m.effectiveSettings()

@@ -76,6 +76,9 @@ func audioFailureFeedback(command *cli.Command, operation string, failure error)
 	if failure == nil {
 		return audioFeedback{}
 	}
+	if errors.Is(failure, audiohistory.ErrCaptureCleanup) {
+		return audioFeedback{Summary: "Could not clean up partial audio.", Action: "Check the audio history folder and its permissions."}
+	}
 	if errors.Is(failure, context.Canceled) {
 		return audioFeedback{Summary: "Audio operation canceled.", Action: "Check History before generating again."}
 	}

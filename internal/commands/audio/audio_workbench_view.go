@@ -278,7 +278,11 @@ func (m *audioWorkbench) View() tea.View {
 		return tea.NewView("")
 	}
 	if !m.usable() {
-		return m.panelView([]string{"Resize to 40 x 12.", m.keyHint("Ctrl+C", "exits.")}, nil, nil, nil)
+		rows := []string{"Resize to 40 x 12."}
+		if m.generationCancel != nil && !m.stoppingGeneration {
+			rows = append(rows, m.keyHint("Esc", "stops generation."))
+		}
+		return m.panelView(append(rows, m.keyHint("Ctrl+C", "exits.")), nil, nil, nil)
 	}
 	switch m.modal {
 	case "recovery":
@@ -292,6 +296,8 @@ func (m *audioWorkbench) View() tea.View {
 		return m.moreView()
 	case "history":
 		return m.historyView(time.Now())
+	case "clear-history":
+		return m.clearHistoryView()
 	case "choice":
 		return m.choiceView()
 	case "save":
@@ -347,7 +353,7 @@ func (m *audioWorkbench) View() tea.View {
 		}
 	}
 	rows = append(rows, actions...)
-	var details []string
+	details := m.workspaceDetails()
 	footer := m.workspaceFooter()
 	if warning := m.retainedGenerationErrorRow(m.audioWidth()); warning != "" {
 		details = []string{warning}
@@ -424,12 +430,13 @@ func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 		title = "Script"
 	}
 	heading := m.composerHeading(title, false)
-	if m.focus == 0 && !m.busy && m.modal == "" {
+	focused := m.focus == 0 && (!m.busy || m.stoppingGeneration)
+	if focused && m.modal == "" {
 		heading = m.selected("› "+title, 2+ansi.StringWidth(title))
 	}
 	if count := m.input.LineCount(); !compact && count > 1 {
 		location := fmt.Sprintf("%d lines", count)
-		if m.focus == 0 && !m.busy {
+		if focused {
 			location = fmt.Sprintf("Line %d of %d", m.input.Line()+1, count)
 		}
 		gap := m.composerWidth() - 2 - ansi.StringWidth(heading) - len(location)
@@ -440,7 +447,7 @@ func (m *audioWorkbench) scriptRows(compact bool) ([]string, *tea.Cursor) {
 	rows := []string{heading}
 	var cursor *tea.Cursor
 	const indent = "  "
-	if m.focus == 0 && !m.busy {
+	if focused {
 		cursor = audioEditorCursor(m.input, len(indent), len(rows))
 	}
 	for _, line := range strings.Split(m.editorView(m.input), "\n") {
@@ -646,6 +653,8 @@ const audioPlayerStatusWidth = 2 + len("Generating") // One dot and a space befo
 func (m *audioWorkbench) playerStatus() string {
 	r := m.result
 	switch {
+	case m.stoppingGeneration:
+		return m.muted().Render("● Stopping")
 	case m.busy && m.note == "Working: generate":
 		return m.accent().Bold(false).Render("● Generating")
 	case r == nil:

@@ -196,6 +196,10 @@ func (m *audioWorkbench) updateHistory(key tea.KeyPressMsg) tea.Cmd {
 		m.setHistoryQuery("")
 	case "ctrl+l":
 		search.showFolder = !search.showFolder
+	case "ctrl+p":
+		return m.toggleHistoryAutoplay()
+	case "ctrl+d":
+		m.modal = "clear-history"
 	default:
 		m.appendHistoryQuery(key.Text)
 	}

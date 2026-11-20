@@ -43,12 +43,16 @@ type audioWorkMessage struct {
 	playID             uint64
 	path, entryID      string
 	clipboardConfirmed bool
+	autoplay           bool
+	autoplayErr        error
 }
 type audioWorkTick time.Time
 
 const (
-	audioPlayingNote      = "Playing. Space toggles playback. X stops."
-	audioActionFailedNote = "Audio action failed."
+	audioPlayingNote           = "Playing. Space toggles playback. X stops."
+	audioActionFailedNote      = "Audio action failed."
+	audioGenerationStoppedNote = "Generation stopped."
+	audioGenerationFailureNote = "Generation stopped after a failure."
 )
 
 // Closing prevents late Bubble Tea commands from starting work after teardown.
@@ -95,6 +99,8 @@ type audioWorkbench struct {
 	choices                   []string
 	entries                   []audiohistory.Entry
 	historySearch             audioHistorySearch
+	historyAutoplay           bool
+	historyFailures           audioHistoryFailures
 	result                    *audioWorkResult
 	priorResult               *audioWorkResult
 	invocation                string
@@ -122,6 +128,8 @@ type audioWorkbench struct {
 	exitCode                  int
 	lastFinished              time.Time
 	started                   time.Time
+	generationCancel          context.CancelFunc
+	stoppingGeneration        bool
 	playID                    uint64
 	playCancel                context.CancelFunc
 	playDone                  <-chan struct{}
@@ -355,7 +363,32 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			return m, nil
 		}
 		m.busy = false
+		if msg.kind == "generate" && m.generationCancel != nil {
+			m.generationCancel()
+			m.generationCancel = nil
+			if m.stoppingGeneration {
+				// A completed worker can already have a result in transit when Esc arrives.
+				m.stoppingGeneration = false
+				m.note = audioGenerationStoppedNote
+				cleanupFailed := errors.Is(msg.err, audiohistory.ErrCaptureCleanup)
+				if cleanupFailed || msg.err != nil && !errors.Is(msg.err, context.Canceled) {
+					m.note = audioGenerationFailureNote
+					m.failure = m.failureFeedback(msg.kind, msg.err)
+					m.failureNote = m.note
+					m.failureOffset = 0
+					m.lastErr = msg.err
+					if cleanupFailed {
+						m.lastErr = audioFailure(m.failure.Summary+" "+m.failure.Action, msg.err)
+					}
+				}
+				return m, nil
+			}
+		}
 		m.lastFinished = time.Now()
+		if msg.kind == "history-autoplay" || msg.kind == "clear-history" {
+			m.applyHistoryResult(msg)
+			return m, nil
+		}
 		if msg.err != nil {
 			m.lastErr = msg.err
 			m.note = audioActionFailedNote
@@ -398,19 +431,12 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 				m.lastErr = nil
 				m.note = "Audio retained. Space plays the recording. S opens Save."
 			}
-			if msg.result.entry.Settings.Preview && msg.err == nil {
+			if msg.err == nil && (msg.result.entry.Settings.Preview || msg.kind == "open" && m.historyAutoplay) {
 				return m, m.togglePlayback()
 			}
 		}
 		if msg.kind == "history" {
-			m.entries = msg.entries
-			m.historySearch = audioHistorySearch{focused: len(m.entries) == 0}
-			m.modal = "history"
-			m.choice = 0
-			m.note = ""
-			if msg.err != nil {
-				m.note = "Some audio history could not be read."
-			}
+			m.applyHistoryResult(msg)
 		}
 		if msg.kind == "export" && msg.err == nil {
 			m.note = "Saved original audio bytes."
@@ -430,10 +456,27 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			m.stopPlayback()
 			return m, tea.Quit
 		}
+		if key == "esc" && m.generationCancel != nil {
+			if m.stoppingGeneration {
+				return m, nil
+			}
+			m.stoppingGeneration = true
+			m.generationCancel()
+			return m, m.focusSection(0)
+		}
 		if !m.usable() {
 			return m, nil
 		}
 		if key == "esc" {
+			if m.modal == "clear-history" {
+				if !m.busy {
+					m.modal = "history"
+				}
+				return m, nil
+			}
+			if m.modal == "history" && m.busy {
+				return m, nil
+			}
 			if m.inlineActions() && m.modal == "more" {
 				m.modal, m.setting = "", 4
 				return m, m.focusSection(2)
@@ -486,7 +529,15 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			return m, tea.Quit
 		}
 		if m.busy {
-			return m, nil
+			// The worker still owns the command flags. Only allow Script edits.
+			if !m.stoppingGeneration || key == "enter" || key == "ctrl+g" {
+				return m, nil
+			}
+			if key == "alt+enter" {
+				m.input.InsertString("\n")
+				return m, nil
+			}
+			break
 		}
 		if key == "f1" && m.activeFailure() && m.modal != "recovery" {
 			m.openRecovery()
@@ -592,8 +643,13 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			return m, nil
 		}
 	}
-	if !m.usable() || m.busy {
+	if !m.usable() || m.busy && !m.stoppingGeneration {
 		return m, nil
+	}
+	if m.stoppingGeneration {
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(message)
+		return m, cmd
 	}
 	if m.modal == "" {
 		if handled, command := m.updateInlineSetting(message); handled {
@@ -701,6 +757,9 @@ func (m *audioWorkbench) updateModal(message tea.KeyPressMsg, key string) tea.Cm
 	if m.modal == "history" {
 		return m.updateHistory(message)
 	}
+	if m.modal == "clear-history" {
+		return m.updateClearHistory(key)
+	}
 	count := len(m.choices)
 	if count == 0 {
 		return nil
@@ -736,7 +795,11 @@ func (m *audioWorkbench) work(kind string, run func(context.Context) audioWorkMe
 	m.busy = true
 	m.started = time.Now()
 	m.note = "Working: " + kind
-	return tea.Batch(m.workers.command(m.ctx, run), audioTick())
+	ctx := m.ctx
+	if kind == "generate" {
+		ctx, m.generationCancel = context.WithCancel(ctx)
+	}
+	return tea.Batch(m.workers.command(ctx, run), audioTick())
 }
 
 func (m *audioWorkbench) generate(preview bool) tea.Cmd {
@@ -767,6 +830,9 @@ func (m *audioWorkbench) generate(preview bool) tea.Cmd {
 	m.playerNotice = ""
 	m.validation = nil
 	return m.work("generate", func(ctx context.Context) audioWorkMessage {
+		if err := ctx.Err(); err != nil {
+			return audioWorkMessage{kind: "generate", err: err}
+		}
 		if preview {
 			entries, listErr := m.store.List(ctx)
 			if listErr != nil {
@@ -776,6 +842,9 @@ func (m *audioWorkbench) generate(preview bool) tea.Cmd {
 				if entry.Settings == settings {
 					return m.load(ctx, entry.ID, "generate")
 				}
+			}
+			if err := ctx.Err(); err != nil {
+				return audioWorkMessage{kind: "generate", err: err}
 			}
 		}
 		entry, err := generateAudio(ctx, m.command, m.next, m.store, settings)
@@ -800,19 +869,6 @@ func (m *audioWorkbench) load(ctx context.Context, id, kind string) audioWorkMes
 		message.err = classifiedAudioFailure(audioMeasurementFailure, "Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", err)
 	}
 	return message
-}
-
-func (m *audioWorkbench) history() tea.Cmd {
-	return m.work("history", func(ctx context.Context) audioWorkMessage {
-		entries, err := m.store.List(ctx)
-		visible := make([]audiohistory.Entry, 0, len(entries))
-		for _, entry := range entries {
-			if !entry.Settings.Preview {
-				visible = append(visible, entry)
-			}
-		}
-		return audioWorkMessage{kind: "history", entries: visible, err: audioFailureIf("Some audio history could not be read.", err)}
-	})
 }
 
 func (m *audioWorkbench) stopPlayback() {

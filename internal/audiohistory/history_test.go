@@ -184,8 +184,8 @@ func TestCaptureCancellationClosesBodyAndSkipsPendingEntry(t *testing.T) {
 	cancel()
 	select {
 	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("cancellation identity lost: %v", err)
+		if !errors.Is(err, context.Canceled) || errors.Is(err, ErrCaptureCleanup) {
+			t.Fatalf("expected cancellation without a cleanup failure: %v", err)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("capture did not close and reap the blocked body")
@@ -193,6 +193,48 @@ func TestCaptureCancellationClosesBodyAndSkipsPendingEntry(t *testing.T) {
 	children, err = os.ReadDir(store.Directory)
 	if err != nil || len(children) != 0 {
 		t.Fatal("canceled capture left owned artifacts")
+	}
+}
+
+func TestCaptureCancellationReportsCleanupFailure(t *testing.T) {
+	store := Store{Directory: filepath.Join(t.TempDir(), "history")}
+	body := &blockedBody{started: make(chan struct{}), closed: make(chan struct{})}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := store.Capture(ctx, body, testSettings()); done <- err }()
+	select {
+	case <-body.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("capture did not start")
+	}
+	children, err := os.ReadDir(store.Directory)
+	if err != nil || len(children) != 1 {
+		t.Fatalf("expected one unfinished capture: %d %v", len(children), err)
+	}
+	dir := filepath.Join(store.Directory, children[0].Name())
+	unexpected := filepath.Join(dir, "unowned")
+	if err := os.WriteFile(unexpected, []byte("synthetic unrelated file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrCaptureCleanup) {
+			t.Fatalf("expected cancellation and a cleanup failure: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("capture did not close and reap the blocked body")
+	}
+	if data, err := os.ReadFile(unexpected); err != nil || string(data) != "synthetic unrelated file" {
+		t.Fatalf("cleanup disturbed the unowned file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "audio")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cleanup left owned audio: %v", err)
+	}
+	entries, err := store.List(t.Context())
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("list advertised an unfinished capture: %d %v", len(entries), err)
 	}
 }
 

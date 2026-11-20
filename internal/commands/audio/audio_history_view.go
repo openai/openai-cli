@@ -30,23 +30,40 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 	if m.framed() {
 		lines = append(lines, m.listeningRule())
 	}
-	details := []string{""}
+	var details []string
+	hasFailure := m.activeFailure() && (m.note == audioHistoryClearFailureNote ||
+		m.note == audioHistoryAutoplayFailureNote || m.note == audioHistoryAutoplayReadFailureNote)
+	if hasFailure {
+		details = append(details, "  "+m.failureStyle().Render(m.note))
+	}
 	if m.historySearch.showFolder && m.store.Directory != "" {
 		details = append(details, m.historyPathRow("History", m.store.Directory))
 	}
-	folderHint := [2]string{"Ctrl+L", "folder"}
+	autoplay := "autoplay off"
+	if m.historyAutoplay {
+		autoplay = "autoplay on"
+	}
+	settings := [][2]string{{"Ctrl+P", autoplay}, {"Ctrl+D", "clear history"}}
+	if m.store.Directory != "" {
+		settings = append(settings, [2]string{"Ctrl+L", "folder"})
+	}
+	if hasFailure {
+		settings = append(settings, [2]string{"F1", "details"})
+	}
 	if len(entries) == 0 {
 		empty := "  No saved audio yet."
 		hints := [][2]string{{"Esc", "back"}}
-		if len(m.entries) > 0 {
+		if m.note == audioHistoryClearedNote && len(m.entries) == 0 {
+			empty = "  " + audioHistoryClearedNote
+		} else if len(m.entries) > 0 {
 			empty = "  No matching recordings."
 			hints = [][2]string{{"Ctrl+U", "clear"}, {"Esc", "back"}}
 		}
-		if m.store.Directory != "" {
-			hints = append(hints, folderHint)
-		}
-		footer := m.formShortcutRows(hints...)
+		footer := m.formShortcutRows(append(hints, settings...)...)
 		return m.panelView(append(lines, empty), details, footer, cursor)
+	}
+	if m.note == audioHistoryClearedNote {
+		details = append(details, "  "+audioHistoryClearedNote)
 	}
 	choice := max(0, min(m.choice, len(entries)-1))
 	selected := entries[choice]
@@ -62,8 +79,7 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 	for len(metadata) > 1 && ansi.StringWidth(audioHistoryCell(strings.Join(metadata, "  "))) > available {
 		metadata = metadata[1:]
 	}
-	details[0] = detail + m.muted().Render(ansi.Truncate(audioHistoryCell(strings.Join(metadata, "  ")), available, "…"))
-	details = append([]string{""}, details...)
+	detail += m.muted().Render(ansi.Truncate(audioHistoryCell(strings.Join(metadata, "  ")), available, "…"))
 	// Export locations are session evidence, not persisted History metadata.
 	for _, result := range []*audioWorkResult{m.result, m.priorResult} {
 		if result != nil && selected.ID != "" && result.entry.ID == selected.ID && len(result.savedPaths) > 0 {
@@ -81,11 +97,15 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 	if m.historySearch.query != "" {
 		hints = append(hints, [2]string{"Ctrl+U", "clear"})
 	}
-	if m.store.Directory != "" {
-		hints = append(hints, folderHint)
-	}
-	footer := m.formShortcutRows(hints...)
+	footer := m.formShortcutRows(append(hints, settings...)...)
 	lines = append(lines, "  "+m.historyTableRow("Clip", "Voice", "Format", "Time", true))
+	room := m.audioHeight() - len(lines) - len(details) - len(footer) - 1
+	if room > 0 {
+		details = append([]string{detail}, details...)
+	}
+	if room > 1 {
+		details = append([]string{""}, details...)
+	}
 
 	type row struct {
 		entry int
@@ -137,6 +157,20 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 		lines = append(lines, m.choiceRow(text, r.entry == choice && !m.historySearch.focused, m.audioWidth()))
 	}
 	return m.panelView(lines, details, footer, cursor)
+}
+
+func (m *audioWorkbench) clearHistoryView() tea.View {
+	if m.busy {
+		return m.panelView([]string{"  Clearing History…"}, nil, m.formShortcutRows([2]string{"Ctrl+C", "exit"}), nil)
+	}
+	lines := []string{
+		"  " + m.warningStyle().Render("Clear all recording history?"), "",
+		"  Deletes cached recordings",
+		"  and voice previews.",
+		"  Keeps your draft and exports.",
+	}
+	footer := m.formShortcutRows([2]string{"Esc", "keep"}, [2]string{"Y", "clear all"})
+	return m.panelView(lines, nil, footer, nil)
 }
 
 // The caller reserves two cells for selection and two for the right inset.
