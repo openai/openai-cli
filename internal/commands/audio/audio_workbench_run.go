@@ -115,7 +115,7 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 	if m.exitCode != 0 {
 		return errors.Join(cli.Exit("", m.exitCode), sessionErr)
 	}
-	resultErr = errors.Join(m.lastErr, sessionErr)
+	resultErr = errors.Join(m.actionError(), sessionErr)
 	if sessionErr != nil {
 		return resultErr
 	}

@@ -144,11 +144,23 @@ func (m *audioWorkbench) workspaceDetails() []string {
 		}
 		return []string{hint}
 	}
+	if m.note == audioGenerationFailureNote {
+		return m.failureSummaryRows()
+	}
+	if m.note == audioGenerationStoppedNote {
+		return []string{"  " + m.muted().Render(m.note)}
+	}
 	return nil
 }
 
 func (m *audioWorkbench) workspaceFooter() []string {
 	if m.busy {
+		if m.stoppingGeneration {
+			return m.formShortcutRows([2]string{"Alt+Enter", "New line"}, [2]string{"Ctrl+C", "Exit"})
+		}
+		if m.generationCancel != nil {
+			return m.formShortcutRows([2]string{"Esc", "Stop generation"}, [2]string{"Ctrl+C", "Exit"})
+		}
 		return m.formShortcutRows([2]string{"Ctrl+C", "cancels"})
 	}
 	if m.modal == "seek" {

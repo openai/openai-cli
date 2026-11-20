@@ -50,8 +50,9 @@ type manifest struct {
 }
 
 var (
-	ErrInvalid = errors.New("audio history metadata is unknown or invalid")
-	ErrChanged = errors.New("audio history changed during the operation")
+	ErrInvalid        = errors.New("audio history metadata is unknown or invalid")
+	ErrChanged        = errors.New("audio history changed during the operation")
+	ErrCaptureCleanup = errors.New("could not clean up incomplete audio capture")
 )
 
 func Default() (Store, error) {
@@ -97,7 +98,9 @@ func (s Store) Capture(ctx context.Context, body io.ReadCloser, settings Setting
 	complete := false
 	defer func() {
 		if !complete {
-			err = errors.Join(err, cleanupDirectory(root, id, directory, identity, owned))
+			if cleanupErr := cleanupDirectory(root, id, directory, identity, owned); cleanupErr != nil {
+				err = errors.Join(err, ErrCaptureCleanup, cleanupErr)
+			}
 		}
 	}()
 	file, info, err := createPrivateFile(directory, "audio")

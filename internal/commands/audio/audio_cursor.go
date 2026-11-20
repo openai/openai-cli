@@ -25,7 +25,7 @@ func audioEditorCursor(editor textarea.Model, x, y int) *tea.Cursor {
 
 // Translate body coordinates only after the final row budget is known.
 func (m *audioWorkbench) panelCursor(cursor *tea.Cursor, bodyHeight int) *tea.Cursor {
-	if cursor == nil || m.busy || m.quit || !m.usable() {
+	if cursor == nil || m.busy && !m.stoppingGeneration || m.quit || !m.usable() {
 		return nil
 	}
 	if cursor.X < 0 || cursor.X >= m.audioWidth() || cursor.Y < 0 || cursor.Y >= bodyHeight {
