@@ -12,6 +12,67 @@ import (
 	"time"
 )
 
+func TestStagedArchiveInitializesManualBeforePublishing(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".openai", "bin", ".openai-install.test")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	bin, err := openManagedBin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bin.Close()
+	const version = "1.0.0"
+	path := filepath.Join(dir, "openai")
+	if err := os.WriteFile(path, buildUpdateFixture(t, t.TempDir(), version), 0700); err != nil {
+		t.Fatal(err)
+	}
+	staged, err := openInstallation(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staged.close()
+	// A removed private installation may have left an old automatic preference.
+	cache, err := openPackageCache(t.Context(), bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadUpdateState(cache, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setUpdateMode(cache, &state, automaticUpdates); err != nil {
+		t.Fatal(err)
+	}
+	cache.close()
+	for range 2 {
+		if err := initializeArchiveUpdateMode(t.Context(), bin, staged, version, syntheticCommit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	modePath := filepath.Join(bin.Name(), ".update", updateModeName)
+	if mode, err := os.ReadFile(modePath); err != nil || string(mode) != "\"manual\"\n" {
+		t.Fatalf("pre-publication preference = %q, %v", mode, err)
+	}
+	if err := os.WriteFile(filepath.Join(bin.Name(), "openai"), []byte("another installation"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(modePath, []byte("\"automatic\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := initializeArchiveUpdateMode(t.Context(), bin, staged, version, syntheticCommit); err == nil {
+		t.Fatal("initializer accepted an occupied installation path")
+	}
+	if mode, err := os.ReadFile(modePath); err != nil || string(mode) != "\"automatic\"\n" {
+		t.Fatalf("initializer reset an existing preference: %q, %v", mode, err)
+	}
+}
+
 func TestPackageEnrollmentTransitions(t *testing.T) {
 	if !automaticPlatform() {
 		t.Skip("package setup requires an ordinary user")
@@ -131,6 +192,7 @@ func TestPackageEnrollmentTransitions(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer current.close()
+				changeTestUpdateMode(t, current, manualUpdates, automaticUpdates)
 				delivery := &syntheticDelivery{selected: syntheticSelection(), content: fixtures[b]}
 				worker := updateWorker{installation: current, current: a, now: time.Now(), delivery: delivery}
 				if err := worker.run(t.Context()); err != nil {
@@ -147,7 +209,7 @@ func TestPackageEnrollmentTransitions(t *testing.T) {
 				}
 				state, err := loadUpdateState(cache, time.Now())
 				cache.close()
-				if err != nil || state.Applied != "" || state.Pending != nil {
+				if err != nil || state.Applied != "" || state.Pending != nil || state.UpdateMode != manualUpdates {
 					t.Fatal("explicit installation created automatic-update confirmation")
 				}
 			}

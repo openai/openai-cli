@@ -86,7 +86,7 @@ func openPrivateWindowsUpdateCache(ctx context.Context, directory string) (*noti
 	}
 	// State and lock are opened for writing by the common cache. Reject
 	// reparse points, additional hard links, and foreign DACLs before use.
-	for _, name := range []string{".lock", stateName, "next", "next.tmp", "archive", "bundle", updateBundleName, windowsWorkerImage, "worker.tmp", "archive-install.tmp", "archive-install-marker.tmp"} {
+	for _, name := range []string{".lock", stateName, updateModeName, "next", "next.tmp", "archive", "bundle", updateBundleName, windowsWorkerImage, "worker.tmp", "archive-install.tmp", "archive-install-marker.tmp"} {
 		err := inspectWindowsUpdatePath(filepath.Join(directory, name), false, true)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, err
@@ -127,6 +127,11 @@ func relayUpdateWorker(ctx context.Context, current string) bool {
 	defer installation.close()
 	cache, err := openManagedUpdateCache(ctx, installation)
 	if err != nil {
+		return true
+	}
+	state, err := loadUpdateState(cache, time.Now())
+	if err != nil || state.UpdateMode != automaticUpdates {
+		cache.close()
 		return true
 	}
 	pinned, err := pinWindowsWorker(ctx, installation, cache)

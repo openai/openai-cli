@@ -50,6 +50,27 @@ func installationGuidance(current string) string {
 	return manualGuidance
 }
 
+// EnrollmentSetupGuidance explains how to prepare a private Unix release copy.
+// The running package manager or portable executable keeps its original owner.
+func EnrollmentSetupGuidance(current string) string {
+	const finish = ` Then run "$HOME/.openai/bin/openai" updates enable.`
+	switch runtime.GOOS {
+	case "darwin":
+		if installationGuidance(current) == brewGuidance {
+			return `In zsh, run source "$(brew --prefix)/bin/openai-enable-updates.zsh" to prepare your private CLI installation.` + finish
+		}
+	case "linux":
+		if executable, _ := os.Executable(); executable == "/usr/bin/openai" {
+			if helper, err := os.Stat("/usr/share/openai-cli/enable-updates.sh"); err == nil && helper.Mode().IsRegular() {
+				return "In Bash or zsh, run source /usr/share/openai-cli/enable-updates.sh to prepare your private CLI installation." + finish
+			}
+		}
+	default:
+		return "Automatic updates support official macOS, Linux, and Windows releases. Use your installation method to upgrade manually."
+	}
+	return "Use a verified official release archive. From its extracted directory in Bash or zsh, run source ./openai-enable-updates.sh." + finish
+}
+
 func homebrewInstallation(executable, brew, current string) bool {
 	// The release workflow publishes a cask containing one openai binary.
 	if runtime.GOOS == "windows" || filepath.Base(executable) != "openai" {

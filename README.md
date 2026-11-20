@@ -76,6 +76,9 @@ Run `openai --version` to check your installation.
 For an archive, replace the executable with the release you choose. For a Linux package, install the newer package.
 For Homebrew, run `brew upgrade --cask openai/tools/openai`. For Go, repeat the install command or replace `latest` with a release tag.
 
+Upgrades are manual by default. On a supported private installation, run `openai updates enable` to turn on automatic upgrades.
+Run `openai updates disable` to return to manual upgrades.
+
 ## Explore commands
 
 Run `openai explore` to search for commands in your own words.

@@ -229,10 +229,11 @@ openai <command> --arg @data://file.txt
 
 ## Update notices
 
-Supported self-managed release installations use [automatic updates](automatic-updates.md), including four-hour discovery and exact-version pins.
-The following notice behavior applies to other installations.
+Upgrades are manual by default. Use `openai updates enable` to enroll a supported private installation.
+Use `openai updates disable` to stop future automatic upgrades. Both commands remember your choice for that installation.
+See [automatic updates](automatic-updates.md) for setup, release verification, and exact-version pins.
 
-Bare `openai` checks for newer stable releases when stdin, stdout, and stderr are terminals.
+In manual mode, bare `openai` checks for newer stable releases when stdin, stdout, and stderr are terminals.
 It adds a plain-text notice below help, at most once every seven days.
 Explicit help, commands, completion, CI, and redirected streams skip the check entirely.
 

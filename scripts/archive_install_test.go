@@ -13,7 +13,15 @@ import (
 	"github.com/openai/openai-cli/internal/updatenotice"
 )
 
-const archiveBinary = "#!/bin/sh\n[ \"$1\" = --version ] || exit 2\necho 'openai version 1.2.3'\n"
+const archiveBinary = `#!/bin/sh
+case "$1" in
+    --version) echo 'openai version 1.2.3' ;;
+    __openai_initialize_update_mode)
+        [ "$OPENAI_CLI_ARCHIVE_INSTALL" = 1 ] && [ ! -e "$HOME/.openai/bin/openai" ] || exit 1
+        echo ready ;;
+    *) exit 2 ;;
+esac
+`
 
 // Go's temporary test directories can inherit a group-writable developer umask.
 func privateInstallDirectory(t *testing.T) string {
@@ -107,7 +115,7 @@ func TestArchiveInstall(t *testing.T) {
 			{"ready", "GitHub CLI supports update verification"},
 		} {
 			t.Run(tc.readiness, func(t *testing.T) {
-				staged := "#!/bin/sh\ncase \"$1\" in\n--version) echo 'openai version 1.2.3';;\n__openai_archive_verifier) echo " + tc.readiness + ";;\n*) exit 9;;\nesac\n"
+				staged := strings.Replace(archiveBinary, "    *) exit 2", "    __openai_archive_verifier) echo "+tc.readiness+" ;;\n    *) exit 2", 1)
 				if err := os.WriteFile(binary, []byte(staged), 0700); err != nil {
 					t.Fatal(err)
 				}
@@ -125,9 +133,12 @@ func TestArchiveInstall(t *testing.T) {
 						t.Fatalf("strict installer published %s: %v", target, err)
 					}
 					output, err = run(home, path).CombinedOutput()
-					if err != nil || !strings.Contains(string(output), tc.hint) || !strings.Contains(string(output), "After fixing gh") {
+					if err != nil || !strings.Contains(string(output), tc.hint) {
 						t.Fatalf("ordinary install: %v: %s", err, output)
 					}
+				}
+				if !strings.Contains(string(output), "openai updates enable") || strings.Contains(string(output), "Automatic updates are enabled") {
+					t.Fatalf("installer must offer explicit enrollment: %s", output)
 				}
 				if got, err := exec.Command(target, "--version").CombinedOutput(); err != nil || string(got) != "openai version 1.2.3\n" {
 					t.Fatalf("installed CLI: %v: %s", err, got)
@@ -381,6 +392,7 @@ func testHomebrewOptIn(t *testing.T) {
 	ready := []byte(`#!/bin/sh
 case $1 in
     --version) echo 'openai version 1.2.3' ;;
+    __openai_initialize_update_mode) echo ready ;;
     __openai_homebrew_verifier)
         echo probe >> "$HOME/formula.log"
         if [ -x "$2/bin/gh" ]; then "$2/bin/gh"; else echo missing; fi ;;

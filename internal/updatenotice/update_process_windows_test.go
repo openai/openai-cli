@@ -374,7 +374,15 @@ func TestWindowsArchiveSharingViolationPreservesUpgrade(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	selection := releaseSelection{Version: "1.0.1", Commit: commit, ReleaseID: 3, AssetID: 5, Digest: fmt.Sprintf("%x", sha256.Sum256(b)), Size: int64(len(b)), Updated: now.UTC().Format(time.RFC3339)}
 	pending := &preparedUpdate{Release: selection, BinaryHash: selection.Digest, PreviousHash: fmt.Sprintf("%x", sha256.Sum256(a))}
-	if err := cache.saveState(updateState{Schema: 1, Pending: pending}); err != nil {
+	state, err := loadUpdateState(cache, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setUpdateMode(cache, &state, automaticUpdates); err != nil {
+		t.Fatal(err)
+	}
+	state.Pending = pending
+	if err := cache.saveState(state); err != nil {
 		t.Fatal(err)
 	}
 	cache.close()

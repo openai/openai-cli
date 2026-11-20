@@ -20,7 +20,7 @@ func runPackageInstallHelper(argv []string) bool {
 		return true
 	}
 	if len(argv) != 2 || os.Getenv("OPENAI_CLI_ARCHIVE_INSTALL") != "1" ||
-		(argv[1] != "__openai_package_current" && argv[1] != "__openai_package_install") {
+		(argv[1] != "__openai_package_current" && argv[1] != "__openai_package_install" && argv[1] != "__openai_initialize_update_mode") {
 		return false
 	}
 	if !automaticPlatform() {
@@ -46,7 +46,12 @@ func runPackageInstallHelper(argv []string) bool {
 			return true
 		}
 		defer staged.close()
-		active, err = installPackageRelease(ctx, bin, staged, releaseVersion, releaseCommit)
+		if argv[1] == "__openai_initialize_update_mode" {
+			err = initializeArchiveUpdateMode(ctx, bin, staged, releaseVersion, releaseCommit)
+			active = "ready"
+		} else {
+			active, err = installPackageRelease(ctx, bin, staged, releaseVersion, releaseCommit)
+		}
 	}
 	if err == nil && active != "" {
 		fmt.Println(active)
@@ -54,15 +59,49 @@ func runPackageInstallHelper(argv []string) bool {
 	return true
 }
 
-// installPackageRelease serializes explicit package installs with automatic
-// activation. The package manager retains its own executable.
-func installPackageRelease(ctx context.Context, bin *os.Root, staged *updateInstallation, version, commit string) (string, error) {
+func stagedReleasePath(bin *os.Root, staged *updateInstallation, version, commit string) (string, error) {
 	relative, err := filepath.Rel(bin.Name(), staged.path)
 	dir, file, ok := strings.Cut(relative, "/")
 	v, stable := stableVersion(version)
 	if err != nil || !ok || file != "openai" || !strings.HasPrefix(dir, ".openai-install.") ||
 		!stable || v != version || !validCommit(commit) || !binaryIdentity(staged.file, version, commit) {
 		return "", errCache
+	}
+	return relative, nil
+}
+
+// Persist manual mode before the standalone installer publishes the executable.
+// A retry can then recognize a completed choice even if the installer stopped after linking.
+func initializeArchiveUpdateMode(ctx context.Context, bin *os.Root, staged *updateInstallation, version, commit string) error {
+	relative, err := stagedReleasePath(bin, staged, version, commit)
+	if err != nil {
+		return err
+	}
+	cache, err := openPackageCache(ctx, bin)
+	if err != nil {
+		return err
+	}
+	defer cache.close()
+	state, err := loadUpdateState(cache, time.Now())
+	if err != nil {
+		return err
+	}
+	namedSource, err := bin.Lstat(relative)
+	if err != nil || !sameUpdateFile(staged.identity, namedSource) || !staged.unchanged() {
+		return errCache
+	}
+	if _, err := bin.Lstat("openai"); !os.IsNotExist(err) {
+		return errCache
+	}
+	return setUpdateMode(cache, &state, manualUpdates)
+}
+
+// installPackageRelease serializes explicit package installs with automatic
+// activation. The package manager retains its own executable.
+func installPackageRelease(ctx context.Context, bin *os.Root, staged *updateInstallation, version, commit string) (string, error) {
+	relative, err := stagedReleasePath(bin, staged, version, commit)
+	if err != nil {
+		return "", err
 	}
 	digest, err := staged.digest(ctx)
 	if err != nil {
@@ -99,6 +138,11 @@ func installPackageRelease(ctx context.Context, bin *os.Root, staged *updateInst
 	// Write both possible identities before renaming. An interrupted explicit
 	// upgrade can resume with either the original or the replacement on disk.
 	state.PackageSources = []packageIdentity{source}
+	if current == nil {
+		if err := setUpdateMode(cache, &state, manualUpdates); err != nil {
+			return "", err
+		}
+	}
 	if previous != (packageIdentity{}) && previous != source {
 		state.PackageSources = append(state.PackageSources, previous)
 	}
@@ -189,5 +233,5 @@ func packageInstalledVersion(ctx context.Context, bin *os.Root) (string, error) 
 }
 
 func openPackageCache(ctx context.Context, bin *os.Root) (*noticeCache, error) {
-	return openInstallerCache(ctx, true, func() (*noticeCache, error) { return openCache(ctx, filepath.Join(bin.Name(), ".update")) })
+	return openInstallerCache(ctx, true, os.Stderr, func() (*noticeCache, error) { return openCache(ctx, filepath.Join(bin.Name(), ".update")) })
 }

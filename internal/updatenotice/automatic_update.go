@@ -31,6 +31,7 @@ type packageIdentity struct {
 }
 
 type updateState struct {
+	UpdateMode          string            `json:"-"`
 	HomebrewPrefix      string            `json:"homebrew_prefix,omitempty"`
 	PackageSources      []packageIdentity `json:"package_sources,omitempty"`
 	Schema              int               `json:"schema"`
@@ -74,6 +75,14 @@ func allowedVersion(version, current, pin string) bool {
 
 func loadUpdateState(cache *noticeCache, now time.Time) (updateState, error) {
 	state := updateState{Schema: 1}
+	mode, err := cache.readRecord(updateModeName, &cache.mode)
+	if err != nil {
+		return state, err
+	}
+	cache.modeRead = true
+	if mode != nil && (json.Unmarshal(mode, &state.UpdateMode) != nil || (state.UpdateMode != manualUpdates && state.UpdateMode != automaticUpdates)) {
+		return state, errCache
+	}
 	data, err := cache.readState()
 	if err != nil || data == nil {
 		return state, err
@@ -126,10 +135,6 @@ func automatic(ctx context.Context, current string, announce bool) (string, bool
 		return "", false
 	}
 	defer installation.close()
-	haveVerifier := systemUpdateVerifier() != "" || verifierEnrolled(installation.root.Name())
-	if !haveVerifier && !mayHaveHomebrewVerifier(installation.stateDirectory()) {
-		return "", false
-	}
 	cache, err := openManagedUpdateCache(ctx, installation)
 	if err != nil {
 		return "", true
@@ -140,7 +145,17 @@ func automatic(ctx context.Context, current string, announce bool) (string, bool
 		cache.close()
 		return "", true
 	}
-	if !haveVerifier && state.HomebrewPrefix == "" {
+	if state.UpdateMode != automaticUpdates {
+		var message string
+		if announce && state.UpdateMode == "" && installation.unchanged() {
+			if setUpdateMode(cache, &state, manualUpdates) == nil {
+				message = migrationNotice
+			}
+		}
+		cache.close()
+		return message, message != ""
+	}
+	if systemUpdateVerifier() == "" && !verifierEnrolled(installation.root.Name()) && state.HomebrewPrefix == "" {
 		cache.close()
 		return "", false
 	}
@@ -261,6 +276,11 @@ func (worker updateWorker) run(ctx context.Context) error {
 	state, err := loadUpdateState(cache, worker.now)
 	if err != nil || !worker.installation.unchanged() {
 		return errCache
+	}
+	// The preference writer uses this same lock. A worker launched before
+	// disable must re-read the preference before discovery or activation.
+	if state.UpdateMode != automaticUpdates {
+		return nil
 	}
 	state.Starting = 0
 	if pending := state.Pending; pending != nil && allowedVersion(pending.Release.Version, worker.current, worker.pin) {

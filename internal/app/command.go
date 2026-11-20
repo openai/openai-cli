@@ -77,6 +77,7 @@ func ConfigureCommand(root *cli.Command) {
 	configureVectorStoreWorkspace(root)
 	tokenize.Register(root)
 	localcommands.RegisterArchiveInstall(root)
+	localcommands.RegisterUpdates(root, writeOutputReceipt)
 	codex.Register(root)
 	localcommands.RemoveFineTuningCommands(root)
 	localcommands.ConfigurePresentation(root)

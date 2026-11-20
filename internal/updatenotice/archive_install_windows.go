@@ -23,7 +23,7 @@ type windowsSetupMessage string
 
 func (m windowsSetupMessage) Error() string { return string(m) }
 
-// ErrWindowsLauncherPathConflict keeps an Explorer installer open after successful setup.
+// ErrWindowsLauncherPathConflict identifies successful setup shadowed by the machine PATH.
 var ErrWindowsLauncherPathConflict = errors.New("Windows installer PATH conflict")
 
 const windowsEnrollmentMarker = "openai windows archive installer v1\n"
@@ -53,24 +53,33 @@ func windowsArchiveEnrolled(bin string) (bool, error) {
 	return true, nil
 }
 
-// InstallWindowsArchive enrolls the currently running official ZIP executable.
+// InstallWindowsArchive prepares a private copy of the running official ZIP executable.
 // Public diagnostics contain authored instructions, never filesystem or verifier output.
-func InstallWindowsArchive(ctx context.Context) (string, error) {
-	path, err := installWindowsArchive(ctx)
+func InstallWindowsArchive(ctx context.Context, enableUpdates bool) (string, error) {
+	if enableUpdates {
+		if err := validateEnableEnvironment(); err != nil {
+			return "", err
+		}
+	}
+	path, err := installWindowsArchive(ctx, enableUpdates)
 	if err == ErrWindowsLauncherPathConflict {
 		return path, err
 	}
-	if err != nil {
-		var message windowsSetupMessage
-		if errors.As(err, &message) {
-			return "", message
-		}
-		return "", windowsSetupMessage("could not prepare the private OpenAI CLI installation; check your account's access and retry setup")
-	}
-	return path, nil
+	return path, publicWindowsSetupError(err)
 }
 
-func installWindowsArchive(ctx context.Context) (string, error) {
+func publicWindowsSetupError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var message windowsSetupMessage
+	if errors.As(err, &message) {
+		return message
+	}
+	return windowsSetupMessage("could not access the private OpenAI CLI installation; check your account's access and retry")
+}
+
+func windowsArchiveTarget() (string, error) {
 	if !automaticPlatform() {
 		return "", windowsSetupMessage("run setup in an ordinary terminal without administrator privileges")
 	}
@@ -85,22 +94,40 @@ func installWindowsArchive(ctx context.Context) (string, error) {
 	if err := validateWindowsPath(localAppData, true, false); err != nil {
 		return "", windowsSetupMessage("the account's local application directory cannot safely contain the installation")
 	}
+	return target, nil
+}
+
+func openWindowsArchiveSource() (*os.File, error) {
 	source, err := os.Executable()
 	version, stable := stableVersion(releaseVersion)
 	if err != nil || !stable || version != releaseVersion || !validCommit(releaseCommit) {
-		return "", windowsSetupMessage("run setup from an extracted official OpenAI CLI Windows ZIP")
+		return nil, windowsSetupMessage("run setup from an extracted official OpenAI CLI Windows ZIP")
 	}
 	if err := validateWindowsPath(source, false, false); err != nil {
-		return "", windowsSetupMessage("extract the official ZIP into a directory only your account can modify")
+		return nil, windowsSetupMessage("extract the official ZIP into a directory only your account can modify")
 	}
 	executable, err := os.Open(source)
+	if err != nil {
+		return nil, err
+	}
+	if checkWindowsUpdateHandle(executable, false, false) != nil || !binaryIdentity(executable, releaseVersion, releaseCommit) {
+		executable.Close()
+		return nil, windowsSetupMessage("setup requires the release executable from the official Windows ZIP")
+	}
+	return executable, nil
+}
+
+func installWindowsArchive(ctx context.Context, enableUpdates bool) (string, error) {
+	target, err := windowsArchiveTarget()
+	if err != nil {
+		return "", err
+	}
+	executable, err := openWindowsArchiveSource()
 	if err != nil {
 		return "", err
 	}
 	defer executable.Close()
-	if checkWindowsUpdateHandle(executable, false, false) != nil || !binaryIdentity(executable, releaseVersion, releaseCommit) {
-		return "", windowsSetupMessage("setup requires the release executable from the official Windows ZIP")
-	}
+	source := executable.Name()
 	ctx, cancel := context.WithTimeout(ctx, workerTimeout+10*time.Second)
 	defer cancel()
 	bin := filepath.Dir(target)
@@ -146,12 +173,18 @@ func installWindowsArchive(ctx context.Context) (string, error) {
 	} else {
 		isolateVerifier(probe)
 	}
-	probe.Stderr = os.Stderr
+	if !enableUpdates {
+		probe.Stderr = os.Stderr
+	}
 	result, err := probe.Output()
 	if err != nil || string(result) != "ready\n" {
 		return "", windowsSetupMessage("could not prepare the update verifier; check network access and retry setup")
 	}
-	cache, err := openInstallerCache(ctx, true, func() (*noticeCache, error) { return openPrivateWindowsUpdateCache(ctx, cacheDir) })
+	var progress io.Writer
+	if !enableUpdates {
+		progress = os.Stderr
+	}
+	cache, err := openInstallerCache(ctx, true, progress, func() (*noticeCache, error) { return openPrivateWindowsUpdateCache(ctx, cacheDir) })
 	if err != nil {
 		return "", windowsSetupMessage("cannot lock the private installation directory; retry setup after other CLI activity finishes")
 	}
@@ -172,6 +205,13 @@ func installWindowsArchive(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if !enrolled && installed.identity == nil {
+		// Record a fresh manual installation before publishing its marker or image.
+		// A retry after interruption must not classify it as a legacy installation.
+		if err := setUpdateMode(cache, &state, manualUpdates); err != nil {
+			return "", err
+		}
+	}
 	if installed.identity == nil || newerVersion(releaseVersion, installed.version) {
 		if err := copyWindowsArchive(ctx, cache, executable, source, sourceHash, target, enrolled, installed.identity); err != nil {
 			return "", err
@@ -181,8 +221,8 @@ func installWindowsArchive(ctx context.Context) (string, error) {
 	if state.AppliedHash != installed.digest || state.AppliedCommit != installed.commit || state.Applied != installed.version {
 		// The rename publishes the image and its setup receipt together. A
 		// retry repairs this shared receipt after an intervening process exit.
-		receipt := updateState{Schema: 1, Applied: installed.version, AppliedCommit: installed.commit, AppliedHash: installed.digest, Announced: true}
-		if err := cache.saveState(receipt); err != nil {
+		state = updateState{Schema: 1, UpdateMode: state.UpdateMode, Applied: installed.version, AppliedCommit: installed.commit, AppliedHash: installed.digest, Announced: true}
+		if err := cache.saveState(state); err != nil {
 			return "", err
 		}
 	}
@@ -194,13 +234,65 @@ func installWindowsArchive(ctx context.Context) (string, error) {
 		}
 		return "", windowsSetupMessage(`could not update the user PATH. Run the managed CLI with & (Join-Path $env:LOCALAPPDATA 'OpenAI\CLI\bin\openai.exe')`)
 	}
-	if conflict {
+	if conflict && !enableUpdates {
 		fmt.Fprintln(os.Stderr, `New terminals select the machine PATH copy first. To select this installation in a new PowerShell, run: $env:Path = "$env:LOCALAPPDATA\OpenAI\CLI\bin;$env:Path"`)
 		if os.Getenv("OPENAI_CLI_WINDOWS_INSTALL_LAUNCHER") == "1" {
 			return target, ErrWindowsLauncherPathConflict
 		}
 	}
+	if enableUpdates && state.UpdateMode != automaticUpdates {
+		if err := setUpdateMode(cache, &state, automaticUpdates); err != nil {
+			return "", err
+		}
+	}
+	if enableUpdates && conflict {
+		return target, ErrWindowsLauncherPathConflict
+	}
 	return target, nil
+}
+
+// A shell that launched the portable ZIP can still select it after enrollment.
+// Disable the same verified, per-user installation without registering PATH again.
+func disablePortableWindowsUpdates(ctx context.Context, current string) error {
+	if current != releaseVersion || !validCommit(releaseCommit) {
+		return nil // Go installations and development builds always use manual upgrades.
+	}
+	target, err := windowsArchiveTarget()
+	if err != nil {
+		return publicWindowsSetupError(err)
+	}
+	bin := filepath.Dir(target)
+	enrolled, err := windowsArchiveEnrolled(bin)
+	if err != nil || !enrolled {
+		return publicWindowsSetupError(err)
+	}
+	source, err := openWindowsArchiveSource()
+	if err != nil {
+		return publicWindowsSetupError(err)
+	}
+	defer source.Close()
+	ctx, cancel := context.WithTimeout(ctx, workerTimeout+10*time.Second)
+	defer cancel()
+	cache, err := openInstallerCache(ctx, true, nil, func() (*noticeCache, error) {
+		return openPrivateWindowsUpdateCache(ctx, filepath.Join(bin, ".update"))
+	})
+	if err != nil {
+		return publicWindowsSetupError(err)
+	}
+	defer cache.close()
+	state, err := loadUpdateState(cache, time.Now())
+	if err != nil {
+		return publicWindowsSetupError(err)
+	}
+	digest, err := fileDigest(ctx, source)
+	if err != nil {
+		return publicWindowsSetupError(err)
+	}
+	installed, err := existingWindowsArchive(ctx, target, true, digest, state)
+	if err != nil || installed.identity == nil || state.UpdateMode == manualUpdates {
+		return publicWindowsSetupError(err)
+	}
+	return publicWindowsSetupError(setUpdateMode(cache, &state, manualUpdates))
 }
 
 type windowsArchiveImage struct {

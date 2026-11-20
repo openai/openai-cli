@@ -30,6 +30,7 @@ func openManagedUpdateCache(ctx context.Context, installation *updateInstallatio
 }
 
 func authorizedUpdateImage(*updateInstallation, bool) bool             { return true }
+func disablePortableWindowsUpdates(context.Context, string) error      { return nil }
 func safeOpenedUpdateFile(*os.File) bool                               { return true }
 func relayUpdateWorker(context.Context, string) bool                   { return false }
 func replaceUpdateImage(_ context.Context, replace func() error) error { return replace() }

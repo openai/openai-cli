@@ -62,6 +62,14 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	statePath := filepath.Join(stateDirectory, "state.json")
+	modePath := filepath.Join(stateDirectory, "update-mode.json")
+	markEnrolled := func() {
+		t.Helper()
+		if err := os.WriteFile(modePath, []byte("\"automatic\"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	markEnrolled()
 	state := map[string]any{"schema": 1, "checked": time.Now().Unix(), "activation_checked": 0, "applied": app.Version, "announced": false, "pending": map[string]any{
 		"release":     map[string]any{"version": app.Version, "commit": commit, "release_id": 1, "asset_id": 2, "digest": strings.Repeat("a", 64), "size": 10, "updated": "2026-10-22T00:00:00Z"},
 		"binary_hash": hex.EncodeToString(digest[:]), "previous_hash": strings.Repeat("b", 64),
@@ -78,11 +86,11 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 		return data
 	}
 	environment := []string{"HOME=" + home, "PATH=" + toolsDirectory, "XDG_CONFIG_HOME=" + filepath.Join(home, "config"), "XDG_CACHE_HOME=" + filepath.Join(home, "cache"), "TERM=xterm-256color", "NO_COLOR=1", "FORCE_COLOR=0", "GOMAXPROCS=2", "HTTPS_PROXY=http://127.0.0.1:1", "NO_PROXY=", "OPENAI_BASE_URL=http://127.0.0.1:1"}
-	run := func(redirect string, extra []string, args ...string) mainDispatchResult {
+	runAt := func(executable, redirect string, extra []string, args ...string) mainDispatchResult {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 		defer cancel()
-		arguments := []string{"-I", "-B", "-c", updateNoticePTY, redirect, binary}
+		arguments := []string{"-I", "-B", "-c", updateNoticePTY, redirect, executable}
 		arguments = append(arguments, args...)
 		command := exec.CommandContext(ctx, python, arguments...)
 		command.Env = append(append([]string{}, environment...), extra...)
@@ -100,6 +108,9 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 			t.Fatal(err)
 		}
 		return mainDispatchResult{result.Code, result.Stdout, result.Stderr}
+	}
+	run := func(redirect string, extra []string, args ...string) mainDispatchResult {
+		return runAt(binary, redirect, extra, args...)
 	}
 	message := "Updated to v" + app.Version + "."
 	noticeDirectory := filepath.Join(home, "cache", "openai-cli", "update-notice-archive-"+runtime.GOOS+"-"+runtime.GOARCH)
@@ -119,6 +130,32 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	const migrationNotice = "Updates are now manual. To enable automatic updates again, run openai updates enable."
+	t.Run("fresh_README_archive", func(t *testing.T) {
+		fresh := t.TempDir()
+		dir := filepath.Join(fresh, ".local", "bin")
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		executable := filepath.Join(dir, "openai")
+		if err := os.WriteFile(executable, binaryBytes, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			result := runAt(executable, "", []string{"HOME=" + fresh, "XDG_CACHE_HOME=" + filepath.Join(fresh, "cache")})
+			if result.code != 0 || !strings.Contains(result.stdout, "openai") || strings.Contains(result.stdout+result.stderr, migrationNotice) {
+				t.Fatalf("fresh manual installation: %+v", result)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(fresh, ".openai", "bin")); !os.IsNotExist(err) {
+			t.Fatalf("ordinary use created a managed installation: %v", err)
+		}
+		bytes, err := os.ReadFile(executable)
+		if err != nil || sha256.Sum256(bytes) != digest {
+			t.Fatal("fresh archive changed during ordinary use", err)
+		}
+	})
+
 	for _, test := range []struct {
 		name, redirect string
 		extra, args    []string
@@ -205,6 +242,91 @@ func TestMainAutomaticUpdateEligibilityAndConfirmation(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+	t.Run("legacy_installation", func(t *testing.T) {
+		// Previous updaters stored prepared releases without recording an update mode.
+		if err := os.Remove(modePath); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(markEnrolled)
+		registered := state
+		defer func() { state = registered }()
+		const staged = "previously prepared release"
+		stagedHash := sha256.Sum256([]byte(staged))
+		state = map[string]any{"schema": 1, "checked": 0, "pending": map[string]any{
+			"release":     map[string]any{"version": "99.0.0", "commit": commit, "release_id": 1, "asset_id": 2, "digest": strings.Repeat("a", 64), "size": 10, "updated": "2026-10-22T00:00:00Z"},
+			"binary_hash": hex.EncodeToString(stagedHash[:]), "previous_hash": hex.EncodeToString(digest[:]),
+		}}
+		before := writeState()
+		if err := os.WriteFile(filepath.Join(stateDirectory, "next"), []byte(staged), 0700); err != nil {
+			t.Fatal(err)
+		}
+		for _, redirect := range []string{"stdin", "stdout", "stderr"} {
+			result := run(redirect, nil)
+			after, err := os.ReadFile(statePath)
+			if result.code != 0 || strings.Contains(result.stdout+result.stderr, migrationNotice) || err != nil || string(after) != string(before) {
+				t.Fatalf("redirecting %s consumed migration notice or started an update: %+v, %v", redirect, result, err)
+			}
+		}
+		first, second := run("", nil), run("", nil)
+		if first.code != 0 || second.code != 0 || !sameUpdatePTYOutput(first.stdout, second.stdout) ||
+			strings.TrimSpace(first.stderr) != migrationNotice || strings.Contains(second.stderr, migrationNotice) {
+			t.Fatalf("legacy bare invocations: first=%q second=%q", first.stderr, second.stderr)
+		}
+		// A detached worker launched by the previous CLI may arrive after migration.
+		result := run("", []string{"OPENAI_CLI_UPDATE_WORKER=1"}, "__openai_update_worker", app.Version)
+		var receipt struct {
+			Checked, Starting int64
+			ActivationChecked int64 `json:"activation_checked"`
+		}
+		data, err := os.ReadFile(statePath)
+		if result.code != 0 || err != nil || json.Unmarshal(data, &receipt) != nil ||
+			receipt.Checked != 0 || receipt.Starting != 0 || receipt.ActivationChecked != 0 {
+			t.Fatalf("old worker attempted an update before enrollment: %s, %v", data, err)
+		}
+		bytes, err := os.ReadFile(binary)
+		if err != nil || sha256.Sum256(bytes) != digest {
+			t.Fatal("old worker replaced the executable", err)
+		}
+		// The verifier accepts only the normal capability probe. All release
+		// traffic still goes to the loopback proxy.
+		gh := filepath.Join(toolsDirectory, "gh")
+		script := "#!/bin/sh\ntest \"$1 $2 ${16}\" = 'attestation verify --help'\n"
+		if err := os.WriteFile(gh, []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.WriteFile(gh, []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
+				t.Error(err)
+			}
+		})
+		if result := run("", nil, "updates", "enable"); result.code != 0 {
+			t.Fatalf("enable failed: %s", result.stderr)
+		}
+		if result := run("", nil); result.code != 0 || strings.Contains(result.stderr, migrationNotice) {
+			t.Fatalf("bare command after enrollment: %+v", result)
+		}
+		waitForWorker(t, "checked")
+		if result := run("", nil, "updates", "disable"); result.code != 0 {
+			t.Fatalf("disable failed: %s", result.stderr)
+		}
+		data, err = os.ReadFile(statePath)
+		state = nil
+		if err != nil || json.Unmarshal(data, &state) != nil {
+			t.Fatal("could not load the disabled installation", err)
+		}
+		state["checked"] = 0 // Make the disabled installation eligible for discovery.
+		writeState()
+		for range 2 {
+			result := run("", nil)
+			if result.code != 0 || strings.Contains(result.stderr, migrationNotice) {
+				t.Fatalf("bare command after disable: %+v", result)
+			}
+		}
+		data, err = os.ReadFile(statePath)
+		if err != nil || json.Unmarshal(data, &receipt) != nil || receipt.Checked != 0 || receipt.Starting != 0 {
+			t.Fatalf("disabled installation scheduled an update: %s, %v", data, err)
+		}
+	})
 	t.Run("ordinary_API_response", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
