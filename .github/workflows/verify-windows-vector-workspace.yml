@@ -1,0 +1,93 @@
+name: Verify Windows vector store workspace
+
+on:
+  push:
+    branches: [codex/windows-vector-workspace-check]
+    paths:
+      - .github/workflows/verify-windows-vector-workspace.yml
+      - scripts/demos/vector-store-workspace/check-windows.py
+
+permissions: {}
+
+jobs:
+  conpty:
+    if: github.repository == 'openai/openai-cli' && (github.run_attempt == '1' || github.run_attempt == '2')
+    runs-on: windows-2025
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      SHIPPING: 7570c81fef6b7f9d5c1152936d33852d6bcb3383
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the runner, target, and candidate files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64') { throw 'Expected Windows x64.' }
+          if ((git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Unexpected candidate.' }
+          git merge-base --is-ancestor $env:SHIPPING HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate does not descend from shipping.' }
+          $changes = @(git diff --name-status --no-renames $env:SHIPPING HEAD)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not determine the candidate file set.' }
+          $expected = @(
+            "A`t.github/workflows/verify-windows-vector-workspace.yml",
+            "A`tscripts/demos/vector-store-workspace/check-windows.py"
+          )
+          if (($changes -join "`n") -cne ($expected -join "`n")) { throw 'Unexpected candidate files.' }
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: .go-version
+          cache: false
+
+      - name: Build and verify the shipping executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($pair in @('GOOS=windows', 'GOHOSTOS=windows', 'GOARCH=amd64', 'GOHOSTARCH=amd64')) {
+            $key, $value = $pair.Split('=')
+            if ((go env $key) -cne $value) { throw "Unexpected $key." }
+          }
+          $exe = Join-Path $env:RUNNER_TEMP 'openai-f15.exe'
+          git checkout --detach $env:SHIPPING
+          if ($LASTEXITCODE -ne 0 -or (git rev-parse HEAD) -cne $env:SHIPPING) { throw 'Unexpected shipping revision.' }
+          try {
+            $changes = @(git status --porcelain)
+            if ($LASTEXITCODE -ne 0 -or $changes.Count -ne 0) { throw 'Shipping checkout is not clean.' }
+            go build -trimpath -buildvcs=true -mod=readonly -o $exe ./cmd/openai
+            if ($LASTEXITCODE -ne 0) { throw 'Shipping executable build failed.' }
+          } finally {
+            git checkout --detach $env:GITHUB_SHA
+            if ($LASTEXITCODE -ne 0 -or (git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Could not restore candidate.' }
+          }
+          $metadata = (go version -m $exe) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw 'Executable metadata is unavailable.' }
+          if ($metadata -cnotmatch ('(?m)^\s*build\s+vcs\.revision=' + $env:SHIPPING + '\r?$')) {
+            throw 'Executable revision differs.'
+          }
+          if ($metadata -cnotmatch '(?m)^\s*build\s+vcs\.modified=false\r?$') { throw 'Executable source was modified.' }
+          Write-Host "Windows x64 shipping=$env:SHIPPING sha256=$((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash)"
+
+      - name: Check the shipping workspace in private ConPTY sessions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $env:RUNNER_TEMP 'openai-f15.exe'
+          $report = Join-Path $env:RUNNER_TEMP 'f15-conpty-report.json'
+          python -I -B ./scripts/demos/vector-store-workspace/check-windows.py --binary $exe --shipping $env:SHIPPING --report $report
+          $exit = $LASTEXITCODE
+          if (-not (Test-Path -LiteralPath $report -PathType Leaf)) { throw 'Native report is missing.' }
+          $receipt = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          if ($receipt.shipping -cne $env:SHIPPING -or $receipt.binary_sha256 -ine (Get-FileHash -LiteralPath $exe).Hash) {
+            throw 'Native report identity differs.'
+          }
+          $cases = @('toggle-resize', 'upload-failure', 'attachment-failure', 'ctrl-c', 'busy-ctrl-c')
+          if (($receipt.cases.case -join ',') -cne ($cases -join ',')) { throw 'Native report case set differs.' }
+          if ($exit -ne 0 -or @($receipt.cases | Where-Object { $_.pass -ne $true }).Count -ne 0) {
+            throw 'Windows workspace checks failed.'
+          }
