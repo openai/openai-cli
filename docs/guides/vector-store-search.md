@@ -53,6 +53,7 @@ The upload purpose `assistants` remains supported by the [Retrieval examples](ht
 This recipe does not create an Assistant.
 
 The recipe waits up to 120 seconds for indexing, with a 30-second maximum per CLI call.
+It checks the file and store IDs when attaching the file and on every status read.
 It stops on `failed`, `cancelled`, unexpected status, or timeout.
 It reports `last_error` for failed processing and retains all response files for inspection.
 It searches the exact synthetic sentence with a matching attribute filter, then checks an excluded filter.
@@ -89,6 +90,10 @@ def require(condition, message):
     if not condition:
         raise RuntimeError(message)
 
+def check_attachment(response, file_id, store_id):
+    require(response.get("id") == file_id and response.get("vector_store_id") == store_id,
+            "Attachment response does not match the uploaded file and temporary store.")
+
 try:
     uploaded = cli("upload", "files", "create", "--file", str(source),
                    "--purpose", "assistants")
@@ -97,9 +102,10 @@ try:
                 "--name", "f15-acceptance-" + evidence.name,
                 "--expires-after", '{"anchor":"last_active_at","days":1}')
     store_id = store["id"]
-    cli("attach", "vector-stores", "files", "create",
-        "--vector-store-id", store_id, "--file-id", file_id,
-        "--attributes", json.dumps(attributes))
+    attached = cli("attach", "vector-stores", "files", "create",
+                   "--vector-store-id", store_id, "--file-id", file_id,
+                   "--attributes", json.dumps(attributes))
+    check_attachment(attached, file_id, store_id)
 
     deadline = time.monotonic() + 120
     attempt = 0
@@ -110,6 +116,7 @@ try:
         status = cli(f"status-{attempt:03d}", "vector-stores", "files", "retrieve",
                      "--vector-store-id", store_id, "--file-id", file_id,
                      timeout=min(30, remaining))
+        check_attachment(status, file_id, store_id)
         state = status["status"]
         if state == "completed":
             break
