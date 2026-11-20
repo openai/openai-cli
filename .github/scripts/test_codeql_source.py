@@ -53,8 +53,26 @@ class SourceSelectionTest(unittest.TestCase):
         self.git(self.candidate, "remote", "add", "origin", str(self.origin))
         self.event = {"number": 3, "repository": {"id": 1, "full_name": "test/cli"},
                       "pull_request": {"number": 3, "state": "open", "base": {
-                          "sha": self.base, "repo": {"id": 1, "full_name": "test/cli"}},
+                          "sha": self.base, "ref": "main", "repo": {"id": 1, "full_name": "test/cli"}},
                           "head": {"sha": self.head}}}
+        self.live_ref = {"ref": "refs/heads/main", "object": {"type": "commit", "sha": self.base}}
+        self.ref_file = self.root / "live-ref.json"
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        gh = self.bin / "gh"
+        # The real gh executable does not load Python code from candidate paths.
+        gh.write_text(f"#!{sys.executable} -I\n" + textwrap.dedent('''\
+            import os, sys
+            from pathlib import Path
+            assert sys.argv[1:] == ["api", "repos/test/cli/git/ref/heads/main"]
+            assert os.environ["GH_TOKEN"] == "synthetic-test-token"
+            if os.environ.get("FIXTURE_API_FAILURE"):
+                raise SystemExit(1)
+            print(Path(os.environ["LIVE_REF_FILE"]).read_text())
+            '''))
+        gh.chmod(0o755)
+        self.env.update(PATH=str(self.bin) + os.pathsep + self.env["PATH"],
+                        GH_TOKEN="synthetic-test-token", LIVE_REF_FILE=str(self.ref_file))
 
     def git(self, cwd, *args, data=None):
         return subprocess.check_output(["git", "-C", str(cwd), *args], input=data,
@@ -72,8 +90,26 @@ class SourceSelectionTest(unittest.TestCase):
 
     def validate(self, event=None, **env):
         (self.root / "event.json").write_text(json.dumps(event if event is not None else self.event))
+        self.ref_file.write_text(json.dumps(self.live_ref))
         return subprocess.run(["bash", "-e", "-c", validator_command()], cwd=self.root,
                               env=dict(self.env, **env), capture_output=True, text=True)
+
+    def test_stale_event_base_uses_authenticated_live_target(self):
+        self.checkout("refs/pull/3/merge")
+        self.event["pull_request"]["base"]["sha"] = "b" * 40
+        result = self.validate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_invalid_or_unavailable_live_target_fails_closed(self):
+        self.checkout("refs/pull/3/merge")
+        for ref in [{"ref": "refs/heads/other", "object": {"type": "commit", "sha": self.base}},
+                    {"ref": "refs/heads/main", "object": {"type": "tag", "sha": self.base}},
+                    {"ref": "refs/heads/main", "object": {"type": "commit", "sha": "invalid"}}]:
+            with self.subTest(ref=ref):
+                self.live_ref = ref
+                self.assertNotEqual(self.validate().returncode, 0)
+        self.live_ref = {"ref": "refs/heads/main", "object": {"type": "commit", "sha": self.base}}
+        self.assertNotEqual(self.validate(FIXTURE_API_FAILURE="1").returncode, 0)
 
     def test_current_merge_replaces_stale_event_sha_and_is_packaged_exactly(self):
         self.checkout("refs/pull/3/merge")
