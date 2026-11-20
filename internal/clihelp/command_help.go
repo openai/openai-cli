@@ -162,11 +162,14 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 	if description = descriptionAfterSummary(terminalProse(description), summary); description != "" {
 		out.WriteString("\n" + heading("DESCRIPTION") + "\n" + wrapPlainDescription(description, "  ", width))
 	}
+	showSearch := false
 	if path == "" {
-		content.Examples = []Example{{"Set up your API key:", "help setup"}, {"List available models:", "models list"}}
+		content.Examples = []Example{{"Set up your API key:", "help setup"}}
 		if explore := command.Command("explore"); explore != nil && !explore.Hidden {
-			content.Examples = append(content.Examples, Example{"Find image commands and examples offline:", "explore images"})
+			showSearch = true
+			content.Examples = append(content.Examples, Example{"Search by keyword. Try another word:", "explore browse"})
 		}
+		content.Examples = append(content.Examples, Example{"List available models:", "models list"})
 		if help := command.Command("help"); help != nil && help.Command("piping") != nil {
 			content.Examples = append(content.Examples, Example{"Pipe text, files, and API requests:", "help piping"})
 		}
@@ -255,6 +258,16 @@ func commandHelpAtWidths(command *cli.Command, invocation, path string, width, n
 			fmt.Fprintf(&out, "  Command help: %s COMMAND --help\n", name)
 		} else {
 			out.WriteString("  Command help:\n" + style.synopsis(name, []string{"COMMAND", "--help"}, width))
+		}
+	}
+	if showSearch && native != "" {
+		const label = "Interactive search:"
+		search := native + " explore"
+		if ansi.StringWidth("  "+label+" "+search) <= width {
+			fmt.Fprintf(&out, "  %s %s\n", label, commandsuggest.Record(command, search))
+		} else {
+			out.WriteString(wrapDescription(label, "  ", width))
+			fmt.Fprintf(&out, "    %s\n", commandsuggest.Record(command, search))
 		}
 	}
 	if content.Notes != "" {
