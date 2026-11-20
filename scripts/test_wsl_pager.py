@@ -418,7 +418,7 @@ class CommandContractTests(unittest.TestCase):
         self.assertEqual(set(suites), {"custom", "images", "process", "app"})
         self.assertEqual((len(suites["custom"]), len(self.names(suites["custom"]))), (4, 9))
         self.assertEqual((len(suites["images"]), len(self.names(suites["images"]))), (6, 62))
-        self.assertEqual((len(suites["process"]), len(self.names(suites["process"]))), (65, 577))
+        self.assertEqual((len(suites["process"]), len(self.names(suites["process"]))), (65, 578))
         self.assertEqual((len(suites["app"]), len(self.names(suites["app"]))), (2, 12))
         self.assertEqual(set(suites["app"]), {"TestRequestConfigurationRestoresEnvironment",
                                              "TestRequestConfigurationLeavesOtherEnvironmentCasesUnchanged"})

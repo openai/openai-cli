@@ -602,7 +602,7 @@ def load_command_cases():
     excluded = set(PROCESS_CASES) | {ROOT, "TestMainDispatchProcess", "TestMainWrappedExitCodeProcess",
                                       "TestRequestConfigurationChildEnvironment"}
     selected = set()
-    for package, roots, names in (("custom", 4, 9), ("images", 6, 62), ("process", 65, 577), ("app", 2, 12)):
+    for package, roots, names in (("custom", 4, 9), ("images", 6, 62), ("process", 65, 578), ("app", 2, 12)):
         cases = suites[package]
         if not isinstance(cases, dict) or len(cases) != roots:
             raise RuntimeError("Invalid WSL command-contract root inventory")
