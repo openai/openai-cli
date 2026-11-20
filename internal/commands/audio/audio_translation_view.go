@@ -6,7 +6,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
 type translationLayout struct {
@@ -48,14 +47,14 @@ func (m *terminalTranslationModel) translationLayout() translationLayout {
 		frame: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1),
 	}
 	layout.title, layout.muted, layout.accent = m.styles()
-	fill, edge, secondary := "#E9EFFE", "#BAC4D8", "#657087"
-	if m.dark {
-		fill, edge, secondary = "#343D58", "#51566B", "#A4ACC2"
-	}
 	if m.color {
+		edge := "#BAC4D8"
+		if m.dark {
+			edge = "#51566B"
+		}
 		layout.frame = layout.frame.BorderForeground(lipgloss.Color(edge))
 	}
-	layout.divider = cliterminal.SectionDivider(width, m.color, fill, edge, secondary)
+	layout.divider = strings.Repeat("─", width)
 	return layout
 }
 
