@@ -121,7 +121,7 @@ func testUploadRetryOptions(t *testing.T, indexing bool) {
 	modelKey(m, tea.KeyEscape)
 	tabToAction(m, 2)
 	modelKey(m, tea.KeyEnter)
-	tabToAction(m, 2)
+	require.Equal(t, 2, m.focus, "return directly to the retained file's recovery action")
 	attach = modelComplete(t, m, modelKey(m, tea.KeyEnter))
 	modelComplete(t, m, attach)
 

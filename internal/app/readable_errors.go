@@ -112,11 +112,22 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 	isAPI := errors.As(failure, &apierr)
 	var streamerr *ssestream.StreamError
 	isStream := !errors.Is(failure, context.Canceled) && errors.As(failure, &streamerr)
+	var limitsFailure *limitsWorkflowFailure
+	if errors.As(failure, &limitsFailure) {
+		// Aggregate source failures retain their causes, but expose only the
+		// workflow's safe outcome. Individual API payloads are not the result.
+		isAPI, isStream = false, false
+	}
 	if format == "text" && root.String("transform-error") == "" {
 		presenter := clihelp.NewSuggestedText(out, root)
 		message := ""
 		var batchFailure *batchcommands.WorkflowError
-		if errors.As(failure, &batchFailure) {
+		if limitsFailure != nil {
+			message = limitsFailure.Error()
+			if limitsFailure.humanDetail != "" {
+				message += "\n" + limitsFailure.humanDetail
+			}
+		} else if errors.As(failure, &batchFailure) {
 			message = batchcommands.WorkflowErrorMessage(failure)
 			var storage *readable.JSONStreamStorageError
 			if errors.As(failure, &storage) && !strings.Contains(message, storage.Error()) {
@@ -127,7 +138,7 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 				// before the outer command adds presentation context.
 				included := readableAPIErrorMessage(root, batchFailure.Unwrap(), apierr)
 				if !strings.Contains(message, included) {
-					message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, presenter)
+					message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, shellError, presenter)
 				}
 			}
 			// Workflow outcomes must not hide safe, known transport guidance.
@@ -147,11 +158,11 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 				}
 			}
 		} else if isAPI && !errors.Is(failure, context.Canceled) {
-			message = readableAPIErrorMessageTo(root, failure, apierr, presenter)
+			message = readableAPIErrorMessageTo(root, failure, apierr, shellError, presenter)
 		} else if isStream {
 			message = readableStreamErrorText
 		} else {
-			message = localErrorMessage(root, failure, presenter)
+			message = readableLocalErrorMessage(root, failure, presenter)
 		}
 		return presenter.WriteText(message)
 	}
@@ -188,16 +199,23 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 const readableStreamErrorMessage = "The response stream failed. Output may be incomplete.\nFor API error details, add --format-error json."
 const readableStreamErrorText = "The response stream failed.\nOutput may be incomplete.\nAPI error details: --format-error json."
 
+type apiErrorSurface int
+
+const (
+	shellError apiErrorSurface = iota
+	workspaceError
+)
+
 func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Error) string {
-	return readableAPIErrorMessageTo(root, failure, apierr)
+	return readableAPIErrorMessageTo(root, failure, apierr, shellError)
 }
 
-func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.Error, output ...io.Writer) string {
+func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.Error, surface apiErrorSurface, output ...io.Writer) string {
 	requestID := clioutput.APIRequestID(apierr)
 	var message string
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
-		message = readableAPIAuthenticationMessage(root, failure, apierr, output...)
+		message = readableAPIAuthenticationMessage(root, failure, apierr, surface, output...)
 	case http.StatusForbidden:
 		message = "The API denied access to this resource.\nCheck your key's permissions and its project access."
 		if permission := readableAPIAccessPermissionMessage(root, failure, apierr); permission != "" {
@@ -205,6 +223,9 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 		}
 	case http.StatusNotFound:
 		message = "The requested resource is unavailable.\nCheck the resource or model ID and your key's access to it."
+		if guidance := readableSpendNotFoundMessage(root, failure); guidance != "" {
+			message = guidance
+		}
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		var contextual *commandError
 		var command *cli.Command
@@ -213,9 +234,15 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 		}
 		message = readableAPIArgumentMessage(apierr, command, output...)
 	case http.StatusTooManyRequests:
-		message = "The API is limiting requests.\nWait before trying again."
-		if quotaLimitError(apierr.Code, apierr.Type) {
+		switch {
+		case apierr.Code == "organization_spend_limit_exceeded":
+			message = readableOrganizationSpendLimitMessage(root)
+		case apierr.Code == "organization_usage_limit_exceeded":
+			message = "Organization usage limit reached.\nCheck your organization's billing and usage limits."
+		case quotaLimitError(apierr.Code, apierr.Type):
 			message = "API usage or billing limit reached.\nCheck your project's billing and limits."
+		default:
+			message = "The API is limiting requests.\nWait before trying again."
 		}
 	case http.StatusConflict:
 		message = "The resource changed or is not ready.\nCheck its current status."
@@ -263,7 +290,7 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 	}
 	// Credential recovery already supplies the next step. Avoid burying it
 	// among unrelated format options; explicit machine output remains available.
-	if apierr.StatusCode == http.StatusUnauthorized || apierr.StatusCode == http.StatusForbidden {
+	if surface == workspaceError || apierr.StatusCode == http.StatusUnauthorized || apierr.StatusCode == http.StatusForbidden {
 		return message
 	}
 	return message + "\nAPI error details: --format-error json."

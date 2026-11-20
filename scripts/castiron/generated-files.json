@@ -331,11 +331,11 @@
     },
     "generated/commands/betaresponse.go": {
       "mode": "100644",
-      "sha256": "ca9dd602f3d120d1d6dabb7ecfd2f303a15502611e3ea1def26971ce26874d77"
+      "sha256": "9ce2ec8b623f716871f6a5c1d255303ccfa111cb08bcf82fbf7de81073a848ba"
     },
     "generated/commands/betaresponse_test.go": {
       "mode": "100644",
-      "sha256": "4325181c4d804a9c951f4111504867ad291870c3c23a4f4afddbadbfd39a512b"
+      "sha256": "906efc0ceffccb007f58d1f789e133a218a1ace409f14c90def56baa5c816657"
     },
     "generated/commands/betaresponseinputitem.go": {
       "mode": "100644",
@@ -591,11 +591,11 @@
     },
     "generated/commands/response.go": {
       "mode": "100644",
-      "sha256": "227a6531e27b2496ddde2938301765a8a08bd519702e3e28258bdc6229846e37"
+      "sha256": "25249f6feee4b02db3175e479821d7a02e92dfcd04b1ef560f485c7f3e509667"
     },
     "generated/commands/response_test.go": {
       "mode": "100644",
-      "sha256": "0667eca1f096db8ac06f540269d4014f96967a34f451a820c48ef441ae03a636"
+      "sha256": "1e94f1595b048c82d7778561984efc99875e11a147126639d97a711adb4aaf75"
     },
     "generated/commands/safetyalert.go": {
       "mode": "100644",
@@ -619,7 +619,7 @@
     },
     "generated/commands/session_test.go": {
       "mode": "100644",
-      "sha256": "f8ef68768131b17778303d7d7fa559b99059a6b7562fd10fc0ebf3f063da95e4"
+      "sha256": "b0b79e78c4cb513225d9694e3856ac5f80fe4b1c50924eeb022bd2443b894340"
     },
     "generated/commands/skill.go": {
       "mode": "100644",

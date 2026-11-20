@@ -38,6 +38,90 @@ func TestCommandPickerSearchSelectAndCancel(t *testing.T) {
 	}
 }
 
+func TestCommandPickerFullScreenPreservesSearchAndSelection(t *testing.T) {
+	m := newCommandPicker([]Candidate{{Command: "openai models list"}, {Command: "openai models retrieve"}}, "Explore commands", true)
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 32})
+	m.Update(tea.PasteMsg{Content: "models"})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	for _, key := range []tea.KeyPressMsg{{Code: 'g', Mod: tea.ModCtrl}, {Code: 'g', Mod: tea.ModCtrl, Text: "g"}} {
+		m.Update(key)
+		require.True(t, m.fullScreen)
+		require.True(t, m.View().AltScreen)
+		require.Contains(t, ansi.Strip(m.View().Content), "Ctrl+G compact")
+		require.Equal(t, "models", string(m.query))
+		require.Equal(t, 5, m.cursor)
+		require.Equal(t, 1, m.selected)
+		m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl, Text: "g", IsRepeat: true})
+		require.True(t, m.fullScreen, "holding the shortcut must not oscillate")
+		m.Update(key)
+		require.False(t, m.View().AltScreen)
+		require.Equal(t, 1, m.selected)
+	}
+	m.Update(tea.KeyPressMsg{Code: 'z', Text: "z"})
+	require.Equal(t, "modelzs", string(m.query), "ordinary letters remain search input")
+}
+
+func TestCommandPickerFullScreenLayoutAndResize(t *testing.T) {
+	candidates := make([]Candidate, 60)
+	for i := range candidates {
+		candidates[i] = Candidate{Command: fmt.Sprintf("openai future%02d", i), Description: "Inspect this command"}
+	}
+	for _, setup := range []string{"", "Update /tmp/synthetic/.zshrc"} {
+		for _, size := range [][2]int{{40, 12}, {59, 13}, {60, 16}, {80, 24}, {160, 48}} {
+			for _, query := range []string{"", "missing"} {
+				t.Run(fmt.Sprintf("%dx%d/setup=%t/%s", size[0], size[1], setup != "", query), func(t *testing.T) {
+					m := newCommandPicker(candidates, "Explore commands", false)
+					m.setupPrompt, m.fullScreen = setup, true
+					m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+					m.Update(tea.PasteMsg{Content: query})
+					if query == "" {
+						for range 40 {
+							m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+						}
+					}
+					view := m.View()
+					plain := ansi.Strip(view.Content)
+					lines := strings.Split(plain, "\n")
+					require.True(t, view.AltScreen)
+					require.Len(t, lines, size[1], "expanded layout fills available rows")
+					for _, line := range lines {
+						require.LessOrEqual(t, ansi.StringWidth(line), size[0]-1)
+					}
+					require.Contains(t, strings.Join(lines[len(lines)-3:], "\n"), "Ctrl+G compact")
+					require.Contains(t, plain, "Esc cancels")
+					if query == "" {
+						require.Contains(t, plain, "› openai future40")
+					} else {
+						require.Contains(t, plain, "No matching commands")
+					}
+					m.Update(tea.WindowSizeMsg{Width: 20, Height: 6})
+					require.True(t, m.View().AltScreen, "small terminals retain screen ownership")
+					m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+					require.Equal(t, plain, ansi.Strip(m.View().Content), "resize preserves view state")
+					m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+					require.False(t, m.View().AltScreen, "close through the inline cleanup frame")
+				})
+			}
+		}
+	}
+}
+
+func TestCommandPickerFullScreenSetupKeepsState(t *testing.T) {
+	m := newCommandPicker([]Candidate{{Command: "openai models list"}}, "Explore commands", false)
+	m.setupPrompt, m.fullScreen = "Update /tmp/synthetic/.zshrc", true
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.Update(tea.PasteMsg{Content: "models"})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyF2})
+	require.True(t, m.confirmSetup)
+	require.True(t, m.View().AltScreen)
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.False(t, m.confirmSetup)
+	require.True(t, m.View().AltScreen)
+	require.Equal(t, "models", string(m.query))
+	require.False(t, m.enableInsertion)
+}
+
 func TestCommandPickerHighlightsSearchWithoutChangingSelectedCommand(t *testing.T) {
 	for _, tc := range []struct {
 		name, command, description, query, commandMatch, descriptionMatch string
@@ -195,7 +279,7 @@ func TestPickerSetupRequiresVisibleConfirmationAndKeepsSelection(t *testing.T) {
 	m.setupPrompt = "Add the shell hook to:\n~/.zshrc"
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 	require.Contains(t, ansi.Strip(m.View().Content), "› openai transcribe")
-	require.Contains(t, ansi.Strip(m.View().Content), "F2 set up insertion")
+	require.Contains(t, ansi.Strip(m.View().Content), "F2 shell setup")
 	m.Update(tea.PasteMsg{Content: "transcribe"})
 	m.Update(tea.KeyPressMsg{Code: tea.KeyF2})
 	require.Contains(t, m.View().Content, "~/.zshrc")
@@ -215,11 +299,11 @@ func TestPickerSetupRequiresVisibleConfirmationAndKeepsSelection(t *testing.T) {
 }
 
 func TestPickerRejectsNonTerminalAndCanceledContext(t *testing.T) {
-	_, err := Pick(context.Background(), nil, nil, []Candidate{{Command: "openai models list"}}, "Commands", true, "")
+	_, err := Pick(context.Background(), nil, nil, []Candidate{{Command: "openai models list"}}, "Commands", true, "", false)
 	require.Error(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = Pick(ctx, nil, nil, nil, "Commands", true, "")
+	_, err = Pick(ctx, nil, nil, nil, "Commands", true, "", true)
 	require.ErrorIs(t, err, context.Canceled)
 }
 

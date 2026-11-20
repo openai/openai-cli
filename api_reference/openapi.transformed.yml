@@ -9077,7 +9077,7 @@ paths:
               curl https://api.openai.com/v1/live/sessions \
                 -H "Authorization: Bearer $OPENAI_API_KEY" \
                 -H "Content-Type: application/json" \
-                -d '{"session":{"model":"gpt-live-1","instructions":"Be concise. Ask for clarification when needed."},"transport":{"type":"webrtc","sdp":"<SDP offer>"}}'
+                -d '{"session":{"model":"gpt-live-1.1","instructions":"Be concise. Ask for clarification when needed."},"transport":{"type":"webrtc","sdp":"<SDP offer>"}}'
           response: '{"session":{"id":"live_123"},"transport":{"type":"webrtc","sdp":"<SDP answer>"}}'
   /live/sessions/{session_id}/accept:
     post:
@@ -44435,6 +44435,12 @@ components:
               type: integer
               minimum: 16
             - type: 'null'
+          background_options:
+            $ref: '#/components/schemas/BackgroundOptionsParam'
+            description: |
+              Options for background execution on HTTP requests. The `2h` and `8h`
+              completion windows require `background: true`, Standard processing,
+              and `stream: false` or omitted.
     CreateRunRequest:
       type: object
       additionalProperties: false
@@ -51085,6 +51091,10 @@ components:
           $ref: '#/components/schemas/LiveClientConfigParam'
         triggers:
           $ref: '#/components/schemas/triggers'
+        wake_policy:
+          $ref: '#/components/schemas/LiveSpeechWakePolicyParam'
+        idle_timeout_s:
+          $ref: '#/components/schemas/idle_timeout_s'
       required:
       - model
       additionalProperties: false
@@ -51257,6 +51267,8 @@ components:
       anyOf:
       - $ref: '#/components/schemas/LiveSessionStarted'
       - $ref: '#/components/schemas/LiveSessionUpdated'
+      - $ref: '#/components/schemas/LiveSessionResumed'
+      - $ref: '#/components/schemas/LiveSessionPaused'
       - $ref: '#/components/schemas/LiveInputAudioMuted'
       - $ref: '#/components/schemas/LiveInputAudioUnmuted'
       - $ref: '#/components/schemas/LiveOutputAudioFixturePlaying'
@@ -52506,13 +52518,14 @@ components:
       description: Model ID used to generate the response, like `gpt-6-astra`. OpenAI offers a wide range of models with different capabilities, performance characteristics, and price points. Refer to the [model guide](https://developers.openai.com/api/docs/models) to browse and compare available models.
     ModelIdsLive:
       description: The Live model. Required in the session configuration for every transport; do not pass it as a URL query parameter.
-      example: gpt-live-1
+      example: gpt-live-1.1
       anyOf:
       - type: string
         minLength: 1
       - type: string
         enum:
         - gpt-live-1
+        - gpt-live-1.1
     ModelIdsResponses:
       example: gpt-6-astra
       anyOf:
@@ -52542,6 +52555,7 @@ components:
         - gpt-6-cyber
         - gpt-rosalind-research
         - gpt-6-rosalind
+        - gpt-6.2-astra-law
         x-openai-enum-deprecations:
           o1-pro:
             message: 'Announced shutdown date: 2026-10-23. See https://developers.openai.com/api/docs/deprecations for details and recommended replacements.'
@@ -63259,6 +63273,39 @@ components:
       - id
       - summary
       - type
+    InputRemovalReason:
+      type: string
+      enum:
+      - organization_mismatch
+      - end_user_mismatch
+      - model_mismatch
+      - prefix_mismatch
+      - turn_boundary
+    ReasoningInputTransformation:
+      properties:
+        type:
+          type: string
+          enum:
+          - reasoning
+          default: reasoning
+          x-stainless-const: true
+        id:
+          type: string
+          description: The original reasoning item ID.
+        action:
+          type: string
+          enum:
+          - removed
+          default: removed
+          x-stainless-const: true
+        reason:
+          $ref: '#/components/schemas/InputRemovalReason'
+      type: object
+      required:
+      - type
+      - id
+      - action
+      - reason
     Response:
       title: The response object
       allOf:
@@ -63344,6 +63391,11 @@ components:
                   - content_filter
                   - steered
             - type: 'null'
+          input_transformations:
+            type: array
+            description: Reasoning inputs withheld from the model, in input order.
+            items:
+              $ref: '#/components/schemas/ReasoningInputTransformation'
           output:
             type: array
             description: |
@@ -85199,7 +85251,6 @@ components:
       type: string
       enum:
       - context_length_exceeded
-      - session_budget_exceeded
       - usage_limit_exceeded
       - project_spend_limit_exceeded
       - organization_spend_limit_exceeded
@@ -85223,7 +85274,6 @@ components:
       - internal_error
       x-enumDescriptions:
       - The request exceeds the model's context window.
-      - The session has reached its usage budget.
       - The organization has reached a usage, plan, or billing limit.
       - The project has reached its enforced spend limit.
       - The organization has reached its enforced spend limit.
@@ -87253,26 +87303,6 @@ components:
       - deleted
       additionalProperties: false
       description: A deleted reusable environment template.
-    SessionSpendControlResource:
-      type: object
-      properties:
-        limit:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 4503599627370495
-          description: The configured positive limit in USD cents.
-        consumed:
-          type:
-          - integer
-          - 'null'
-          minimum: 0
-          description: Best-effort recorded spend floored to whole USD cents, or null when unavailable.
-      required:
-      - limit
-      - consumed
-      additionalProperties: false
-      description: Session-wide spending control, present only when a limit is configured.
     SessionStatusResource:
       type: string
       enum:
@@ -87927,9 +87957,6 @@ components:
     SessionResource:
       type: object
       properties:
-        spend_control:
-          $ref: '#/components/schemas/SessionSpendControlResource'
-          description: Configured spending limit and best-effort consumption, in USD cents. Unlimited sessions omit this object.
         metadata:
           type: object
           additionalProperties:
@@ -88052,21 +88079,6 @@ components:
       - has_more
       additionalProperties: false
       description: A page of Agents API resources, with IDs for retrieving additional pages.
-    SessionSpendControlParam:
-      type: object
-      properties:
-        limit:
-          type:
-          - integer
-          - 'null'
-          format: int64
-          minimum: 1
-          maximum: 4503599627370495
-          description: Positive USD cents, or null to remove the limit.
-      required:
-      - limit
-      additionalProperties: false
-      description: Sets the session-wide limit without changing recorded spend.
     AgentToolConfigParamFunction:
       type: object
       properties:
@@ -88748,11 +88760,6 @@ components:
     CreateAgentSessionParams:
       type: object
       properties:
-        spend_control:
-          anyOf:
-          - $ref: '#/components/schemas/SessionSpendControlParam'
-          - type: 'null'
-          description: Optional spending limit in USD cents. Omission or null creates an unlimited session.
         metadata:
           type:
           - object
@@ -90421,11 +90428,6 @@ components:
     UpdateAgentSessionParams:
       type: object
       properties:
-        spend_control:
-          anyOf:
-          - $ref: '#/components/schemas/SessionSpendControlParam'
-          - type: 'null'
-          description: Omit to retain the limit; null or a null limit removes it without resetting spend.
         agent:
           $ref: '#/components/schemas/UpdateSessionAgentParam'
           description: Agent settings to update on this session. Omitted fields stay unchanged.
@@ -92470,7 +92472,7 @@ components:
         type: session.start
         event_id: evt_start_001
         session:
-          model: gpt-live-1
+          model: gpt-live-1.1
           instructions: Help the caller plan a restaurant reservation. Confirm details before booking.
           audio:
             format:
@@ -92506,7 +92508,7 @@ components:
           type: session.start
           event_id: evt_start_001
           session:
-            model: gpt-live-1
+            model: gpt-live-1.1
             instructions: Help the caller plan a restaurant reservation. Confirm details before booking.
             audio:
               format:
@@ -93027,7 +93029,7 @@ components:
         client_event_id: evt_start_001
         session:
           id: live_abc123
-          model: gpt-live-1
+          model: gpt-live-1.1
           status: active
           expires_at: 1788555600
           instructions: Help the caller plan a restaurant reservation. Confirm details before booking.
@@ -93068,7 +93070,7 @@ components:
           client_event_id: evt_start_001
           session:
             id: live_abc123
-            model: gpt-live-1
+            model: gpt-live-1.1
             status: active
             expires_at: 1788555600
             instructions: Help the caller plan a restaurant reservation. Confirm details before booking.
@@ -93089,7 +93091,7 @@ components:
         client_event_id: evt_update_001
         session:
           id: live_def456
-          model: gpt-live-1
+          model: gpt-live-1.1
           status: active
           expires_at: 1788555600
           instructions: Help the caller plan a restaurant reservation. Confirm details before booking.
@@ -93135,7 +93137,7 @@ components:
           client_event_id: evt_update_001
           session:
             id: live_def456
-            model: gpt-live-1
+            model: gpt-live-1.1
             status: active
             expires_at: 1788555600
             instructions: Help the caller plan a restaurant reservation. Confirm details before booking.
@@ -93677,13 +93679,92 @@ components:
             delta: An outdoor table is available at 7 PM.
             sequence_number: 3
             logprobs: []
+    LiveSpeechWakePolicyParam:
+      description: Inference starts when the Live WebRTC session connects. After an idle pause, microphone speech resumes inference.
+      type: object
+      properties:
+        type:
+          description: The wake policy type, always `speech`.
+          default: speech
+          x-stainless-const: true
+          type: string
+          enum:
+          - speech
+        vad_threshold:
+          description: The speech detection threshold for resuming paused inference, from 0 to 1 inclusive. Defaults to 0.5. Higher values require stronger evidence of speech. This setting is independent of active turn detection.
+          type: number
+      required:
+      - type
+    idle_timeout_s:
+      description: Whole seconds of inactivity after which a Live WebRTC session with a speech wake policy pauses inference. The connection and conversation history are retained. Omit to keep inference active until the session ends.
+      type: integer
+      minimum: 5
+      maximum: 60
+    LiveSessionResumed:
+      description: Sent when speech resumes paused inference and it is ready for audio in a Live WebRTC session. Delivered to the sideband and, when permitted by its event settings, the data channel.
+      example:
+        type: session.resumed
+        event_id: evt_resumed_001
+      type: object
+      properties:
+        event_id:
+          description: The unique ID of the Live server event.
+          type: string
+        client_event_id:
+          description: The event_id of the client command associated with this server event, when supplied.
+          type: string
+        type:
+          default: session.resumed
+          x-stainless-const: true
+          type: string
+          enum:
+          - session.resumed
+      required:
+      - event_id
+      - type
+      x-oaiMeta:
+        example:
+          type: session.resumed
+          event_id: evt_resumed_001
+    LiveSessionPaused:
+      description: Sent when the idle timeout pauses inference in a Live WebRTC session. The WebRTC connection, sideband, and session ID persist. Delivered to the sideband and, when permitted by its event settings, the data channel.
+      example:
+        type: session.paused
+        event_id: evt_paused_001
+      type: object
+      properties:
+        event_id:
+          description: The unique ID of the Live server event.
+          type: string
+        client_event_id:
+          description: The event_id of the client command associated with this server event, when supplied.
+          type: string
+        type:
+          default: session.paused
+          x-stainless-const: true
+          type: string
+          enum:
+          - session.paused
+      required:
+      - event_id
+      - type
+      x-oaiMeta:
+        example:
+          type: session.paused
+          event_id: evt_paused_001
     LiveSessionUsage:
-      description: Cumulative audio duration for a Live session. Values are totals for the session, not increments to sum across usage events.
+      description: Cumulative billable duration for a Live session. Eligible WebRTC sessions also report the active and paused breakdown. Do not sum values across usage events.
       type: object
       properties:
         seconds:
-          description: The cumulative Live audio duration in seconds. Do not sum this value across usage events.
-          type: number
+          description: The cumulative billable duration in whole seconds. When present, the active and paused breakdown adds up to this total.
+          type: integer
+        active_seconds:
+          description: The remaining billable seconds attributed to active audio and any unused prepaid duration.
+          type: integer
+        paused_seconds:
+          description: Billable time attributed to paused inference at the configured rate, rounded down to whole seconds.
+          type: integer
       required:
       - seconds
     LiveContextWindowUsage:
@@ -93701,7 +93782,7 @@ components:
         type: session.usage.updated
         event_id: evt_usage_001
         usage:
-          seconds: 32.5
+          seconds: 32
         context_window:
           usage_ratio: 0.12
       type: object
@@ -93734,7 +93815,7 @@ components:
           type: session.usage.updated
           event_id: evt_usage_001
           usage:
-            seconds: 32.5
+            seconds: 32
           context_window:
             usage_ratio: 0.12
     LiveSessionClosed:
@@ -93760,7 +93841,7 @@ components:
           delegation:
             type: client
         usage:
-          seconds: 45.8
+          seconds: 45
       type: object
       properties:
         event_id:
@@ -93837,7 +93918,7 @@ components:
             delegation:
               type: client
           usage:
-            seconds: 45.8
+            seconds: 45
     LiveLiveError:
       description: Details of an error encountered by the Live session, including the affected parameter or client command when available.
       type: object
@@ -99721,6 +99802,7 @@ components:
         - gpt-5.6-cyber
         - gpt-6-cyber
         - gpt-rosalind-research
+        - gpt-6.2-astra-law
         x-openai-enum-deprecations:
           o1-pro:
             message: 'Announced shutdown date: 2026-10-23. See https://developers.openai.com/api/docs/deprecations for details and recommended replacements.'
@@ -101367,6 +101449,39 @@ components:
             },
             "sequence_number": 1
           }
+    BetaReasoningInputTransformation:
+      properties:
+        type:
+          type: string
+          enum:
+          - reasoning
+          default: reasoning
+          x-stainless-const: true
+        id:
+          type: string
+          description: The original reasoning item ID.
+        action:
+          type: string
+          enum:
+          - removed
+          default: removed
+          x-stainless-const: true
+        reason:
+          $ref: '#/components/schemas/BetaInputRemovalReason'
+      type: object
+      required:
+      - type
+      - id
+      - action
+      - reason
+    BetaInputRemovalReason:
+      type: string
+      enum:
+      - organization_mismatch
+      - end_user_mismatch
+      - model_mismatch
+      - prefix_mismatch
+      - turn_boundary
     BetaResponse:
       title: The response object
       allOf:
@@ -101452,6 +101567,11 @@ components:
                   - content_filter
                   - steered
             - type: 'null'
+          input_transformations:
+            type: array
+            description: Reasoning inputs withheld from the model, in input order.
+            items:
+              $ref: '#/components/schemas/BetaReasoningInputTransformation'
           output:
             type: array
             description: |
@@ -106733,6 +106853,12 @@ components:
             - type: 'null'
             x-openai-go-legacy-bool-fields:
             - enabled
+          background_options:
+            $ref: '#/components/schemas/BetaBackgroundOptionsParam'
+            description: |
+              Options for background execution on HTTP requests. The `2h` and `8h`
+              completion windows require `background: true`, Standard processing,
+              and `stream: false` or omitted.
     BetaMultiAgentParam:
       properties:
         enabled:
@@ -108443,6 +108569,40 @@ components:
       - output_tokens
       - total_tokens
       - reasoning_tokens
+    BackgroundOptionsParam:
+      properties:
+        completion_window:
+          $ref: '#/components/schemas/BackgroundCompletionWindowEnum'
+          description: The completion window for background execution. Defaults to `soonest`; `2h` and `8h` select discounted background execution.
+        continuation_id:
+          type: string
+          description: A customer-provided opaque identifier used to prioritize related background requests. It does not add prior history to the input.
+      type: object
+      required: []
+      description: Options for background execution.
+    BackgroundCompletionWindowEnum:
+      type: string
+      enum:
+      - soonest
+      - 2h
+      - 8h
+    BetaBackgroundOptionsParam:
+      properties:
+        completion_window:
+          $ref: '#/components/schemas/BetaBackgroundCompletionWindowEnum'
+          description: The completion window for background execution. Defaults to `soonest`; `2h` and `8h` select discounted background execution.
+        continuation_id:
+          type: string
+          description: A customer-provided opaque identifier used to prioritize related background requests. It does not add prior history to the input.
+      type: object
+      required: []
+      description: Options for background execution.
+    BetaBackgroundCompletionWindowEnum:
+      type: string
+      enum:
+      - soonest
+      - 2h
+      - 8h
     OAuthErrorCode:
       anyOf:
       - enum:
@@ -108596,7 +108756,9 @@ components:
       type: string
       enum:
       - gpt-6-astra
+      - gpt-6.2-astra
       - gpt-6.1-sol
+      - gpt-6.2-sol
       - gpt-6.1-terra
       - gpt-6-sol
       - gpt-6-luna

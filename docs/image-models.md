@@ -16,7 +16,7 @@ openai --transform 'models.0.id' --raw-output images models --offline
 Use the complete ID with the existing generation command:
 
 ```sh
-openai images generate --prompt "A tiny orange robot" --model gpt-image-2.5-flare
+openai images generate --prompt "A tiny orange robot" --model gpt-image-2.6-flare
 ```
 
 This command does not set a CLI default. The catalog comes from the SDK version

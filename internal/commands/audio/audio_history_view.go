@@ -30,9 +30,9 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 	if m.framed() {
 		lines = append(lines, m.listeningRule())
 	}
-	footer := []string{""}
+	details := []string{""}
 	if m.historySearch.showFolder && m.store.Directory != "" {
-		footer = append(footer, m.historyPathRow("History", m.store.Directory))
+		details = append(details, m.historyPathRow("History", m.store.Directory))
 	}
 	folderHint := [2]string{"Ctrl+L", "folder"}
 	if len(entries) == 0 {
@@ -45,8 +45,8 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 		if m.store.Directory != "" {
 			hints = append(hints, folderHint)
 		}
-		footer = append(footer, m.formShortcutRows(hints...)...)
-		return m.cursorView(append(append(lines, empty), footer...), len(footer), cursor)
+		footer := m.formShortcutRows(hints...)
+		return m.panelView(append(lines, empty), details, footer, cursor)
 	}
 	choice := max(0, min(m.choice, len(entries)-1))
 	selected := entries[choice]
@@ -62,13 +62,13 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 	for len(metadata) > 1 && ansi.StringWidth(audioHistoryCell(strings.Join(metadata, "  "))) > available {
 		metadata = metadata[1:]
 	}
-	footer[0] = detail + m.muted().Render(ansi.Truncate(audioHistoryCell(strings.Join(metadata, "  ")), available, "…"))
-	footer = append([]string{""}, footer...)
+	details[0] = detail + m.muted().Render(ansi.Truncate(audioHistoryCell(strings.Join(metadata, "  ")), available, "…"))
+	details = append([]string{""}, details...)
 	// Export locations are session evidence, not persisted History metadata.
 	for _, result := range []*audioWorkResult{m.result, m.priorResult} {
 		if result != nil && selected.ID != "" && result.entry.ID == selected.ID && len(result.savedPaths) > 0 {
 			if path := result.savedPaths[len(result.savedPaths)-1]; path != "" {
-				footer = append(footer, m.historyPathRow("Saved", path))
+				details = append(details, m.historyPathRow("Saved", path))
 				break
 			}
 		}
@@ -84,7 +84,7 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 	if m.store.Directory != "" {
 		hints = append(hints, folderHint)
 	}
-	footer = append(footer, m.formShortcutRows(hints...)...)
+	footer := m.formShortcutRows(hints...)
 	lines = append(lines, "  "+m.historyTableRow("Clip", "Voice", "Format", "Time", true))
 
 	type row struct {
@@ -104,7 +104,7 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 		}
 		rows = append(rows, row{entry: i, date: date})
 	}
-	budget := max(1, m.audioHeight()-len(lines)-len(footer))
+	budget := max(1, m.audioHeight()-len(lines)-len(details)-len(footer))
 	start := max(0, selectedRow-budget+1)
 	dateStyle := m.accent()
 	if m.color && m.dark {
@@ -136,7 +136,7 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 		text := m.historyTableRow(prompt, readable.ChoiceTitle(entry.Settings.Voice), strings.ToUpper(entry.Settings.Format), stamp, false)
 		lines = append(lines, m.choiceRow(text, r.entry == choice && !m.historySearch.focused, m.audioWidth()))
 	}
-	return m.cursorView(append(lines, footer...), len(footer), cursor)
+	return m.panelView(lines, details, footer, cursor)
 }
 
 // The caller reserves two cells for selection and two for the right inset.

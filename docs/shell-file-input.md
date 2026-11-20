@@ -6,12 +6,17 @@ Use `@-` for one text field or `--file -` for a binary upload.
 ```sh
 printf 'hello\n' | openai responses create --model MODEL --input @-
 cat notes.txt | openai files create --file - --purpose user_data
-cat speech.wav | openai audio transcriptions create --model whisper-1 --file -
 ```
 
 The first command sends `hello\n` as the input field.
 In literal mode, JSON-looking text also stays text when an ordinary text field explicitly selects stdin.
 The CLI does not expand references found inside that text.
+
+For transcription, pass a named audio file. The CLI uses its extension to identify the audio format.
+
+```sh
+openai audio transcriptions create --model gpt-transcribe --file speech.wav
+```
 
 Only one effective parameter can consume stdin.
 Two consumers fail before the CLI reads stdin or sends a request.
@@ -88,6 +93,19 @@ A file path retains its basename and extension-derived content type.
 Use a file path when an API needs a named file or a specific extension.
 Uploads containing readers stream once and do not retry or replay automatically.
 Multipart uploads preserve NUL and non-UTF8 bytes.
+
+### Skill folders
+
+Pass the folder containing `SKILL.md` to either create command.
+
+```sh
+openai skills create --files ./demo-skill
+openai skills versions create --skill-id skill_example --files ./demo-skill --default=false
+```
+
+The CLI packages the selected folder under its own name. It includes hidden files, nested folders, and executable bits.
+Select only the files you intend to share. Remove symbolic links and special files before uploading.
+Packaging uses temporary disk space. To upload an existing ZIP, pass its filename or use `--files -` for stdin.
 
 ### Windows shells
 

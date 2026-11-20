@@ -161,7 +161,7 @@ func TestImagePickerWorkspaceProgressAndScrollingDoNotRepaintHeader(t *testing.T
 	m.width, m.height, m.workspace, m.generating = 96, 28, true, true
 	w := &imagePickerWorkspace{out: out, since: time.Now()}
 	for range 40 {
-		w.rows = append(w.rows, "Synthetic image row")
+		w.addDetail("Synthetic image row", imageSecondary)
 	}
 	require.NoError(t, w.draw(m, colorprofile.ASCII, true, true))
 	position, err := out.Seek(0, io.SeekCurrent)

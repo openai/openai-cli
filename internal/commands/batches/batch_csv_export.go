@@ -39,7 +39,7 @@ func validateBatchCSVResults(batch gjson.Result) error {
 	return nil
 }
 
-func writeBatchCSVResults(ctx context.Context, client openai.Client, options []option.RequestOption, batch gjson.Result, sourcePath string, file *os.File, preview io.Writer) (err error) {
+func writeBatchCSVResults(ctx context.Context, client openai.Client, options []option.RequestOption, batch gjson.Result, sourcePath string, file *os.File, preview *batchBrowserCSVRows) (err error) {
 	source, err := prepareBatchCSVSnapshot(ctx, sourcePath)
 	if err != nil {
 		return err
@@ -134,7 +134,7 @@ func writeBatchCSVResults(ctx context.Context, client openai.Client, options []o
 			answer, problem = batchCSVResult(gjson.ParseBytes(record.Bytes()), group.resultHead > beforeErrors)
 		}
 		if preview != nil {
-			if err := writeBatchBrowserCSVRow(preview, number, header, row, answer, problem); err != nil {
+			if err := preview.add(number, header, row, answer, problem); err != nil {
 				return err
 			}
 		}

@@ -132,7 +132,7 @@ func setupUpdateVerifier(ctx context.Context) error {
 }
 
 func (d *releaseDelivery) selectVerifier(ctx context.Context, work string, root *os.Root, showProgress bool) error {
-	if d.verifier != "" && d.checkVerifierHelp(ctx, work) == nil {
+	if d.verifier != "" && d.checkVerifierCapabilities(ctx, work) == nil {
 		return nil
 	}
 	name, pin := privateVerifierAsset()
@@ -141,7 +141,7 @@ func (d *releaseDelivery) selectVerifier(ctx context.Context, work string, root 
 		return err
 	}
 	d.verifier = path
-	return d.checkVerifierHelp(ctx, work)
+	return d.checkVerifierCapabilities(ctx, work)
 }
 
 func privateVerifierAsset() (string, verifierPin) {

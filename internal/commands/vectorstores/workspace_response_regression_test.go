@@ -89,10 +89,7 @@ func TestNarrowConfirmationDisplaysFullAttachmentAndBatchID(t *testing.T) {
 			require.Equal(t, tc.page, m.page)
 			var displayed strings.Builder
 			for _, line := range strings.Split(m.View().Content, "\n") {
-				_, body, ok := strings.Cut(line, "│")
-				if ok {
-					displayed.WriteString(strings.TrimSpace(strings.TrimSuffix(body, "│")))
-				}
+				displayed.WriteString(strings.TrimSpace(line))
 			}
 			assert.Contains(t, displayed.String(), tc.id, "the user must enter the full ID")
 		})

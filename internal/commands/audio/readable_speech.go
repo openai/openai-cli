@@ -16,6 +16,7 @@ import (
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -34,12 +35,34 @@ func ConfigureSpeech(root *cli.Command, presentation func(context.Context, *cli.
 	command := resource.Command("create")
 	const form = "Run without command flags in a terminal to open speech controls. " +
 		"The form retains audio, text, and instructions in private local history."
-	const inputs = "For direct output, supply --input, --model, and --voice through flags or piped JSON/YAML."
+	const inputs = "For direct output, supply --input, --model, and --voice through flags or piped JSON/YAML. " +
+		"Use " + realtimeSpeechModel + " for WAV or PCM over Realtime."
 	command.Description += "\n\n" + form + " Use audio history, inspect, play, and export for retained results. " +
 		"Explicit flags and pipes preserve direct output."
 	if command.Metadata == nil {
 		command.Metadata = map[string]any{}
 	}
+	for _, flag := range command.Flags {
+		switch f := flag.(type) {
+		case *requestflag.Flag[string]:
+			switch f.Name {
+			case "model":
+				f.Usage = "The composer defaults to " + realtimeSpeechModel + " through the Realtime API. Choose a Speech API ID such as gpt-4o-mini-tts, tts-1, or tts-1-hd to use the Speech endpoint."
+			case "input":
+				f.Usage = "Text to read aloud. Speech API models accept up to 4096 characters."
+			case "response-format":
+				f.Usage = "Realtime supports wav (default) and pcm. Speech API models support mp3 (default), opus, aac, flac, wav, and pcm."
+				f.HideDefault = true
+			case "stream-format":
+				f.Usage = "Use audio (default) for a finite recording. Speech API models also accept sse, except for tts-1 and tts-1-hd."
+			}
+		case *requestflag.Flag[float64]:
+			if f.Name == "speed" {
+				f.Usage = "Set the speech speed. Realtime supports 0.25 to 1.5. Speech API models support 0.25 to 4."
+			}
+		}
+	}
+	command.Metadata["audio-speech-request"] = true
 	command.Metadata["help-content"] = clihelp.Content{
 		Description: command.Description, InputNote: inputs, CompactNote: form + "\n\n" + inputs,
 	}
@@ -262,4 +285,5 @@ type SpeechPresentation struct {
 // AuthenticationGuidance supplies a cause and short recovery steps.
 type AuthenticationGuidance struct {
 	Summary, Action string
+	PanelAction     string // Optional shorter action while the terminal form is open.
 }

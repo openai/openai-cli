@@ -116,7 +116,7 @@ func (w *imagePickerWorkspace) ensureGallery(m *imagePicker, captions bool) {
 		w.galleryRevision++
 	}
 	first, end := w.visibleImages(m)
-	if first != w.galleryFirst || end-first != len(w.galleryStarts) || w.layoutWidth != width || w.layoutCaptions != captions || w.layoutCount != len(w.rows) || w.layoutSelected != w.selected || w.layoutRevision != w.galleryRevision || w.galleryJump || w.galleryDetails {
+	if first != w.galleryFirst || end-first != len(w.galleryStarts) || w.layoutWidth != width || w.layoutCaptions != captions || w.layoutCount != len(w.diagnostics) || w.layoutSelected != w.selected || w.layoutRevision != w.galleryRevision || w.galleryJump || w.galleryDetails {
 		w.layoutCaptions = captions
 		w.layoutGallery(m)
 	}
@@ -134,7 +134,7 @@ func (w *imagePickerWorkspace) inlineStatus(m *imagePicker, busy bool) string {
 	status := ""
 	if busy {
 		status = w.progress(m)
-	} else if m.note != "" && m.note != "All images saved." && (m.note != imagePickerRequestFailureNote || len(w.rows) == 0) {
+	} else if m.note != "" && m.note != "All images saved." && (m.note != imagePickerRequestFailureNote || len(w.diagnostics) == 0) {
 		// New form notices take precedence over retained request or image-open errors.
 		role := m.noteTone
 		if m.note == imagePickerRequestFailureNote {
@@ -150,8 +150,10 @@ func (w *imagePickerWorkspace) inlineStatus(m *imagePicker, busy bool) string {
 }
 
 func (w *imagePickerWorkspace) requestFailureSummary() string {
-	if w.requestFailure != "" {
-		return w.requestFailure
+	for i := len(w.diagnostics) - 1; i >= 0; i-- {
+		if heading := w.diagnostics[i].heading; heading != "" {
+			return imagePickerLine(heading)
+		}
 	}
 	return imagePickerRequestFailureNote
 }
@@ -187,8 +189,13 @@ func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 	if w.longNotice != "" {
 		appendDetail(w.longNotice, w.longNoticeTone)
 	}
-	for i, row := range w.rows {
-		appendDetail(row, w.detailTones[i])
+	for _, diagnostic := range w.diagnostics {
+		if diagnostic.heading != "" {
+			appendDetail(imagePickerLine(diagnostic.heading), imageFailure)
+		}
+		for _, detail := range diagnostic.details {
+			appendDetail(imagePickerLine(detail.text), detail.tone)
+		}
 	}
 	w.messageRows = len(w.displayRows)
 	firstImage, end := w.visibleImages(m)
@@ -211,7 +218,7 @@ func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 			appendRow("Select this image to fit the preview. Press O to open it.")
 		case entry.nativeRows > 0:
 			for row := range entry.nativeRows {
-				w.nativeDisplay[len(w.displayRows)] = imagePickerNativeRow{i, row, entry.columns, entry.nativeRows, false}
+				w.nativeDisplay[len(w.displayRows)] = imagePickerNativeRow{image: i, row: row, columns: entry.columns, count: entry.nativeRows, expanded: false}
 				w.displayRows = append(w.displayRows, "")
 			}
 		default:
@@ -232,7 +239,7 @@ func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 		w.offset = w.galleryOffset(w.selected, w.images[w.selected].inlineOffset)
 	}
 	w.galleryJump, w.galleryDetails = false, false
-	w.layoutWidth, w.layoutCount, w.layoutSelected, w.layoutRevision = width, len(w.rows), w.selected, w.galleryRevision
+	w.layoutWidth, w.layoutCount, w.layoutSelected, w.layoutRevision = width, len(w.diagnostics), w.selected, w.galleryRevision
 }
 
 func (w *imagePickerWorkspace) galleryImageAt(offset int) int {
@@ -260,10 +267,8 @@ func (w *imagePickerWorkspace) galleryOffset(index, relative int) int {
 }
 
 func (w *imagePickerWorkspace) clearRequestDiagnostics() {
-	if len(w.rows) > 0 && len(w.galleryStarts) > 0 && w.offset < w.galleryStarts[0] {
+	if len(w.diagnostics) > 0 && len(w.galleryStarts) > 0 && w.offset < w.galleryStarts[0] {
 		w.galleryJump = true
 	}
-	w.rows = nil
-	w.detailTones = nil
-	w.requestFailure = ""
+	w.diagnostics = nil
 }

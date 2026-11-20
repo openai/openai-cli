@@ -68,7 +68,7 @@ func (m *imagePickerMouseModes) disable() string {
 // Stop reporting before waiting for workers or restoring terminal input.
 // Repeated cleanup retries the same owned resets after a previous write failure.
 func (w *imagePickerWorkspace) stopMouse() error {
-	transferErr := w.stopKonsoleTransfer()
+	transferErr := w.stopNativeTransfer()
 	frame := w.mouse.disable()
 	if frame == "" {
 		return transferErr

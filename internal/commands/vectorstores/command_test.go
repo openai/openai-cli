@@ -16,6 +16,7 @@ import (
 
 type workspaceRoutingState struct {
 	previous, service, run, direct int
+	fullScreen                     bool
 	project, organization, url     string
 	header                         []string
 	output                         bytes.Buffer
@@ -64,8 +65,9 @@ func workspaceRoutingRoot(terminal bool) (*cli.Command, *workspaceRoutingState) 
 			return nil, nil
 		}},
 		terminal: func(*cli.Command) (*os.File, *os.File, bool) { return nil, nil, terminal },
-		run: func(context.Context, Service, func(error) string, *os.File, *os.File) error {
+		run: func(_ context.Context, _ Service, _ func(error) string, _, _ *os.File, fullScreen bool) error {
 			state.run++
+			state.fullScreen = fullScreen
 			return nil
 		},
 	}.configure(root)
@@ -148,6 +150,42 @@ func TestWorkspaceExplicitOutputChoices(t *testing.T) {
 	}
 }
 
+func TestWorkspaceFullScreenFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"compact by default", nil, false},
+		{"expanded", []string{"--full-screen"}, true},
+		{"explicit compact", []string{"--full-screen=false"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, state := workspaceRoutingRoot(true)
+			require.NoError(t, root.Run(t.Context(), append([]string{"openai", "vector-stores", "manage"}, tc.args...)))
+			require.Equal(t, 1, state.run)
+			assert.Equal(t, tc.want, state.fullScreen)
+		})
+	}
+
+	root, state := workspaceRoutingRoot(false)
+	require.NoError(t, root.Run(t.Context(), []string{"openai", "vector-stores", "manage", "--help"}))
+	assert.Contains(t, state.output.String(), "--full-screen")
+
+	for _, tc := range []struct {
+		terminal bool
+		args     []string
+	}{
+		{false, []string{"openai", "vector-stores", "manage", "--full-screen"}},
+		{true, []string{"openai", "--format", "json", "vector-stores", "manage", "--full-screen"}},
+	} {
+		root, state := workspaceRoutingRoot(tc.terminal)
+		require.Error(t, root.Run(t.Context(), tc.args))
+		assert.Zero(t, state.service)
+		assert.Zero(t, state.run)
+	}
+}
+
 func TestWorkspaceInheritedContext(t *testing.T) {
 	for _, tailFlags := range []bool{false, true} {
 		root, state := workspaceRoutingRoot(true)
@@ -227,7 +265,7 @@ func TestWorkspaceLaunchFailureRetainsIdentity(t *testing.T) {
 	called := false
 	command := workspaceCommand{
 		options: Options{NewService: func(context.Context, *cli.Command) (Service, error) { return nil, failure }},
-		run: func(context.Context, Service, func(error) string, *os.File, *os.File) error {
+		run: func(context.Context, Service, func(error) string, *os.File, *os.File, bool) error {
 			called = true
 			return nil
 		},

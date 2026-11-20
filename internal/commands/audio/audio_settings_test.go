@@ -142,6 +142,7 @@ func TestAudioInlineSpeedTypingAndEnterStayOnForm(t *testing.T) {
 	for _, size := range [][2]int{{40, 12}, {90, 34}} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			m := audioInlineSettingsModel(t, size[0], size[1], 3)
+			m.settings.Model = "gpt-4o-mini-tts" // Legacy Speech API supports speeds through 4.
 			m.settings.Speed = 1.25
 			audioInlineType(m, "2.5")
 			require.True(t, m.speedEditing)
@@ -195,10 +196,10 @@ func TestAudioInlineSpeedInvalidDraftBlocksNavigationAndGeneration(t *testing.T)
 					require.False(t, m.busy)
 					require.False(t, m.quit)
 					require.Empty(t, m.modal)
-					require.Equal(t, audioSpeedError, m.speedError)
+					require.Equal(t, m.speedRangeError(), m.speedError)
 				}
 				view := strings.Join(strings.Fields(ansi.Strip(m.View().Content)), " ")
-				require.Contains(t, view, audioSpeedError)
+				require.Contains(t, view, m.speedRangeError())
 				m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 				require.False(t, m.speedEditing)
 				require.Empty(t, m.speedError)
@@ -230,9 +231,10 @@ func TestAudioInlineSpeedValidNavigationCommitsWithoutGeneration(t *testing.T) {
 
 func TestAudioInlineSpeedCorrectionClearsValidation(t *testing.T) {
 	m := audioInlineSettingsModel(t, 90, 34, 3)
+	m.settings.Model = "gpt-4o-mini-tts" // Legacy Speech API supports speeds through 4.
 	audioInlineType(m, "4.01")
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	require.Equal(t, audioSpeedError, m.speedError)
+	require.Equal(t, m.speedRangeError(), m.speedError)
 	m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	require.Equal(t, "4.0", m.speedInput.Value())
 	require.Empty(t, m.speedError)
@@ -244,6 +246,7 @@ func TestAudioInlineSpeedCorrectionClearsValidation(t *testing.T) {
 
 func TestAudioInlineSpeedArrowsAdjustQuarterStepsAndPreserveDraft(t *testing.T) {
 	m := audioInlineSettingsModel(t, 90, 34, 3)
+	m.settings.Model = "gpt-4o-mini-tts" // Legacy Speech API supports speeds through 4.
 	for _, tc := range []struct {
 		speed float64
 		key   rune
@@ -273,6 +276,7 @@ func TestAudioInlineChoicesCycleSupportedValuesWithoutActions(t *testing.T) {
 					m.settings.Model, m.settings.Voice = "tts-1", choices[0]
 				}
 				if setting == 2 {
+					m.settings.Model = "gpt-4o-mini-tts"
 					m.settings.Format = choices[0]
 				}
 				retained := audioReviewResult("retained", false)
@@ -360,6 +364,7 @@ func TestAudioInlineSpeedRecoveryPreservesDraftAndRestoresFocus(t *testing.T) {
 		for _, trigger := range []string{"playback failure", "F1"} {
 			t.Run(fmt.Sprintf("%v/%s", size, trigger), func(t *testing.T) {
 				m := audioInlineSettingsModel(t, size[0], size[1], 3)
+				m.settings.Model = "gpt-4o-mini-tts" // Legacy Speech API supports speeds through 4.
 				retained := audioReviewResult("retained", false)
 				m.result, m.playID, m.playing = &retained, 17, true
 				failure := audioWorkMessage{kind: "play", playID: 17, err: errors.New("synthetic player failure")}
@@ -375,7 +380,7 @@ func TestAudioInlineSpeedRecoveryPreservesDraftAndRestoresFocus(t *testing.T) {
 				}
 				audioInlineType(m, "4.01")
 				m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-				require.Equal(t, audioSpeedError, m.speedError)
+				require.Equal(t, m.speedRangeError(), m.speedError)
 				if trigger == "playback failure" {
 					m.Update(failure)
 				} else {
@@ -390,7 +395,7 @@ func TestAudioInlineSpeedRecoveryPreservesDraftAndRestoresFocus(t *testing.T) {
 				require.True(t, m.speedInput.Focused())
 				require.True(t, m.speedEditing)
 				require.Equal(t, "4.01", m.speedInput.Value())
-				require.Equal(t, audioSpeedError, m.speedError)
+				require.Equal(t, m.speedRangeError(), m.speedError)
 				require.Equal(t, float64(1), m.settings.Speed)
 				require.Same(t, &retained, m.result)
 				// Leave the repeat-submit cooldown behind. The invalid draft itself
@@ -421,9 +426,9 @@ func TestAudioSettingsPickerShowsAppliedValueWhileBrowsing(t *testing.T) {
 				audioReviewKey(m, tea.KeyDown)
 				content := m.View().Content
 				plain := ansi.Strip(content)
-				require.Contains(t, plain, "Current  gpt-4o-mini-tts")
-				require.Contains(t, plain, "› gpt-4o-mini-tts-2025-03-20")
-				require.Contains(t, strings.Join(strings.Fields(plain), " "), "Pinned snapshot with voice instructions")
+				require.Contains(t, plain, "Current  gpt-realtime-2.1-mini")
+				require.Contains(t, plain, "› gpt-4o-mini-tts")
+				require.Contains(t, strings.Join(strings.Fields(plain), " "), "Supports voice instructions")
 				require.Contains(t, plain, "Retirement  Jan 6, 2027")
 				if color {
 					require.Contains(t, content, m.warningStyle().Render("Retirement  Jan 6, 2027"))
@@ -435,7 +440,7 @@ func TestAudioSettingsPickerShowsAppliedValueWhileBrowsing(t *testing.T) {
 				for _, row := range rows {
 					require.LessOrEqual(t, ansi.StringWidth(row), size[0]-1)
 				}
-				for i := 0; i < 3; i++ {
+				for i := 0; i < 4; i++ {
 					audioReviewKey(m, tea.KeyDown)
 				}
 				plain = ansi.Strip(m.View().Content)
@@ -443,7 +448,7 @@ func TestAudioSettingsPickerShowsAppliedValueWhileBrowsing(t *testing.T) {
 				require.Contains(t, plain, "Unlisted legacy ID")
 				require.NotContains(t, plain, "Retirement")
 				audioReviewKey(m, tea.KeyEscape)
-				require.Equal(t, "gpt-4o-mini-tts", m.settings.Model)
+				require.Equal(t, realtimeSpeechModel, m.settings.Model)
 				require.Empty(t, m.modal)
 			})
 		}
@@ -463,4 +468,25 @@ func TestAudioFormatPickerShowsEncodingAndPreservesAPIValue(t *testing.T) {
 		require.Equal(t, "pcm", m.settings.Format)
 		require.Empty(t, m.modal)
 	}
+}
+
+func TestRealtimeSpeechFormSettings(t *testing.T) {
+	m := audioInlineSettingsModel(t, 90, 34, 3)
+	require.Equal(t, "gpt-realtime-2.1-mini", m.settings.Model)
+	require.Equal(t, []string{"wav", "pcm"}, audioModelFormats(m.settings.Model))
+	require.NotContains(t, audioModelVoices(m.settings.Model), "fable")
+	m.settings.Speed = 1.5
+	audioReviewKey(m, tea.KeyRight)
+	require.Equal(t, 1.5, m.settings.Speed)
+	require.Contains(t, m.speedRangeError(), "1.5")
+	m.Update(tea.PasteMsg{Content: "1.51"})
+	audioReviewKey(m, tea.KeyEnter)
+	require.True(t, m.speedEditing)
+	require.Equal(t, "Enter a speed from 0.25 to 1.5.", m.speedError)
+	audioReviewKey(m, tea.KeyEscape)
+	m.input.SetValue("A private script.")
+	command, ok := m.rawCommand()
+	require.True(t, ok)
+	require.Contains(t, command, `"model": "gpt-realtime-2.1-mini"`)
+	require.Contains(t, command, `"response_format": "wav"`)
 }

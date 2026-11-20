@@ -210,7 +210,7 @@ func TestImageStudioShowsRecoveryInstructionsWithoutClipping(t *testing.T) {
 func TestImageStudioWrappedGuidanceKeepsItsTone(t *testing.T) {
 	m, w := browserForTest(t, 110, 28)
 	m.color, m.dark = true, true
-	w.rows = []string{strings.Repeat("Try again. ", 14) + "Reopen Images."}
+	w.addDetail(strings.Repeat("Try again. ", 14)+"Reopen Images.", imageSecondary)
 	require.NoError(t, w.draw(m, colorprofile.TrueColor, false, true))
 	require.Greater(t, w.messageRows, 1)
 	for _, row := range w.displayRows[:w.messageRows] {

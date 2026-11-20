@@ -15,7 +15,7 @@ func TestMainExploreHelpShowsLocalOptions(t *testing.T) {
 	if got.code != 0 || got.stderr != "" {
 		t.Fatalf("Explore help failed: %+v", got)
 	}
-	for _, want := range []string{"--format", "--format-error", "openai help --all explore"} {
+	for _, want := range []string{"--full-screen", "Ctrl+G", "--format", "--format-error", "openai help --all explore"} {
 		if !strings.Contains(got.stdout, want) {
 			t.Errorf("Explore help omitted %q", want)
 		}

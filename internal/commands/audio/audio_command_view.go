@@ -100,7 +100,7 @@ func (m *audioWorkbench) commandOptions() (args []string, speed float64, reason 
 	}
 	speed = m.settings.Speed
 	if m.speedEditing {
-		value, valid := audioSpeedValue(m.speedInput.Value())
+		value, valid := m.speedValue(m.speedInput.Value())
 		if !valid {
 			return nil, 0, "Apply a valid Speed to preview the command."
 		}
@@ -231,7 +231,7 @@ func (m *audioWorkbench) commandView() tea.View {
 	for _, row := range rows[start:min(len(rows), start+height)] {
 		lines = append(lines, "  "+row)
 	}
-	return tea.NewView(m.fitAudio(append(lines, footer...), len(footer)))
+	return m.panelView(lines, nil, footer, nil)
 }
 
 func (m *audioWorkbench) commandViewportHeight() int {

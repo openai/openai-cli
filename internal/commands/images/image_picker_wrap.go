@@ -6,8 +6,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/terminal"
 )
 
 type imagePickerWrapProbe struct {
@@ -28,9 +28,7 @@ func (p *imagePickerInline) probeWrapping() tea.Cmd {
 	p.wrapRevision++
 	revision := p.wrapRevision
 	p.wrapProbe = &imagePickerWrapProbe{width: width, height: height, revision: revision}
-	_, _ = io.WriteString(p.output, ansi.SaveCursor+"\r"+ansi.EraseScreenBelow+
-		ansi.CursorHorizontalAbsolute(width)+"  "+ansi.RequestCursorPositionReport+
-		ansi.RestoreCursor+"\r"+ansi.EraseScreenBelow)
+	_, _ = io.WriteString(p.output, terminal.WrapProbe(width))
 	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return imagePickerWrapTimeout{revision} })
 }
 
@@ -62,10 +60,11 @@ func (p *imagePickerInline) updateWrapProbe(msg tea.Msg) (bool, tea.Cmd) {
 			p.model.width, p.model.height = width, height
 			return true, p.probeWrapping()
 		}
-		if msg.Y < 0 || msg.Y >= height || msg.X != 1 && msg.X != width-1 {
+		enabled, valid := terminal.ObservedAutoWrap(width, height, msg.X, msg.Y)
+		if !valid {
 			return fail()
 		}
-		p.restoreWrap, p.wrapKnown, p.wrapProbe = msg.X == width-1, true, nil
+		p.restoreWrap, p.wrapKnown, p.wrapProbe = !enabled, true, nil
 		p.start()
 		p.draw()
 		return true, nil

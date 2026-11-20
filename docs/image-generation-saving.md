@@ -4,9 +4,9 @@
 openai images generate --prompt "A tiny orange robot"
 openai images generate --prompt "A tiny orange robot" --name robot --count 2
 openai images generate --prompt "A tiny orange robot" --output-dir "~/Downloads"
-openai images generate --prompt "A tiny orange robot" --model gpt-image-2.5-flare
+openai images generate --prompt "A tiny orange robot" --model gpt-image-2.6-flare
 openai images generate --prompt "A tiny orange robot" --output-format webp
-openai --format json images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst
+openai --format json images generate --prompt "A tiny orange robot" --model gpt-image-2.6-sunburst
 ```
 
 Run `openai images generate` without flags in a terminal to choose a prompt,
@@ -22,6 +22,8 @@ An optional [Tab shortcut](image-picker-shortcuts.md) opens the same picker in
 Bash 4.3+, zsh and fish. Other shells use Enter.
 
 After generation, the picker keeps your prompt and settings below the saved result.
+In iTerm2, the mouse wheel and trackpad scroll terminal history, including after Ctrl+C.
+Use the arrow keys in **Images** to browse the gallery.
 Focus **Images** and press Enter to **Expand** the selected image.
 In supported Konsole sessions, Expand uses a temporary screen with native image pixels.
 Resize the terminal while Expand is open to refit the image.
@@ -47,7 +49,7 @@ Explicit image flags, output formats, piped input and redirected output retain
 the direct command behavior described below.
 
 Generation uses API credits and requires access to the chosen model. The CLI's
-default for saving is the exact ID `gpt-image-2.5-sunburst`. This is a preset,
+default for saving is the exact ID `gpt-image-2.6-sunburst`. This is a preset,
 not a guarantee of access or quota. When neither `model` nor `response_format`
 is supplied, it requests one PNG, automatic size, quality, background and
 moderation, no partial images, and no streaming. Flags and merged JSON/YAML
@@ -83,7 +85,8 @@ without claiming that an image was saved.
 
 ## Editing and variations
 
-The `images create-variation` endpoint is retired and no longer available.
+OpenAI retired the `images create-variation` endpoint. The CLI shows an edit command before uploading an image.
+Custom providers that implement variations still receive the original request.
 To create a variation, use `images edit` with a GPT Image model and a prompt:
 
 ```sh

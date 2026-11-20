@@ -9,6 +9,8 @@ func TestCatalog(t *testing.T) {
 	aliases := Catalog(false)
 	all := Catalog(true)
 	want := []Entry{
+		{ID: "gpt-image-2.6-sunburst"},
+		{ID: "gpt-image-2.6-flare"},
 		{ID: "gpt-image-2.5-sunburst"},
 		{ID: "gpt-image-2.5-flare"},
 		{ID: "gpt-image-2"},
@@ -22,7 +24,7 @@ func TestCatalog(t *testing.T) {
 		{ID: "gpt-image-2.5-flare-2026-09-08", Snapshot: true},
 		{ID: "gpt-image-2-2026-04-21", Snapshot: true},
 	}
-	if !slices.Equal(all, want) || !slices.Equal(aliases, want[:9]) {
+	if !slices.Equal(all, want) || !slices.Equal(aliases, want[:11]) {
 		t.Fatalf("unexpected catalogs: aliases=%+v; all=%+v", aliases, all)
 	}
 	aliases[0].ID = "mutated"

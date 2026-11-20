@@ -248,4 +248,4 @@ func TestMainImageProgressTerminal(t *testing.T) {
 }
 
 // The API fixture asserts the current preset, independent of runtime internals.
-const defaultProgressModel = "gpt-image-2.5-sunburst"
+const defaultProgressModel = "gpt-image-2.6-sunburst"

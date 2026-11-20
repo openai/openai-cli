@@ -1,5 +1,84 @@
 # Changelog
 
+## [1.55.1](https://github.com/openai/openai-cli/compare/v1.55.0...v1.55.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **api:** refresh the CLI's bundled API reference ([#773](https://github.com/openai/openai-cli/issues/773)) ([d8187ae](https://github.com/openai/openai-cli/commit/d8187aef9993ed3062858e18cfaf3b7e0bdfe692))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.103.0 ([#772](https://github.com/openai/openai-cli/issues/772)) ([57e1664](https://github.com/openai/openai-cli/commit/57e1664af379fa4cea4937aed4872de6ac4ff261))
+
+## [1.55.0](https://github.com/openai/openai-cli/compare/v1.54.1...v1.55.0) (2026-11-17)
+
+
+### Features
+
+* **api:** add 2-hour and 8-hour Responses background windows ([6f71347](https://github.com/openai/openai-cli/commit/6f71347fae484ed5647b8d19065e331219d293f2))
+* **api:** add the GPT-6.2 Astra Law Responses model identifier ([6f71347](https://github.com/openai/openai-cli/commit/6f71347fae484ed5647b8d19065e331219d293f2))
+* **api:** add the GPT-6.2 Astra model identifier ([6f71347](https://github.com/openai/openai-cli/commit/6f71347fae484ed5647b8d19065e331219d293f2))
+* **api:** add the GPT-6.2 Sol model identifier ([6f71347](https://github.com/openai/openai-cli/commit/6f71347fae484ed5647b8d19065e331219d293f2))
+* suggest static flag values in shell completion ([#411](https://github.com/openai/openai-cli/issues/411)) ([2a2c60a](https://github.com/openai/openai-cli/commit/2a2c60a5644c30194da5a25ef3be078078d6646c))
+
+
+### Bug Fixes
+
+* update Unicode decoding and terminal capabilities ([#767](https://github.com/openai/openai-cli/issues/767)) ([e78b06d](https://github.com/openai/openai-cli/commit/e78b06dbbb14d8d429ae4ae72df0790beb8477b7))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.101.0 ([#769](https://github.com/openai/openai-cli/issues/769)) ([b45b3dd](https://github.com/openai/openai-cli/commit/b45b3ddfdf9ae52aca50e109417ce97677a2ddea))
+
+## [1.54.1](https://github.com/openai/openai-cli/compare/v1.54.0...v1.54.1) (2026-11-16)
+
+
+### Chores
+
+* **deps:** bump golang.org/x/sys from 0.49.0 to 0.50.0 in the golang-x group across 1 directory ([#763](https://github.com/openai/openai-cli/issues/763)) ([58549ed](https://github.com/openai/openai-cli/commit/58549edd80add49082a295d266ad8d0582b84b1a))
+* **deps:** bump the codeql group across 1 directory with 2 updates ([#765](https://github.com/openai/openai-cli/issues/765)) ([eb2108a](https://github.com/openai/openai-cli/commit/eb2108a72fcb97494ad33a0532b2359138f5b9e5))
+
+## [1.54.0](https://github.com/openai/openai-cli/compare/v1.53.1...v1.54.0) (2026-11-14)
+
+
+### Features
+
+* add compact Limits workspaces ([#405](https://github.com/openai/openai-cli/issues/405)) ([c35604d](https://github.com/openai/openai-cli/commit/c35604d7b28d9574b017c918b369d756688be76d))
+
+## [1.53.1](https://github.com/openai/openai-cli/compare/v1.53.0...v1.53.1) (2026-11-12)
+
+
+### Chores
+
+* **deps:** update openai-go to v3.99.0 ([#754](https://github.com/openai/openai-cli/issues/754)) ([905f047](https://github.com/openai/openai-cli/commit/905f047678718846f6a1f308660dcdf5bc682785))
+
+## [1.53.0](https://github.com/openai/openai-cli/compare/v1.52.0...v1.53.0) (2026-11-12)
+
+
+### Features
+
+* **api:** describe reasoning input transformations on responses ([#749](https://github.com/openai/openai-cli/issues/749)) ([54c4a56](https://github.com/openai/openai-cli/commit/54c4a56a0ddcf4a6e9314a213deaf18c16fb25ed))
+
+## [1.52.0](https://github.com/openai/openai-cli/compare/v1.51.5...v1.52.0) (2026-11-11)
+
+
+### Breaking changes
+
+* Standard list commands now browse by default when both input and output are terminals. If more results remain, the command waits for keyboard input. Add `--browse=false` to terminal-attached scripts that must continue automatically. Pipes, redirected output, and runs with a nonempty `CI` still paginate automatically. [#737](https://github.com/openai/openai-cli/pull/737)
+* Flags with a matching `-structured` option now treat ordinary text arguments literally. For example, use `openai responses create --model MODEL --input-structured @messages.json` to send structured input. Scripts that depend on implicit JSON or YAML parsing can set `OPENAI_CLI_INPUT_MODE=legacy`. [#635](https://github.com/openai/openai-cli/pull/635)
+
+### Bug Fixes
+
+* The Images studio keeps your scroll position when you switch panes while inspecting a generated command. [#734](https://github.com/openai/openai-cli/pull/734)
+
+### Chores
+
+* **deps:** bump the go-minor-and-patch group across 1 directory with 3 updates ([#738](https://github.com/openai/openai-cli/issues/738)) ([76dad0b](https://github.com/openai/openai-cli/commit/76dad0bc7ccff1ea16f25ec24c2fbc29b71fedfa))
+* **deps:** update openai-go to v3.98.0 ([#736](https://github.com/openai/openai-cli/issues/736)) ([05c8294](https://github.com/openai/openai-cli/commit/05c8294cc7185e3515486b07fb730bea0208ad0c))
+
 ## [1.51.5](https://github.com/openai/openai-cli/compare/v1.51.4...v1.51.5) (2026-11-07)
 
 

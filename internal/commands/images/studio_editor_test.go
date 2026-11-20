@@ -179,11 +179,25 @@ func TestStudioPaneSwitchRestoresEditor(t *testing.T) {
 			m := pickerForTest(t)
 			m.width, m.height, m.workspace, m.hasImages = 110, 28, true, images
 			m.focus, m.selected, m.cursor, m.commandOffset = initial, 3, 2, 1
+			var commandRows []string
+			if initial == "command" {
+				m.settings.prompt = strings.Repeat("first landscape ", 60) + strings.Repeat("last landscape ", 60)
+				m.draft = []rune(m.settings.prompt)
+				width, height := m.commandDimensions()
+				require.Greater(t, len(m.commandLines(width)), height+1, "exercise a scrolled command longer than the inspector")
+				commandRows = strings.Split(ansi.Strip(m.View().Content), "\n")[1:]
+			}
 			prompt := string(m.draft)
 			require.Nil(t, pickerKey(m, tea.KeyTab))
 			require.Equal(t, "images", m.focus)
+			if initial == "command" {
+				require.Equal(t, commandRows, strings.Split(ansi.Strip(m.View().Content), "\n")[1:], "switching panes must preserve the displayed command rows")
+			}
 			m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 			require.Equal(t, initial, m.focus)
+			if initial == "command" {
+				require.Equal(t, commandRows, strings.Split(ansi.Strip(m.View().Content), "\n")[1:])
+			}
 			require.Equal(t, 3, m.selected)
 			require.Equal(t, 2, m.cursor)
 			require.Equal(t, 1, m.commandOffset)

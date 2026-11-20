@@ -14,7 +14,10 @@ The recovery guide below includes a failure-safe JSON export recipe.
 openai tokenizer
 ```
 
-The live editor opens below the shell command. Earlier output stays in the terminal's scrollback.
+The live editor normally opens below the shell command.
+In a direct Linux VS Code terminal, it uses a temporary screen when the shell screen is active.
+Earlier shell output returns when you exit, even after resizing the terminal.
+If the terminal cannot confirm which screen is active, the editor opens below the command.
 Type or paste text to see its exact token count.
 The editor supports up to 1 MiB of UTF-8 input.
 

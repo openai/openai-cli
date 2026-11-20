@@ -30,9 +30,9 @@ func (m *audioWorkbench) studioView() tea.View {
 	rows = append(rows, m.formActionRows()...)
 	rows = append(rows, m.listeningRule(), "")
 
-	footer := m.workspaceFooter()
+	details, footer := m.workspaceDetails(), m.workspaceFooter()
 	// Reserve two rows for progress, seek validation, and wrapped shortcuts.
-	height := m.audioHeight() - len(rows) - max(2, len(footer))
+	height := m.audioHeight() - len(rows) - max(2, len(details)+len(footer))
 	left, cursor, focus := m.studioComposerRows()
 	width, monitorWidth := m.studioScriptWidth(), m.studioMonitorWidth()
 	right, seekCursor := m.studioMonitorRows(monitorWidth, height)
@@ -63,7 +63,7 @@ func (m *audioWorkbench) studioView() tea.View {
 		}
 		rows = append(rows, line)
 	}
-	return m.cursorView(append(rows, footer...), len(footer), cursor)
+	return m.panelView(rows, details, footer, cursor)
 }
 
 func (m *audioWorkbench) studioComposerRows() ([]string, *tea.Cursor, int) {

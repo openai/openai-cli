@@ -89,9 +89,9 @@ func (m *audioWorkbench) failureView() tea.View {
 	for _, row := range rows[start:min(len(rows), start+height)] {
 		lines = append(lines, m.failureIndent()+row)
 	}
-	lines = append(lines, "")
-	for _, row := range m.failureFooter() {
-		lines = append(lines, m.failureIndent()+row)
+	footer := m.failureFooter()
+	for i := range footer {
+		footer[i] = m.failureIndent() + footer[i]
 	}
-	return tea.NewView(m.fitAudio(lines, 1))
+	return m.panelView(lines, nil, footer, nil)
 }

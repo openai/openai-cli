@@ -257,6 +257,10 @@ jobs:
           go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAPIErrorsFormatPrecedenceAndExtraction|TestMainAPIErrorsPreserveJSONDetailsAndExtraction|TestMainAPIErrorsStructuredAcrossCommands|TestMainAPIErrorsWithUnexpectedJSONShapes|TestMainAPIErrorsWithoutJSONDetails|TestMainCommandGroupsHaveWorkflowDescriptions|TestMainCommandSubgroupsCoverGeneratedRoutes|TestMainCommandSubgroupsHelpAndCompletion|TestMainCommandSubgroupsLegacyPrefixCompletion|TestMainCommandSubgroupsPreserveAudioAndErrors|TestMainCommandSubgroupsPreserveBodyFlagScope|TestMainCommandSubgroupsPreserveRequestsAndOutput|TestMainCommandSubgroupsStreamingStaysIncremental|TestMainLocalErrorGuidance|TestMainLocalErrorsStayOnStderr|TestMainNestedHelpErrorFormatPrecedence|TestMainPreservesWrappedExitCode|TestMainReadableAPIArgumentGuidance|TestMainReadableDefaultAndExplicitText|TestMainReadableErrorsStayOnStderr|TestMainReadablePreservesExplicitFormatsAndExtraction|TestMainReadableRawOutputStreamsBeforeNextEvent|TestMainSensitiveLocalErrors|TestMainStreamErrorsPreserveEventDetails|TestMainTaskAdminRoutesPreserveCredentialAndFlagScope|TestMainTaskAudioUploadsPreserveRequestsAndOutput|TestMainTaskFileUploadPreservesMultipartAndOutput|TestMainTaskResourceRoutesPreserveAPIErrorsAndExit|TestMainTaskRouteCompletionProtocols|TestMainTaskRouteHelpStaysLocal|TestMainTaskRoutesPreserveAPIErrorsAndExit|TestMainTaskRoutesPreserveRequiredFlags|TestMainTaskSpeechPreservesJSONInputAndBinaryOutput|TestMainTaskWindowsAudioInterruptClosesStreams)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'native-command-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Windows Skills folder uploads and temporary file cleanup
+        if: matrix.native-commands && runner.os == 'Windows' && matrix.shard != 'dispatch'
+        shell: pwsh
+        run: go test -p 1 ./internal/commands/skills ./internal/app ./cmd/openai -run '^(TestFolder|TestSkillFolderReplacedBeforePackaging$|TestMainSkill)' -count=1 -v
       - name: Test Windows voice validation and upload ownership
         if: (matrix.native-commands && runner.os == 'Windows') && matrix.shard != 'dispatch'
         shell: pwsh
@@ -746,6 +750,16 @@ jobs:
                       'openai_--missing=assets/lo',
                       'openai_--_--file=assets/lo',
                       "openai_--file='assets/a='",
+                      'openai_--file="assets/a="',
+                      "openai_--file='assets/colon:'",
+                      "openai_--file='assets/literal%='",
+                      "openai_--file='assets/dollar$='",
+                      "openai_--file='assets/tilde~='",
+                      "openai_--file='assets/brace{q}='",
+                      "openai_--file='assets/glob*?='",
+                      "openai_--file='assets/(sample)='",
+                      'openai_--file="$OPENAI_CLI_COMPLETION_ASSETS/colon:"',
+                      'openai_--file="$(printf_assets)/colon:"',
                       "openai_--file='assets/a=",
                       'openai_--file="assets/a=',
                       'openai_--file=assets/a\\=',
@@ -753,6 +767,15 @@ jobs:
                       'openai_--file=assets/colon:',
                       'openai_--file=assets/back\\\\slash=',
                       'openai_--file=$OPENAI_CLI_COMPLETION_ASSETS/lo',
+                      "openai_--format_@'assets/literal%='",
+                      "openai_--format_@file://'assets/a='",
+                      'openai_--format_@data://"$OPENAI_CLI_COMPLETION_ASSETS/colon:"',
+                      'openai_--format_@file://"$(printf_assets)/colon:"',
+                      "openai_--format_'@assets/literal$variable='",
+                      "openai_--format_'@file://assets/literal$variable='",
+                      'openai_--format_"@data://$OPENAI_CLI_COMPLETION_ASSETS/colon:"',
+                      "openai_--format_'attached_@file://assets/literal$variable='",
+                      'openai_--format_@data://assets/lo',
                       "openai_--format_'(touch_unsafe)'_--file=assets/lo",
                       'openai_--format_(touch_unsafe)_--file=assets/lo',
                   ],

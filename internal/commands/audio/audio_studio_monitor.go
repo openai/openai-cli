@@ -20,7 +20,7 @@ func (m *audioWorkbench) studioMonitorRows(width, height int) ([]string, *tea.Cu
 		rows[1] = "  " + m.warningStyle().Render(m.playerNotice)
 	}
 
-	// Four rows after the transport can carry a save receipt, an error with F1,
+	// Four rows after the transport can carry a save receipt, an error summary,
 	// and two rows identifying a retained recording when the draft changes.
 	const plotTop = 3
 	budget := min(m.waveformDetailHeight(audioMaxWaveformHeight)+3, height-plotTop-6)

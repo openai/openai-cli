@@ -286,6 +286,7 @@ func TestAudioReviewHistoryRestoresSettingsWithoutGeneration(t *testing.T) {
 	m := audioReviewModel(t)
 	retained := audioReviewResult("history", false)
 	retained.entry.Settings.Model = "gpt-4o-mini-tts-2025-12-15"
+	retained.entry.Settings.Format = "mp3"
 	retained.entry.Settings.Voice = "verse"
 	retained.entry.Settings.Speed = 1.75
 	_, command := m.Update(audioWorkMessage{kind: "open", result: retained})

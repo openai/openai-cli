@@ -325,30 +325,35 @@ func TestAutomaticUpdateVerifierCapabilities(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "synthetic-secret")
 	t.Setenv("GH_TOKEN", "synthetic-token")
 	t.Setenv("GH_DEBUG", "api")
-	const help = "--bundle string\n--hostname string\n--repo string\n--cert-identity string\n--source-ref string\n--deny-self-hosted-runners\n--format string\n"
-	for _, missing := range []string{"", "--bundle", "--hostname", "--repo", "--cert-identity", "--source-ref", "--deny-self-hosted-runners", "--format", "command", "oversized", "canceled"} {
-		name := missing
-		if name == "" {
-			name = "supported"
-		}
-		t.Run(name, func(t *testing.T) {
-			cache, err := openCache(t.Context(), filepath.Join(t.TempDir(), "update"))
+	for _, tc := range []struct {
+		name, response string
+		wantReady      bool
+	}{
+		{"older help", "printf '%s\\n' '--deny-self-hosted-runners'", true},
+		{"new help", "printf '%s\\n' '--deny-self-hosted-runners[=true|false]'", true},
+		{"unsupported flag", "printf '%s\\n' 'unknown flag: --deny-self-hosted-runners' >&2; exit 1", false},
+		{"inert verifier", "", false},
+		{"oversized", "/usr/bin/head -c 1100000 /dev/zero", false},
+		{"canceled", "exit 0", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache, err := openCache(t.Context(), filepath.Join(t.TempDir(), "update with spaces"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer cache.close()
-			output := help
-			if strings.HasPrefix(missing, "--") {
-				output = strings.ReplaceAll(output, missing, missing+"-unsupported")
-			}
-			script := "#!/bin/sh\nset -eu\ntest -z \"${OPENAI_API_KEY-}${GH_TOKEN-}${GH_DEBUG-}\"\ntest \"$*\" = 'attestation verify --help'\n"
-			switch missing {
-			case "command":
-				script += "exit 1\n"
-			case "oversized":
-				script += "/usr/bin/head -c 1100000 /dev/zero\n"
-			default:
-				script += "printf '%s' '" + output + "'\n"
+			// Verify every option and its value independently of the implementation.
+			script := `#!/bin/sh
+set -eu
+test -z "${OPENAI_API_KEY-}${GH_TOKEN-}${GH_DEBUG-}"
+test "$#" = 16
+test "$1 $2 $3" = 'attestation verify --bundle'
+test "$4" = "${GH_CONFIG_DIR%/gh-config}/bundle.jsonl"
+test "$5 $6 $7 $8 $9 ${10}" = '--hostname github.com --repo openai/openai-cli --cert-identity ` + workflowIdentity + `'
+test "${11} ${12} ${13} ${14} ${15} ${16}" = '--source-ref refs/heads/main --deny-self-hosted-runners --format json --help'
+` + tc.response + "\n"
+			if tc.name == "inert verifier" {
+				script = "#!/bin/sh\nexit 0\n"
 			}
 			verifier := filepath.Join(t.TempDir(), "gh")
 			if err := os.WriteFile(verifier, []byte(script), 0700); err != nil {
@@ -357,12 +362,12 @@ func TestAutomaticUpdateVerifierCapabilities(t *testing.T) {
 			d := releaseDelivery{verifier: verifier}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			if missing == "canceled" {
+			if tc.name == "canceled" {
 				cancel()
 			}
 			err = d.checkVerifier(ctx, cache)
-			if (err == nil) != (missing == "") {
-				t.Fatalf("capability check = %v, missing %q", err, missing)
+			if (err == nil) != tc.wantReady {
+				t.Fatalf("capability check = %v, want ready %v", err, tc.wantReady)
 			}
 		})
 	}
@@ -370,6 +375,9 @@ func TestAutomaticUpdateVerifierCapabilities(t *testing.T) {
 
 func TestArchiveVerifierStatus(t *testing.T) {
 	bin := t.TempDir()
+	if err := os.Chmod(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", bin)
 	t.Setenv("GH_TOKEN", "synthetic-token")
 	t.Setenv("OPENAI_API_KEY", "synthetic-key")
@@ -377,12 +385,12 @@ func TestArchiveVerifierStatus(t *testing.T) {
 		t.Fatalf("absent gh: %q", got)
 	}
 	gh := filepath.Join(bin, "gh")
-	script := "#!/bin/sh\ntest -z \"${GH_TOKEN-}${OPENAI_API_KEY-}\" || exit 9\n[ \"$*\" = 'attestation verify --help' ] || exit 9\n"
-	for _, tc := range []struct{ output, want string }{
-		{"old gh", "unavailable"},
-		{"--bundle --hostname --repo --cert-identity --source-ref --deny-self-hosted-runners --format", "ready"},
+	script := "#!/bin/sh\nset -eu\ntest -z \"${GH_TOKEN-}${OPENAI_API_KEY-}\"\ntest \"$1 $2\" = 'attestation verify'\ntest \"${16}\" = --help\n"
+	for _, tc := range []struct{ command, want string }{
+		{"exit 1", "unavailable"},
+		{"printf '%s\\n' 'Usage: gh attestation verify'", "ready"},
 	} {
-		if err := os.WriteFile(gh, []byte(script+"echo '"+tc.output+"'\n"), 0700); err != nil {
+		if err := os.WriteFile(gh, []byte(script+tc.command+"\n"), 0700); err != nil {
 			t.Fatal(err)
 		}
 		if got := archiveVerifierStatus(); got != tc.want {

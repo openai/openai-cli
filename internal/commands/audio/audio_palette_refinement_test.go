@@ -93,7 +93,11 @@ func TestAudioFormDistinguishesGenerateFromSecondaryActions(t *testing.T) {
 			m.setting = 0
 			view := m.View().Content
 			audioRequireTextForeground(t, view, "Generate speech", m.strong())
-			audioRequireTextForeground(t, view, "Ctrl+G", m.accent())
+			if focus == 0 {
+				audioRequireTextForeground(t, view, "Enter", m.accent())
+			} else {
+				audioRequireTextForeground(t, view, "Ctrl+G", m.accent())
+			}
 			for _, label := range []string{"History", "More actions…"} {
 				audioRequireTextForeground(t, view, label, m.muted())
 			}

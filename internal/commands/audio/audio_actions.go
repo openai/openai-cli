@@ -318,13 +318,14 @@ func (m *audioWorkbench) openHelp(parent string) {
 
 func (m *audioWorkbench) helpRows() []string {
 	shortcut := func(key, action string) string {
-		return "  " + m.keyHint(key, "") + strings.Repeat(" ", 12-ansi.StringWidth(key)) + m.muted().Render(action)
+		return "  " + m.keyHint(key, "") + strings.Repeat(" ", max(1, 12-ansi.StringWidth(key))) + m.muted().Render(action)
 	}
 	rows := []string{
 		"  " + m.strong().Render("Compose"),
 		shortcut("Tab", "Next section"),
-		shortcut("Ctrl+G", "Generate speech"),
+		shortcut("Enter/Ctrl+G", "Generate speech"),
 		shortcut("Alt+Enter", "Insert a new line"),
+		shortcut("Ctrl+C", "Exit Voice Studio"),
 	}
 	if m.studioLayout() {
 		rows = append(rows, shortcut("↑ / ↓", "First script line to Generate and back"), shortcut("Shift+Tab", "Script to Recording"))
@@ -381,8 +382,7 @@ func (m *audioWorkbench) helpView() tea.View {
 	if len(rows) > height {
 		footer = m.shortcutLine([2]string{"↑↓", "scroll"}, [2]string{"Esc", "back"})
 	}
-	lines = append(lines, "", footer)
-	return tea.NewView(m.fitAudio(lines, 1))
+	return m.panelView(lines, nil, []string{footer}, nil)
 }
 
 func (m *audioWorkbench) progressView() string {
@@ -390,5 +390,5 @@ func (m *audioWorkbench) progressView() string {
 	if action == "" {
 		action = "Working"
 	}
-	return m.muted().Render(fmt.Sprintf("%s… %.1fs  ", action, time.Since(m.started).Seconds())) + m.keyHint("Ctrl+C", "cancels")
+	return m.muted().Render(fmt.Sprintf("%s… %.1fs", action, time.Since(m.started).Seconds()))
 }

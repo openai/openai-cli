@@ -19,21 +19,23 @@ openai webhooks create
 1. Enter a name. Leave it blank to use the displayed `Webhook` default.
 2. Enter your receiver's HTTPS URL.
 3. Select the events your receiver handles.
-4. Continue to confirmation and check the settings.
+4. Choose Review to check the settings.
 5. Choose Yes to create the endpoint.
 
 Name, URL, and event choices stay visible in one form.
 Use Up and Down to move through the fields and event list. Tab and Shift+Tab also move between fields.
-Choose Continue to confirmation, or press Enter from the event list. The confirmation shows every setting before creation.
+Choose Review, or press Enter from the event list. The confirmation shows every setting before creation.
 The CLI loads available events from your authenticated project.
 Use Left and Right to choose an event category. Use Up and Down to move and Space to select events.
-Type to filter events in that category. Changing category clears the search and preserves selections.
+Press `/` in Events to focus **Find event**. Type an event or group name to filter the category.
+Use Down to reach matching events. Escape clears the filter. Changing category clears the search and preserves selections.
 While choosing events, Ctrl+A selects all matching events. Press it again to clear those matches.
 Selections outside the search remain unchanged.
 Selections remain when you change the search. Press Enter to check the selected settings.
 Use Shift+Tab to go back. Press Escape or Ctrl+C to cancel.
 The final confirmation defaults to No.
-The form stays inline and keeps the fields and confirmation action together.
+The form opens inline. Press Ctrl+G to expand the event list. The actions and keyboard controls stay at the bottom.
+Press Ctrl+G again to return to compact view with the same fields and selections.
 A blinking text cursor marks the input position. Brief controls appear for the active field.
 It preserves terminal scrollback and supports both light and dark terminal colors.
 Set `NO_COLOR=1` for plain output; selection markers remain visible.

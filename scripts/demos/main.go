@@ -102,7 +102,7 @@ func serveImageGeneration(w http.ResponseWriter, r *http.Request) {
 	var request map[string]any
 	promptOnly := map[string]any{"prompt": "A tiny orange robot"}
 	preset := map[string]any{
-		"prompt": "A tiny orange robot", "model": "gpt-image-2.5-sunburst",
+		"prompt": "A tiny orange robot", "model": "gpt-image-2.6-sunburst",
 		"n": float64(1), "size": "auto", "quality": "auto", "output_format": "png",
 		"background": "auto", "moderation": "auto", "partial_images": float64(0), "stream": false,
 	}
@@ -234,7 +234,7 @@ func serveImageUpload(w http.ResponseWriter, r *http.Request) {
 	if edit {
 		before = map[string][]string{"prompt": {"Make the sky purple"}}
 		after = map[string][]string{
-			"prompt": {"Make the sky purple"}, "model": {"gpt-image-2.5-sunburst"},
+			"prompt": {"Make the sky purple"}, "model": {"gpt-image-2.6-sunburst"},
 			"n": {"1"}, "size": {"auto"}, "quality": {"auto"}, "background": {"auto"},
 			"output_format": {"png"}, "partial_images": {"0"}, "stream": {"false"},
 		}

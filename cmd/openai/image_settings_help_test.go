@@ -118,7 +118,7 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 			require.NoError(t, png.Encode(&source, image.NewNRGBA(image.Rect(0, 0, 256, 256))))
 			sourcePath := filepath.Join(home, "photo.png")
 			require.NoError(t, os.WriteFile(sourcePath, source.Bytes(), 0600))
-			want := map[string]any{"model": "gpt-image-2.5-sunburst", "n": float64(1), "size": "auto", "quality": "auto", "background": "auto", "output_format": "png", "partial_images": float64(0), "stream": false}
+			want := map[string]any{"model": "gpt-image-2.6-sunburst", "n": float64(1), "size": "auto", "quality": "auto", "background": "auto", "output_format": "png", "partial_images": float64(0), "stream": false}
 			if tc.operation == "generate" {
 				want["moderation"] = "auto"
 			}

@@ -169,10 +169,6 @@ func TestPickerInstalledFishRunsAfterUserConfiguration(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(home, "openai"), []byte(fixture), 0700))
 			driver := `set timeout 8
 spawn -noecho $env(PICKER_TEST_SHELL) --interactive
-expect_before {
-  -exact "\033\1330c" {send -- "\033\133?1;2c"; exp_continue}
-  -exact "\033\1336n" {send -- "\033\1331;1R"; exp_continue}
-}
 expect_after timeout { puts stderr "fish startup probe timed out"; exit 1 }
 expect -exact "PICKER_TEST> "
 send -- "other\t\025printf 'FALLBACK_DONE\\n'\r"
@@ -196,6 +192,7 @@ expect -exact "PICKER_TEST> "
 send -- "exit\r"
 expect eof
 `
+			driver = terminalQueryExpect(driver)
 			require.NoError(t, os.WriteFile(filepath.Join(home, "driver.exp"), []byte(driver), 0600))
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()

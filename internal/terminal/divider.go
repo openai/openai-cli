@@ -4,7 +4,26 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/xo/terminfo"
 )
+
+// SupportsDECLineDrawing reports whether the terminal advertises DEC's native strokes.
+func SupportsDECLineDrawing() bool {
+	ti, err := terminfo.LoadFromEnv()
+	return err == nil &&
+		string(ti.Strings[terminfo.EnterAltCharsetMode]) == ansi.SelectCharacterSet('(', '0') &&
+		string(ti.Strings[terminfo.ExitAltCharsetMode]) == ansi.SelectCharacterSet('(', 'B')
+}
+
+// PaneDivider pins the stroke to a one-based column even when terminals disagree about emoji widths.
+func PaneDivider(column int, border lipgloss.Style, dec bool) string {
+	stroke := "│"
+	if dec {
+		stroke = ansi.SelectCharacterSet('(', '0') + "x" + ansi.SelectCharacterSet('(', 'B')
+	}
+	return ansi.CursorHorizontalAbsolute(column) + border.Render(stroke)
+}
 
 // SectionDivider renders the Batch browser's thin, center-bright rule.
 func SectionDivider(width int, colors bool, fill, edge, secondary string) string {

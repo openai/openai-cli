@@ -27,19 +27,27 @@ var assets embed.FS
 
 // Config contains only the public controls used to start a translation session.
 type Config struct {
-	Language       string `json:"language"`
-	NoiseReduction bool   `json:"noise_reduction"`
+	Language           string `json:"language"`
+	NoiseReduction     bool   `json:"noise_reduction"`
+	Model              string `json:"-"`
+	TranscriptionModel string `json:"-"`
 }
 
 // Event carries only display data. It never contains credentials or raw API errors.
 type Event struct {
-	Type       string `json:"type"`
-	Delta      string `json:"delta,omitempty"`
-	Message    string `json:"message,omitempty"`
-	Tokens     int64  `json:"tokens,omitempty"`
-	Format     string `json:"format,omitempty"`
-	SampleRate int    `json:"sample_rate,omitempty"`
-	Channels   int    `json:"channels,omitempty"`
+	ItemID       string   `json:"item_id,omitempty"`
+	ContentIndex int      `json:"content_index,omitempty"`
+	Transcript   *string  `json:"transcript,omitempty"`
+	Type         string   `json:"type"`
+	Delta        string   `json:"delta,omitempty"`
+	Message      string   `json:"message,omitempty"`
+	Tokens       int64    `json:"tokens,omitempty"`
+	InputTokens  *int64   `json:"input_tokens,omitempty"`
+	OutputTokens *int64   `json:"output_tokens,omitempty"`
+	ElapsedMS    *float64 `json:"elapsed_ms,omitempty"`
+	Format       string   `json:"format,omitempty"`
+	SampleRate   int      `json:"sample_rate,omitempty"`
+	Channels     int      `json:"channels,omitempty"`
 }
 
 // Failure contains an actionable message prepared by trusted application code.
@@ -96,6 +104,9 @@ type capture struct {
 	stopping   bool
 	drainTimer *time.Timer
 }
+
+// LanguageName returns the display name of a supported translation target.
+func LanguageName(code string) string { return languages[code] }
 
 var languages = map[string]string{
 	"zh": "Chinese", "en": "English", "fr": "French", "de": "German", "hi": "Hindi",

@@ -41,9 +41,10 @@ func TestHomebrewVerifierSelection(t *testing.T) {
 	const source = `package main
 import ("fmt"; "os"; "time")
 func main() {
- if len(os.Args)==4 && os.Args[1]=="attestation" && os.Args[2]=="verify" && os.Args[3]=="--help" {
+ if len(os.Args)>1 && os.Args[1]=="attestation" {
+  if len(os.Args)!=17 || os.Args[2]!="verify" || os.Args[3]!="--bundle" || os.Args[13]!="--deny-self-hosted-runners" || os.Args[16]!="--help" { os.Exit(1) }
   if _,err:=os.Stat(os.Getenv("HOME")+"/cold-verifier"); err==nil {time.Sleep(2200*time.Millisecond)}
-  fmt.Println("--bundle --hostname --repo --cert-identity --source-ref --deny-self-hosted-runners --format")
+  fmt.Println("--deny-self-hosted-runners[=true|false]")
   return
  }
  fmt.Println("selected Homebrew fixture")

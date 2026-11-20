@@ -7,21 +7,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
-	"github.com/xo/terminfo"
+	"github.com/openai/openai-cli/internal/terminal"
 )
 
 const studioGutter = 3 // A divider cell with a space on each side.
-
-// Some terminals rasterize adjacent Unicode box glyphs with overlapping edges.
-// Use the terminal's own line-drawing stroke when it advertises the DEC set.
-func supportsDECLineDrawing() bool {
-	ti, err := terminfo.LoadFromEnv()
-	if err != nil {
-		return false
-	}
-	return string(ti.Strings[terminfo.EnterAltCharsetMode]) == ansi.SelectCharacterSet('(', '0') &&
-		string(ti.Strings[terminfo.ExitAltCharsetMode]) == ansi.SelectCharacterSet('(', 'B')
-}
 
 func (m *tokenizerEditor) sourceWidth() int {
 	return (m.viewWidth() - studioGutter) * 45 / 100
@@ -40,19 +29,13 @@ func (m *tokenizerEditor) studioView(s tokenizerEditorStyles, left []string) str
 	left = append(left, m.noteRows(s, leftWidth)...)
 	right := m.studioResults(s, rightWidth)
 	rows := make([]string, min(m.bodyHeight(), max(len(left), len(right))))
-	divider := "│"
-	if m.decLineDrawing {
-		divider = ansi.SelectCharacterSet('(', '0') + "x" + ansi.SelectCharacterSet('(', 'B')
-	}
-	divider = s.border.Render(divider)
+	divider := terminal.PaneDivider(leftWidth+4, s.border, m.decLineDrawing)
 	for i := range rows {
 		line := ""
 		if i < len(left) {
 			line = left[i]
 		}
-		// Pin the seam when a terminal draws a visible emoji narrower than its measured cells.
-		rows[i] = line + strings.Repeat(" ", max(0, leftWidth-tokenizerSourceWidth(line))+1) +
-			ansi.CursorHorizontalAbsolute(leftWidth+4) + divider + " "
+		rows[i] = line + strings.Repeat(" ", max(0, leftWidth-tokenizerSourceWidth(line))+1) + divider + " "
 		if i < len(right) {
 			rows[i] += right[i]
 		}

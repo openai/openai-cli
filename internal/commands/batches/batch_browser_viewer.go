@@ -134,13 +134,13 @@ func showBatchBrowserDocument(ctx context.Context, cmd *cli.Command, document *b
 }
 
 type batchBrowserDocumentState struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	sequence   uint64
-	page       batchBrowserDocumentPage
-	loading    bool
-	err        error
-	csvResults bool
+	ctx      context.Context
+	cancel   context.CancelFunc
+	sequence uint64
+	page     batchBrowserDocumentPage
+	loading  bool
+	err      error
+	csv      *batchBrowserCSVRows
 }
 
 func (s *batchBrowserDocumentState) stop() {
@@ -164,16 +164,16 @@ func newBatchBrowserDocumentScreen(ctx context.Context, document *batchBrowserDo
 
 // Match the shared frame's heading, optional subtitle, divider, and footer.
 func (m *batchBrowserScreen) documentSize() (int, int) {
-	width, height := max(1, m.width), max(1, m.height)
-	if width >= 50 && height >= 12 {
-		width, height = width-2, height-2
+	width, height := m.contentSize()
+	content := width - 2
+	if m.hasFrame() {
+		content--
+	}
+	if m.documentState.csv != nil {
+		return max(1, content), max(1, height-2)
 	}
 	footer, used := 2, 2
 	keys := []string{"↑↓ scroll", "PgUp/PgDn page", "p print", "Esc back"}
-	if m.documentState.csvResults {
-		keys[2] = "s save CSV"
-		keys = append(keys[:3], "Ctrl+S save as", keys[3])
-	}
 	if m.documentRawAvailable {
 		label := "j Raw JSON"
 		if m.documentRaw {
@@ -192,10 +192,6 @@ func (m *batchBrowserScreen) documentSize() (int, int) {
 			gap = 0
 		}
 		used += gap + ansi.StringWidth(key)
-	}
-	content := width - 2
-	if m.width >= 50 && m.height >= 12 {
-		content--
 	}
 	header := 2
 	if m.subtitle != "" {
@@ -247,7 +243,7 @@ func (m *batchBrowserScreen) updateDocument(message tea.Msg) (tea.Model, tea.Cmd
 		return m, m.loadDocument("anchor", 0)
 	case tea.KeyPressMsg:
 		_, rows := m.documentSize()
-		if s.csvResults {
+		if s.csv != nil {
 			switch msg.String() {
 			case "s", "ctrl+s":
 				s.stop()
@@ -313,7 +309,13 @@ func (m *batchBrowserScreen) documentLines(height, width int, footer []string, r
 	titleWidth := width - ansi.StringWidth(position)
 	title := ansi.Truncate(batchInputLabel(m.title), max(1, titleWidth-2), "…")
 	lines := []string{"  " + lipgloss.NewStyle().Bold(colors).Render(title) + strings.Repeat(" ", max(0, titleWidth-ansi.StringWidth(title))) + muted.Render(position)}
-	if m.subtitle != "" {
+	if s.csv != nil {
+		label := batchInputLabel(m.subtitle) + " · " + m.title
+		lines = []string{"  " + heading.Render(ansi.Truncate(label, max(1, titleWidth-1), "…"))}
+		if position != "" {
+			lines[0] += " " + muted.Render(position)
+		}
+	} else if m.subtitle != "" {
 		lines = append(lines, "  "+muted.Render(ansi.Truncate(batchInputLabel(m.subtitle), width, "…")))
 	}
 	lines = append(lines, rule())
@@ -341,11 +343,11 @@ func (m *batchBrowserScreen) documentLines(height, width int, footer []string, r
 			}
 			styled.WriteString(text[position:])
 			text = styled.String()
-		} else if s.csvResults && strings.HasPrefix(text, "Row ") {
+		} else if s.csv != nil && strings.HasPrefix(text, "Row ") {
 			text = heading.Render(text)
-		} else if s.csvResults && strings.HasPrefix(text, "Answer: ") {
+		} else if s.csv != nil && strings.HasPrefix(text, "Answer: ") {
 			text = heading.Render("Answer: ") + strings.TrimPrefix(text, "Answer: ")
-		} else if s.csvResults && strings.HasPrefix(text, "Error: ") {
+		} else if s.csv != nil && strings.HasPrefix(text, "Error: ") {
 			text = semantic(muted, "negative").Render("Error: ") + strings.TrimPrefix(text, "Error: ")
 		} else if strings.HasPrefix(text, "Request: ") {
 			text = heading.Render(text)
@@ -355,7 +357,7 @@ func (m *batchBrowserScreen) documentLines(height, width int, footer []string, r
 		// A resize can draw the previous page while its replacement loads.
 		lines = append(lines, "  "+ansi.Truncate(text, width, "…"))
 	}
-	for len(lines) < height-len(footer) {
+	for s.csv == nil && len(lines) < height-len(footer) {
 		lines = append(lines, "")
 	}
 	return append(lines, footer...)

@@ -28,7 +28,7 @@ func configureVectorStoreWorkspace(root *cli.Command) {
 		ErrorMessage: func(err error) string {
 			var apierr *openai.Error
 			if errors.As(err, &apierr) {
-				return readableAPIErrorMessage(root, err, apierr)
+				return readableAPIErrorMessageTo(root, err, apierr, workspaceError)
 			}
 			return localErrorMessage(root, err)
 		},

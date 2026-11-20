@@ -130,7 +130,7 @@ def main():
             next_cwd.mkdir()
             folder = first_cwd/'pictures with spaces 雪'
             folder.mkdir()
-            prompt, model = "Synthetic reuse 'moon' 雪", 'gpt-image-2.5-flare'
+            prompt, model = "Synthetic reuse 'moon' 雪", 'gpt-image-2.6-flare'
             path = state_path(home, env)
             before = len(server.requests)
             with terminal_case('remember-custom-generation', env, cwd=first_cwd) as terminal:
@@ -216,7 +216,7 @@ def main():
                 terminal.wait('Settings', after=mark)
                 terminal.send(b'\x03')
                 terminal.finish(130)
-                assert json.loads(path.read_bytes()) == dict(saved, prompt=canceled_prompt, model='gpt-image-2.5-sunburst')
+                assert json.loads(path.read_bytes()) == dict(saved, prompt=canceled_prompt, model='gpt-image-2.6-sunburst')
                 assert len(server.requests) == before
 
             previous_state = path.read_bytes()

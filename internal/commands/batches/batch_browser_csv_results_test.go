@@ -81,11 +81,11 @@ func TestBatchCSVViewerOpensAndSavesVerifiedRows(t *testing.T) {
 				_, err := os.Stat(defaultPath)
 				require.ErrorIs(t, err, os.ErrNotExist)
 				_, resize := m.Update(tea.WindowSizeMsg{Width: 60, Height: 13})
-				applyBrowserDocumentCommand(t, m, resize)
-				require.True(t, m.documentState.page.More)
+				applyRequestCommand(t, m, resize)
+				require.EqualValues(t, 4, m.requestState.page.Total)
 				require.Contains(t, m.View().Content, "save CSV")
 				var text strings.Builder
-				require.NoError(t, m.document.writeTo(t.Context(), &text))
+				require.NoError(t, m.requestState.csv.document.writeTo(t.Context(), &text))
 				expect := "Row 1\n  id: 001\n  message: First\nAnswer: billing\n\n" +
 					"Row 2\n  id: 002\n  message: Line one\\nLine two\nError: Refused\\u001b[2J\n\n" +
 					"Row 3\n  id: 003\n  message: =third\nAnswer: =unsafe\n\n" +
@@ -97,7 +97,7 @@ func TestBatchCSVViewerOpensAndSavesVerifiedRows(t *testing.T) {
 				_, _ = m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 				require.Equal(t, "save", m.chosen)
 			} else {
-				require.Contains(t, m.subtitle, "Saved renamed.csv")
+				require.Contains(t, m.notice, "Saved renamed.csv")
 				m.chosen = "back"
 			}
 		default:
@@ -152,7 +152,7 @@ func TestBatchCSVViewerKeepsSaveAsFolderAfterReopening(t *testing.T) {
 						m.chosen = "save-as"
 					}
 				} else {
-					require.Equal(t, "Saved "+name+" in "+target, m.subtitle)
+					require.Equal(t, "Saved "+name+" in "+target, m.notice)
 					m.chosen = "back"
 				}
 			default:

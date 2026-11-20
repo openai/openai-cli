@@ -38,11 +38,17 @@ func (r *tokenizerTestInput) Close() error {
 
 func collectTokenizerInput(t *testing.T, chunks []string) []tea.Msg {
 	t.Helper()
+	return collectTokenizerInputChunks(t, chunks, false, 0)
+}
+
+func collectTokenizerInputChunks(t *testing.T, chunks []string, screenProbe bool, gap time.Duration) []tea.Msg {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	raw, writer := io.Pipe()
 	bridge, err := startTokenizerInputBridge(ctx, &tokenizerTestInput{PipeReader: raw})
 	require.NoError(t, err)
+	bridge.screenProbe.Store(screenProbe)
 	defer bridge.Close()
 	events := make(chan uv.Event)
 	decoded := make(chan error, 1)
@@ -53,7 +59,10 @@ func collectTokenizerInput(t *testing.T, chunks []string) []tea.Msg {
 	written := make(chan error, 1)
 	go func() {
 		defer writer.Close()
-		for _, chunk := range chunks {
+		for i, chunk := range chunks {
+			if i > 0 && gap > 0 {
+				time.Sleep(gap)
+			}
 			if _, err := io.WriteString(writer, chunk); err != nil {
 				written <- err
 				return
@@ -70,10 +79,12 @@ func collectTokenizerInput(t *testing.T, chunks []string) []tea.Msg {
 			translated = tea.PasteMsg(event)
 		case uv.KeyPressEvent:
 			translated = tea.KeyPressMsg(event)
+		case uv.ModeReportEvent:
+			translated = tea.ModeReportMsg(event)
 		}
 		message := bridge.Resolve(translated)
 		switch message.(type) {
-		case tea.PasteMsg, tea.KeyPressMsg, tokenizerInputPasteErrorMsg:
+		case tea.PasteMsg, tea.KeyPressMsg, tea.ModeReportMsg, tokenizerInputPasteErrorMsg:
 			result = append(result, message)
 		}
 	}
@@ -82,6 +93,34 @@ func collectTokenizerInput(t *testing.T, chunks []string) []tea.Msg {
 	require.NoError(t, <-written)
 	require.ErrorIs(t, bridge.Close(), io.EOF)
 	return result
+}
+
+func TestTokenizerInputSplitScreenReportPreservesKeys(t *testing.T) {
+	const report = "\x1b[?1049;2$y"
+	want := []tea.Msg{
+		tea.KeyPressMsg{Code: 'a', Text: "a"},
+		tea.ModeReportMsg{Mode: ansi.ModeAltScreenSaveCursor, Value: ansi.ModeReset},
+		tea.KeyPressMsg{Code: 'b', Text: "b"},
+	}
+	for split := 1; split < len(report); split++ {
+		require.Equal(t, want, collectTokenizerInputChunks(t, []string{"a" + report[:split], report[split:] + "b"}, true, 0), "split at %d", split)
+	}
+	gap := 2 * uv.DefaultEscTimeout
+	const prefix = "\x1b[?1049;"
+	require.Equal(t, want, collectTokenizerInputChunks(t, []string{"a" + prefix, "2$yb"}, true, gap))
+	keys := []tea.Msg{want[0], want[2]}
+	require.Equal(t, keys, collectTokenizerInputChunks(t, []string{"a" + prefix, "b"}, true, gap))
+	require.Equal(t, keys, collectTokenizerInputChunks(t, []string{"a" + prefix + "2", "b"}, true, gap))
+	require.Equal(t, keys, collectTokenizerInputChunks(t, []string{"a\x1b[?", "1049;", "b"}, true, gap))
+	for _, typed := range [][]string{{"2 apples"}, {"2", " apples"}, {"2", "$", "z"}} {
+		var wantKeys []tea.Msg
+		for _, r := range "a" + strings.Join(typed, "") {
+			wantKeys = append(wantKeys, tea.KeyPressMsg{Code: r, Text: string(r)})
+		}
+		require.Equal(t, wantKeys, collectTokenizerInputChunks(t, append([]string{"a" + prefix}, typed...), true, gap))
+	}
+	other := []tea.Msg{want[0], tea.ModeReportMsg{Mode: ansi.ModeAutoWrap, Value: ansi.ModeSet}, want[2]}
+	require.Equal(t, other, collectTokenizerInputChunks(t, []string{"a\x1b[?", "7;1$yb"}, true, gap))
 }
 
 func TestTokenizerInputPreservesExactBracketedPaste(t *testing.T) {

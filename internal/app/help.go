@@ -182,7 +182,7 @@ func configureImageHelpContent(root *cli.Command) {
 				"Readable output also works in scripts. Failed checks keep partial results and exit nonzero.",
 			Examples: []clihelp.Example{
 				{Description: "Check image model visibility:", Command: "images models"},
-				{Description: "Use an exact model name:", Command: `images generate --prompt "A tiny orange robot" --model gpt-image-2.5-flare`},
+				{Description: "Use an exact model name:", Command: `images generate --prompt "A tiny orange robot" --model gpt-image-2.6-flare`},
 				{Description: "Return JSON for scripts:", Command: "--format json images models"},
 			},
 		},
@@ -418,7 +418,7 @@ func configureHelpGroups(root *cli.Command) {
 			if create := command.Command("create"); create != nil {
 				for _, flag := range create.Flags {
 					if files, ok := flag.(*requestflag.Flag[[]string]); ok && files.Name == "files" {
-						files.Usage = "For a ZIP upload, pass the .zip path or use - to read the ZIP from stdin."
+						files.Usage = "Pass a folder (including hidden files), a ZIP path, or - for ZIP bytes from stdin. Remove symbolic links and special files before uploading a folder."
 					}
 				}
 			}

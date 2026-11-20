@@ -14,6 +14,7 @@ const imagePickerNativeCacheBytes = 8 << 20
 type imagePickerNativeRow struct {
 	image, row, columns, count int
 	expanded                   bool
+	region                     imagePickerRegion
 }
 
 // The suffix positions the outside border explicitly. Neither string holds image bytes.
@@ -51,10 +52,11 @@ func (w *imagePickerWorkspace) expandedRowCount() int {
 }
 
 func (row imagePickerNativeRow) identity() string {
-	return fmt.Sprintf("\x00native:%d:%d:%d:%d:%t", row.image, row.row, row.columns, row.count, row.expanded)
+	return fmt.Sprintf("\x00native:%d:%d:%d:%d:%t:%d:%d", row.image, row.row, row.columns, row.count, row.expanded, row.region.first, row.region.rows)
 }
 
 func (w *imagePickerWorkspace) nativePayload(row imagePickerNativeRow) (string, bool) {
+	row = row.payloadKey()
 	if text, ok := w.nativeTransient[row]; ok {
 		return text, true
 	}
@@ -71,7 +73,7 @@ func (w *imagePickerWorkspace) stageNativeRows(index int, expanded bool, columns
 	}
 	w.nativeTransient = make(map[imagePickerNativeRow]string, len(rows))
 	for i, text := range rows {
-		w.nativeTransient[imagePickerNativeRow{index, i, columns, len(rows), expanded}] = text
+		w.nativeTransient[imagePickerNativeRow{image: index, row: i, columns: columns, count: len(rows), expanded: expanded}] = text
 	}
 }
 
@@ -93,7 +95,7 @@ func (w *imagePickerWorkspace) discardNativeGeometry(index int, expanded bool, c
 func (w *imagePickerWorkspace) cacheNativeArrival(index int, columns int, rows []string) {
 	for i, text := range rows {
 		if len(text) <= imagePickerNativeCacheBytes-w.nativeBytes {
-			w.storeNativeRow(imagePickerNativeRow{index, i, columns, len(rows), false}, text)
+			w.storeNativeRow(imagePickerNativeRow{image: index, row: i, columns: columns, count: len(rows), expanded: false}, text)
 		}
 	}
 }
@@ -108,6 +110,11 @@ func (w *imagePickerWorkspace) storeNativeRow(row imagePickerNativeRow, text str
 }
 
 func (w *imagePickerWorkspace) nativeViewRow(row imagePickerNativeRow, screenRow int) string {
+	if w.iterm && !w.images[row.image].itermBounds.Empty() {
+		// Layout only reserves cells. Resolve the visible source rectangle after clipping.
+		w.nativeFrame[screenRow] = row
+		return ""
+	}
 	if text, ok := w.nativePayload(row); ok {
 		if cells := terminalimage.RowColumns(text); cells < 0 || cells > row.columns {
 			return ""
@@ -132,7 +139,7 @@ func (w *imagePickerWorkspace) studioNativeRow(row imagePickerNativeRow, y int, 
 }
 
 func (w *imagePickerWorkspace) nativeWireLine(y int, line string) string {
-	if chrome, ok := w.nativeChrome[y]; ok && w.nativeReady[y] {
+	if chrome, ok := w.nativeChrome[y]; ok && w.nativeReady[y] && w.nativeFrame[y].region.rows == 0 {
 		text, _ := w.nativePayload(w.nativeFrame[y])
 		return chrome.prefix + text + chrome.suffix
 	}
@@ -164,11 +171,11 @@ func (w *imagePickerWorkspace) nativePaintKeys(lines []string, repaint bool) ([]
 func (w *imagePickerWorkspace) retainNativeFrame() {
 	visible := make(map[imagePickerNativeRow]bool, len(w.nativeFrame))
 	for _, row := range w.nativeFrame {
-		visible[row] = true
+		visible[row.payloadKey()] = true
 	}
 	for y := 0; y < len(w.painted); y++ {
 		row, ok := w.nativeFrame[y]
-		if !ok || !w.nativeReady[y] {
+		if !ok || !w.nativeReady[y] || (row.region.rows > 0 && row.row != row.region.first) {
 			continue
 		}
 		text, ok := w.nativePayload(row)
@@ -203,7 +210,7 @@ func (w *imagePickerWorkspace) missingNativeRow() (imagePickerNativeRow, bool) {
 		row, ok := w.nativeFrame[y]
 		painted, present := w.nativePainted[y]
 		if ok && (!present || painted != row) {
-			return row, true
+			return row.payloadKey(), true
 		}
 	}
 	return imagePickerNativeRow{}, false

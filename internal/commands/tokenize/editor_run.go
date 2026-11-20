@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -118,7 +119,7 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 		return 0, err
 	}
 	model := newTokenizerEditor()
-	model.decLineDrawing = supportsDECLineDrawing()
+	model.decLineDrawing = cliterminal.SupportsDECLineDrawing()
 	// Catch signals before raw mode starts, and release them after restoration.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -140,7 +141,17 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	defer inputBridge.Close()
 	worker := newTokenizerPreviewWorker(ctx, executable)
 	defer worker.Close()
-	cursorOutput := &tokenizerCursorOutput{FrameOutput: terminalOutput, size: func() (int, int, error) { return term.GetSize(output.Fd()) }}
+	probeScreen := tokenizerProbeScreen(runtime.GOOS)
+	if probeScreen {
+		// Start the response window only after the query reaches the terminal.
+		// The input bridge retains any reply or keystrokes until Tea starts.
+		inputBridge.screenProbe.Store(true)
+		probe, stop := context.WithTimeout(parent, 250*time.Millisecond)
+		n, probeErr := terminalOutput.WriteContext(probe, []byte(ansi.RequestModeAltScreenSaveCursor))
+		stop()
+		probeScreen = probeErr == nil && n == len(ansi.RequestModeAltScreenSaveCursor)
+	}
+	cursorOutput := &tokenizerCursorOutput{FrameOutput: terminalOutput, probeScreen: probeScreen, size: func() (int, int, error) { return term.GetSize(output.Fd()) }}
 	painter := cliterminal.NewPainter(cursorOutput, cancel)
 	defer painter.Stop()
 	model.width, model.height = width, height
@@ -158,7 +169,7 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	profile := cliterminal.ColorProfile(output, os.Environ(), term.IsTerminal(output.Fd()))
 	model.color = profile >= colorprofile.ANSI
 	inline := &tokenizerEditorInline{model: model, worker: worker, output: output, profile: profile,
-		painter: painter, cursorOutput: cursorOutput, input: inputBridge, fail: cancel}
+		painter: painter, cursorOutput: cursorOutput, input: inputBridge, fail: cancel, awaitScreen: probeScreen}
 	options := []tea.ProgramOption{tea.WithInput(inputBridge.Input()), tea.WithOutput(io.Discard), tea.WithContext(ctx),
 		tea.WithWindowSize(width, height), tea.WithColorProfile(profile), tea.WithoutSignalHandler(), tea.WithoutRenderer()}
 	program := tea.NewProgram(inline, options...)
@@ -223,6 +234,15 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 }
 
 type tokenizerEditorSizeErrorMsg struct{}
+
+// Only the direct Linux VS Code terminal has been qualified for this switch.
+func tokenizerProbeScreen(goos string) bool {
+	term := os.Getenv("TERM")
+	return goos == "linux" && os.Getenv("TERM_PROGRAM") == "vscode" &&
+		os.Getenv("TMUX") == "" && os.Getenv("STY") == "" && os.Getenv("ZELLIJ") == "" && os.Getenv("SSH_CONNECTION") == "" &&
+		os.Getenv("SSH_TTY") == "" && !strings.HasPrefix(term, "screen") && !strings.HasPrefix(term, "tmux")
+}
+
 type tokenizerEditorWrapTimeout struct{}
 type tokenizerEditorInputErrorMsg struct{ err error }
 
@@ -248,6 +268,8 @@ type tokenizerEditorInline struct {
 	fail                              context.CancelFunc
 	profile                           colorprofile.Profile
 	started, modesActive, restoreWrap bool
+	awaitScreen, wrapReported         bool
+	temporaryScreen                   bool
 	preparing                         bool
 	prepared                          map[string]error
 	content                           string
@@ -303,15 +325,29 @@ func (p *tokenizerEditorInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		p.err = errors.New("could not read terminal size")
 		return p, tea.Quit
 	case tea.ModeReportMsg:
+		if msg.Mode == ansi.ModeAltScreenSaveCursor && p.input != nil {
+			p.input.screenProbe.Store(false)
+		}
+		if msg.Mode == ansi.ModeAltScreenSaveCursor && p.awaitScreen {
+			p.awaitScreen = false
+			p.temporaryScreen = msg.Value == ansi.ModeReset
+			if p.wrapReported {
+				p.start()
+			}
+		}
 		if msg.Mode == ansi.ModeAutoWrap {
 			if msg.Value == ansi.ModePermanentlyReset {
 				p.err = errors.New("terminal line wrapping is unavailable")
 				return p, tea.Quit
 			}
 			p.restoreWrap = msg.Value == ansi.ModeReset
-			p.start()
+			p.wrapReported = true
+			if !p.awaitScreen {
+				p.start()
+			}
 		}
 	case tokenizerEditorWrapTimeout:
+		p.awaitScreen = false
 		p.start()
 	case tea.ColorProfileMsg:
 		p.profile = msg.Profile
@@ -374,7 +410,11 @@ func (p *tokenizerEditorInline) start() {
 		return
 	}
 	p.started = true
-	p.painter.Control(ansi.SetModeAutoWrap)
+	start := ansi.SetModeAutoWrap
+	if p.temporaryScreen {
+		start = ansi.SetModeAltScreenSaveCursor + start
+	}
+	p.painter.Control(start)
 }
 
 func (p *tokenizerEditorInline) draw() {
@@ -399,11 +439,16 @@ func (p *tokenizerEditorInline) drawFrame(width, height int) {
 		return
 	}
 	frame := ansi.ResetModeTextCursorEnable
-	if p.anchored {
+	if p.temporaryScreen {
+		frame += ansi.CursorHomePosition
+	} else if p.anchored {
 		frame += ansi.RestoreCursor
 	}
 	// Each replaceable frame includes the complete panel, even for a cursor-only change.
-	frame += cliterminal.InlineFrame(content, width) + ansi.SaveCursor
+	frame += cliterminal.InlineFrame(content, width)
+	if !p.temporaryScreen {
+		frame += ansi.SaveCursor
+	}
 	if cursor := view.Cursor; cursor != nil {
 		if cursor.Y > 0 {
 			frame += ansi.CursorDown(cursor.Y)
@@ -449,13 +494,27 @@ func tokenizerCaretColumn(content string, cursor *tea.Cursor) string {
 // an acknowledged SaveCursor establishes an origin that cleanup can restore.
 type tokenizerCursorOutput struct {
 	cliterminal.FrameOutput
-	saved  atomic.Bool
-	size   func() (int, int, error)
-	height int
-	caretY int
+	probeScreen, screenAttempted bool
+	saved                        atomic.Bool
+	size                         func() (int, int, error)
+	height                       int
+	caretY                       int
 }
 
 func (w *tokenizerCursorOutput) WriteContext(ctx context.Context, data []byte) (int, error) {
+	if w.probeScreen && !w.screenAttempted && bytes.Contains(data, []byte(ansi.SetModeAltScreenSaveCursor)) {
+		// A canceled write can reach the terminal before its acknowledgment.
+		// Save on the confirmed primary screen first so resetting 1049 is safe
+		// whether the switch reaches the terminal or stays queued.
+		n, err := w.FrameOutput.WriteContext(ctx, []byte(ansi.SaveCursor))
+		if err != nil {
+			return 0, err
+		}
+		if n != len(ansi.SaveCursor) {
+			return 0, io.ErrShortWrite
+		}
+		w.screenAttempted = true
+	}
 	save := bytes.LastIndex(data, []byte(ansi.SaveCursor))
 	if save < 0 {
 		return w.FrameOutput.WriteContext(ctx, data)
@@ -538,7 +597,9 @@ func (p *tokenizerEditorInline) close() string {
 		cleanup += ansi.SelectCharacterSet('(', 'B')
 	}
 	if w := p.cursorOutput; w != nil {
-		if origin := w.origin(w.terminalHeight()); origin != "" {
+		if w.screenAttempted {
+			cleanup += ansi.ResetModeAltScreenSaveCursor
+		} else if origin := w.origin(w.terminalHeight()); origin != "" {
 			cleanup += origin + "\r" + ansi.EraseScreenBelow
 		}
 	}

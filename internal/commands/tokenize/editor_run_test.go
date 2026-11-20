@@ -184,6 +184,86 @@ func TestTokenizerStudioDividerRestoresCharacterSet(t *testing.T) {
 	}
 }
 
+func TestTokenizerTemporaryScreenHost(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "vscode")
+	t.Setenv("TERM", "xterm-256color")
+	for _, key := range []string{"TMUX", "STY", "ZELLIJ", "SSH_CONNECTION", "SSH_TTY"} {
+		t.Setenv(key, "")
+	}
+	require.True(t, tokenizerProbeScreen("linux"))
+	require.False(t, tokenizerProbeScreen("darwin"))
+	for key, value := range map[string]string{"TMUX": "1", "STY": "1", "ZELLIJ": "1", "SSH_TTY": "/dev/pts/1", "SSH_CONNECTION": "remote", "TERM": "screen-256color", "TERM_PROGRAM": "other"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, value)
+			require.False(t, tokenizerProbeScreen("linux"))
+		})
+	}
+}
+
+func TestTokenizerTemporaryScreenOwnership(t *testing.T) {
+	wrap := tea.ModeReportMsg{Mode: ansi.ModeAutoWrap, Value: ansi.ModeReset}
+	for _, setting := range []ansi.ModeSetting{ansi.ModeSet, ansi.ModeReset, ansi.ModeNotRecognized, ansi.ModePermanentlySet, ansi.ModePermanentlyReset} {
+		screen := tea.ModeReportMsg{Mode: ansi.ModeAltScreenSaveCursor, Value: setting}
+		for _, messages := range [][]tea.Msg{{screen, wrap}, {wrap, screen}, {wrap, tokenizerEditorWrapTimeout{}, screen}} {
+			paint := &tokenizerRecordedFrames{}
+			p := &tokenizerEditorInline{model: newTokenizerEditor(), painter: paint, awaitScreen: true}
+			p.Init()
+			p.Update(messages[0])
+			require.False(t, p.started)
+			for _, msg := range messages[1:] {
+				p.Update(msg)
+			}
+			p.Update(screen)
+			p.drawFrame(80, 24)
+			p.drawFrame(34, 9)
+			expected := setting == ansi.ModeReset && len(messages) == 2
+			require.Equal(t, expected, strings.Count(paint.String(), ansi.SetModeAltScreenSaveCursor) == 1)
+			require.Equal(t, expected, strings.Contains(paint.String(), ansi.CursorHomePosition))
+			require.Contains(t, paint.String(), "Tokenizer")
+			require.Contains(t, p.close(), ansi.ResetModeAutoWrap)
+		}
+	}
+}
+
+func TestTokenizerTemporaryScreenInterruptedWrite(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		saved, delivered int
+		switchAttempted  bool
+	}{
+		{"save interrupted", 1, 0, false},
+		{"no switch acknowledged", len(ansi.SaveCursor), 0, true},
+		{"partial switch", len(ansi.SaveCursor), 3, true},
+		{"complete switch", len(ansi.SaveCursor), len(ansi.SetModeAltScreenSaveCursor), true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var writes []string
+			w := &tokenizerCursorOutput{probeScreen: true, FrameOutput: tokenizerFrameWriteFunc(func(_ context.Context, data []byte) (int, error) {
+				writes = append(writes, string(data))
+				n := test.delivered
+				if len(writes) == 1 {
+					n = test.saved
+				}
+				if n != len(data) {
+					return n, context.Canceled
+				}
+				return n, nil
+			})}
+			p := &tokenizerEditorInline{modesActive: true, cursorOutput: w}
+			require.NotContains(t, p.close(), ansi.ResetModeAltScreenSaveCursor, "queued entry owns nothing")
+			p.modesActive = true
+			_, err := w.WriteContext(t.Context(), []byte(ansi.SetModeAltScreenSaveCursor))
+			require.Equal(t, test.delivered != len(ansi.SetModeAltScreenSaveCursor), err != nil)
+			require.Equal(t, ansi.SaveCursor, writes[0])
+			require.Equal(t, test.switchAttempted, len(writes) == 2)
+			cleanup := p.close()
+			require.Equal(t, test.switchAttempted, strings.Contains(cleanup, ansi.ResetModeAltScreenSaveCursor))
+			require.NotContains(t, cleanup, ansi.EraseScreenBelow)
+			require.Empty(t, p.close())
+		})
+	}
+}
+
 func TestTokenizerEditorRepaintsFromInlineAnchorOnResize(t *testing.T) {
 	paint := &tokenizerRecordedFrames{}
 	receipt := &tokenizerCursorOutput{FrameOutput: tokenizerFrameWriteFunc(func(_ context.Context, data []byte) (int, error) {

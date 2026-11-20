@@ -15,19 +15,21 @@ import (
 // Requests retain only the visible catalog page and the selected match position.
 // Catalog scans run outside the terminal event loop and stop when replaced.
 type batchBrowserRequestState struct {
-	ctx          context.Context
-	catalog      *batchBrowserCatalog
-	cancel       context.CancelFunc
-	sequence     uint64
-	page         batchBrowserRecordPage
-	selected     int64
-	loading      bool
-	loaded       bool
-	err          error
-	expanded     bool
-	autoExpanded bool
-	offerCSV     bool
-	preview      batchBrowserInlinePreview
+	ctx             context.Context
+	expandAfterLoad bool
+	catalog         *batchBrowserCatalog
+	csv             *batchBrowserCSVRows
+	cancel          context.CancelFunc
+	sequence        uint64
+	page            batchBrowserRecordPage
+	selected        int64
+	loading         bool
+	loaded          bool
+	err             error
+	expanded        bool
+	autoExpanded    bool
+	offerCSV        bool
+	preview         batchBrowserInlinePreview
 }
 
 func (s *batchBrowserRequestState) stop() {
@@ -39,6 +41,22 @@ func (s *batchBrowserRequestState) stop() {
 }
 
 func (m *batchBrowserScreen) requestKeys(shortcut func(string, string) string) []string {
+	if m.requestState.csv != nil {
+		if m.requestState.loaded && !m.requestState.loading && m.requestState.page.Total == 0 && m.input.Value() != "" {
+			return []string{shortcut("Esc", "clear")}
+		}
+		if m.requestState.expanded {
+			return []string{shortcut("↑↓", "select"), shortcut("→", "full row"), shortcut("Esc", "collapse")}
+		}
+		keys := []string{shortcut("↑↓", "select"), shortcut("Enter", "expand")}
+		if m.input.Value() != "" {
+			return append(keys, shortcut("Esc", "clear"))
+		}
+		if m.searchFocused {
+			return append(keys, shortcut("Esc", "cancel"))
+		}
+		return append(keys, shortcut("s", "save CSV"), shortcut("Esc", "back"))
+	}
 	var keys []string
 	if m.requestState.autoExpanded && m.requestState.expanded {
 		keys = []string{shortcut("Enter", "collapse"), shortcut("→", "full record"), shortcut("Ctrl+V", "view all")}
@@ -73,9 +91,16 @@ func newBatchBrowserRequests(ctx context.Context, catalog *batchBrowserCatalog, 
 }
 
 func (m *batchBrowserScreen) requestRows() int {
-	width, height := max(1, m.width), max(1, m.height)
-	if width >= 50 && height >= 12 {
-		width, height = width-2, height-2
+	width, height := m.contentSize()
+	if m.requestState.csv != nil {
+		heading := 2
+		if height >= 10 {
+			heading += 2
+		}
+		if m.notice != "" {
+			heading++
+		}
+		return max(1, height-heading)
 	}
 	heading, footer := 3, 1
 	if height >= 10 {
@@ -112,9 +137,15 @@ func (m *batchBrowserScreen) loadRequests(first int64, end bool) tea.Cmd {
 	sequence := s.sequence
 	ctx, cancel := context.WithCancel(s.ctx)
 	s.cancel, s.loading, s.err = cancel, true, nil
-	catalog, query, rows := s.catalog, m.input.Value(), m.requestRows()
+	var readPage func(context.Context, string, int64, int) (batchBrowserRecordPage, error)
+	if s.csv != nil {
+		readPage = s.csv.page
+	} else {
+		readPage = s.catalog.page
+	}
+	query, rows := m.input.Value(), m.requestRows()
 	return func() tea.Msg {
-		page, err := catalog.page(ctx, query, first, rows)
+		page, err := readPage(ctx, query, first, rows)
 		return batchBrowserRequestsReady{m, sequence, page, end, err}
 	}
 }
@@ -150,6 +181,12 @@ func (m *batchBrowserScreen) updateRequests(message tea.Msg) (tea.Model, tea.Cmd
 		if len(s.page.Rows) == 0 {
 			s.selected, m.searchFocused = 0, true
 		}
+		if s.expandAfterLoad {
+			s.expandAfterLoad = false
+			if len(s.page.Rows) > 0 {
+				return m.updateRequests(tea.KeyPressMsg{Code: tea.KeyEnter})
+			}
+		}
 		return m, m.loadRequestPreview()
 	case tea.WindowSizeMsg:
 		rows := m.requestRows()
@@ -159,6 +196,56 @@ func (m *batchBrowserScreen) updateRequests(message tea.Msg) (tea.Model, tea.Cmd
 		}
 		return m, m.loadRequests(m.requestFirst(), false)
 	case tea.KeyPressMsg:
+		if s.csv != nil {
+			s.expandAfterLoad = false
+			switch msg.String() {
+			case "enter":
+				if s.loading && m.width >= 30 && m.height >= 7 {
+					s.expandAfterLoad = true
+					return m, nil
+				}
+
+			case "/":
+				if !m.searchFocused {
+					m.searchFocused, m.querySelected = true, m.input.Value() != ""
+					s.expanded = false
+					s.preview.stop()
+					return m, nil
+				}
+			case "up", "shift+tab":
+				if s.selected == 0 && !m.searchFocused {
+					m.querySelected = m.input.Value() != ""
+				}
+			case "left", "right":
+				if !s.expanded {
+					m.searchFocused = true
+					return m, m.updateSearchField(msg)
+				}
+			case "down":
+				if m.searchFocused && m.input.Value() != "" && !s.loading && len(s.page.Rows) > 0 {
+					m.searchFocused, m.querySelected = false, false
+					return m, m.selectRequest(s.selected + 1)
+				}
+			case "esc":
+				if !s.expanded && (m.searchFocused || m.input.Value() != "") {
+					m.input.SetValue("")
+					m.querySelected, m.searchFocused = false, false
+					s.selected = 0
+					return m, m.loadRequests(0, false)
+				}
+			case "ctrl+s", "s":
+				if !m.searchFocused || msg.String() == "ctrl+s" {
+					s.stop()
+					m.closed, m.chosen = true, "save"
+					if msg.String() == "ctrl+s" {
+						m.chosen = "save-as"
+					}
+					return m, tea.Quit
+				}
+			case "ctrl+o", "ctrl+v":
+				return m, nil
+			}
+		}
 		switch msg.String() {
 		case "ctrl+o":
 			if s.offerCSV {
@@ -193,7 +280,7 @@ func (m *batchBrowserScreen) updateRequests(message tea.Msg) (tea.Model, tea.Cmd
 			index := s.selected - s.page.First
 			if index >= 0 && index < int64(len(s.page.Rows)) {
 				if msg.String() == "enter" {
-					m.searchFocused = false
+					m.searchFocused, m.querySelected = false, false
 					s.autoExpanded = false
 					s.expanded = !s.expanded
 					if !s.expanded || m.requestPreviewRows() > 0 {
@@ -250,13 +337,18 @@ func (m *batchBrowserScreen) updateRequests(message tea.Msg) (tea.Model, tea.Cmd
 	}
 	previous, position := m.input.Value(), m.input.Position()
 	var command tea.Cmd
-	m.input, command = m.input.Update(message)
+	if s.csv != nil {
+		command = m.updateSearchField(message)
+	} else {
+		m.input, command = m.input.Update(message)
+	}
 	if m.input.Value() != previous || m.input.Position() != position {
 		m.searchFocused = true
 		s.expanded = false
 		s.preview.stop()
 	}
 	if m.input.Value() != previous {
+		s.expandAfterLoad = false
 		s.selected = 0
 		s.loaded = false
 		s.page = batchBrowserRecordPage{}
@@ -282,10 +374,16 @@ func (m *batchBrowserScreen) requestLines(height, width int, footer []string, ru
 	s := m.requestState
 	clip := func(text string, width int) string { return ansi.Truncate(batchInputLabel(text), max(1, width), "…") }
 	heading := lipgloss.NewStyle().Bold(colors)
-	lines := []string{"  " + heading.Render(clip(m.title, width)), "  " + muted.Render(clip(m.subtitle, width))}
+	var lines []string
 	count := fmt.Sprintf("%d requests", s.page.Total)
 	if s.page.Total == 1 {
 		count = "1 request"
+	}
+	if s.csv != nil {
+		count = fmt.Sprintf("%d rows", s.page.Total)
+		if s.page.Total == 1 {
+			count = "1 row"
+		}
 	}
 	if m.input.Value() != "" {
 		count = fmt.Sprintf("%d matches", s.page.Total)
@@ -296,25 +394,35 @@ func (m *batchBrowserScreen) requestLines(height, width int, footer []string, ru
 	if s.loading {
 		count = "Searching…"
 	}
-	searchWidth := width - ansi.StringWidth(count) - 2
-	if searchWidth < 18 {
-		searchWidth, count = width, ""
-	}
-	query, x := m.searchView(searchWidth - 8)
-	if m.input.Value() == "" {
-		query = muted.Render(query)
-	}
-	search := "Search  " + query
-	if count != "" {
-		search += strings.Repeat(" ", max(0, width-ansi.StringWidth(search)-ansi.StringWidth(count))) + muted.Bold(colors).Render(count)
+	var search string
+	var x int
+	if s.csv != nil {
+		room := width - ansi.StringWidth(count) - 3
+		lines = []string{"  " + heading.Render(clip(m.subtitle, room)) + muted.Render(" · "+count)}
+		search, x = m.csvFinderField(width, muted, accent, colors)
+	} else {
+		lines = []string{"  " + heading.Render(clip(m.title, width)), "  " + muted.Render(clip(m.subtitle, width))}
+		searchWidth := width - ansi.StringWidth(count) - 2
+		if searchWidth < 18 {
+			searchWidth, count = width, ""
+		}
+		search, x = m.searchView(searchWidth - 8)
+		if m.input.Value() == "" {
+			search = muted.Render(search)
+		}
+		search = "Search  " + search
+		x += 8
+		if count != "" {
+			search += strings.Repeat(" ", max(0, width-ansi.StringWidth(search)-ansi.StringWidth(count))) + muted.Bold(colors).Render(count)
+		}
 	}
 	lines = append(lines, "  "+search)
 	var cursor *tea.Cursor
 	if m.searchFocused {
-		cursor = tea.NewCursor(10+x, 2)
+		cursor = tea.NewCursor(2+x, len(lines)-1)
 		cursor.Shape, cursor.Blink = tea.CursorBar, true
 	}
-	if height < 10 {
+	if height < 10 && s.csv == nil {
 		shortcuts := "↑↓ Enter →full Ctrl+V Esc"
 		if s.offerCSV {
 			shortcuts = "↑↓ Enter → Ctrl+V ^O CSV Esc"
@@ -326,8 +434,15 @@ func (m *batchBrowserScreen) requestLines(height, width int, footer []string, ru
 		numberWidth = max(numberWidth, len(strconv.FormatInt(row.ID, 10)))
 	}
 	idWidth := min(32, max(10, (width-numberWidth-4)/2))
+	if s.csv != nil {
+		numberWidth = max(3, numberWidth)
+		idWidth = min(18, max(6, ansi.StringWidth(s.csv.firstColumn)))
+		for _, row := range s.page.Rows {
+			idWidth = min(18, max(idWidth, ansi.StringWidth(row.Label)))
+		}
+	}
 	previewWidth := max(0, width-numberWidth-idWidth-4)
-	table := width >= 45
+	table := width >= 45 || s.csv != nil
 	cell := func(text string, size int) string {
 		text = clip(text, size)
 		return text + strings.Repeat(" ", max(0, size-ansi.StringWidth(text)))
@@ -337,22 +452,41 @@ func (m *batchBrowserScreen) requestLines(height, width int, footer []string, ru
 		labels := cell("#", numberWidth) + "  Request"
 		if table {
 			previewLabel := "Result"
-			if s.catalog.selection == "input" {
+			if s.csv != nil {
+				previewLabel = "Answer"
+				if m.input.Value() != "" {
+					previewLabel = "Matching text"
+				}
+			} else if s.catalog.selection == "input" {
 				previewLabel = "Input"
 			} else if s.catalog.selection == "error" {
 				previewLabel = "Error"
 			}
-			labels = cell("#", numberWidth) + "  " + cell("Request", idWidth) + "  " + previewLabel
+			idLabel, numberLabel := "Request", "#"
+			if s.csv != nil {
+				idLabel, numberLabel = s.csv.firstColumn, "Row"
+			}
+			labels = cell(numberLabel, numberWidth) + "  " + cell(idLabel, idWidth) + "  " + previewLabel
 		}
 		lines = append(lines, "  "+muted.Render(labels))
 	}
+	if s.csv != nil && m.notice != "" {
+		footer = append([]string{"  " + muted.Render(clip(m.notice, width))}, footer...)
+	}
 	budget := max(1, height-len(lines)-len(footer))
 	if s.loading {
-		lines = append(lines, "  "+muted.Render("Searching requests…"))
+		notice := "Searching requests…"
+		if s.csv != nil {
+			notice = "Finding rows…"
+		}
+		lines = append(lines, "  "+muted.Render(notice))
 	} else if len(s.page.Rows) == 0 {
 		notice := "No requests in this file."
 		if m.input.Value() != "" {
 			notice = "No matching requests."
+		}
+		if s.csv != nil {
+			notice = "No matching rows."
 		}
 		lines = append(lines, "  "+muted.Render(clip(notice, width)))
 	} else {
@@ -361,17 +495,24 @@ func (m *batchBrowserScreen) requestLines(height, width int, footer []string, ru
 		first := max(0, offset-budget+1)
 		for i := first; i < min(len(s.page.Rows), first+budget); i++ {
 			row := s.page.Rows[i]
-			selected := !m.searchFocused && s.selected == s.page.First+int64(i)
+			selected := (!m.searchFocused || s.csv != nil) && s.selected == s.page.First+int64(i)
 			prefix := cell(strconv.FormatInt(row.ID, 10), numberWidth) + "  "
 			name, preview := clip(row.Label, width-ansi.StringWidth(prefix)), ""
 			if table {
 				name = cell(row.Label, idWidth)
 				preview = "  " + clip(row.Preview, previewWidth)
 			}
+			if s.csv != nil && m.input.Value() != "" {
+				style := lipgloss.NewStyle()
+				if selected {
+					style = highlight
+				}
+				preview = csvHighlight(preview, m.input.Value(), style, colors)
+			}
 			if selected {
 				text := prefix + name + preview
 				rowWidth := width
-				if m.width >= 50 && m.height >= 12 {
+				if m.hasFrame() {
 					rowWidth++ // Retain selection through the frame's right content gutter.
 				}
 				padding := strings.Repeat(" ", max(0, rowWidth-ansi.StringWidth(text)))
@@ -388,7 +529,7 @@ func (m *batchBrowserScreen) requestLines(height, width int, footer []string, ru
 			}
 		}
 	}
-	for len(lines) < height-len(footer) {
+	for s.csv == nil && len(lines) < height-len(footer) {
 		lines = append(lines, "")
 	}
 	return append(lines, footer...), cursor

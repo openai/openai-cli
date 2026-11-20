@@ -33,7 +33,7 @@ func TestMainDebugLiveAudioPreservesWebSocket(t *testing.T) {
 		flags []string
 	}{
 		{"ordinary", nil},
-		{"debug", []string{"--debug"}},
+		{"debug", []string{"--debug", "--header", "Authorization: Bearer sk-fake-debug-capture"}},
 		{"capture", []string{"--debug", "--debug-body", "--debug-sse", "--debug-event-timing", "--debug-max-bytes", "64", "--debug-max-events", "1"}},
 	} {
 		for _, drain := range []bool{true, false} {
@@ -48,14 +48,18 @@ func TestMainDebugLiveAudioPreservesWebSocket(t *testing.T) {
 				for _, name := range []string{"open", "xdg-open"} {
 					require.NoError(t, os.WriteFile(filepath.Join(home, name), []byte("#!/bin/sh\nexit 0\n"), 0700))
 				}
+				key := "sk-fake-debug-capture"
+				if mode.name == "debug" {
+					key = "sk-fake-shadowed-key"
+				}
 				env := []string{
 					"PATH=" + home, "HOME=" + home, "TMPDIR=" + home,
 					"XDG_CONFIG_HOME=" + home, "XDG_CACHE_HOME=" + home,
-					"OPENAI_API_KEY=sk-fake-debug-capture", "OPENAI_BASE_URL=" + server.URL + "/v1/",
+					"OPENAI_API_KEY=" + key, "OPENAI_BASE_URL=" + server.URL + "/v1/",
 					"FORCE_COLOR=0",
 				}
 				stdout := &debugTimingCapture{changed: make(chan struct{}, 1)}
-				args := append(append([]string(nil), mode.flags...), "audio", "translate", "--live")
+				args := append(append([]string(nil), mode.flags...), "audio", "translate", "--live", "--browser")
 				child, stderr, done, ctx := startAudioLocalProcess(t, env, stdout, args...)
 				stdout.waitFor(t, ctx, "Ctrl+C to close.\n")
 				lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")

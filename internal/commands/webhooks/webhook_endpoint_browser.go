@@ -231,7 +231,7 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 	} else if !b.loading && len(b.items) > 0 {
 		bindings = []string{"↑↓ move", "Enter details", "Tab actions", "Esc back"}
 	}
-	controls := webhookCreateControls(inner, label, quiet, bindings...)
+	controls := m.controls(inner, label, quiet, bindings...)
 	overhead += len(controls)
 	table := !compact && !b.loading && !b.details && len(b.items) > 0
 	if table {

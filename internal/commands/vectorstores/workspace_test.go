@@ -261,6 +261,65 @@ func TestWorkspaceUploadRetainsFileAndChecksBeforeRetry(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIndexingProgressDuringUploadAndResume(t *testing.T) {
+	var uploads, attachments, checks int
+	m := modelForTest(t, modelService{
+		upload: func(context.Context, string) (*openai.FileObject, error) {
+			uploads++
+			return &openai.FileObject{ID: "file_demo", Filename: "notes.txt"}, nil
+		},
+		attach: func(context.Context, string, string, AttachOptions) (*openai.VectorStoreFile, error) {
+			attachments++
+			return &openai.VectorStoreFile{ID: "file_demo", Status: "in_progress"}, nil
+		},
+		getFile: func(context.Context, string, string) (*openai.VectorStoreFile, error) {
+			checks++
+			status := openai.VectorStoreFileStatusInProgress
+			if checks == 4 {
+				status = openai.VectorStoreFileStatusCompleted
+			}
+			return &openai.VectorStoreFile{ID: "file_demo", Status: status}, nil
+		},
+	})
+	m.store = &openai.VectorStore{ID: "vs_demo", Name: "Demo"}
+	m.enter("upload")
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	m.Update(tea.PasteMsg{Content: "notes.txt"})
+	modelKey(m, tea.KeyEnter)
+	attach := modelComplete(t, m, modelKey(m, tea.KeyEnter))
+	require.NotContains(t, m.View().Content, "✓ Attached")
+	poll := modelComplete(t, m, attach)
+	frame := m.View().Content
+	for _, text := range []string{"notes.txt", "✓ Uploaded", "✓ Attached", "Indexing file…", "Waiting for first status check", "Searchable after indexing.", "Esc stop waiting", "Ctrl+C exit"} {
+		require.Contains(t, frame, text)
+	}
+	for _, line := range strings.Split(frame, "\n") {
+		require.LessOrEqual(t, ansi.StringWidth(line), m.width)
+	}
+	require.LessOrEqual(t, strings.Count(frame, "\n")+1, m.height)
+	require.NotContains(t, frame, "Ready to search")
+	for i := 1; i <= 2; i++ {
+		poll = modelComplete(t, m, poll)
+		require.Contains(t, m.View().Content, fmt.Sprintf("Status checks  %d", i))
+	}
+	modelKey(m, tea.KeyEscape)
+	require.Contains(t, m.View().Content, "Stopping local work…")
+	require.NotContains(t, m.View().Content, "Ready to search.")
+	modelComplete(t, m, poll)
+	require.Equal(t, 2, checks, "Escape cancels the next scheduled read")
+	require.Contains(t, m.View().Content, "Resume indexing")
+
+	poll = modelComplete(t, m, modelKey(m, tea.KeyEnter))
+	require.Contains(t, m.View().Content, "Status checks  1", "resume starts with its own attachment check")
+	modelComplete(t, m, poll)
+	require.Equal(t, 4, checks)
+	require.Equal(t, 1, uploads)
+	require.Equal(t, 1, attachments)
+	require.Contains(t, m.View().Content, "File indexed. Ready to search.")
+	require.Contains(t, m.View().Content, "notes.txt")
+	require.Equal(t, "home", m.page)
+}
+
 func TestWorkspaceCancelledMutationRetainsReturnedResource(t *testing.T) {
 	t.Run("upload", func(t *testing.T) {
 		m := modelForTest(t, modelService{
@@ -328,7 +387,7 @@ func TestWorkspaceUploadCleanupErrorRetainsIDAcrossStoreSwitch(t *testing.T) {
 	require.Nil(t, modelComplete(t, m, modelKey(m, tea.KeyEnter)))
 	require.Equal(t, "file_retained", m.pendingFile)
 	require.Error(t, m.lastErr)
-	assert.Contains(t, m.note, "retained")
+	assert.Contains(t, m.note, "use the same file")
 
 	modelKey(m, tea.KeyEscape)
 	modelKey(m, tea.KeyEscape)
@@ -451,6 +510,8 @@ func TestWorkspaceFailedRefreshPreservesPagination(t *testing.T) {
 		modelKey(m, tea.KeyTab)
 		modelComplete(t, m, modelKey(m, tea.KeyEnter))
 		modelKey(m, tea.KeyTab)
+		modelKey(m, tea.KeyTab)
+		require.Contains(t, m.View().Content, "› Refresh files")
 		modelComplete(t, m, modelKey(m, tea.KeyEnter))
 		require.Len(t, m.files, 1)
 		assert.Equal(t, "file_first", m.files[0].ID)

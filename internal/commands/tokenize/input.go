@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -19,6 +20,7 @@ const (
 	tokenizerPasteStart       = "\x1b[200~"
 	tokenizerPasteEnd         = "\x1b[201~"
 	tokenizerPastePlaceholder = "openai-tokenizer-input"
+	tokenizerScreenReply      = "\x1b[?1049;"
 )
 
 type tokenizerInputPasteErrorMsg struct{ message string }
@@ -52,6 +54,7 @@ type tokenizerInputBridge struct {
 	stopCallback    func() bool
 	mu              sync.Mutex
 	pending         *tokenizerPendingInput
+	screenProbe     atomic.Bool
 	err, closeError error
 }
 
@@ -181,7 +184,14 @@ func (b *tokenizerInputBridge) pump() {
 		}
 		// Only this bridge owns unfinished terminal sequences. Tea receives
 		// complete bytes or decoded expiry events, never a competing ESC timer.
-		if parser.ordinary.Len() > 0 {
+		if b.screenProbe.Load() && tokenizerScreenReportPrefix(parser.ordinary.Bytes()) {
+			if parser.heldScreenPrefix == 0 {
+				parser.heldScreenPrefix = parser.ordinary.Len()
+			}
+		} else {
+			parser.heldScreenPrefix = 0
+		}
+		if parser.ordinary.Len() > 0 && parser.heldScreenPrefix == 0 {
 			timer.Reset(uv.DefaultEscTimeout)
 			expired = timer.C
 		} else {
@@ -194,6 +204,37 @@ func (b *tokenizerInputBridge) pump() {
 		b.err = err
 		b.mu.Unlock()
 	}
+}
+
+// Once CSI ? identifies a private reply, a slow split must not turn its
+// remaining parameters into keystrokes. Keep at most one short prefix.
+// Bare Escape and Alt+[ still use the normal keyboard timeout.
+func tokenizerScreenReportPrefix(data []byte) bool {
+	if len(data) < len("\x1b[?") {
+		return false
+	}
+	if len(data) <= len(tokenizerScreenReply) {
+		return bytes.HasPrefix([]byte(tokenizerScreenReply), data)
+	}
+	tail, ok := bytes.CutPrefix(data, []byte(tokenizerScreenReply))
+	return ok && tail[0] >= '0' && tail[0] <= '4' &&
+		(len(tail) == 1 || len(tail) == 2 && tail[1] == '$')
+}
+
+// The preceding bytes match an unfinished screen report. A different private
+// reply can share its opening CSI ?, before the mode number is complete.
+func tokenizerInterruptedScreenReport(data []byte) bool {
+	last := data[len(data)-1]
+	if bytes.HasPrefix(data, []byte(tokenizerScreenReply)) {
+		return last != 'y' || data[len(data)-2] != '$'
+	}
+	var decoder uv.EventDecoder
+	n, event := decoder.Decode(data)
+	switch event.(type) {
+	case uv.UnknownEvent, uv.UnknownCsiEvent:
+		return n < len(data) || last >= '@'
+	}
+	return false
 }
 
 func (b *tokenizerInputBridge) publish(message tea.Msg, opened bool) error {
@@ -221,6 +262,7 @@ type tokenizerInputParser struct {
 	ordinary             bytes.Buffer
 	startMatch, endMatch int
 	paste, oversized     bool
+	heldScreenPrefix     int
 	content, replacement []byte
 }
 
@@ -268,6 +310,21 @@ func (p *tokenizerInputParser) feed(data []byte) error {
 
 func (p *tokenizerInputParser) ordinaryByte(value byte) error {
 	p.ordinary.WriteByte(value)
+	if p.heldScreenPrefix > 0 {
+		data := p.ordinary.Bytes()
+		if !tokenizerScreenReportPrefix(data) {
+			if tokenizerInterruptedScreenReport(data) {
+				// Discard the mode identifier even if it spanned several reads.
+				// A status digit or '$' after the held prefix can be typing.
+				drop := p.heldScreenPrefix
+				if bytes.HasPrefix(data, []byte(tokenizerScreenReply)) {
+					drop = max(drop, len(tokenizerScreenReply))
+				}
+				p.ordinary.Next(drop)
+			}
+			p.heldScreenPrefix = 0
+		}
+	}
 	if value == tokenizerPasteStart[p.startMatch] {
 		p.startMatch++
 	} else {

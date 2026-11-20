@@ -17,7 +17,7 @@ func TestLiveSessionsAccept(t *testing.T) {
 			"--admin-api-key", "string",
 			"live:sessions", "accept",
 			"--session-id", "session_id",
-			"--session", "{model: gpt-live-1, type: live, audio: {output: {voice: alloy}}, delegation: {type: client, acknowledgement_delay_ms: 0}, input: [{content: [{text: text, type: input_text}], role: developer, id: id, status: incomplete, type: message}], instructions: instructions, store: true, triggers: [{decisions: {questions: [{instructions: string, type: predicate, name: name}]}, event_type: session.input_transcript.delta, type: decisions}]}",
+			"--session", "{model: gpt-live-1.1, type: live, audio: {output: {voice: alloy}}, delegation: {type: client, acknowledgement_delay_ms: 0}, input: [{content: [{text: text, type: input_text}], role: developer, id: id, status: incomplete, type: message}], instructions: instructions, store: true, triggers: [{decisions: {questions: [{instructions: string, type: predicate, name: name}]}, event_type: session.input_transcript.delta, type: decisions}]}",
 		)
 	})
 
@@ -32,7 +32,7 @@ func TestLiveSessionsAccept(t *testing.T) {
 			"--admin-api-key", "string",
 			"live:sessions", "accept",
 			"--session-id", "session_id",
-			"--session.model", "gpt-live-1",
+			"--session.model", "gpt-live-1.1",
 			"--session.type", "live",
 			"--session.audio", "{output: {voice: alloy}}",
 			"--session.delegation", "{type: client, acknowledgement_delay_ms: 0}",
@@ -47,7 +47,7 @@ func TestLiveSessionsAccept(t *testing.T) {
 		// Test piping YAML data over stdin
 		pipeData := []byte("" +
 			"session:\n" +
-			"  model: gpt-live-1\n" +
+			"  model: gpt-live-1.1\n" +
 			"  type: live\n" +
 			"  audio:\n" +
 			"    output:\n" +

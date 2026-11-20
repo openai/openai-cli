@@ -36,7 +36,8 @@ func TestAudioTranslationGeneratedRegistration(t *testing.T) {
 	executable, err := os.Executable()
 	require.NoError(t, err)
 	for _, name := range []string{
-		"live alone", "live preserves pipe", "live with file", "live with model",
+		"live alone", "live preserves pipe", "live with file", "live with model", "explicit browser", "legacy browser", "legacy browser alias",
+		"legacy mixed flags", "file with live disabled",
 		"missing both", "missing file", "missing model",
 		"file flags", "file JSON", "file YAML", "JSON missing file", "YAML missing model",
 	} {
@@ -77,25 +78,32 @@ func testAudioTranslationGeneratedCase(t *testing.T, name string) {
 	jsonBody, err := json.Marshal(map[string]string{"file": path, "model": "whisper-1"})
 	require.NoError(t, err)
 	type testCase struct {
+		command string
 		args    []string
 		input   string
 		missing string
 		live    bool
-		mixed   bool
+		browser bool
+		mixed   string
 	}
 	cases := map[string]testCase{
-		"live alone":          {args: []string{"--live"}, live: true},
-		"live preserves pipe": {args: []string{"--live"}, input: liveInput, live: true},
-		"live with file":      {args: []string{"--live", "--file", path}, live: true, mixed: true},
-		"live with model":     {args: []string{"--live", "--model", "whisper-1"}, live: true, mixed: true},
-		"missing both":        {missing: `Required flags "file, model" not set`},
-		"missing file":        {args: []string{"--model", "whisper-1"}, missing: `Required flag "file" not set`},
-		"missing model":       {args: []string{"--file", path}, missing: `Required flag "model" not set`},
-		"file flags":          {args: []string{"--file", path, "--model", "whisper-1"}},
-		"file JSON":           {input: string(jsonBody)},
-		"file YAML":           {input: fmt.Sprintf("file: %q\nmodel: whisper-1\n", path)},
-		"JSON missing file":   {input: `{"model":"whisper-1"}`, missing: `Required flag "file" not set`},
-		"YAML missing model":  {input: fmt.Sprintf("file: %q\n", path), missing: `Required flag "model" not set`},
+		"live alone":              {command: "translate-live", live: true},
+		"live preserves pipe":     {command: "translate-live", input: liveInput, live: true},
+		"live with file":          {command: "translate-live", args: []string{"--file", path}, live: true},
+		"live with model":         {command: "translate-live", args: []string{"--model", "whisper-1"}, live: true, mixed: "not defined: -model"},
+		"explicit browser":        {command: "translate-live", args: []string{"--browser"}, input: liveInput, live: true, browser: true},
+		"legacy browser":          {args: []string{"--live"}, input: liveInput, live: true, browser: true},
+		"legacy browser alias":    {args: []string{"--live", "--browser"}, live: true, browser: true},
+		"legacy mixed flags":      {args: []string{"--live", "--model", "whisper-1"}, live: true, mixed: "Omit --live"},
+		"file with live disabled": {args: []string{"--live=false", "--file", path, "--model", "whisper-1"}},
+		"missing both":            {missing: `Required flags "file, model" not set`},
+		"missing file":            {args: []string{"--model", "whisper-1"}, missing: `Required flag "file" not set`},
+		"missing model":           {args: []string{"--file", path}, missing: `Required flag "model" not set`},
+		"file flags":              {args: []string{"--file", path, "--model", "whisper-1"}},
+		"file JSON":               {input: string(jsonBody)},
+		"file YAML":               {input: fmt.Sprintf("file: %q\nmodel: whisper-1\n", path)},
+		"JSON missing file":       {input: `{"model":"whisper-1"}`, missing: `Required flag "file" not set`},
+		"YAML missing model":      {input: fmt.Sprintf("file: %q\n", path), missing: `Required flag "model" not set`},
 	}
 	tc, ok := cases[name]
 	require.True(t, ok, "unknown helper case %q", name)
@@ -145,7 +153,7 @@ func testAudioTranslationGeneratedCase(t *testing.T, name string) {
 	app.ConfigureCommand(root)
 	var stdout, stderr bytes.Buffer
 	root.Writer, root.ErrWriter = &stdout, &stderr
-	if tc.live {
+	if tc.browser {
 		before := root.Before
 		root.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
 			ctx, err := before(ctx, command)
@@ -159,14 +167,20 @@ func testAudioTranslationGeneratedCase(t *testing.T, name string) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	args := []string{"openai", "--base-url", server.URL + "/v1/", "--api-key", "synthetic-translation-key", "audio", "translate"}
+	route := tc.command
+	if route == "" {
+		route = "translate"
+	}
+	args := []string{"openai", "--base-url", server.URL + "/v1/", "--api-key", "synthetic-translation-key", "audio", route}
 	err = root.Run(ctx, append(args, tc.args...))
-	if tc.mixed {
-		require.ErrorContains(t, err, "Use --live by itself")
-	} else if tc.live {
+	if tc.mixed != "" {
+		require.ErrorContains(t, err, tc.mixed)
+	} else if tc.browser {
 		var failure audiolive.Failure
 		require.ErrorAs(t, err, &failure)
 		require.Equal(t, audiolive.Failure("Live translation could not start: browser or API configuration is missing."), failure)
+	} else if tc.live {
+		require.ErrorContains(t, err, "interactive terminal")
 	} else if tc.missing != "" {
 		require.ErrorContains(t, err, tc.missing)
 	} else {

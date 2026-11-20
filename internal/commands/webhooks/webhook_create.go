@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/request"
@@ -90,12 +91,21 @@ func webhookCreateWorkflow(next cli.ActionFunc) cli.ActionFunc {
 			return next(ctx, command)
 		}
 		return withWebhookCreateInterrupts(ctx, func(ctx context.Context) error {
-			if _, err := io.WriteString(output.Writer{Context: ctx, Sink: out}, "Loading webhook event types for your project...\n"); err != nil {
-				return &WorkflowError{"Could not display webhook setup. No endpoint was created. " +
-					"Check terminal output, then retry webhooks create with your original authentication, project, organization, and API settings. " +
-					"Use openai webhooks create --help for explicit flags.", err}
+			discover := func(ctx context.Context, cmd *cli.Command) ([]string, error) {
+				if _, err := io.WriteString(output.Writer{Context: ctx, Sink: out}, "Loading events…"); err != nil {
+					return nil, &WorkflowError{"Could not display webhook setup. No endpoint was created. " +
+						"Check terminal output, then retry webhooks create with your original authentication, project, organization, and API settings. " +
+						"Use openai webhooks create --help for explicit flags.", err}
+				}
+				events, err := discoverWebhookCreateEvents(ctx, cmd)
+				// Erase the temporary status before the form or an error takes its place.
+				_, clearErr := io.WriteString(output.Writer{Context: context.WithoutCancel(ctx), Sink: out}, "\r"+ansi.EraseLineRight)
+				if clearErr != nil {
+					return nil, errors.Join(err, clearErr)
+				}
+				return events, err
 			}
-			return runWebhookCreateFlow(ctx, command, next, discoverWebhookCreateEvents,
+			return runWebhookCreateFlow(ctx, command, next, discover,
 				func(ctx context.Context, events []string) (webhookCreateSettings, bool, error) {
 					return runWebhookCreatePicker(ctx, os.Stdin, out, events, func(ctx context.Context) ([]webhookEndpoint, error) {
 						return discoverWebhookEndpoints(ctx, command)

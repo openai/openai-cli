@@ -93,16 +93,20 @@ func playerArguments(format string, progress bool) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	status := "-nostats"
-	if progress {
-		status = "-stats"
-	}
-	args := []string{"-hide_banner", "-nodisp", "-autoexit", "-vn", "-sn", status, "-loglevel", "error",
-		"-protocol_whitelist", "pipe", "-f", demux}
+	args := playerInputArguments(demux, progress)
 	if format == "pcm" {
 		args = append(args, "-sample_rate", "24000")
 	}
 	return append(args, "-i", "pipe:0"), nil
+}
+
+func playerInputArguments(demux string, progress bool) []string {
+	status := "-nostats"
+	if progress {
+		status = "-stats"
+	}
+	return []string{"-hide_banner", "-nodisp", "-autoexit", "-vn", "-sn", status, "-loglevel", "error",
+		"-protocol_whitelist", "pipe", "-f", demux}
 }
 
 type cancelWriter struct {

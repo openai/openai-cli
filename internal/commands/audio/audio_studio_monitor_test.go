@@ -77,9 +77,11 @@ func TestAudioStudioMonitorKeepsRetainedClipAndSeekCaret(t *testing.T) {
 	width := m.studioMonitorWidth()
 	rows, _ := m.studioMonitorRows(width, height)
 	text := strings.Join(rows, "\n")
-	for _, label := range []string{"F1 details", "Draft changed. Showing previous audio.", "Recording: original", "Saved: ", "/saved.wav"} {
+	for _, label := range []string{"! error 世界", "Draft changed. Showing previous audio.", "Recording: original", "Saved: ", "/saved.wav"} {
 		require.Contains(t, text, label)
 	}
+	require.NotContains(t, text, "F1 details")
+	require.Contains(t, strings.Join(m.resultHintRows(), "\n"), "F1 details")
 	for _, row := range rows {
 		require.LessOrEqual(t, ansi.StringWidth(row), width)
 	}

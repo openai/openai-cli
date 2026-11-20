@@ -126,36 +126,6 @@ func TestWebhookCreatePickerRequiresFieldsAndEvents(t *testing.T) {
 	require.False(t, m.confirmYes, "returning to review resets confirmation")
 }
 
-func TestWebhookCreatePickerSearchRetainsSelectionsAndUnknownNames(t *testing.T) {
-	m := newWebhookCreatePicker([]string{"response.completed", "new.family.event", "response.failed", "batch.completed", "new.family.event"})
-	m.url.insert("https://example.invalid/webhook")
-	m.stage = 2
-	require.Len(t, m.events, 4)
-	webhookCreatePaste(m, "responses")
-	require.Equal(t, []string{"response.completed", "response.failed"}, m.filteredEvents())
-	webhookCreateKey(m, tea.KeyDown)
-	webhookCreateKey(m, ' ')
-	require.True(t, m.selected["response.completed"])
-	webhookCreateKey(m, tea.KeyDown)
-	webhookCreateKey(m, ' ')
-	require.True(t, m.selected["response.failed"])
-	m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
-	webhookCreatePaste(m, "OTHER")
-	require.Equal(t, []string{"new.family.event"}, m.filteredEvents())
-	webhookCreateKey(m, tea.KeyDown)
-	webhookCreateKey(m, ' ')
-	require.Equal(t, []string{"response.completed", "response.failed", "new.family.event"}, m.settings().events)
-	webhookCreatePaste(m, "missing")
-	require.Empty(t, m.filteredEvents())
-	webhookCreateKey(m, tea.KeyDown)
-	webhookCreateKey(m, ' ')
-	require.Len(t, m.settings().events, 3, "no matches must not alter selected events")
-	require.Contains(t, m.View().Content, "No matches")
-	webhookCreateKey(m, tea.KeyEnter)
-	require.Equal(t, 3, m.stage, "search must not hide the retained selections from confirmation")
-	require.Contains(t, m.View().Content, "new.family.event")
-}
-
 func TestWebhookCreatePickerCancellationAndTinyTerminal(t *testing.T) {
 	for _, stage := range []int{0, 1, 2, 3} {
 		for _, msg := range []tea.KeyPressMsg{{Code: tea.KeyEscape}, {Code: 'c', Mod: tea.ModCtrl}} {
@@ -445,7 +415,7 @@ func TestWebhookCreatePickerArrowNavigationIncludesReview(t *testing.T) {
 	webhookCreateKey(m, tea.KeyDown)
 	webhookCreateKey(m, tea.KeyDown)
 	require.True(t, m.reviewFocused)
-	require.Contains(t, ansi.Strip(m.View().Content), "› [ Continue to confirmation ]")
+	require.Contains(t, ansi.Strip(m.View().Content), "› [ Review ]")
 	foot := ansi.Strip(m.View().Content)
 	for _, inactive := range []string{"←→ category", "Space select", "Ctrl+A all"} {
 		require.NotContains(t, foot, inactive, "the action must not advertise event controls")
@@ -477,47 +447,9 @@ func TestWebhookCreatePickerArrowNavigationIncludesReview(t *testing.T) {
 	require.False(t, m.confirmed)
 }
 
-func TestWebhookCreatePickerFocusesCategoryAndSearchAsSeparateFields(t *testing.T) {
-	m := newWebhookCreatePicker([]string{"batch.completed", "response.completed"})
-	webhookCreateKey(m, tea.KeyDown)
-	webhookCreateKey(m, tea.KeyDown)
-	require.Contains(t, ansi.Strip(m.View().Content), "› Events")
-	require.Nil(t, m.View().Cursor)
-	webhookCreateKey(m, tea.KeyRight)
-	require.Equal(t, []string{"batch.completed"}, m.filteredEvents())
-	webhookCreateKey(m, tea.KeyDown)
-	require.Contains(t, ansi.Strip(m.View().Content), "› Search")
-	require.Contains(t, ansi.Strip(m.View().Content), "Type an event or group name")
-	require.NotNil(t, m.View().Cursor, "an empty search must show where typing starts")
-	webhookCreatePaste(m, "batch")
-	category := m.category
-	webhookCreateKey(m, tea.KeyLeft)
-	require.Equal(t, 4, m.search.cursor)
-	require.Equal(t, category, m.category, "search arrows edit text instead of changing categories")
-	webhookCreateKey(m, tea.KeyRight)
-	m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
-	require.Equal(t, "batch ", string(m.search.value))
-	require.Empty(t, m.settings().events, "a search space must not select an event")
-	m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
-	require.Zero(t, m.search.cursor, "search retains ordinary Ctrl+A editing")
-	m.Update(tea.KeyPressMsg{Code: 'k', Mod: tea.ModCtrl})
-	require.Empty(t, m.search.value)
-	webhookCreateKey(m, tea.KeyDown)
-	require.Contains(t, ansi.Strip(m.View().Content), "› [ ] batch.completed")
-	m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
-	require.Equal(t, []string{"batch.completed"}, m.settings().events)
-	m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
-	require.Contains(t, ansi.Strip(m.View().Content), "› Search")
-	webhookCreateKey(m, tea.KeyUp)
-	require.Contains(t, ansi.Strip(m.View().Content), "› Events")
-	webhookCreateKey(m, tea.KeyUp)
-	require.Equal(t, 1, m.stage)
-	require.False(t, m.confirmed)
-}
-
 func TestWebhookCreatePickerTabStopsDoNotSubmitTheDraft(t *testing.T) {
 	m := newWebhookCreatePicker([]string{"response.completed"})
-	for _, marker := range []string{"› Name", "› URL", "› Events", "› Search", "› [ ] response.completed", "› [ Continue to confirmation ]"} {
+	for _, marker := range []string{"› Name", "› URL", "› Events", "› / Find event", "› [ ] response.completed", "› [ Review ]"} {
 		require.Contains(t, ansi.Strip(m.View().Content), marker)
 		require.False(t, m.confirmed)
 		webhookCreateKey(m, tea.KeyTab)
@@ -538,7 +470,7 @@ func TestWebhookCreatePickerKeepsOnlyContextualControls(t *testing.T) {
 				require.NotContains(t, view, removed)
 			}
 			if stage < 3 {
-				require.Contains(t, view, "[ Continue to confirmation ]")
+				require.Contains(t, view, "[ Review ]")
 			}
 		}
 	}
@@ -598,30 +530,6 @@ func TestWebhookCreatePickerReviewValidatesSkippedName(t *testing.T) {
 	require.True(t, m.selected["response.completed"])
 }
 
-func TestWebhookCreatePickerSelectAllOnlyChangesMatchingEvents(t *testing.T) {
-	m := newWebhookCreatePicker([]string{"batch.completed", "response.completed", "response.failed"})
-	m.stage = 2
-	m.selected["batch.completed"] = true
-	webhookCreatePaste(m, "response")
-	webhookCreateKey(m, tea.KeyDown)
-	selectAll := tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}
-	m.Update(selectAll)
-	require.Len(t, m.settings().events, 3)
-	require.False(t, m.confirmed)
-	require.False(t, m.confirmYes)
-	m.Update(selectAll)
-	require.Equal(t, []string{"batch.completed"}, m.settings().events, "hidden selections must survive clearing matches")
-	webhookCreatePaste(m, "-no-matches")
-	webhookCreateKey(m, tea.KeyDown)
-	m.Update(selectAll)
-	require.Equal(t, []string{"batch.completed"}, m.settings().events)
-	m.stage = 0
-	m.name.insert("Original")
-	m.Update(selectAll)
-	require.Equal(t, 0, m.name.cursor, "Ctrl+A in a text field must retain its editing meaning")
-	require.Equal(t, "Original", string(m.name.value))
-}
-
 func TestWebhookCreatePickerCompactBudgetKeepsControls(t *testing.T) {
 	for _, size := range [][2]int{{36, 10}, {40, 12}, {80, 24}, {80, 60}} {
 		for stage := range 4 {
@@ -633,7 +541,7 @@ func TestWebhookCreatePickerCompactBudgetKeepsControls(t *testing.T) {
 			view := ansi.Strip(m.View().Content)
 			require.NotContains(t, view, "Tab fields", "size=%v stage=%d", size, stage)
 			if stage < 3 {
-				require.Contains(t, view, "[ Continue to confirmation ]")
+				require.Contains(t, view, "[ Review ]")
 			}
 			if stage == 3 {
 				require.Contains(t, view, "Create endpoint now?")
@@ -654,9 +562,7 @@ func TestWebhookCreateControlsRemainVisibleAtFrameThreshold(t *testing.T) {
 				m.note = note
 				view := ansi.Strip(m.View().Content)
 				controls := []string{"Space select", "Esc cancel"}
-				if note == "" {
-					controls = append(controls, "Ctrl+A all", "Enter next")
-				}
+				require.NotContains(t, view, "Ctrl+A all")
 				for _, control := range controls {
 					require.Contains(t, view, control, "size=%dx%d note=%q", width, height, note)
 				}
@@ -867,6 +773,14 @@ func TestWebhookCreatePickerBlinkingTextCursorAndCompactSpacing(t *testing.T) {
 					inputWidth -= 6 // Border padding and the fixed column divider.
 					column += 4
 				}
+				if stage == 2 {
+					column = ansi.StringWidth("› / Find event  ")
+					inputWidth = min(76, size[0]-2) - column
+					if size[1] >= 15 {
+						column += 2
+						inputWidth -= 4
+					}
+				}
 				_, offset := input.viewport(inputWidth, "")
 				painted := m.View()
 				require.NotNil(t, painted.Cursor)
@@ -876,7 +790,7 @@ func TestWebhookCreatePickerBlinkingTextCursorAndCompactSpacing(t *testing.T) {
 				require.Less(t, painted.Cursor.X, size[0]-2)
 				lines := strings.Split(ansi.Strip(painted.Content), "\n")
 				require.Less(t, painted.Cursor.Y, len(lines))
-				require.Contains(t, lines[painted.Cursor.Y], []string{"Name", "URL", "Search"}[stage])
+				require.Contains(t, lines[painted.Cursor.Y], []string{"Name", "URL", "Find event"}[stage])
 			}
 		}
 		m.reviewFocused = true

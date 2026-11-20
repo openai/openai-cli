@@ -23,8 +23,9 @@ chmod 700 "$work/home"
 # This verifier supports the real capability probe and rejects all network work.
 cat > "$work/tools/gh" <<'SH'
 #!/bin/sh
-[ "$#" = 3 ] && [ "$1 $2 $3" = 'attestation verify --help' ] || exit 1
-printf '%s\n' '--bundle --hostname --repo --cert-identity --source-ref --deny-self-hosted-runners --format'
+[ "$#" = 16 ] && [ "$1 $2 $3" = 'attestation verify --bundle' ] || exit 1
+[ "${13} ${14} ${15} ${16}" = '--deny-self-hosted-runners --format json --help' ] || exit 1
+printf '%s\n' '--deny-self-hosted-runners[=true|false]'
 SH
 chmod 755 "$work/tools/gh"
 export PATH="$work/tools:$PATH"

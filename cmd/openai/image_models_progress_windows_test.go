@@ -116,6 +116,8 @@ func TestImageModelsWindowsStderrProgress(t *testing.T) {
 	}
 	const want = "Image models — checked with your API key\n\n" +
 		"MODEL                   STATUS\n" +
+		"gpt-image-2.6-sunburst  Visible\n" +
+		"gpt-image-2.6-flare     Visible\n" +
 		"gpt-image-2.5-sunburst  Visible\n" +
 		"gpt-image-2.5-flare     Visible\n" +
 		"gpt-image-2             Visible\n" +
@@ -131,8 +133,8 @@ func TestImageModelsWindowsStderrProgress(t *testing.T) {
 		t.Fatalf("piped report changed: got %q; want %q", &stdout, want)
 	}
 	assertMainImageModelsRoutes(t, requests(), false)
-	if responses.Load() != 9 {
-		t.Fatalf("completed metadata responses=%d; want 9", responses.Load())
+	if responses.Load() != 11 {
+		t.Fatalf("completed metadata responses=%d; want 11", responses.Load())
 	}
 }
 

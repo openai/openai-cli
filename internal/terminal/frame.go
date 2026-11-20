@@ -8,16 +8,30 @@ import (
 
 // InlineFrame renders content as one soft-wrapped logical terminal line.
 func InlineFrame(content string, width int) string {
+	return renderFrame(content, width, false)
+}
+
+// HardLineFrame uses explicit line breaks when the terminal's wrap mode is unknown.
+func HardLineFrame(content string, width int) string {
+	return renderFrame(content, width, true)
+}
+
+func renderFrame(content string, width int, hardBreaks bool) string {
 	var frame strings.Builder
 	frame.WriteString("\r" + ansi.EraseScreenBelow)
 	if content == "" || width <= 0 {
 		return frame.String()
 	}
 	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		// A printable space completes the preceding row's pending wrap. CR
-		// then returns to column zero without breaking that logical line.
-		frame.WriteString(" \r")
+	for i, line := range lines {
+		if hardBreaks {
+			if i > 0 {
+				frame.WriteString("\r\n")
+			}
+		} else {
+			// A space completes a pending wrap. CR returns to column zero.
+			frame.WriteString(" \r")
+		}
 		used, clipped := 0, false
 		for len(line) > 0 {
 			sequence, cells, read := Sequence(line)
@@ -31,19 +45,39 @@ func InlineFrame(content string, width int) string {
 				clipped = true
 			}
 		}
-		// Place the wrap boundary explicitly. Emoji clusters can occupy fewer
-		// cells than wcwidth reports; spaces alone would leave the cursor on
-		// the wrong row. The final cell is reserved from content above.
-		frame.WriteString(ansi.CursorHorizontalAbsolute(width))
-		frame.WriteByte(' ')
+		if !hardBreaks {
+			// Emoji can occupy fewer cells than wcwidth reports. Place the wrap
+			// boundary explicitly in the final cell reserved above.
+			frame.WriteString(ansi.CursorHorizontalAbsolute(width))
+			frame.WriteByte(' ')
+		}
 	}
-	// CR cancels the pending wrap after the final boundary cell. All preceding
-	// rows were reached by autowrap, so this remains one logical terminal line.
+	// Return to the frame origin. CR also cancels any pending soft wrap.
 	frame.WriteByte('\r')
 	if len(lines) > 1 {
 		frame.WriteString(ansi.CursorUp(len(lines) - 1))
 	}
 	return frame.String()
+}
+
+// WrapProbe observes wrapping on the blank row owned by the upcoming frame.
+// It restores the cursor and erases the probe before waiting for the reply.
+func WrapProbe(width int) string {
+	if width < 3 {
+		return ""
+	}
+	return ansi.SaveCursor + "\r" + ansi.EraseScreenBelow +
+		ansi.CursorHorizontalAbsolute(width) + "  " + ansi.RequestCursorPositionReport +
+		ansi.RestoreCursor + "\r" + ansi.EraseScreenBelow
+}
+
+// ObservedAutoWrap interprets a zero-based cursor position reported after WrapProbe.
+func ObservedAutoWrap(width, height, x, y int) (enabled, valid bool) {
+	if width < 3 || height < 2 || y < 0 || y >= height {
+		return false, false
+	}
+	// The second space reaches column 1 after wrapping, or stays at the right edge.
+	return x == 1, x == 1 || x == width-1
 }
 
 // Sequence counts a complete printable cluster, including ASCII-led keycap emoji.

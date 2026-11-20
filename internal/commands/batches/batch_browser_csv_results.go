@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -15,22 +16,31 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func writeBatchBrowserCSVRow(out io.Writer, number int, header, row []string, answer, problem string) error {
+func (c *batchBrowserCSVRows) add(number int, header, row []string, answer, problem string) error {
+	if number == 1 {
+		c.firstColumn = batchInputLabel(header[0])
+	}
 	var text strings.Builder
 	if number > 1 {
 		text.WriteByte('\n')
 	}
+	start := c.document.size + int64(text.Len())
 	fmt.Fprintf(&text, "Row %d\n", number)
+	label := c.document.size + int64(text.Len()+len("  ")+len(c.firstColumn)+len(": "))
 	for i, column := range header {
 		text.WriteString("  " + batchInputLabel(column) + ": " + batchInputLabel(row[i]) + "\n")
 	}
+	result := c.document.size + int64(text.Len())
 	if answer != "" {
 		text.WriteString("Answer: " + batchInputLabel(answer) + "\n")
 	}
 	if problem != "" {
 		text.WriteString("Error: " + batchInputLabel(problem) + "\n")
 	}
-	_, err := io.WriteString(out, text.String())
+	_, err := io.WriteString(c.document, text.String())
+	if err == nil {
+		c.rows = append(c.rows, batchBrowserCSVOffset{start, label, result, c.document.size})
+	}
 	return err
 }
 
@@ -76,17 +86,17 @@ func browseBatchCSVResults(ctx context.Context, client openai.Client, options []
 	if err != nil {
 		return err
 	}
+	csvRows := &batchBrowserCSVRows{document: document}
 	// Navigation and saving share one verified join. No user file is created until requested.
 	if _, err := batchBrowserWork(ctx, "Reading CSV results", show, func(ctx context.Context) (struct{}, error) {
-		return struct{}{}, writeBatchCSVResults(ctx, client, options, batch, source, sheet, document)
+		return struct{}{}, writeBatchCSVResults(ctx, client, options, batch, source, sheet, csvRows)
 	}); err != nil {
 		return err
 	}
 	actions.actionsState.csvSource = source
 	actions.setOverview(batch)
-	screen := newBatchBrowserDocumentScreen(ctx, document, "Rows with answers", filepath.Base(source))
-	screen.documentState.csvResults = true
-	defer screen.documentState.stop()
+	screen := newBatchBrowserCSVList(ctx, csvRows, filepath.Base(source))
+	defer func() { screen.requestState.stop(); csvRows.wait() }()
 	dest := strings.TrimSuffix(source, filepath.Ext(source)) + "-results.csv"
 	if actions.actionsState.saveFolder != "" {
 		dest, err = batchBrowserSaveDestinationIn(filepath.Base(dest), actions.actionsState.saveFolder)
@@ -98,8 +108,22 @@ func browseBatchCSVResults(ctx context.Context, client openai.Client, options []
 		if err := show(ctx, screen); err != nil {
 			return err
 		}
-		if screen.documentState.err != nil {
-			return screen.documentState.err
+		if screen.requestState.err != nil {
+			return screen.requestState.err
+		}
+		if strings.HasPrefix(screen.chosen, "record:") {
+			id, err := strconv.ParseInt(strings.TrimPrefix(screen.chosen, "record:"), 10, 64)
+			if err != nil {
+				return err
+			}
+			action, err := csvRows.showRow(ctx, id, filepath.Base(source), show)
+			if err != nil {
+				return err
+			}
+			if action != "save" && action != "save-as" {
+				continue
+			}
+			screen.chosen = action
 		}
 		if screen.chosen != "save" && screen.chosen != "save-as" {
 			return nil
@@ -110,7 +134,10 @@ func browseBatchCSVResults(ctx context.Context, client openai.Client, options []
 		}
 		if saved != "" {
 			dest = saved
-			screen.subtitle = "Saved " + filepath.Base(saved) + " in " + batchBrowserFileFolder(saved)
+			screen.notice = "Saved " + filepath.Base(saved)
+			if batchBrowserFileFolder(saved) != batchBrowserFileFolder(source) {
+				screen.notice += " in " + batchBrowserFileFolder(saved)
+			}
 		}
 	}
 }

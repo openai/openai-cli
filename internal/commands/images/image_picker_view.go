@@ -396,15 +396,22 @@ func imagePickerShortcutLine(shortcuts [][2]string, width int, keyStyle, muted l
 }
 
 func (m *imagePicker) commandPreview(width, height int) ([]string, int, int) {
+	if m.focus == "command" {
+		return m.commandViewport(width, height)
+	}
+	lines := m.commandLines(width)
+	start := 0
+	if m.workspace {
+		// Keep the changing prompt visible when a long command needs scrolling.
+		start = max(0, len(lines)-height)
+	}
+	return lines[start:min(len(lines), start+height)], start, len(lines)
+}
+
+// Keep the inspector's viewport stable even when the other pane owns the keyboard.
+func (m *imagePicker) commandViewport(width, height int) ([]string, int, int) {
 	lines := m.commandLines(width)
 	start := max(0, min(m.commandOffset, len(lines)-height))
-	if m.focus != "command" {
-		start = 0
-		if m.workspace {
-			// Keep the changing prompt visible when a long command needs scrolling.
-			start = max(0, len(lines)-height)
-		}
-	}
 	return lines[start:min(len(lines), start+height)], start, len(lines)
 }
 

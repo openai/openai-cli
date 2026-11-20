@@ -15,6 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/modeldefaults"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
@@ -87,6 +88,7 @@ func TestImagePickerPromptSubmitsExactlyOnce(t *testing.T) {
 	require.False(t, m.result.PrintOnly)
 	require.False(t, m.result.Canceled)
 	require.Equal(t, []string{"images", "generate"}, m.result.Args[:2])
+	require.Equal(t, modeldefaults.SavedImage, pickerArg(t, m.result.Args, "--model"))
 	result := m.result
 	result.Args = append([]string(nil), m.result.Args...)
 	settings := m.settings
@@ -267,7 +269,7 @@ func TestImagePickerPrintShortcutKeepsCommittedChoices(t *testing.T) {
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
 	require.NotNil(t, cmd)
 	require.True(t, m.result.PrintOnly)
-	require.Equal(t, openai.ImageModelGPTImage2_5Sunburst, pickerArg(t, m.result.Args, "--model"))
+	require.Equal(t, openai.ImageModelGPTImage2_6Sunburst, pickerArg(t, m.result.Args, "--model"))
 }
 
 func TestImagePickerEscapeModelMenuToPrompt(t *testing.T) {
@@ -356,7 +358,7 @@ func TestImagePickerFastEscapeEnterLeavesMenuWithoutSubmitting(t *testing.T) {
 		require.Equal(t, "prompt", m.focus)
 		require.Equal(t, "settings", m.page)
 		require.Empty(t, m.result.Args)
-		require.Equal(t, openai.ImageModelGPTImage2_5Sunburst, m.settings.model)
+		require.Equal(t, openai.ImageModelGPTImage2_6Sunburst, m.settings.model)
 	}
 }
 
@@ -369,8 +371,8 @@ func TestImagePickerCtrlGFromDropdown(t *testing.T) {
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	cmd = pickerFinishFolderCommand(m, cmd)
 	require.NotNil(t, cmd)
-	require.Equal(t, openai.ImageModelGPTImage2_5Sunburst, m.settings.model, "unconfirmed highlighted option must not apply")
-	require.Equal(t, openai.ImageModelGPTImage2_5Sunburst, pickerArg(t, m.result.Args, "--model"))
+	require.Equal(t, openai.ImageModelGPTImage2_6Sunburst, m.settings.model, "unconfirmed highlighted option must not apply")
+	require.Equal(t, openai.ImageModelGPTImage2_6Sunburst, pickerArg(t, m.result.Args, "--model"))
 	require.False(t, m.result.PrintOnly)
 }
 

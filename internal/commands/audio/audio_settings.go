@@ -9,7 +9,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-const audioSpeedError = "Enter a speed from 0.25 to 4."
+func maxAudioSpeed(model string) float64 {
+	if model == realtimeSpeechModel {
+		return 1.5
+	}
+	return 4
+}
+
+func (m *audioWorkbench) speedRangeError() string {
+	return "Enter a speed from 0.25 to " + strconv.FormatFloat(maxAudioSpeed(m.settings.Model), 'f', -1, 64) + "."
+}
 
 type audioFormValidation struct {
 	field   int
@@ -32,7 +41,7 @@ func (m *audioWorkbench) fieldValidation(field int) string {
 	case 2:
 		return "Choose a supported audio format."
 	case 3:
-		return audioSpeedError
+		return m.speedRangeError()
 	default:
 		return m.validation.message
 	}
@@ -72,15 +81,15 @@ func (m *audioWorkbench) cancelInlineSpeed() bool {
 	return true
 }
 
-func audioSpeedValue(value string) (float64, bool) {
+func (m *audioWorkbench) speedValue(value string) (float64, bool) {
 	speed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-	return speed, err == nil && !math.IsNaN(speed) && !math.IsInf(speed, 0) && speed >= .25 && speed <= 4
+	return speed, err == nil && !math.IsNaN(speed) && !math.IsInf(speed, 0) && speed >= .25 && speed <= maxAudioSpeed(m.settings.Model)
 }
 
 func (m *audioWorkbench) commitInlineSpeed() bool {
-	speed, valid := audioSpeedValue(m.speedInput.Value())
+	speed, valid := m.speedValue(m.speedInput.Value())
 	if !valid {
-		m.speedError = audioSpeedError
+		m.speedError = m.speedRangeError()
 		return false
 	}
 	m.settings.Speed = speed
@@ -113,12 +122,12 @@ func (m *audioWorkbench) updateInlineSetting(message tea.Msg) (bool, tea.Cmd) {
 			case "up", "down", "tab", "shift+tab", "home", "end", "ctrl+g", "ctrl+o", "ctrl+s", "ctrl+p", "f1":
 				return !m.commitInlineSpeed(), nil
 			case "left", "right":
-				speed, valid := audioSpeedValue(m.speedInput.Value())
+				speed, valid := m.speedValue(m.speedInput.Value())
 				if !valid {
-					m.speedError = audioSpeedError
+					m.speedError = m.speedRangeError()
 					return true, nil
 				}
-				m.speedInput.SetValue(strconv.FormatFloat(audioStepSpeed(speed, key.String()), 'f', -1, 64))
+				m.speedInput.SetValue(strconv.FormatFloat(m.stepSpeed(speed, key.String()), 'f', -1, 64))
 				m.speedInput.CursorEnd()
 				m.speedError = ""
 				return true, nil
@@ -135,7 +144,7 @@ func (m *audioWorkbench) updateInlineSetting(message tea.Msg) (bool, tea.Cmd) {
 	if isKey {
 		switch key.String() {
 		case "left", "right":
-			m.settings.Speed = audioStepSpeed(m.settings.Speed, key.String())
+			m.settings.Speed = m.stepSpeed(m.settings.Speed, key.String())
 			return true, nil
 		case "enter":
 			return true, m.beginInlineSpeed()
@@ -152,12 +161,12 @@ func (m *audioWorkbench) updateInlineSetting(message tea.Msg) (bool, tea.Cmd) {
 	return true, cmd
 }
 
-func audioStepSpeed(speed float64, key string) float64 {
+func (m *audioWorkbench) stepSpeed(speed float64, key string) float64 {
 	step := .25
 	if key == "left" {
 		step = -.25
 	}
-	return max(.25, min(4, speed+step))
+	return max(.25, min(maxAudioSpeed(m.settings.Model), speed+step))
 }
 
 // Single-letter selection cycles matching choices without a hidden search draft.
@@ -169,7 +178,7 @@ func (m *audioWorkbench) changeInlineChoice(key tea.KeyPressMsg) bool {
 	case 1:
 		choices, current = audioModelVoices(m.settings.Model), m.settings.Voice
 	case 2:
-		choices, current = audioFormats, m.settings.Format
+		choices, current = audioModelFormats(m.settings.Model), m.settings.Format
 	}
 	index := slices.Index(choices, current)
 	next := index

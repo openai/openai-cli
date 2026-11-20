@@ -8,8 +8,7 @@ as well as terminals.
 ```sh
 openai audio:transcriptions create --file sample.wav --model gpt-transcribe
 openai audio:transcriptions create --file sample.wav --model gpt-transcribe --stream=true
-openai audio:translations create --file sample.wav --model whisper-1
-openai --format json audio:transcriptions create --file sample.wav --model whisper-1
+openai --format json audio:transcriptions create --file sample.wav --model gpt-transcribe
 ```
 
 For transcript-only output, extract text from the JSON response.
@@ -18,6 +17,10 @@ The file then contains the transcript without response metadata.
 ```sh
 openai --transform text --raw-output audio transcribe --file sample.wav --model gpt-transcribe --response-format json > transcript.txt
 ```
+
+For multilingual audio, repeat `--languages` to supply language hints to `gpt-transcribe`.
+For example, `--languages en --languages es` sends two entries in `languages[]`.
+Models that accept a single input language use `--language`, which sends the separate `language` field.
 
 Use `whisper-1` with `verbose_json` for word and segment timestamps.
 Use `gpt-4o-transcribe-diarize` with `diarized_json` for speaker labels and segment timestamps.

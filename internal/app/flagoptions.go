@@ -97,11 +97,22 @@ func flagOptionsWithStdin(
 			return embedSkillZIP(cmd, body, stdin)
 		}
 	}
+	var speechBody []byte
+	speechRequest := bodyType == ApplicationJSON && audio.IsSpeechRequest(cmd)
+	if speechRequest {
+		hooks.Encoding.ObserveJSON = append([]func([]byte){func(body []byte) { speechBody = body }}, observeJSON...)
+	}
 	options, err = requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
-	if err == nil && bodyType == EmptyBody && cmd.Metadata[listPagerMetadata] == true {
+	if err != nil {
+		return nil, err
+	}
+	if speechRequest {
+		return audio.SpeechModelOptions(speechBody, options, func() []option.RequestOption { return GetDefaultRequestOptions(cmd) })
+	}
+	if bodyType == EmptyBody && cmd.Metadata[listPagerMetadata] == true {
 		// Scope the automatic size to requests that use the owning command's flags.
 		// The same SDK client can also perform independently bound lookups.
 		options = append(options, option.WithMiddleware(boundListRequest(cmd)))
 	}
-	return options, err
+	return options, nil
 }

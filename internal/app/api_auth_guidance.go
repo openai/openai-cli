@@ -21,7 +21,7 @@ const apiAuthenticationIPAllowlistURL = "https://developers.openai.com/api/docs/
 
 // Human guidance names configuration sources, never their values. The existing
 // presenter retains status, request IDs, structured data and error identity.
-func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *openai.Error, output ...io.Writer) string {
+func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *openai.Error, surface apiErrorSurface, output ...io.Writer) string {
 	if apierr == nil || apierr.StatusCode != http.StatusUnauthorized {
 		return ""
 	}
@@ -60,6 +60,9 @@ func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *
 		case emptyFlag:
 			return message + "\nRemove the empty --" + flag + " override."
 		default:
+			if surface == workspaceError && apiAuthenticationKeyPresent(root, flag, variable) {
+				return "The API endpoint denied access.\nCheck this endpoint's credentials."
+			}
 			return message + "\nSet the credential required by this API endpoint.\n" + setupGuidance("Key setup: ")
 		}
 	}
@@ -93,6 +96,15 @@ func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *
 	}
 	if admin {
 		return message + "\nAsk an organization owner to check the admin API key supplied by " + source + "."
+	}
+	if surface == workspaceError {
+		if source == "--"+flag {
+			return message + "\n" + action + " value of " + source + " and reopen."
+		}
+		if apierr.Code == "invalid_api_key" {
+			return "OpenAI didn't accept this API key.\nReopen with a valid project key."
+		}
+		return "Couldn't sign in to OpenAI.\nReopen with your project API key."
 	}
 	return message + "\n" + action + " API key supplied by " + source + "."
 }

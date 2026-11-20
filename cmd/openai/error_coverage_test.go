@@ -149,6 +149,7 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 		"explore/--suggestions":                            "Shell-owned recent-command input; search and native shell tests cover valid use. Parser errors must not echo rejected values.",
 		"explore/--shell-integration":                      "Shell-owned selection protocol; search and native shell tests cover valid use. Parser errors must not echo rejected values.",
 		"explore/--shell":                                  "Shell-owned selection encoding; search and native shell tests cover valid use. Parser errors retain only the declared option name.",
+		"audio translate/--browser":                        "Hidden preview alias for browser translation. Parser errors retain the option name and omit rejected values.",
 		"help/--all":                                       "Full-reference flag. Help routing tests cover explicit true and false values.",
 		"admin certificates create/--content":              "Hidden compatibility field; explicit-use errors retain its declared name, but suggestions omit it.",
 		"admin organization certificates create/--content": "Hidden compatibility field; explicit-use errors retain its declared name, but suggestions omit it.",
@@ -193,7 +194,9 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 		}
 		if entry.HasChildren && (command.Action != nil || len(command.Arguments) != 0 || command.ArgValidator != nil) {
 			switch name {
-			case "help", "help setup", "tokenizer":
+			case "help", "help setup", "tokenizer",
+				"admin limits", "admin organization limits",
+				"projects limits", "admin projects limits", "admin organization projects limits":
 				entry.Class += "; reviewed positional-error group"
 				entry.ActionContract = name
 			default:
@@ -520,6 +523,7 @@ func declaredErrorCoverageCases(manifest errorCoverageManifest) []errorCoverageC
 			}
 			message += " to see commands."
 			code := 3
+			suffix := []string{private}
 			switch path {
 			case "help":
 				message = "Unknown help topic. Run openai help to see commands."
@@ -529,8 +533,16 @@ func declaredErrorCoverageCases(manifest errorCoverageManifest) []errorCoverageC
 				// This action-bearing group owns positional input validation.
 				message = "Tokenizer takes no positional input. Open the editor without arguments, or use tokenizer count --text TEXT."
 				code = 1
+			case "admin limits", "admin organization limits",
+				"projects limits", "admin projects limits", "admin organization projects limits":
+				message = "Limits does not accept positional arguments. Use --help to inspect its options."
+				code = 1
+				if strings.HasSuffix(path, "projects limits") {
+					// Reach positional validation without masking it behind a missing project identifier.
+					suffix = []string{"--project-id=proj_synthetic", private}
+				}
 			}
-			add("unknown-child", "", []string{private}, code, message)
+			add("unknown-child", "", suffix, code, message)
 		}
 		if path == "vector-stores manage" {
 			add("unexpected-operand", "", []string{private}, 1, "The vector store workspace takes no positional arguments.")

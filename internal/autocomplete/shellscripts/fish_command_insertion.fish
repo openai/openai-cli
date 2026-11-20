@@ -65,8 +65,8 @@ __FISH_EXPLORE_SELECTION__
 
     function ____APPNAME___suggestions_run
         ____APPNAME___suggestions_clear
-        if ____APPNAME___is_bare_explore $argv
-            ____APPNAME___fill_explore __APPNAME__ remember
+        if ____APPNAME___is_interactive_explore $argv
+            ____APPNAME___fill_explore __APPNAME__ remember $argv
             return $status
         end
         if command test -e /dev/fd/7; or command test -e /dev/fd/8; or command test -e /dev/fd/9

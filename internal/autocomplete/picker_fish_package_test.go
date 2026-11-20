@@ -90,12 +90,33 @@ end
 			require.NoError(t, os.WriteFile(filepath.Join(home, "startup.fish"), []byte(startup), 0600))
 			driver := `set timeout 8
 spawn -noecho $env(PICKER_TEST_SHELL) --no-config --interactive --init-command {source "$PICKER_TEST_STARTUP"}
-expect_before {
-  -exact "\033\1330c" {send -- "\033\133?1;2c"; exp_continue}
-  -exact "\033\1336n" {send -- "\033\1331;1R"; exp_continue}
+# Expect gives separate patterns priority over earlier bytes in the same read.
+# Match the next marker or terminal query in stream order.
+proc wait_for_fish {{marker ""}} {
+  global spawn_id timeout
+  set pattern {\x1b\[(?:0c|6n)}
+  if {$marker ne ""} {
+    append pattern | [regsub -all {[][\\.^$*+?(){}|]} $marker {\\&}]
+  }
+  expect {
+    -re $pattern {
+      switch -- $expect_out(0,string) {
+        "\033\1330c" {send -- "\033\133?1;2c"}
+        "\033\1336n" {send -- "\033\1331;1R"}
+        default {return}
+      }
+      exp_continue -continue_timer
+    }
+    timeout {error "fish package probe timed out waiting for $marker"}
+    eof {
+      set status [wait]
+      if {$marker ne "" || [llength $status] != 4 || [lrange $status 2 3] ne {0 0}} {
+        error "unexpected fish exit while waiting for '$marker': $status"
+      }
+    }
+  }
 }
-expect_after timeout { puts stderr "fish package probe timed out"; exit 1 }
-expect -exact "PICKER_TEST> "
+wait_for_fish "PICKER_TEST> "
 `
 			// Exercise Tab at the very first prompt: a nested prompt callback
 			// would leave this command on the ordinary custom-binding path.
@@ -103,35 +124,35 @@ expect -exact "PICKER_TEST> "
 			if changedExecutable {
 				driver += `send -- {set -gx PATH "$HOME/other" $PATH}
 send -- "\r"
-expect -exact "PICKER_TEST> "
+wait_for_fish "PICKER_TEST> "
 `
 			}
 			if !scenario.disabled && !changedExecutable {
 				driver += `send -- "openai images generate\t"
-expect -exact "PICKER_LAUNCHED\r\n"
-expect -exact "PICKER_TEST> "
+wait_for_fish "PICKER_LAUNCHED\r\n"
+wait_for_fish "PICKER_TEST> "
 send -- "\025other\t\025printf 'FALLBACK_DONE\\n'\r"
-expect -exact "FALLBACK_DONE\r\n"
-expect -exact "PICKER_TEST> "
+wait_for_fish "FALLBACK_DONE\r\n"
+wait_for_fish "PICKER_TEST> "
 send -- "openai_picker_disable; printf 'DISABLED\\n'\r"
-expect -exact "DISABLED\r\n"
-expect -exact "PICKER_TEST> "
+wait_for_fish "DISABLED\r\n"
+wait_for_fish "PICKER_TEST> "
 `
 			}
 			driver += `send -- "openai images generate\t\025printf 'RESTORED\\n'\r"
-expect -exact "RESTORED\r\n"
-expect -exact "PICKER_TEST> "
+wait_for_fish "RESTORED\r\n"
+wait_for_fish "PICKER_TEST> "
 `
 			if changedExecutable {
 				driver += `send -- "openai_picker_disable\r"
-expect -exact "PICKER_TEST> "
+wait_for_fish "PICKER_TEST> "
 `
 			}
 			driver += `send -- {if set -q __openai_picker_modes[1]; printf 'reactivated\n' >>"$PICKER_TEST_RESULT"; end; if functions -q __openai_picker_install_on_prompt; printf 'pending\n' >>"$PICKER_TEST_RESULT"; end}
 send -- "\r"
-expect -exact "PICKER_TEST> "
+wait_for_fish "PICKER_TEST> "
 send -- "exit\r"
-expect eof
+wait_for_fish
 `
 			require.NoError(t, os.WriteFile(filepath.Join(home, "driver.exp"), []byte(driver), 0600))
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -225,16 +246,18 @@ func TestFishPackageExploreInsertsAtFirstPrompt(t *testing.T) {
 send -- "openai examples\r"
 expect -exact "DISPLAYED_COMMAND_END\r\n"
 expect -exact "INSTALL_TEST> "
-send -- "openai explore\r"
+foreach invocation {"openai explore" "openai explore --full-screen"} {
+send -- "$invocation\r"
 expect -exact "BARE_SELECTED\r\n"
 expect -exact "INSTALL_TEST> "
 send -- "\030\007"
 expect -re {CAPTURED_BUFFER\r?\n}
 send -- "\005\025"
+}
 `)
 	buffers, err := os.ReadFile(filepath.Join(fixture.home, "buffers"))
 	require.NoError(t, err)
-	require.Equal(t, "<openai models list>|18\n", string(buffers))
+	require.Equal(t, strings.Repeat("<openai models list>|18\n", 2), string(buffers))
 	for _, unexpected := range []string{"executed", "generation-calls", "captured-help"} {
 		_, err := os.Stat(filepath.Join(fixture.home, unexpected))
 		require.ErrorIs(t, err, os.ErrNotExist)

@@ -113,7 +113,7 @@ func TestAudioCommandViewPendingSpeedPreviewAndPrint(t *testing.T) {
 					require.Equal(t, 2, m.focus)
 					require.Equal(t, 3, m.setting)
 					require.Equal(t, draft, m.speedInput.Value())
-					require.Equal(t, audioSpeedError, m.speedError)
+					require.Equal(t, m.speedRangeError(), m.speedError)
 					require.Equal(t, float64(1), m.settings.Speed)
 					m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 					require.False(t, m.speedEditing)

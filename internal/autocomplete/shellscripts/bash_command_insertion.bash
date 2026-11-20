@@ -63,9 +63,10 @@ if [[ $- == *i* && -t 0 && -t 1 && -t 2 && ${TERM-} != dumb ]] &&
   ____APPNAME___suggestions_run() {
     local file code ____APPNAME___suggestions_started=0
     ____APPNAME___suggestions_clear
-    if (( $# == 1 && BASH_SUBSHELL == 0 )) && [ "$1" = explore ] && [[ -t 0 && -t 1 && -t 2 ]]; then
+    if (( BASH_SUBSHELL == 0 )) && [ "${1-}" = explore ] && [[ -t 0 && -t 1 && -t 2 ]] &&
+      { (( $# == 1 )) || { (( $# == 2 )) && [ "$2" = --full-screen ]; }; }; then
       local selected
-      if selected=$(OPENAI_CLI_COMMANDS_FD= OPENAI_CLI_COMMANDS_SHELL= command '__APPNAME__' explore --shell-integration --shell bash); then
+      if selected=$(OPENAI_CLI_COMMANDS_FD= OPENAI_CLI_COMMANDS_SHELL= command '__APPNAME__' "$@" --shell-integration --shell bash); then
         local LC_ALL=C
         [[ -n $selected && $selected != *[[:cntrl:]]* ]] && (( ${#selected} <= 16384 )) || return 1
         ____APPNAME___suggestions=("$selected")

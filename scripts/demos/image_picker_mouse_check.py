@@ -160,7 +160,7 @@ def run(binary, output, case):
         api.close()
 
 
-def repeated_shell(binary, output):
+def repeated_shell(binary, output, *, iterm2=False):
     output.mkdir()
     api = fixture('success')
     process = None
@@ -189,36 +189,53 @@ def repeated_shell(binary, output):
             env['SYNTHETIC_BINARY'] = str(binary)
             env.pop('NO_COLOR', None)
             env['COLORTERM'] = 'truecolor'
+            if iterm2:
+                env['TERM_PROGRAM'] = 'iTerm.app'
             process = SplitProcess(wrapper, env, stderr_pipe=True)
+            launch_start = 0
             for round_number in (1, 2):
-                process.wait_for(lambda: bytes(process.streams['stdout']).count(b'\x1b[?1000$p') == round_number)
-                process.wait_for(lambda: b'Create image' in process.streams['stdout'])
-                process.send(b'\x1b[?1000;2$y\x1b[?1002;2$y\x1b[?1003;2$y\x1b[?1006;2$y')
+                if not iterm2:
+                    process.wait_for(lambda: bytes(process.streams['stdout']).count(b'\x1b[?1000$p') == round_number)
+                    process.send(b'\x1b[?1000;2$y\x1b[?1002;2$y\x1b[?1003;2$y\x1b[?1006;2$y')
+                process.wait_for(lambda: b'Create image' in process.streams['stdout'][launch_start:])
                 process.pump(0.95)
                 process.submit('SYNTHETIC scrolling')
                 process.wait_for(lambda: len(api.requests) == round_number)
                 api.gates[round_number - 1].set()
-                process.wait_for(lambda: len(saved(home)) == round_number and b'Saved in' in screen(bytes(process.streams['stdout'])) and b'Ctrl+G generate' in screen(bytes(process.streams['stdout'])))
-                assert mouse_state(bytes(process.streams['stdout']), original)[1000]
-                burst = b'\x1b[<64;10;20M\x1b[<65;10;20M' * 20
-                for _ in range(3):
-                    process.send(burst)
-                    process.pump(0.05)
-                process.send(burst + b'\x03' + burst)
+                def saved_frame():
+                    current = screen(bytes(process.streams['stdout'][launch_start:]))
+                    return b'Saved in' in current and b'Ctrl+G generate' in current
+                process.wait_for(saved_frame)
+                assert len(saved(home)) == round_number
+                if iterm2:
+                    process.send(b'\x03')
+                else:
+                    assert mouse_state(bytes(process.streams['stdout']), original)[1000]
+                    burst = b'\x1b[<64;10;20M\x1b[<65;10;20M' * 20
+                    for _ in range(3):
+                        process.send(burst)
+                        process.pump(0.05)
+                    process.send(burst + b'\x03' + burst)
                 marker = ('SYNTHETIC CLI %d EXIT 130' % round_number).encode()
                 process.wait_for(lambda: marker in process.streams['stdout'])
+                launch_start = process.streams['stdout'].index(marker) + len(marker)
                 assert mouse_state(bytes(process.streams['stdout']), original) == original
                 if round_number == 1:
                     process.send(b'NEXT\n')
             process.wait_for(lambda: b'SYNTHETIC SHELL READY' in process.streams['stdout'])
             # A physical wheel produces no input when the receiver's tracking modes are off.
             assert not any(mouse_state(bytes(process.streams['stdout']), original).values())
+            if iterm2:
+                raw = bytes(process.streams['stdout'])
+                assert b'\x1b[6n' not in raw and b'\x1b[5n' not in raw
+                assert b'$p' not in raw and b'\x1b]11;?' not in raw
+                assert all(int(match[1]) not in MODES for match in CONTROL.finditer(raw))
             process.send(b'SYNTHETIC shell command\n')
             process.wait_for(lambda: process.status is not None)
             assert process.status == 0
             assert b'SYNTHETIC SHELL INPUT <SYNTHETIC shell command>' in process.streams['stdout']
             assert len(saved(home)) == 2 and len(api.requests) == 2
-            (output / 'report.json').write_text(json.dumps(dict(passed=True, launches=2, same_tty=True, queued_scroll_reports=240, shell_input='SYNTHETIC shell command', exit_status=0, binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), native_terminal=False), indent=2) + '\n')
+            (output / 'report.json').write_text(json.dumps(dict(passed=True, launches=2, same_tty=True, iterm2=iterm2, queued_scroll_reports=0 if iterm2 else 240, shell_input='SYNTHETIC shell command', exit_status=0, binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), native_terminal=False), indent=2) + '\n')
     finally:
         for gate in api.gates:
             gate.set()
@@ -239,9 +256,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', type=pathlib.Path)
     parser.add_argument('output', type=pathlib.Path)
+    cases = ('quit', 'busy-cancel', 'print-only', 'sigterm', 'sighup', 'inherited-encoding',
+             'inherited-tracking', 'unknown-terminal', 'generation-failure', 'resize',
+             'removed-executable', 'apple-terminal', 'open-full', 'repeated-shell', 'iterm2-shell')
+    parser.add_argument('--case', choices=cases, action='append')
     args = parser.parse_args()
     args.output.mkdir()
-    for case in ('quit', 'busy-cancel', 'print-only', 'sigterm', 'sighup', 'inherited-encoding', 'inherited-tracking', 'unknown-terminal', 'generation-failure', 'resize', 'removed-executable','apple-terminal','open-full'):
-        run(args.binary.resolve(), args.output / case, case)
-
-    repeated_shell(args.binary.resolve(), args.output / 'repeated-shell')
+    for case in args.case or cases:
+        if case in ('repeated-shell', 'iterm2-shell'):
+            repeated_shell(args.binary.resolve(), args.output / case, iterm2=case == 'iterm2-shell')
+        else:
+            run(args.binary.resolve(), args.output / case, case)

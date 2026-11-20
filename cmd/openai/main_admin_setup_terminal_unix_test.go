@@ -41,6 +41,7 @@ func TestMainAdminSetupTerminal(t *testing.T) {
 		{"default success", nil, http.StatusOK, 0, false, true, ""},
 		{"quiet success", []string{"--quiet"}, http.StatusOK, 0, false, false, ""},
 		{"quiet overrides verbose", []string{"--quiet", "--verbose"}, http.StatusOK, 0, false, false, ""},
+		{"rejected key", nil, http.StatusUnauthorized, 1, false, true, ""},
 		{"quiet forbidden", []string{"--quiet"}, http.StatusForbidden, 1, false, false, ""},
 		{"quiet cancellation", []string{"--quiet"}, http.StatusOK, 130, true, false, ""},
 		{"prequeued complete line", nil, http.StatusOK, 0, false, true, "line"},
@@ -57,7 +58,7 @@ func TestMainAdminSetupTerminal(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(test.status)
 				body := `{"object":"list","data":[],"has_more":true}`
-				if test.status == http.StatusForbidden {
+				if test.status != http.StatusOK {
 					body = `{"error":{"message":"synthetic-private-quiet-body ` + key + `"}}`
 				}
 				if _, err := io.WriteString(w, body); err != nil {
@@ -82,18 +83,23 @@ func TestMainAdminSetupTerminal(t *testing.T) {
 			}
 			stdout, stderr := ansi.Strip(got.stdout), ansi.Strip(got.stderr)
 			require.Equal(t, 1, strings.Count(stderr, "Admin API key (hidden): "))
-			require.Contains(t, stderr, "Destination:")
-			require.Contains(t, stderr, "The key stays in this process.")
-			require.Equal(t, test.progress, strings.Contains(stderr, "Verifying admin access..."))
-			require.NotContains(t, stdout, "Verifying admin access...")
+			require.Contains(t, stderr, "Check admin access\n\nPaste your admin API key. It stays hidden on screen.")
+			require.Contains(t, stderr, "Press Enter to check the key with "+server.URL+".")
+			require.Contains(t, stderr, "https://platform.openai.com/settings/organization/admin-keys")
+			require.Contains(t, stderr, "Press Ctrl+C to cancel.")
+			require.Equal(t, test.progress, strings.Contains(stderr, "Checking admin access…"))
+			require.NotContains(t, stdout, "Checking admin access…")
 			require.NotContains(t, stderr, "Command result:", "quiet must override verbose")
 			if test.exit == 0 {
-				require.Equal(t, "Admin access verified. The project-list request succeeded.\nNo key was saved. Later commands still need authentication.\n", stdout)
+				require.Equal(t, "Admin access verified.\nThe CLI discarded the key after the check.\nSet OPENAI_ADMIN_KEY before running other admin commands.\n", stdout)
 			} else {
 				require.Empty(t, stdout)
-				if test.cancel {
+				switch {
+				case test.cancel:
 					require.Contains(t, stderr, "Admin setup canceled. No key was saved.")
-				} else {
+				case test.status == http.StatusUnauthorized:
+					require.Contains(t, stderr, "The server rejected your admin API key (401).\nCheck that you copied an admin API key for the right organization.\nRun openai setup admin to try again.")
+				default:
 					require.Contains(t, stderr, "The server denied admin access (403). Ask an organization owner to check your access.")
 				}
 			}

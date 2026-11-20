@@ -1,6 +1,7 @@
 package vectorstores
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -19,7 +20,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func runWorkspace(parent context.Context, service Service, errorMessage func(error) string, input, output *os.File) (resultErr error) {
+func runWorkspace(parent context.Context, service Service, errorMessage func(error) string, input, output *os.File, fullScreen bool) (resultErr error) {
 	ctx, stopSignals := workspaceSignalContext(parent)
 	signalContext := ctx
 	defer func() {
@@ -66,9 +67,12 @@ func runWorkspace(parent context.Context, service Service, errorMessage func(err
 	if _, err := console.MakeRaw(); err != nil {
 		return workspaceFailure("Could not enable terminal input.", err)
 	}
-	painter := cliterminal.NewPainter(terminal, cancel)
+	screen := &workspaceScreenOutput{FrameOutput: terminal}
+	painter := cliterminal.NewPainter(screen, cancel)
 	defer painter.Stop()
 	model := newWorkspace(ctx, service, errorMessage)
+	model.fullScreen = fullScreen
+	model.decLineDrawing = cliterminal.SupportsDECLineDrawing()
 	model.width, model.height = width, height
 	model.dark = cliterminal.DarkBackground(os.Getenv("COLORFGBG"))
 	profile := cliterminal.ColorProfile(output, os.Environ(), term.IsTerminal(output.Fd()))
@@ -104,7 +108,7 @@ func runWorkspace(parent context.Context, service Service, errorMessage func(err
 	model.shutdown(cancel)
 	<-listenerDone
 	writeErr := painter.Stop()
-	cleanupErr := cliterminal.CloseFrame(terminal, inline.close(), model.exitCode != 0 || contextErr != nil)
+	cleanupErr := cliterminal.CloseFrame(terminal, inline.close(screen.mayBeAlternate), model.exitCode != 0 || contextErr != nil)
 	resultErr = errors.Join(model.lastErr, runErr, contextErr)
 	if err := errors.Join(writeErr, inline.err, cleanupErr); err != nil {
 		resultErr = errors.Join(resultErr, workspaceFailure("Could not finish the vector store display.", err))
@@ -150,7 +154,28 @@ func workspaceSignalContext(parent context.Context) (context.Context, context.Ca
 type workspaceWrapTimeout struct{}
 type workspaceSizeError struct{}
 
-// The workspace owns only its inline frame, paste mode, cursor, and wrapping.
+// Painter.Stop can discard queued frames. Only restore a buffer that the
+// terminal might have entered, including a partially acknowledged write.
+type workspaceScreenOutput struct {
+	cliterminal.FrameOutput
+	mayBeAlternate bool
+}
+
+func (o *workspaceScreenOutput) WriteContext(ctx context.Context, frame []byte) (int, error) {
+	// Mode switches precede the frame. Never inspect its displayed text.
+	controls, _, _ := bytes.Cut(frame, []byte{'\r'})
+	enter := bytes.LastIndex(controls, []byte(ansi.SetModeAltScreenSaveCursor))
+	leave := bytes.LastIndex(controls, []byte(ansi.ResetModeAltScreenSaveCursor))
+	if enter >= 0 {
+		o.mayBeAlternate = true
+	}
+	n, err := o.FrameOutput.WriteContext(ctx, frame)
+	if leave > enter && err == nil && n == len(frame) {
+		o.mayBeAlternate = false
+	}
+	return n, err
+}
+
 type workspaceInline struct {
 	model                             *workspace
 	painter                           cliterminal.FramePainter
@@ -158,6 +183,8 @@ type workspaceInline struct {
 	profile                           colorprofile.Profile
 	cancel                            context.CancelFunc
 	started, modesActive, restoreWrap bool
+	fullScreen, alternateUnavailable  bool
+	receivedScreenReport              bool
 	content                           string
 	width, height                     int
 	err                               error
@@ -165,7 +192,7 @@ type workspaceInline struct {
 
 func (p *workspaceInline) Init() tea.Cmd {
 	p.modesActive = true
-	query := ansi.ResetModeTextCursorEnable + ansi.SetModeBracketedPaste + ansi.RequestModeAutoWrap
+	query := ansi.ResetModeTextCursorEnable + ansi.SetModeBracketedPaste + ansi.RequestModeAltScreenSaveCursor + ansi.RequestModeAutoWrap
 	if p.model.color {
 		query += ansi.RequestBackgroundColor
 	}
@@ -179,18 +206,29 @@ func (p *workspaceInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		p.err = errors.New("could not read terminal size")
 		return p, tea.Quit
 	case tea.ModeReportMsg:
+		if msg.Mode == ansi.ModeAltScreenSaveCursor && !p.receivedScreenReport {
+			p.receivedScreenReport = true
+			// Leave another application's alternate screen under its owner's control.
+			p.alternateUnavailable = msg.Value.IsSet() || msg.Value == ansi.ModePermanentlyReset
+			if p.alternateUnavailable {
+				p.fullScreen = false
+			}
+		}
 		if msg.Mode == ansi.ModeAutoWrap {
 			if msg.Value == ansi.ModePermanentlyReset {
 				p.err = errors.New("terminal wrapping is unavailable")
 				return p, tea.Quit
 			}
 			p.restoreWrap = msg.Value == ansi.ModeReset
-			p.start()
+			// When starting expanded, give the alternate-screen query its startup window.
+			if !p.model.fullScreen || p.receivedScreenReport {
+				p.start()
+			}
 		}
 	case workspaceWrapTimeout:
 		p.start()
 	}
-	if key, ok := message.(tea.KeyPressMsg); !p.started && ok && key.String() != "ctrl+c" {
+	if key, ok := message.(tea.KeyPressMsg); !p.started && ok && key.String() != "ctrl+c" && key.Keystroke() != zoomKey {
 		return p, nil
 	}
 	// A queued resize must not submit a control that is no longer visible.
@@ -200,6 +238,11 @@ func (p *workspaceInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	_, command := p.model.Update(message)
+	if p.model.fullScreen && p.alternateUnavailable {
+		p.model.fullScreen = false
+		p.model.note = "Full screen is unavailable here. Open vector stores in a new terminal tab."
+		p.model.reflow()
+	}
 	if p.started {
 		p.draw()
 	}
@@ -236,18 +279,43 @@ func (p *workspaceInline) draw() {
 	_, _ = io.WriteString(&colorprofile.Writer{Forward: &converted, Profile: max(p.profile, colorprofile.ASCII)}, p.model.View().Content)
 	content := converted.String()
 	w, h := p.model.width, p.model.height
-	if content == p.content && w == p.width && h == p.height {
+	if content == p.content && w == p.width && h == p.height && p.fullScreen == p.model.fullScreen {
 		return
 	}
-	p.painter.Frame(cliterminal.InlineFrame(content, w))
+	p.paintFrame(content, w)
 	p.content, p.width, p.height = content, w, h
 }
 
-func (p *workspaceInline) close() string {
+func (p *workspaceInline) paintFrame(content string, width int) {
+	if p.model.fullScreen != p.fullScreen {
+		// Drop frames queued for the previous buffer before queuing its switch.
+		p.painter.Frame("")
+		mode := ansi.ResetModeAltScreenSaveCursor
+		if p.model.fullScreen {
+			mode = ansi.SetModeAltScreenSaveCursor
+		}
+		p.painter.Control(mode)
+		p.fullScreen = p.model.fullScreen
+	}
+	frame := cliterminal.InlineFrame(content, width)
+	if p.fullScreen {
+		frame = ansi.CursorHomePosition + frame
+	}
+	p.painter.Frame(frame)
+}
+
+func (p *workspaceInline) close(alternate bool) string {
 	if !p.modesActive {
 		return ""
 	}
 	cleanup := "\x18\x1b\\" + ansi.ResetStyle
+	if p.model != nil && p.model.decLineDrawing {
+		// A partial frame can stop between the character-set shifts.
+		cleanup += ansi.SelectCharacterSet('(', 'B')
+	}
+	if alternate && !p.alternateUnavailable {
+		cleanup += ansi.ResetModeAltScreenSaveCursor
+	}
 	if p.started {
 		cleanup += "\r" + ansi.EraseScreenBelow
 	}
