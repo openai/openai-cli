@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 def load_fixture():
     source = Path(__file__).with_name("check.py")
@@ -280,7 +281,15 @@ class Terminal:
     def __enter__(self):
         return self
 
-    def __exit__(self, *_):
+    def __exit__(self, _error_type, error, _traceback):
+        try:
+            self.close()
+        except Exception as cleanup_error:
+            if error is None:
+                raise
+            error.add_note(f"Console cleanup also failed: {cleanup_error}")
+
+    def close(self):
         if self.process.handle:
             try:
                 if self.api.WaitForSingleObject(self.process.handle, 0) == WAIT_TIMEOUT:
@@ -404,14 +413,48 @@ def zoom_and_resize(terminal, server):
     assert_screen_transition(terminal, mark, expanded=False)
 
 
+class BusyCancellationHandler(check.Handler):
+    def respond(self, status, body):
+        server = self.server
+        if (server.cancel_verified.is_set() and server.release.is_set()
+                and self.command == "GET" and urlsplit(self.path).path == "/v1/vector_stores"
+                and status == 200):
+            # The CLI has already exited while this response was gated.
+            server.withheld_responses += 1
+            self.close_connection = True
+            return
+        super().respond(status, body)
+
+
+class BusyCancellationFixture(check.Fixture):
+    def __init__(self):
+        super().__init__("busy-ctrl-c")
+        self.cancel_verified = threading.Event()
+        self.withheld_responses = 0
+        self.RequestHandlerClass = BusyCancellationHandler
+
+
+def stop_fixture(server, fixture_thread):
+    server.stopped.set()
+    server.release.set()
+    fixture_thread.join(4)
+    server.server_close()
+    assert not fixture_thread.is_alive(), "fixture thread survived"
+    assert not server.failures, server.failures
+
+
 def run_case(binary, name):
     check.QUERY = QUERY if name == "toggle-resize" else ORIGINAL_QUERY
-    server = check.Fixture("resize" if name == "toggle-resize" else name)
+    if name == "busy-ctrl-c":
+        server = BusyCancellationFixture()
+    else:
+        server = check.Fixture("resize" if name == "toggle-resize" else name)
     if name == "toggle-resize":
         server.attached = True
         server.attached_store = check.EXISTING_ID
     fixture_thread = threading.Thread(target=server.serve, daemon=True)
     fixture_thread.start()
+    failure = None
     try:
         with tempfile.TemporaryDirectory(prefix="f15-windows-") as workspace:
             directory = Path(workspace)
@@ -442,15 +485,26 @@ def run_case(binary, name):
                     assert not server.release.is_set(), "fixture gate released before CLI exit"
                 assert check.CANARY not in terminal.text() and check.KEY not in terminal.text()
                 assert not server.failures, server.failures
-            return {"case": name, "pass": True, "console": terminal.receipt,
-                    "requests": server.records.copy()}
+        if name == "busy-ctrl-c":
+            server.cancel_verified.set()
+    except BaseException as error:
+        failure = error
+        raise
     finally:
-        server.release.set()
-        server.stopped.set()
-        fixture_thread.join(4)
-        server.server_close()
-        assert not fixture_thread.is_alive(), "fixture thread survived"
-        assert not server.failures, server.failures
+        try:
+            stop_fixture(server, fixture_thread)
+        except Exception as cleanup_error:
+            if failure is None:
+                raise
+            failure.add_note(f"Fixture cleanup also failed: {cleanup_error}")
+    result = {"case": name, "pass": True, "console": terminal.receipt,
+              "requests": server.records.copy()}
+    if name == "busy-ctrl-c":
+        assert server.records == [{"method": "GET", "path": "/v1/vector_stores",
+                                   "body": None, "response_status": 200}], server.records
+        assert server.withheld_responses == 1, "fixture did not withhold the canceled response"
+        result["withheld_responses"] = server.withheld_responses
+    return result
 
 
 ORIGINAL_QUERY = check.QUERY
@@ -483,7 +537,8 @@ def main():
         try:
             result = run_case(binary, name)
         except Exception as error:
-            result = {"case": name, "pass": False, "error": str(error)}
+            details = "\n".join([str(error), *getattr(error, "__notes__", [])])
+            result = {"case": name, "pass": False, "error": details}
         report["cases"].append(result)
         args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(result), flush=True)
