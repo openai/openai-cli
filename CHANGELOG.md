@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.56.0](https://github.com/openai/openai-cli/compare/v1.55.2...v1.56.0) (2026-11-20)
+
+
+### Features
+
+* make automatic CLI updates opt-in ([a5d544c](https://github.com/openai/openai-cli/commit/a5d544c7ade742fc90e11c8c04b2581cea9daf22))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.105.0 ([#780](https://github.com/openai/openai-cli/issues/780)) ([3d8d1b2](https://github.com/openai/openai-cli/commit/3d8d1b24d2bfca8828e24dc5a87ee58ea00e9975))
+
 ## [1.55.2](https://github.com/openai/openai-cli/compare/v1.55.1...v1.55.2) (2026-11-19)
 
 
