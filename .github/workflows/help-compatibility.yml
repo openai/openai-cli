@@ -1686,12 +1686,12 @@ jobs:
           if os.environ.get("CHECK_NATIVE_COMMANDS") == "true":
               inventory = json.loads(Path("scripts/native-command-tests.json").read_text())
               portable = inventory["portable"]
-              if len(portable) != 33 or sum(len(children) for children in portable.values()) != 305:
-                  raise SystemExit("native command inventory must contain 33 roots and 305 children")
+              if len(portable) != 33 or sum(len(children) for children in portable.values()) != 306:
+                  raise SystemExit("native command inventory must contain 33 roots and 306 children")
               selected = set()
               for root, children in portable.items():
                   selected.update(required_cases(root, children))
-              if len(selected) != 338:
+              if len(selected) != 339:
                   raise SystemExit("native command inventory contains duplicate names")
               if os.environ["RUNNER_OS"] == "Windows":
                   aliases = inventory["windows_aliases"]
@@ -1699,7 +1699,7 @@ jobs:
                       raise SystemExit("Windows task inventory must contain one root and eight children")
                   for root, children in aliases.items():
                       selected.update(required_cases(root, children))
-                  if len(selected) != 347:
+                  if len(selected) != 348:
                       raise SystemExit("Windows task inventory contains duplicate names")
               suites["native-command-tests.jsonl"] = selected
               strict_packages["native-command-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"

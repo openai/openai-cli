@@ -35,22 +35,17 @@ func TestMainExploreRootHelpIntroducesOfflineSearch(t *testing.T) {
 				t.Fatalf("root help failed: %+v", got)
 			}
 			_, start, found := strings.Cut(got.stdout, "\nSTART HERE\n")
-			if !found || !strings.HasPrefix(start, "  openai help setup ") || !strings.Contains(start, "Find image commands and examples offline.") {
+			rows := strings.SplitN(start, "\n", 3)
+			if !found || len(rows) < 2 || !strings.HasPrefix(rows[0], "  openai help setup ") {
 				t.Fatalf("root help does not introduce setup and local search: %s", got.stdout)
 			}
-			var example string
-			for _, line := range strings.Split(start, "\n") {
-				if strings.HasPrefix(line, "  openai explore ") {
-					example, _, _ = strings.Cut(strings.TrimSpace(line), "  ")
-					break
-				}
-			}
-			if example != "openai explore images" {
+			example, _, _ := strings.Cut(strings.TrimSpace(rows[1]), "  ")
+			if example != "openai explore browse" {
 				t.Fatalf("missing copyable search example: %q", example)
 			}
 			search := runMainDispatchWithEnv(t, "zsh", []string{"OPENAI_BASE_URL=not%url", "OPENAI_API_KEY="}, strings.Fields(example)...)
-			if search.code != 0 || search.stderr != "" || !strings.Contains(search.stdout, "MATCHING COMMANDS") || !strings.Contains(search.stdout, "openai images") {
-				t.Fatalf("copied command did not run offline search: %+v", search)
+			if search.code != 0 || search.stderr != "" || !strings.HasPrefix(search.stdout, "MATCHING COMMANDS\n  openai batches browse ") {
+				t.Fatalf("copied command did not find Batch Browser first: %+v", search)
 			}
 		})
 	}
