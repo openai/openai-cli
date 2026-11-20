@@ -18,7 +18,7 @@ func RegisterArchiveInstall(root *cli.Command) {
 	const errorFormat = "Use --format-error json for machine-readable installation errors."
 	root.Commands = append(root.Commands, &cli.Command{
 		Name:        "install",
-		Usage:       "Install this Windows ZIP for your user and enable automatic updates",
+		Usage:       "Install this Windows ZIP for your user",
 		Description: description,
 		Metadata: map[string]any{LocalUtilityMetadata: true, "help-command-section": "Local tools", "help-content": clihelp.Content{
 			Description: description, GlobalOptionsNote: errorFormat,
@@ -34,7 +34,7 @@ func RegisterArchiveInstall(root *cli.Command) {
 			if !cmd.Bool("user") || cmd.Args().Len() != 0 {
 				return &LocalError{Message: "Use openai install --user without other arguments."}
 			}
-			path, err := updatenotice.InstallWindowsArchive(ctx)
+			path, err := updatenotice.InstallWindowsArchive(ctx, false)
 			if err == updatenotice.ErrWindowsLauncherPathConflict {
 				// Only Install.cmd requests this successful, attention-required status.
 				return cli.Exit("", 86)
@@ -46,4 +46,16 @@ func RegisterArchiveInstall(root *cli.Command) {
 			return err
 		},
 	})
+}
+
+func enableUnmanagedUpdates(ctx context.Context, _ string) (string, error) {
+	_, err := updatenotice.InstallWindowsArchive(ctx, true)
+	if err == updatenotice.ErrWindowsLauncherPathConflict {
+		return `Automatic updates enabled for your private CLI installation. New terminals select the machine PATH copy first.
+In PowerShell, run & "$env:LOCALAPPDATA\OpenAI\CLI\bin\openai.exe". In Command Prompt, run "%LOCALAPPDATA%\OpenAI\CLI\bin\openai.exe".`, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return `Automatic updates enabled for your private CLI installation. To use this copy in PowerShell, run & "$env:LOCALAPPDATA\OpenAI\CLI\bin\openai.exe".`, nil
 }

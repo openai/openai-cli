@@ -357,7 +357,34 @@ throw 'setup ignored the conflicting alias'`
 	if err != nil || json.Unmarshal(data, &receipt) != nil || receipt.Applied == "" || receipt.Applied == "0.0.1" || !receipt.Announced {
 		t.Fatal("new ZIP lacks the expected managed receipt", err)
 	}
+	// The current terminal can still select the portable ZIP after enabling.
+	// An older portable binary must change the setting on the verified private
+	// copy without downgrading it or overwriting the original archive.
+	for _, mode := range []string{"enable", "enable", "disable", "disable"} {
+		c := exec.CommandContext(t.Context(), older, "updates", mode)
+		c.Env = append(os.Environ(), "HTTP_PROXY=http://127.0.0.1:9", "HTTPS_PROXY=http://127.0.0.1:9", "NO_PROXY=127.0.0.1,localhost")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("portable updates %s: %v %s", mode, err, out)
+		}
+		want := "manual"
+		if mode == "enable" {
+			want = "automatic"
+		}
+		requireWindowsUpdateMode(t, managed, want)
+	}
+	if content, err := os.ReadFile(managed); err != nil || sha256.Sum256(content) != original {
+		t.Fatal("changing update settings from an older ZIP changed the private executable", err)
+	}
 	verifyWindowsOrdinaryUpdateAdmission(t, managed)
+}
+
+func requireWindowsUpdateMode(t *testing.T, managed, want string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(managed), ".update", "update-mode.json"))
+	var mode string
+	if err != nil || json.Unmarshal(data, &mode) != nil || mode != want {
+		t.Fatalf("private installation mode = %q, want %q: %v", mode, want, err)
+	}
 }
 
 // Test the ordinary public download independently of tools installed on the
@@ -393,7 +420,7 @@ func verifyWindowsFirstPrivateVerifier(t *testing.T, cli, emptyPath, managed str
 		t.Fatal("first transfer requires a pristine account without a usable verifier")
 	}
 
-	start := cmd(emptyPath, "install", "--user")
+	start := cmd(emptyPath, "updates", "enable")
 	var diag bytes.Buffer
 	if runtime.GOARCH == "arm64" {
 		// Match the public ARM64 ZIP route. The x64 run covers redirected stdout and stderr.
@@ -413,6 +440,7 @@ func verifyWindowsFirstPrivateVerifier(t *testing.T, cli, emptyPath, managed str
 		if report.Exit != 0 || !report.StatusOrder || report.Downloads != 1 {
 			t.Error("expected a successful launcher and one visible verifier download")
 		}
+		requireWindowsUpdateMode(t, managed, "manual")
 	} else {
 		start.Stderr = &diag
 		out, err := start.Output()
@@ -425,9 +453,10 @@ func verifyWindowsFirstPrivateVerifier(t *testing.T, cli, emptyPath, managed str
 			}
 			t.Fatalf("initial Windows ZIP setup: %v", err)
 		}
-		if strings.TrimSpace(diag.String()) != windowsVerifierDownload || !strings.EqualFold(strings.TrimSpace(string(out)), managed) {
-			t.Fatal("first setup must print exactly one download start and one installed path")
+		if len(out) != 0 || !strings.Contains(diag.String(), "Automatic updates enabled for your private CLI installation.") {
+			t.Fatal("explicit portable opt-in did not confirm the private installation")
 		}
+		requireWindowsUpdateMode(t, managed, "automatic")
 	}
 	// With no system gh, the read-only probe checks the private executable
 	// against its compiled SHA-256 and exercises its required capabilities.
@@ -461,6 +490,9 @@ func verifyWindowsFirstPrivateVerifier(t *testing.T, cli, emptyPath, managed str
 	out, err := repeat.Output()
 	if err != nil || diag.Len() != 0 || !strings.EqualFold(strings.TrimSpace(string(out)), managed) {
 		t.Fatal("verified cached setup must succeed quietly through a closed proxy", err)
+	}
+	if runtime.GOARCH == "amd64" {
+		requireWindowsUpdateMode(t, managed, "automatic")
 	}
 	t.Log("Cached verifier: offline repeat succeeded without a download message")
 }

@@ -163,15 +163,95 @@ func TestPreparedImageAfterTrust(t *testing.T) {
 	exercisePreparedImageAfterTrust(t, t.TempDir())
 }
 
+func changeTestUpdateMode(t *testing.T, i *updateInstallation, previous, mode string) {
+	t.Helper()
+	cache, err := openManagedUpdateCache(t.Context(), i)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cache.close()
+	state, err := loadUpdateState(cache, time.Now())
+	if err != nil || state.UpdateMode != previous {
+		t.Fatalf("previous update mode = %q, want %q: %v", state.UpdateMode, previous, err)
+	}
+	if err := setUpdateMode(cache, &state, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdateWorkerRequiresExplicitEnrollment(t *testing.T) {
+	t.Setenv("OPENAI_CLI_NO_AUTO_UPDATE", "")
+	t.Setenv("OPENAI_CLI_NO_UPDATE_CHECK", "")
+	t.Setenv("OPENAI_CLI_VERSION_PIN", "")
+	old := []byte("original private installation")
+	next := buildUpdateFixture(t, t.TempDir(), "1.0.1")
+	i := updateTestInstallation(t, old)
+	d := &syntheticDelivery{selected: syntheticSelection(), content: next}
+	w := updateWorker{installation: i, current: "1.0.0", now: time.Now(), delivery: d}
+	run := func() {
+		t.Helper()
+		if err := w.run(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run() // A detached worker from before the transition has no explicit consent.
+	if d.verifierCalls != 0 || d.selectCalls != 0 {
+		t.Fatal("unenrolled worker started discovery")
+	}
+	changeTestUpdateMode(t, i, "", automaticUpdates)
+	run()
+	if d.prepareCalls != 1 {
+		t.Fatal("opt-in did not prepare a release")
+	}
+	changeTestUpdateMode(t, i, automaticUpdates, manualUpdates)
+	if _, err := os.Lstat(filepath.Join(i.stateDirectory(), "next")); !os.IsNotExist(err) {
+		t.Fatalf("disabled installation kept its staged executable: %v", err)
+	}
+	run() // A worker already queued for activation observes the new preference.
+	got, err := os.ReadFile(i.path)
+	if err != nil || !bytes.Equal(got, old) || d.validationCalls != 0 || d.selectCalls != 1 {
+		t.Fatalf("disabled worker attempted an update: %v", err)
+	}
+	changeTestUpdateMode(t, i, manualUpdates, automaticUpdates)
+	run()
+	if d.prepareCalls != 2 || d.validationCalls != 0 {
+		t.Fatal("re-enrollment reused a replacement from before consent")
+	}
+	changeTestUpdateMode(t, i, automaticUpdates, automaticUpdates)
+	run()
+	got, err = os.ReadFile(i.path)
+	if err != nil || !bytes.Equal(got, next) || d.validationCalls != 1 {
+		t.Fatalf("re-enrolled worker did not activate the newly prepared release: %v", err)
+	}
+}
+
+func TestUpdateModeSurvivesLegacyReceiptWrites(t *testing.T) {
+	i := updateTestInstallation(t, []byte("current"))
+	path := filepath.Join(i.stateDirectory(), stateName)
+	for _, mode := range []string{manualUpdates, automaticUpdates} {
+		previous := ""
+		if mode == automaticUpdates {
+			previous = manualUpdates
+		}
+		changeTestUpdateMode(t, i, previous, mode)
+		// Older installers overwrite their release receipt, including unfamiliar fields.
+		if err := os.WriteFile(path, []byte(`{"schema":1,"checked":0,"announced":false}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		changeTestUpdateMode(t, i, mode, mode)
+	}
+}
+
 func TestAutomaticUpdateTransactions(t *testing.T) {
 	t.Setenv("OPENAI_CLI_NO_AUTO_UPDATE", "")
 	t.Setenv("OPENAI_CLI_NO_UPDATE_CHECK", "")
 	t.Setenv("OPENAI_CLI_VERSION_PIN", "")
 	next := buildUpdateFixture(t, t.TempDir(), "1.0.1")
 	old := []byte("original installation")
-	for _, scenario := range []string{"activate", "withdrawn", "pin_conflict", "opt_out", "replaced_binary", "inplace_binary", "replaced_state", "inplace_state", "replaced_lock", "replaced_next", "inplace_next", "symlink_next", "fifo_next", "canceled", "rename_failure"} {
+	for _, scenario := range []string{"activate", "withdrawn", "pin_conflict", "opt_out", "replaced_binary", "inplace_binary", "replaced_state", "inplace_state", "replaced_mode", "inplace_mode", "replaced_lock", "replaced_next", "inplace_next", "symlink_next", "fifo_next", "canceled", "rename_failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			i := updateTestInstallation(t, old)
+			changeTestUpdateMode(t, i, "", automaticUpdates)
 			delivery := &syntheticDelivery{selected: syntheticSelection(), content: next}
 			worker := updateWorker{installation: i, current: "1.0.0", now: time.Now(), delivery: delivery}
 			if err := worker.run(context.Background()); err != nil {
@@ -221,6 +301,16 @@ func TestAutomaticUpdateTransactions(t *testing.T) {
 					}
 				case "inplace_state":
 					if err := os.WriteFile(statePath, []byte("{}"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				case "replaced_mode", "inplace_mode":
+					path := filepath.Join(i.stateDirectory(), updateModeName)
+					if scenario == "replaced_mode" {
+						if err := os.Rename(path, path+".old"); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := os.WriteFile(path, []byte(`"manual"`), 0600); err != nil {
 						t.Fatal(err)
 					}
 				case "replaced_lock":
@@ -312,6 +402,7 @@ func TestAutomaticUpdateDiscoveryThrottleAndLock(t *testing.T) {
 	t.Setenv("OPENAI_CLI_NO_UPDATE_CHECK", "")
 	t.Setenv("OPENAI_CLI_VERSION_PIN", "")
 	i := updateTestInstallation(t, []byte("old"))
+	changeTestUpdateMode(t, i, "", automaticUpdates)
 	d := &syntheticDelivery{selected: syntheticSelection(), prepareError: errors.New("interrupted download")}
 	w := updateWorker{installation: i, current: "1.0.0", now: time.Now(), delivery: d}
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -389,6 +480,7 @@ func TestAutomaticUpdateVerifierFallbackRecovery(t *testing.T) {
 	t.Setenv("OPENAI_CLI_NO_UPDATE_CHECK", "")
 	t.Setenv("OPENAI_CLI_VERSION_PIN", "")
 	i := updateTestInstallation(t, []byte("old"))
+	changeTestUpdateMode(t, i, "", automaticUpdates)
 	d := &syntheticDelivery{selected: syntheticSelection(), verifierError: errUpdate, prepareError: errUpdate}
 	w := updateWorker{installation: i, current: "1.0.0", now: time.Now(), delivery: d}
 	if err := w.run(t.Context()); err == nil {
@@ -467,6 +559,7 @@ func TestAutomaticUpdateRecoversStalePreparation(t *testing.T) {
 	for _, scenario := range []string{"missing", "corrupt", "manual_replacement", "withdrawn"} {
 		t.Run(scenario, func(t *testing.T) {
 			i := updateTestInstallation(t, []byte("old"))
+			changeTestUpdateMode(t, i, "", automaticUpdates)
 			d := &syntheticDelivery{selected: syntheticSelection(), content: next}
 			worker := updateWorker{installation: i, current: "1.0.0", now: time.Now(), delivery: d}
 			if err := worker.run(t.Context()); err != nil {

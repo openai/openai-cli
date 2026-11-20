@@ -26,6 +26,11 @@ type cacheState struct {
 	Latest   string `json:"latest"`
 }
 
+type cacheRecord struct {
+	identity os.FileInfo
+	data     []byte
+}
+
 type noticeCache struct {
 	ctx               context.Context
 	directory         string
@@ -33,18 +38,20 @@ type noticeCache struct {
 	root              *os.Root
 	lock              *os.File
 	identity          os.FileInfo
-	stateIdentity     os.FileInfo
-	stateData         []byte
+	state, mode       cacheRecord
+	modeRead          bool
 }
 
 // An explicit installation can wait for a running update. Interactive API
 // commands still use the nonblocking cache lock.
-func openInstallerCache(ctx context.Context, wait bool, acquire func() (*noticeCache, error)) (*noticeCache, error) {
+func openInstallerCache(ctx context.Context, wait bool, status io.Writer, acquire func() (*noticeCache, error)) (*noticeCache, error) {
 	cache, err := acquire()
 	if !wait || !errors.Is(err, errCacheBusy) {
 		return cache, err
 	}
-	fmt.Fprintln(os.Stderr, "Waiting for the current OpenAI CLI update to finish...")
+	if status != nil {
+		fmt.Fprintln(status, "Waiting for the current OpenAI CLI update to finish...")
+	}
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -140,6 +147,10 @@ func privateFile(info os.FileInfo) bool {
 	return info != nil && info.Mode().IsRegular() && privateMode(info)
 }
 
+func privateRecord(name string, info os.FileInfo) bool {
+	return privateFile(info) && (name != updateModeName || ownedUpdatePath(info))
+}
+
 func (cache *noticeCache) load(now time.Time) (cacheState, error) {
 	state := cacheState{Schema: 1}
 	data, err := cache.readState()
@@ -162,51 +173,59 @@ func (cache *noticeCache) load(now time.Time) (cacheState, error) {
 }
 
 func (cache *noticeCache) readState() ([]byte, error) {
-	info, err := cache.root.Lstat(stateName)
+	return cache.readRecord(stateName, &cache.state)
+}
+
+func (cache *noticeCache) readRecord(name string, record *cacheRecord) ([]byte, error) {
+	info, err := cache.root.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
-	if err != nil || !privateFile(info) {
+	if err != nil || !privateRecord(name, info) {
 		return nil, errCache
 	}
-	file, err := cache.root.OpenFile(stateName, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	file, err := cache.root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 	actual, err := file.Stat()
-	if err != nil || !privateFile(actual) || !os.SameFile(info, actual) {
+	if err != nil || !privateRecord(name, actual) || !os.SameFile(info, actual) {
 		return nil, errCache
 	}
 	data, err := io.ReadAll(io.LimitReader(file, 4097))
 	if err != nil || len(data) > 4096 {
 		return nil, errCache
 	}
-	cache.stateIdentity, cache.stateData = actual, data
+	record.identity, record.data = actual, data
 	return data, nil
 }
 
 // Cooperating writers hold the permanent lock. Also preserve distinguishable
 // replacements or edits from programs that do not honor that lock.
 func (cache *noticeCache) unchangedState() bool {
-	info, err := cache.root.Lstat(stateName)
-	if cache.stateIdentity == nil {
+	return cache.unchangedRecord(stateName, cache.state) && (!cache.modeRead || cache.unchangedRecord(updateModeName, cache.mode))
+}
+
+func (cache *noticeCache) unchangedRecord(name string, record cacheRecord) bool {
+	info, err := cache.root.Lstat(name)
+	if record.identity == nil {
 		return errors.Is(err, os.ErrNotExist)
 	}
-	if err != nil || !privateFile(info) || !os.SameFile(info, cache.stateIdentity) {
+	if err != nil || !privateRecord(name, info) || !os.SameFile(info, record.identity) {
 		return false
 	}
-	file, err := cache.root.OpenFile(stateName, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	file, err := cache.root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return false
 	}
 	defer file.Close()
 	actual, err := file.Stat()
-	if err != nil || !privateFile(actual) || !os.SameFile(actual, cache.stateIdentity) {
+	if err != nil || !privateRecord(name, actual) || !os.SameFile(actual, record.identity) {
 		return false
 	}
 	data, err := io.ReadAll(io.LimitReader(file, 4097))
-	return err == nil && cache.ctx.Err() == nil && bytes.Equal(data, cache.stateData)
+	return err == nil && cache.ctx.Err() == nil && bytes.Equal(data, record.data)
 }
 
 func decodeState(data []byte, state *cacheState) bool {
@@ -252,6 +271,10 @@ func (cache *noticeCache) save(state cacheState) error {
 }
 
 func (cache *noticeCache) saveState(state any) error {
+	return cache.saveRecord(stateName, &cache.state, state)
+}
+
+func (cache *noticeCache) saveRecord(destination string, record *cacheRecord, state any) error {
 	if !cache.validLock() || !cache.unchangedState() {
 		return errCache
 	}
@@ -276,9 +299,9 @@ func (cache *noticeCache) saveState(state any) error {
 	if !cache.validLock() || !cache.unchangedState() {
 		return errCache
 	}
-	if err := cache.root.Rename(name, stateName); err != nil {
+	if err := cache.root.Rename(name, destination); err != nil {
 		return err
 	}
-	cache.stateIdentity, cache.stateData = identity, data
+	record.identity, record.data = identity, data
 	return nil
 }

@@ -103,6 +103,37 @@ func TestMainWindowsArchivePublishedUpgrade(t *testing.T) {
 		env = append(env, "OPENAI_WINDOWS_REQUIRE_PRIVATE_GH=1")
 	}
 	env = append(env, "NO_PROXY=127.0.0.1,localhost")
+	// Read the installed release's own command tree. Explicit help or settings
+	// commands do not count as ordinary use or start the update worker.
+	supportsOptIn := func() bool {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), managed, "--help")
+		cmd.Env = env
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal("could not read the installed release's help", err)
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if fields := strings.Fields(line); len(fields) > 1 && fields[0] == "updates" {
+				return true
+			}
+		}
+		return false
+	}
+	starterOptIn := supportsOptIn()
+	if starterOptIn {
+		requireWindowsUpdateMode(t, managed, "manual")
+		initial := waitWindowsPublishedState(t, statePath, func(state windowsPublishedState) bool { return state.Applied == starter[1:] })
+		if initial.Checked != 0 || initial.Pending != nil {
+			t.Fatal("fresh manual starter already attempted an automatic upgrade")
+		}
+		cmd := exec.CommandContext(t.Context(), managed, "updates", "enable")
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("could not enroll the public starter: %v: %s", err, out)
+		}
+		requireWindowsUpdateMode(t, managed, "automatic")
+	}
 	work := t.TempDir()
 	run := func(mode string) string {
 		t.Helper()
@@ -151,10 +182,26 @@ func TestMainWindowsArchivePublishedUpgrade(t *testing.T) {
 	if requests.Load() != 2 || applied.AppliedCommit != prepared.Pending.Release.Commit {
 		t.Fatal("wrong API request count or applied commit")
 	}
-	confirmation := "Updated to " + successor + "."
+	if starterOptIn {
+		requireWindowsUpdateMode(t, managed, "automatic")
+	}
+	const migration = "Updates are now manual. To enable automatic updates again, run openai updates enable."
+	migrates := !starterOptIn && supportsOptIn()
+	expectedNotice := "Updated to " + successor + "."
+	if migrates {
+		expectedNotice = migration
+	}
 	firstBare, secondBare := run("bare"), run("bare")
-	if strings.Count(firstBare, "Updated to ") != 1 || !strings.Contains(firstBare, confirmation) || strings.Contains(secondBare, "Updated to ") {
-		t.Fatal("expected exactly one visible update confirmation across fresh consoles")
+	if !strings.Contains(firstBare, expectedNotice) || strings.Count(firstBare, "Updated to ")+strings.Count(firstBare, migration) != 1 ||
+		strings.Contains(secondBare, "Updated to ") || strings.Contains(secondBare, migration) {
+		t.Fatal("expected only the release-specific notice on the first bare invocation")
+	}
+	if migrates {
+		requireWindowsUpdateMode(t, managed, "manual")
+		manual := waitWindowsPublishedState(t, statePath, func(state windowsPublishedState) bool { return state.Applied == successor[1:] })
+		if manual.Pending != nil || manual.Checked != 0 {
+			t.Fatal("the transition release continued automatic updates without explicit enrollment")
+		}
 	}
 	report := struct{ Architecture, Starter, Successor, StarterSHA256, ExecutableSHA256, ArchiveSHA256, Commit string }{
 		runtime.GOARCH, starter, successor, before, expected, prepared.Pending.Release.Digest, applied.AppliedCommit,
@@ -170,7 +217,7 @@ func TestMainWindowsArchivePublishedUpgrade(t *testing.T) {
 	if err := os.WriteFile(destination, output, 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("Two ordinary API requests upgraded %s to %s on Windows %s. The CLI confirmed once.", starter, successor, runtime.GOARCH)
+	t.Logf("Two ordinary API requests upgraded %s to %s on Windows %s. The CLI showed its notice once: %s", starter, successor, runtime.GOARCH, expectedNotice)
 }
 
 func waitWindowsPublishedState(t *testing.T, path string, check func(windowsPublishedState) bool) windowsPublishedState {

@@ -83,7 +83,7 @@ func selectEnrolledHomebrewVerifier(ctx context.Context, d *releaseDelivery, cac
 	var receipt struct {
 		Prefix string `json:"homebrew_prefix"`
 	}
-	if json.Unmarshal(cache.stateData, &receipt) != nil || !validHomebrewPrefix(receipt.Prefix) || !protectedHomebrewState(cache) {
+	if json.Unmarshal(cache.state.data, &receipt) != nil || !validHomebrewPrefix(receipt.Prefix) || !protectedHomebrewState(cache) {
 		return false
 	}
 	if useHomebrewVerifier(ctx, d, receipt.Prefix, cache.directory) {
@@ -214,13 +214,13 @@ func protectedHomebrewState(cache *noticeCache) bool {
 	if err != nil || !os.SameFile(cache.directoryIdentity, named) {
 		return false
 	}
-	files := map[string]os.FileInfo{".": cache.directoryIdentity, stateName: cache.stateIdentity}
+	files := map[string]os.FileInfo{".": cache.directoryIdentity, stateName: cache.state.identity}
 	if cache.lock != nil {
 		files[".lock"] = cache.identity
 	}
 	for name, want := range files {
 		f, err := cache.root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-		if name == stateName && os.IsNotExist(err) && cache.stateIdentity == nil {
+		if name == stateName && os.IsNotExist(err) && cache.state.identity == nil {
 			continue
 		}
 		if err != nil {

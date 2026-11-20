@@ -79,6 +79,8 @@ func TestLocalUtilityFirstRunSuppression(t *testing.T) {
 			{"openai", "tokenizer", "licenses"},
 			{"openai", "codex"},
 			{"openai", "codex", "--destination", "config"},
+			{"openai", "updates", "enable"},
+			{"openai", "updates", "disable"},
 			{"openai", "--format", "json", "help", "tokenizer", "count"},
 		} {
 			if images.FirstRunEligible(args, getenv, true, true, true, shell) {

@@ -177,7 +177,7 @@ func (d *releaseDelivery) installPrivateVerifier(ctx context.Context, root *os.R
 	}
 	// openCache serializes downloads and releases the kernel lock on process
 	// exit. The permanent destination always wins if another process created it.
-	cache, err := openInstallerCache(ctx, showProgress, func() (*noticeCache, error) { return openCache(ctx, root.Name()) })
+	cache, err := openInstallerCache(ctx, showProgress, os.Stderr, func() (*noticeCache, error) { return openCache(ctx, root.Name()) })
 	if err != nil {
 		return "", err
 	}

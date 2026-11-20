@@ -47,6 +47,9 @@ home = runtime / 'after-home'
 binary = home / '.openai/bin/openai'
 directory = binary.parent / '.update'
 directory.mkdir(mode=0o700)
+mode = directory / 'update-mode.json'
+mode.write_text(json.dumps('automatic'))
+mode.chmod(0o600)
 receipt = dict(schema=1, checked=int(time.time()), activation_checked=0, starting=0,
                applied=versions[1], announced=False,
                pending=dict(release=dict(version=versions[1], commit=sys.argv[3], release_id=1, asset_id=2,

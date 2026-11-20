@@ -1,6 +1,27 @@
 # Automatic updates
 
-Supported self-managed installations prepare release updates automatically. Other installations retain the existing update notice.
+Upgrades are manual by default. Enroll a supported private installation with this command.
+
+```sh
+openai updates enable
+```
+
+Use this command to stop automatic upgrades for that installation.
+
+```sh
+openai updates disable
+```
+
+Your choice persists across terminal sessions. Homebrew, Linux packages, and Go continue to own the executables they installed.
+
+### If you used the old README
+
+An older CLI can still install the release that introduces these commands. From that release onward, upgrades require an explicit opt-in.
+The next time you run bare `openai` interactively, the previous private installation shows this message once:
+
+> Updates are now manual. To enable automatic updates again, run openai updates enable.
+
+You can ignore the message to keep manual upgrades. Scripts and redirected commands do not show or consume it.
 
 ## Install from a release archive
 
@@ -14,7 +35,8 @@ If you already have a Homebrew cask containing the helper, you can run the helpe
 source "$(brew --prefix)/bin/openai-enable-updates.zsh"
 ```
 
-The helper checks for shell conflicts and selects the verified copy in this terminal.
+The helper checks for shell conflicts and selects the verified private copy in this terminal.
+Then run `openai updates enable`.
 The updater uses a compatible GitHub CLI from the selected Homebrew installation when available.
 It can use this verifier even when your shell selects an older `gh`.
 Setup installs GitHub CLI through Homebrew only when it needs a compatible verifier.
@@ -40,7 +62,8 @@ For a package that includes the helper, run this command in interactive Bash or 
 source /usr/share/openai-cli/enable-updates.sh
 ```
 
-This enables updates for your account. The package manager continues to own `/usr/bin/openai`.
+This selects a private copy for your account. Then run `openai updates enable`.
+The package manager continues to own `/usr/bin/openai`.
 Setup prepends `$HOME/.openai/bin` to your interactive shell’s PATH and preserves your other settings.
 It uses a compatible GitHub CLI or downloads a private verifier.
 If you install a newer system package, rerun setup to select that version immediately.
@@ -68,7 +91,11 @@ In an interactive Bash or zsh terminal on Debian, Ubuntu, or Fedora, paste this 
 
 ### Set up automatic updates on Windows
 
-Open PowerShell in the extracted official ZIP.
+In the extracted official ZIP, run `.\openai.exe updates enable` in PowerShell.
+The command prepares the private copy and enables updates for it.
+If another command takes precedence, use the private executable shown in the confirmation.
+
+To select the private copy in your current PowerShell window, use the following setup.
 
 ```powershell
 & {
@@ -85,6 +112,7 @@ Open PowerShell in the extracted official ZIP.
 }
 ```
 Setup selects the managed executable in your current PowerShell and registers its directory in your user PATH.
+Run `openai updates enable` to enroll that copy.
 Setup uses a compatible GitHub CLI when available. Otherwise, it installs a verified private copy for the updater.
 Future eligible commands use the managed executable at `%LOCALAPPDATA%\OpenAI\CLI\bin\openai.exe`.
 
@@ -105,6 +133,7 @@ source ./openai-enable-updates.sh
 ```
 
 Setup selects the installed CLI in this terminal and future interactive shells.
+Run `openai updates enable` to enroll it.
 In zsh, selecting a command in Explore fills your prompt. In Bash 4.3+, press Ctrl+X, then Tab to insert it.
 If your archive predates the helper or you use linked startup files, select the installation for this terminal manually.
 
@@ -154,6 +183,7 @@ Automatic installation requires these conditions on macOS and Linux. The Windows
 
 - macOS or Linux, running as an ordinary user.
 - An official release built with the automatic-update release metadata.
+- Explicit enrollment with `openai updates enable`.
 - The executable is a regular file at `$HOME/.openai/bin/openai`.
 - The executable and dedicated directories belong to the current user and reject writes from other users.
 - The executable and dedicated directories have no symlinks. The executable has no hard links.
@@ -227,7 +257,7 @@ export OPENAI_CLI_VERSION_PIN=v1.40.4
 ```
 
 Pins accept three numeric components, with an optional `v`. Invalid pins disable automatic installation.
-Pinning the executing version prevents updates. Another pin selects only that exact release, including an explicit downgrade.
+Pins apply only after enrollment. Pinning the executing version prevents updates. Another pin selects only that exact release, including an explicit downgrade.
 Installation still requires that release's updater metadata, matching platform archive, and successful authentication.
 Unavailable or unsupported pins leave the working installation unchanged. The updater never substitutes `latest` for a pin.
 

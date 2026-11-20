@@ -259,6 +259,10 @@ if [ "$transaction" = true ]; then
     active=$(env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 "$stage/openai" __openai_package_install)
     [ -n "$active" ] || fail 'Could not safely enroll the package. Check for a different executable or an update in progress, then retry.'
 elif [ "$existing" = false ]; then
+    # Record the default before the executable becomes visible to another shell.
+    initialized=$(env -i HOME="$HOME" PATH=/usr/bin:/bin OPENAI_CLI_ARCHIVE_INSTALL=1 \
+        "$stage/openai" __openai_initialize_update_mode) || initialized=
+    [ "$initialized" = ready ] || fail 'Could not prepare manual updates for the new installation. Check the installation directory and retry.'
     ln "$stage/openai" . || fail 'Could not install openai. Check whether another installation already exists.'
 fi
 check_destination() {
@@ -309,17 +313,13 @@ if [ -n "$profile_dir" ] && [ "${OPENAI_CLI_SOURCED_INSTALL:-}" != 1 ]; then
     PATH="$HOME/.openai/bin:$PATH" "$HOME/.openai/bin/openai" @completion "$@" --auto-suggestions >/dev/null ||
         printf '%s\n' 'The CLI is installed. Prompt insertion setup could not finish.' >&2
 fi
-if [ "$transaction" = true ] && [ "$readiness" = ready ]; then
-    printf 'Automatic updates are enabled for OpenAI CLI %s at $HOME/.openai/bin/openai.\n' "$active"
-else
-    printf 'Installed OpenAI CLI %s at $HOME/.openai/bin/openai.\n' "${active:-$release}"
-fi
+printf 'Installed OpenAI CLI %s at $HOME/.openai/bin/openai.\n' "${active:-$release}"
 if [ -z "$profile_dir" ] && [ "$(command -v openai || :)" != "$HOME/.openai/bin/openai" ]; then
     printf '%s\n' 'Select it in this shell: export PATH="$HOME/.openai/bin:$PATH"'
 fi
 printf '%s\n' "$advice"
 if [ "$readiness" = ready ]; then
-    printf '%s\n' 'The CLI checks for updates after eligible interactive API requests or bare openai.'
+    printf '%s\n' 'To enable automatic updates for this installation, run openai updates enable.'
 else
-    printf '%s\n' 'The CLI is installed. After fixing gh, use openai in a terminal to resume update checks.'
+    printf '%s\n' 'To enable automatic updates, set up GitHub CLI first. Then run openai updates enable.'
 fi

@@ -23,7 +23,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Call this only after ordinary enrollment under the disposable standard account.
+// Call this only after setup under the disposable standard account.
 func verifyWindowsOrdinaryUpdateAdmission(t *testing.T, managed string) {
 	t.Helper()
 	requests, env := windowsUpdateAPI(t, os.Environ())
@@ -45,10 +45,46 @@ func verifyWindowsOrdinaryUpdateAdmission(t *testing.T, managed string) {
 		t.Fatalf("redirected JSON API command: %v", err)
 	}
 	seed, err := os.ReadFile(state)
-	var initial struct{ Checked, Starting int64 }
-	if err != nil && !errors.Is(err, os.ErrNotExist) || err == nil && (json.Unmarshal(seed, &initial) != nil || initial.Checked != 0 || initial.Starting != 0) {
+	var initial struct {
+		Checked, Starting int64
+	}
+	if err != nil || json.Unmarshal(seed, &initial) != nil || initial.Checked != 0 || initial.Starting != 0 {
 		t.Fatal("machine command or setup launched the updater", err)
 	}
+	requireWindowsUpdateMode(t, managed, "manual")
+	// An old README setup left this same receipt without an enrollment choice.
+	if err := os.Remove(filepath.Join(filepath.Dir(state), "update-mode.json")); err != nil {
+		t.Fatal(err)
+	}
+	bare := exec.CommandContext(t.Context(), managed)
+	bare.Env = env
+	if output, err := bare.CombinedOutput(); err != nil || strings.Contains(string(output), "Updates are now manual") {
+		t.Fatal("redirected command consumed the migration notice", err)
+	}
+	// A separate fresh console captures each ordinary invocation. Keep release
+	// notices offline so only the enrolled worker reaches the observed proxy.
+	for i := range 2 {
+		dir := t.TempDir()
+		screen := filepath.Join(dir, "screen.txt")
+		legacyEnv := append(append([]string{}, env...), "PATH="+filepath.Dir(managed)+";"+os.Getenv("PATH"),
+			"OPENAI_ARCHIVE_TEST_MODE=bare", "OPENAI_ARCHIVE_TEST_SCREEN="+screen,
+			"HTTPS_PROXY=http://127.0.0.1:1", "HTTP_PROXY=http://127.0.0.1:1")
+		runWindowsUpdateConsole(t, t.Context(), managed, dir, legacyEnv)
+		data, err := os.ReadFile(screen)
+		count := strings.Count(string(data), "Updates are now manual. To enable automatic updates again, run openai updates enable.")
+		if err != nil || count != 1-i {
+			t.Fatalf("bare invocation %d displayed %d migration notices: %v", i+1, count, err)
+		}
+	}
+	setMode := func(mode string) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), managed, "updates", mode)
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("updates %s: %v: %s", mode, err, out)
+		}
+	}
+	setMode("enable")
 	ctx, cancel := context.WithTimeout(t.Context(), 35*time.Second)
 	defer cancel()
 	runWindowsUpdateConsole(t, ctx, managed, t.TempDir(), env)
@@ -67,6 +103,8 @@ func verifyWindowsOrdinaryUpdateAdmission(t *testing.T, managed string) {
 	if err != nil || json.Unmarshal(raw, &receipt) != nil || receipt.Checked <= 0 || requests.Load() != 2 {
 		t.Fatal("missing automatic update receipt or incorrect foreground API request count", err)
 	}
+	setMode("disable")
+	requireWindowsUpdateMode(t, managed, "manual")
 }
 
 // Only explicitly whitelisted system paths can reach the real CLI and its

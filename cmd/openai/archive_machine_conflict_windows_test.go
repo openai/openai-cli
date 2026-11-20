@@ -122,6 +122,11 @@ func TestMainWindowsArchiveMachinePathConflict(t *testing.T) {
 		}
 		run(check)
 	}
+	optIn := exec.CommandContext(ctx, filepath.Join(dir, "openai.exe"), "updates", "enable")
+	outputBytes, err := optIn.CombinedOutput()
+	if err != nil || !strings.Contains(string(outputBytes), "New terminals select the machine PATH copy first") {
+		t.Fatalf("explicit enrollment lost machine PATH guidance: %v: %s", err, outputBytes)
+	}
 }
 
 func documentedWindowsArchivePaste(t *testing.T, archive string) string {
