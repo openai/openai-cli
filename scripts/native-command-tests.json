@@ -344,6 +344,7 @@
       "audio_speech_create",
       "audio_transcribe",
       "audio_translate",
+      "audio_translate-live",
       "audio_translations_create",
       "files_create",
       "files_upload",
