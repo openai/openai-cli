@@ -79,14 +79,19 @@ For Homebrew, run `brew upgrade --cask openai/tools/openai`. For Go, repeat the 
 Upgrades are manual by default. On a supported private installation, run `openai updates enable` to turn on automatic upgrades.
 Run `openai updates disable` to return to manual upgrades.
 
-## Explore commands
+## Quickstart
 
-Run `openai explore` to search for commands in your own words.
-For example, to check a prompt's length without an API key, search for `count tokens offline`.
+### Explore commands
 
-Highlight the command you want and press **Enter** to bring it back to your terminal.
+Find a command by describing what you want to do. No API key needed.
 
-## Authentication
+```sh
+openai explore
+```
+
+Try searching for `count tokens offline`. Use the arrow keys to highlight a command, then press **Enter** to select it.
+
+### Authentication
 
 When you're ready to make an API request, run the setup guide for your shell.
 
