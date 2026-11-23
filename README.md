@@ -22,6 +22,14 @@
 
 ## Installation
 
+<a id="macos"></a>
+
+### Installing with Homebrew
+
+```sh
+brew install openai/tools/openai
+```
+
 ### Installing a prebuilt binary
 
 <a id="linux"></a>
@@ -50,14 +58,6 @@ Add the folder to your user `Path`. Open a new PowerShell window.
 
 **Linux packages.** Install the matching `.deb`, `.rpm`, or `.pkg.tar.zst` file with your distribution’s package manager.
 On Alpine, use the verified tarball unless your system trusts the release `.apk`.
-
-<a id="macos"></a>
-
-### Installing with Homebrew
-
-```sh
-brew install openai/tools/openai
-```
 
 ### Installing with Go
 
