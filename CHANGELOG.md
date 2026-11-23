@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.56.1](https://github.com/openai/openai-cli/compare/v1.56.0...v1.56.1) (2026-11-23)
+
+
+### Documentation
+
+* add a README Quickstart before Things to try ([#787](https://github.com/openai/openai-cli/issues/787)) ([9ea87bd](https://github.com/openai/openai-cli/commit/9ea87bd2bdb3a751604401259d6c1450d2cbeaa9))
+
 ## [1.56.0](https://github.com/openai/openai-cli/compare/v1.55.2...v1.56.0) (2026-11-20)
 
 
