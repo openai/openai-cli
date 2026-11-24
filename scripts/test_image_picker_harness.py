@@ -40,7 +40,7 @@ class TranscriptTerminal:
         self.raw.extend(self.chunks.popleft())
 
     def running(self):
-        return True
+        return self.child.returncode is None
 
     def size(self):
         return self.dimensions
@@ -205,6 +205,18 @@ class ReceiptTest(unittest.TestCase):
 
 
 class TerminalReceiverTest(unittest.TestCase):
+    def test_wait_finds_marker_in_final_output_after_exit(self):
+        terminal = TranscriptTerminal(chunks=(b'NEXT_', b'COMMAND\r\n'))
+        terminal.child.returncode = 0
+        terminal.wait('NEXT_COMMAND')
+
+    def test_wait_rejects_stale_marker_after_exit(self):
+        previous = b'NEXT_COMMAND\r\n'
+        terminal = TranscriptTerminal(previous, chunks=(b'other output\r\n', b''))
+        terminal.child.returncode = 0
+        with self.assertRaisesRegex(AssertionError, "missing 'NEXT_COMMAND'; exit=0"):
+            terminal.wait('NEXT_COMMAND', after=len(previous))
+
     def test_screen_does_not_change_the_live_transcript(self):
         raw = bytearray(b'first\x1b[')
         before = bytes(raw)
