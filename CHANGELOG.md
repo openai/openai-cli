@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.57.0](https://github.com/openai/openai-cli/compare/v1.56.1...v1.57.0) (2026-11-24)
+
+
+### Features
+
+* **api:** add healthcare model IDs for Responses ([#796](https://github.com/openai/openai-cli/issues/796)) ([5b8fb02](https://github.com/openai/openai-cli/commit/5b8fb0272ef5e1c8e030fe246aaa18b16991bc60))
+
+
+### Chores
+
+* **ci:** refresh the reviewed realtime translation guide ([#797](https://github.com/openai/openai-cli/issues/797)) ([ffb4a9d](https://github.com/openai/openai-cli/commit/ffb4a9dfad1f2d69704598a9962ba4f464b035bb))
+
 ## [1.56.1](https://github.com/openai/openai-cli/compare/v1.56.0...v1.56.1) (2026-11-23)
 
 
