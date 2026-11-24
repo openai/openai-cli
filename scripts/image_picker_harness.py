@@ -282,10 +282,15 @@ class Terminal:
 
     def wait(self, marker, timeout=12, after=0):
         deadline = time.monotonic()+timeout
+        drained = False
         while marker not in ANSI.sub('', self.raw[after:].decode('utf-8', 'replace')):
-            self.read()
-            if not self.running() or time.monotonic() > deadline:
+            if drained or time.monotonic() >= deadline:
                 raise AssertionError(f'missing {marker!r}; exit={self.child.returncode}; tail={self.text()[-1800:]}')
+            # Output can still be queued in the PTY after the child exits.
+            exited = not self.running()
+            previous_size = len(self.raw)
+            self.read()
+            drained = exited and len(self.raw) == previous_size
 
     def send(self, value):
         os.write(self.master, value)
