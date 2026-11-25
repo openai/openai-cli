@@ -97,11 +97,13 @@ func TestSuggestedNewParserGuidanceUsesCurrentCommand(t *testing.T) {
 		output.Reset()
 		require.NoError(t, ShowCommandError(root, failure, &output))
 		if format == "text" {
-			require.Contains(t, output.String(), "Options and examples: openai widgets inspect --help")
-			require.Equal(t, commandRecorder{{&output, "", "openai widgets inspect --help"}}, recorder)
+			require.Contains(t, output.String(), "Missing required options: --widget.\n\nopenai widgets inspect")
+			require.Len(t, recorder, 1)
+			require.Equal(t, "openai help --all widgets inspect", recorder[0].text)
 		} else {
 			require.Empty(t, recorder)
 		}
+		require.Same(t, &output, root.Writer)
 	}
 }
 func TestSuggestedParserGuidanceKeepsUnsafeNamesPlain(t *testing.T) {

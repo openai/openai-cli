@@ -3,7 +3,6 @@ package audio
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"maps"
 	"reflect"
@@ -52,7 +51,7 @@ func PreflightVoiceBody(cmd *cli.Command, bodyMap map[string]any) error {
 		value = string(typed)
 	case requestconfig.FilePathValue:
 		if typed != "" {
-			return requireAudioVoicesFields(cmd, bodyMap, "name")
+			return requireAudioVoicesFields(bodyMap, "name")
 		}
 	case io.Reader:
 		// Already-created readers retain late inspection and ownership cleanup.
@@ -60,19 +59,19 @@ func PreflightVoiceBody(cmd *cli.Command, bodyMap map[string]any) error {
 	default:
 		// Shared expansion can resolve ordinary or named strings beginning with @.
 		if text := reflect.ValueOf(value); text.Kind() == reflect.String && strings.HasPrefix(text.String(), "@") {
-			return requireAudioVoicesFields(cmd, bodyMap, "name")
+			return requireAudioVoicesFields(bodyMap, "name")
 		}
 	}
-	return validateAudioVoicesRequirements(cmd, bodyMap, value)
+	return validateAudioVoicesRequirements(bodyMap, value)
 }
 
 // Use one type-to-requirements mapping before and after reference inspection.
-func validateAudioVoicesRequirements(cmd *cli.Command, bodyMap map[string]any, voiceType any) error {
+func validateAudioVoicesRequirements(bodyMap map[string]any, voiceType any) error {
 	switch voiceType {
 	case "audio_sample":
-		return requireAudioVoicesFields(cmd, bodyMap, "audio_sample", "consent", "name")
+		return requireAudioVoicesFields(bodyMap, "audio_sample", "consent", "name")
 	case "prompt":
-		return requireAudioVoicesFields(cmd, bodyMap, "name", "prompt")
+		return requireAudioVoicesFields(bodyMap, "name", "prompt")
 	default:
 		return &VoiceTypeError{}
 	}
@@ -95,11 +94,11 @@ func prepareAudioVoicesMultipartBody(cmd *cli.Command, bodyMap map[string]any) e
 	if inspectErr != nil {
 		return inspectErr
 	}
-	return validateAudioVoicesRequirements(cmd, bodyMap, voiceType)
+	return validateAudioVoicesRequirements(bodyMap, voiceType)
 }
 
 // Share presence checks and field order between early and resolved validation.
-func requireAudioVoicesFields(cmd *cli.Command, bodyMap map[string]any, required ...string) error {
+func requireAudioVoicesFields(bodyMap map[string]any, required ...string) error {
 	var missing []string
 	for _, field := range required {
 		if _, present := bodyMap[field]; !present {
@@ -107,7 +106,7 @@ func requireAudioVoicesFields(cmd *cli.Command, bodyMap map[string]any, required
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("Required flags %q not set\nRun '%s --help' for usage information", strings.Join(missing, ", "), cmd.FullName())
+		return &requestconfig.MissingRequiredFlagsError{Names: missing}
 	}
 	return nil
 }

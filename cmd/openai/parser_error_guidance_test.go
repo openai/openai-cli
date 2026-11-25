@@ -45,6 +45,15 @@ func TestMainParserErrorGuidance(t *testing.T) {
 					t.Fatalf("parser failure = %+v; want exit 1 and stderr only", got)
 				}
 				message := got.stderr
+				want := test.want
+				if format == "text" && test.name == "required flag" {
+					help := runMainDispatch(t, "bash", append(slices.Clone(args), "--help")...)
+					if help.code != 0 || help.stdout == "" || help.stderr != "" ||
+						!strings.HasSuffix(message, "\n\n"+help.stdout) {
+						t.Fatalf("required input recovery differs from explicit help: %+v; help: %+v", got, help)
+					}
+					want = want[:1]
+				}
 				if format != "text" {
 					payload := decodeMainStructuredError(t, format, got.stderr)
 					message, _ = payload["message"].(string)
@@ -52,9 +61,9 @@ func TestMainParserErrorGuidance(t *testing.T) {
 						t.Errorf("local parser error invented an HTTP status: %v", payload)
 					}
 				}
-				for _, want := range test.want {
-					if !strings.Contains(message, want) {
-						t.Errorf("message = %q, want %q", message, want)
+				for _, part := range want {
+					if !strings.Contains(message, part) {
+						t.Errorf("message = %q, want %q", message, part)
 					}
 				}
 				if strings.Contains(got.stderr, "synthetic-private-") {

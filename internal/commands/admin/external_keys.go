@@ -3,6 +3,7 @@ package admin
 import (
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -30,15 +31,22 @@ func ValidateExternalKeyCreate(command *cli.Command, body []byte) error {
 		return nil
 	}
 	var missing []string
+	var omitted bool
 	for _, field := range required {
 		property := value.Get(field)
-		if !property.Exists() || property.Type == gjson.Null {
+		absent := !property.Exists()
+		if absent || property.Type == gjson.Null {
 			missing = append(missing, "--"+strings.ReplaceAll(field, "_", "-"))
+			omitted = omitted || absent
 		}
 	}
 	if len(missing) != 0 {
 		// Only static schema field names enter diagnostics, never request values.
-		return &localcommands.LocalError{Message: "Required external-key fields not set: " + strings.Join(missing, ", ")}
+		err := &localcommands.LocalError{Message: "Required external-key fields not set: " + strings.Join(missing, ", ")}
+		if omitted {
+			return clihelp.MissingInput(err)
+		}
+		return err
 	}
 	return nil
 }

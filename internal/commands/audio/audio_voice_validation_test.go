@@ -56,7 +56,9 @@ func TestAudioVoiceBodyEmbeddingValidationFailureClosesOwnedInputs(t *testing.T)
 			}, &requestconfig.OnceStdinReader{})
 			require.Nil(t, body)
 			if tc.voiceType == "audio_sample" {
-				require.ErrorContains(t, err, `Required flags "consent" not set`)
+				var missing *requestconfig.MissingRequiredFlagsError
+				require.ErrorAs(t, err, &missing)
+				require.Equal(t, []string{"consent"}, missing.Names)
 			} else {
 				var typeError *VoiceTypeError
 				require.ErrorAs(t, err, &typeError)

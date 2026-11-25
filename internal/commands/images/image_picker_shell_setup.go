@@ -91,7 +91,15 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 		install, remove := command.Bool("install-picker"), command.Bool("uninstall-picker")
 		if !install && !remove {
 			if command.Bool("automatic") || command.IsSet("profile") {
-				return pickerSetupUsageError(ctx, command, "Use --install-picker or --uninstall-picker with setup options.")
+				err := pickerSetupUsageError(ctx, command, "Use --install-picker or --uninstall-picker with setup options.")
+				profile := command.String("profile")
+				// The flag parser can consume an action flag as a profile value.
+				automaticOnly := command.Bool("automatic") && !command.IsSet("profile")
+				profileOnly := !command.Bool("automatic") && profile != "" && !strings.HasPrefix(strings.TrimSpace(profile), "-")
+				if (automaticOnly || profileOnly) && !command.IsSet("install-picker") && !command.IsSet("uninstall-picker") {
+					return clihelp.MissingInput(err)
+				}
+				return err
 			}
 			return next(ctx, command)
 		}
@@ -109,6 +117,9 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 		}
 		targets, err := imagePickerShellTarget(ctx, shell, command.Bool("automatic"), command.String("profile"))
 		if err != nil {
+			if shell == "" && command.Args().Len() == 0 && !command.Bool("automatic") && errors.Is(err, errPickerUnsupportedShell) {
+				err = &clihelp.MissingInputError{Cause: err, Message: "Specify Bash, zsh, or Fish for Tab shortcut setup."}
+			}
 			return imageSavingFailure("Could not choose a supported shell startup file. Use openai @completion SHELL --install-picker with an explicit shell and --profile PATH when needed.", err, "openai @completion SHELL --install-picker")
 		}
 		if len(targets) == 0 {

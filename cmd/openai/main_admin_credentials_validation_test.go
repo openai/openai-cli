@@ -42,6 +42,15 @@ func TestMainAdminCredentialsLocalValidation(t *testing.T) {
 						t.Fatalf("local validation = %+v, want exit 1 and empty stdout", got)
 					}
 					message := strings.TrimSpace(got.stderr)
+					want := test.want
+					if format == "text" && strings.HasPrefix(want, "Missing required options:") {
+						help := runMainDispatchWithEnv(t, "bash", adminCredentialsProxyEnv(server.URL, nil), append(args, "--help")...)
+						if help.code != 0 || help.stdout == "" || help.stderr != "" {
+							t.Fatalf("explicit help failed: %+v", help)
+						}
+						diagnostic, _, _ := strings.Cut(want, "\n")
+						want = diagnostic + "\n\n" + strings.TrimSpace(help.stdout)
+					}
 					if format == "json" {
 						payload := decodeMainStructuredError(t, format, got.stderr)
 						message, _ = payload["message"].(string)
@@ -49,8 +58,8 @@ func TestMainAdminCredentialsLocalValidation(t *testing.T) {
 							t.Error("local validation invented an HTTP status")
 						}
 					}
-					if message != test.want {
-						t.Errorf("diagnostic = %q, want %q", message, test.want)
+					if message != want {
+						t.Errorf("diagnostic = %q, want %q", message, want)
 					}
 					if count := requests.Load(); count != 0 {
 						t.Errorf("invalid input sent %d proxy requests, want 0", count)

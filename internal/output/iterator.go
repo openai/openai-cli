@@ -46,9 +46,12 @@ type JSON struct{ gjson.Result }
 
 func (value JSON) RawJSON() string { return value.Raw }
 
-// StreamResultError carries only fixed classifications from the stream
-// transformers, never API prose, so the command presenter can retain meaning.
-type StreamResultError struct{ Message string }
+// StreamResultError carries a fixed classification and, on a known omission,
+// a parameter path for the command presenter to validate. It carries no API prose.
+type StreamResultError struct {
+	Message          string
+	MissingParameter *string
+}
 
 func (e *StreamResultError) Error() string { return e.Message }
 
@@ -77,7 +80,7 @@ func (it *Iterator[T]) Next() bool {
 		sourceErr := it.source.Err()
 		if it.done && it.err == nil && it.resultErr == nil && sourceErr == nil {
 			if message := it.completion.CompletionError(it.route); message != "" {
-				it.resultErr = &StreamResultError{message}
+				it.resultErr = &StreamResultError{Message: message}
 			}
 		}
 		err := errors.Join(it.err, it.resultErr, sourceErr)
@@ -114,7 +117,11 @@ func (it *Iterator[T]) Next() bool {
 	// Ordinary result events can signal failure without becoming SDK errors.
 	// Keep that original event visible, then stop before consuming another one.
 	if message := transformers.StreamFailure(value, it.route); message != "" {
-		it.resultErr = &StreamResultError{message}
+		failure := &StreamResultError{Message: message}
+		if parameter, missing := MissingStreamInput(value); missing {
+			failure.MissingParameter = &parameter
+		}
+		it.resultErr = failure
 	}
 	it.completion.Observe(value, it.route)
 	value, it.err = Transform(it.context, value, it.transform)

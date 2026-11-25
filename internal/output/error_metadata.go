@@ -6,6 +6,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
+	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -39,6 +40,40 @@ func APIRequestID(apierr *openai.Error) string {
 
 var readableParameterPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:(?:\.[A-Za-z0-9_]+)|(?:\[[0-9]+\]))*$`)
 var readableParameterIndex = regexp.MustCompile(`\[[0-9]+\]`)
+
+// MissingInputCode recognizes structured API omission codes without inspecting prose.
+func MissingInputCode(code string) bool {
+	return code == "missing_required_parameter" || code == "missing_required_argument"
+}
+
+// MissingStreamInput reads structured codes from a stream failure event.
+// The returned parameter is untrusted and must be mapped through ParameterFlag.
+func MissingStreamInput(event gjson.Result) (string, bool) {
+	var detail gjson.Result
+	switch event.Get("type").String() {
+	case "":
+		detail = event.Get("error")
+	case "error":
+		detail = event.Get("error")
+		if !detail.Exists() {
+			detail = event
+		}
+	case "response.failed":
+		detail = event.Get("response.error")
+	case "response.completed", "response.done":
+		if event.Get("response.status").String() == "failed" {
+			detail = event.Get("response.error")
+		}
+	}
+	if !MissingInputCode(detail.Get("code").String()) {
+		return "", false
+	}
+	parameter := detail.Get("param")
+	if parameter.Type != gjson.String {
+		return "", true
+	}
+	return parameter.String(), true
+}
 
 // ParameterFlag maps untrusted API parameter paths to locally declared flags.
 func ParameterFlag(command *cli.Command, parameter string) (name, path string) {

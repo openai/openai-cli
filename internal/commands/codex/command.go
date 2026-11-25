@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
@@ -131,7 +132,7 @@ func handleCodex(ctx context.Context, command *cli.Command, open func(context.Co
 		}
 	}
 	if command.Bool("open") && selected == nil {
-		return &localcommands.LocalError{Message: "Opening a Codex destination requires --destination docs, config, app, or web."}
+		return clihelp.MissingInput(&localcommands.LocalError{Message: "Opening a Codex destination requires --destination docs, config, app, or web."})
 	}
 	if selected == nil {
 		if handled, err := writeCodexTerminalGuide(ctx, command, guide); handled {

@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/openai/openai-cli/internal/autocomplete"
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/urfave/cli/v3"
 )
@@ -28,11 +29,13 @@ func configureShellSuggestions(root *cli.Command) {
 	completion.Action = func(ctx context.Context, command *cli.Command) error {
 		if command.Bool("suggest-executable") {
 			message := ""
+			missingShell := false
 			switch {
 			case command.Bool("picker") || command.Bool("install-picker") || command.Bool("uninstall-picker") || command.Bool("automatic") || command.IsSet("profile"):
 				message = "Print executable suggestions separately from picker setup. Use openai '@completion' SHELL --suggest-executable."
 			case command.Args().Len() != 1:
 				message = "Choose one shell: openai '@completion' SHELL --suggest-executable. Supported shells: bash, zsh, fish, pwsh."
+				missingShell = command.Args().Len() == 0
 			default:
 				switch command.Args().First() {
 				case "bash", "zsh", "fish", "pwsh":
@@ -41,7 +44,11 @@ func configureShellSuggestions(root *cli.Command) {
 				}
 			}
 			if message != "" {
-				return &localcommands.LocalError{Message: message, Cause: cli.Exit(message, 2)}
+				failure := &localcommands.LocalError{Message: message, Cause: cli.Exit(message, 2)}
+				if missingShell {
+					return clihelp.MissingInput(failure)
+				}
+				return failure
 			}
 			script, err := autocomplete.RenderShellSuggestions(autocomplete.CompletionStyle(command.Args().First()), command.Root().Name)
 			if err != nil {

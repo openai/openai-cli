@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/urfave/cli/v3"
@@ -55,8 +56,12 @@ func RegisterPreview(root *cli.Command, opts PreviewOptions) {
 }
 
 func handleImagesPreview(ctx context.Context, command *cli.Command, opts PreviewOptions) (resultErr error) {
-	if command.Args().Len() != 1 {
-		return imageSavingFailure("Provide one saved image: openai images preview \"path/to/image.png\". Quote filenames containing spaces.", nil, `openai images preview "path/to/image.png"`)
+	if count := command.Args().Len(); count != 1 {
+		err := imageSavingFailure("Provide one saved image: openai images preview \"path/to/image.png\". Quote filenames containing spaces.", nil, `openai images preview "path/to/image.png"`)
+		if count == 0 {
+			err = clihelp.MissingInput(err)
+		}
+		return err
 	}
 	if err := validateLocalImageOutput(command); err != nil {
 		return err

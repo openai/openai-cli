@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 
 	"github.com/openai/openai-cli/internal/clihelp"
@@ -94,6 +95,13 @@ func ConfigureCommand(root *cli.Command) {
 	previousBefore := root.Before
 	root.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
 		if _, err := debugCaptureOptions(command); err != nil {
+			var missing *clihelp.MissingInputError
+			if errors.As(err, &missing) {
+				// Before receives the root after the framework parses the command chain.
+				if target, _, _ := parsedOutputCommand(command); target != nil {
+					err = withCommandError(target, err)
+				}
+			}
 			return ctx, err
 		}
 		if previousBefore != nil {

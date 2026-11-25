@@ -1,6 +1,7 @@
 package app
 
 import (
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -21,7 +22,7 @@ func validateProjectAPIKeyUpdate(command *cli.Command, body []byte) error {
 		return nil
 	}
 	if !gjson.GetBytes(body, "scopes").Exists() && !gjson.GetBytes(body, "expires_in_seconds").Exists() {
-		return &projectAPIKeyUpdateError{}
+		return clihelp.MissingInput(&projectAPIKeyUpdateError{})
 	}
 	return nil
 }

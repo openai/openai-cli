@@ -120,6 +120,14 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 	}
 	if format == "text" && root.String("transform-error") == "" {
 		presenter := clihelp.NewSuggestedText(out, root)
+		command := commandErrorContext(root, failure)
+		autoHelp := false
+		interrupted := errors.Is(failure, context.Canceled) || errors.Is(failure, context.DeadlineExceeded)
+		apiHelp := isAPI && !interrupted && command != root && apiMissingRequiredInput(apierr)
+		surface := shellError
+		if apiHelp {
+			surface = shellErrorWithHelp
+		}
 		message := ""
 		var batchFailure *batchcommands.WorkflowError
 		if limitsFailure != nil {
@@ -134,11 +142,12 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 				message += "\n" + storage.Error()
 			}
 			if isAPI && !errors.Is(failure, context.Canceled) {
+				autoHelp = apiHelp
 				// Workflow wrappers can already include guidance from this cause,
 				// before the outer command adds presentation context.
 				included := readableAPIErrorMessage(root, batchFailure.Unwrap(), apierr)
 				if !strings.Contains(message, included) {
-					message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, shellError, presenter)
+					message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, surface, presenter)
 				}
 			}
 			// Workflow outcomes must not hide safe, known transport guidance.
@@ -158,11 +167,34 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 				}
 			}
 		} else if isAPI && !errors.Is(failure, context.Canceled) {
-			message = readableAPIErrorMessageTo(root, failure, apierr, shellError, presenter)
+			autoHelp = apiHelp
+			message = readableAPIErrorMessageTo(root, failure, apierr, surface, presenter)
 		} else if isStream {
 			message = readableStreamErrorText
+		} else if missing := missingRequiredInputMessage(command, failure); missing != "" && !interrupted {
+			message, autoHelp = missing, true
 		} else {
 			message = readableLocalErrorMessage(root, failure, presenter)
+		}
+		var missingInput *clihelp.MissingInputError
+		if !isAPI && !isStream && !interrupted && errors.As(failure, &missingInput) {
+			autoHelp = true
+			if missingInput.Message != "" {
+				message = missingInput.Message
+			}
+		}
+		if !isAPI && !interrupted && command != root {
+			if parameter, missing := missingStreamParameter(failure, streamerr); missing {
+				flag, _ := clioutput.ParameterFlag(command, parameter)
+				message = readableMissingInput(flag) + "\n" + message
+				autoHelp = true
+			}
+		}
+		if autoHelp {
+			if err := presenter.WriteText(message + "\n\n"); err != nil {
+				return err
+			}
+			return clihelp.WriteCommandHelp(ctx, command, out)
 		}
 		return presenter.WriteText(message)
 	}
@@ -204,6 +236,7 @@ type apiErrorSurface int
 const (
 	shellError apiErrorSurface = iota
 	workspaceError
+	shellErrorWithHelp
 )
 
 func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Error) string {
@@ -232,7 +265,11 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 		if errors.As(failure, &contextual) {
 			command = contextual.command
 		}
-		message = readableAPIArgumentMessage(apierr, command, output...)
+		if surface == shellErrorWithHelp {
+			message = readableAPIArgumentSummary(apierr, command)
+		} else {
+			message = readableAPIArgumentMessage(apierr, command, output...)
+		}
 	case http.StatusTooManyRequests:
 		switch {
 		case apierr.Code == "organization_spend_limit_exceeded":
@@ -321,6 +358,42 @@ func quotaLimitError(code, kind string) bool {
 // exact command, and print only the matching locally defined flag name. Never
 // display an arbitrary param, server message, rejected value, or remote choice.
 func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command, output ...io.Writer) string {
+	message := readableAPIArgumentSummary(apierr, command)
+	if command == nil {
+		return message + "\nCheck your arguments with --help."
+	}
+	invocation := clihelp.DisplayInvocation(command.Root())
+	pathToCommand := strings.TrimPrefix(command.FullName(), command.Root().Name+" ")
+	return message + "\nOptions and examples: " + clihelp.SuggestedCommandPath(command, output, invocation+" help "+pathToCommand)
+}
+
+func apiMissingRequiredInput(apierr *openai.Error) bool {
+	return (apierr.StatusCode == http.StatusBadRequest || apierr.StatusCode == http.StatusUnprocessableEntity) &&
+		clioutput.MissingInputCode(apierr.Code)
+}
+
+func missingStreamParameter(failure error, streamerr *ssestream.StreamError) (string, bool) {
+	if streamerr != nil {
+		if !gjson.ValidBytes(streamerr.Event.Data) {
+			return "", false
+		}
+		return clioutput.MissingStreamInput(gjson.ParseBytes(streamerr.Event.Data))
+	}
+	var streamResult *streamResultError
+	if errors.As(failure, &streamResult) && streamResult.MissingParameter != nil {
+		return *streamResult.MissingParameter, true
+	}
+	return "", false
+}
+
+func readableMissingInput(flagName string) string {
+	if flagName != "" {
+		return "Add " + flagName + " with a value."
+	}
+	return "A required value is missing from the request."
+}
+
+func readableAPIArgumentSummary(apierr *openai.Error, command *cli.Command) string {
 	flagName, path := clioutput.ParameterFlag(command, apierr.Param)
 	message := "The API rejected the request."
 	if flagName != "" {
@@ -328,11 +401,7 @@ func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command, outp
 	}
 	switch apierr.Code {
 	case "missing_required_parameter", "missing_required_argument":
-		if flagName != "" {
-			message = "Add " + flagName + " with a value."
-		} else {
-			message = "A required value is missing from the request."
-		}
+		message = readableMissingInput(flagName)
 	case "unknown_parameter", "unsupported_parameter":
 		if flagName != "" {
 			message = "This request does not support " + flagName + ". Remove it or choose a model that supports it."
@@ -358,12 +427,7 @@ func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command, outp
 	if choices := readableParameterChoices(command, path); choices != "" && flagName != "" && apierr.Code != "unsupported_parameter" && apierr.Code != "unknown_parameter" {
 		message += "\n" + flagName + ": " + choices
 	}
-	if command == nil {
-		return message + "\nCheck your arguments with --help."
-	}
-	invocation := clihelp.DisplayInvocation(command.Root())
-	pathToCommand := strings.TrimPrefix(command.FullName(), command.Root().Name+" ")
-	return message + "\nOptions and examples: " + clihelp.SuggestedCommandPath(command, output, invocation+" help "+pathToCommand)
+	return message
 }
 
 func readableParameterChoices(command *cli.Command, path string) string {

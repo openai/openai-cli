@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	cliinput "github.com/openai/openai-cli/internal/input"
 	clioutput "github.com/openai/openai-cli/internal/output"
@@ -178,7 +179,7 @@ func readTokenizerInput(ctx context.Context, command *cli.Command) (string, erro
 			input = file
 		}
 	} else if file, ok := input.(*os.File); ok && tokenizerInputIsTerminal(file) {
-		return "", &localcommands.LocalError{Message: "Provide --text or --file, or pipe UTF-8 text into the tokenizer. Use --file - for interactive stdin."}
+		return "", clihelp.MissingInput(&localcommands.LocalError{Message: "Provide --text or --file, or pipe UTF-8 text into the tokenizer. Use --file - for interactive stdin."})
 	}
 	data, err := io.ReadAll(io.LimitReader(&tokenizerInputReader{ctx: ctx, input: input}, tokenizer.MaxInputBytes+1))
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/terminal"
@@ -28,7 +29,11 @@ func (w workflow) configureBatchListWatch(command *cli.Command) {
 	command.Action = func(ctx context.Context, cmd *cli.Command) error {
 		if !cmd.Bool("watch") {
 			if cmd.IsSet("poll-interval") || cmd.IsSet("watch-count") {
-				return batchError("Use --watch with --poll-interval or --watch-count.")
+				err := batchError("Use --watch with --poll-interval or --watch-count.")
+				if !cmd.IsSet("watch") {
+					return clihelp.MissingInput(err)
+				}
+				return err
 			}
 			return previous(ctx, cmd)
 		}

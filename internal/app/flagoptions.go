@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-cli/internal/commands/files"
@@ -66,6 +67,9 @@ func flagOptionsWithStdin(
 		PreflightMultipart:  func(body map[string]any) error { return audio.PreflightVoiceBody(cmd, body) },
 		ValidateCredentials: func() error { return admin.CheckCredentials(cmd) },
 		ValidateResolvedInputs: func(contents requestflag.RequestContents) error {
+			if err := validateResponsesCreateInputs(cmd, contents.Body); err != nil {
+				return err
+			}
 			return files.ValidatePurpose(cmd, contents)
 		},
 		ResolvedJSONOptions: func(parameters map[string]any, headers http.Header, body []byte) []option.RequestOption {
@@ -115,4 +119,51 @@ func flagOptionsWithStdin(
 		options = append(options, option.WithMiddleware(boundListRequest(cmd)))
 	}
 	return options, nil
+}
+
+func validateResponsesCreateInputs(cmd *cli.Command, body any) error {
+	if cmd.Name != "create" {
+		return nil
+	}
+	resource := localcommands.ResourceName(cmd)
+	if resource != "responses" && resource != "beta:responses" {
+		return nil
+	}
+	fields, ok := body.(map[string]any)
+	if !ok || apiAuthenticationCustomBase(cmd.Root()) {
+		return nil
+	}
+	// Streaming controls cannot select a model. Other fields may select saved
+	// context, or may need server validation, including malformed values.
+	if len(fields) == 0 || responsesOnlyStreamingControls(fields) {
+		return &requestconfig.MissingRequiredFlagsError{Names: []string{"model"}}
+	}
+	return nil
+}
+
+func responsesOnlyStreamingControls(fields map[string]any) bool {
+	if len(fields) > 2 {
+		return false
+	}
+	var streaming bool
+	switch stream := fields["stream"].(type) {
+	case bool:
+		streaming = stream
+	case *bool:
+		if stream == nil {
+			return false
+		}
+		streaming = *stream
+	default:
+		return false
+	}
+	if len(fields) == 1 {
+		return true
+	}
+	options, ok := fields["stream_options"].(map[string]any)
+	if !streaming || !ok {
+		return false
+	}
+	_, obfuscation := options["include_obfuscation"].(bool)
+	return len(options) == 0 || len(options) == 1 && obfuscation
 }
