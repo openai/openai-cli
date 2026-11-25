@@ -95,16 +95,20 @@ func TestMainRecoveryRequiredValidationStages(t *testing.T) {
 				failed := runLocalRecovery(t, env, mode, args...)
 				message := localRecoveryMessage(t, failed, mode, 1)
 				want := "Missing required options: " + stage.flag + ".\nOptions and examples: openai batches download --help"
-				if message != want || requests.Load() != 0 {
-					t.Fatalf("required input recovery: %q; want %q; requests=%d", message, want, requests.Load())
+				helpCommand := "openai batches download --help"
+				if mode.structured || mode.extract {
+					if message != want {
+						t.Fatalf("structured input recovery: %q; want %q", message, want)
+					}
+					_, helpCommand, _ = strings.Cut(message, "Options and examples: ")
 				}
-				_, copied, found := strings.Cut(message, "Options and examples: ")
-				if !found {
-					t.Fatal("required input recovery omitted executable help")
-				}
-				help := runMainDispatchWithEnv(t, "", env, strings.Fields(copied)...)
+				help := runMainDispatchWithEnv(t, "", env, strings.Fields(helpCommand)...)
 				if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, "openai batches download") || requests.Load() != 0 {
 					t.Fatalf("copied required input help failed: %+v; requests=%d", help, requests.Load())
+				}
+				if !mode.structured && !mode.extract &&
+					failed.stderr != "Missing required options: "+stage.flag+".\n\n"+help.stdout {
+					t.Fatalf("required input recovery differs from explicit help: %q", failed.stderr)
 				}
 			}
 		})

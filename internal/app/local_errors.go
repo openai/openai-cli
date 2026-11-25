@@ -177,6 +177,9 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool, o
 			return "A local file could not be read or written. Check your file arguments and permissions."
 		}
 	}
+	if missing := missingRequiredInputMessage(command, failure); missing != "" {
+		return parserErrorGuidance(command, missing, output...)
+	}
 	for err := failure; err != nil; err = errors.Unwrap(err) {
 		if message := knownLocalError(command, err.Error(), output...); message != "" {
 			return message
@@ -332,15 +335,10 @@ func knownLocalError(command *cli.Command, message string, output ...io.Writer) 
 				continue
 			}
 			names, _ := strconv.Unquote(quoted)
-			var flags []string
-			for _, name := range strings.Split(names, ", ") {
-				flag := declaredErrorFlag(command, name)
-				if flag == "" {
-					return ""
-				}
-				flags = append(flags, flag)
+			if missing := missingOptionsMessage(command, strings.Split(names, ", ")); missing != "" {
+				return parserErrorGuidance(command, missing, output...)
 			}
-			return parserErrorGuidance(command, "Missing required options: "+strings.Join(flags, ", ")+".", output...)
+			return ""
 		}
 	}
 	switch {

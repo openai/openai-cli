@@ -91,7 +91,12 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 		install, remove := command.Bool("install-picker"), command.Bool("uninstall-picker")
 		if !install && !remove {
 			if command.Bool("automatic") || command.IsSet("profile") {
-				return pickerSetupUsageError(ctx, command, "Use --install-picker or --uninstall-picker with setup options.")
+				err := pickerSetupUsageError(ctx, command, "Use --install-picker or --uninstall-picker with setup options.")
+				if command.Bool("automatic") && !command.IsSet("profile") &&
+					!command.IsSet("install-picker") && !command.IsSet("uninstall-picker") {
+					return clihelp.MissingInput(err)
+				}
+				return err
 			}
 			return next(ctx, command)
 		}

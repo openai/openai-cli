@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -114,4 +116,25 @@ func TestCommandErrorsConfigureLateCommandsOnce(t *testing.T) {
 	require.Same(t, late, contextual.command)
 	require.Same(t, cause, contextual.Unwrap())
 	require.Equal(t, 1, calls)
+}
+
+func TestRequiredPositionalArgumentShowsHelp(t *testing.T) {
+	command := &cli.Command{
+		Name: "get", Usage: "Read one item.",
+		Arguments: []cli.Argument{&cli.StringArg{Name: "item", Required: true}},
+		Action: func(context.Context, *cli.Command) error {
+			t.Fatal("the command action ran without its required argument")
+			return nil
+		},
+	}
+	root := &cli.Command{Name: "openai", Commands: []*cli.Command{command}, Writer: io.Discard, ErrWriter: io.Discard}
+	args, _, err := clihelp.Configure(root, []string{"openai", "get"})
+	require.NoError(t, err)
+	ConfigureCommandErrors(root)
+	failure := root.Run(t.Context(), args)
+	require.Error(t, failure)
+	var out strings.Builder
+	require.NoError(t, ShowCommandError(root, failure, &out))
+	require.Contains(t, out.String(), "Missing required arguments: item.\n\n")
+	require.Contains(t, out.String(), "Read one item.")
 }

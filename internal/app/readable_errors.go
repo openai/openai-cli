@@ -120,6 +120,8 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 	}
 	if format == "text" && root.String("transform-error") == "" {
 		presenter := clihelp.NewSuggestedText(out, root)
+		command := commandErrorContext(root, failure)
+		autoHelp := false
 		message := ""
 		var batchFailure *batchcommands.WorkflowError
 		if limitsFailure != nil {
@@ -158,11 +160,32 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 				}
 			}
 		} else if isAPI && !errors.Is(failure, context.Canceled) {
-			message = readableAPIErrorMessageTo(root, failure, apierr, shellError, presenter)
+			surface := shellError
+			if command != root && apiMissingRequiredInput(apierr) {
+				autoHelp, surface = true, shellErrorWithHelp
+			}
+			message = readableAPIErrorMessageTo(root, failure, apierr, surface, presenter)
 		} else if isStream {
 			message = readableStreamErrorText
+		} else if missing := missingRequiredInputMessage(command, failure); missing != "" &&
+			!errors.Is(failure, context.Canceled) && !errors.Is(failure, context.DeadlineExceeded) {
+			message, autoHelp = missing, true
 		} else {
 			message = readableLocalErrorMessage(root, failure, presenter)
+		}
+		var missingInput *clihelp.MissingInputError
+		if !isAPI && !isStream && !errors.Is(failure, context.Canceled) &&
+			!errors.Is(failure, context.DeadlineExceeded) && errors.As(failure, &missingInput) {
+			autoHelp = true
+			if missingInput.Message != "" {
+				message = missingInput.Message
+			}
+		}
+		if autoHelp {
+			if err := presenter.WriteText(message + "\n\n"); err != nil {
+				return err
+			}
+			return clihelp.WriteCommandHelp(ctx, command, out)
 		}
 		return presenter.WriteText(message)
 	}
@@ -204,6 +227,7 @@ type apiErrorSurface int
 const (
 	shellError apiErrorSurface = iota
 	workspaceError
+	shellErrorWithHelp
 )
 
 func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Error) string {
@@ -232,7 +256,11 @@ func readableAPIErrorMessageTo(root *cli.Command, failure error, apierr *openai.
 		if errors.As(failure, &contextual) {
 			command = contextual.command
 		}
-		message = readableAPIArgumentMessage(apierr, command, output...)
+		if surface == shellErrorWithHelp {
+			message = readableAPIArgumentSummary(apierr, command)
+		} else {
+			message = readableAPIArgumentMessage(apierr, command, output...)
+		}
 	case http.StatusTooManyRequests:
 		switch {
 		case apierr.Code == "organization_spend_limit_exceeded":
@@ -321,6 +349,21 @@ func quotaLimitError(code, kind string) bool {
 // exact command, and print only the matching locally defined flag name. Never
 // display an arbitrary param, server message, rejected value, or remote choice.
 func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command, output ...io.Writer) string {
+	message := readableAPIArgumentSummary(apierr, command)
+	if command == nil {
+		return message + "\nCheck your arguments with --help."
+	}
+	invocation := clihelp.DisplayInvocation(command.Root())
+	pathToCommand := strings.TrimPrefix(command.FullName(), command.Root().Name+" ")
+	return message + "\nOptions and examples: " + clihelp.SuggestedCommandPath(command, output, invocation+" help "+pathToCommand)
+}
+
+func apiMissingRequiredInput(apierr *openai.Error) bool {
+	return (apierr.StatusCode == http.StatusBadRequest || apierr.StatusCode == http.StatusUnprocessableEntity) &&
+		(apierr.Code == "missing_required_parameter" || apierr.Code == "missing_required_argument")
+}
+
+func readableAPIArgumentSummary(apierr *openai.Error, command *cli.Command) string {
 	flagName, path := clioutput.ParameterFlag(command, apierr.Param)
 	message := "The API rejected the request."
 	if flagName != "" {
@@ -358,12 +401,7 @@ func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command, outp
 	if choices := readableParameterChoices(command, path); choices != "" && flagName != "" && apierr.Code != "unsupported_parameter" && apierr.Code != "unknown_parameter" {
 		message += "\n" + flagName + ": " + choices
 	}
-	if command == nil {
-		return message + "\nCheck your arguments with --help."
-	}
-	invocation := clihelp.DisplayInvocation(command.Root())
-	pathToCommand := strings.TrimPrefix(command.FullName(), command.Root().Name+" ")
-	return message + "\nOptions and examples: " + clihelp.SuggestedCommandPath(command, output, invocation+" help "+pathToCommand)
+	return message
 }
 
 func readableParameterChoices(command *cli.Command, path string) string {

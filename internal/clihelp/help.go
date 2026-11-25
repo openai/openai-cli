@@ -4,6 +4,7 @@ package clihelp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -584,6 +585,45 @@ func showHelpTopics(ctx context.Context, command *cli.Command) error {
 		return cli.ShowRootCommandHelp(root)
 	}
 	return cli.ShowCommandHelp(ctx, parent, target.Name)
+}
+
+// WriteCommandHelp renders the selected command's normal help at the actual
+// diagnostic destination. It does not run command parsing or a help pager.
+func WriteCommandHelp(ctx context.Context, command *cli.Command, out io.Writer) error {
+	root := command.Root()
+	previous := root.Writer
+	// The framework's help printer does not report errors from its writer.
+	capture := &helpOutput{Writer: out}
+	root.Writer = capture
+	defer func() { root.Writer = previous }()
+	if command == root {
+		return errors.Join(cli.ShowRootCommandHelp(command), capture.err)
+	}
+	return errors.Join(cli.ShowCommandHelp(ctx, command.Lineage()[1], command.Name), capture.err)
+}
+
+type helpOutput struct {
+	io.Writer
+	err error
+}
+
+func (w *helpOutput) Fd() uintptr {
+	if file, ok := w.Writer.(interface{ Fd() uintptr }); ok {
+		return file.Fd()
+	}
+	return ^uintptr(0)
+}
+
+func (w *helpOutput) Write(data []byte) (int, error) {
+	if w.err != nil {
+		return 0, w.err
+	}
+	n, err := w.Writer.Write(data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	w.err = err
+	return n, err
 }
 
 // UnknownTopicError retains the last valid group for safe local recovery guidance.

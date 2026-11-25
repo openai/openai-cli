@@ -131,8 +131,12 @@ func (workflow localRuntime) handleAudioHistory(ctx context.Context, command *cl
 }
 
 func openAudioResult(ctx context.Context, command *cli.Command) (*audiohistory.Snapshot, error) {
-	if command.Args().Len() != 1 {
-		return nil, audioFailure("Specify one audio history ID.", nil)
+	if count := command.Args().Len(); count != 1 {
+		err := audioFailure("Specify one audio history ID.", nil)
+		if count == 0 {
+			err = clihelp.MissingInput(err)
+		}
+		return nil, err
 	}
 	store, err := audioStore()
 	if err != nil {

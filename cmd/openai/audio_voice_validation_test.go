@@ -17,8 +17,18 @@ import (
 
 const audioVoiceInvalidType = "Invalid voice type: --type must be audio_sample or prompt. Omit it to use audio_sample."
 
-func audioVoiceMissing(route []string, fields string) string {
-	return "Missing required options: " + fields + ".\nOptions and examples: openai " + strings.Join(route, " ") + " --help"
+func audioVoiceMissing(t *testing.T, env, route []string, fields string, structured bool) string {
+	t.Helper()
+	diagnostic := "Missing required options: " + fields + "."
+	if structured {
+		return diagnostic + "\nOptions and examples: openai " + strings.Join(route, " ") + " --help"
+	}
+	args := append([]string{"openai", "--format-error", "text"}, route...)
+	help := runMainDispatchWithEnv(t, "", env, append(args, "--help")...)
+	require.Zero(t, help.code, help.stderr)
+	require.Empty(t, help.stderr)
+	require.NotEmpty(t, help.stdout)
+	return diagnostic + "\n\n" + strings.TrimSpace(help.stdout)
 }
 
 func audioVoiceJSON(t *testing.T, value any) string {
@@ -134,16 +144,20 @@ func TestMainAudioVoicePreflight(t *testing.T) {
 					message := localRecoveryMessage(t, got, mode, 1)
 					want := tc.message
 					if tc.missing != "" {
-						want = audioVoiceMissing(route, tc.missing)
+						want = audioVoiceMissing(t, env, route, tc.missing, tc.structured)
 					}
 					require.Equal(t, want, message)
 					require.Zero(t, requests.Load())
 					if tc.help {
-						_, copied, found := strings.Cut(message, "\nOptions and examples: ")
-						require.True(t, found)
-						require.Equal(t, "openai "+strings.Join(route, " ")+" --help", copied)
-						// This exact command contains no quoting. Spaced paths have separate shell coverage.
-						help := runMainDispatchWithEnv(t, "", env, strings.Fields(copied)...)
+						helpArgs := append([]string{"openai"}, route...)
+						helpArgs = append(helpArgs, "--help")
+						if tc.structured {
+							_, copied, found := strings.Cut(message, "\nOptions and examples: ")
+							require.True(t, found)
+							require.Equal(t, strings.Join(helpArgs, " "), copied)
+							helpArgs = strings.Fields(copied)
+						}
+						help := runMainDispatchWithEnv(t, "", env, helpArgs...)
 						require.Zero(t, help.code, help.stderr)
 						require.Empty(t, help.stderr)
 						require.True(t, strings.HasPrefix(help.stdout, "openai "+strings.Join(route, " ")+" "), help.stdout)
@@ -300,7 +314,7 @@ func TestMainAudioVoiceDiscriminatorReferences(t *testing.T) {
 			args := append([]string{"openai", "--format-error", "text"}, route...)
 			args = append(args, "--type", "@-")
 			got := runMainDispatchWithStdin(t, "", env, reader, args...)
-			require.Equal(t, audioVoiceMissing(route, "--name"), localRecoveryMessage(t, got, localRecoveryMode{}, 1))
+			require.Equal(t, audioVoiceMissing(t, env, route, "--name", false), localRecoveryMessage(t, got, localRecoveryMode{}, 1))
 			require.Zero(t, requests.Load())
 		})
 	}
@@ -371,7 +385,7 @@ func TestMainAudioVoiceReferenceOrdering(t *testing.T) {
 					got := runMainDispatchWithStdin(t, "", env, shellFileInput(t, []byte(input)), args...)
 					want := tc.message
 					if tc.fields != "" {
-						want = audioVoiceMissing(route, tc.fields)
+						want = audioVoiceMissing(t, env, route, tc.fields, tc.structured)
 					}
 					require.Equal(t, want, localRecoveryMessage(t, got, mode, 1))
 					require.Zero(t, requests.Load())

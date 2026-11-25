@@ -83,17 +83,26 @@ func (w workflow) newBatchSubmitCommand(create *cli.Command) *cli.Command {
 
 func (w workflow) submitBatch(ctx context.Context, cmd *cli.Command) (err error) {
 	path := cmd.String("file")
-	if cmd.Args().Len() > 1 || cmd.Args().Len() == 1 && cmd.IsSet("file") {
+	count, hasFile := cmd.Args().Len(), cmd.IsSet("file")
+	if count > 1 || count == 1 && hasFile {
 		return batchError("Choose one input file: use FILE or --file, not both. No upload was attempted.")
 	}
-	if cmd.Args().Len() == 1 {
+	if count == 1 {
 		path = cmd.Args().First()
 	}
 	if path == "" || path == "-" || path == "/dev/stdin" || path == "/dev/fd/0" {
-		return batchError("Choose a local JSONL file: openai batches submit requests.jsonl. For stdin, use files upload, then batches create.")
+		err := batchError("Choose a local JSONL file: openai batches submit requests.jsonl. For stdin, use files upload, then batches create.")
+		if count == 0 && !hasFile {
+			err = clihelp.MissingInput(err)
+		}
+		return err
 	}
 	if !cmd.Bool("wait") && (cmd.IsSet("output-dir") || cmd.IsSet("poll-interval") || cmd.IsSet("wait-timeout")) {
-		return batchError("Add --wait to use --output-dir, --poll-interval, or --wait-timeout. No upload was attempted.")
+		err := batchError("Add --wait to use --output-dir, --poll-interval, or --wait-timeout. No upload was attempted.")
+		if !cmd.IsSet("wait") {
+			return clihelp.MissingInput(err)
+		}
+		return err
 	}
 	if cmd.Duration("poll-interval") <= 0 || cmd.Duration("wait-timeout") < 0 {
 		return batchError("--poll-interval must be positive, and --wait-timeout must be zero or positive. No upload was attempted.")

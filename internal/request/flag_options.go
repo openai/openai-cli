@@ -2,7 +2,6 @@ package request
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -136,15 +135,11 @@ func FlagOptions(
 	}
 
 	if missingFlags := requestflag.GetMissingRequiredFlags(cmd, requestContents.Body); len(missingFlags) > 0 {
-		if len(missingFlags) == 1 {
-			return nil, fmt.Errorf("Required flag %q not set\nRun '%s --help' for usage information", missingFlags[0].Names()[0], cmd.FullName())
-		} else {
-			names := []string{}
-			for _, flag := range missingFlags {
-				names = append(names, flag.Names()[0])
-			}
-			return nil, fmt.Errorf("Required flags %q not set\nRun '%s --help' for usage information", strings.Join(names, ", "), cmd.FullName())
+		names := make([]string, 0, len(missingFlags))
+		for _, flag := range missingFlags {
+			names = append(names, flag.Names()[0])
 		}
+		return nil, &MissingRequiredFlagsError{Names: names}
 	}
 
 	if hooks.ValidateCredentials != nil {

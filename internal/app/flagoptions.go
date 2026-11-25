@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-cli/internal/commands/files"
@@ -66,6 +67,13 @@ func flagOptionsWithStdin(
 		PreflightMultipart:  func(body map[string]any) error { return audio.PreflightVoiceBody(cmd, body) },
 		ValidateCredentials: func() error { return admin.CheckCredentials(cmd) },
 		ValidateResolvedInputs: func(contents requestflag.RequestContents) error {
+			// OpenAI accepts saved prompts as an alternative to a model.
+			// Custom endpoints own their request requirements.
+			if cmd.Name == "create" && localcommands.ResourceName(cmd) == "responses" && !apiAuthenticationCustomBase(cmd.Root()) {
+				if body, ok := contents.Body.(map[string]any); ok && len(body) == 0 {
+					return &requestconfig.MissingRequiredFlagsError{Names: []string{"model"}}
+				}
+			}
 			return files.ValidatePurpose(cmd, contents)
 		},
 		ResolvedJSONOptions: func(parameters map[string]any, headers http.Header, body []byte) []option.RequestOption {

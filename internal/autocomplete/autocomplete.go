@@ -68,16 +68,32 @@ func OutputCompletionScript(ctx context.Context, cmd *cli.Command) error {
 		return nil
 	}
 	if cmd.Bool("suggestions-only") && (!cmd.Bool("suggestions") || cmd.Bool("picker")) {
-		return cli.Exit("--suggestions-only requires --suggestions and cannot include --picker", 1)
+		err := cli.Exit("--suggestions-only requires --suggestions and cannot include --picker", 1)
+		if !cmd.IsSet("suggestions") && !cmd.Bool("picker") {
+			return clihelp.MissingInput(err)
+		}
+		return err
 	}
 	if cmd.Bool("suggestions-double-tab") && !cmd.Bool("suggestions") {
-		return cli.Exit("--suggestions-double-tab requires --suggestions", 1)
+		err := cli.Exit("--suggestions-double-tab requires --suggestions", 1)
+		if !cmd.IsSet("suggestions") {
+			return clihelp.MissingInput(err)
+		}
+		return err
 	}
 	if cmd.Bool("suggestions-click") && !cmd.Bool("suggestions") {
-		return cli.Exit("--suggestions-click requires --suggestions", 1)
+		err := cli.Exit("--suggestions-click requires --suggestions", 1)
+		if !cmd.IsSet("suggestions") {
+			return clihelp.MissingInput(err)
+		}
+		return err
 	}
 	if cmd.Bool("suggestions-click") && (cmd.Args().Len() != 1 || cmd.Args().First() != "zsh") {
-		return cli.Exit("click insertion currently supports zsh with a local Kitty adapter", 1)
+		err := cli.Exit("click insertion currently supports zsh with a local Kitty adapter", 1)
+		if cmd.Args().Len() == 0 {
+			return &clihelp.MissingInputError{Cause: err, Message: "Specify zsh for --suggestions-click."}
+		}
+		return err
 	}
 	shells := make([]CompletionStyle, 0, len(shellCompletions))
 	for k := range shellCompletions {
@@ -85,7 +101,7 @@ func OutputCompletionScript(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	if cmd.Args().Len() == 0 {
-		return cli.Exit(fmt.Sprintf("no shell provided for completion command. available shells are %+v", shells), 1)
+		return clihelp.MissingInput(cli.Exit(fmt.Sprintf("no shell provided for completion command. available shells are %+v", shells), 1))
 	}
 	s := CompletionStyle(cmd.Args().First())
 

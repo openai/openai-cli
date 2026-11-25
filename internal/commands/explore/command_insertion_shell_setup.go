@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/autocomplete"
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
@@ -63,11 +64,18 @@ func commandInsertionShellSetup(ctx context.Context, command *cli.Command) error
 			count++
 		}
 	}
+	const setupUsage = "Choose one command insertion setup action. Picker and mouse setup are separate."
 	if count != 1 || command.Args().Len() > 1 || command.Bool("install-picker") || command.Bool("uninstall-picker") ||
 		command.Bool("automatic") || command.Bool("picker") || command.Bool("suggestions-click") || command.Bool("suggestions-only") || command.IsSet("suggestions-adapter") ||
 		command.IsSet("profile") && command.String("profile") == "" || !install && command.Bool("suggestions-double-tab") ||
-		automatic && (command.Bool("suggestions") || command.Args().Len() != 1) {
-		return insertionSetupFailure("Choose one command insertion setup action. Picker and mouse setup are separate.", nil, 2)
+		automatic && command.Bool("suggestions") {
+		return insertionSetupFailure(setupUsage, nil, 2)
+	}
+	if automatic && command.Args().Len() == 0 {
+		return &clihelp.MissingInputError{
+			Cause:   insertionSetupFailure(setupUsage, nil, 2),
+			Message: "Specify Bash, zsh, or Fish for --auto-suggestions.",
+		}
 	}
 	format := strings.ToLower(command.Root().String("format"))
 	if (format != "" && format != "auto" && format != "text" && format != "json" && format != "jsonl") ||
