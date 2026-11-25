@@ -299,7 +299,7 @@
     },
     "generated/commands/batch.go": {
       "mode": "100644",
-      "sha256": "83f4665183a8959433676a2926fdb7bd54dbfcb4a65bedcd291cae91d748aa88"
+      "sha256": "84daecbe6ef2ba718f91594f86aefc17810be494305ced0365bd8e9099498d21"
     },
     "generated/commands/batch_test.go": {
       "mode": "100644",
@@ -307,7 +307,7 @@
     },
     "generated/commands/betaassistant.go": {
       "mode": "100644",
-      "sha256": "aabba08d1480dea2c9e2dbe2e5389f3ab34c5fa76b937b98e037869f48839d35"
+      "sha256": "a71bf7b40cba801f77f8b2e6498bf4a5eeb56c5d74a71d0869b853618a39722a"
     },
     "generated/commands/betaassistant_test.go": {
       "mode": "100644",
@@ -331,7 +331,7 @@
     },
     "generated/commands/betaresponse.go": {
       "mode": "100644",
-      "sha256": "9ce2ec8b623f716871f6a5c1d255303ccfa111cb08bcf82fbf7de81073a848ba"
+      "sha256": "44d9629f9c9c4f9eb55d42c93b5a5d2980ca2cf942aa2f9db45e41e305548166"
     },
     "generated/commands/betaresponse_test.go": {
       "mode": "100644",
@@ -355,7 +355,7 @@
     },
     "generated/commands/betathread.go": {
       "mode": "100644",
-      "sha256": "419e0d14aab72c082fbbf7bebed1418808bab56badb664525b012c35b1a93479"
+      "sha256": "2cf409ce8700980704f03e85a36a5a1f1bf51e50071d62fa3597d6a36c8a5df1"
     },
     "generated/commands/betathread_test.go": {
       "mode": "100644",
@@ -363,7 +363,7 @@
     },
     "generated/commands/betathreadmessage.go": {
       "mode": "100644",
-      "sha256": "c68ef8b8f1d078ff83be178fb5a59a70e796e384130fcc3c8fc9ca03b8be26d6"
+      "sha256": "940b20d373e8f3bdf8bb00d928b674ba83214f8aba6fceb096261eb8c26b5338"
     },
     "generated/commands/betathreadmessage_test.go": {
       "mode": "100644",
@@ -371,7 +371,7 @@
     },
     "generated/commands/betathreadrun.go": {
       "mode": "100644",
-      "sha256": "7da2c54d998485557a7a9bc6ed69413ef73498cd27bf6c351168b796bbf010f6"
+      "sha256": "361286e8fc8d5860d6efb421ed911a443643ff8eb43c6865a684bf862e8c6f19"
     },
     "generated/commands/betathreadrun_test.go": {
       "mode": "100644",
@@ -395,7 +395,7 @@
     },
     "generated/commands/chatcompletion.go": {
       "mode": "100644",
-      "sha256": "a6cb8812cb4ec85e05d470f4d50ec36ffdc2b05a885433958f8e1630e47e32f5"
+      "sha256": "b8a580bc92fe1d7c9507e244f9206d29d6385beed6bb67b333aa194a14a3bf31"
     },
     "generated/commands/chatcompletion_test.go": {
       "mode": "100644",
@@ -463,7 +463,7 @@
     },
     "generated/commands/conversation.go": {
       "mode": "100644",
-      "sha256": "ee355ae86b6b02de8dbb5a0b65ff379c9685da0506bdcf9d7786f5a64ff2d774"
+      "sha256": "fb02114ab3cedccf4cd5a0da25cc55b06faaf8a3f59435ee1802ac5d8a68d291"
     },
     "generated/commands/conversation_test.go": {
       "mode": "100644",
@@ -523,7 +523,7 @@
     },
     "generated/commands/finetuningjob.go": {
       "mode": "100644",
-      "sha256": "4ac50623ccd582922aebbb0f9756dee68972be9c9efc016775b3c9300507b2ae"
+      "sha256": "46ca4932e5d59b118630504577a3fca0fe3322ea75177790b0309249a335ecc8"
     },
     "generated/commands/finetuningjob_test.go": {
       "mode": "100644",
@@ -591,7 +591,7 @@
     },
     "generated/commands/response.go": {
       "mode": "100644",
-      "sha256": "25249f6feee4b02db3175e479821d7a02e92dfcd04b1ef560f485c7f3e509667"
+      "sha256": "6111480b8ea263233f4b830a4c76b46ea84e83ef16c592e38db22ab886134063"
     },
     "generated/commands/response_test.go": {
       "mode": "100644",
@@ -671,7 +671,7 @@
     },
     "generated/commands/vectorstore.go": {
       "mode": "100644",
-      "sha256": "6c5a9f6287a9f8e67a89699806752fe4747a02f92c5c807de90bb079fb5f16c4"
+      "sha256": "22b90a086c39d8557d619a259c6e0c45185eac5c421d5118c32b9a5113b5d593"
     },
     "generated/commands/vectorstore_test.go": {
       "mode": "100644",
