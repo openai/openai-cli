@@ -9,8 +9,11 @@ import (
 	"runtime"
 
 	"github.com/openai/openai-cli/internal/autocomplete"
+	"github.com/openai/openai-cli/internal/clihelp"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
+
+var errPickerUnsupportedShell = errors.New("choose a supported shell: bash, zsh, or fish")
 
 func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, profileOverride string) ([]autocomplete.PickerInstallation, error) {
 	if err := ctx.Err(); err != nil {
@@ -66,7 +69,7 @@ func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, p
 		shell = cliterminal.ParentShell(ctx)
 	}
 	if shell == "" || shell == "pwsh" || cliterminal.ShellName(shell) != shell {
-		return nil, errors.New("choose a supported shell: bash, zsh, or fish")
+		return nil, errPickerUnsupportedShell
 	}
 	// Fish's startup directory follows XDG on every platform. CLI scripts stay
 	// beside picker settings; consent and its decision lock use a stable home path.
@@ -81,6 +84,9 @@ func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, p
 	paths := imagePickerShellPaths{home: home, config: config, fishConfig: fishConfig, zdotdir: os.Getenv("ZDOTDIR")}
 	targets, err := imagePickerSelectShellTargets(shell, profileOverride, paths)
 	if err != nil {
+		if shell == "zsh" && profileOverride == "" && imagePickerAbsolutePath(config) && !imagePickerAbsolutePath(paths.zdotdir) {
+			err = &clihelp.MissingInputError{Cause: err, Message: "Add --profile with your zsh startup file, or export an absolute ZDOTDIR."}
+		}
 		return nil, err
 	}
 	if shell == "fish" {

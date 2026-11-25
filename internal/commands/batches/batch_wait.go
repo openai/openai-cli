@@ -91,7 +91,11 @@ func (w workflow) configureBatchCommands(root *cli.Command) {
 				command.Action = func(ctx context.Context, cmd *cli.Command) error {
 					if !cmd.Bool("wait") {
 						if cmd.IsSet("poll-interval") || cmd.IsSet("wait-timeout") {
-							return batchError("Use --wait with --poll-interval or --wait-timeout.")
+							err := batchError("Use --wait with --poll-interval or --wait-timeout.")
+							if !cmd.IsSet("wait") {
+								return clihelp.MissingInput(err)
+							}
+							return err
 						}
 						return previous(ctx, cmd)
 					}

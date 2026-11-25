@@ -93,7 +93,8 @@ func imageSavingResultFailure(message string, cause error) error {
 }
 
 func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Result) (*imageOutputPlan, bool, error) {
-	streaming := body.Get("stream").Type == gjson.True
+	stream := body.Get("stream")
+	streaming := stream.Type == gjson.True
 	if err := validateImageGenerationSettings(body); err != nil {
 		return nil, false, imageSavingFailure(err.Error(), err)
 	}
@@ -112,13 +113,17 @@ func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Re
 			return nil, false, imageSavingFailure("--name and --output-dir cannot be combined with "+conflict+"; choose saved images or API output.", nil)
 		}
 		if body.Get("response_format").String() != "url" && body.Get("partial_images").Int() > 0 && !streaming {
-			return nil, false, imageSavingFailure("--partial-images needs --stream true for API output.", nil)
+			err := imageSavingFailure("--partial-images needs --stream true for API output.", nil)
+			if !stream.Exists() {
+				err = clihelp.MissingInput(err)
+			}
+			return nil, false, err
 		}
 		return nil, streaming, nil
 	}
 	partials := body.Get("partial_images").Int()
 	if partials > 0 {
-		if body.Get("stream").Exists() && !streaming {
+		if stream.Exists() && !streaming {
 			return nil, false, imageSavingFailure("--partial-images needs streaming; omit --stream or use --stream true.", nil)
 		}
 		streaming = true

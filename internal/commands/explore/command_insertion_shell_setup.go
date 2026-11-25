@@ -93,11 +93,15 @@ func commandInsertionShellSetup(ctx context.Context, command *cli.Command) error
 		shell = cliterminal.ParentShell(ctx)
 	}
 	if shell != "bash" && shell != "zsh" && shell != "fish" {
-		return insertionSetupFailure("Choose Bash 4.3+, zsh, or fish for command insertion setup.", ctx.Err(), 2)
+		err := insertionSetupFailure("Choose Bash 4.3+, zsh, or fish for command insertion setup.", ctx.Err(), 2)
+		if command.Args().Len() == 0 {
+			return clihelp.MissingInput(err)
+		}
+		return err
 	}
 	profile := command.String("profile")
 	if shell == "zsh" && profile == "" && !autocomplete.AbsoluteShellPath(os.Getenv("ZDOTDIR")) {
-		return insertionSetupFailure(`For zsh, specify the current startup file: --profile "${ZDOTDIR-$HOME}/.zshrc".`, nil, 2)
+		return clihelp.MissingInput(insertionSetupFailure(`For zsh, specify the current startup file: --profile "${ZDOTDIR-$HOME}/.zshrc".`, nil, 2))
 	}
 	targets, err := commandInsertionShellTargets(ctx, shell, profile, remove)
 	if err != nil {

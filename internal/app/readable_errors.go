@@ -122,6 +122,12 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 		presenter := clihelp.NewSuggestedText(out, root)
 		command := commandErrorContext(root, failure)
 		autoHelp := false
+		interrupted := errors.Is(failure, context.Canceled) || errors.Is(failure, context.DeadlineExceeded)
+		apiHelp := isAPI && !interrupted && command != root && apiMissingRequiredInput(apierr)
+		surface := shellError
+		if apiHelp {
+			surface = shellErrorWithHelp
+		}
 		message := ""
 		var batchFailure *batchcommands.WorkflowError
 		if limitsFailure != nil {
@@ -136,11 +142,12 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 				message += "\n" + storage.Error()
 			}
 			if isAPI && !errors.Is(failure, context.Canceled) {
+				autoHelp = apiHelp
 				// Workflow wrappers can already include guidance from this cause,
 				// before the outer command adds presentation context.
 				included := readableAPIErrorMessage(root, batchFailure.Unwrap(), apierr)
 				if !strings.Contains(message, included) {
-					message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, shellError, presenter)
+					message += "\n" + readableAPIErrorMessageTo(root, failure, apierr, surface, presenter)
 				}
 			}
 			// Workflow outcomes must not hide safe, known transport guidance.
@@ -160,25 +167,27 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 				}
 			}
 		} else if isAPI && !errors.Is(failure, context.Canceled) {
-			surface := shellError
-			if command != root && apiMissingRequiredInput(apierr) {
-				autoHelp, surface = true, shellErrorWithHelp
-			}
+			autoHelp = apiHelp
 			message = readableAPIErrorMessageTo(root, failure, apierr, surface, presenter)
 		} else if isStream {
 			message = readableStreamErrorText
-		} else if missing := missingRequiredInputMessage(command, failure); missing != "" &&
-			!errors.Is(failure, context.Canceled) && !errors.Is(failure, context.DeadlineExceeded) {
+		} else if missing := missingRequiredInputMessage(command, failure); missing != "" && !interrupted {
 			message, autoHelp = missing, true
 		} else {
 			message = readableLocalErrorMessage(root, failure, presenter)
 		}
 		var missingInput *clihelp.MissingInputError
-		if !isAPI && !isStream && !errors.Is(failure, context.Canceled) &&
-			!errors.Is(failure, context.DeadlineExceeded) && errors.As(failure, &missingInput) {
+		if !isAPI && !isStream && !interrupted && errors.As(failure, &missingInput) {
 			autoHelp = true
 			if missingInput.Message != "" {
 				message = missingInput.Message
+			}
+		}
+		if !isAPI && !interrupted && command != root {
+			if parameter, missing := missingStreamParameter(failure, streamerr); missing {
+				flag, _ := clioutput.ParameterFlag(command, parameter)
+				message = readableMissingInput(flag) + "\n" + message
+				autoHelp = true
 			}
 		}
 		if autoHelp {
@@ -360,7 +369,28 @@ func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command, outp
 
 func apiMissingRequiredInput(apierr *openai.Error) bool {
 	return (apierr.StatusCode == http.StatusBadRequest || apierr.StatusCode == http.StatusUnprocessableEntity) &&
-		(apierr.Code == "missing_required_parameter" || apierr.Code == "missing_required_argument")
+		clioutput.MissingInputCode(apierr.Code)
+}
+
+func missingStreamParameter(failure error, streamerr *ssestream.StreamError) (string, bool) {
+	if streamerr != nil {
+		if !gjson.ValidBytes(streamerr.Event.Data) {
+			return "", false
+		}
+		return clioutput.MissingStreamInput(gjson.ParseBytes(streamerr.Event.Data))
+	}
+	var streamResult *streamResultError
+	if errors.As(failure, &streamResult) && streamResult.MissingParameter != nil {
+		return *streamResult.MissingParameter, true
+	}
+	return "", false
+}
+
+func readableMissingInput(flagName string) string {
+	if flagName != "" {
+		return "Add " + flagName + " with a value."
+	}
+	return "A required value is missing from the request."
 }
 
 func readableAPIArgumentSummary(apierr *openai.Error, command *cli.Command) string {
@@ -371,11 +401,7 @@ func readableAPIArgumentSummary(apierr *openai.Error, command *cli.Command) stri
 	}
 	switch apierr.Code {
 	case "missing_required_parameter", "missing_required_argument":
-		if flagName != "" {
-			message = "Add " + flagName + " with a value."
-		} else {
-			message = "A required value is missing from the request."
-		}
+		message = readableMissingInput(flagName)
 	case "unknown_parameter", "unsupported_parameter":
 		if flagName != "" {
 			message = "This request does not support " + flagName + ". Remove it or choose a model that supports it."

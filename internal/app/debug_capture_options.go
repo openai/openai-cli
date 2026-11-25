@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/debugmiddleware"
 	"github.com/urfave/cli/v3"
 )
@@ -66,12 +67,12 @@ func debugCaptureOptions(command *cli.Command) (debugmiddleware.CaptureOptions, 
 	}
 	for _, name := range []string{debugBodyFlag, debugSSEFlag, debugEventTimingFlag} {
 		if root.Bool(name) && !root.Bool("debug") {
-			return opts, &debugCaptureOptionError{message: fmt.Sprintf("--%s requires --debug", name)}
+			return opts, missingDebugOption(root, name)
 		}
 	}
 	for _, name := range []string{debugMaxBytesFlag, debugMaxEventsFlag} {
 		if root.IsSet(name) && !root.Bool("debug") {
-			return opts, &debugCaptureOptionError{message: fmt.Sprintf("--%s requires --debug", name)}
+			return opts, missingDebugOption(root, name)
 		}
 	}
 	if root.IsSet(debugMaxBytesFlag) {
@@ -87,4 +88,12 @@ func debugCaptureOptions(command *cli.Command) (debugmiddleware.CaptureOptions, 
 		return opts, &debugCaptureOptionError{message: fmt.Sprintf("--%s must be between 1 and %d", debugMaxEventsFlag, debugmiddleware.MaximumCaptureEvents)}
 	}
 	return opts, nil
+}
+
+func missingDebugOption(root *cli.Command, name string) error {
+	var err error = &debugCaptureOptionError{message: fmt.Sprintf("--%s requires --debug", name)}
+	if !root.IsSet("debug") {
+		err = clihelp.MissingInput(err)
+	}
+	return err
 }

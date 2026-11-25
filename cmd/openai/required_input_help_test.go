@@ -27,6 +27,10 @@ func TestMainRequiredInputShowsCommandHelp(t *testing.T) {
 		args             []string
 	}{
 		{"empty Responses request", "Missing required options: --model.", []string{"responses", "create"}},
+		{"empty beta Responses request", "Missing required options: --model.", []string{"beta:responses", "create"}},
+		{"Responses stream only", "Missing required options: --model.", []string{"responses", "create", "--stream=true"}},
+		{"beta Responses stream false only", "Missing required options: --model.", []string{"beta:responses", "create", "--stream=false"}},
+		{"Responses stream controls only", "Missing required options: --model.", []string{"responses", "create", "--stream=true", "--stream-options.include-obfuscation=false"}},
 		{"required request flags", "Missing required options: --input, --model.", []string{"embeddings", "create"}},
 		{"missing resource ID", "Missing required options: --file-id.", []string{"files", "get"}},
 		{"nested command", "Missing required options:", []string{"chat", "completions", "create"}},
@@ -51,11 +55,15 @@ func TestMainHandwrittenRequiredInputShowsCommandHelp(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(server.Close)
+	home := t.TempDir()
 	env := []string{"OPENAI_BASE_URL=" + server.URL, "OPENAI_API_KEY=sk-fake-required-help",
-		"OPENAI_ADMIN_KEY=sk-fake-admin-required-help", "NO_COLOR=1"}
+		"OPENAI_ADMIN_KEY=sk-fake-admin-required-help", "NO_COLOR=1", "ZDOTDIR=",
+		"HOME=" + home, "USERPROFILE=" + home, "XDG_CONFIG_HOME=" + home}
 	structuredMessages := map[string]string{
 		"automatic suggestion shell": "Choose one command insertion setup action. Picker and mouse setup are separate.",
 		"click adapter shell":        "click insertion currently supports zsh with a local Kitty adapter",
+		"picker zsh profile":         "Could not choose a supported shell startup file.",
+		"picker with no shell":       "Could not choose a supported shell startup file.",
 	}
 
 	for _, tc := range []struct {
@@ -66,12 +74,21 @@ func TestMainHandwrittenRequiredInputShowsCommandHelp(t *testing.T) {
 		{"audio history ID", "Specify one audio history ID.", []string{"audio", "export"}, []string{"--output=-"}, 1},
 		{"batch file", "Choose a local JSONL file", []string{"batches", "submit"}, nil, 1},
 		{"batch wait option", "Add --wait", []string{"batches", "submit"}, []string{"fixture.jsonl", "--wait-timeout", "5s"}, 1},
+		{"batch retrieve without wait", "Use --wait", []string{"batches", "retrieve"}, []string{"batch_fixture", "--wait-timeout", "1s"}, 1},
+		{"batch list without watch", "Use --watch", []string{"batches", "list"}, []string{"--watch-count", "1"}, 1},
+		{"debug capture without debug", "--debug-body requires --debug", []string{"models", "list"}, []string{"--debug-body"}, 1},
+		{"image API output without stream", "--partial-images needs --stream true", []string{"images", "generate"}, []string{"--format", "json", "--prompt", "fixture", "--partial-images", "1"}, 1},
 		{"saved image", "Provide one saved image", []string{"images", "preview"}, nil, 1},
 		{"Codex destination", "Opening a Codex destination requires --destination", []string{"codex"}, []string{"--open"}, 1},
 		{"completion shell", "Choose a shell", []string{"@completion"}, nil, 1},
 		{"suggestion shell", "Choose one shell", []string{"@completion"}, []string{"--suggest-executable"}, 2},
 		{"automatic suggestion shell", "Specify Bash, zsh, or Fish", []string{"@completion"}, []string{"--auto-suggestions"}, 2},
 		{"automatic picker action", "Use --install-picker or --uninstall-picker", []string{"@completion"}, []string{"--automatic"}, 2},
+		{"explicit profile without action", "Use --install-picker or --uninstall-picker", []string{"@completion"}, []string{"zsh", "--profile=fixture"}, 2},
+		{"picker zsh profile", "Add --profile", []string{"@completion"}, []string{"zsh", "--install-picker"}, 1},
+		{"picker with no shell", "Specify Bash, zsh, or Fish", []string{"@completion"}, []string{"--install-picker"}, 1},
+		{"suggestions zsh profile", "For zsh, specify the current startup file", []string{"@completion"}, []string{"zsh", "--install-suggestions"}, 2},
+		{"suggestion status without detectable shell", "Choose Bash 4.3+", []string{"@completion"}, []string{"--suggestions-status"}, 2},
 		{"suggestions prerequisite", "--suggestions-double-tab requires --suggestions", []string{"@completion"}, []string{"zsh", "--suggestions-double-tab"}, 1},
 		{"click adapter shell", "Specify zsh for --suggestions-click.", []string{"@completion"}, []string{"--suggestions", "--suggestions-click"}, 1},
 		{"API key update fields", "provide at least one of --scope or --expires-in-seconds",
@@ -82,13 +99,13 @@ func TestMainHandwrittenRequiredInputShowsCommandHelp(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			command := append([]string{"openai"}, tc.command...)
 			help := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(command), "--help")...)
-			got := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(command), tc.options...)...)
+			args := append(slices.Clone(command), tc.options...)
+			got := runMainDispatchWithEnv(t, "bash", env, append(args, "--format-error", "text")...)
 			if got.code != tc.exit || got.stdout != "" || !strings.HasPrefix(got.stderr, tc.diagnostic) ||
 				help.code != 0 || help.stdout == "" || help.stderr != "" || !strings.HasSuffix(got.stderr, "\n\n"+help.stdout) {
 				t.Fatalf("missing input: %+v; explicit help: %+v", got, help)
 			}
-			args := append([]string{"openai", "--format-error", "json"}, tc.command...)
-			structured := runMainDispatchWithEnv(t, "bash", env, append(args, tc.options...)...)
+			structured := runMainDispatchWithEnv(t, "bash", env, append(args, "--format-error", "json")...)
 			value := decodeMainStructuredError(t, "json", structured.stderr)
 			message, _ := value["message"].(string)
 			want := tc.diagnostic
@@ -103,6 +120,77 @@ func TestMainHandwrittenRequiredInputShowsCommandHelp(t *testing.T) {
 	}
 	if requests.Load() != 0 {
 		t.Fatalf("sent %d HTTP requests for local missing inputs", requests.Load())
+	}
+}
+
+func TestMainStreamingMissingInputShowsCommandHelp(t *testing.T) {
+	const partial = `{"type":"response.output_text.delta","item_id":"msg_fixture","output_index":0,"content_index":0,"delta":"Partial answer"}`
+	for _, tc := range []struct {
+		name, event, diagnostic string
+	}{
+		{"ordinary error event", `{"type":"error","code":"missing_required_parameter","param":"model","message":"private-fixture"}`, "Add --model with a value."},
+		{"failed response", `{"type":"response.failed","response":{"status":"failed","error":{"code":"missing_required_argument","param":"model","message":"private-fixture"}}}`, "Add --model with a value."},
+		{"SDK error envelope", `{"error":{"code":"missing_required_parameter","param":"private-fixture\u001b[2J","message":"private-fixture"}}`, "A required value is missing from the request."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := streamingTextServer(t, []string{partial, tc.event})
+			help := runReadableCommand(t, server, "responses", "create", "--help")
+			got := runReadableCommand(t, server, streamingTextArgs("responses")...)
+			if got.code != 1 || !strings.Contains(got.stdout, "Partial answer") || help.code != 0 ||
+				!strings.HasPrefix(got.stderr, tc.diagnostic) || !strings.Contains(got.stderr, "Output may be incomplete.") ||
+				!strings.HasSuffix(got.stderr, "\n\n"+help.stdout) || strings.Contains(got.stderr, "private-fixture") {
+				t.Fatalf("streamed missing input: %+v; explicit help: %+v", got, help)
+			}
+			structured := runReadableCommand(t, server, streamingTextArgs("responses", "--format-error", "json")...)
+			value := decodeMainErrorObject(t, "json", structured.stderr)
+			if structured.code != 1 || structured.stdout != got.stdout {
+				t.Fatalf("structured error changed stream exit or output: %+v", structured)
+			}
+			if tc.name == "SDK error envelope" {
+				event, _ := value["error"].(map[string]any)
+				if event["code"] != "missing_required_parameter" || event["message"] != "private-fixture" {
+					t.Fatalf("structured SDK event changed: %+v", value)
+				}
+			} else if message, _ := value["message"].(string); !strings.HasSuffix(message, "\nOutput may be incomplete.") {
+				t.Fatalf("structured result error changed: %+v", value)
+			}
+		})
+	}
+}
+
+func TestMainBatchMissingInputShowsCommandHelpAfterUpload(t *testing.T) {
+	var uploads, creations atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.Copy(io.Discard, r.Body)
+		switch r.Method + " " + r.URL.Path {
+		case "POST /files":
+			uploads.Add(1)
+			_, _ = io.WriteString(w, `{"id":"file_fixture","purpose":"batch"}`)
+		case "POST /batches":
+			creations.Add(1)
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = io.WriteString(w, `{"error":{"code":"missing_required_parameter","param":"input_file_id","message":"private-fixture"}}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	path := simpleBatchPath(t, simpleBatchInput)
+	help := runReadableCommand(t, server, "batches", "submit", "--help")
+	got := runReadableCommand(t, server, "batches", "submit", path)
+	if got.code != 1 || got.stdout != "" || help.code != 0 || !strings.HasSuffix(got.stderr, "\n\n"+help.stdout) ||
+		!strings.Contains(got.stderr, "Uploaded input file:") || !strings.Contains(got.stderr, "HTTP 422:") ||
+		strings.Contains(got.stderr, "private-fixture") || uploads.Load() != 1 || creations.Load() != 1 {
+		t.Fatalf("batch missing input lost help or recovery: %+v; explicit help: %+v", got, help)
+	}
+	structured := runReadableCommand(t, server, "--format-error", "json", "batches", "submit", path)
+	value := decodeMainErrorObject(t, "json", structured.stderr)
+	apiError, _ := value["error"].(map[string]any)
+	if structured.code != 1 || structured.stdout != "" || apiError["code"] != "missing_required_parameter" ||
+		apiError["message"] != "private-fixture" || value["batch_submission"] == nil || uploads.Load() != 2 || creations.Load() != 2 {
+		t.Fatalf("structured batch recovery changed: %+v", structured)
 	}
 }
 
