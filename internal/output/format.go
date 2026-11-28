@@ -95,7 +95,7 @@ func FormatJSON(res gjson.Result, opts FormatOptions, destination io.Writer, ter
 		}
 		return out.Bytes(), nil
 	case "json":
-		prettyJSON := pretty.Pretty([]byte(res.Raw))
+		prettyJSON := indentJSON([]byte(res.Raw))
 		if UseColors(terminal) {
 			return pretty.Color(prettyJSON, pretty.TerminalStyle), nil
 		} else {
