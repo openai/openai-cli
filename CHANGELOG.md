@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.57.1](https://github.com/openai/openai-cli/compare/v1.57.0...v1.57.1) (2026-11-28)
+
+
+### Chores
+
+* **api:** correct metadata documentation ([#799](https://github.com/openai/openai-cli/issues/799)) ([6334136](https://github.com/openai/openai-cli/commit/6334136d330ebe2126c3d3b4a085f7c7f6190702))
+
 ## [1.57.0](https://github.com/openai/openai-cli/compare/v1.56.1...v1.57.0) (2026-11-24)
 
 
