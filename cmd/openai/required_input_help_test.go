@@ -27,11 +27,11 @@ func TestMainRequiredInputShowsCommandHelp(t *testing.T) {
 		name, diagnostic string
 		args             []string
 	}{
-		{"empty Responses request", "Missing required options: --model.", []string{"responses", "create"}},
+		{"empty Responses request", "Add --input to create a response with the default model.", []string{"responses", "create"}},
 		{"empty beta Responses request", "Missing required options: --model.", []string{"beta:responses", "create"}},
-		{"Responses stream only", "Missing required options: --model.", []string{"responses", "create", "--stream=true"}},
+		{"Responses stream only", "Add --input to create a response with the default model.", []string{"responses", "create", "--stream=true"}},
 		{"beta Responses stream false only", "Missing required options: --model.", []string{"beta:responses", "create", "--stream=false"}},
-		{"Responses stream controls only", "Missing required options: --model.", []string{"responses", "create", "--stream=true", "--stream-options.include-obfuscation=false"}},
+		{"Responses stream controls only", "Add --input to create a response with the default model.", []string{"responses", "create", "--stream=true", "--stream-options.include-obfuscation=false"}},
 		{"required request flags", "Missing required options: --input, --model.", []string{"embeddings", "create"}},
 		{"missing resource ID", "Missing required options: --file-id.", []string{"files", "get"}},
 		{"nested command", "Missing required options:", []string{"chat", "completions", "create"}},
@@ -44,6 +44,14 @@ func TestMainRequiredInputShowsCommandHelp(t *testing.T) {
 				help.code != 0 || help.stdout == "" || help.stderr != "" ||
 				!strings.HasSuffix(got.stderr, "\n\n"+help.stdout) || requests.Load() != 0 {
 				t.Fatalf("missing argument: %+v; explicit help: %+v; API calls: %d", got, help, requests.Load())
+			}
+			if tc.args[0] == "responses" {
+				structured := runMainDispatchWithEnv(t, "bash", env, append(args, "--format-error", "json")...)
+				value := decodeMainStructuredError(t, "json", structured.stderr)
+				message, _ := value["message"].(string)
+				if structured.code != 1 || structured.stdout != "" || !strings.HasPrefix(message, "Missing required options: --model.") || requests.Load() != 0 {
+					t.Fatalf("structured missing argument changed: %+v; API calls: %d", structured, requests.Load())
+				}
 			}
 		})
 	}

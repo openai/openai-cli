@@ -496,7 +496,7 @@ var examples = map[string][]Example{
 		{"Print model IDs for a script:", "models list --transform id --raw-output"},
 	},
 	"models retrieve":   {{"Inspect a model:", "models retrieve --model gpt-5.5"}},
-	"responses create":  {{"Create a text response:", `responses create --model gpt-5.5 --input "Say hello"`}},
+	"responses create":  {{"Create a text response:", `responses create --input "Say hello"`}},
 	"files create":      {{"Upload an existing file:", `files create --file ./example.txt --purpose assistants`}},
 	"files upload":      {{"Upload an existing file:", `files upload --file ./example.txt --purpose assistants`}},
 	"images generate":   {{"Generate an image:", `images generate --prompt "A tiny orange robot"`}},

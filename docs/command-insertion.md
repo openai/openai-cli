@@ -201,7 +201,7 @@ Examples across features include:
 
 | Help or guidance | Clickable suggestion |
 | --- | --- |
-| Responses help | `openai responses create --model gpt-5.5 --input "Say hello"` |
+| Responses help | `openai responses create --input "Say hello"` |
 | Files help | `openai files create --file ./example.txt --purpose assistants` |
 | Models help | `openai models list` |
 | Authentication recovery | `openai help setup` |

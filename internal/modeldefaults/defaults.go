@@ -3,6 +3,7 @@
 package modeldefaults
 
 const (
+	Responses             = "gpt-6.2-sol"
 	Speech                = "gpt-realtime-2.1-mini"
 	SavedImage            = "gpt-image-2.6-sunburst"
 	Translation           = "gpt-realtime-translate"

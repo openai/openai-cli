@@ -10,6 +10,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/admin"
 	imagecommands "github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/commands/manpages"
+	"github.com/openai/openai-cli/internal/modeldefaults"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -430,8 +431,18 @@ func configureHelpGroups(root *cli.Command) {
 					Description: create.Description,
 					Examples:    clihelp.CommandExamples(create, path),
 				})
+				modelBrief := "Model ID to use."
+				if resource == "responses" {
+					modelBrief = "Fresh requests with input default to " + modeldefaults.Responses + " on global, US, and EU OpenAI endpoints."
+					for _, flag := range create.Flags {
+						if model, ok := flag.(*requestflag.Flag[string]); ok && model.Name == "model" {
+							model.Usage = "Model ID. " + modelBrief + " Use --model to choose another model."
+							break
+						}
+					}
+				}
 				setBriefFlagDescriptions(create, map[string]string{
-					"model":             "Model ID to use.",
+					"model":             modelBrief,
 					"input":             "Text, image, or file input.",
 					"instructions":      "System or developer instructions.",
 					"stream":            "Stream the response as it is generated.",

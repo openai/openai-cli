@@ -259,7 +259,7 @@ func TestStructuredInputPreparationReservesStdinAndResolvesAliases(t *testing.T)
 	var observed []byte
 	_, err := FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatRepeat,
 		ApplicationJSON, false, strings.NewReader(`{"alias":"@private/missing.json"}`), PreparationHooks{
-			ValidateResolvedInputs: func(contents requestflag.RequestContents) error {
+			PrepareResolvedInputs: func(contents requestflag.RequestContents) error {
 				require.Equal(t, map[string]any{"input": map[string]any{"content": "@private/missing.json"}}, contents.Body)
 				return nil
 			},
@@ -275,7 +275,7 @@ func TestStructuredInputParseFailureStopsPreparation(t *testing.T) {
 	_, err := FlagOptions(command,
 		apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatRepeat, ApplicationJSON, false,
 		strings.NewReader("[private malformed content"), PreparationHooks{
-			ValidateResolvedInputs: func(requestflag.RequestContents) error {
+			PrepareResolvedInputs: func(requestflag.RequestContents) error {
 				t.Fatal("resolved validation ran after a parse failure")
 				return nil
 			},

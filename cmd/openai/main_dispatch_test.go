@@ -19,6 +19,9 @@ func TestMainDispatchProcess(t *testing.T) {
 	if separator < 0 {
 		t.Fatal("missing subprocess argument separator")
 	}
+	if endpoint := os.Getenv("OPENAI_CLI_TEST_RESPONSES_SERVER"); endpoint != "" {
+		installResponsesFixture(t, endpoint)
+	}
 	os.Args = os.Args[separator+1:]
 	main()
 	os.Exit(0)

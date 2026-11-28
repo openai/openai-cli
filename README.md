@@ -106,8 +106,10 @@ For scripts, supply `OPENAI_API_KEY` through your environment or secret manager.
 ### Send a request
 
 ```sh
-openai responses create --model gpt-5.5 --input "Say this is a test"
+openai responses create --input "Say this is a test"
 ```
+
+New requests with input use `gpt-6.2-sol` on global, US, and EU OpenAI endpoints. Use `--model` to choose another model.
 
 ### Generate an image and save it locally
 
