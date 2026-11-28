@@ -26,6 +26,7 @@ type batchJSONScanner struct {
 	idFields          int
 	urlCapture        int // Opt-in bounded capture for submit endpoint inference.
 	url               string
+	urlPath           batchEndpointPath
 	urlFields         int
 }
 
@@ -128,6 +129,12 @@ func (s *batchJSONScanner) outerSpace() error {
 // A positive capture value bounds inspected string bytes. Other values skip
 // capture. Longer strings still stream completely, returning an empty value.
 func (s *batchJSONScanner) stringValue(capture int) (string, error) {
+	return s.scanString(capture, nil)
+}
+
+// The path observer receives decoded ASCII bytes and rejects non-ASCII input.
+// It runs independently of the bounded raw capture used for exact matching.
+func (s *batchJSONScanner) scanString(capture int, path *batchEndpointPath) (string, error) {
 	var value strings.Builder
 	write := func(b byte) {
 		if capture > 0 && value.Len() <= capture {
@@ -155,6 +162,9 @@ func (s *batchJSONScanner) stringValue(capture int) (string, error) {
 			return "", errBatchRecordJSON
 		}
 		if b != '\\' {
+			if path != nil {
+				path.add(b)
+			}
 			continue
 		}
 		b, err = s.take(true)
@@ -163,19 +173,37 @@ func (s *batchJSONScanner) stringValue(capture int) (string, error) {
 		}
 		write(b)
 		if strings.ContainsRune(`"\/bfnrt`, rune(b)) {
+			if path != nil {
+				if b == '/' {
+					path.add(b)
+				} else {
+					// The other simple escapes decode to a quote, backslash, or control.
+					path.invalid = true
+				}
+			}
 			continue
 		}
 		if b != 'u' {
 			return "", errBatchRecordJSON
 		}
+		var code uint16
 		for range 4 {
 			b, err = s.take(true)
 			if err != nil {
 				return "", err
 			}
 			write(b)
-			if !(b >= '0' && b <= '9' || b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F') {
+			digit, valid := batchHexDigit(b)
+			if !valid {
 				return "", errBatchRecordJSON
+			}
+			code = code<<4 | uint16(digit)
+		}
+		if path != nil {
+			if code <= 0x7f {
+				path.add(byte(code))
+			} else {
+				path.invalid = true
 			}
 		}
 	}
@@ -187,6 +215,19 @@ func (s *batchJSONScanner) stringValue(capture int) (string, error) {
 		return "", errBatchRecordJSON
 	}
 	return decoded, nil
+}
+
+func batchHexDigit(b byte) (byte, bool) {
+	switch {
+	case '0' <= b && b <= '9':
+		return b - '0', true
+	case 'a' <= b && b <= 'f':
+		return b - 'a' + 10, true
+	case 'A' <= b && b <= 'F':
+		return b - 'A' + 10, true
+	default:
+		return 0, false
+	}
 }
 
 func (s *batchJSONScanner) digits(required bool) error {
@@ -331,7 +372,7 @@ func (s *batchJSONScanner) value(depth int) error {
 				} else if b != '"' {
 					return errBatchRecordURL
 				}
-				s.url, err = s.stringValue(s.urlCapture)
+				s.url, err = s.scanString(s.urlCapture, &s.urlPath)
 			} else if depth == 0 && object && key == "custom_id" {
 				s.idFields++
 				if s.idFields > 1 {

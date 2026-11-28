@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-go/v3"
 )
 
@@ -77,6 +79,7 @@ func inspectBatchJSONL(ctx context.Context, reader io.Reader) (batchJSONLInfo, e
 		}
 		scanner.idStart, scanner.idLength, scanner.idFields = 0, 0, 0
 		scanner.url, scanner.urlFields = "", 0
+		scanner.urlPath = batchEndpointPath{}
 		if b != '{' {
 			err = errBatchRecordJSON
 		} else {
@@ -96,7 +99,24 @@ func inspectBatchJSONL(ctx context.Context, reader io.Reader) (batchJSONLInfo, e
 			return batchJSONLInfo{}, batchSubmitEndpointLineError(line, "has no top-level url", "Add the request endpoint as url, then retry.")
 		}
 		if !allowed[scanner.url] {
-			return batchJSONLInfo{}, batchSubmitEndpointLineError(line, "has an unsupported url", "Check the request endpoint, or provide --endpoint explicitly for a custom endpoint.")
+			failure := batchSubmitEndpointLineError(line, "has an unsupported url", "Check the request endpoint, or provide --endpoint explicitly for a custom endpoint.")
+			if info.endpoint == "" && scanner.urlPath.valid() {
+				// Validate this record's boundary before inviting an explicit endpoint.
+				// Keep the original diagnostic for trailing content.
+				err := scanner.outerSpace()
+				if canceled := ctx.Err(); canceled != nil {
+					return batchJSONLInfo{}, canceled
+				}
+				if err == io.EOF {
+					return batchJSONLInfo{}, clihelp.MissingInput(failure)
+				}
+				if err == nil {
+					if next, err := scanner.peek(); err == nil && next == '\n' {
+						return batchJSONLInfo{}, clihelp.MissingInput(failure)
+					}
+				}
+			}
+			return batchJSONLInfo{}, failure
 		}
 		if info.endpoint != "" && info.endpoint != scanner.url {
 			return batchJSONLInfo{}, batchSubmitEndpointLineError(line, "uses a different endpoint", "Split requests into separate files, with one endpoint per batch.")
@@ -125,6 +145,48 @@ func inspectBatchJSONL(ctx context.Context, reader io.Reader) (batchJSONLInfo, e
 		return batchJSONLInfo{}, batchError("Cannot determine the batch endpoint: the input has no requests. Add JSONL requests, then retry.")
 	}
 	return info, nil
+}
+
+// batchEndpointPath checks a rooted URI path without retaining the decoded URL.
+// It allows the same path bytes as net/url.URL.EscapedPath, including brackets.
+type batchEndpointPath struct {
+	prefix        uint8 // Number of initial bytes checked, up to two.
+	percentDigits uint8
+	invalid       bool
+}
+
+func (p *batchEndpointPath) add(b byte) {
+	if p.invalid {
+		return
+	}
+	switch p.prefix {
+	case 0:
+		p.prefix = 1
+		p.invalid = b != '/'
+		return
+	case 1:
+		p.prefix = 2
+		if b == '/' {
+			p.invalid = true
+			return
+		}
+	}
+	if p.percentDigits > 0 {
+		_, valid := batchHexDigit(b)
+		p.invalid = !valid
+		p.percentDigits--
+		return
+	}
+	if b == '%' {
+		p.percentDigits = 2
+		return
+	}
+	p.invalid = !(b >= '0' && b <= '9' || b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' ||
+		strings.IndexByte("-._~/!$&'()*+,;=:@[]", b) >= 0)
+}
+
+func (p batchEndpointPath) valid() bool {
+	return p.prefix > 0 && p.percentDigits == 0 && !p.invalid
 }
 
 func batchSubmitEndpointLineError(line int, problem, recovery string) error {

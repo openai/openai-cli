@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +44,44 @@ func TestBatchSubmitEndpointLargeRecords(t *testing.T) {
 			require.Equal(t, "/v1/responses", endpoint)
 			require.Equal(t, int64(len(input)), snapshot.Size())
 		})
+	}
+}
+
+func TestBatchSubmitCustomEndpointPath(t *testing.T) {
+	longPath := "/" + strings.Repeat("x", 128*1024)
+	for _, tc := range []struct {
+		name string
+		url  string // JSON string contents, including any escapes.
+		help bool
+	}{
+		{"escaped path", `\u002f\u0076\u0031\/\u0063\u0075\u0073\u0074\u006f\u006d\u0025\u0032\u0046`, true},
+		{"long path", longPath + "%2F", true},
+		{"long escaped path", `\u002f` + strings.Repeat(`\u0078`, 128*1024), true},
+		{"late query", longPath + `\u003fdebug`, false},
+		{"incomplete percent escape", longPath + `%2`, false},
+		{"authority", `\/\u002fhost/path`, false},
+		{"non-ASCII path", `/v1/\u00e9`, false},
+		{"escaped control", `/v1/\t`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := inferBatchSubmitJSONL(t.Context(), strings.NewReader(`{"url":"`+tc.url+`"}`))
+			require.ErrorContains(t, err, "unsupported url")
+			var missing *clihelp.MissingInputError
+			require.Equal(t, tc.help, errors.As(err, &missing))
+		})
+	}
+}
+
+func TestBatchEndpointPathMatchesURLParser(t *testing.T) {
+	for char := range 256 {
+		value := "/v1/" + string(byte(char))
+		parsed, err := url.ParseRequestURI(value)
+		want := err == nil && parsed.EscapedPath() == value
+		var path batchEndpointPath
+		for i := range len(value) {
+			path.add(value[i])
+		}
+		require.Equal(t, want, path.valid(), "path byte %#x", char)
 	}
 }
 

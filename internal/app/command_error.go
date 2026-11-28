@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
@@ -31,6 +32,17 @@ func withCommandError(command *cli.Command, err error) error {
 		return err
 	}
 	return &commandError{command: command, err: err}
+}
+
+// Before runs on the root after the command chain has been parsed.
+func withParsedMissingInputCommand(root *cli.Command, err error) error {
+	var missing *clihelp.MissingInputError
+	if errors.As(err, &missing) {
+		if target, _, _ := parsedOutputCommand(root); target != nil {
+			return withCommandError(target, err)
+		}
+	}
+	return err
 }
 
 // ConfigureCommandErrors composes with success wrappers without owning success
@@ -61,17 +73,21 @@ func ConfigureCommandErrors(root *cli.Command) {
 			previousUsage := command.OnUsageError
 			command.OnUsageError = func(ctx context.Context, command *cli.Command, err error, subcommand bool) error {
 				missing := requiredUsageMessage(command, err)
+				missingCount := requiredArgumentCountMessage(command, err.Error())
 				if previousUsage != nil {
 					original := err
 					err = previousUsage(ctx, command, err, subcommand)
 					if !errors.Is(err, original) {
-						missing = ""
+						return withCommandError(command, err)
 					}
 				}
 				// The default handler also prints help to stdout. Return the failure
 				// instead so the error presenter owns all diagnostic output.
 				if missing != "" {
 					return &commandError{command: command, err: err, missing: missing}
+				}
+				if missingCount != "" {
+					err = &clihelp.MissingInputError{Cause: err, Message: missingCount}
 				}
 				return withCommandError(command, err)
 			}
@@ -118,6 +134,33 @@ func requiredUsageMessage(command *cli.Command, err error) string {
 		return "Missing required arguments: " + strings.Join(names, ", ") + "."
 	}
 	return ""
+}
+
+// The framework reports a slice argument's Min separately from a required scalar.
+func requiredArgumentCountMessage(command *cli.Command, message string) string {
+	detail, ok := strings.CutPrefix(message, "sufficient count of arg ")
+	const separator = " not provided, given "
+	index := strings.LastIndex(detail, separator)
+	if !ok || index < 1 {
+		return ""
+	}
+	name := detail[:index]
+	count, minimum, found := strings.Cut(detail[index+len(separator):], " expected ")
+	if !found {
+		return ""
+	}
+	given, givenErr := strconv.Atoi(count)
+	required, requiredErr := strconv.Atoi(minimum)
+	if givenErr != nil || requiredErr != nil || given < 0 || given >= required ||
+		strconv.Itoa(given) != count || strconv.Itoa(required) != minimum ||
+		!slices.ContainsFunc(command.Arguments, func(arg cli.Argument) bool { return arg.HasName(name) }) {
+		return ""
+	}
+	unit := "values"
+	if required == 1 {
+		unit = "value"
+	}
+	return "Provide at least " + minimum + " " + unit + " for " + name + "."
 }
 
 func missingOptionsMessage(command *cli.Command, names []string) string {
