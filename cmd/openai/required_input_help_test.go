@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -175,24 +176,33 @@ func TestMainMissingMTLSConfigurationShowsCommandHelp(t *testing.T) {
 }
 
 func TestMainBatchSubmitMissingCustomEndpointShowsCommandHelp(t *testing.T) {
-	const endpoint = "/v1/custom_operation"
+	const endpoint = "/v1/custom_operation_extra"
 	const payload = `{"custom_id":"fixture","method":"POST","url":"` + endpoint + `","body":{}}` + "\n"
 	fixture := newSimpleBatchServer(t, payload, endpoint, "completed")
 	path := simpleBatchPath(t, payload)
 	env := []string{"OPENAI_BASE_URL=" + fixture.server.URL, "OPENAI_API_KEY=sk-fake-readable-test", "NO_COLOR=1"}
 	command := []string{"openai", "batches", "submit"}
 	help := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(command), "--help")...)
-	args := append(slices.Clone(command), path)
-	got := runMainDispatchWithEnv(t, "bash", env, args...)
-	if got.code != 1 || got.stdout != "" || !strings.Contains(got.stderr, "provide --endpoint explicitly") ||
-		help.code != 0 || help.stdout == "" || !strings.HasSuffix(got.stderr, "\n\n"+help.stdout) {
-		t.Fatalf("missing custom endpoint did not append exact help: %+v", got)
+	var escaped strings.Builder
+	for _, char := range endpoint {
+		fmt.Fprintf(&escaped, `\u%04x`, char)
 	}
-	structured := runMainDispatchWithEnv(t, "bash", env, append(args, "--format-error", "json")...)
-	value := decodeMainStructuredError(t, "json", structured.stderr)
-	if structured.code != 1 || structured.stdout != "" ||
-		value["message"] != "Cannot determine the batch endpoint: line 1 has an unsupported url. Check the request endpoint, or provide --endpoint explicitly for a custom endpoint." {
-		t.Fatalf("machine diagnostic changed: %+v", structured)
+	escapedPath := simpleBatchPath(t, strings.Replace(payload, endpoint, escaped.String(), 1))
+	for _, tc := range []struct{ name, path string }{{"plain URL", path}, {"escaped URL", escapedPath}} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(slices.Clone(command), tc.path)
+			got := runMainDispatchWithEnv(t, "bash", env, args...)
+			if got.code != 1 || got.stdout != "" || !strings.Contains(got.stderr, "provide --endpoint explicitly") ||
+				help.code != 0 || help.stdout == "" || !strings.HasSuffix(got.stderr, "\n\n"+help.stdout) {
+				t.Fatalf("missing custom endpoint did not append exact help: %+v", got)
+			}
+			structured := runMainDispatchWithEnv(t, "bash", env, append(args, "--format-error", "json")...)
+			value := decodeMainStructuredError(t, "json", structured.stderr)
+			if structured.code != 1 || structured.stdout != "" ||
+				value["message"] != "Cannot determine the batch endpoint: line 1 has an unsupported url. Check the request endpoint, or provide --endpoint explicitly for a custom endpoint." {
+				t.Fatalf("machine diagnostic changed: %+v", structured)
+			}
+		})
 	}
 	invalid := simpleBatchPath(t, strings.Replace(payload, endpoint, "https://fixture.invalid/path", 1))
 	malformed := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(command), invalid)...)

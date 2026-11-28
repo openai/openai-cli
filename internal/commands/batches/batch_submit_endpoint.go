@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
@@ -80,6 +79,7 @@ func inspectBatchJSONL(ctx context.Context, reader io.Reader) (batchJSONLInfo, e
 		}
 		scanner.idStart, scanner.idLength, scanner.idFields = 0, 0, 0
 		scanner.url, scanner.urlFields = "", 0
+		scanner.urlPath = batchEndpointPath{}
 		if b != '{' {
 			err = errBatchRecordJSON
 		} else {
@@ -100,7 +100,7 @@ func inspectBatchJSONL(ctx context.Context, reader io.Reader) (batchJSONLInfo, e
 		}
 		if !allowed[scanner.url] {
 			failure := batchSubmitEndpointLineError(line, "has an unsupported url", "Check the request endpoint, or provide --endpoint explicitly for a custom endpoint.")
-			if info.endpoint == "" && isCustomBatchEndpointPath(scanner.url) {
+			if info.endpoint == "" && scanner.urlPath.valid() {
 				// Validate this record's boundary before inviting an explicit endpoint.
 				// Keep the original diagnostic for trailing content.
 				err := scanner.outerSpace()
@@ -147,12 +147,46 @@ func inspectBatchJSONL(ctx context.Context, reader io.Reader) (batchJSONLInfo, e
 	return info, nil
 }
 
-func isCustomBatchEndpointPath(value string) bool {
-	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") {
-		return false
+// batchEndpointPath checks a rooted URI path without retaining the decoded URL.
+// It allows the same path bytes as net/url.URL.EscapedPath, including brackets.
+type batchEndpointPath struct {
+	prefix        uint8 // Number of initial bytes checked, up to two.
+	percentDigits uint8
+	invalid       bool
+}
+
+func (p *batchEndpointPath) add(b byte) {
+	if p.invalid {
+		return
 	}
-	path, err := url.ParseRequestURI(value)
-	return err == nil && path.EscapedPath() == value
+	switch p.prefix {
+	case 0:
+		p.prefix = 1
+		p.invalid = b != '/'
+		return
+	case 1:
+		p.prefix = 2
+		if b == '/' {
+			p.invalid = true
+			return
+		}
+	}
+	if p.percentDigits > 0 {
+		_, valid := batchHexDigit(b)
+		p.invalid = !valid
+		p.percentDigits--
+		return
+	}
+	if b == '%' {
+		p.percentDigits = 2
+		return
+	}
+	p.invalid = !(b >= '0' && b <= '9' || b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' ||
+		strings.IndexByte("-._~/!$&'()*+,;=:@[]", b) >= 0)
+}
+
+func (p batchEndpointPath) valid() bool {
+	return p.prefix > 0 && p.percentDigits == 0 && !p.invalid
 }
 
 func batchSubmitEndpointLineError(line int, problem, recovery string) error {
