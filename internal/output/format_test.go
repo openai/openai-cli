@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/term"
@@ -160,4 +161,39 @@ func TestFormatJSONPreservesFormatBytesAndErrors(t *testing.T) {
 	data, err := FormatJSON(gjson.Parse(`{}`), FormatOptions{Format: "invalid"}, io.Discard, false)
 	require.Nil(t, data)
 	require.EqualError(t, err, "Invalid format: invalid, valid formats are: auto, text, explore, json, jsonl, pretty, raw, yaml")
+}
+
+func TestFormatJSONPreservesObjectAndArrayLayout(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	input := `{"empty":{},"short":[1,[2,3],"[{}]"],"records":[{"name":"a","ids":[4,5]}]}`
+	want := `{
+  "empty": {},
+  "short": [1, [2, 3], "[{}]"],
+  "records": [
+    {
+      "name": "a",
+      "ids": [4, 5]
+    }
+  ]
+}
+`
+	got, err := FormatJSON(gjson.Parse(input), FormatOptions{Format: "json"}, io.Discard, false)
+	require.NoError(t, err)
+	require.Equal(t, want, string(got))
+}
+
+func TestFormatJSONPreservesArrayWidth(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	item := `"` + strings.Repeat("x", 74) + `"`
+	array := "[" + item + "]"
+	for _, tc := range []struct{ name, input, want string }{
+		{"first item", "[" + array + ",0]", "[\n  [\n    " + item + "\n  ],\n  0\n]\n"},
+		{"after comma", "[0," + array + "]", "[\n  0,\n  " + array + "\n]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := FormatJSON(gjson.Parse(tc.input), FormatOptions{Format: "json"}, io.Discard, false)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, string(got))
+		})
+	}
 }

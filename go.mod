@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.1
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4
 	github.com/charmbracelet/x/ansi v0.11.9
@@ -21,8 +21,8 @@ require (
 	github.com/openai/openai-go/v3 v3.105.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/stretchr/testify v1.12.1
-	github.com/tidwall/gjson v1.20.1
-	github.com/tidwall/pretty v1.2.2
+	github.com/tidwall/gjson v1.20.3
+	github.com/tidwall/pretty v1.3.0
 	github.com/tiktoken-go/tokenizer v0.10.0
 	github.com/urfave/cli-docs/v3 v3.2.0
 	github.com/urfave/cli/v3 v3.14.0
