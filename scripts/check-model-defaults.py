@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 
 SITE = "https://developers.openai.com/"
 DOCS = SITE + "api/docs/"
+RESPONSES = DOCS + "guides/model-selection.md"
 SPEECH = DOCS + "guides/text-to-speech.md"
 IMAGE = DOCS + "guides/image-generation.md"
 TRANSLATION = DOCS + "guides/realtime-translation.md"
@@ -24,6 +25,7 @@ MODEL_ID = r"[a-z0-9][a-z0-9.-]*"
 
 # Review changes to model advice even if the source retains an older recommendation.
 REVIEWED_GUIDANCE = {
+    RESPONSES: "6e4f47a4635ac0508c72557499ebdcca6c59c3f91aa7a90353dc46caa6ae15f2",
     SPEECH: "5d7de5ea03eabc2ee2a34272e6128d37b90442c80592df4f13725e76638647e7",
     IMAGE: "b60477ab890001f895a01364f63ed8b1ea9bd9f1ec50f6d1f897ec5cb528f642",
     TRANSLATION: "76664a49f1c389f3ee4ee22a44baa4e8a8b19119898da2fa4e3fc47d462321ea",
@@ -148,6 +150,8 @@ def check_caption_field(page, model):
 
 
 def verify(models, read):
+    responses = unique(r"^- For most API workflows, start with \*\*([A-Za-z0-9. -]+)\*\* at medium reasoning effort\.$",
+                       read(RESPONSES), RESPONSES).lower().replace(" ", "-")
     speech = unique(r"Migrate to `(" + MODEL_ID + r")` using the\s+\[Realtime API\]", read(SPEECH), SPEECH)
     translation = unique(r"Use \[`(" + MODEL_ID + r")`\]\([^)]+\) when your application should translate",
                          read(TRANSLATION), TRANSLATION)
@@ -156,6 +160,7 @@ def verify(models, read):
     text_translation = recommended_replacement(deprecations, "gpt-5-mini")
     captions = unique(r"configure input transcription with `(" + MODEL_ID + r")`", read(CAPTIONS), CAPTIONS)
     recommendations = {
+        "Responses": (responses, RESPONSES, ["v1/responses"]),
         "Speech": (speech, SPEECH, ["v1/realtime"]),
         "SavedImage": (image_recommendation(read(IMAGE)), IMAGE, ["v1/images/generations", "v1/images/edits"]),
         "Translation": (translation, TRANSLATION, ["v1/realtime/translations"]),

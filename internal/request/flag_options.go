@@ -26,8 +26,9 @@ type PreparationHooks struct {
 	// SelectBodyType resolves file unions after stdin policy has checked file
 	// paths, but before opening them.
 	SelectBodyType func(*cli.Command, map[string]any) (BodyContentType, error)
-	// ValidateResolvedInputs runs after file expansion, while preparation owns opened uploads.
-	ValidateResolvedInputs func(requestflag.RequestContents) error
+	// PrepareResolvedInputs can validate or apply defaults after file expansion,
+	// while request preparation still owns opened uploads.
+	PrepareResolvedInputs func(requestflag.RequestContents) error
 	// ResolvedJSONOptions inspects finalized inputs before JSON observers run.
 	// Literal headers retain precedence over every returned request option.
 	ResolvedJSONOptions func(map[string]any, http.Header, []byte) []option.RequestOption
@@ -215,8 +216,8 @@ func FlagOptions(
 	}
 
 	encoding := hooks.Encoding
-	if hooks.ValidateResolvedInputs != nil {
-		if err := hooks.ValidateResolvedInputs(requestContents); err != nil {
+	if hooks.PrepareResolvedInputs != nil {
+		if err := hooks.PrepareResolvedInputs(requestContents); err != nil {
 			return nil, err
 		}
 	}

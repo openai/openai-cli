@@ -252,22 +252,28 @@ func apiAuthenticationCredentialSource(root *cli.Command, flag, variable, label 
 }
 
 func apiAuthenticationCustomBase(root *cli.Command) bool {
+	return openAIBaseHost(root) == ""
+}
+
+// openAIBaseHost returns the effective host for a known OpenAI API endpoint.
+func openAIBaseHost(root *cli.Command) string {
 	base := root.String("base-url")
 	if base == "" {
 		base = os.Getenv("OPENAI_BASE_URL")
 	}
 	if base == "" {
-		return false
+		return "api.openai.com"
 	}
 	parsed, err := url.Parse(base)
 	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
 		parsed.Port() != "" && parsed.Port() != "443" || parsed.Path != "/v1" && parsed.Path != "/v1/" {
-		return true
+		return ""
 	}
 	// These API hosts are declared by the current SDK's endpoint options.
-	switch strings.ToLower(parsed.Hostname()) {
+	host := strings.ToLower(parsed.Hostname())
+	switch host {
 	case "api.openai.com", "us.api.openai.com", "eu.api.openai.com", "ae.api.openai.com", "mtls.api.openai.com":
-		return false
+		return host
 	}
-	return true
+	return ""
 }

@@ -4,14 +4,17 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/commands/webhooks"
+	"github.com/openai/openai-cli/internal/modeldefaults"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3/option"
@@ -66,8 +69,8 @@ func flagOptionsWithStdin(
 		DebugCapture:        captureOptions,
 		PreflightMultipart:  func(body map[string]any) error { return audio.PreflightVoiceBody(cmd, body) },
 		ValidateCredentials: func() error { return admin.CheckCredentials(cmd) },
-		ValidateResolvedInputs: func(contents requestflag.RequestContents) error {
-			if err := validateResponsesCreateInputs(cmd, contents.Body); err != nil {
+		PrepareResolvedInputs: func(contents requestflag.RequestContents) error {
+			if err := prepareResponsesCreateInputs(cmd, contents.Body); err != nil {
 				return err
 			}
 			return files.ValidatePurpose(cmd, contents)
@@ -121,7 +124,7 @@ func flagOptionsWithStdin(
 	return options, nil
 }
 
-func validateResponsesCreateInputs(cmd *cli.Command, body any) error {
+func prepareResponsesCreateInputs(cmd *cli.Command, body any) error {
 	if cmd.Name != "create" {
 		return nil
 	}
@@ -130,15 +133,50 @@ func validateResponsesCreateInputs(cmd *cli.Command, body any) error {
 		return nil
 	}
 	fields, ok := body.(map[string]any)
-	if !ok || apiAuthenticationCustomBase(cmd.Root()) {
+	host := openAIBaseHost(cmd.Root())
+	if !ok || host == "" {
 		return nil
 	}
+	// GPT-6.2 Sol supports global endpoints and US and EU data residency.
+	defaultModel := resource == "responses" &&
+		(host == "api.openai.com" || host == "mtls.api.openai.com" || host == "us.api.openai.com" || host == "eu.api.openai.com")
 	// Streaming controls cannot select a model. Other fields may select saved
 	// context, or may need server validation, including malformed values.
 	if len(fields) == 0 || responsesOnlyStreamingControls(fields) {
-		return &requestconfig.MissingRequiredFlagsError{Names: []string{"model"}}
+		missing := &requestconfig.MissingRequiredFlagsError{Names: []string{"model"}}
+		if defaultModel {
+			return &clihelp.MissingInputError{Cause: missing, Message: "Add --input to create a response with the default model."}
+		}
+		return missing
+	}
+	if defaultModel {
+		applyResponsesDefaultModel(fields)
 	}
 	return nil
+}
+
+func applyResponsesDefaultModel(fields map[string]any) {
+	// Preserve both explicit model values and any server-selected saved context.
+	for _, key := range []string{"model", "prompt", "previous_response_id", "conversation"} {
+		if _, supplied := fields[key]; supplied {
+			return
+		}
+	}
+	// Apply the default to fresh requests with text or input items. Leave input
+	// validation and errors for other body shapes to the existing API path.
+	switch input := fields["input"].(type) {
+	case string:
+		if strings.TrimSpace(input) == "" {
+			return
+		}
+	case []any:
+		if len(input) == 0 {
+			return
+		}
+	default:
+		return
+	}
+	fields["model"] = modeldefaults.Responses
 }
 
 func responsesOnlyStreamingControls(fields map[string]any) bool {

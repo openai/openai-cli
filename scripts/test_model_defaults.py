@@ -14,9 +14,10 @@ spec.loader.exec_module(check)
 
 class ModelDefaultsTest(unittest.TestCase):
     def setUp(self):
-        self.models = {"Speech": "voice", "SavedImage": "image", "Translation": "translate",
+        self.models = {"Responses": "gpt-6.2-fixture", "Speech": "voice", "SavedImage": "image", "Translation": "translate",
                        "TranslationText": "text", "TranslationTranscript": "captions"}
         self.pages = {
+            check.RESPONSES: "- For most API workflows, start with **GPT-6.2 Fixture** at medium reasoning effort.",
             check.SPEECH: "Migrate to `voice` using the\n[Realtime API](guide). Older examples use `old`.",
             check.IMAGE: ("### GPT-Image-4.0\n"
                           "[A](https://developers.openai.com/api/docs/models/image) for detailed visual work\n"
@@ -31,7 +32,8 @@ class ModelDefaultsTest(unittest.TestCase):
                                 "|---|---|---|\n| Yesterday | `old` \\| `older` | `voice` |\n"
                                 "| Tomorrow | `gpt-5-mini` \\| `gpt-5-mini-2025-08-07` | `text` |",
         }
-        for model, routes in [("voice", ["v1/realtime"]), ("image", ["v1/images/generations", "v1/images/edits"]),
+        for model, routes in [("gpt-6.2-fixture", ["v1/responses"]), ("voice", ["v1/realtime"]),
+                              ("image", ["v1/images/generations", "v1/images/edits"]),
                               ("translate", ["v1/realtime/translations"]), ("text", ["v1/responses"]),
                               ("captions", [])]:
             self.pages[check.DOCS + "models/" + model + ".md"] = "\n".join(
@@ -56,6 +58,11 @@ class ModelDefaultsTest(unittest.TestCase):
     def test_stale_default_despite_old_examples(self):
         self.pages[check.SPEECH] = "Migrate to `new-voice` using the [Realtime API](guide). Example: `voice`."
         with self.assertRaisesRegex(ValueError, "current guidance recommends new-voice"):
+            self.verify()
+
+    def test_responses_follows_current_recommendation(self):
+        self.pages[check.RESPONSES] = self.pages[check.RESPONSES].replace("GPT-6.2 Fixture", "GPT-6.3 Fixture")
+        with self.assertRaisesRegex(ValueError, "Responses selects gpt-6.2-fixture; current guidance recommends gpt-6.3-fixture"):
             self.verify()
 
     def test_missing_text_translation_role(self):

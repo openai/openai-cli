@@ -88,7 +88,7 @@ func TestSuggestedCommandsRegisterOnlyRenderedHelp(t *testing.T) {
 		t.Fatalf("lazy rendering omitted a new flag:\n%s", out.String())
 	}
 	want := helpSuggestionRecorder{
-		{"", `openai responses create --model gpt-5.5 --input "Say hello"`},
+		{"", `openai responses create --input "Say hello"`},
 		{"", "openai help --all responses create"},
 	}
 	if !reflect.DeepEqual(recorder, want) {

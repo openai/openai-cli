@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MODULE = "github.com/openai/openai-cli"
 CASES = {
     "cmd/openai": {
+        "TestMainResponsesDefaultModel": ("openai responses create, POST /v1/responses", ("default", "explicit_model")),
         "TestMainSpeakRealtime": ("openai speak, GET /v1/realtime", ("WAV_file",)),
         "TestMainImageGenerationDefaultsAndRequestOverrides": (
             "openai images generate, POST /v1/images/generations", ("defaults", "explicit_model_retains_API_defaults")

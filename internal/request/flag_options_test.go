@@ -78,7 +78,7 @@ func TestFlagOptionsResolvedInputValidationClosesUploads(t *testing.T) {
 				phases = append(phases, "expand")
 				return map[string]any{"file": FileUpload{Reader: source, FileName: "synthetic.txt"}}, nil
 			},
-			ValidateResolvedInputs: func(contents requestflag.RequestContents) error {
+			PrepareResolvedInputs: func(contents requestflag.RequestContents) error {
 				phases = append(phases, "validate")
 				require.Equal(t, "batch", contents.Queries["purpose"])
 				_, ok := contents.Body.(map[string]any)["file"].(FileUpload)
