@@ -72,6 +72,7 @@ func TestMainHandwrittenRequiredInputShowsCommandHelp(t *testing.T) {
 		exit             int
 	}{
 		{"audio history ID", "Specify one audio history ID.", []string{"audio", "export"}, []string{"--output=-"}, 1},
+		{"legacy audio browser without live", "Use audio translate --live to open the browser panel.", []string{"audio", "translate"}, []string{"--browser"}, 1},
 		{"batch file", "Choose a local JSONL file", []string{"batches", "submit"}, nil, 1},
 		{"batch wait option", "Add --wait", []string{"batches", "submit"}, []string{"fixture.jsonl", "--wait-timeout", "5s"}, 1},
 		{"batch retrieve without wait", "Use --wait", []string{"batches", "retrieve"}, []string{"batch_fixture", "--wait-timeout", "1s"}, 1},
@@ -120,6 +121,98 @@ func TestMainHandwrittenRequiredInputShowsCommandHelp(t *testing.T) {
 	}
 	if requests.Load() != 0 {
 		t.Fatalf("sent %d HTTP requests for local missing inputs", requests.Load())
+	}
+}
+
+func TestMainMissingMTLSConfigurationShowsCommandHelp(t *testing.T) {
+	const incomplete = "mTLS client certificate and key files must be configured together"
+	const noURL = "mTLS requires an explicit HTTPS base URL"
+	var requests atomic.Int32
+	trap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer trap.Close()
+	env := adminCredentialsProxyEnv(trap.URL, []string{"OPENAI_BASE_URL=", "NO_COLOR=1"})
+	for _, tc := range []struct {
+		name, diagnostic, flag string
+		options, sources       []string
+	}{
+		{"certificate only", incomplete, "--mtls-client-key-file", []string{"--mtls-client-cert-file=synthetic-cert.pem"}, nil},
+		{"key from environment", incomplete, "--mtls-client-cert-file", nil, []string{"OPENAI_MTLS_CLIENT_KEY_FILE=synthetic-key.pem"}},
+		{"pair without URL", noURL, "--base-url", []string{"--mtls-client-cert-file=synthetic-cert.pem", "--mtls-client-key-file=synthetic-key.pem"}, nil},
+		{"explicit empty override", incomplete, "", []string{"--mtls-client-key-file="},
+			[]string{"OPENAI_MTLS_CLIENT_CERT_FILE=synthetic-cert.pem", "OPENAI_MTLS_CLIENT_KEY_FILE=synthetic-key.pem"}},
+		{"explicit HTTP URL", noURL, "", []string{"--base-url=" + trap.URL, "--mtls-client-cert-file=synthetic-cert.pem", "--mtls-client-key-file=synthetic-key.pem"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testEnv := append(slices.Clone(env), tc.sources...)
+			command := []string{"openai", "files", "list"}
+			help := runMainDispatchWithEnv(t, "bash", testEnv, append(slices.Clone(command), "--help")...)
+			args := append(slices.Clone(command), tc.options...)
+			got := runMainDispatchWithEnv(t, "bash", testEnv, args...)
+			if got.code != 1 || got.stdout != "" || !strings.HasPrefix(got.stderr, tc.diagnostic) ||
+				strings.Contains(got.stderr, "synthetic-") || help.code != 0 || help.stdout == "" || help.stderr != "" {
+				t.Fatalf("unexpected mTLS validation: %+v", got)
+			}
+			if tc.flag != "" {
+				if !strings.Contains(got.stderr, "Add "+tc.flag+".\n\n") || !strings.HasSuffix(got.stderr, "\n\n"+help.stdout) {
+					t.Fatalf("mTLS omission did not append exact command help: %+v", got)
+				}
+			} else if got.stderr != tc.diagnostic+"\n" {
+				t.Fatalf("mTLS invalid value replaced its diagnostic: %+v", got)
+			}
+			structured := runMainDispatchWithEnv(t, "bash", testEnv, append(args, "--format-error", "json")...)
+			value := decodeMainStructuredError(t, "json", structured.stderr)
+			if structured.code != 1 || structured.stdout != "" || value["message"] != tc.diagnostic {
+				t.Fatalf("mTLS machine diagnostic changed: %+v", structured)
+			}
+		})
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("sent %d requests after mTLS configuration failed", requests.Load())
+	}
+}
+
+func TestMainBatchSubmitMissingCustomEndpointShowsCommandHelp(t *testing.T) {
+	const endpoint = "/v1/custom_operation"
+	const payload = `{"custom_id":"fixture","method":"POST","url":"` + endpoint + `","body":{}}` + "\n"
+	fixture := newSimpleBatchServer(t, payload, endpoint, "completed")
+	path := simpleBatchPath(t, payload)
+	env := []string{"OPENAI_BASE_URL=" + fixture.server.URL, "OPENAI_API_KEY=sk-fake-readable-test", "NO_COLOR=1"}
+	command := []string{"openai", "batches", "submit"}
+	help := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(command), "--help")...)
+	args := append(slices.Clone(command), path)
+	got := runMainDispatchWithEnv(t, "bash", env, args...)
+	if got.code != 1 || got.stdout != "" || !strings.Contains(got.stderr, "provide --endpoint explicitly") ||
+		help.code != 0 || help.stdout == "" || !strings.HasSuffix(got.stderr, "\n\n"+help.stdout) {
+		t.Fatalf("missing custom endpoint did not append exact help: %+v", got)
+	}
+	structured := runMainDispatchWithEnv(t, "bash", env, append(args, "--format-error", "json")...)
+	value := decodeMainStructuredError(t, "json", structured.stderr)
+	if structured.code != 1 || structured.stdout != "" ||
+		value["message"] != "Cannot determine the batch endpoint: line 1 has an unsupported url. Check the request endpoint, or provide --endpoint explicitly for a custom endpoint." {
+		t.Fatalf("machine diagnostic changed: %+v", structured)
+	}
+	invalid := simpleBatchPath(t, strings.Replace(payload, endpoint, "https://fixture.invalid/path", 1))
+	malformed := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(command), invalid)...)
+	if malformed.code != 1 || malformed.stdout != "" || strings.HasSuffix(malformed.stderr, "\n\n"+help.stdout) {
+		t.Fatalf("malformed request URL triggered omission help: %+v", malformed)
+	}
+	fixture.mu.Lock()
+	requests := len(fixture.requests)
+	fixture.mu.Unlock()
+	if requests != 0 {
+		t.Fatalf("sent %d requests before local validation finished", requests)
+	}
+	accepted := runSimpleBatchCommand(t, fixture, nil, path, "--endpoint", endpoint)
+	if accepted.code != 0 || accepted.stderr != "" || !json.Valid([]byte(accepted.stdout)) {
+		t.Fatalf("explicit custom endpoint did not work: %+v", accepted)
+	}
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	if !slices.Equal(fixture.requests, []string{"POST /files", "POST /batches"}) {
+		t.Fatalf("explicit custom endpoint changed request sequence: %v", fixture.requests)
 	}
 }
 

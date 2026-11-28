@@ -15,13 +15,28 @@ import (
 // construction, so preserve its response-header timeout here.
 const openAISDKResponseHeaderTimeout = 10 * time.Minute
 
+// MissingMTLSOptionError identifies an absent option without carrying any file paths.
+type MissingMTLSOptionError struct {
+	Flag    string
+	message string
+}
+
+func (e *MissingMTLSOptionError) Error() string { return e.message }
+
 // NewMTLSHTTPClient constructs an endpoint-bound mTLS client using default transport settings.
 func NewMTLSHTTPClient(certFile, keyFile, baseURL string) (*http.Client, error) {
 	if certFile == "" && keyFile == "" {
 		return nil, nil
 	}
 	if certFile == "" || keyFile == "" {
-		return nil, errors.New("mTLS client certificate and key files must be configured together")
+		flag := MTLSClientKeyFileFlag
+		if certFile == "" {
+			flag = MTLSClientCertFileFlag
+		}
+		return nil, &MissingMTLSOptionError{Flag: flag, message: "mTLS client certificate and key files must be configured together"}
+	}
+	if baseURL == "" {
+		return nil, &MissingMTLSOptionError{Flag: "base-url", message: "mTLS requires an explicit HTTPS base URL"}
 	}
 	endpoint, err := url.Parse(baseURL)
 	if err != nil || !strings.EqualFold(endpoint.Scheme, "https") || endpoint.Host == "" {

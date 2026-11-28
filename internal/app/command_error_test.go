@@ -138,3 +138,61 @@ func TestRequiredPositionalArgumentShowsHelp(t *testing.T) {
 	require.Contains(t, out.String(), "Missing required arguments: item.\n\n")
 	require.Contains(t, out.String(), "Read one item.")
 }
+
+func TestMinimumPositionalArgumentCountShowsHelp(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		help       bool
+		valid      bool
+		structured bool
+	}{
+		{name: "zero values", help: true},
+		{name: "one value", args: []string{"1"}, help: true},
+		{name: "enough values", args: []string{"1", "2"}, valid: true},
+		{name: "invalid value", args: []string{"bad"}, help: false},
+		{name: "structured error", args: []string{"1"}, structured: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			command := &cli.Command{
+				Name: "compare", Usage: "Compare two record IDs.",
+				Arguments: []cli.Argument{&cli.IntArgs{Name: "ids", Min: 2, Max: 2}},
+				Action: func(context.Context, *cli.Command) error {
+					called = true
+					return nil
+				},
+			}
+			root := &cli.Command{
+				Name: "openai", Commands: []*cli.Command{command}, Writer: io.Discard, ErrWriter: io.Discard,
+				Flags: []cli.Flag{&cli.StringFlag{Name: "format-error"}},
+			}
+			invocation := []string{"openai"}
+			if tc.structured {
+				invocation = append(invocation, "--format-error", "json")
+			}
+			invocation = append(append(invocation, "compare"), tc.args...)
+			args, _, err := clihelp.Configure(root, invocation)
+			require.NoError(t, err)
+			ConfigureCommandErrors(root)
+			failure := root.Run(t.Context(), args)
+			require.Equal(t, tc.valid, called)
+			if tc.valid {
+				require.NoError(t, failure)
+				return
+			}
+			require.Error(t, failure)
+			var out, help strings.Builder
+			require.NoError(t, ShowCommandError(root, failure, &out))
+			if tc.structured {
+				require.JSONEq(t, `{"message":"The command could not be completed. Check your arguments with --help."}`, out.String())
+				return
+			}
+			require.NoError(t, clihelp.WriteCommandHelp(t.Context(), command, &help))
+			require.Equal(t, tc.help, strings.HasSuffix(out.String(), "\n\n"+help.String()))
+			if tc.help {
+				require.True(t, strings.HasPrefix(out.String(), "Provide at least 2 values for ids.\n\n"), out.String())
+			}
+		})
+	}
+}

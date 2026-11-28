@@ -96,7 +96,11 @@ func ConfigureLiveTranslation(root *cli.Command, policy TranslationOptions) {
 	command.Action = func(ctx context.Context, command *cli.Command) error {
 		if !command.Bool("live") {
 			if command.Bool("browser") {
-				return audioFailure("Use audio translate --live to open the browser panel.", nil)
+				err := audioFailure("Use audio translate --live to open the browser panel.", nil)
+				if !command.IsSet("live") {
+					return clihelp.MissingInput(err)
+				}
+				return err
 			}
 			return next(ctx, command)
 		}

@@ -95,14 +95,7 @@ func ConfigureCommand(root *cli.Command) {
 	previousBefore := root.Before
 	root.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
 		if _, err := debugCaptureOptions(command); err != nil {
-			var missing *clihelp.MissingInputError
-			if errors.As(err, &missing) {
-				// Before receives the root after the framework parses the command chain.
-				if target, _, _ := parsedOutputCommand(command); target != nil {
-					err = withCommandError(target, err)
-				}
-			}
-			return ctx, err
+			return ctx, withParsedMissingInputCommand(command, err)
 		}
 		if previousBefore != nil {
 			var err error
@@ -121,7 +114,15 @@ func ConfigureCommand(root *cli.Command) {
 		if err := requestconfig.ValidateBaseURL(baseURL, source); err != nil {
 			return ctx, err
 		}
-		return requestconfig.ConfigureMTLS(ctx, command.Root())
+		ctx, err := requestconfig.ConfigureMTLS(ctx, command.Root())
+		var missing *requestconfig.MissingMTLSOptionError
+		if errors.As(err, &missing) && !command.IsSet(missing.Flag) {
+			err = &clihelp.MissingInputError{
+				Cause:   err,
+				Message: missing.Error() + ". Add --" + missing.Flag + ".",
+			}
+		}
+		return ctx, withParsedMissingInputCommand(command, err)
 	}
 	cli.SuggestCommand = clihelp.SuggestCommand
 }
